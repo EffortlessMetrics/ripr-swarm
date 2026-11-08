@@ -256,7 +256,19 @@ Updated:
 ## Pending — owner_return_pin_json_uncalled_closure (21)
 
 Reason:
-RIPR-SPEC-0240 merged-tree golden refresh: re-blessed against current main; this branch's change does not move these fixtures, and the stale expected files predate main's analyzer. No class, stage or evidence change from the PR itself.
+RIPR-SPEC-0197: assertion_not_credited splits into assertion_inert / assertion_admission_unproven (#5446, PR #12647); only the miss label and its wording change
+
+Command:
+`cargo xtask goldens bless owner_return_pin_json_uncalled_closure --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — owner_return_pin_json_uncalled_closure (22)
+
+Reason:
+RIPR-SPEC-0221: inert miss wording says shape that can keep the assertion from running
 
 Command:
 `cargo xtask goldens bless owner_return_pin_json_uncalled_closure --reason "..."`

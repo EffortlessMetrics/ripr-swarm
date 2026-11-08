@@ -11,7 +11,8 @@
 //!
 //! Judged fields are the ones the corpus assertions and the honesty argument
 //! rest on: the set of seams, each seam's `grip_class` and stage states, and
-//! each related test's `oracle_strength` and `relation_reason`. Producer
+//! each related test's `oracle_strength` and `relation_reason`, and each
+//! static limitation's stage, state and category (#13278). Producer
 //! version, cache schema, timestamps and the absolute root are expected to
 //! differ between captures and are not judged here; the cache schema is
 //! checked separately against `CACHE_SCHEMA_VERSION` by `report_cache_schema`
@@ -38,8 +39,11 @@ const REGENERATION_ARGS: [&str; 5] = [
 
 /// Assertion types that judge a repo-exposure report's seams. A case using any
 /// of them reads a stored capture, so each must be regenerable (#12188).
-const REPO_SEAM_ASSERTIONS: [&str; 2] =
-    ["expected_repo_seam_grip", "expected_repo_seam_related_test"];
+const REPO_SEAM_ASSERTIONS: [&str; 3] = [
+    "expected_repo_seam_grip",
+    "expected_repo_seam_related_test",
+    "expected_repo_seam_limitation",
+];
 
 /// A seam's identity within one report: file, line, column and kind. The
 /// `seam_id` hash is deliberately not the key, so a change to how ids are
@@ -56,11 +60,15 @@ struct JudgedSeam {
     grip_class: String,
     stages: Vec<(String, String)>,
     related_tests: Vec<RelatedTest>,
+    static_limitations: Vec<StaticLimitation>,
 }
 
 /// A related test as judged: name, file, line, oracle strength, relation
 /// reason. File and line are kept so a test that moved is a difference.
 type RelatedTest = (String, String, u64, String, String);
+
+/// A named limitation as judged: stage, original state and category.
+type StaticLimitation = (String, String, String);
 
 fn string_field(value: &Value, field: &str) -> String {
     value
@@ -112,12 +120,15 @@ fn judged_seams(report: &Value) -> Result<BTreeMap<SeamKey, JudgedSeam>, String>
             })
             .unwrap_or_default();
         related_tests.sort();
+        let mut static_limitations = limitation_rows(seam)?.unwrap_or_default();
+        static_limitations.sort();
         let entry = JudgedSeam {
             owner: string_field(seam, "owner"),
             expression: string_field(seam, "expression"),
             grip_class: string_field(seam, "grip_class"),
             stages,
             related_tests,
+            static_limitations,
         };
         if judged.insert(key.clone(), entry).is_some() {
             return Err(format!(
@@ -180,6 +191,13 @@ pub(super) fn compare_reports(
                 stored.related_tests, fresh.related_tests
             ));
         }
+        if stored.static_limitations != fresh.static_limitations {
+            violations.push(format!(
+                "{case_label}: seam at {location} committed static limitations \
+                 (stage, state, category) {:?} differ from the current analyzer's {:?}",
+                stored.static_limitations, fresh.static_limitations
+            ));
+        }
     }
     for key in regenerated.keys() {
         if !committed.contains_key(key) {
@@ -193,7 +211,7 @@ pub(super) fn compare_reports(
 }
 
 /// The cases that must be regenerable: every case that pins a repo seam, by
-/// grip or by related test. A
+/// grip, related test or named limitation. A
 /// case without `report_subject` would be judged from a stored file nothing
 /// can refresh, which is the gap this guard closes, so it fails rather than
 /// being skipped.
@@ -228,11 +246,119 @@ pub(super) fn repo_seam_cases(
                 regenerable.push((id.to_string(), report.to_string(), subject.to_string()));
             }
             _ => violations.push(format!(
-                "evidence promotion case `{id}`: a case with `expected_repo_seam_grip` or `expected_repo_seam_related_test` needs `source_report` and `report_subject` (the Cargo subject the report was captured from), so the report can be regenerated and checked for staleness (#12144)"
+                "evidence promotion case `{id}`: a case with `expected_repo_seam_grip`, `expected_repo_seam_related_test` or `expected_repo_seam_limitation` needs `source_report` and `report_subject` (the Cargo subject the report was captured from), so the report can be regenerated and checked for staleness (#12144)"
             )),
         }
     }
     regenerable
+}
+
+/// Judge a typed limitation independently of the seam's unchanged grip class.
+/// A missing selector or malformed evidence is never a successful absence.
+/// Match the whole expression so a field cannot also select its enclosing return.
+pub(super) fn expected_limitation_violations(
+    case_label: &str,
+    report: &Value,
+    owner: &str,
+    expression: &str,
+    category: &str,
+    present: bool,
+) -> Vec<String> {
+    let Some(seams) = report.get("seams").and_then(Value::as_array) else {
+        return vec![format!(
+            "{case_label}: `expected_repo_seam_limitation` requires a `seams` array"
+        )];
+    };
+    let expression = normalized_seam_expression(expression);
+    if expression.is_empty() {
+        return vec![format!(
+            "{case_label}: `expected_repo_seam_limitation` requires a nonempty expression \
+             after trimming whitespace and one optional comma"
+        )];
+    }
+    let matched: Vec<&Value> = seams
+        .iter()
+        .filter(|seam| {
+            seam.get("owner").and_then(Value::as_str) == Some(owner)
+                && seam
+                    .get("expression")
+                    .and_then(Value::as_str)
+                    .is_some_and(|text| normalized_seam_expression(text) == expression)
+        })
+        .collect();
+    if matched.len() != 1 {
+        return vec![format!(
+            "{case_label}: `expected_repo_seam_limitation` requires exactly one seam with \
+             owner `{owner}` and expression equal to `{expression}`, matched {}",
+            matched.len()
+        )];
+    }
+    let mut violations = Vec::new();
+    for seam in matched {
+        let seam_label = string_field(seam, "seam_id");
+        let limits = match limitation_rows(seam) {
+            Ok(Some(limits)) => limits,
+            Ok(None) => {
+                violations.push(format!(
+                    "{case_label}: seam `{seam_label}` must carry a static_limitations array"
+                ));
+                continue;
+            }
+            Err(error) => {
+                violations.push(format!("{case_label}: {error}"));
+                continue;
+            }
+        };
+        let count = limits
+            .iter()
+            .filter(|(_, _, actual)| actual == category)
+            .count();
+        let expected = usize::from(present);
+        if count != expected {
+            violations.push(format!(
+                "{case_label}: seam `{seam_label}` has {count} limitation rows for \
+                 `{category}`, but the corpus pins {expected}"
+            ));
+        }
+    }
+    violations
+}
+
+fn normalized_seam_expression(expression: &str) -> &str {
+    let expression = expression.trim();
+    expression
+        .strip_suffix(',')
+        .unwrap_or(expression)
+        .trim_end()
+}
+
+/// Older trimmed captures may omit the evidence record. An explicit malformed
+/// record is different from absence and cannot establish a fresh comparison.
+fn limitation_rows(seam: &Value) -> Result<Option<Vec<StaticLimitation>>, String> {
+    let Some(raw) = seam.pointer("/evidence_record/static_limitations") else {
+        return Ok(None);
+    };
+    let seam_label = string_field(seam, "seam_id");
+    let limits = raw
+        .as_array()
+        .ok_or_else(|| format!("seam `{seam_label}` has a malformed static_limitations array"))?;
+    let mut rows = Vec::new();
+    for (index, limit) in limits.iter().enumerate() {
+        let text = |field: &str| {
+            limit
+                .get(field)
+                .and_then(Value::as_str)
+                .filter(|text| !text.trim().is_empty())
+                .map(str::to_string)
+                .ok_or_else(|| {
+                    format!(
+                        "seam `{seam_label}` static limitation {index} has no nonempty `{field}`"
+                    )
+                })
+        };
+        rows.push((text("stage")?, text("state")?, text("category")?));
+    }
+    Ok(Some(rows))
 }
 
 /// The producer's `raw_json_placeholder_v1` canonicalization: the digest is the
@@ -605,6 +731,185 @@ mod tests {
                 ]
             }]
         })
+    }
+
+    fn with_field_limit(report: &mut Value, present: bool) {
+        report["seams"][0]["evidence_record"] = json!({
+            "static_limitations": if present {
+                json!([{
+                    "stage": "discriminate", "state": "weak",
+                    "category": "rust_framework_oracle_unresolved"
+                }])
+            } else {
+                json!([])
+            }
+        });
+    }
+
+    fn field_limit_violations(report: &Value, present: bool) -> Vec<String> {
+        expected_limitation_violations(
+            "field",
+            report,
+            "src/lib.rs::check",
+            "a > b",
+            "rust_framework_oracle_unresolved",
+            present,
+        )
+    }
+
+    #[test]
+    fn named_limitation_assertions_distinguish_identical_class_and_stages() {
+        let mut ordinary = report("weakly_gripped", "yes", "medium");
+        with_field_limit(&mut ordinary, false);
+        let mut marked = ordinary.clone();
+        with_field_limit(&mut marked, true);
+        assert_eq!(
+            ordinary["seams"][0]["grip_class"],
+            marked["seams"][0]["grip_class"]
+        );
+        assert_eq!(
+            ordinary["seams"][0]["evidence"],
+            marked["seams"][0]["evidence"]
+        );
+        assert!(field_limit_violations(&ordinary, false).is_empty());
+        assert!(field_limit_violations(&marked, true).is_empty());
+        assert_eq!(field_limit_violations(&ordinary, true).len(), 1);
+        assert_eq!(field_limit_violations(&marked, false).len(), 1);
+        let stale = compare_reports("field", &marked, &ordinary);
+        assert_eq!(stale.len(), 1, "{stale:?}");
+        assert!(stale[0].contains("static limitations"), "{stale:?}");
+        // Re-blessing the missing marker satisfies freshness but cannot
+        // satisfy the independent corpus assertion that requires it.
+        assert!(compare_reports("field", &ordinary, &ordinary).is_empty());
+        assert!(!field_limit_violations(&ordinary, true).is_empty());
+    }
+
+    #[test]
+    fn named_limitation_assertions_reject_missing_malformed_and_duplicate_rows() {
+        let mut marked = report("weakly_gripped", "yes", "medium");
+        with_field_limit(&mut marked, true);
+        for bad in [json!({}), json!({"seams": []})] {
+            assert!(!field_limit_violations(&bad, false).is_empty());
+        }
+        let mut wrong_owner = marked.clone();
+        wrong_owner["seams"][0]["owner"] = json!("other");
+        assert!(!field_limit_violations(&wrong_owner, true).is_empty());
+        let ambiguous = json!({"seams": [marked["seams"][0], marked["seams"][0]]});
+        assert!(!field_limit_violations(&ambiguous, true).is_empty());
+        let mut malformed = marked.clone();
+        malformed["seams"][0]["evidence_record"]["static_limitations"] = json!({});
+        assert!(!field_limit_violations(&malformed, false).is_empty());
+        malformed["seams"][0]["evidence_record"]["static_limitations"] = json!([{}]);
+        assert!(!field_limit_violations(&malformed, false).is_empty());
+        let row = marked["seams"][0]["evidence_record"]["static_limitations"][0].clone();
+        marked["seams"][0]["evidence_record"]["static_limitations"] = json!([row, row]);
+        assert!(!field_limit_violations(&marked, true).is_empty());
+    }
+
+    #[test]
+    fn named_limitation_assertions_select_fields_apart_from_enclosing_returns() {
+        let owner = "src/lib.rs::make_record";
+        let field = "items: items.iter().count()";
+        let returned = "Record {\n    items: items.iter().count(),\n}";
+        let category = "rust_framework_oracle_unresolved";
+        let report = json!({
+            "seams": [
+                {
+                    "seam_id": "returned", "owner": owner, "kind": "return_value",
+                    "expression": returned,
+                    "evidence_record": {"static_limitations": []}
+                },
+                {
+                    "seam_id": "field", "owner": owner, "kind": "field_construction",
+                    "expression": field,
+                    "evidence_record": {"static_limitations": [{
+                        "stage": "discriminate", "state": "weak", "category": category
+                    }]}
+                }
+            ]
+        });
+        let judge = |expression: &str, present| {
+            expected_limitation_violations(
+                "nested field",
+                &report,
+                owner,
+                expression,
+                category,
+                present,
+            )
+        };
+        for selector in [field.to_string(), format!("  {field},  ")] {
+            let violations = judge(&selector, true);
+            assert!(violations.is_empty(), "{violations:?}");
+            assert_eq!(judge(&selector, false).len(), 1);
+        }
+        assert!(judge(returned, false).is_empty());
+        assert_eq!(judge(returned, true).len(), 1);
+        assert!(!judge(&format!("{field},,"), true).is_empty());
+        let mut with_comma = report.clone();
+        with_comma["seams"][1]["expression"] = json!(format!("  {field},  "));
+        let violations = expected_limitation_violations(
+            "field with comma",
+            &with_comma,
+            owner,
+            field,
+            category,
+            true,
+        );
+        assert!(violations.is_empty(), "{violations:?}");
+        let return_only = json!({"seams": [report["seams"][0]]});
+        let missing = expected_limitation_violations(
+            "missing field",
+            &return_only,
+            owner,
+            field,
+            category,
+            false,
+        );
+        assert!(!missing.is_empty());
+        let empty_expression = json!({"seams": [{
+            "seam_id": "empty", "owner": owner, "expression": "",
+            "evidence_record": {"static_limitations": []}
+        }]});
+        for selector in ["", " ", ",", " , "] {
+            let malformed = expected_limitation_violations(
+                "empty expression",
+                &empty_expression,
+                owner,
+                selector,
+                category,
+                false,
+            );
+            assert!(!malformed.is_empty());
+        }
+    }
+
+    #[test]
+    fn named_limitation_cases_require_explicit_presence_and_a_live_subject() -> Result<(), String> {
+        let mut assertion = json!({
+            "type": "expected_repo_seam_limitation",
+            "owner": "src/lib.rs::check", "expression": "a > b",
+            "category": "rust_framework_oracle_unresolved"
+        });
+        if super::super::evidence_promotion_parse_assertion("field", 0, &assertion).is_ok() {
+            return Err("missing `present` must be rejected".to_string());
+        }
+        assertion["present"] = json!("true");
+        if super::super::evidence_promotion_parse_assertion("field", 0, &assertion).is_ok() {
+            return Err("non-boolean `present` must be rejected".to_string());
+        }
+        assertion["present"] = json!(true);
+        super::super::evidence_promotion_parse_assertion("field", 0, &assertion)?;
+        let mut case = json!({"id": "field", "assertions": [assertion]});
+        let mut missing = Vec::new();
+        assert!(repo_seam_cases(&[case.clone()], &mut missing).is_empty());
+        assert_eq!(missing.len(), 1);
+        case["source_report"] = json!("reports/field.json");
+        case["report_subject"] = json!("subjects/field");
+        let mut valid = Vec::new();
+        assert_eq!(repo_seam_cases(&[case], &mut valid).len(), 1);
+        assert!(valid.is_empty());
+        Ok(())
     }
 
     /// A report whose `content_sha256` is computed the producer's way.

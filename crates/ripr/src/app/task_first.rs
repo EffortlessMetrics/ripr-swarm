@@ -336,28 +336,52 @@ fn repair_refusal(
     if let Some(reason) = policy.omission_reason_for_class(entry.class, Some(entry.seam.file())) {
         return Some((RefusalKind::Other, reason));
     }
-    // #12867: the start publishes an attempt and then renders the handoff
-    // card, which cannot name the workspace without an admitted test target
-    // (a proposed new test file has none). A start whose card cannot be
-    // produced leaves an attempt with nothing to act on, so the gate refuses
-    // it up front, through the card's own identity rule.
-    super::repair_card_handoff::workspace_identity_for(entry, &eligibility.readiness)
-        .err()
-        .map(|_| {
-            (
-                RefusalKind::RouteNotReady,
-                NO_TEST_TARGET_REASON.to_string(),
-            )
-        })
+    proposal_start_refusal(entry, &eligibility.readiness)
 }
 
-/// Compared by equality in `check_repair_route` (shared on purpose, so a
-/// static-limited finding can stay silent about it): change the text in one
-/// place only.
-/// Why a seam that is otherwise ready does not start: no existing test names
-/// where the repair would go, and a proposed new test file cannot be handed
-/// off as a card (#12867).
-const NO_TEST_TARGET_REASON: &str = "ripr found no existing test to extend for this code, and it cannot hand off a repair that would begin in a new test file, so it does not start an automatic repair here; write the test by hand";
+/// #12867 / #13203 A0: the start publishes an attempt and then renders the
+/// handoff card, which cannot name the workspace without an admitted test
+/// target or a producer-owned proposal that carries the identity. A start whose
+/// card cannot be produced leaves an attempt with nothing to act on, so the
+/// gate refuses it up front, through the card's own identity rule.
+///
+/// A proposal is startable only when the attempt can enforce an edit cage on
+/// it: the packet's recommended test must be the proposal's own file (a new
+/// test surface, or the one governed inline module). Otherwise the packet is
+/// inspection-only and the start would publish an attempt whose before phase
+/// fails on the cage policy.
+pub(super) fn proposal_start_refusal(
+    entry: &crate::analysis::ClassifiedSeam,
+    readiness: &crate::analysis::repair_route::RepairRouteReadiness,
+) -> Option<(RefusalKind, String)> {
+    let no_target = || {
+        Some((
+            RefusalKind::RouteNotReady,
+            NO_TEST_TARGET_REASON.to_string(),
+        ))
+    };
+    if super::repair_card_handoff::workspace_identity_for(entry, readiness).is_err() {
+        return no_target();
+    }
+    if let crate::analysis::repair_route::RepairTargetSelection::Proposed(proposal) =
+        &readiness.target_selection
+        && (!crate::output::agent_seam_packets::recommended_test_is_repair_edit_target(entry)
+            || !crate::output::agent_seam_packets::recommended_test_is_the_proposed_file(
+                entry,
+                &proposal.file,
+            ))
+    {
+        return no_target();
+    }
+    None
+}
+
+/// Why a seam that is otherwise ready does not start: ripr found no existing
+/// test to extend and no complete new-test proposal it can safely begin from
+/// (#12867, #13203 A0). `check_repair_route` compares against this same
+/// constant to stay silent for a static-limited finding, so change the text
+/// in one place only.
+pub(super) const NO_TEST_TARGET_REASON: &str = "ripr found no existing test to extend for this code and no complete new-test proposal it can safely start from, so it does not start an automatic repair here; write the test by hand";
 
 /// The refusal for an opaque seam with no candidate test to name: ripr could
 /// not see how any test reaches or observes the changed code, so it cannot say
@@ -849,6 +873,7 @@ pub(crate) fn inventory_for_repair(
         let _widened = crate::analysis::PilotInventoryDefault::widen_to(cap);
         let rerun =
             crate::analysis::inventory_classified_seams_report_at_with_config(root, config)?;
+        rerun.require_complete_evidence("repair seam inventory")?;
         // The repair gates read the cap only. A file the parse budget declined
         // has no seams in the inventory, so a rerun that declined any is not
         // known to be complete and the original truncation refusal stands.
@@ -2319,11 +2344,51 @@ pub(crate) fn held_inline_start_file(
 /// The refusal for a start held by an uncommitted production target: states
 /// that no attempt started and what to do about it (#9033).
 pub(crate) fn uncommitted_start_refusal_message(root: &Path, seam_id: &str, file: &str) -> String {
+    let rerun = repair_rerun_command(root, seam_id);
+    start_refusal_with_next(
+        &format!(
+            "No repair attempt started. Commit or stash `{file}`, then run `{rerun}`. A repair confined to its inline `#[cfg(test)]` module starts only from the committed file"
+        ),
+        &format!("commit or stash `{file}`, then run `{rerun}`"),
+    )
+}
+
+/// The one spelling of the repair start every not-started refusal and card
+/// hold names as its rerun command.
+pub(crate) fn repair_rerun_command(root: &Path, seam_id: &str) -> String {
     format!(
-        "No repair attempt started. Commit or stash `{file}`, then run `ripr repair {} --root {}`. A repair confined to its inline `#[cfg(test)]` module starts only from the committed file",
+        "ripr repair {} --root {}",
         shell_arg(seam_id),
         shell_arg(&bound_root(&root.to_string_lossy()))
     )
+}
+
+/// Map a build-output precondition failure to its refusal. Only the typed
+/// [`BuildOutputPreconditionError::NotIgnored`] hold is a not-started refusal
+/// (exit 3 on the facade); an inspection failure stays operational. The
+/// decision reads the variant, never the rendered wording.
+pub(crate) fn build_output_precondition_refusal(
+    rerun: &str,
+    error: crate::edit_cage::BuildOutputPreconditionError,
+) -> (Option<RepairRefusalCode>, String) {
+    match error {
+        crate::edit_cage::BuildOutputPreconditionError::NotIgnored(detail) => (
+            Some(RepairRefusalCode::BuildOutputNotIgnored),
+            start_refusal_with_next(
+                &format!("{detail} Nothing was started."),
+                &format!("add Cargo's build directory to .gitignore, then run {rerun}"),
+            ),
+        ),
+        crate::edit_cage::BuildOutputPreconditionError::Inspection(detail) => {
+            (None, format!("{detail} Nothing was started."))
+        }
+    }
+}
+
+/// The one shape every not-started repair refusal shares: the plain reason,
+/// then a single `next:` line naming the recovery.
+fn start_refusal_with_next(reason: &str, next: &str) -> String {
+    format!("{}\nnext: {next}", reason.trim_end())
 }
 
 /// The one sentence for a start held by an uncommitted test target, shared by
@@ -2353,11 +2418,7 @@ pub(crate) fn card_start_hold(
     let refusal = repair_start_refusal_for_entry(root, entry, policy)?;
     let seam_id = entry.seam.id().as_str();
     let held = held_inline_target(root, &repair_packet_eligibility(entry).readiness).map(|file| {
-        let command = format!(
-            "ripr repair {} --root {}",
-            shell_arg(seam_id),
-            shell_arg(&bound_root(&root.to_string_lossy()))
-        );
+        let command = repair_rerun_command(root, seam_id);
         (
             format!("commit or stash `{file}`, then run `{command}`"),
             command,
@@ -2918,7 +2979,13 @@ fn non_rust_language(file: &Path) -> Option<&'static str> {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct ChangedNonRust {
     pub(crate) language: &'static str,
+    /// Wire name of the language (`python`), for the `[languages]` line.
+    pub(crate) wire: &'static str,
     pub(crate) adds_code: bool,
+    /// Whether the effective `[languages].enabled` set analyzes this
+    /// language for the root. `false` means `ripr check` could not analyze
+    /// the change at all (#13571), so it names no gap for it.
+    pub(crate) enabled: bool,
 }
 
 /// Why repair could not narrow its spots to the change, when it could not
@@ -3018,17 +3085,34 @@ pub(crate) fn changed_non_rust_languages(root: &Path, base: Option<&str>) -> Vec
     let Some(files) = live_check_diff_files(root, base) else {
         return Vec::new();
     };
+    // An unreadable config keeps the earlier message: only a loaded
+    // `[languages]` set can say a language is switched off.
+    let enabled_languages = crate::config::load_for_root(root)
+        .ok()
+        .map(|config| config.languages.enabled);
     let mut found: Vec<ChangedNonRust> = Vec::new();
     for file in files {
-        let Some(language) = non_rust_language(&file.path) else {
+        let Some(id) = crate::analysis::route(&file.path) else {
             continue;
         };
+        if id == crate::domain::LanguageId::Rust {
+            continue;
+        }
+        let language = id.display_name();
+        let enabled = enabled_languages.as_ref().is_none_or(|set| {
+            set.contains(&id)
+                // The TypeScript adapter also analyzes JavaScript files.
+                || (id == crate::domain::LanguageId::JavaScript
+                    && set.contains(&crate::domain::LanguageId::TypeScript))
+        });
         let adds_code = !file.added_lines.is_empty();
         match found.iter_mut().find(|entry| entry.language == language) {
             Some(entry) => entry.adds_code |= adds_code,
             None => found.push(ChangedNonRust {
                 language,
+                wire: id.as_str(),
                 adds_code,
+                enabled,
             }),
         }
     }
@@ -3042,7 +3126,43 @@ pub(crate) fn changed_non_rust_languages(root: &Path, base: Option<&str>) -> Vec
 /// Names the gap-bound start for TypeScript and Python (#10373) and the
 /// manual route otherwise. A deletion-only change gets no `check` finding,
 /// so it is not promised one.
-pub(crate) fn non_rust_repair_guidance(root_display: &str, changed: &[ChangedNonRust]) -> String {
+pub(crate) fn non_rust_repair_guidance(
+    root: &Path,
+    root_display: &str,
+    changed: &[ChangedNonRust],
+) -> String {
+    let off: Vec<&ChangedNonRust> = changed.iter().filter(|entry| !entry.enabled).collect();
+    if !off.is_empty() {
+        // #13571: an adapter is switched off here (no project marker and no
+        // `ripr.toml`), so `ripr check` analyzes none of that change and a
+        // zero-gap result is not a clean one. Say that, with the fix, not the
+        // by-hand route that `check` cannot back. `root` is the real path:
+        // `root_display` is shell-quoted for the message only.
+        let mut names: Vec<&str> = Vec::new();
+        if crate::domain::rust_markers_at(root) {
+            names.push("rust");
+        }
+        for entry in &off {
+            // The TypeScript adapter also analyzes JavaScript files.
+            let wire = if entry.wire == "javascript" {
+                "typescript"
+            } else {
+                entry.wire
+            };
+            if !names.contains(&wire) {
+                names.push(wire);
+            }
+        }
+        let toml = crate::domain::format_languages_enabled_toml(&names);
+        let languages = off
+            .iter()
+            .map(|entry| entry.language)
+            .collect::<Vec<_>>()
+            .join(" and ");
+        return format!(
+            "the changed code under {root_display} is {languages}, and ripr did not analyze it: the adapter is not enabled here, so there is no gap to repair, and finding nothing is not a clean result. To analyze it, add this to ripr.toml and rerun `ripr check --root {root_display}`:\n\n[languages]\n{toml}"
+        );
+    }
     let languages = changed
         .iter()
         .map(|entry| entry.language)
@@ -3254,6 +3374,9 @@ pub(crate) enum RepairRefusalCode {
     RepairNeedsItem,
     /// The start was refused: the focused test file has uncommitted changes.
     StartRefusedUncommittedTarget,
+    /// Cargo's build directory is not Git-ignored, so a Rust repair cannot
+    /// start: the same not-started shape as the uncommitted-target hold.
+    BuildOutputNotIgnored,
     /// The start was refused: no test file or module ripr can safely edit.
     NoTestRoute,
     /// `continue`: the attempt awaits the focused test edit; retry after it.
@@ -3310,7 +3433,7 @@ impl RepairRefusalDisposition {
 impl RepairRefusalCode {
     /// Every code, for the docs/help parity test.
     #[cfg(test)]
-    pub(crate) const ALL: [Self; 19] = [
+    pub(crate) const ALL: [Self; 20] = [
         Self::ItemNamesNoSeam,
         Self::ItemNamesSeveralSeams,
         Self::SeamNotRepairEligible,
@@ -3318,6 +3441,7 @@ impl RepairRefusalCode {
         Self::SeveralEligibleSeams,
         Self::RepairNeedsItem,
         Self::StartRefusedUncommittedTarget,
+        Self::BuildOutputNotIgnored,
         Self::NoTestRoute,
         Self::AwaitingEdit,
         Self::RetryBudgetExhausted,
@@ -3341,6 +3465,7 @@ impl RepairRefusalCode {
             Self::SeveralEligibleSeams => "several_eligible_seams",
             Self::RepairNeedsItem => "repair_needs_item",
             Self::StartRefusedUncommittedTarget => "start_refused_uncommitted_target",
+            Self::BuildOutputNotIgnored => "build_output_not_ignored",
             Self::NoTestRoute => "no_test_route",
             Self::AwaitingEdit => "awaiting_edit",
             Self::RetryBudgetExhausted => "retry_budget_exhausted",
@@ -3373,6 +3498,7 @@ impl RepairRefusalCode {
             | Self::SeamNotRepairEligible
             | Self::NoEligibleSeam
             | Self::StartRefusedUncommittedTarget
+            | Self::BuildOutputNotIgnored
             | Self::NoTestRoute
             | Self::NoCurrentAttempt
             | Self::AttemptBaselineBlocked
@@ -3761,6 +3887,30 @@ fn held_inline_target(
 
 #[cfg(test)]
 pub(crate) mod tests {
+    #[test]
+    fn build_output_refusal_is_decided_by_variant_not_wording() {
+        use crate::edit_cage::BuildOutputPreconditionError::{Inspection, NotIgnored};
+        // Wording that matches none of the production text still takes the
+        // typed hold, because the variant decides.
+        let (code, message) = build_output_precondition_refusal(
+            "`ripr repair seam-1`",
+            NotIgnored("completely reworded detail".to_string()),
+        );
+        assert_eq!(code, Some(RepairRefusalCode::BuildOutputNotIgnored));
+        assert!(message.contains("completely reworded detail Nothing was started."));
+        assert!(message.contains("\nnext: add Cargo's build directory to .gitignore"));
+        // The reverse: production wording carried by an inspection failure
+        // never becomes the typed hold.
+        let (code, _) = build_output_precondition_refusal(
+            "`ripr repair seam-1`",
+            Inspection(
+                "requires Cargo's build directory to be Git-ignored before the test edit"
+                    .to_string(),
+            ),
+        );
+        assert_eq!(code, None);
+    }
+
     /// #11597: the refusal-code vocabulary is closed and snake_case, every
     /// code is unique, each is documented with its disposition in
     /// `docs/EXIT_CODES.md`, and the stderr line carries both.
@@ -3883,6 +4033,95 @@ pub(crate) mod tests {
             None,
             "a complete inventory needs no rerun"
         );
+    }
+
+    /// #13340: a repair start over a walk whose evidence warm failed refuses
+    /// with the pass-wide `producer_failure` error instead of reading the
+    /// opaque stand-ins as "no eligible seam". Every gate maps it to its
+    /// existing refusal; the unarmed control stays loaded.
+    #[test]
+    fn repair_gates_fail_closed_on_a_failed_evidence_warm() -> Result<(), String> {
+        use crate::analysis::test_grip_evidence::WarmPanicGuard;
+        let make_root = |label: &str| -> Result<std::path::PathBuf, String> {
+            let stamp = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(|error| error.to_string())?
+                .as_nanos();
+            let root = std::env::temp_dir()
+                .join(format!("ripr-warm-{label}-{}-{stamp}", std::process::id()));
+            std::fs::create_dir_all(root.join("src")).map_err(|error| error.to_string())?;
+            std::fs::write(
+                root.join("Cargo.toml"),
+                "[package]\nname = \"warm\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+            )
+            .map_err(|error| error.to_string())?;
+            std::fs::write(
+                root.join("src/lib.rs"),
+                "pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }\n",
+            )
+            .map_err(|error| error.to_string())?;
+            Ok(root)
+        };
+
+        // Unarmed control on its own root, so its cached healthy walk cannot
+        // answer the armed runs: the repair inventory and the gate load.
+        let control_root = make_root("control")?;
+        let _control_guard = TempRootGuard {
+            root: control_root.clone(),
+        };
+        let control_config = load_for_root(&control_root)?;
+        let (classified, _) = inventory_for_repair(&control_root, &control_config)?;
+        assert!(!classified.is_empty(), "fixture must classify seams");
+        assert!(matches!(
+            load_gate_state(&control_root),
+            GateState::Loaded { .. }
+        ));
+
+        let root = make_root("armed")?;
+        let _guard = TempRootGuard { root: root.clone() };
+        let config = load_for_root(&root)?;
+
+        for point in [1u8, 2u8] {
+            let _armed = WarmPanicGuard::arm(point);
+            let Err(error) = inventory_for_repair(&root, &config) else {
+                return Err(format!("point {point}: inventory_for_repair must refuse"));
+            };
+            assert!(error.contains("producer_failure"), "{error}");
+            assert!(error.contains("pass-wide"), "{error}");
+
+            let Err(subject) = resolve_repair_subject_outcome(&root, "gap:rust:src/lib.rs:1")
+            else {
+                return Err(format!("point {point}: the subject resolver must refuse"));
+            };
+            assert!(subject.contains("producer_failure"), "{subject}");
+
+            let Err(start) = resolve_repair_start(&root, None) else {
+                return Err(format!("point {point}: the start resolver must refuse"));
+            };
+            assert!(start.contains("producer_failure"), "{start}");
+
+            match load_gate_state(&root) {
+                GateState::Unavailable(why) => assert!(why.contains("producer_failure"), "{why}"),
+                _ => return Err(format!("point {point}: the gate must be unavailable")),
+            }
+
+            let selection = crate::app::selector::select_finding_with_seam_reverse(
+                &[],
+                &root,
+                &config,
+                "0123456789abcdef",
+            );
+            assert!(
+                matches!(
+                    selection,
+                    crate::app::selector::FindingSelection::Undecided(
+                        crate::app::selector::SelectorLimitation::InventoryUnreadable
+                    )
+                ),
+                "point {point}: the selector must be undecided, not a clean miss"
+            );
+        }
+        Ok(())
     }
 
     /// End to end over a real repository above the 10,000-seam default cap
@@ -4275,6 +4514,7 @@ pub(crate) mod tests {
                 file: std::path::PathBuf::from(file),
                 owner: "price".to_string(),
                 provenance: NewTestProposalProvenance::ProducerOwned,
+                workspace_identity: String::new(),
             }),
             test_target: None,
             proposed_oracle: None,

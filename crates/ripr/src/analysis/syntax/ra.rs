@@ -139,12 +139,34 @@ pub(crate) struct RustEmbedResourceDirective {
     pub(crate) macro_kind: RustEmbedResourceMacro,
 }
 
+/// Crate-wide `macro_rules!` shadow facts for the embed-resource macros,
+/// computed by the resource-dependency producer from the indexed workspace
+/// sources (#13046): `true` when any indexed Rust source defines a
+/// `macro_rules!` of that name, wherever in the crate it lives.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct EmbedResourceMacroShadowFacts {
+    /// Some indexed Rust source defines `macro_rules! include_str`.
+    pub(crate) include_str: bool,
+    /// Some indexed Rust source defines `macro_rules! include_bytes`.
+    pub(crate) include_bytes: bool,
+}
+
+impl EmbedResourceMacroShadowFacts {
+    pub(crate) fn has(&self, kind: RustEmbedResourceMacro) -> bool {
+        match kind {
+            RustEmbedResourceMacro::IncludeStr => self.include_str,
+            RustEmbedResourceMacro::IncludeBytes => self.include_bytes,
+        }
+    }
+}
+
 /// Extract `include_str!` / `include_bytes!` macro nodes from parser-backed
 /// syntax. Comments and string contents never produce directives.
 pub(crate) fn rust_embed_resource_directives(
     _path: &Path,
     text: &str,
     max_directives: usize,
+    crate_shadows: &EmbedResourceMacroShadowFacts,
 ) -> Result<Vec<RustEmbedResourceDirective>, String> {
     let Some(parse) = parse_clean_source_file(text) else {
         return Err("rust_embed_resource_parent_parse_unavailable".to_string());
@@ -168,7 +190,7 @@ pub(crate) fn rust_embed_resource_directives(
         let Some(macro_kind) = embed_resource_macro_callee(&path) else {
             continue;
         };
-        if embed_resource_call_may_be_shadowed(text, &path) {
+        if embed_resource_call_may_be_shadowed(parse.tree().syntax(), &path, crate_shadows) {
             continue;
         }
         let expression = slice_text(text, call_start, call_range.end());
@@ -889,25 +911,53 @@ fn embed_resource_macro_callee(path: &ast::Path) -> Option<RustEmbedResourceMacr
     }
 }
 
-/// Unqualified `include_str!` / `include_bytes!` spellings can be shadowed by
-/// a same-file `macro_rules!` definition; skip those calls rather than emit
-/// a false exact resource edge.
+/// Whether an unqualified `include_str!` / `include_bytes!` call may resolve
+/// to a same-crate `macro_rules!` of that name instead of the builtin, in
+/// which case the call is skipped rather than given a false exact resource
+/// edge.
 ///
-/// Known limit: only a `macro_rules!` defined in the same file is seen. A
-/// shadowing macro imported through `#[macro_use]`, `use`, or defined in another
-/// module is not detected, so such a call can still yield an exact edge.
-fn embed_resource_call_may_be_shadowed(source: &str, path: &ast::Path) -> bool {
+/// Detection is parser-backed for the file being scanned and crate-wide
+/// through `crate_shadows`: the resource producer sets a flag when any
+/// indexed Rust source in the crate defines `macro_rules! include_str` (or
+/// `include_bytes`), so a shadowing macro defined in another module or
+/// brought in by `#[macro_use]` is now seen. The crate-wide scan is lexical
+/// and deliberately conservative: a `macro_rules!` mention inside a comment
+/// or string of another file can only over-skip (fail closed), never
+/// under-skip.
+///
+/// Known limits: a shadowing macro imported with `use` when no crate source
+/// defines a local `macro_rules!` of that name, a `#[macro_use] extern
+/// crate` macro without a local `macro_rules!`, and macros injected by
+/// build scripts are not detected. `std::`/`core::`/`::`-qualified paths
+/// are always trusted.
+fn embed_resource_call_may_be_shadowed(
+    root: &SyntaxNode,
+    path: &ast::Path,
+    crate_shadows: &EmbedResourceMacroShadowFacts,
+) -> bool {
     if path.segments().count() > 1 {
         return false;
     }
     let Some(kind) = embed_resource_macro_callee(path) else {
         return false;
     };
+    if crate_shadows.has(kind) {
+        return true;
+    }
     let name = match kind {
         RustEmbedResourceMacro::IncludeStr => "include_str",
         RustEmbedResourceMacro::IncludeBytes => "include_bytes",
     };
-    source.contains(&format!("macro_rules! {name}"))
+    root.descendants()
+        .any(|node| macro_definition_name(&node).is_some_and(|def| def == name))
+}
+
+/// Name of a `macro_rules!` / `macro` definition item, if `node` is one.
+fn macro_definition_name(node: &SyntaxNode) -> Option<String> {
+    ast::MacroRules::cast(node.clone())
+        .and_then(|item| item.name())
+        .or_else(|| ast::MacroDef::cast(node.clone()).and_then(|item| item.name()))
+        .map(|name| name.text().to_string())
 }
 
 pub(super) fn include_literal_path_from_macro_call(call: &ast::MacroCall) -> Option<PathBuf> {
@@ -5097,7 +5147,12 @@ fn read() {
     let _ = include_bytes!(concat!(env!("OUT_DIR"), "/x.bin"));
 }
 "#;
-        let directives = rust_embed_resource_directives(Path::new("src/lib.rs"), source, 16)?;
+        let directives = rust_embed_resource_directives(
+            Path::new("src/lib.rs"),
+            source,
+            16,
+            &super::EmbedResourceMacroShadowFacts::default(),
+        )?;
         assert_eq!(directives.len(), 2);
         assert_eq!(
             directives[0].literal_path.as_deref(),
@@ -5121,11 +5176,35 @@ macro_rules! include_str {
 const DATA: &str = include_str!("data.json");
 const TRUSTED: &str = std::include_str!("data.json");
 "#;
-        let directives = rust_embed_resource_directives(Path::new("src/lib.rs"), source, 16)?;
+        let directives = rust_embed_resource_directives(
+            Path::new("src/lib.rs"),
+            source,
+            16,
+            &super::EmbedResourceMacroShadowFacts::default(),
+        )?;
         assert_eq!(directives.len(), 1);
         assert_eq!(
             directives[0].literal_path.as_deref(),
             Some(Path::new("data.json"))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn crate_wide_shadow_fact_skips_unqualified_call() -> Result<(), String> {
+        let source = r#"const DATA: &str = include_str!("data.json");"#;
+        let directives = rust_embed_resource_directives(
+            Path::new("src/lib.rs"),
+            source,
+            16,
+            &super::EmbedResourceMacroShadowFacts {
+                include_str: true,
+                include_bytes: false,
+            },
+        )?;
+        assert!(
+            directives.is_empty(),
+            "crate-wide macro_rules! include_str must suppress the unqualified call: {directives:?}"
         );
         Ok(())
     }

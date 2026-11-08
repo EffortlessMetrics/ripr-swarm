@@ -684,6 +684,8 @@ async fn list_gaps_accepts_offset_and_limit_at_the_dispatch_edge() -> Result<(),
         serde_json::json!({}),
         serde_json::json!({"offset": 0}),
         serde_json::json!({"offset": 3, "limit": 10}),
+        serde_json::json!({"independent_pages": true}),
+        serde_json::json!({"independent_pages": false}),
         serde_json::json!({"snapshot_id": "snapshot:sha256:x", "offset": 0, "limit": 1}),
     ] {
         let arguments = serde_json::from_value(arguments).map_err(|error| error.to_string())?;
@@ -714,6 +716,8 @@ async fn list_gaps_accepts_offset_and_limit_at_the_dispatch_edge() -> Result<(),
         serde_json::json!({"offset": "3"}),
         serde_json::json!({"limit": 0}),
         serde_json::json!({"limit": true}),
+        serde_json::json!({"independent_pages": "true"}),
+        serde_json::json!({"independent_pages": null}),
         serde_json::json!({"verbose": true}),
     ] {
         let arguments = serde_json::from_value(arguments).map_err(|error| error.to_string())?;
@@ -1552,6 +1556,48 @@ fn unknown_argument_names_keep_bounded_explicit_diagnostics() -> Result<(), Stri
     let allowed_name = "x".repeat(128);
     let arguments = argument_map(serde_json::json!({ format!("{allowed_name}x"): true }));
     assert!(reject_unknown_arguments(&arguments, &[allowed_name.as_str()]).is_err());
+    Ok(())
+}
+
+/// #13220: preserve the protocol category and ordinary message while making
+/// a long method name a disclosed preview, never a response-sized echo.
+#[test]
+fn unknown_method_names_keep_bounded_explicit_diagnostics() -> Result<(), String> {
+    for (name, preview, truncated) in [
+        ("nope/never".to_string(), "nope/never".to_string(), false),
+        ("x".repeat(128), "x".repeat(128), false),
+        ("x".repeat(129), "x".repeat(128), true),
+        ("雪".repeat(128), "雪".repeat(128), false),
+        ("雪".repeat(129), "雪".repeat(128), true),
+        ("x".repeat(150_000), "x".repeat(128), true),
+        ("\u{1}".repeat(40_000), "\u{1}".repeat(128), true),
+        ("😀".repeat(40_000), "😀".repeat(128), true),
+    ] {
+        let error = unknown_method_error(&name);
+        assert_eq!(error.code, rmcp::model::ErrorCode::METHOD_NOT_FOUND);
+        let expected_message = if truncated {
+            format!("Method not found: {preview} (name truncated)")
+        } else {
+            format!("Method not found: {preview}")
+        };
+        assert_eq!(error.message.as_ref(), expected_message.as_str());
+        if truncated {
+            assert_eq!(
+                error.data,
+                Some(serde_json::json!({
+                    "method": preview,
+                    "method_truncated": true,
+                    "method_bytes": name.len(),
+                }))
+            );
+        } else {
+            assert!(error.data.is_none());
+        }
+        let bytes = serde_json::to_vec(&error)
+            .map_err(|error| error.to_string())?
+            .len();
+        assert!(bytes <= 4 * 1024, "method diagnostic grew to {bytes} bytes");
+    }
     Ok(())
 }
 

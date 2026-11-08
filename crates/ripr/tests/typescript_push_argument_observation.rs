@@ -212,7 +212,14 @@ fn framework_registration_identity_keeps_the_extension_bounded() -> Result<(), S
             "test",
             "weakly_exposed",
         ),
-        ("@jest/globals", "", "test.only", "exposed"),
+        ("@jest/globals", "", "test.only", "weakly_exposed"),
+        ("@jest/globals", "test.only = fake;", "test.only", "exposed"),
+        (
+            "@jest/globals",
+            "import { test as run } from 'vitest';",
+            "run.only",
+            "exposed",
+        ),
         ("vitest", "", "test.only", "weakly_exposed"),
         (
             "vitest",
@@ -251,6 +258,46 @@ fn changed_cardinality_keeps_length_credit_for_both_frameworks() -> Result<(), S
             finding["classification"], "exposed",
             "{framework}: {finding}"
         );
+    }
+    Ok(())
+}
+
+#[test]
+fn jest_only_distinguishes_appended_value_from_cardinality() -> Result<(), String> {
+    for (new, body, expected) in [
+        (
+            UPPER,
+            "const b: string[] = [];\nlogLine(b, 'hi');\nexpect(b.length).toBe(1);",
+            "weakly_exposed",
+        ),
+        (
+            UPPER,
+            "const b: string[] = [];\nlogLine(b, 'hi');\nexpect(b[0]).toBe('HI');",
+            "exposed",
+        ),
+        (
+            "buf.push(msg, msg);",
+            "const b: string[] = [];\nlogLine(b, 'hi');\nexpect(b.length).toBe(2);",
+            "exposed",
+        ),
+    ] {
+        let workspace = Workspace::new("@jest/globals", new, body)?;
+        let path = workspace.0.join("test/log.test.ts");
+        let source = fs::read_to_string(&path).map_err(|error| error.to_string())?;
+        fs::write(&path, source.replace("test('log'", "test.only('log'"))
+            .map_err(|error| error.to_string())?;
+        let finding = workspace.finding()?;
+        assert_eq!(
+            finding["classification"], expected,
+            "{new}: {body}\n{finding}"
+        );
+        if expected == "weakly_exposed" {
+            assert_eq!(finding["ripr"]["observe"]["state"], "weak", "{finding}");
+            assert_eq!(
+                finding["ripr"]["discriminate"]["state"], "weak",
+                "{finding}"
+            );
+        }
     }
     Ok(())
 }
