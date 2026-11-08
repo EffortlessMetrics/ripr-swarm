@@ -95,6 +95,7 @@ reports no runtime outcomes; a real mutation runner confirms later.
 | [`ripr capabilities`](#capabilities) | Show per-language, framework and mode capability status. | public |
 | [`ripr check`](#check) | Analyze the current diff and name the top actionable gap. | public |
 | [`ripr start-here`](#first-pr) | Compatibility alias for first-pr; compose the same start-here bundle. | compatibility |
+| [`ripr completions`](#completions) | Print a tab-completion script for your shell. | public |
 | [`ripr config`](#config) | Show the configuration command surface. | public |
 | [`ripr config validate`](#config) | Validate ripr.toml without running analysis. | public |
 | [`ripr context`](#context) | Collect the tests and seams related to one finding. | public |
@@ -1768,6 +1769,35 @@ Examples:
   ripr check --mode ready --json
   ripr check --base origin/main --json --suppression-policy policy/ripr-suppressions.toml
   ripr check --diff d.patch --write-artifact target/ripr/last-check.json
+```
+
+### completions
+
+`ripr help completions`
+
+```text
+Print a tab-completion script for your shell.
+
+Usage: ripr completions <bash|zsh|fish|powershell>
+
+Options:
+  --help  Show this help.
+
+The script completes ripr command names and the word after a command, such as
+`cache status`. It does not complete flags. It prints to stdout and changes
+nothing on your machine.
+
+Try it in the current shell:
+  bash        source <(ripr completions bash)
+  zsh         source <(ripr completions zsh)   (run `compinit` first)
+  fish        ripr completions fish | source
+  powershell  ripr completions powershell | Out-String | Invoke-Expression
+
+To keep it, add that line to your shell startup file (for example ~/.bashrc,
+~/.zshrc, ~/.config/fish/config.fish or your PowerShell profile).
+
+Examples:
+  ripr completions bash
 ```
 
 ### config
