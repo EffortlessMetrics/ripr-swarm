@@ -500,7 +500,7 @@ fn unify_root_separators(value: &str) -> String {
 /// Reduce a root to the plain form the producer writes: `/` separators and
 /// no Windows verbatim prefix. The harness root comes from
 /// `fs::canonicalize`, which yields `\\?\H:\...` / `\\?\UNC\server\...`
-/// on Windows, while the producer reports `H:/...` / `//server/...`;
+/// on Windows, while the producer reports the plain drive / UNC forms;
 /// without this reduction every Windows warm sample is rejected.
 fn plain_root_text(value: &str) -> String {
     let unified = unify_root_separators(value);
