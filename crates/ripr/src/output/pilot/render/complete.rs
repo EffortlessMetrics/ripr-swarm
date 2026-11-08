@@ -176,6 +176,20 @@ pub(crate) fn render_pilot_summary_json(
         )),
         None => out.push_str("  \"repo_exposure_byte_bound\": null,\n"),
     }
+    // #13340: the inventory's evidence pass failed. Omitted when healthy so
+    // the summary stays byte-identical.
+    if !context.inventory_evidence_limitations.is_empty() {
+        out.push_str("  \"inventory_evidence_limitations\": [\n");
+        for (idx, limitation) in context.inventory_evidence_limitations.iter().enumerate() {
+            if idx > 0 {
+                out.push_str(",\n");
+            }
+            out.push_str(
+                &crate::output::repo_exposure::evidence_limitation_json_object(limitation, 4),
+            );
+        }
+        out.push_str("\n  ],\n");
+    }
     push_declined_rust_files_json(&mut out, declined_rust_files(context));
     out.push_str(&format!(
         "  \"withheld_static_limitations_total\": {},\n",
@@ -313,6 +327,7 @@ fn render_pilot_summary_md_with_target(
     // #6602: a seam limit cut the classified list before ranking, so every
     // Rust seam count below covers only the seams that were kept, and the
     // actionable count is a lower bound.
+    push_inventory_evidence_limitations(&mut out, context, true);
     if let Some(bound) = context.repo_exposure_byte_bound {
         out.push_str(&format!(
             "- repo-exposure.json byte bound reached: it lists {} of {} spots ({} byte budget); ranking and `agent-seam-packets.json` cover all {}. Set `{}=0` to list every spot\n",
@@ -726,6 +741,7 @@ fn render_pilot_terminal_with_target(
             limit.analyzed, limit.total
         ));
     }
+    push_inventory_evidence_limitations(&mut out, context, false);
     // #12108: the terminal states the byte cut too, as JSON and Markdown do.
     if let Some(bound) = context.repo_exposure_byte_bound {
         out.push_str(&format!(
@@ -1388,6 +1404,29 @@ impl CurrentChangeLabel {
 }
 
 /// Project the producer's named coverage limitation, even with a changed top pick.
+/// #13340: names a failed inventory evidence pass, so a count read from the
+/// opaque stand-ins is never taken for an inventory result. Nothing for a
+/// healthy run.
+fn push_inventory_evidence_limitations(
+    out: &mut String,
+    context: PilotSummaryContext<'_>,
+    markdown: bool,
+) {
+    for limitation in context.inventory_evidence_limitations {
+        let prefix = if markdown {
+            "- Inventory limitation"
+        } else {
+            "  inventory limitation"
+        };
+        out.push_str(&terminal_safe(format!(
+            "{prefix}: {}: {}; spot counts and rankings below are not an inventory result. {}\n",
+            limitation.kind.as_str(),
+            limitation.kind.plain_label(),
+            limitation.recovery.detail
+        )));
+    }
+}
+
 fn push_changed_file_limitations(
     out: &mut String,
     change: Option<&PilotCurrentChange>,

@@ -1751,6 +1751,10 @@ struct PilotDeclinedOnly {
     /// A seam limit also cut the run, so seams past the cut were never
     /// classified and splitting the files alone leaves the scan incomplete.
     seam_limit_applied: bool,
+    /// The evidence pass failed (#13340), read from the summary's
+    /// `inventory_evidence_limitations` or the repo exposure report: the
+    /// run's counts are not a settled result, whatever the declined files say.
+    evidence_failed: bool,
 }
 
 fn pilot_declined_only(root: &Path) -> Option<PilotDeclinedOnly> {
@@ -1785,10 +1789,16 @@ fn pilot_declined_only(root: &Path) -> Option<PilotDeclinedOnly> {
     let seam_limit_applied = summary
         .pointer("/seam_limit")
         .is_some_and(|limit| !limit.is_null());
+    let evidence_failed = summary
+        .pointer("/inventory_evidence_limitations")
+        .and_then(Value::as_array)
+        .is_some_and(|entries| !entries.is_empty())
+        || pilot_repo_exposure_limits(root).is_some_and(|limits| limits.evidence_failed);
     Some(PilotDeclinedOnly {
         file_count,
         files,
         seam_limit_applied,
+        evidence_failed,
     })
 }
 
@@ -1815,8 +1825,15 @@ fn pilot_declined_only_message(declined: &PilotDeclinedOnly, root_display: &str)
     } else {
         ""
     };
+    // The failure may be transient, unlike the parse limit: it is its own
+    // step, never folded into the declined-files repair.
+    let evidence = if declined.evidence_failed {
+        " The evidence pass also failed (`producer_failure`, `run_status: limited_seam_evidence` in `target/ripr/pilot/repo-exposure.json`), so the zero-gap result is a failed pass, not a settled result and not a verdict on the spots; it may be transient, so read the limitation's `repair_route` in that file."
+    } else {
+        ""
+    };
     format!(
-        "the last complete `ripr pilot` run ranked no gap because a parse limit declined {files}, so their gaps are not fully analyzed and running pilot again unchanged declines them again. Split the file(s) below the Rust parse budget (or save them as UTF-8), then rerun `{}`.{seam_limit} `target/ripr/pilot/pilot-summary.json` lists them as `declined_rust_files`",
+        "the last complete `ripr pilot` run ranked no gap because a parse limit declined {files}, so their gaps are not fully analyzed and running pilot again unchanged declines them again. Split the file(s) below the Rust parse budget (or save them as UTF-8), then rerun `{}`.{seam_limit}{evidence} `target/ripr/pilot/pilot-summary.json` lists them as `declined_rust_files`",
         pilot_select_command(root_display)
     )
 }
@@ -7320,6 +7337,80 @@ mod tests {
         ] {
             assert!(warning.message.contains(expected), "{}", warning.message);
         }
+
+        // #13340: a failed evidence pass named by the summary (or the repo
+        // exposure report) adds its own transient step beside the repair.
+        write_file(
+            &root.join(PILOT_SUMMARY_ARTIFACT),
+            &summary("complete", "[]", "null", declined),
+        )?;
+        let plain = build_agent_status_report(&root, Path::new("."));
+        let plain = plain
+            .warnings
+            .iter()
+            .find(|warning| warning.kind == "pilot_declined_rust_files_no_repair_target")
+            .ok_or("expected a declined warning")?
+            .message
+            .clone();
+        assert!(!plain.contains("producer_failure"), "{plain}");
+        let failure = r#"{"category": "producer_failure", "producer_stage": "seam_evidence", "scope": "pass_wide", "repair_route": "rerun"}"#;
+        write_file(
+            &root.join(PILOT_SUMMARY_ARTIFACT),
+            &summary(
+                "complete",
+                "[]",
+                "null",
+                &declined.replacen(
+                    "\"declined_rust_files\"",
+                    &format!(
+                        "\"inventory_evidence_limitations\": [{failure}], \"declined_rust_files\""
+                    ),
+                    1,
+                ),
+            ),
+        )?;
+        let by_summary = build_agent_status_report(&root, Path::new("."));
+        let by_summary = by_summary
+            .warnings
+            .iter()
+            .find(|warning| warning.kind == "pilot_declined_rust_files_no_repair_target")
+            .ok_or("expected a declined warning")?
+            .message
+            .clone();
+        assert!(by_summary.contains("producer_failure"), "{by_summary}");
+        assert!(by_summary.contains("may be transient"), "{by_summary}");
+        assert!(by_summary.contains("Split the file(s)"), "{by_summary}");
+        write_file(
+            &root.join(PILOT_SUMMARY_ARTIFACT),
+            &summary("complete", "[]", "null", declined),
+        )?;
+        write_file(
+            &root.join(PILOT_REPO_EXPOSURE_ARTIFACT),
+            &format!(r#"{{"run_status": "limited_seam_evidence", "limitations": [{failure}]}}"#),
+        )?;
+        let by_report = build_agent_status_report(&root, Path::new("."));
+        let by_report = by_report
+            .warnings
+            .iter()
+            .find(|warning| warning.kind == "pilot_declined_rust_files_no_repair_target")
+            .ok_or("expected a declined warning")?
+            .message
+            .clone();
+        assert!(by_report.contains("may be transient"), "{by_report}");
+        // A healthy report beside the same summary keeps the plain message.
+        write_file(
+            &root.join(PILOT_REPO_EXPOSURE_ARTIFACT),
+            r#"{"run_status": "limited_declined_files"}"#,
+        )?;
+        let healthy = build_agent_status_report(&root, Path::new("."));
+        let healthy = healthy
+            .warnings
+            .iter()
+            .find(|warning| warning.kind == "pilot_declined_rust_files_no_repair_target")
+            .ok_or("expected a declined warning")?
+            .message
+            .clone();
+        assert_eq!(healthy, plain);
 
         // Controls: each keeps its previous routing.
         for control in [

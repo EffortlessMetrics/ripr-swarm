@@ -18202,6 +18202,18 @@ and the cut seams do not count as analyzed, so the change is never read as
 completely classified. The field is omitted when the evidence pass was healthy
 or no supplement ran, so those summaries are unchanged.
 
+When the inventory's own seam-evidence pass fails (#13340), `pilot-summary.json`
+carries an optional top-level `inventory_evidence_limitations` array, the same
+entries `repo-exposure.json` lists in `limitations[]` (`category`
+`producer_failure`, `producer_stage`, `scope` `pass_wide`, optional `detail`,
+`repair_route`). Every classified seam is then an opaque stand-in, so no count or
+ranking is an inventory result; the terminal and Markdown summaries print an
+`inventory limitation: producer_failure` line. This is separate from
+`current_change.evidence_limitations`, which covers only the current-change
+supplement. The field is omitted when the pass was healthy, so those summaries
+are byte-identical; the schema version stays `0.4`. `ripr agent status` names
+the same failure on the declined-files-only stop.
+
 Both the fallback and a successful current-change supplement apply the shared
 diff-aware generated-source exclusions before checking presence, including exact
 handwritten opt-ins, stronger explicit patterns and changed vendor checksum
