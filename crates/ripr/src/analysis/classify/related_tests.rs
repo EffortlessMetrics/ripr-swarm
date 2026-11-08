@@ -6570,12 +6570,30 @@ fn owner_impl_is_root_item_of(index: &RustIndex, owner: &FunctionSummary, file: 
 
 /// Whether `file` has a non-glob `use` whose bound name (its alias, else its
 /// last segment) is `name` and whose path is rooted at a crate that is neither
-/// `crate`/`self`/`super` nor a workspace member.
+/// `crate`/`self`/`super`, a workspace member, nor a module or type declared in
+/// `file` itself.
 fn file_imports_name_from_external_crate(index: &RustIndex, file: &Path, name: &str) -> bool {
     let Some(tree) = index.source_syntax.get(index, file).and_then(|s| s.tree()) else {
         return false;
     };
     let members = index.workspace_member_crates();
+    // With no manifest in the index the workspace's own crate names are
+    // unknown, so no root can be called foreign.
+    if members.is_empty() {
+        return false;
+    }
+    // A root that names a module or type declared in this file (2018 uniform
+    // paths: `mod support; use support::Regex;`) is local, not a crate.
+    let local_items: std::collections::BTreeSet<String> = tree
+        .syntax()
+        .descendants()
+        .filter_map(|node| {
+            ast::Module::cast(node.clone())
+                .and_then(|item| item.name())
+                .or_else(|| ast::Adt::cast(node).and_then(|item| item.name()))
+        })
+        .map(|name| name.text().trim_start_matches("r#").to_string())
+        .collect();
     tree.syntax()
         .descendants()
         .filter_map(ast::Use::cast)
@@ -6600,6 +6618,7 @@ fn file_imports_name_from_external_crate(index: &RustIndex, file: &Path, name: &
                     last != "*"
                         && bound == name
                         && !matches!(root, "crate" | "self" | "super" | "")
+                        && !local_items.contains(root)
                         && !members
                             .iter()
                             .any(|member| member.replace('-', "_") == root)
