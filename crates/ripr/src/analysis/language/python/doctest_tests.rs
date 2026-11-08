@@ -25,7 +25,8 @@
 //! (#13869). An example is read at all only when it is certain to be that
 //! assertion:
 //!
-//! - the docstring belongs to an undecorated top-level `def` and every example
+//! - the docstring belongs to a top-level `def` (a decorated one is never
+//!   evaluated, only kept as an opaque comparison) and every example
 //!   in it is one `>>>` line, a call of a bare name with literal arguments,
 //!   followed by one expected line equal to the `repr` of a string, integer or
 //!   boolean. Any other example (a statement, a continuation, a trace, `...`,
@@ -59,7 +60,8 @@ const MAX_CONFIG_BYTES: u64 = 64 * 1024;
 
 /// The tests the doctest examples of changed module `file` state: examples of
 /// the new source that also stand in the old source, that pytest collects and
-/// whose result differs between the old and the new function.
+/// whose result differs between the old and the new function (an exact
+/// assertion), or that the evaluator cannot run (an opaque comparison).
 pub(super) fn doctest_tests(
     file: &Path,
     new_source: &str,
@@ -685,10 +687,19 @@ fn undecided_example_test(
 ) -> Option<PythonTest> {
     let test_name = format!("test_doctest_line_{}", example.line);
     let synthetic = format!(
-        "from {import_module} import {name}\n\n\ndef {test_name}():\n    assert_doctest_output_matches(\n        {},\n        {:?},\n    )\n",
-        example.call, example.expected
+        "from {import_module} import {name}\n\n\ndef {test_name}():\n    assert_doctest_output_matches(\n        {}\n        ,\n        {},\n    )\n",
+        example.call,
+        python_string_literal(&example.expected)?
     );
     synthetic_test(file, example, &synthetic)
+}
+
+/// `text` as a Python string literal, for printable ASCII without a backslash
+/// (the doctest reader admits no backslash); anything else is not written.
+fn python_string_literal(text: &str) -> Option<String> {
+    text.chars()
+        .all(|ch| (' '..='~').contains(&ch) && ch != '\\')
+        .then(|| format!("\"{}\"", text.replace('"', "\\\"")))
 }
 
 /// A path no file has, under a `tests` directory so the test-file predicate

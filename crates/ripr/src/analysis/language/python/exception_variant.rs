@@ -433,10 +433,20 @@ fn test_bindings_intact(
                             && class_import.alias == expected
                             && class_import.source_module == import.source_module
                     }),
-                    // A builtin is read only when the test binds neither name.
-                    ClassKind::Builtin => test.imports.iter().all(|other| {
-                        other.alias != old_type && other.alias != new_type && other.imported != "*"
-                    }),
+                    // A builtin is read only when the test module binds
+                    // neither name, even once (`TypeError = Exception`).
+                    ClassKind::Builtin => {
+                        !rebinding.module_opaque
+                            && !rebinding
+                                .module_bound
+                                .iter()
+                                .any(|bound| bound == old_type || bound == new_type)
+                            && test.imports.iter().all(|other| {
+                                other.alias != old_type
+                                    && other.alias != new_type
+                                    && other.imported != "*"
+                            })
+                    }
                 }
         })
 }

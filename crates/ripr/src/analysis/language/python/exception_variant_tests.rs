@@ -670,6 +670,17 @@ fn a_builtin_exception_swap_requires_unshadowed_builtin_names() -> Check {
     }
     let rebinding = "import pytest\nfrom fx.core import checked\n\ndef test_negative():\n    TypeError = ValueError\n    with pytest.raises(TypeError):\n        checked(-1)\n";
     assert_no_credit(&classify(&source, rebinding, BUILTIN_OLD, BUILTIN_NEW)?);
+    // One module-level binding in the test file shadows the builtin too.
+    for binding in [
+        "TypeError = Exception\n",
+        "class TypeError(Exception):\n    pass\n",
+        "ValueError = TypeError\n",
+    ] {
+        let shadowed = format!(
+            "import pytest\nfrom fx.core import checked\n{binding}\ndef test_negative():\n    with pytest.raises(TypeError):\n        checked(-1)\n"
+        );
+        assert_no_credit(&classify(&source, &shadowed, BUILTIN_OLD, BUILTIN_NEW)?);
+    }
     // An input that does not reach the edited raise is not a discriminator.
     let unreached = "import pytest\nfrom fx.core import checked\n\ndef test_negative():\n    with pytest.raises(TypeError):\n        checked(1)\n";
     assert_no_credit(&classify(&source, unreached, BUILTIN_OLD, BUILTIN_NEW)?);
