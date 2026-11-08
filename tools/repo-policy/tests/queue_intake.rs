@@ -4,7 +4,7 @@
 use std::process::Command;
 
 const CONTROLS: &str = r#"
-import copy, importlib.util, json, pathlib, sys, unittest
+import copy, importlib.util, json, pathlib, subprocess, sys, tomllib, unittest
 from datetime import datetime, timezone
 p=pathlib.Path(sys.argv[1]); spec=importlib.util.spec_from_file_location('intake',p)
 m=importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
@@ -58,6 +58,21 @@ class API:
 class Controls(unittest.TestCase):
  def refused(self,call):
   with self.assertRaises((m.Refused,ValueError,KeyError,TypeError)):call()
+ def test_required_producer_roots_exist_in_the_committed_repository(self):
+  root=p.parents[3]
+  configured=tomllib.loads((root/'policy/queue-publisher.toml').read_text())
+  self.assertEqual(configured['producer_closure'],m.ROOTS)
+  for path,kind in m.ROOTS.items():
+   with self.subTest(path=path):
+    result=subprocess.run(['git','-C',str(root),'ls-tree','HEAD','--',path],
+                          check=True,text=True,capture_output=True,timeout=5)
+    rows=result.stdout.splitlines()
+    self.assertEqual(len(rows),1,'required producer root must exist in the actual Git tree')
+    metadata,actual_path=rows[0].split('\t')
+    mode,actual_kind,sha=metadata.split()
+    self.assertEqual(actual_path,path);self.assertEqual(actual_kind,kind)
+    self.assertEqual(mode,'040000' if kind=='tree' else '100644')
+    self.assertTrue(m.oid(sha))
  def test_exact_intake_allows_reviewed_new_generation_and_base_movement(self):
   api=API();r=m.observe(api,SUBJECT,m.configuration(CONFIG),lambda:NOW)
   self.assertEqual(r['member'],MEMBER);self.assertNotEqual(r['admission']['intake']['base_sha'],B)
