@@ -308,8 +308,8 @@ mod parser_state {
         /// so the section's path is not registered and its hunk lines are
         /// consumed without being recorded (#4577).
         symlink_section: bool,
-        symlink_counted: bool,
-        symlink_file_count: usize,
+        /// Paths of symlink sections, deduplicated; the scoped parse filters them (#13659).
+        symlink_paths: std::collections::BTreeSet<PathBuf>,
         /// Set once a header names a regular-file mode (`100644`/`100755`), so
         /// quoted `Subproject commit` text in a document is never a gitlink.
         regular_file_section: bool,
@@ -399,8 +399,8 @@ mod parser_state {
             self.deleted_file_count
         }
 
-        pub(super) fn symlink_file_count(&self) -> usize {
-            self.symlink_file_count
+        pub(super) fn symlink_paths(&self) -> &std::collections::BTreeSet<PathBuf> {
+            &self.symlink_paths
         }
 
         pub(super) fn submodule_file_count(&self) -> usize {
@@ -621,10 +621,6 @@ mod parser_state {
             };
             if is_symlink {
                 self.symlink_section = true;
-                if !self.symlink_counted {
-                    self.symlink_counted = true;
-                    self.symlink_file_count = self.symlink_file_count.saturating_add(1);
-                }
             }
             let mut fields = raw.split_whitespace();
             let is_regular = raw
@@ -712,7 +708,6 @@ mod parser_state {
             // A plain-diff file boundary also ends a symlink section; git's
             // own sections reset it at `diff --git` (#4594 review).
             self.symlink_section = false;
-            self.symlink_counted = false;
             self.saw_old_path_marker = false;
             self.conflict_region = None;
         }
@@ -811,6 +806,7 @@ mod parser_state {
                 // A symlink is not source: registering its path would count
                 // it as a changed file and admit the link into indexing
                 // (#4577, #4594 review). Its hunk lines are skipped too.
+                self.symlink_paths.insert(path);
                 self.current_path = None;
                 self.saw_old_path_marker = false;
                 return true;
@@ -883,7 +879,6 @@ mod parser_state {
             self.submodule_counted = false;
             self.submodule_new_file = false;
             self.symlink_section = false;
-            self.symlink_counted = false;
             self.rename_section = false;
             self.pure_rename_section = false;
             self.rename_from_path = None;

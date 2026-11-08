@@ -217,7 +217,11 @@ fn parse_lines<'a, E>(
         changed_files: files.into_values().collect(),
         deleted_file_count: state.deleted_file_count(),
         submodule_file_count: state.submodule_file_count(),
-        symlink_file_count: state.symlink_file_count(),
+        symlink_file_count: state
+            .symlink_paths()
+            .iter()
+            .filter(|path| keep(path))
+            .count(),
         renamed_file_count: state.renamed_file_count(),
         pure_rename_file_count: state.pure_rename_file_count(),
         pure_rename_paths: state.pure_rename_paths(),

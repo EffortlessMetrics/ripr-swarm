@@ -1019,9 +1019,9 @@ fn is_truncated_diff_stream(truncated_file_sections: usize) -> bool {
 fn symlink_disclosure_message(symlink_file_count: usize) -> Option<String> {
     (symlink_file_count > 0).then(|| {
         format!(
-            "ripr: skipped {symlink_file_count} symlink change(s); a tracked file that became, \
-             or stopped being, a symlink is not analyzed, so an empty result does not mean its \
-             behavior is covered."
+            "ripr: skipped {symlink_file_count} symlink change(s); a symlink is not source, so \
+             the link itself is never analyzed and an empty result does not mean its behavior \
+             is covered. A regular-file half of a type change is analyzed normally."
         )
     })
 }
