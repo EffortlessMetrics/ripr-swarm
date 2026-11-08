@@ -5539,17 +5539,14 @@ fn inherent_receiver_call_resolves_with(
     let owner_local = index
         .zip(owner)
         .is_some_and(|(index, owner)| owner_impl_is_root_item_of(index, owner, &test.file));
-    // An explicit `use` that binds the receiver type's name in the test file
-    // can bring a different type of that name (#13525). The constructor
-    // resolves by that name alone, so credit it only when the #8999
-    // method-entry authority confirms the import names the owner's own type.
-    // A file with no such import (glob, qualified or same-file use) is
-    // unchanged.
-    if let Some((index, owner)) = index.zip(owner)
+    // An explicit `use` that binds the receiver type's name to a type from a
+    // crate outside the workspace cannot be the owner's own type (#13525), yet
+    // the constructor below resolves by that name alone. Decline it. Imports
+    // rooted at `crate`/`self`/`super` or at a workspace member are unchanged,
+    // so a member-to-member same-named type is still a name-only match.
+    if let Some(index) = index
         && !owner_local
-        && file_explicitly_imports_name(index, &test.file, impl_type)
-        && !super::call_identity::inherent_entry_type_identity(index, owner)
-            .is_some_and(|identity| identity.binds_inherent_entry_type(test, index))
+        && file_imports_name_from_external_crate(index, &test.file, impl_type)
     {
         return false;
     }
@@ -6575,11 +6572,13 @@ fn owner_impl_is_root_item_of(index: &RustIndex, owner: &FunctionSummary, file: 
 /// `super::*`, or a `type` alias called `ty`: any of which can make a bare
 /// `ty` mean a type declared elsewhere.
 /// Whether `file` has a non-glob `use` whose bound name (its alias, else its
-/// last segment) is `name`.
-fn file_explicitly_imports_name(index: &RustIndex, file: &Path, name: &str) -> bool {
+/// last segment) is `name` and whose path is rooted at a crate that is neither
+/// `crate`/`self`/`super` nor a workspace member.
+fn file_imports_name_from_external_crate(index: &RustIndex, file: &Path, name: &str) -> bool {
     let Some(tree) = index.source_syntax.get(index, file).and_then(|s| s.tree()) else {
         return false;
     };
+    let members = index.workspace_member_crates();
     tree.syntax()
         .descendants()
         .filter_map(ast::Use::cast)
@@ -6589,13 +6588,24 @@ fn file_explicitly_imports_name(index: &RustIndex, file: &Path, name: &str) -> b
                 .iter()
                 .any(|import| {
                     let last = import.path.rsplit("::").next().unwrap_or("");
+                    let bound = import
+                        .alias
+                        .as_deref()
+                        .unwrap_or(last)
+                        .trim_start_matches("r#");
+                    let root = import
+                        .path
+                        .trim_start_matches("::")
+                        .split("::")
+                        .next()
+                        .unwrap_or("")
+                        .trim_start_matches("r#");
                     last != "*"
-                        && import
-                            .alias
-                            .as_deref()
-                            .unwrap_or(last)
-                            .trim_start_matches("r#")
-                            == name
+                        && bound == name
+                        && !matches!(root, "crate" | "self" | "super" | "")
+                        && !members
+                            .iter()
+                            .any(|member| member.replace('-', "_") == root)
                 })
         })
 }
