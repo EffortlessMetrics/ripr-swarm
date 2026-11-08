@@ -68,7 +68,10 @@ fn position(value: Option<&Value>, what: &str) -> Result<(u64, u64), String> {
 /// the hunk header's line numbers) matches `source_lines`. A dump made from
 /// another revision whose mutated line is unchanged but whose surrounding
 /// code moved or changed is therefore refused, not scored.
-fn changed_line_pair<'a>(diff: &'a str, source_lines: &[&str]) -> Option<(&'a str, &'a str)> {
+fn changed_line_pair<'a>(
+    diff: &'a str,
+    source_lines: &[&str],
+) -> Option<(usize, &'a str, &'a str)> {
     let mut removed = None;
     let mut added = None;
     let mut cursor: Option<usize> = None;
@@ -98,10 +101,13 @@ fn changed_line_pair<'a>(diff: &'a str, source_lines: &[&str]) -> Option<(&'a st
         }
         *at += 1;
         if is_removed {
-            removed.replace(text).map_or(Some(()), |_| None)?;
+            removed
+                .replace((*at - 1, text))
+                .map_or(Some(()), |_| None)?;
         }
     }
-    Some((removed?, added?))
+    let (index, removed) = removed?;
+    Some((index, removed, added?))
 }
 
 /// The replacement text for `[start, end)` (Python code-point columns on
@@ -218,8 +224,10 @@ pub(crate) fn parse_cosmic_ray_dump(
             None
         } else {
             line_text.zip(diff).and_then(|(original, diff)| {
-                let (removed, added) = changed_line_pair(diff, &source_lines)?;
-                if removed != original {
+                let (index, removed, added) = changed_line_pair(diff, &source_lines)?;
+                // The removed line must be the mutant's own line, not an equal
+                // line elsewhere in the file.
+                if removed != original || u64::try_from(index + 1).ok()? != start_line {
                     return None;
                 }
                 let (start, end) = (
@@ -433,6 +441,23 @@ mod tests {
             let (sources, _) = parse_cosmic_ray_dump(&dump, &read, None)?;
             assert_eq!(sources[0].mutants[0].outcome, UNLOCATABLE_DIFF, "{diff}");
         }
+        Ok(())
+    }
+
+    #[test]
+    fn a_hunk_at_another_equal_line_is_never_scored() -> Result<(), String> {
+        let src = "a = 1\nb = 1\na = 1\n";
+        let read_twice = |_: &str| Some(src.to_string());
+        // The mutant claims line 1, but its diff changes the equal line 3.
+        let dump = json!([
+            {"job_id": "t", "mutations": [{"module_path": "m.py", "operator_name": "o",
+                "occurrence": 0, "start_pos": [1, 4], "end_pos": [1, 5]}]},
+            {"worker_outcome": "normal", "test_outcome": "survived", // ripr-allow: static-language: cosmic-ray outcome name
+             "diff": "--- a/m.py\n+++ b/m.py\n@@ -2,2 +2,2 @@\n b = 1\n-a = 1\n+a = 2\n"}
+        ])
+        .to_string();
+        let (sources, _) = parse_cosmic_ray_dump(&dump, &read_twice, None)?;
+        assert_eq!(sources[0].mutants[0].outcome, UNLOCATABLE_DIFF);
         Ok(())
     }
 
