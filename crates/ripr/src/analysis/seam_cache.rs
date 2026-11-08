@@ -5453,7 +5453,8 @@ mod tests {
         // 1.55 -> 1.56: path-value `.map(owner)` synthetic call facts (#9478).
         // 1.56 -> 1.57: Verus guard facts on file facts (#10747).
         // 1.57 -> 1.58: positive Err-enclosing allowlist (#12474).
-        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.58");
+        // 1.58 -> 1.59: file-fact keys carry the normalized path spelling (#13887).
+        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.59");
         // 1.4 -> 1.5: metadata-sourced harness validation (#3634) flips
         // verdicts for workspaces the manifest emulation approximated.
         // 1.5 -> 1.6: the #3636 reachability authority excludes
