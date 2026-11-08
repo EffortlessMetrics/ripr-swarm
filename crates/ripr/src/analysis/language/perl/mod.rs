@@ -33,11 +33,10 @@ mod row_miss_tests;
 mod static_limit;
 mod v2_projection;
 #[cfg(test)]
-pub(crate) use v2_projection::sink_text_eq;
-pub(crate) use v2_projection::{
-    behavior_hint_to_probe_family, change_lines_from_diff, packet_to_findings,
-    packet_to_findings_with_currentness, perl_change_currentness, perl_lines_currentness,
-    unowned_change_findings,
+use v2_projection::{behavior_hint_to_probe_family, sink_text_eq};
+use v2_projection::{
+    change_lines_from_diff, packet_to_findings, packet_to_findings_with_currentness,
+    perl_change_currentness, unowned_change_findings,
 };
 
 /// The `ripr-perl-facts-v1` packet schema. Re-uses the canonical declaration
@@ -2688,18 +2687,13 @@ enum FrameworkExecution {
     Unknown,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 enum FrameworkOracleMode {
+    #[default]
     Normal,
     TodoQualified,
     Unknown,
-}
-
-impl Default for FrameworkOracleMode {
-    fn default() -> Self {
-        Self::Normal
-    }
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]

@@ -22,7 +22,7 @@ const PORTFOLIO: &[&str] = &[
     "Dependency policy",
     "Process policy",
     "Network policy",
-    "All-features ripr target check",
+    "Strict all-features ripr Clippy",
     "Strict workspace Clippy",
     "Golden output contracts",
     "Fixture contracts",

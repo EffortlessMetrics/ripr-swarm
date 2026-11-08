@@ -24,8 +24,8 @@ const UNANALYZED_WORKING_TREE_NOTE: &str = "\nNote: uncommitted source and test 
 this run read each file as committed at HEAD; drop `--committed` (or pass `--worktree`) to \
 include staged and unstaged tracked edits (for example `ripr check --worktree`).\n";
 
-/// #5258: untracked files are invisible to the committed diff AND to
-/// `--worktree` (it diffs tracked edits only), so the note must name the
+/// #5258: untracked files are absent from the committed and working-tree
+/// diffs (the latter covers tracked edits only), so the note must name the
 /// real repair — staging — instead of sending the reader through a second
 /// empty `no_scope` run. Fires whenever untracked routed files exist in an
 /// unanalyzed working-tree state; it also states what `--worktree` does add,
@@ -47,7 +47,7 @@ fn unanalyzed_working_tree_note(output: &CheckOutput) -> String {
         return format!(
             "\nNote: uncommitted source and test changes were not analyzed; this run read each \
               file as committed at HEAD, and `--worktree` adds staged and unstaged tracked edits only. \
-              Untracked files ({listing}) are invisible to both; stage them first (`git add <paths>`, \
+              Untracked files ({listing}) are not in either diff yet; stage them first (`git add <paths>`, \
               or `git add -N <paths>` intent-to-add makes a new file visible to `--worktree`) and \
               rerun `ripr check --worktree`, or pass `--diff PATH`.\n"
         );
@@ -60,7 +60,7 @@ fn unanalyzed_working_tree_note(output: &CheckOutput) -> String {
         let listing =
             crate::output::analyzed_revisions::name_paths(untracked, escape_terminal_display);
         note.push_str(&format!(
-            "Untracked files ({listing}) are invisible to both; stage them first (`git add <paths>`, \
+            "Untracked files ({listing}) are not in either diff yet; stage them first (`git add <paths>`, \
              or `git add -N <paths>` intent-to-add makes a new file visible to `--worktree`) and \
              rerun `ripr check --worktree`, or pass `--diff PATH`. "
         ));
@@ -477,7 +477,10 @@ pub(crate) fn render_full_with_config_and_navigation(
             output.source_value_files(finding),
             false,
         ));
-        if let Some(FindingDrillIn::Commands(navigation)) = drill_in {
+        // #13502: a candidate-tree subject cannot be replayed by `explain`.
+        if let Some(FindingDrillIn::Commands(navigation)) = drill_in
+            && !navigation.finding_routes_withheld()
+        {
             out.push_str("Drill in:\n");
             // #12431: the same finding-id label the bounded digest prints,
             // through the same shared helper so the two blocks cannot drift.
@@ -498,6 +501,7 @@ pub(crate) fn render_full_with_config_and_navigation(
     // route to the same run's ids without pointing at ids that are absent.
     if findings_rendered == 0
         && let Some(FindingDrillIn::Commands(navigation)) = drill_in
+        && !navigation.finding_routes_withheld()
     {
         out.push_str(&format!(
             "Drill in: every finding in this run is suppressed by policy, so none printed above. List this run's finding ids with:\n  {}\n\n",
@@ -1523,7 +1527,7 @@ pub(crate) use evidence_lines::{
 };
 pub(crate) use sections::HUMAN_EVIDENCE_LEGEND;
 pub(crate) use sections::render_finding_with_config;
-pub(crate) use triage::unresolved_boundary_operand;
+pub(crate) use triage::{multi_comparison_predicate, unresolved_boundary_operand};
 
 #[cfg(test)]
 mod tests {
@@ -1533,12 +1537,12 @@ mod tests {
     use crate::app::{CheckOutput, Mode};
     use crate::config::RiprConfig;
     use crate::domain::{
-        ActivationEvidence, CALLEE_ONLY_REACH_PREFIX, Confidence, DeltaKind, ExposureClass,
-        Finding, FindingCanonicalGap, FlowSinkFact, FlowSinkKind, LanguageFileCount, LanguageId,
-        LanguageStatus, MISSING_DISCRIMINATOR_VALUE_PREFIX, MissingDiscriminatorFact, OracleKind,
-        OracleStrength, Probe, ProbeFamily, ProbeId, RelatedTest, RevealEvidence, RiprEvidence,
-        SourceLocation, StageEvidence, StageState, StopReason, Summary, SymbolId, ValueContext,
-        ValueFact,
+        ActivationEvidence, CALLEE_ONLY_REACH_PREFIX, Confidence, DeltaKind, DiscriminatorShape,
+        ExposureClass, Finding, FindingCanonicalGap, FlowSinkFact, FlowSinkKind, LanguageFileCount,
+        LanguageId, LanguageStatus, MISSING_DISCRIMINATOR_VALUE_PREFIX, MissingDiscriminatorFact,
+        OracleKind, OracleStrength, Probe, ProbeFamily, ProbeId, RelatedTest, RevealEvidence,
+        RiprEvidence, SourceLocation, StageEvidence, StageState, StopReason, Summary, SymbolId,
+        ValueContext, ValueFact,
     };
     use std::path::{Path, PathBuf};
 
@@ -1982,7 +1986,7 @@ mod tests {
 
         assert!(
             rendered.contains(
-                "Untracked files (src/new.rs, tests/new.rs, Cargo.toml and 1 more) are invisible to both"
+                "Untracked files (src/new.rs, tests/new.rs, Cargo.toml and 1 more) are not in either diff yet"
             ),
             "{rendered}"
         );
@@ -2159,7 +2163,7 @@ mod tests {
 
         assert!(
             rendered.contains(
-                "Untracked files (src/new.rs) are invisible to both; stage them first (`git add <paths>`"
+                "Untracked files (src/new.rs) are not in either diff yet; stage them first (`git add <paths>`"
             ),
             "{rendered}"
         );
@@ -4958,6 +4962,8 @@ mod tests {
             value: "end == start".to_string(),
             reason: "no related test call uses end equal to start".to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Boundary,
+            drafted_boundary: None,
         }];
         finding.missing = vec!["No strong discriminator was detected".to_string()];
         let digest = super::sections::render_finding_digest_with_config(
@@ -5591,6 +5597,8 @@ mod tests {
                 value: "amount == 100".to_string(),
                 reason: "boundary".to_string(),
                 flow_sink: None,
+                shape: DiscriminatorShape::Boundary,
+                drafted_boundary: None,
             }];
         assert!(crate::output::python_repair_card::python_repair_card(&diff).is_none());
         let scope_reason = "repo-mode findings have no repair routing (python/any/repo/repair_routing is not_proven)";
@@ -5613,6 +5621,8 @@ mod tests {
             value: "amount == 100".to_string(),
             reason: "boundary".to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Boundary,
+            drafted_boundary: None,
         }];
         assert!(render(&single_finding_output(placed)).contains(
             "has no repair card (its test placement or related-test evidence is incomplete)"
@@ -5774,6 +5784,8 @@ mod tests {
                     reason: "changed TypeScript equality-boundary lacks a concrete discriminator"
                         .to_string(),
                     flow_sink: None,
+                    shape: DiscriminatorShape::Boundary,
+                    drafted_boundary: None,
                 });
             finding.related_tests.push(RelatedTest {
                 name: "applies discount at threshold".to_string(),
@@ -7276,6 +7288,8 @@ mod tests {
             value: "amount >= threshold".to_string(),
             reason: "no related test call uses an amount at the threshold".to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Other,
+            drafted_boundary: None,
         }];
 
         let digest = super::sections::render_finding_digest_with_config(
@@ -8163,6 +8177,8 @@ mod tests {
             value: "not (x > 0)".to_string(),
             reason: "every observed input takes the unchanged if arm".to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Other,
+            drafted_boundary: None,
         }];
         let digest = super::sections::render_finding_digest_with_config(
             &finding,
@@ -8274,6 +8290,8 @@ mod tests {
             value: "amount == discount_threshold".to_string(),
             reason: "no related test call uses the boundary value".to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Boundary,
+            drafted_boundary: None,
         }];
 
         let digest = super::sections::render_finding_digest_with_config(
@@ -8308,6 +8326,8 @@ mod tests {
             value: "AuthError::RevokedToken".to_string(),
             reason: "No exact error variant assertion for AuthError::RevokedToken".to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Other,
+            drafted_boundary: None,
         }];
         let digest = super::sections::render_finding_digest_with_config(
             &finding,
@@ -8480,6 +8500,8 @@ mod tests {
             reason: "Related Perl test reaches the owner but lacks an exact return discriminator"
                 .to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Other,
+            drafted_boundary: None,
         }];
         finding.related_tests = vec![RelatedTest {
             name: "discount_smoke".to_string(),
@@ -8750,6 +8772,8 @@ mod tests {
             value: "observation_unverified".to_string(),
             reason: "r".to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Other,
+            drafted_boundary: None,
         }];
         let rendered = super::evidence_lines::evidence_path_lines(
             &finding,
@@ -8844,6 +8868,8 @@ mod tests {
                     value: "enabled == false".to_string(),
                     reason: "related tests do not use the changed value".to_string(),
                     flow_sink: None,
+                    shape: DiscriminatorShape::Boundary,
+                    drafted_boundary: None,
                 }],
             },
             stop_reasons: vec![],

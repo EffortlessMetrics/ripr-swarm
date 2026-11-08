@@ -9,11 +9,16 @@ mod call_identity;
 mod caller_loop_selector;
 mod changed_span;
 mod const_flow;
+#[cfg(feature = "lang-rust")]
+mod tier_flow;
+#[cfg(feature = "lang-rust")]
+pub(in crate::analysis) use tier_flow::{TierFlow, evaluate_tier_flow};
 mod const_readers;
 mod context;
 mod custom_eq;
 mod decision;
 mod diff_touched;
+pub(in crate::analysis) mod drafted_boundary;
 mod effect_carrier;
 mod element_field_pin;
 mod field_reach;
@@ -55,6 +60,7 @@ mod stop_reason_contract;
 mod targeted_calls;
 mod text;
 mod transitive_reach;
+mod unpolled_future;
 mod value_transfer;
 mod variant_field_pattern;
 
@@ -181,7 +187,7 @@ pub(in crate::analysis) use reach::take_external_docs_parse_count;
 pub(in crate::analysis) use reach::{
     UnseenReachNames, includes_external_docs_with, invokes_opaque_macro, is_proximity_only,
     is_trait_impl_method, names_identifier_outside_fn_definition, owner_may_be_reached_unseen,
-    reach_evidence, relation_establishes_reach,
+    owner_runs_through_language_dispatch, reach_evidence, relation_establishes_reach,
 };
 pub(in crate::analysis) use receiver_unestablished::{
     mark_receiver_unestablished, withhold_receiver_unestablished_gap,
@@ -199,6 +205,8 @@ pub(in crate::analysis) use related_tests::{
     owner_dispatch_trait, owner_impl_identity_shadowed, owner_trait_name, package_prefix,
     requires_inherent_receiver_identity, resolves_method_in_prefix, test_calls_free_function,
 };
+#[cfg(feature = "lang-rust")]
+pub(in crate::analysis) use reveal::RELATED_TESTS_RENDER_CAP;
 pub(in crate::analysis) use reveal::is_inline_expect_snapshot;
 pub(in crate::analysis) use reveal::unconditional_owner_insert_field;
 pub(in crate::analysis) use reveal::wrapper_error_seam_expression;
@@ -211,6 +219,7 @@ pub(in crate::analysis) use reveal::{
 pub(in crate::analysis) use reveal::{ReturnOracleAdmission, contains_as_whole_word};
 pub(in crate::analysis) use reveal::{only_proximity_oracles, reveal_outcome};
 pub(in crate::analysis) use slice_boundary::refine_slice_boundary;
+pub(in crate::analysis) use unpolled_future::withhold_unpolled_future_gap;
 // RIPR-SPEC-0106: re-export the variant parsers so test_grip_evidence.rs can
 // apply variant-binding without reaching into the private `text` submodule.
 pub(in crate::analysis) use text::{

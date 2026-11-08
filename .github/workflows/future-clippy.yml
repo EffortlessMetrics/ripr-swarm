@@ -1,8 +1,11 @@
 name: Future Clippy (advisory)
 
 on:
-  push:
-    branches: [main, master]
+  # Advisory lane: a daily run on main instead of every push (a merge lands
+  # every few minutes and this lane takes 30+ minutes). Use workflow_dispatch
+  # for an on-demand run.
+  schedule:
+    - cron: "3 4 * * *"
   pull_request:
     types: [labeled, opened, synchronize, reopened]
   workflow_dispatch:
@@ -26,7 +29,7 @@ concurrency:
 # track readiness for the planned flips recorded in `policy/clippy-lints.toml`.
 #
 # Triggers:
-#   - push to main: tracks main-line readiness over time.
+#   - daily schedule on main: tracks main-line readiness over time.
 #   - pull_request with the `clippy-future` or `full-ci` label: lets
 #     authors opt into the scan when they're touching code likely to
 #     surface findings.
@@ -40,7 +43,7 @@ concurrency:
 jobs:
   future-clippy:
     name: future-clippy
-    if: (github.event_name != 'pull_request' || (contains(github.event.pull_request.labels.*.name, 'merge-ready') && (github.event.action == 'labeled' && github.event.label.name == 'merge-ready'))) && (github.event_name == 'push' || github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'clippy-future') || contains(github.event.pull_request.labels.*.name, 'full-ci'))
+    if: (github.event_name != 'pull_request' || (contains(github.event.pull_request.labels.*.name, 'merge-ready') && (github.event.action == 'labeled' && github.event.label.name == 'merge-ready'))) && (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'clippy-future') || contains(github.event.pull_request.labels.*.name, 'full-ci'))
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
@@ -102,7 +105,7 @@ jobs:
 
   stable-repo-policy:
     name: stable-repo-policy
-    if: (github.event_name != 'pull_request' || (contains(github.event.pull_request.labels.*.name, 'merge-ready') && (github.event.action == 'labeled' && github.event.label.name == 'merge-ready'))) && (github.event_name == 'push' || github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'clippy-future') || contains(github.event.pull_request.labels.*.name, 'full-ci'))
+    if: (github.event_name != 'pull_request' || (contains(github.event.pull_request.labels.*.name, 'merge-ready') && (github.event.action == 'labeled' && github.event.label.name == 'merge-ready'))) && (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'clippy-future') || contains(github.event.pull_request.labels.*.name, 'full-ci'))
     runs-on: ubuntu-latest
     timeout-minutes: 15
     # Keep compiler selection consistent inside isolated fixture directories.
