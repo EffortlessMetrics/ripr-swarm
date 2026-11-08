@@ -1318,20 +1318,22 @@ automation code from obscuring product quality:
 The component split uses Codecov's path-based named statuses. Future coverage
 ratchets should follow the [calibration strategy](IMPLEMENTATION_CAMPAIGNS.md).
 
-The Test Analytics workflow currently runs:
+The Test Analytics workflow currently runs the all-features suite as four
+nextest hash partitions (#12916), mirroring the required shards, plus doctests
+on shard 1 only:
 
 ```bash
-cargo nextest run --workspace --all-features --profile ci
+cargo nextest run --workspace --all-features --profile ci --partition hash:N/4
 cargo test --workspace --doc
 ```
 
-Test Analytics runs only on explicit manual dispatch. Its `always()` artifact
-step attempts to retain JUnit XML as `rust-junit` for five days and warns if the
-file is absent. The Codecov test-results upload requires a non-cancelled run
-and a nonempty `CODECOV_TOKEN`; the dispatch event satisfies its event predicate.
-Unlike coverage upload, this step does not explicitly set `fail_ci_if_error`.
-The retained push/PR and fork-skip predicates are dormant; fork PRs do not start
-tests or artifact generation through this workflow.
+Test Analytics runs only on explicit manual dispatch. A combine job verifies
+that its four partitions form a disjoint, complete, green cover of the
+all-features workspace (`cargo xtask verify-test-shards --all-features`) before
+publishing the combined `rust-junit` artifact and advisory slow-test report.
+The Codecov test-results upload also requires a nonempty `CODECOV_TOKEN`.
+The retained fork predicates are dormant because PR events are retired; the
+lane remains advisory and the required shards retain blocking enforcement.
 
 ### Merge-ready Conflict Notice
 
