@@ -549,6 +549,17 @@ fn native_windows_gate_rejects_each_failed_command() -> TestResult {
                 .success(),
             "native queue accepted failed {label}"
         );
+        let unchecked = script.replace(
+            "[ \"${REQUIRE_SUBSET_SUCCESS:-false}\" = true ]",
+            "[ false = true ]",
+        );
+        assert_ne!(unchecked, script);
+        assert!(
+            fixture
+                .command("bash", &["-c", &unchecked], &env)?
+                .status
+                .success()
+        );
         env.insert("REQUIRE_SUBSET_SUCCESS".into(), "false".into());
         assert!(
             fixture
@@ -620,6 +631,17 @@ fn native_windows_selector_requires_a_passing_receipt() -> TestResult {
             .status
             .success(),
         "native queue accepted a failed selector receipt"
+    );
+    let unchecked = script.replace(
+        "os.environ.get(\"REQUIRE_SUBSET_SUCCESS\") == \"true\"",
+        "False",
+    );
+    assert_ne!(unchecked, script);
+    assert!(
+        fixture
+            .command("bash", &["-c", &unchecked], &env)?
+            .status
+            .success()
     );
     env.insert("REQUIRE_SUBSET_SUCCESS".into(), "false".into());
     assert!(
