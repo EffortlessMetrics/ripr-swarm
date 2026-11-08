@@ -1385,7 +1385,13 @@ or `static_unknown`, never `exposed`):
    spelled identically in `has`, `set` and `get`; `<flow>` meets condition 2
    and the original call passes only `this` and plain identifiers, so it
    cannot rebind the key; the wrapper body is exactly the guard and the
-   return, with no `else` and no other statement in the guard. A `WeakMap`,
+   return, with no `else` and no other statement in the guard; the
+   `cache.set` statement sits on one line. `Map` must be the global
+   constructor, which is read statically as: the word `Map` appears nowhere
+   else in the file (no import, local class or binding, no `Map.prototype`
+   patch), and the file holds no `\u` escape, `eval` or `Function`, which
+   could spell a name the counts do not see. Patching the global `Map`
+   from another module is outside the static model. A `WeakMap`,
    a `let` cache, a prefilled or shared cache, a mismatched key, or a
    combined return (`cache.get(k) + 1`) keeps the old reading.
 3. The decorator is applied as a bare `@D` (or an import alias of it) on
@@ -1419,7 +1425,9 @@ or `static_unknown`, never `exposed`):
    is not a path.
 
 Negatives pinned by tests: a memoizing wrapper outside condition 2a
-(prefilled, `let` or leaked cache, mismatched key, extra flow), a wrapper with a
+(prefilled, `let` or leaked cache, mismatched key, extra flow, a rebound or
+patched `Map`, an escape or dynamic evaluation in the file, a split `set`
+line), a wrapper with a
 conditional return, an `await`ing wrapper, a side-effect-only change
 (`calls.push(key)`), a factory decorator, a stacked decorator, and a
 `@D` that resolves to a different function than the owner.

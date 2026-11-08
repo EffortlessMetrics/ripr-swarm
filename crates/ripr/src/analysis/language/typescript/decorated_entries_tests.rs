@@ -450,3 +450,43 @@ fn memoizing_decorator_refuses_mismatched_keys_and_extra_flow() {
         assert_no_decorated_entry(&memo_source(MEMO_CACHE, body));
     }
 }
+
+#[test]
+fn memoizing_decorator_refuses_a_map_that_may_not_be_the_global() {
+    // `Map` rebound or patched anywhere in the file, an escape that spells a
+    // name the counts cannot see, or dynamic evaluation: the cache may not be
+    // a plain Map.
+    let base = memo_source(MEMO_CACHE, MEMO_BODY);
+    for prefix in [
+        "import { Map } from \"immutable\";\n",
+        "class Map<K, V> { get(_k: K): V | undefined { return undefined; } }\n",
+        "const Map = FakeMap;\n",
+        "Map.prototype.get = () => 99;\n",
+        "const M\\u0061p = FakeMap;\n",
+        "eval(\"ca\" + \"che.set(4, 99)\");\n",
+        "new Function(\"return 1\")();\n",
+    ] {
+        assert_no_decorated_entry(&format!("{prefix}{base}"));
+    }
+    let escaped = memo_source(
+        MEMO_CACHE,
+        "    if (!cache.has(n)) {
+      cache.set(n, original.call(this, n));
+    }
+    \\u0063ache.set(4, 99);
+    return cache.get(n) as number;",
+    );
+    assert_no_decorated_entry(&escaped);
+    // A `set` split over lines records no range.
+    let split = memo_source(
+        MEMO_CACHE,
+        "    if (!cache.has(n)) {
+      cache.set(
+        n,
+        original.call(this, n),
+      );
+    }
+    return cache.get(n) as number;",
+    );
+    assert_no_decorated_entry(&split);
+}

@@ -361,6 +361,8 @@ fn pass_through_return(
 /// reaches the decorated method's result. The cache must be a decorator-local
 /// `const` built by an argument-free `new Map()`, named nowhere else in the
 /// decorator, and the key one wrapper parameter used identically three times.
+/// `Map` must be named nowhere else in the file, the file may hold no `\u`
+/// escape, `eval` or `Function`, and the `set` statement sits on one line.
 fn memoized_flow(
     decorator: &Function<'_>,
     wrapper: &Function<'_>,
@@ -455,13 +457,26 @@ fn memoized_flow(
             })
     });
     let text = &source[decorator.span.start as usize..decorator.span.end as usize];
-    if !declared || word_count(text, cache) != 4 || word_count(text, "Map") != 1 {
+    if !declared || word_count(text, cache) != 4 {
         return None;
     }
-    Some((
+    // `Map` must be the global constructor: the name appears nowhere else in
+    // the file (no import, local class or binding, no `Map.prototype` patch),
+    // and the file holds no escape or dynamic evaluation that could spell a
+    // name the counts above do not see.
+    let file = source.text();
+    if word_count(file, "Map") != 1
+        || file.contains("\\u")
+        || word_count(file, "eval") != 0
+        || word_count(file, "Function") != 0
+    {
+        return None;
+    }
+    let (start, end) = (
         source.line_for_offset(set_expression.span.start as usize),
         source.line_for_offset(set_expression.span.end as usize),
-    ))
+    );
+    (start == end).then_some((start, end))
 }
 
 /// `(object, first argument)` for `object.method(<identifier>, ...)` with
