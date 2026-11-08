@@ -2324,20 +2324,17 @@ impl AfterPhaseRefusalContext {
 }
 
 /// The recorded refusal: the final error, then the narration that named its
-/// cause and recovery, as sentences. The attempt authority bounds its length.
+/// cause and recovery, preserving source case and line structure. The attempt
+/// authority bounds its length.
 fn after_refusal_reason(error: &str, narration: &[String]) -> String {
-    let mut reason = error.trim().trim_end_matches('.').to_string();
+    let mut reason = error.trim().to_string();
     for line in narration {
-        let line = line.trim();
-        if line.is_empty() {
+        let line = line.trim_end();
+        if line.trim().is_empty() {
             continue;
         }
-        reason.push_str(". ");
-        let mut chars = line.chars();
-        if let Some(first) = chars.next() {
-            reason.extend(first.to_uppercase());
-            reason.push_str(chars.as_str().trim_end_matches('.'));
-        }
+        reason.push('\n');
+        reason.push_str(line);
     }
     reason
 }

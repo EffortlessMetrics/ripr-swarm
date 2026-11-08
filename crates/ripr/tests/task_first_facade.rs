@@ -6690,6 +6690,150 @@ fn assert_refusal_stderr_has_prefix(stderr: &str) {
     );
 }
 
+/// #13382: genuine after-phase states own the card's next step.
+#[test]
+fn repair_loop_projection_tracks_real_attempt_states() -> Result<(), String> {
+    for terminal in [false, true] {
+        let fixture = Fixture::boundary("repair-loop-projection")?;
+        let root = &fixture.root;
+        run_git(root, &["checkout", "-b", "repair-loop-change"])?;
+        weaken_boundary_predicate(root)?;
+        run_git(root, &["add", "src/lib.rs"])?;
+        git_commit(root, "change boundary behavior")?;
+        let root_arg = root.to_string_lossy().into_owned();
+        let start = run_ripr(root, &["repair", FIXTURE_SEAM, "--root", &root_arg])?;
+        assert_exit(&start, 0, "start repair-loop fixture");
+        let ids = attempt_ids(root);
+        assert_eq!(ids.len(), 1);
+        let id = &ids[0];
+        assert_eq!(read_manifest(root, id)?["state"], "awaiting_edit");
+        let text = stdout_text(&start);
+        assert!(
+            text.contains("Next, after the test edit: ripr continue"),
+            "{text}"
+        );
+        assert!(!text.contains("Next: ripr agent packet"), "{text}");
+        let card = run_ripr(
+            root,
+            &[
+                "agent",
+                "card",
+                "--root",
+                &root_arg,
+                "--seam-id",
+                FIXTURE_SEAM,
+                "--json",
+            ],
+        )?;
+        assert_exit(&card, 0, "awaiting card");
+        let card: serde_json::Value =
+            serde_json::from_slice(&card.stdout).map_err(|e| e.to_string())?;
+        let action = card["canonical_next_action"].to_string();
+        assert!(
+            action.contains("ripr continue") && action.contains(id),
+            "{action}"
+        );
+        assert!(!action.contains("ripr:agent:packet"), "{action}");
+        let path = if terminal {
+            "src/lib.rs"
+        } else {
+            "tests/pricing.rs"
+        };
+        let edit = if terminal {
+            format!(
+                "{}\n// outside the allowed surface\n",
+                FIXTURE_LIB.replace(">=", ">")
+            )
+        } else {
+            format!("{FIXTURE_WEAK_TEST}{FIXTURE_OFF_BOUNDARY_TEST}")
+        };
+        std::fs::write(root.join(path), edit).map_err(|e| e.to_string())?;
+        let after = run_ripr(root, &["continue", "--root", &root_arg, "--attempt", id])?;
+        assert_exit(&after, if terminal { 2 } else { 0 }, "real after phase");
+        let manifest = read_manifest(root, id)?;
+        assert_eq!(
+            manifest["state"],
+            if terminal {
+                "failed"
+            } else {
+                "ready_to_finish"
+            }
+        );
+        if terminal {
+            let reason = manifest["last_after_refusal"]["reason"]
+                .as_str()
+                .ok_or("missing refusal")?;
+            assert!(
+                reason.contains("src/lib.rs") && reason.contains("tests/pricing.rs"),
+                "{reason}"
+            );
+            assert!(
+                !reason.contains("Src/lib.rs")
+                    && !reason.contains("Tests/pricing.rs")
+                    && !reason.contains(":."),
+                "{reason}"
+            );
+        } else {
+            assert!(stdout_text(&after).contains("Static grip did not improve"));
+            assert!(stdout_text(&after).contains("Test run: none recorded"));
+        }
+        let card = run_ripr(
+            root,
+            &[
+                "agent",
+                "card",
+                "--root",
+                &root_arg,
+                "--seam-id",
+                FIXTURE_SEAM,
+            ],
+        )?;
+        assert_exit(&card, 0, "ended card on an open gap");
+        let text = stdout_text(&card);
+        assert!(
+            !text.contains("waiting for your test") && !text.contains("Repair in progress"),
+            "{text}"
+        );
+        assert!(
+            text.contains("ripr agent status") && text.contains(id),
+            "{text}"
+        );
+        assert!(!text.contains("Next: ripr agent packet"), "{text}");
+        if terminal {
+            std::fs::write(root.join("src/lib.rs"), FIXTURE_LIB.replace(">=", ">"))
+                .map_err(|e| e.to_string())?;
+            std::fs::write(
+                root.join("tests/pricing.rs"),
+                format!("{FIXTURE_WEAK_TEST}\n#[test]\nfn current_boundary() {{ assert_eq!(discounted_total(100,100),100); }}\n"),
+            )
+            .map_err(|e| e.to_string())?;
+            let start = run_ripr(root, &["repair", FIXTURE_SEAM, "--root", &root_arg])?;
+            assert_exit(&start, 3, "gripped start is withheld");
+            assert!(stderr_text(&start).contains("already check it"));
+            let status = run_ripr(
+                root,
+                &[
+                    "agent",
+                    "status",
+                    "--root",
+                    &root_arg,
+                    "--attempt",
+                    id,
+                    "--json",
+                ],
+            )?;
+            assert_exit(&status, 0, "withheld selected status");
+            let text = stdout_text(&status);
+            assert!(text.contains("a new attempt is not offered"), "{text}");
+            assert!(
+                !text.contains("start a new attempt with") && !text.contains("--phase before"),
+                "{text}"
+            );
+        }
+    }
+    Ok(())
+}
+
 /// #11600: `ripr status --attempt <bad>` is the façade the caller typed, so its
 /// failure names `status`, never the `agent status` spelling of the shared body.
 #[test]

@@ -313,6 +313,107 @@ fn observe(fixture: &Fixture) -> Result<Observed, String> {
     })
 }
 
+/// #13382: the shared card projects live durable state through the actual
+/// stdio transport; inspection does not rewrite or finish the attempt.
+#[test]
+fn repair_card_next_step_tracks_live_attempt_state_over_stdio() -> Result<(), String> {
+    for failed in [false, true] {
+        let weak = "#[test]\nfn below() { assert_eq!(discounted_total(50,100),50); }\n#[test]\nfn above() { assert_eq!(discounted_total(10000,100),9990); }\n";
+        let fixture = Fixture::rust("attempt-state", Some(weak))?;
+        let run = |args: &[&str]| {
+            ripr()
+                .current_dir(&fixture.0)
+                .args(args)
+                .output()
+                .map_err(|e| e.to_string())
+        };
+        let start = run(&["repair"])?;
+        assert!(
+            start.status.success(),
+            "{}",
+            String::from_utf8_lossy(&start.stderr)
+        );
+        let manifests = std::fs::read_dir(fixture.0.join("target/ripr/repair-attempts"))
+            .map_err(|e| e.to_string())?
+            .filter_map(Result::ok)
+            .map(|entry| entry.path().join("attempt.json"))
+            .filter(|path| path.is_file())
+            .collect::<Vec<_>>();
+        assert_eq!(manifests.len(), 1);
+        let path = &manifests[0];
+        let before: Value =
+            serde_json::from_slice(&std::fs::read(path).map_err(|e| e.to_string())?)
+                .map_err(|e| e.to_string())?;
+        let id = before["repair_attempt_id"]
+            .as_str()
+            .ok_or("missing attempt id")?;
+        let mut mcp = Mcp::spawn(&fixture.0)?;
+        for after in [false, true] {
+            if after {
+                let (file, edit) = if failed {
+                    (
+                        "src/lib.rs",
+                        format!("{}\n// forbidden production edit\n", rust_source(">")),
+                    )
+                } else {
+                    (
+                        "tests/p.rs",
+                        format!(
+                            "use fx::discounted_total;\n{weak}\n#[test]\nfn off_boundary() {{ assert_eq!(discounted_total(150,100),140); }}\n"
+                        ),
+                    )
+                };
+                std::fs::write(fixture.0.join(file), edit).map_err(|e| e.to_string())?;
+                let result = run(&["continue", "--attempt", id])?;
+                assert_eq!(
+                    result.status.code(),
+                    Some(if failed { 2 } else { 0 }),
+                    "{}",
+                    String::from_utf8_lossy(&result.stderr)
+                );
+            }
+            let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
+            let manifest: Value = serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
+            let state = if !after {
+                "awaiting_edit"
+            } else if failed {
+                "failed"
+            } else {
+                "ready_to_finish"
+            };
+            assert_eq!(manifest["state"], state);
+            let refresh = mcp.tool("ripr_refresh", json!({ "source": "worktree" }))?;
+            assert_eq!(refresh["attempt"]["state"], "completed", "{refresh}");
+            let gaps = mcp.tool("ripr_list_gaps", json!({}))?;
+            let items = gaps["items"].as_array().ok_or("missing items")?;
+            assert_eq!(items.len(), 1, "{gaps}");
+            let card = mcp.tool(
+                "ripr_get_repair_card",
+                json!({"canonical_id": items[0]["canonical_id"]}),
+            )?;
+            assert!(card.get("failure").is_none(), "{card}");
+            assert_eq!(card["card"]["attempt"]["state"], state, "{card}");
+            assert_eq!(card["card"]["attempt"]["attempt_id"], id, "{card}");
+            let action = card["card"]["canonical_next_action"].to_string();
+            assert!(
+                action.contains(if after {
+                    "ripr agent status"
+                } else {
+                    "ripr continue"
+                }) && action.contains(id),
+                "{action}"
+            );
+            assert!(!action.contains("ripr:agent:packet"), "{action}");
+            assert_eq!(
+                std::fs::read(path).map_err(|e| e.to_string())?,
+                bytes,
+                "MCP inspection rewrote the manifest"
+            );
+        }
+    }
+    Ok(())
+}
+
 #[test]
 fn already_gripped_seam_is_refused_with_one_cause_on_every_surface() -> Result<(), String> {
     let fixture = Fixture::rust(
