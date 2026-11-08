@@ -272,6 +272,13 @@ fn cli_command_from_dispatch(
 }
 
 fn unknown_command_error(command: &str) -> String {
+    let message = unknown_command_message(command);
+    // #11584: typed code and token for a JSON-requested boundary.
+    crate::cli::usage_refusal::note_unknown_command(command, &message);
+    message
+}
+
+fn unknown_command_message(command: &str) -> String {
     // A flag in command position means options were put before the command.
     if command.starts_with('-') {
         if let Some(flag) = closest_flag(command) {
