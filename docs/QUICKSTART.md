@@ -97,21 +97,11 @@ cargo install --locked --git https://github.com/EffortlessMetrics/ripr-swarm rip
 ```
 
 From a `ripr-swarm` checkout, `cargo install --path crates/ripr` does the same.
-Either route compiles from source. A cold `cargo build --release` of the
-workspace (thin LTO, 16 codegen units) took about 6 minutes (366 s) on a 4-core
-Linux container in October 2026, against 17 minutes (1037 s) for the earlier
-fat-LTO, single-codegen-unit profile; `cargo install ripr` for 0.10.0 took about
-2 minutes on an earlier run. The packaged 0.11.0 crate carries no profile
-section, so `cargo install ripr --locked` should build in about 4.6 minutes
-(275 s) once 0.11.0 is on crates.io (measured by building the packaged crate with
-`cargo build --release` on the same container, not a download). In that walk,
-`doctor` and `check` each took under 3 seconds on small crates; `ripr pilot`
-takes longer on large repositories. The prebuilt 0.10.0 archive downloads in
-about a second, against about two minutes to compile 0.10.0 from source. There is
-no prebuilt 0.11 archive until 0.11.0 is published.
-`cargo xtask first-run --install-archive 0.10.0` replays the archive route end
-to end and times it; the [first-run scoreboard](../benchmarks/dx_scoreboard/README.md)
-tracks the install time so a rise shows.
+Either route compiles from source: expect about 6 minutes cold on a 4-core
+machine (October 2026 measurement). The prebuilt 0.10.0 archive downloads in
+about a second; there is no prebuilt 0.11 archive until 0.11.0 is published.
+`cargo xtask first-run --install-archive 0.10.0` replays and times the archive
+route; the [first-run scoreboard](../benchmarks/dx_scoreboard/README.md) tracks it.
 
 With [cargo-binstall](https://github.com/cargo-bins/cargo-binstall) installed,
 `cargo binstall ripr` uses the prebuilt 0.11.0 release archive when that asset is
