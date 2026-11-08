@@ -51,15 +51,17 @@ while [ $# -gt 0 ]; do
 done
 printf 'FETCH retries=%s retry_all=%s url=%s out=%s\n' "$retries" "$retry_all" "$url" "$out" >> "$FAKE_DIR/log"
 max_attempts=1
-if [ "$retry_all" -eq 1 ] && [ "$retries" -gt 0 ]; then
-  max_attempts=$((retries + 1))
+if [ "$retries" -gt 0 ]; then
+  if [ "$retry_all" -eq 1 ] || [ "${FAKE_HTTP_STATUS:-504}" -ge 500 ]; then
+    max_attempts=$((retries + 1))
+  fi
 fi
 attempt=0
 while [ "$attempt" -lt "$max_attempts" ]; do
   attempt=$((attempt + 1))
   printf 'ATTEMPT %d\n' "$attempt" >> "$FAKE_DIR/log"
   if [ "$attempt" -le "${FAKE_FAIL_ATTEMPTS:-0}" ]; then
-    echo "The requested URL returned error: 504" >&2
+    echo "The requested URL returned error: ${FAKE_HTTP_STATUS:-504}" >&2
     continue
   fi
   cp "$FAKE_DIR/payload.tar.gz" "$out"
@@ -76,12 +78,11 @@ expected="$(cut -d' ' -f1 "$check_file")"
 target="$(sed 's/^[^ ]*  //' "$check_file")"
 [ -f "$target" ] || exit 1
 [ "$expected" = "$EXPECTED_SHA256" ] || exit 1
-actual="$(/usr/bin/sha256sum "$target" | cut -d' ' -f1)"
-if [ "$actual" != "$FIXTURE_SHA256" ]; then
-  echo "$target: FAILED" >&2
-  exit 1
+if cmp -s "$target" "$FAKE_DIR/expected.tar.gz"; then
+  exit 0
 fi
-exit 0
+echo "$target: FAILED" >&2
+exit 1
 "#;
 
 fn repo_root() -> Result<PathBuf, String> {
@@ -160,15 +161,7 @@ fn run_step(fail_attempts: usize, corrupt_tarball: bool, case: &str) -> Result<O
         ));
     }
 
-    let sha_out = spawn_tool("/usr/bin/sha256sum")
-        .arg(dir.join("payload.tar.gz"))
-        .output()
-        .map_err(|e| e.to_string())?;
-    let fixture_sha = String::from_utf8_lossy(&sha_out.stdout)
-        .split_whitespace()
-        .next()
-        .ok_or("sha256sum output empty")?
-        .to_string();
+    fs::copy(dir.join("payload.tar.gz"), dir.join("expected.tar.gz")).map_err(|e| e.to_string())?;
     if corrupt_tarball {
         fs::write(dir.join("payload.tar.gz"), b"corrupted-tarball-bytes")
             .map_err(|e| e.to_string())?;
@@ -191,7 +184,6 @@ fn run_step(fail_attempts: usize, corrupt_tarball: bool, case: &str) -> Result<O
         .env("RUNNER_TEMP", dir.join("runner-temp"))
         .env("FAKE_FAIL_ATTEMPTS", fail_attempts.to_string())
         .env("EXPECTED_SHA256", PINNED_SHA256)
-        .env("FIXTURE_SHA256", fixture_sha)
         .output()
         .map_err(|e| e.to_string())?;
 
