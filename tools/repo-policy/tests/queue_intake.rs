@@ -110,6 +110,15 @@ class Controls(unittest.TestCase):
     api=API();api.change=mode;self.refused(lambda:m.observe(api,SUBJECT,CONFIG,lambda:NOW))
   old=m.observe(API(),SUBJECT,CONFIG,lambda:NOW);old['admission']['check_run_id']=999
   self.refused(lambda:m.observe(API(),SUBJECT,CONFIG,lambda:NOW,old))
+ def test_command_and_policy_configuration_is_part_of_authorized_producer(self):
+  for path in ['.cargo','clippy.toml','deny.toml']:
+   for change in ['omitted','changed']:
+    with self.subTest(path=path,change=change):
+     api=API()
+     if change=='omitted':
+      data=copy.deepcopy(DATA);data['producer_closure'].pop(path,None);api.checks['check_runs'][0]['output']['text']=m.canonical(data)
+     else:next(entry for entry in api.trees[T]['tree'] if entry['path']==path)['sha']='9'*40
+     self.refused(lambda:m.observe(api,SUBJECT,CONFIG,lambda:NOW))
  def test_native_join_rejects_incomplete_or_non_singleton_group(self):
   for mode in ['pagination','wrong_base','wrong_group','position','entry','draft']:
    with self.subTest(mode=mode):
