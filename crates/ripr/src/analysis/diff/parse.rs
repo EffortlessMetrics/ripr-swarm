@@ -144,6 +144,8 @@ pub(crate) struct ParsedDiff {
     pub(crate) changed_files: Vec<ChangedFile>,
     pub(crate) deleted_file_count: usize,
     pub(crate) submodule_file_count: usize,
+    /// Symlink (mode `120000`) file sections, counted once per section (#13659).
+    pub(crate) symlink_file_count: usize,
     pub(crate) renamed_file_count: usize,
     pub(crate) pure_rename_file_count: usize,
     pub(crate) pure_rename_paths: Vec<PathBuf>,
@@ -306,6 +308,8 @@ mod parser_state {
         /// so the section's path is not registered and its hunk lines are
         /// consumed without being recorded (#4577).
         symlink_section: bool,
+        symlink_counted: bool,
+        symlink_file_count: usize,
         /// Set once a header names a regular-file mode (`100644`/`100755`), so
         /// quoted `Subproject commit` text in a document is never a gitlink.
         regular_file_section: bool,
@@ -393,6 +397,10 @@ mod parser_state {
 
         pub(super) fn deleted_file_count(&self) -> usize {
             self.deleted_file_count
+        }
+
+        pub(super) fn symlink_file_count(&self) -> usize {
+            self.symlink_file_count
         }
 
         pub(super) fn submodule_file_count(&self) -> usize {
@@ -613,6 +621,10 @@ mod parser_state {
             };
             if is_symlink {
                 self.symlink_section = true;
+                if !self.symlink_counted {
+                    self.symlink_counted = true;
+                    self.symlink_file_count = self.symlink_file_count.saturating_add(1);
+                }
             }
             let mut fields = raw.split_whitespace();
             let is_regular = raw
@@ -700,6 +712,7 @@ mod parser_state {
             // A plain-diff file boundary also ends a symlink section; git's
             // own sections reset it at `diff --git` (#4594 review).
             self.symlink_section = false;
+            self.symlink_counted = false;
             self.saw_old_path_marker = false;
             self.conflict_region = None;
         }
@@ -870,6 +883,7 @@ mod parser_state {
             self.submodule_counted = false;
             self.submodule_new_file = false;
             self.symlink_section = false;
+            self.symlink_counted = false;
             self.rename_section = false;
             self.pure_rename_section = false;
             self.rename_from_path = None;
@@ -1664,6 +1678,9 @@ deleted file mode 100644
         let type_changes = "diff --git a/src/b.rs b/src/b.rs\ndeleted file mode 100644\nindex 7d37b56..0000000\n--- a/src/b.rs\n+++ /dev/null\n@@ -1 +0,0 @@\n-pub fn b() -> u32 { 2 }\ndiff --git a/src/b.rs b/src/b.rs\nnew file mode 120000\nindex 0000000..32bcc48\n--- /dev/null\n+++ b/src/b.rs\n@@ -0,0 +1 @@\n+lib.rs\n\\ No newline at end of file\ndiff --git a/src/link.rs b/src/link.rs\ndeleted file mode 120000\nindex 32bcc48..0000000\n--- a/src/link.rs\n+++ /dev/null\n@@ -1 +0,0 @@\n-lib.rs\n\\ No newline at end of file\ndiff --git a/src/link.rs b/src/link.rs\nnew file mode 100644\nindex 0000000..ebd9dfb\n--- /dev/null\n+++ b/src/link.rs\n@@ -0,0 +1 @@\n+pub fn c(x: u32) -> bool { x > 3 }\n";
         let parsed = parse_unified_diff_with_metadata(type_changes);
         assert_eq!(parsed.deleted_file_count, 2);
+        // #13659: each symlink half is counted once even though both its
+        // mode and index headers say 120000.
+        assert_eq!(parsed.symlink_file_count, 2);
         assert!(
             parsed
                 .changed_files

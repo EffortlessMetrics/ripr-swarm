@@ -247,6 +247,15 @@ covers ranges that only delete files, change submodule pointers or touch ripr
 artifacts, so deletion-only, submodule and excluded-artifact ranges still carry
 no assurance that no behavior changed.
 
+### Symlink type changes (#13659)
+
+A tracked file that becomes, or stops being, a symlink (git mode `120000`) is
+not source and is never analyzed. The diff parser counts each symlink file
+section once, and `check` prints on stderr
+`ripr: skipped N symlink change(s); ...` stating that the empty result does not
+mean the behavior is covered. The stdout surfaces keep their existing
+empty-scope wording; the stderr line is the type-change disclosure.
+
 A submodule with uncommitted changes counts as a submodule pointer change too.
 Git renders it as an adjacent `-Subproject commit <sha>` and
 `+Subproject commit <sha>-dirty` pair with no `160000` mode or `index` header,

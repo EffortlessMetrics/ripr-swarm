@@ -27206,6 +27206,50 @@ fn check_diff_file_with_base_does_not_report_a_git_range_note() -> Result<(), St
     Ok(())
 }
 
+/// #13659: a tracked source file replaced by a symlink is a type change ripr
+/// does not analyze; stderr must say so. Control: an ordinary edit has no
+/// symlink disclosure.
+#[cfg(unix)]
+#[test]
+fn check_file_replaced_by_symlink_discloses_the_type_change() -> Result<(), String> {
+    let root = unique_temp_workspace("symlink-type-change");
+    std::fs::create_dir_all(root.join("src")).map_err(|e| format!("mkdir: {e}"))?;
+    run_git(&root, &["init"])?;
+    run_git(&root, &["config", "user.email", "test@test.com"])?;
+    run_git(&root, &["config", "user.name", "Test"])?;
+    std::fs::write(root.join("src/lib.rs"), "pub fn one() -> i32 { 1 }\n")
+        .map_err(|e| format!("write lib: {e}"))?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"symlink-change\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|e| format!("write Cargo.toml: {e}"))?;
+    run_git(&root, &["add", "."])?;
+    run_git(&root, &["commit", "-m", "initial"])?;
+    let root_str = root.to_string_lossy().into_owned();
+    let stderr_of = |root_str: &str| {
+        String::from_utf8_lossy(&run_ripr(&["check", "--root", root_str, "--worktree"]).stderr)
+            .into_owned()
+    };
+    std::fs::write(root.join("src/lib.rs"), "pub fn one() -> i32 { 2 }\n")
+        .map_err(|e| format!("edit lib: {e}"))?;
+    let control = stderr_of(&root_str);
+    if control.contains("symlink change") {
+        return Err(format!(
+            "an ordinary edit is not a symlink change:\n{control}"
+        ));
+    }
+    std::fs::remove_file(root.join("src/lib.rs")).map_err(|e| format!("rm lib: {e}"))?;
+    std::os::unix::fs::symlink("/etc/hostname", root.join("src/lib.rs"))
+        .map_err(|e| format!("symlink: {e}"))?;
+    let stderr = stderr_of(&root_str);
+    if !stderr.contains("skipped 1 symlink change(s)") {
+        return Err(format!("the type change must be disclosed:\n{stderr}"));
+    }
+    ignore_remove_dir_all(&root);
+    Ok(())
+}
+
 // RIPR-SPEC-0112 regression guards: --base must disclose uncommitted working-tree changes.
 
 /// RIPR-SPEC-0112: `ripr check --base HEAD --committed --json` with an uncommitted
