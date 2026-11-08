@@ -5,8 +5,9 @@
 //! stated tolerance, or a broken instrument, exits nonzero.
 //!
 //! Scope and non-claims: the set is 68 small diffs (24 Rust, 22 Python, 22 TypeScript) rebuilt from
-//! `benchmarks/repair_start/cases.json`; it measures whether bare
-//! `ripr repair --root .` starts a repair after `ripr check`, not whether the
+//! `benchmarks/repair_start/cases.json`, each with its change on a `change`
+//! branch off `main`; it measures whether bare `ripr repair --root .` starts a
+//! repair after `ripr check`, not whether the
 //! repair is correct. Agent fix success and the false-actionable rate are read
 //! from an optional dx-scoreboard report and stay `not_measured` without one.
 
@@ -212,10 +213,15 @@ fn build_case(dir: &Path, case: &Value) -> Result<(), String> {
         fs::remove_dir_all(dir).map_err(|error| format!("clear {}: {error}", dir.display()))?;
     }
     fs::create_dir_all(dir).map_err(|error| format!("create {}: {error}", dir.display()))?;
-    git(dir, &["init", "-q"])?;
+    // The change lives on a feature branch off `main`, the layout a developer
+    // runs bare `ripr repair` in. A linear history on the default branch gives
+    // bare repair an empty diff, so it lists every seam instead of starting the
+    // one `check` recommends (and can start on an unchanged line).
+    git(dir, &["init", "-q", "-b", "main"])?;
     write_tree(dir, &case["base"])?;
     git(dir, &["add", "-A"])?;
     git(dir, &["commit", "-q", "-m", "base"])?;
+    git(dir, &["checkout", "-q", "-b", "change"])?;
     write_tree(dir, &case["change"])?;
     git(dir, &["add", "-A"])?;
     git(dir, &["commit", "-q", "-m", "change"])
@@ -699,7 +705,7 @@ fn evaluate(
         "trend": trend,
         "gate": {"status": if failures.is_empty() { "pass" } else { "fail" }, "failures": failures},
         "non_claims": [
-            "Repair start means bare `ripr repair --root .` exited 0 (Rust) or `ripr agent repair --gap-id <gap> --phase before` exited 0 for some gap the check named (Python, TypeScript, which `ripr repair` refuses by design) on a small rebuilt diff; it does not say the repair is correct.",
+            "Repair start means bare `ripr repair --root .` exited 0 on a feature branch off `main` (Rust) or `ripr agent repair --gap-id <gap> --phase before` exited 0 for some gap the check named (Python, TypeScript, which `ripr repair` refuses by design) on a small rebuilt diff; it does not say the repair is correct.",
             "Static movement only; no runtime mutation outcome is claimed.",
             "First-useful-result time is the wall time of `ripr check --base HEAD~1 --format json` on a tiny crate and is runner-dependent, so it is shown against its bar but never gates.",
         ],
@@ -969,6 +975,28 @@ mod tests {
                 .iter()
                 .any(|f| f.contains("typescript ran 5 case(s)"))
         );
+        Ok(())
+    }
+
+    #[test]
+    fn a_built_case_puts_the_change_on_a_branch_off_main() -> Result<(), String> {
+        let dir = std::env::temp_dir().join(format!("outcome-build-case-{}", std::process::id()));
+        let case = json!({"base": {"a.txt": "one\n"}, "change": {"a.txt": "two\n"}});
+        let built = build_case(&dir, &case);
+        let read = |path: &str| fs::read_to_string(dir.join(path)).map(|t| t.trim().to_string());
+        let head = read(".git/HEAD");
+        let main = read(".git/refs/heads/main");
+        let change = read(".git/refs/heads/change");
+        let worktree = read("a.txt");
+        let _ = fs::remove_dir_all(&dir);
+        built?;
+        assert_eq!(head.map_err(|e| e.to_string())?, "ref: refs/heads/change");
+        let (main, change) = (
+            main.map_err(|e| e.to_string())?,
+            change.map_err(|e| e.to_string())?,
+        );
+        assert_ne!(main, change, "the change must be a commit beyond main");
+        assert_eq!(worktree.map_err(|e| e.to_string())?, "two");
         Ok(())
     }
 

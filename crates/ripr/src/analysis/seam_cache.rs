@@ -719,9 +719,11 @@ pub(crate) struct CachedSeamLimitInfo {
 /// `1.173`: `#[async_std::test]` bodies admit owner-return pins read through one
 /// `.await` on an async owner (#5040). Old entries would keep those assertions
 /// refused as async tests.
-/// `1.174`: same multiline receiver binding refusal as `1.172` (#9992) — the
+/// `1.174`: the repo-seam proximity gate reads a local's initializer, so an
+/// assertion on a local bound to another function pins that function (#12264).
+/// `1.175`: same multiline receiver binding refusal as `1.172` (#9992) — the
 /// Python rule rejudges seams the `1.173` transition did not touch.
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.174";
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.175";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -936,8 +938,9 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.174";
 /// `0.173`: same cross-file wrapper limit as full `1.171` (#12886).
 /// `0.174`: same multiline receiver binding refusal as full `1.172` (#9992).
 /// `0.175`: same `#[async_std::test]` admission as full `1.173` (#5040).
-/// `0.176`: same multiline receiver binding refusal as full `1.174` (#9992).
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.176";
+/// `0.176`: same local-bound proximity pin as full `1.174` (#12264).
+/// `0.177`: same multiline receiver binding refusal as full `1.175` (#9992).
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.177";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -1154,8 +1157,9 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.176";
 /// `0.173`: same cross-file wrapper limit as full `1.171` (#12886).
 /// `0.174`: same multiline receiver binding refusal as full `1.172` (#9992).
 /// `0.175`: same `#[async_std::test]` admission as full `1.173` (#5040).
-/// `0.176`: same multiline receiver binding refusal as full `1.174` (#9992).
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.176";
+/// `0.176`: same local-bound proximity pin as full `1.174` (#12264).
+/// `0.177`: same multiline receiver binding refusal as full `1.175` (#9992).
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.177";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -5307,8 +5311,9 @@ mod tests {
         // 1.170 -> 1.171: cross-file forwarding wrapper names the limit (#12886).
         // 1.171 -> 1.172: multiline Python receiver rebindings withhold protocol-entry credit (#9992).
         // 1.172 -> 1.173: `#[async_std::test]` owner-return pins (#5040).
-        // 1.173 -> 1.174: multiline receiver rebindings rejudged (#9992).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.174");
+        // 1.173 -> 1.174: local-bound proximity pin (#12264).
+        // 1.174 -> 1.175: multiline receiver rebindings rejudged (#9992).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.175");
         // 1.168 -> 1.169: plain `assert_eq!` literal withhold in the audit (#13005).
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
@@ -5463,9 +5468,10 @@ mod tests {
         // 0.172 -> 0.173: same cross-file wrapper limit as full 1.171 (#12886).
         // 0.173 -> 0.174: same multiline receiver binding refusal as full 1.172 (#9992).
         // 0.174 -> 0.175: same async_std test admission as full 1.173 (#5040).
-        // 0.175 -> 0.176: same multiline receiver rejudgment as full 1.174 (#9992).
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.176");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.176");
+        // 0.175 -> 0.176: same local-bound proximity pin as full 1.174 (#12264).
+        // 0.176 -> 0.177: same multiline receiver rejudgment as full 1.175 (#9992).
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.177");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.177");
         // 0.170 -> 0.171: same plain `assert_eq!` literal withhold as full 1.169 (#13005).
     }
 
