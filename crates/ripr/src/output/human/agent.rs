@@ -582,9 +582,9 @@ fn terminal_line(
                 // action` ("there is no repair to make"). A `stop=` saying an
                 // improvement "may still be possible" sent agents looking for
                 // work after their test closed the gap.
-                None if triage
-                    .selected
-                    .is_some_and(|finding| finding.class == ExposureClass::Exposed) =>
+                None if triage.selected.is_some_and(|finding| {
+                    finding.class == ExposureClass::Exposed && !triage::is_static_limited(finding)
+                }) =>
                 {
                     "done=preview-language evidence is advisory only; a related test appears to observe this change, so there is no test-side gap to fix; verify the assertion independently; static advisory, not runtime proof\n"
                         .to_string()

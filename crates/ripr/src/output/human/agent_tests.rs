@@ -1108,6 +1108,15 @@ fn check_agent_exposed_preview_finding_reads_done_not_stop() {
     );
     assert!(!drill.contains("\nstop="), "{drill}");
     assert!(!drill.contains("co-located test"), "{drill}");
+    // A static-limited exposed preview finding fails closed on both surfaces.
+    let mut limited = preview_weak_gap("probe:a", 2);
+    limited.class = ExposureClass::Exposed;
+    limited.activation.missing_discriminators.clear();
+    limited.static_limit_kind = Some(StaticLimitKind::RustMacroWrappedAssertionUnresolved);
+    let limited_check = rendered(&output(vec![limited.clone()]));
+    assert!(!limited_check.contains("\ndone="), "{limited_check}");
+    let limited_drill = explained(&limited);
+    assert!(!limited_drill.contains("\ndone="), "{limited_drill}");
 }
 
 /// A preview finding without a producer-established discriminator has nothing

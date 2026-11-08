@@ -1033,7 +1033,9 @@ next=COMMAND
   ... --base ...` command, the same start the human `Next` block and JSON
   `finding_routes[].repair.command` print. When uncommitted production edits
   block the start, `open=` says to commit first and `next=` is absent. Without
-  a start, `stop=` says there is no guided repair route for this finding.
+  a start, a selected preview finding that already reads `exposed` (and is not
+  static-limited) ends with `done=` carrying the preview advisory qualifier;
+  otherwise `stop=` says there is no guided repair route for this finding.
 - `next=` is the scope-bound `ripr explain` command for the top gap (it embeds
   `--root` and the diff or base selectors, because a finding id does not
   resolve outside its run). It is absent when no gap is listed unless the
@@ -1048,9 +1050,11 @@ next=COMMAND
   counts it, and `next=` is the `ripr explain` drill-in. A limit with no such
   row, or any other limit kind, keeps `stop=`.
 - Terminal states are one explicit line: `done=` (no weak or unobserved gap is
-  left to fix from the test side, or no changed behavior was found in scope),
+  left to fix from the test side, no changed behavior was found in scope, or
+  the selected preview finding already reads `exposed`),
   `stop=` (every finding is base-side or unresolved, all are suppressed by
-  policy, ripr cannot tell from reading the code, preview-only evidence, or
+  policy, ripr cannot tell from reading the code, non-exposed preview-only
+  evidence, or
   nothing was analyzed because no scope was given), or `open=` (no gap is
   listed, but a reach-only limitation still carries a weak or smoke related
   test; it replaces `stop=` as described above). `done=` is static advisory
@@ -1086,8 +1090,10 @@ next=ripr context ... --at SELECTOR
 - Exactly one terminal line: `open=` for a candidate-current test-side gap
   (`weakly_exposed` or `reachable_unrevealed`, not limited) or for a
   reach-only limit that still carries a weak related test (the `check` `open=`
-  rule); `done=` for a candidate-current, unsuppressed exposed finding;
-  `stop=` otherwise (limited, preview-only, `no_static_path`, unknown classes).
+  rule); `done=` for a candidate-current, unsuppressed exposed finding that is
+  not static-limited (a preview finding's `done=` keeps the advisory
+  qualifier); `stop=` otherwise (limited, non-exposed preview-only,
+  `no_static_path`, unknown classes).
   A finding that is not a current edit target (`base_deleted`, `moved_or_renamed`,
   `unresolved_subject`) never prints `open=` or `done=`: its `stop=` names the
   currentness. A policy-suppressed finding prints a suppression `stop=`; a
