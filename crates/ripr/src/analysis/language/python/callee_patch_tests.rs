@@ -313,3 +313,53 @@ fn an_edit_that_reaches_the_patched_callee_transitively_keeps_the_limit() -> Res
     }
     Ok(())
 }
+
+/// Negative controls (#13632): a receiver the edit taints routes the value to
+/// the patched callee with no tainted argument; string literals and comments
+/// hide brackets or `=`; a subscript target reads the tainted name. Each keeps
+/// `mocked_module`.
+#[test]
+fn receiver_literal_and_target_shapes_keep_the_limit() -> Result<(), String> {
+    let bodies: [&str; 9] = [
+        // B1: tainted receiver, no tainted argument.
+        "    base = amount * 3\n    self.x = base\n    return self.compute()\n",
+        "    base = amount * 3\n    obj.scale = base\n    return obj.run()\n",
+        // B1: an unrelated call may route the edit indirectly.
+        "    base = amount * 3\n    return helper() * rate_for(region)\n",
+        // B2: a bracket inside a string swallows later lines.
+        "    base = amount * 3\n    msg = \"(\"\n    key = base + 1\n    return rate_for(key)\n",
+        // B2: a bracket inside a comment.
+        "    base = amount * 3\n    # see (note\n    key = base + 1\n    return rate_for(key)\n",
+        // B2: a closing bracket inside an argument string truncates the span.
+        "    base = amount * 3\n    key = base + 1\n    return rate_for(\"x)\" + key)\n",
+        // O2: a tainted subscript in the target taints the container.
+        "    base = amount * 3\n    cfg = {}\n    cfg[base] = 1\n    return rate_for(cfg)\n",
+        // O3: `=` inside a string is not an assignment.
+        "    base = amount * 3\n    key = base + \"=\"\n    return rate_for(key)\n",
+        // f-string replacement fields read the tainted name.
+        "    base = amount * 3\n    key = f\"{base}-x\"\n    return rate_for(key)\n",
+    ];
+    for body in bodies {
+        let source = format!(
+            "def rate_for(region):\n    return 1\n\n\ndef tax_for(amount, region):\n{body}"
+        );
+        let line = source
+            .lines()
+            .position(|text| text == BASE_NEW)
+            .map(|index| index + 1)
+            .ok_or_else(|| format!("edited line in {source}"))?;
+        let finding = classify(
+            &source,
+            &caller_test(PATCH_RATE, "60"),
+            line,
+            BASE_OLD,
+            BASE_NEW,
+        )?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::StaticUnknown,
+            "{source}\n{finding:?}"
+        );
+    }
+    Ok(())
+}

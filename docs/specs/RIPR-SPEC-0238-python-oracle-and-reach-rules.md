@@ -1468,7 +1468,7 @@ the first matching row wins (reach / observe / discriminate):
 | --- | --- | --- | --- |
 | 1 | a static limit | `static_unknown` | no / no / no with no related test; else yes (eligible) or weak (heuristic only) / same / unknown |
 | 2 | no related test | `no_static_path` | no / no / no |
-| 2a | no static limit, no oracle-eligible relation, and every related test replaces the owner itself via `monkeypatch`/`patch` (#13632) | `reachable_unrevealed`, never a credit | yes / no / no |
+| 2a | no static limit, no oracle-eligible relation, and every related test replaces the owner itself via `monkeypatch`/`patch` (#13632) | `reachable_unrevealed`, never a credit | weak / no / no |
 | 3 | only heuristic relations | `weakly_exposed`, no repair card | weak / weak / weak |
 | 4 | strong, credited, gates pass | `exposed` | yes / yes / yes |
 | 5 | strong, credited, changed default always overridden | `weakly_exposed` | yes / weak / weak |

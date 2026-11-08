@@ -389,9 +389,11 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
     mut related: Option<&mut RelatedCandidateMemo<'a>>,
 ) -> Option<Finding> {
     let mut dropped = false;
-    // The sibling-dropped pass is speculative: it records into a scratch copy
-    // that replaces the real receipts only when its result is the one returned.
-    let mut scratch = value_origins.as_deref().cloned();
+    // The sibling-dropped pass is speculative: it records into a fresh scratch
+    // that is merged into the real receipts only when its result is returned.
+    let mut scratch = value_origins
+        .as_deref()
+        .map(|_| crate::value_origins::ValueOrigins::default());
     let independent = classify_change_for_owner_inner(
         site.clone(),
         line_text,
@@ -410,7 +412,7 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
             .is_some_and(|finding| finding.class == ExposureClass::Exposed);
     if keep_independent {
         if let (Some(real), Some(recorded)) = (value_origins.as_deref_mut(), scratch) {
-            *real = recorded;
+            real.extend(recorded);
         }
         return independent;
     }

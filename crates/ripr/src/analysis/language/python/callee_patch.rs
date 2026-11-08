@@ -164,7 +164,7 @@ pub(super) fn callee_only_patch(
     }
     // The edit's taint, closed over every name bound from it, never reaches a
     // call argument, a nested scope or a rebinding the owner declares.
-    if edit_reaches_owner_calls(owner, owner_source, &edit_names) {
+    if edit_reaches_owner_calls(owner, owner_source, &edit_names, &patched) {
         return false;
     }
     // No other call in the owner receives a value the edit touches, directly
@@ -209,15 +209,119 @@ struct Statement {
     indent: usize,
 }
 
-fn owner_statements(owner: &PythonOwner, owner_source: &str) -> Vec<Statement> {
+/// `text` with comments dropped and string-literal contents blanked (quotes
+/// kept), so brackets and `=` inside them are never read. Identifiers inside an
+/// f-string `{...}` stay visible as reads. `None` when a literal is unterminated
+/// or an f-string replacement field holds a quote: unsure refuses.
+fn blank_literals(text: &str) -> Option<String> {
+    let chars: Vec<char> = text.chars().collect();
+    let mut out = String::new();
+    let mut index = 0;
+    while index < chars.len() {
+        let ch = chars[index];
+        if ch == '#' {
+            while index < chars.len() && chars[index] != '\n' {
+                index += 1;
+            }
+            continue;
+        }
+        if !matches!(ch, '"' | '\'') {
+            out.push(ch);
+            index += 1;
+            continue;
+        }
+        // A string prefix (`f`, `rb`, ...) is the identifier run just before.
+        let prefix: String = out
+            .chars()
+            .rev()
+            .take_while(|c| is_python_identifier_char(*c))
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect();
+        let formatted = prefix.len() <= 2 && prefix.to_ascii_lowercase().contains('f');
+        let triple = chars.get(index + 1) == Some(&ch) && chars.get(index + 2) == Some(&ch);
+        let width = if triple { 3 } else { 1 };
+        out.push(ch);
+        index += width;
+        let mut closed = false;
+        while index < chars.len() {
+            let c = chars[index];
+            if c == '\\' {
+                index += 2;
+                continue;
+            }
+            if c == ch
+                && (!triple
+                    || (chars.get(index + 1) == Some(&ch) && chars.get(index + 2) == Some(&ch)))
+            {
+                index += width;
+                closed = true;
+                break;
+            }
+            if c == '\n' {
+                if !triple {
+                    return None;
+                }
+                out.push('\n');
+                index += 1;
+                continue;
+            }
+            if formatted && c == '{' {
+                if chars.get(index + 1) == Some(&'{') {
+                    index += 2;
+                    continue;
+                }
+                out.push(' ');
+                out.push('{');
+                index += 1;
+                let mut depth = 1;
+                while index < chars.len() && depth > 0 {
+                    let f = chars[index];
+                    match f {
+                        '"' | '\'' | '\\' | '#' => return None,
+                        '{' => depth += 1,
+                        '}' => depth -= 1,
+                        '\n' if !triple => return None,
+                        _ => {}
+                    }
+                    out.push(if f == '\n' { '\n' } else { f });
+                    index += 1;
+                }
+                if depth > 0 {
+                    return None;
+                }
+                out.push(' ');
+                continue;
+            }
+            index += 1;
+        }
+        if !closed {
+            return None;
+        }
+        out.push(ch);
+        if triple {
+            out.push(ch);
+            out.push(ch);
+        }
+    }
+    Some(out)
+}
+
+/// The owner's statements over literal-blanked text. `None` when a literal
+/// cannot be read or a statement is still open (or over-closed) at the end.
+fn owner_statements(owner: &PythonOwner, owner_source: &str) -> Option<Vec<Statement>> {
+    let lines: Vec<&str> = owner_source
+        .lines()
+        .enumerate()
+        .filter(|(index, _)| (owner.start_line..=owner.end_line).contains(&(index + 1)))
+        .map(|(_, line)| line)
+        .collect();
+    let blanked = blank_literals(&lines.join("\n"))?;
     let mut out = Vec::new();
     let mut current: Option<Statement> = None;
     let mut depth = 0i32;
-    for (index, line) in owner_source.lines().enumerate() {
-        let number = index + 1;
-        if number < owner.start_line || number > owner.end_line {
-            continue;
-        }
+    for line in blanked.lines() {
         if current.is_none() && line.trim().is_empty() {
             continue;
         }
@@ -230,7 +334,12 @@ fn owner_statements(owner: &PythonOwner, owner_source: &str) -> Vec<Statement> {
         for ch in line.chars() {
             match ch {
                 '(' | '[' | '{' => depth += 1,
-                ')' | ']' | '}' => depth = (depth - 1).max(0),
+                ')' | ']' | '}' => {
+                    depth -= 1;
+                    if depth < 0 {
+                        return None;
+                    }
+                }
                 _ => {}
             }
         }
@@ -241,8 +350,10 @@ fn owner_statements(owner: &PythonOwner, owner_source: &str) -> Vec<Statement> {
             out.push(done);
         }
     }
-    out.extend(current);
-    out
+    if current.is_some() {
+        return None;
+    }
+    Some(out)
 }
 
 /// `(target text, value text, augmented)` of the last top-level `=` of
@@ -329,8 +440,15 @@ fn is_function_header(text: &str) -> bool {
 /// Whether the names the edit touches, closed over every name bound on a
 /// statement that reads one, reach a call argument, a nested scope, a lambda
 /// or a `global`/`nonlocal` declaration of the owner. Unsure reads true.
-fn edit_reaches_owner_calls(owner: &PythonOwner, owner_source: &str, edit_names: &[&str]) -> bool {
-    let statements = owner_statements(owner, owner_source);
+fn edit_reaches_owner_calls(
+    owner: &PythonOwner,
+    owner_source: &str,
+    edit_names: &[&str],
+    patched: &[&str],
+) -> bool {
+    let Some(statements) = owner_statements(owner, owner_source) else {
+        return true;
+    };
     let header = statements.iter().position(|s| is_function_header(&s.text));
     let body: Vec<(usize, &Statement)> = statements
         .iter()
@@ -345,7 +463,8 @@ fn edit_reaches_owner_calls(owner: &PythonOwner, owner_source: &str, edit_names:
             let reads = match assignment_split(&statement.text) {
                 Some((target, value, augmented)) => {
                     let mut reads = data_names(value);
-                    if augmented {
+                    // A name inside a target subscript or call is a read.
+                    if augmented || target.contains('[') || target.contains('(') {
                         reads.extend(data_names(target));
                     }
                     let other_binders = statement.text.contains(" for ")
@@ -393,33 +512,55 @@ fn edit_reaches_owner_calls(owner: &PythonOwner, owner_source: &str, edit_names:
         if tokens(text).iter().any(|(_, token)| *token == "lambda") && tainted(text) {
             return true;
         }
-        if call_arguments(text)
-            .iter()
-            .any(|arguments| tainted(arguments))
-        {
-            return true;
+        // A header's own parameter list is not a call; its defaults are scanned.
+        let scanned = if is_function_header(text) {
+            text.split_once('(').map_or("", |(_, rest)| rest)
+        } else {
+            text
+        };
+        for (callee, arguments) in call_sites(scanned) {
+            // A tainted receiver or callee, or a tainted argument, reaches the
+            // call. Any call other than the patched callee or a safe builtin may
+            // route the edit there indirectly, so it is refused too.
+            let routed =
+                callee.is_none_or(|name| !(patched.contains(&name) || SAFE_CALLS.contains(&name)));
+            if routed || tainted(arguments) {
+                return true;
+            }
         }
     }
     false
 }
 
-/// The text inside every call parenthesis of `text`, whole across lines, other
-/// than a safe builtin's. A parenthesis after a name, `)` or `]` is a call.
-fn call_arguments(text: &str) -> Vec<&str> {
+/// Every call of `text` as `(callee, arguments)`: the callee is `Some(name)`
+/// only for a bare undotted name, `None` for a dotted chain (a method or
+/// receiver call) or a call on an expression. Arguments are whole across
+/// lines. A parenthesis after a keyword is not a call; one after a name, `)` or
+/// `]` is. Safe builtins are reported too; the caller decides.
+fn call_sites(text: &str) -> Vec<(Option<&str>, &str)> {
     let bytes = text.as_bytes();
-    let mut spans = Vec::new();
+    let mut sites = Vec::new();
     for (open, _) in text.match_indices('(') {
         let before = text[..open].trim_end();
-        let callee = tokens(before)
-            .pop()
-            .filter(|(start, token)| start + token.len() == before.len());
-        let called = match callee {
-            Some((_, token)) => is_plain_name(token) && !SAFE_CALLS.contains(&token),
-            None => before.ends_with(')') || before.ends_with(']'),
-        };
-        if !called {
+        let run_start = before
+            .char_indices()
+            .rev()
+            .take_while(|(_, ch)| is_python_identifier_char(*ch) || *ch == '.')
+            .last()
+            .map_or(before.len(), |(index, _)| index);
+        let run = &before[run_start..];
+        let callee = if run.is_empty() {
+            if !(before.ends_with(')') || before.ends_with(']')) {
+                continue;
+            }
+            None
+        } else if run.contains('.') || before[..run_start].trim_end().ends_with('.') {
+            None
+        } else if is_plain_name(run) {
+            Some(run)
+        } else {
             continue;
-        }
+        };
         let mut depth = 0i32;
         let mut close = bytes.len();
         for (offset, &byte) in bytes[open..].iter().enumerate() {
@@ -435,9 +576,9 @@ fn call_arguments(text: &str) -> Vec<&str> {
                 _ => {}
             }
         }
-        spans.push(&text[open + 1..close]);
+        sites.push((callee, &text[open + 1..close]));
     }
-    spans
+    sites
 }
 
 /// `"a.b.c"` string literals that follow a `setattr(` or `patch(` opener in
