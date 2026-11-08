@@ -1026,6 +1026,12 @@ fn find_related_tests_with_candidates<'a>(
         .filter(|t| !common_tokens.assertion_tokens.contains(t.as_str()))
         .map(String::as_str)
         .collect();
+    // #13843: a word that occurs in the probe only inside a string literal
+    // is prose, not an identifier. Help text such as `summary: "Show
+    // capability status per language"` shares `language` or `status` with
+    // thousands of unrelated assertions, so such a word relates a test only
+    // when its assertion quotes one of the probe's literals whole.
+    let probe_literals = ProbeLiterals::new(&probe.expression);
 
     let candidate_indices = match candidates {
         RelatedTestCandidates::Indexed(candidate_index) => {
@@ -1462,6 +1468,7 @@ fn find_related_tests_with_candidates<'a>(
                     obs_tok.len() >= ASSERTION_TOKEN_MIN_LEN
                         && long_probe_tokens.contains(&obs_tok.as_str())
                         && !is_declaration_only_token(&oracle.text, obs_tok)
+                        && probe_literals.admits(obs_tok, &oracle.text)
                 })
             });
 
@@ -3792,6 +3799,62 @@ fn literal_ids(masked: &str) -> impl Iterator<Item = usize> + '_ {
 /// shared by unrelated code and must not seed assertion-target affinity
 /// (#9171); an occurrence used as an identifier (`a.union(b)`, `let union`)
 /// keeps the token.
+/// The string literals of a probe expression, split from its code (#13843).
+///
+/// `code_tokens` are the identifier tokens outside every string literal and
+/// comment; `literals` are the trimmed contents of each string literal.
+struct ProbeLiterals {
+    code_tokens: BTreeSet<String>,
+    literals: Vec<String>,
+}
+
+impl ProbeLiterals {
+    fn new(expression: &str) -> Self {
+        let masked = mask_comments_and_strings(expression);
+        let code_tokens = extract_identifier_tokens(&masked).into_iter().collect();
+        let mut literals = Vec::new();
+        let mut current: Option<String> = None;
+        let mut chars = expression.chars();
+        // Plain `"…"` literals only; a raw string or a comment adds no
+        // literal, so its words fall back to the stricter code-token test.
+        while let Some(ch) = chars.next() {
+            match (&mut current, ch) {
+                (None, '"') => current = Some(String::new()),
+                (Some(text), '"') => {
+                    let trimmed = text.trim();
+                    if !trimmed.is_empty() {
+                        literals.push(trimmed.to_string());
+                    }
+                    current = None;
+                }
+                (Some(text), '\\') => {
+                    text.push(ch);
+                    if let Some(escaped) = chars.next() {
+                        text.push(escaped);
+                    }
+                }
+                (Some(text), _) => text.push(ch),
+                (None, _) => {}
+            }
+        }
+        Self {
+            code_tokens,
+            literals,
+        }
+    }
+
+    /// Whether `token` may tie an assertion with `oracle_text` to the probe:
+    /// always for a code token, and for a literal-only word only when the
+    /// assertion quotes one of the probe's literals whole.
+    fn admits(&self, token: &str, oracle_text: &str) -> bool {
+        self.code_tokens.contains(token)
+            || self
+                .literals
+                .iter()
+                .any(|literal| literal.contains(token) && oracle_text.contains(literal.as_str()))
+    }
+}
+
 fn is_declaration_only_token(text: &str, token: &str) -> bool {
     if token != "union" && token != "macro_rules" {
         return false;
@@ -15507,6 +15570,53 @@ try_parse_summary(raw).map_err(Into::into)"
         assert_eq!(related.len(), 1);
         assert_eq!(related[0].0.name, "repo_lane_deserializes_fields_correctly");
         assert_eq!(related[0].1, RelationReason::AssertionTargetAffinity);
+    }
+
+    /// #13843: a help-text field literal shares prose words (`framework`,
+    /// `capability`) with unrelated assertions. Those words relate a test
+    /// only when its assertion quotes the probe's literal whole; a code token
+    /// (`open_in` above) still relates on its own.
+    #[test]
+    fn literal_only_prose_words_relate_a_test_only_through_the_whole_literal() {
+        let probe = struct_field_probe(
+            "crates/ripr/src/cli/command_metadata.rs",
+            "summary: \"Show capability status per framework.\",",
+        );
+        let related_names = |assertion: &str| {
+            let test = test_with_assertions(
+                "crates/ripr/src/cli/tests.rs",
+                "renders_the_help",
+                assertion,
+                vec![oracle_fact(
+                    assertion,
+                    OracleKind::ExactValue,
+                    OracleStrength::Strong,
+                )],
+            );
+            let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+                tests: vec![test],
+                ..Default::default()
+            });
+            find_related_tests(&probe, None, &index, true, None, None)
+                .into_iter()
+                .map(|(test, reason)| (test.name.clone(), reason))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            related_names(
+                "assert!(violations.iter().any(|v| v.contains(\"names framework `Test::More`\")));"
+            ),
+            Vec::new(),
+            "a shared prose word is no tie"
+        );
+        assert_eq!(
+            related_names("assert!(help.contains(\"Show capability status per framework.\"));"),
+            vec![(
+                "renders_the_help".to_string(),
+                RelationReason::AssertionTargetAffinity
+            )],
+            "an assertion quoting the literal whole still relates"
+        );
     }
 
     /// #9173: a package's root `build.rs` runs under Cargo before the package
