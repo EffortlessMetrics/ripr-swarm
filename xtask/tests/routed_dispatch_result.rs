@@ -345,6 +345,11 @@ esac
     );
     let mut group_proof = true;
     if queue {
+        // Authentication/currentness itself is executed by repo-policy's
+        // queue_intake controls. This harness supplies its upstream outcome;
+        // dedicated negatives below prove summary refusal when it is absent.
+        env.entry("INTAKE_RECHECK".to_string())
+            .or_insert_with(|| "success".to_string());
         let proof = named_step(source, "Require complete native group portfolio")?;
         let proof_script = scratch.0.join("group-proof.sh");
         fs::write(&proof_script, result_shell(proof)?).map_err(|e| e.to_string())?;
@@ -363,7 +368,9 @@ esac
     };
     if queue {
         if output.status.success() {
-            assert!(report.contains("Native-G portfolio and current eligibility passed."));
+            assert!(report.contains(
+                "Native-G portfolio, authenticated H intake and current eligibility passed."
+            ));
         }
     } else {
         assert!(report.contains("### Ripr Rust Small Result"));
@@ -2039,6 +2046,7 @@ fn live_queue_requires_each_mandatory_leaf_and_bound_subject() -> Result<(), Str
         "WHEEL_RESULT",
         "CI_RESULT",
         "PRINTED_RESULT",
+        "INTAKE_RECHECK",
     ] {
         for value in ["", "failure", "cancelled", "skipped"] {
             assert!(

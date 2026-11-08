@@ -30,6 +30,10 @@ succession. The configured canary is a singleton squash group, not an invented
 PR merge or a per-PR merge-method override. It uses static owned capability for
 candidate composition, main Rust and generic Linux proof; finalization reads
 only the immutable trusted bundle and API state on separate control capacity.
+Before allocating candidate capacity, that control authenticates the existing
+Hermes exact-H/entry intake and its reviewed target producer closure. The
+numeric App binding in protected-base `policy/queue-publisher.toml` remains
+disabled until verified activation; the final result rechecks the same receipt.
 Wheel ABI, Windows/macOS and GUI test contracts retain their qualified platforms.
 
 Until activation is verified, retain the reviewed candidate and its evidence.

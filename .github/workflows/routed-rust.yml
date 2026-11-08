@@ -21,8 +21,55 @@ env:
   CI_LIFECYCLE_GENERATION: merge-queue-v1
 
 jobs:
+  intake:
+    name: Authenticate native queue intake
+    runs-on:
+      group: em-ci-build
+      labels: [self-hosted, linux, x64, ci-control]
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+      checks: read
+    outputs:
+      pr: ${{ steps.verify.outputs.pr }}
+      pr_id: ${{ steps.verify.outputs.pr_id }}
+      head: ${{ steps.verify.outputs.head }}
+      queue_entry: ${{ steps.verify.outputs.queue_entry }}
+      admission_id: ${{ steps.verify.outputs.admission_id }}
+      intake_json: ${{ steps.verify.outputs.intake_json }}
+      intake_identity: ${{ steps.verify.outputs.intake_identity }}
+    steps:
+      - name: Check out protected intake evaluator only
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ github.event.merge_group.base_sha }}
+          path: .queue-trusted
+          sparse-checkout: |
+            .github/actions/pr-candidate-admission
+            policy/queue-publisher.toml
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+      - name: Authenticate exact head and acknowledged queue entry
+        id: verify
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TRUSTED_SHA: ${{ github.event.merge_group.base_sha }}
+        run: |
+          set -euo pipefail
+          trusted="$GITHUB_WORKSPACE/.queue-trusted"
+          [[ "$TRUSTED_SHA" =~ ^[0-9a-f]{40}$ && "$(git -C "$trusted" rev-parse HEAD)" == "$TRUSTED_SHA" ]]
+          for path in .github/actions/pr-candidate-admission/queue_intake.py policy/queue-publisher.toml; do
+            [[ -f "$trusted/$path" && ! -L "$trusted/$path" ]]
+            [[ "$(git hash-object --no-filters "$trusted/$path")" == "$(git -C "$trusted" rev-parse "$TRUSTED_SHA:$path")" ]]
+          done
+          python3 -I "$trusted/.github/actions/pr-candidate-admission/queue_intake.py" --policy "$trusted/policy/queue-publisher.toml"
+
   detect-docs-only:
     name: Detect Docs-Only Surface
+    needs: [intake]
+    if: needs.intake.result == 'success'
     runs-on:
       group: em-ci-build
       labels: [self-hosted, linux, x64, rust-heavy]
@@ -84,8 +131,8 @@ jobs:
 
   admission:
     name: Admit PR Candidate
-    needs: [detect-docs-only]
-    if: always()
+    needs: [intake, detect-docs-only]
+    if: needs.intake.result == 'success' && needs.detect-docs-only.result == 'success'
     runs-on:
       group: em-ci-build
       labels: [self-hosted, linux, x64, rust-heavy]
@@ -185,6 +232,10 @@ jobs:
           GROUP_HEAD_REF: ${{ github.event.merge_group.head_ref }}
           GROUP_BASE_SHA: ${{ github.event.merge_group.base_sha }}
           GROUP_HEAD_SHA: ${{ github.event.merge_group.head_sha }}
+          INTAKE_PR: ${{ needs.intake.outputs.pr }}
+          INTAKE_PR_ID: ${{ needs.intake.outputs.pr_id }}
+          INTAKE_HEAD: ${{ needs.intake.outputs.head }}
+          INTAKE_ENTRY: ${{ needs.intake.outputs.queue_entry }}
         run: |
           set -euo pipefail
           pr="$PR_NUMBER" head="$PR_HEAD_SHA" pr_id="$PR_NODE_ID" labels="$PR_LABELS" queue_entry="" tree=""
@@ -223,10 +274,9 @@ jobs:
             tree="$(git rev-parse "${GROUP_HEAD_SHA}^{tree}")"
             labels="$(jq -r '[.labels[].name] | join(",")' <<<"$current")"
           fi
+          [[ "$pr" == "$INTAKE_PR" && "$pr_id" == "$INTAKE_PR_ID" && "$head" == "$INTAKE_HEAD" && "$queue_entry" == "$INTAKE_ENTRY" ]]
           { echo "pr=$pr"; echo "pr_id=$pr_id"; echo "head=$head"; echo "tree=$tree"; echo "labels=$labels"; echo "queue_entry=$queue_entry"; echo "request=$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"; } >> "$GITHUB_OUTPUT"
-      # This observes the live candidate's composition. Protected H authority
-      # comes from the existing publisher's acknowledged exact-head enqueue
-      # receipt; a later same-tree H2 cannot inherit the earlier admission.
+      # The composition must use the exact H/entry authenticated before allocation.
       - name: Freeze actual native group subject
         id: group
         if: github.event_name == 'merge_group'
@@ -361,7 +411,7 @@ jobs:
 
   result:
     name: Ripr Rust Small Result
-    needs: [admission, rust-owned, windows-subset, python-wheel, ci-feature, printed-command]
+    needs: [intake, admission, rust-owned, windows-subset, python-wheel, ci-feature, printed-command]
     if: always()
     runs-on:
       group: em-ci-build
@@ -371,6 +421,7 @@ jobs:
       contents: read
       actions: read
       pull-requests: read
+      checks: read
     steps:
       - name: Check out trusted admission bundle for the review recheck
         if: needs.admission.result == 'success' && needs.admission.outputs.status == 'admitted' && (github.event_name == 'merge_group' || (github.event_name == 'pull_request' && github.event.label.name == 'merge-ready'))
@@ -378,7 +429,10 @@ jobs:
         with:
           ref: ${{ needs.admission.outputs.trusted_sha }}
           path: .admission-trusted
-          sparse-checkout: .github/actions/pr-candidate-admission
+          sparse-checkout: |
+            .github/actions/pr-candidate-admission
+            policy/queue-publisher.toml
+          sparse-checkout-cone-mode: false
           persist-credentials: false
       - name: Recheck source review disposition for the admitted head
         if: needs.admission.result == 'success' && needs.admission.outputs.status == 'admitted' && (github.event_name == 'merge_group' || (github.event_name == 'pull_request' && github.event.label.name == 'merge-ready'))
@@ -547,6 +601,23 @@ jobs:
             echo "::warning::Retrying the complete eligibility collection after a transient PR read; admission $EXPECTED_REQUEST is unchanged"
             sleep 1
           done
+      - name: Recheck native intake authority
+        id: intake
+        if: needs.admission.result == 'success' && needs.intake.result == 'success'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TRUSTED_SHA: ${{ github.event.merge_group.base_sha }}
+          EXPECTED_INTAKE: ${{ needs.intake.outputs.intake_json }}
+        run: |
+          set -euo pipefail
+          trusted="$GITHUB_WORKSPACE/.admission-trusted"
+          [[ "$TRUSTED_SHA" =~ ^[0-9a-f]{40}$ && "$(git -C "$trusted" rev-parse HEAD)" == "$TRUSTED_SHA" ]]
+          for path in .github/actions/pr-candidate-admission/queue_intake.py policy/queue-publisher.toml; do
+            [[ -f "$trusted/$path" && ! -L "$trusted/$path" ]]
+            [[ "$(git hash-object --no-filters "$trusted/$path")" == "$(git -C "$trusted" rev-parse "$TRUSTED_SHA:$path")" ]]
+          done
+          python3 -I "$trusted/.github/actions/pr-candidate-admission/queue_intake.py" --policy "$trusted/policy/queue-publisher.toml" --expected-env EXPECTED_INTAKE
       - name: Require complete native group portfolio
         id: group_proof
         if: always() && github.event_name == 'merge_group'
@@ -581,9 +652,10 @@ jobs:
           CUT_STATUS: ${{ needs.admission.outputs.cut_status }}
           ELIGIBILITY_RESULT: ${{ steps.eligibility.outcome }}
           GROUP_PROOF_RESULT: ${{ steps.group_proof.outcome }}
+          INTAKE_RECHECK: ${{ steps.intake.outcome }}
           OWNED_RESULT: ${{ needs.rust-owned.result }}
         run: |
           set -euo pipefail
           [[ "$ADMISSION_RESULT" == success && "$ADMISSION_STATUS" == admitted && "$CUT_STATUS" != refused ]]
-          [[ "$ELIGIBILITY_RESULT" == success && "$GROUP_PROOF_RESULT" == success && "$OWNED_RESULT" == success ]]
-          printf 'Native-G portfolio and current eligibility passed. Protected H intake and resulting M observation remain publisher obligations.\n' >> "$GITHUB_STEP_SUMMARY"
+          [[ "$ELIGIBILITY_RESULT" == success && "$GROUP_PROOF_RESULT" == success && "$OWNED_RESULT" == success && "$INTAKE_RECHECK" == success ]]
+          printf 'Native-G portfolio, authenticated H intake and current eligibility passed. Protected publication and resulting M observation remain publisher obligations.\n' >> "$GITHUB_STEP_SUMMARY"

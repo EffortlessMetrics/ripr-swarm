@@ -73,7 +73,34 @@ pub fn violations(source: &str, reusable: Option<&str>) -> Vec<String> {
             header.contains("    timeout-minutes:"),
             &format!("{name} requires a deadline"),
         );
+        let condition = if name == "admission" {
+            "    if: needs.intake.result == 'success' && needs.detect-docs-only.result == 'success'"
+        } else {
+            "    if: needs.intake.result == 'success'"
+        };
+        require(
+            header.contains("    needs: [intake") && header.lines().any(|line| line == condition),
+            &format!("{name} must not allocate candidate capacity before authenticated intake"),
+        );
     }
+    let intake = job(source, "intake").unwrap_or("");
+    for binding in [
+        "labels: [self-hosted, linux, x64, ci-control]",
+        "ref: ${{ github.event.merge_group.base_sha }}",
+        "checks: read",
+        "queue_intake.py",
+        "policy/queue-publisher.toml",
+        "intake_json: ${{ steps.verify.outputs.intake_json }}",
+    ] {
+        require(
+            intake.contains(binding),
+            &format!("protected intake control lacks {binding}"),
+        );
+    }
+    require(
+        !intake.contains("rust-heavy") && !intake.contains("ref: ${{ github.sha }}"),
+        "intake must not execute or allocate candidate capacity",
+    );
     let admission = job(source, "admission").unwrap_or("");
     for binding in [
         "uses: ./.github/actions/verify-merge-group-subject",
@@ -163,7 +190,7 @@ pub fn violations(source: &str, reusable: Option<&str>) -> Vec<String> {
     let header = result.split("    steps:\n").next().unwrap_or("");
     for binding in [
         "    name: Ripr Rust Small Result",
-        "    needs: [admission, rust-owned, windows-subset, python-wheel, ci-feature, printed-command]",
+        "    needs: [intake, admission, rust-owned, windows-subset, python-wheel, ci-feature, printed-command]",
         "    if: always()",
         "    timeout-minutes: 5",
         "    runs-on:\n      group: em-ci-build\n      labels: [self-hosted, linux, x64, ci-control]",
@@ -175,7 +202,7 @@ pub fn violations(source: &str, reusable: Option<&str>) -> Vec<String> {
     }
     for binding in [
         "ref: ${{ needs.admission.outputs.trusted_sha }}",
-        "sparse-checkout: .github/actions/pr-candidate-admission",
+        "sparse-checkout: |\n            .github/actions/pr-candidate-admission\n            policy/queue-publisher.toml",
         "--head \"$EXPECTED_HEAD\"",
         ".head.sha == $head",
         ".mergeQueueEntry.id == $entry",
@@ -194,6 +221,13 @@ pub fn violations(source: &str, reusable: Option<&str>) -> Vec<String> {
         );
     }
     let aggregate = step(result, "Require complete native group portfolio").unwrap_or("");
+    require(
+        result.contains("--expected-env EXPECTED_INTAKE")
+            && result.contains("EXPECTED_INTAKE: ${{ needs.intake.outputs.intake_json }}")
+            && result.contains("INTAKE_RECHECK: ${{ steps.intake.outcome }}")
+            && result.contains("\"$INTAKE_RECHECK\" == success"),
+        "terminal result must recheck the identical authenticated intake",
+    );
     for (env, name) in [
         ("OWNED_RESULT", "rust-owned"),
         ("WINDOWS_RESULT", "windows-subset"),
@@ -279,6 +313,33 @@ mod tests {
             assert_eq!(
                 crate::routed_rust_event_route(CALLER, event, Some("labeled"), Some("merge-ready")),
                 crate::RoutedRustEventRoute::WorkflowNotTriggered
+            );
+        }
+    }
+    #[test]
+    fn heavy_allocation_and_terminal_success_require_authenticated_intake() {
+        for (before, after) in [
+            ("    needs: [intake]\n", "    needs: []\n"),
+            (
+                "    needs: [intake, detect-docs-only]\n",
+                "    needs: [detect-docs-only]\n",
+            ),
+            (
+                "    if: needs.intake.result == 'success'",
+                "    if: always()",
+            ),
+            ("--expected-env EXPECTED_INTAKE", ""),
+            ("\"$INTAKE_RECHECK\" == success", "true"),
+            (
+                "ref: ${{ github.event.merge_group.base_sha }}",
+                "ref: ${{ github.sha }}",
+            ),
+        ] {
+            let wrong = CALLER.replace(before, after);
+            assert_ne!(wrong, CALLER);
+            assert!(
+                !violations(&wrong, Some(RUST)).is_empty(),
+                "accepted {before}"
             );
         }
     }

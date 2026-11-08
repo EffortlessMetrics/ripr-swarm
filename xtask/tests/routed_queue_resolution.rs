@@ -251,6 +251,16 @@ fn run_resolve_with_node(
     run: &Run,
     node: Option<serde_json::Value>,
 ) -> Result<Outcome, String> {
+    run_resolve_with_intake(world, shell, run, node, &run.api_head)
+}
+
+fn run_resolve_with_intake(
+    world: &World,
+    shell: &str,
+    run: &Run,
+    node: Option<serde_json::Value>,
+    intake_head: &str,
+) -> Result<Outcome, String> {
     world.publish(&format!("refs/pull/{PR}/head"), &run.pull_ref)?;
     let clone = world.shallow_checkout_of(&run.queued)?;
     let scratch = &world.scratch.0;
@@ -325,6 +335,10 @@ esac
         .env("GROUP_HEAD_REF", head_ref)
         .env("GROUP_BASE_SHA", &run.group_base)
         .env("GROUP_HEAD_SHA", &run.queued)
+        .env("INTAKE_PR", PR)
+        .env("INTAKE_PR_ID", "PR_fixture42")
+        .env("INTAKE_HEAD", intake_head)
+        .env("INTAKE_ENTRY", "entry-42")
         .env("GITHUB_RUN_ID", "100")
         .env("GITHUB_RUN_ATTEMPT", "1")
         .env("GITHUB_OUTPUT", &github_output)
@@ -374,6 +388,37 @@ fn assert_refused(outcome: &Outcome, needle: &str) {
         "a refusal must publish no admission outputs: {:?}",
         outcome.outputs
     );
+}
+
+#[test]
+fn a_live_head_cannot_replace_the_authenticated_intake_head() -> Result<(), String> {
+    let world = World::new()?;
+    let source = resolve_shell(&workflow()?)?;
+    let run = honest(&world, &world.head, &world.base)?;
+    let refused = run_resolve_with_intake(
+        &world,
+        &source,
+        &run,
+        Some(json!("PR_fixture42")),
+        &world.other_head,
+    )?;
+    assert!(!refused.accepted);
+    assert!(refused.outputs.is_empty());
+    let weakened = source.replace("\"$head\" == \"$INTAKE_HEAD\"", "true");
+    assert_ne!(source, weakened);
+    let wrong = run_resolve_with_intake(
+        &world,
+        &weakened,
+        &run,
+        Some(json!("PR_fixture42")),
+        &world.other_head,
+    )?;
+    assert!(
+        wrong.accepted,
+        "the control must detect removal of the intake-head comparison: {}",
+        wrong.log
+    );
+    Ok(())
 }
 
 #[test]

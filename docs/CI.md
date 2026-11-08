@@ -179,8 +179,9 @@ observation at finalization. Missing, changed or ambiguous intake refuses.
 with fake API observations, including head/entry/issuer/source/expiry negatives
 and currentness changes. These tests establish consumer behavior, not a live
 publisher, installed capacity, native enqueue or protected landing. The cutover
-caller must run this control before any candidate checkout or shared-cache work;
-the support stage alone does not change event subscriptions or allocate jobs.
+caller runs this control on `ci-control` before either heavy preflight job can
+start. It rechecks the same frozen intake before terminal success. The support
+stage alone does not change event subscriptions or allocate jobs.
 
 ### Actual-G callable source preparation (#8082)
 
@@ -215,7 +216,7 @@ The admission job retains `ripr-queue-subject-<run_id>-<run_attempt>` with the
 canonical subject, its digest, observed native queue-entry id and complete
 mandatory portfolio. The Result verifies the frozen subject/run tuple and
 retains current-head, review, cut and succession checks. This observation does
-not itself authorize H: the existing protected publisher must join it to the
+not itself authorize H: the preceding trusted control joins the publisher's
 acknowledged enqueue receipt binding exact H, admission id and native entry id.
 A later same-tree H2 cannot inherit H's intake authority. The shared source
 verifier is part of the transitive reviewed workflow closure.
@@ -227,6 +228,17 @@ requires a reviewed constituent/composition model. Parent-shape acceptance in
 the verifier does not grant a per-PR native queue merge-method override.
 
 ### Owned runner source and final activation
+
+Reuse the existing platform evidence within its actual scope. The em-ci
+[published image receipt](https://github.com/EffortlessMetrics/em-ci/blob/df90ed3a55c4ab3d7eccaa68200c8ffb514efa65/config/runner-image-publication.json)
+and [successful image run](https://github.com/EffortlessMetrics/em-ci/actions/runs/36797027947)
+establish image publication, not a currently admitted RIPR slot. The
+[#7827 historical cache handoff](https://github.com/EffortlessMetrics/ripr-swarm/issues/7827#issuecomment-6185849191)
+records two distinct subjects restoring the old hosted cache, with explicit
+writer-cleanup and acceptance limits. It does not qualify the replacement owned
+route. Use the existing `em-ci-runner-cycle.v2`, job-context and sccache receipts
+for that route; no new cache service, fleet migration or universal two-subject
+gate is introduced for an unchanged execution route.
 
 The final Rust caller selects `execution-profile: owned-jit`; the published
 preparation retains the default `legacy` profile until activation. Owned JIT is admitted only for
