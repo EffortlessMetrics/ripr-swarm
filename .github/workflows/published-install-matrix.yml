@@ -114,9 +114,13 @@ jobs:
           set -euo pipefail
           cd "$RUNNER_TEMP" && cargo new --quiet smoke-project && cd smoke-project
           ripr --version | tee version.txt
-          if [ -n "$RELEASE_VERSION" ] && [ "$(head -n1 version.txt | tr -d '\r')" != "ripr $RELEASE_VERSION" ]; then
-            echo "::error::expected ripr $RELEASE_VERSION but got $(head -n1 version.txt)"
-            exit 1
+          if [ -n "$RELEASE_VERSION" ]; then
+            # `ripr --version` may append the build commit: "ripr X.Y.Z (<40 hex>[-dirty])".
+            reported=$(head -n1 version.txt | tr -d '\r' | sed -E 's/ \([0-9a-f]{40}(-dirty)?\)$//')
+            if [ "$reported" != "ripr $RELEASE_VERSION" ]; then
+              echo "::error::expected ripr $RELEASE_VERSION but got $(head -n1 version.txt)"
+              exit 1
+            fi
           fi
           ripr doctor
           echo "version=$(head -n1 version.txt)" >> "$GITHUB_OUTPUT"
