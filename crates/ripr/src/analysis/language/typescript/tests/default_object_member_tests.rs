@@ -383,6 +383,25 @@ fn a_sibling_that_can_reach_the_object_without_this_credits_nothing() -> Result<
                 "function patch(): void {{\n  module.exports.default.merge = {stub};\n}}\n\nfunction extend(): void {{\n  patch();\n}}"
             ),
         ),
+        // An imported member's body is invisible here (#13694 review).
+        (
+            "relative-imported-member",
+            "import { extend } from './extend';\n",
+            String::new(),
+        ),
+        (
+            "package-imported-member",
+            "import { extend } from 'lodash';\n",
+            String::new(),
+        ),
+        // A top-level reassignment the declaration scan does not see.
+        (
+            "reassigned-member",
+            "",
+            format!(
+                "let extend = (): void => {{}};\nextend = function (this: any): void {{\n  this.merge = {stub};\n}};"
+            ),
+        ),
     ] {
         let owner = format!(
             "{prelude}{}",

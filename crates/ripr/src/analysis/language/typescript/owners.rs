@@ -901,7 +901,7 @@ fn mark_default_object_members(body: &[Statement<'_>], owners: &mut [TypeScriptO
     // or a self-import), which no test-file fact can see. Each marked owner
     // carries the siblings that might do so; a test that calls any of them
     // gets no rule-5 credit for the owner (#13694 review).
-    let Some(unsafe_names) = unsafe_top_level_names(body) else {
+    let Some(unsafe_names) = unsafe_top_level_names(body, &members) else {
         return;
     };
     for owner in owners.iter_mut() {
@@ -931,9 +931,15 @@ fn mark_default_object_members(body: &[Statement<'_>], owners: &mut [TypeScriptO
 /// `arguments` or `define`, a reference to a binding imported from a
 /// relative source (possibly the module itself), or a reference to another
 /// unsafe top-level name (fixpoint). References are matched by name, so a
-/// shadowing local only over-approximates. `None` when a top-level name is
+/// shadowing local only over-approximates. A member that is not a top-level
+/// declaration of this module (an import, whose body this pass cannot see)
+/// and a name that is assigned anywhere in the module (`extend = function ()
+/// { this.merge = stub }`) are unsafe too. `None` when a top-level name is
 /// declared more than once, since the object could then hold either.
-fn unsafe_top_level_names(body: &[Statement<'_>]) -> Option<std::collections::HashSet<String>> {
+fn unsafe_top_level_names(
+    body: &[Statement<'_>],
+    members: &std::collections::HashSet<&str>,
+) -> Option<std::collections::HashSet<String>> {
     use oxc_ast::ast::{
         Declaration, IdentifierReference, ImportDeclarationSpecifier, ImportExpression,
         MetaProperty, ThisExpression,
@@ -974,6 +980,27 @@ fn unsafe_top_level_names(body: &[Statement<'_>]) -> Option<std::collections::Ha
             }
             self.references.insert(identifier.name.as_str().to_string());
         }
+    }
+    #[derive(Default)]
+    struct Assigned {
+        names: HashSet<String>,
+    }
+    impl<'a> Visit<'a> for Assigned {
+        fn visit_simple_assignment_target(
+            &mut self,
+            target: &oxc_ast::ast::SimpleAssignmentTarget<'a>,
+        ) {
+            if let oxc_ast::ast::SimpleAssignmentTarget::AssignmentTargetIdentifier(identifier) =
+                target
+            {
+                self.names.insert(identifier.name.as_str().to_string());
+            }
+            oxc_ast_visit::walk::walk_simple_assignment_target(self, target);
+        }
+    }
+    let mut assigned = Assigned::default();
+    for stmt in body {
+        assigned.visit_statement(stmt);
     }
     let mut relative_imports: HashSet<String> = HashSet::new();
     let mut declared: HashMap<String, Scan> = HashMap::new();
@@ -1047,6 +1074,13 @@ fn unsafe_top_level_names(body: &[Statement<'_>]) -> Option<std::collections::Ha
         })
         .map(|(name, _)| name.clone())
         .collect();
+    unsafe_names.extend(assigned.names);
+    unsafe_names.extend(
+        members
+            .iter()
+            .filter(|member| !declared.contains_key(**member))
+            .map(|member| (*member).to_string()),
+    );
     loop {
         let before = unsafe_names.len();
         for (name, scan) in &declared {

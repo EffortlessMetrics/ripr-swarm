@@ -976,7 +976,9 @@ reference to `require`, `module`, `exports`, `globalThis`, `global`,
 `window`, `self`, `eval`, `Function`, `arguments` or `define`, a reference
 to a binding imported from a relative source, or a reference to another
 unsafe top-level name (fixpoint; references match by name, so shadowing only
-over-approximates). A test file that calls any unsafe sibling of the owner
+over-approximates). A member that is not a top-level declaration of the
+module (an import, whose body is not scanned) and a name assigned anywhere in
+the module are unsafe as well. A test file that calls any unsafe sibling of the owner
 through `local` gets no rule-5 relation for that owner; a test that never
 calls one keeps it. When the owner has any unsafe sibling, a second binding of
 the owner's module in the test file (another default local, a named or
