@@ -357,7 +357,7 @@ fn refuse_overlapping_outputs(guidance_out: &Path, gate: &GateOptions) -> Result
     )?;
     if output::path::same_output_leaf(&guidance, &guidance_md) {
         return Err(
-            "gate check --guidance-out must be a JSON path such as target/ripr/review/comments.json; review-comments writes its Markdown companion next to it with a .md extension"
+            "gate check --guidance-out names a Markdown path; pass a JSON path such as target/ripr/review/comments.json, because review-comments writes its .md companion next to it"
                 .to_string(),
         );
     }
@@ -386,7 +386,7 @@ fn ensure_guidance_parent_contained(path: &Path) -> Result<(), String> {
         return Ok(());
     }
     let cwd = std::env::current_dir()
-        .map_err(|err| format!("gate check cannot resolve the current directory: {err}"))?;
+        .map_err(|err| format!("gate check cannot resolve the current directory: {err}; run ripr from an existing, readable directory"))?;
     let Some(parent) = cwd.join(path).parent().map(Path::to_path_buf) else {
         return Ok(());
     };
@@ -401,10 +401,10 @@ fn ensure_guidance_parent_contained(path: &Path) -> Result<(), String> {
     }
     let canonical_cwd = cwd
         .canonicalize()
-        .map_err(|err| format!("gate check cannot resolve the current directory: {err}"))?;
+        .map_err(|err| format!("gate check cannot resolve the current directory: {err}; run ripr from an existing, readable directory"))?;
     let canonical_parent = existing.canonicalize().map_err(|err| {
         format!(
-            "gate check cannot resolve the --guidance-out directory {}: {err}",
+            "gate check cannot resolve the --guidance-out directory {}: {err}; pass a --guidance-out whose directory is readable",
             existing.display()
         )
     })?;
@@ -1552,7 +1552,7 @@ mod tests {
             "target/gc/guidance.md",
         ]));
         assert!(
-            matches!(&markdown, Err(message) if message.contains("must be a JSON path")),
+            matches!(&markdown, Err(message) if message.contains("names a Markdown path")),
             "a .md guidance path collides with its Markdown companion: {markdown:?}"
         );
         for (guidance, out) in [

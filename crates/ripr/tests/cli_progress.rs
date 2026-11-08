@@ -1398,6 +1398,7 @@ const NO_NARRATION: &[&str] = &[
     "first-action",
     "first-pr",
     "gate",
+    "gate check",
     "gate evaluate",
     "help",
     "impacted-evidence",
