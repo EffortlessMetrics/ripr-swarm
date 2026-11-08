@@ -1,0 +1,1 @@
+Added a hosted, read-only `Mutation Spot Check` workflow and a pinned corpus manifest (12 Rust crates) so the real-mutant spot check can be refreshed on a schedule without running third-party code locally (#12901).
