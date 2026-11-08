@@ -110,12 +110,12 @@
       "receipt": {
         "bash": "(cd -P -- <root> && ripr receipt write --gap gap:rust:pricing:discount:threshold-boundary --verify-command 'cargo xtask fixtures boundary_gap' --status not_run --out target/ripr/receipts/gap-pr-pricing-threshold-boundary.targeted-test-outcome.json)",
         "powershell": null,
-        "recovery": "PowerShell selected-root form is unavailable because generic shell text does not establish native exit-status semantics. In Git Bash or any POSIX shell, use the Bash form. In PowerShell, inspect the raw command in JSON, run it from the selected repository, and check its exit status before recording a receipt."
+        "recovery": "PowerShell selected-root form is unavailable because generic shell text does not establish native exit-status semantics. In Git Bash (not WSL) or a Unix shell, use the Bash form. In PowerShell, inspect the raw command in JSON, run it from the selected repository, and check its exit status before recording a receipt."
       },
       "verify": {
         "bash": "(cd -P -- <root> && cargo xtask fixtures boundary_gap)",
         "powershell": null,
-        "recovery": "PowerShell selected-root form is unavailable because generic shell text does not establish native exit-status semantics. In Git Bash or any POSIX shell, use the Bash form. In PowerShell, inspect the raw command in JSON, run it from the selected repository, and check its exit status before recording a receipt."
+        "recovery": "PowerShell selected-root form is unavailable because generic shell text does not establish native exit-status semantics. In Git Bash (not WSL) or a Unix shell, use the Bash form. In PowerShell, inspect the raw command in JSON, run it from the selected repository, and check its exit status before recording a receipt."
       }
     }
   },

@@ -620,7 +620,7 @@ fn rooted_command_forms(cwd: Option<&str>, command: &str) -> serde_json::Value {
     serde_json::json!({
         "bash": format!("(cd -P -- {root} && {command})"),
         "powershell": null,
-        "recovery": "PowerShell selected-root form is unavailable because generic shell text does not establish native exit-status semantics. In Git Bash or any POSIX shell, use the Bash form. In PowerShell, inspect the raw command in JSON, run it from the selected repository, and check its exit status before recording a receipt.",
+        "recovery": "PowerShell selected-root form is unavailable because generic shell text does not establish native exit-status semantics. In Git Bash (not WSL) or a Unix shell, use the Bash form. In PowerShell, inspect the raw command in JSON, run it from the selected repository, and check its exit status before recording a receipt.",
     })
 }
 
