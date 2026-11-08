@@ -5546,7 +5546,11 @@ fn inherent_receiver_call_resolves_with(
     // so a member-to-member same-named type is still a name-only match.
     if let Some(index) = index
         && !owner_local
-        && file_imports_name_from_external_crate(index, &test.file, impl_type)
+        && index
+            .call_identity_memos
+            .external_import(&test.file, impl_type, || {
+                file_imports_name_from_external_crate(index, &test.file, impl_type)
+            })
     {
         return false;
     }
