@@ -1052,9 +1052,29 @@ object holds the top-level function (or `const` arrow function; a `let` or
 its own name (`{ name }` or
 `{ name: name }`). The object must be made only of such plain entries; a
 spread, computed key, method, getter, renamed entry or duplicate key leaves
-every owner unmarked. The test file must use `local` for nothing but calls of
-that one member, anywhere in the file (setup hooks and file-level code
-included), so an alias (`const m = local.name`), a reassignment, `Object.assign`
+every owner unmarked, and so does a top-level name declared more than once.
+A sibling member called as `local.other()` could replace the owner before
+the asserted call (#13694 review), so each owner records the siblings whose
+declaration is unsafe: it contains `this`, `import(...)`, `import.meta`, a
+reference to `require`, `module`, `exports`, `globalThis`, `global`,
+`window`, `self`, `eval`, `Function`, `arguments` or `define`, a reference
+to any imported binding (relative or package), or a reference to another
+unsafe top-level name (fixpoint; references match by name, so shadowing only
+over-approximates). A member that is not a top-level declaration of the
+module (an import, whose body is not scanned) and a name assigned anywhere in
+the module are unsafe as well. A module with an `import x = require(...)`, a
+namespace, or another top-level statement that escapes or hoists a `var`
+marks no owner; bodiless overload signatures are not second declarations.
+A test file that calls any unsafe sibling of the owner
+through `local` gets no rule-5 relation for that owner; a test that never
+calls one keeps it. When the owner has any unsafe sibling, a second binding of
+the owner's module in the test file (another default local, a named or
+namespace import, a `require()`) also withholds the relation, since it could
+reach the sibling outside `local.member(` calls (#13750 tracks bindings the
+import resolver cannot match). The test file must use `local` for nothing but direct
+calls `local.member(` (any number of distinct members, each credited only to
+the owner it names; amended #6653), anywhere in the file (setup hooks and
+file-level code included), so an alias (`const m = local.name`), a reassignment, `Object.assign`
 or a body-local rebinding of `local` all refuse the relation. The relation is
 `imported_owner_call` and the observation guard reads `local.name(...)` as a
 call of the owner, as it does for a namespace import.

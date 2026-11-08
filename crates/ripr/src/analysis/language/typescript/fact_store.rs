@@ -340,6 +340,14 @@ impl TypeScriptFileFactStore {
         }
     }
 
+    /// True when an envelope file for `key` exists, so a [`Self::load`] could
+    /// serve it. Existence only: the load still validates identity and
+    /// integrity. The parallel lookahead skips such files, leaving them to the
+    /// loop's own lookup.
+    pub(crate) fn entry_exists(&self, key: &TypeScriptFileFactKey) -> bool {
+        self.dir.join(key.filename()).exists()
+    }
+
     /// True when a schema- and analyzer-matching entry for `normalized_file`
     /// existed when the run began. The snapshot is header-only and taken
     /// once; entries written during this run are deliberately not observed.
