@@ -144,11 +144,13 @@ full summary counts, never from the displayed subset:
 
 - `verify=complete|outcome=O|findings=N|exposed=N` means the outcome is
   `complete_no_findings` or `complete_with_findings`, the full
-  `findings` and `exposed` counts are equal, and no saved-worktree, partial
-  or no-scope condition applies.
+  `findings` and `exposed` counts are equal, and no unanalyzed working tree,
+  untracked or gitignored source excluded from the diff, partial or no-scope
+  condition applies.
 - `verify=refused|...|reason=R,...` names every unmet condition
   (`outcome_missing`, `no_behavior_in_scope`, `analysis_incomplete`,
-  `gaps_remain`, `unanalyzed_working_tree`, `partial_scope`, `no_scope`).
+  `gaps_remain`, `unanalyzed_working_tree`, `untracked_source_excluded`,
+  `ignored_source_excluded`, `partial_scope`, `no_scope`).
   `no_scope`, `no_changed_lines` and `no_behavioral_candidates` are complete
   analyses of an empty scope; they do not establish completion of the
   requested behavior review.

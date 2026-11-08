@@ -17,7 +17,10 @@ enough to establish that the input was fully analyzable.
 The generated agent loop uses bounded Agent output to discover a gap, then a
 single post-edit Agent-format check for both verification and completion.
 Its final `verify=` line (#13516) projects the complete outcome, analysis
-completeness, full summary counts and worktree/partial/no-scope disclosures;
+completeness, full summary counts and worktree/partial/no-scope disclosures,
+including untracked or gitignored routed source excluded from the diff
+(`untracked_source_excluded`, `ignored_source_excluded`), from one app-owned
+verdict (`CheckOutput::verification`);
 full JSON is an explicit drilldown. The report must describe the same root,
 base and saved source; changed inputs require a fresh check. The consumer
 requires `verify=complete` before claiming done. An empty findings list alone is not completion evidence.

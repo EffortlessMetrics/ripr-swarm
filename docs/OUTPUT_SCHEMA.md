@@ -994,12 +994,19 @@ verify=complete|outcome=O|findings=N|exposed=N
   `verify=complete|outcome=O|findings=N|exposed=N` or
   `verify=refused|outcome=O|findings=N|exposed=N|reason=R,...`. It is projected
   from the producer's `analysis_outcome` and the full `summary` counts, not the
-  displayed or triaged subset. `complete` requires outcome
+  displayed or triaged subset. Its `findings`/`exposed` equal the header's
+  `findings=`/`exposed=` except under `--suppression-policy`: the header
+  omits suppressed findings, while `summary.findings` keeps them and
+  `summary.exposed` drops suppressed exposed ones, so a suppressed finding
+  never reads as a closed gap. `complete` requires outcome
   `complete_no_findings` or `complete_with_findings`, `findings` equal to
-  `exposed`, and no unanalyzed working tree, partial scope or missing scope;
-  `outcome=missing` refuses. Reasons: `outcome_missing`, `no_behavior_in_scope`,
-  `analysis_incomplete`, `gaps_remain`, `unanalyzed_working_tree`,
-  `partial_scope`, `no_scope`. It is independent of `done=`, is static
+  `exposed`, no unanalyzed working tree, no untracked or gitignored routed
+  source excluded from the diff (`untracked_working_tree_source_paths` /
+  `ignored_working_tree_source_paths` empty), no partial scope and no missing
+  scope; `outcome=missing` refuses. Reasons: `outcome_missing`,
+  `no_behavior_in_scope`, `analysis_incomplete`, `gaps_remain`,
+  `unanalyzed_working_tree`, `untracked_source_excluded`,
+  `ignored_source_excluded`, `partial_scope`, `no_scope`. It is independent of `done=`, is static
   evidence only, and does not replace running the tests.
 - Line 1 is always the header: `base` is `-` when no base applies, `gaps` counts
   every test-side gap (candidate-current, `weakly_exposed` or
