@@ -4,7 +4,7 @@
   "mode": "fast",
   "root": "fixtures/python_parametrize_collection_error/input",
   "config_path": "<cwd>/fixtures/python_parametrize_collection_error/input/ripr.toml",
-  "summary": {"changed_rust_files":0,"probes":1,"findings":1,"exposed":0,"weakly_exposed":0,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":1,"changed_files_by_language":[{"language":"python","files":1}]},
+  "summary": {"changed_rust_files":0,"probes":1,"findings":1,"exposed":0,"weakly_exposed":1,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"python","files":1}]},
   "analysis_outcome": {
     "analysis_complete": true,
     "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":"fnv1a64:22d926b58d6300e8","base_revision":null,"input_identity":"sha256:a3e080a7359fc1417e4e822c4eeb63c0c8f13bc42813e94bc4563c95da56db57","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":1,"finding_count":1},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
@@ -12,15 +12,27 @@
   "findings": [
     {
       "id": "probe:discount.py:python_preview:5ee0ee5a",
-      "classification": "static_unknown",
-      "severity": "note",
-      "confidence": 0.20,
+      "canonical_gap_id": "gap:python:discount.py:bulk_discount:predicate_boundary:predicate:quantity>100",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:python:discount.py:bulk_discount:predicate_boundary:predicate:quantity>100",
+        "language": "python",
+        "file": "discount.py",
+        "owner": "bulk_discount",
+        "behavior_kind": "predicate_boundary",
+        "probe_kind": "predicate",
+        "normalized_discriminator": "quantity>100"
+
+      },
+      "classification": "weakly_exposed",
+      "severity": "warning",
+      "confidence": 0.40,
       "confidence_basis": [
         {"code": "preview_stages_not_modeled", "summary": "preview adapter: infection/propagation not modeled (Python)"},
         {"code": "syntax_first_no_type_resolution", "summary": "syntax-first, no type or import resolution"},
-        {"code": "discriminator_not_established", "summary": "whether a test checks this behavior is not established"}
+        {"code": "no_related_test", "summary": "no related test reaches the changed owner"}
       ],
-      "confidence_why_capped": "Why capped: preview adapter: infection/propagation not modeled (Python); syntax-first, no type or import resolution; whether a test checks this behavior is not established. Preview score, not on the same scale as Rust confidence.",
+      "confidence_why_capped": "Why capped: preview adapter: infection/propagation not modeled (Python); syntax-first, no type or import resolution; no related test reaches the changed owner. Preview score, not on the same scale as Rust confidence.",
       "probe": {
         "id": "probe:discount.py:python_preview:5ee0ee5a",
         "family": "predicate",
@@ -32,16 +44,17 @@
        },
       "ripr": {
         "reach": {"state":"weak","confidence":"low","summary":"1 heuristic Python test link(s) found for owner `bulk_discount`; relation is uncertain"},
-        "infect": {"state":"unknown","confidence":"low","summary":"Static limit `decorator_indirection` prevents a safe Python infection claim."},
-        "propagate": {"state":"unknown","confidence":"low","summary":"Static limit `decorator_indirection` prevents a safe Python propagation claim."},
+        "infect": {"state":"yes","confidence":"low","summary":"Changed Python predicate can alter branch selection: `if quantity > 100:`"},
+        "propagate": {"state":"weak","confidence":"low","summary":"Changed Python control flow can propagate by selecting a different branch; preview evidence does not prove the concrete downstream sink."},
         "observe": {"state":"weak","confidence":"low","summary":"Strongest extracted Python oracle kind: `unknown` (rank 1)"},
-        "discriminate": {"state":"unknown","confidence":"low","summary":"Static limit `decorator_indirection` prevents a safe Python discriminator claim."}
+        "discriminate": {"state":"weak","confidence":"low","summary":"Python preview adapter found no strong discriminator; typed repair guidance is unavailable for this shape."}
        },
-      "evidence_path": ["reach weak: 1 heuristic Python test link(s) found for owner `bulk_discount`; relation is uncertain", "infection unknown: Static limit `decorator_indirection` prevents a safe Python infection claim.", "propagation unknown: Static limit `decorator_indirection` prevents a safe Python propagation claim.", "observation weak: Strongest extracted Python oracle kind: `unknown` (rank 1)", "discriminator unknown: Static limit `decorator_indirection` prevents a safe Python discriminator claim.", "related test tests/test_discount.py:8 test_bulk_discount uses no oracle"],
+      "evidence_path": ["reach weak: 1 heuristic Python test link(s) found for owner `bulk_discount`; relation is uncertain", "infection yes: Changed Python predicate can alter branch selection: `if quantity > 100:`", "propagation weak: Changed Python control flow can propagate by selecting a different branch; preview evidence does not prove the concrete downstream sink.", "observation weak: Strongest extracted Python oracle kind: `unknown` (rank 1)", "discriminator weak: Python preview adapter found no strong discriminator; typed repair guidance is unavailable for this shape.", "local flow reaches unknown sink: if quantity > 100: (line 2)", "related test tests/test_discount.py:8 test_bulk_discount uses no oracle"],
       "flow_sinks": [
+        {"kind":"unknown","text":"if quantity > 100:","line":2}
       ],
-      "evidence": ["owner: bulk_discount", "owner_kind: function", "static_limit decorator_indirection: test activation for `test_bulk_discount` is controlled by `pytest.mark.parametrize(collection error)`", "test_framework: pytest (test_bulk_discount)", "test_fixtures: q, quantity, rate (test_bulk_discount)", "test_parametrized: pytest (test_bulk_discount)", "test_verify_command: python -m pytest tests/test_discount.py::test_bulk_discount (test_bulk_discount)", "related_test_relation: test_activation_unestablished (test_bulk_discount)", "related_test_uncertain: test_activation_unestablished (test_bulk_discount)"],
-      "missing": ["Static limit `decorator_indirection`: related test `test_bulk_discount` uses `pytest.mark.parametrize(collection error)`; static evidence does not establish that its body runs and an assertion failure fails verification. Add an independent active test or inspect the activation condition."],
+      "evidence": ["owner: bulk_discount", "owner_kind: function", "test_framework: pytest (test_bulk_discount)", "test_fixtures: q, quantity, rate (test_bulk_discount)", "test_parametrized: pytest (test_bulk_discount)", "test_verify_command: python -m pytest tests/test_discount.py::test_bulk_discount (test_bulk_discount)", "related_test_relation: test_activation_unestablished (test_bulk_discount)", "related_test_uncertain: test_activation_unestablished (test_bulk_discount)", "related_test_never_runs: `pytest.mark.parametrize(collection error)` (test_bulk_discount)"],
+      "missing": ["Related test `test_bulk_discount` never runs (`pytest.mark.parametrize(collection error)`), so no test can notice this change to `bulk_discount`; remove the control or add an active pytest or unittest test with an exact-value assertion."],
       "assertion_texts": {
       },
       "activation": {
@@ -65,7 +78,7 @@
           "oracle": ""
         }
       ],
-      "stop_reasons": ["static_probe_unknown"],
+      "stop_reasons": [],
       "oracle_kind": "unknown",
       "oracle_strength": "unknown",
       "recommended_next_step": "",
@@ -73,7 +86,6 @@
       "language": "python",
       "language_status": "preview",
       "owner_kind": "function",
-      "static_limit_kind": "decorator_indirection",
       "changed_sink": "quantity",
       "oracle_alignment": "unknown",
       "alignment_reason": "no_strong_oracle",
