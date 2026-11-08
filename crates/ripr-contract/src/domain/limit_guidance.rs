@@ -17,7 +17,7 @@ impl StaticLimitKind {
     /// Every kind, so tests can walk the vocabulary. The ordinal test keeps
     /// this list in step with the enum.
     #[cfg(test)]
-    pub const ALL: [StaticLimitKind; 35] = [
+    pub const ALL: [StaticLimitKind; 36] = [
         StaticLimitKind::DynamicDispatch,
         StaticLimitKind::Metaprogramming,
         StaticLimitKind::MissingImportGraph,
@@ -53,6 +53,7 @@ impl StaticLimitKind {
         StaticLimitKind::RustInherentReceiverUnestablished,
         StaticLimitKind::TypescriptWorkspaceDiscoveryTruncated,
         StaticLimitKind::TypescriptWorkspaceReadLimited,
+        StaticLimitKind::RustFutureNeverPolled,
     ];
 
     /// What to do so ripr can settle this limitation. One imperative
@@ -207,6 +208,11 @@ impl StaticLimitKind {
             StaticLimitKind::TypescriptWorkspaceReadLimited => {
                 "Run ripr from a narrower root, or raise RIPR_TS_MAX_FILE_READ_BYTES and/or \
                  RIPR_TS_MAX_WORKSPACE_READ_BYTES to read the refused sources, then check again."
+            }
+            StaticLimitKind::RustFutureNeverPolled => {
+                "Await the changed `async fn` in an async test (for example `#[tokio::test]`), or \
+                 drive its future with an executor, and assert on its result; ripr does not \
+                 choose a runtime for you."
             }
         }
     }
@@ -374,9 +380,10 @@ mod tests {
                 StaticLimitKind::RustInherentReceiverUnestablished => 32,
                 StaticLimitKind::TypescriptWorkspaceDiscoveryTruncated => 33,
                 StaticLimitKind::TypescriptWorkspaceReadLimited => 34,
+                StaticLimitKind::RustFutureNeverPolled => 35,
             }
         }
-        const COUNT: usize = 35;
+        const COUNT: usize = 36;
         assert_eq!(StaticLimitKind::ALL.len(), COUNT);
         let ordinals: Vec<usize> = StaticLimitKind::ALL.iter().copied().map(ordinal).collect();
         assert_eq!(
