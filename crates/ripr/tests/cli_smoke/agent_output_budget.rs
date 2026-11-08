@@ -55,7 +55,10 @@ fn run(project: &Path, args: &[&str]) -> TestResult<String> {
         "{args:?}: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    Ok(String::from_utf8(output.stdout)?)
+    // Measure with the absolute root replaced by a fixed token, so the
+    // budget does not depend on how long the checkout path is.
+    let root = project.to_string_lossy().into_owned();
+    Ok(String::from_utf8(output.stdout)?.replace(&root, "<root>"))
 }
 
 fn within(label: &str, text: &str, ceiling: usize) {
