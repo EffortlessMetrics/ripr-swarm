@@ -1,0 +1,8 @@
+[[extend]]
+id = "RIPR-SPEC-0067"
+tests = [
+  "xtask/src/verification_contracts.rs::tests::schema_valued_additional_properties_validate_undeclared_fields",
+  "xtask/src/verification_contracts.rs::tests::boolean_schemas_validate_direct_and_composed_values",
+  "xtask/src/verification_contracts.rs::tests::boolean_schema_entry_keeps_work_and_depth_charging",
+]
+code = ["xtask/src/verification_contracts.rs"]

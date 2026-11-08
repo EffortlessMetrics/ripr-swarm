@@ -44,7 +44,8 @@ ripr check \
 
 ripr classifies the change **below `exposed`**. The receiver-qualified-only
 relation is `weak_token_substring`, not `direct_owner_call`: the name-only
-match keeps reach `weak` and the finding `weakly_exposed`.
+match gives no direct call, and nothing else can reach the free function
+unseen, so reach is `no` and the finding `no_static_path` (#13080).
 
 **This fixture must NEVER read `exposed`.** Before the free-function
 receiver gate it read `exposed` — a silent over-credit: a test that only
