@@ -403,6 +403,38 @@ pub(crate) fn parse_mutmut_dump(
     ))
 }
 
+/// Record the pytest arguments a repo's mutmut run used. Each
+/// `--deselect`/`--ignore` target (either `--flag=value` or `--flag value`)
+/// lands in `excluded_tests`, and any `-k`/`-m` selection also marks the
+/// suite reduced, because a left-out test cannot kill a mutant.
+pub(crate) fn record_test_args(tool: &mut Value, test_args: &str) {
+    let mut excluded = Vec::new();
+    let mut selects = false;
+    let mut words = test_args.split_whitespace().peekable();
+    while let Some(word) = words.next() {
+        if let Some((flag, value)) = word.split_once('=')
+            && matches!(flag, "--deselect" | "--ignore" | "--ignore-glob")
+        {
+            excluded.push(value.to_string());
+        } else if matches!(word, "--deselect" | "--ignore" | "--ignore-glob") {
+            if let Some(value) = words.next() {
+                excluded.push(value.to_string());
+            }
+        } else if matches!(word, "-k" | "-m") || word.starts_with("-k=") || word.starts_with("-m=")
+        {
+            selects = true;
+        }
+    }
+    if let Some(fields) = tool.as_object_mut() {
+        fields.insert("test_args".into(), json!(test_args));
+        fields.insert(
+            "reduced_suite".into(),
+            json!(selects || !excluded.is_empty()),
+        );
+        fields.insert("excluded_tests".into(), json!(excluded));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::synthetic_diff::synthesize_edit;
@@ -447,6 +479,29 @@ mod tests {
         format!("# m.x: survived\n--- src/m.py\n+++ src/m.py\n@@ -1,4 +1,4 @@\n{body}") // ripr-allow: static-language: mutmut status name
     }
 
+    #[test]
+    fn test_args_record_left_out_tests_and_mark_the_suite_reduced() {
+        let mut tool = json!({"name": "mutmut"});
+        record_test_args(
+            &mut tool,
+            "-p no:cacheprovider -o addopts= --deselect=tests/a.py::t1 --deselect tests/a.py::t2 --ignore=tests/b.py",
+        );
+        assert_eq!(tool["reduced_suite"], true);
+        assert_eq!(
+            tool["excluded_tests"],
+            json!(["tests/a.py::t1", "tests/a.py::t2", "tests/b.py"])
+        );
+        assert_eq!(tool["name"], "mutmut");
+
+        let mut full = json!({});
+        record_test_args(&mut full, "-p no:cacheprovider -o addopts=");
+        assert_eq!(full["reduced_suite"], false);
+        assert_eq!(full["excluded_tests"], json!([]));
+
+        let mut keyword = json!({});
+        record_test_args(&mut keyword, "-k not_slow");
+        assert_eq!(keyword["reduced_suite"], true);
+    }
     #[test]
     fn locates_a_top_level_function_mutant_by_its_text() -> Result<(), String> {
         let dump = record(

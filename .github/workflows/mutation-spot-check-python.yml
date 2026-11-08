@@ -59,7 +59,7 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
-          toolchain: stable
+          toolchain: 1.95.0
 
       - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
@@ -145,7 +145,7 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
-          toolchain: stable
+          toolchain: 1.95.0
 
       - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
@@ -162,7 +162,7 @@ jobs:
           status="$reports/python-mutmut-status.tsv"
           mkdir -p "$RUNNER_TEMP/corpus" "$reports"
           : > "$status"
-          python -m pip install --disable-pip-version-check "mutmut==$(jq -r .mutmut.version "$corpus")" pytest
+          python -m pip install --disable-pip-version-check "mutmut==$(jq -r .mutmut.version "$corpus")" "pytest==$(jq -r .pytest.version "$corpus")"
           for name in $(jq -r '.packages[].name' "$corpus"); do
             if [ -n "$PACKAGES" ] && ! [[ ",$PACKAGES," == *",$name,"* ]]; then continue; fi
             pkg() { jq -r --arg n "$name" ".packages[]|select(.name==\$n).$1" "$corpus"; }
@@ -193,6 +193,7 @@ jobs:
         run: |
           set -uo pipefail
           reports="$GITHUB_WORKSPACE/target/ripr/reports"
+          corpus=benchmarks/mutation_spot_check/corpus-python-mutmut.json
           : > "$RUNNER_TEMP/xtask-args"
           while IFS=$'\t' read -r name rc dir module; do
             [ "$rc" = 0 ] || continue
@@ -209,7 +210,9 @@ jobs:
             [ "$listed" -gt 0 ] && [ "$listed" -eq "$dumped" ] || printf '%s\t%s listed, %s dumped\n' "$name" "$listed" "$dumped" >> "$reports/python-mutmut-dump-check.tsv"
             # Leave the checkout as pinned, so ripr reads the real tree.
             (cd "$dir" && rm -rf mutants && git checkout -q -- . && git clean -fdqx)
-            [ -s "$dump" ] && printf -- '--repo %s=%s --mutmut-dump %s=%s ' "$name" "$dir" "$name" "$dump" >> "$RUNNER_TEMP/xtask-args"
+            # One argument per line: the pytest arguments carry spaces.
+            [ -s "$dump" ] && printf -- '%s\n' --repo "$name=$dir" --mutmut-dump "$name=$dump" --mutmut-test-args \
+              "$name=$(jq -r --arg n "$name" '.packages[]|select(.name==$n).pytest_args' "$corpus")" >> "$RUNNER_TEMP/xtask-args"
           done < "$reports/python-mutmut-status.tsv"
           [ -s "$RUNNER_TEMP/xtask-args" ] || { echo "no mutmut dump was produced"; exit 1; }
 
@@ -218,7 +221,9 @@ jobs:
         # the final step turns a missing receipt into a red job.
         continue-on-error: true
         shell: bash
-        run: cargo xtask mutation-spot-check --mutmut-version "$(jq -r .mutmut.version benchmarks/mutation_spot_check/corpus-python-mutmut.json)" $(cat "$RUNNER_TEMP/xtask-args")
+        run: |
+          mapfile -t args < "$RUNNER_TEMP/xtask-args"
+          cargo xtask mutation-spot-check --mutmut-version "$(jq -r .mutmut.version benchmarks/mutation_spot_check/corpus-python-mutmut.json)" "${args[@]}"
 
       - name: Upload the spot-check receipt, dumps and per-package status
         if: always()

@@ -136,7 +136,7 @@ const REDERIVE_USAGE: &str =
 const USAGE: &str = "usage: cargo xtask mutation-spot-check --repo <name>=<checkout> [--repo ...] [--mutants-out <name>=<mutants.out dir>] [--run-mutants] [--mutants-arg <name>=<arg>] [--jobs <n>] [--mutant-timeout-secs <n>] [--examples <n>] [--ripr <binary>]
   TypeScript (real Stryker outcomes, synthetic-diff verdict join): --repo <name>=<checkout> --stryker-report <name>=<mutation.json> [--max-mutants <n>]
   Python (real cosmic-ray outcomes, same join): --repo <name>=<checkout> --cosmic-ray-dump <name>=<cosmic-ray dump output> [--cosmic-ray-version <v>] [--max-mutants <n>]
-  Python (real mutmut outcomes, same join): --repo <name>=<checkout> --mutmut-dump <name>=<mutmut show JSONL> [--mutmut-version <v>] [--max-mutants <n>]
+  Python (real mutmut outcomes, same join): --repo <name>=<checkout> --mutmut-dump <name>=<mutmut show JSONL> [--mutmut-version <v>] [--mutmut-test-args <name>=<pytest args>] [--max-mutants <n>]
   One run scores one synthetic-diff language and tool; do not mix --stryker-report, --cosmic-ray-dump and --mutmut-dump.";
 
 fn harness_owned_mutants_arg(arg: &str) -> bool {
@@ -219,10 +219,13 @@ pub(crate) fn mutation_spot_check(args: &[String]) -> Result<(), String> {
                 let relative = synthetic_diff::checkout_relative(path)?;
                 fs::read_to_string(checkout.join(relative)).ok()
             };
-            let parsed =
+            let (sources, mut tool) =
                 mutmut::parse_mutmut_dump(&dump, &read_source, options.mutmut_version.as_deref())
                     .map_err(|err| format!("`{name}`: {err}"))?;
-            Some((synthetic_diff::PYTHON, parsed))
+            if let Some(test_args) = options.mutmut_test_args.get(name) {
+                mutmut::record_test_args(&mut tool, test_args);
+            }
+            Some((synthetic_diff::PYTHON, (sources, tool)))
         } else {
             None
         };
@@ -301,6 +304,9 @@ struct Options {
     mutmut_dumps: BTreeMap<String, PathBuf>,
     /// The mutmut version that produced the dumps; a dump does not say.
     mutmut_version: Option<String>,
+    /// The pytest arguments each mutmut repo ran under, recorded verbatim so
+    /// a suite reduced by `--deselect` or `--ignore` is visible in the receipt.
+    mutmut_test_args: BTreeMap<String, String>,
     max_mutants: usize,
     run_mutants: bool,
     jobs: usize,
@@ -319,6 +325,7 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
         cosmic_ray_version: None,
         mutmut_dumps: BTreeMap::new(),
         mutmut_version: None,
+        mutmut_test_args: BTreeMap::new(),
         max_mutants: synthetic_diff::DEFAULT_MAX_MUTANTS,
         run_mutants: false,
         jobs: DEFAULT_JOBS,
@@ -386,6 +393,25 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
             "--mutmut-version" => {
                 index += 1;
                 options.mutmut_version = Some(required_arg(args, index, flag)?.to_string());
+            }
+            "--mutmut-test-args" => {
+                index += 1;
+                let value = required_arg(args, index, flag)?;
+                let Some((name, test_args)) = value
+                    .split_once('=')
+                    .filter(|(name, _)| is_repo_name(name.trim()))
+                else {
+                    return Err(format!(
+                        "--mutmut-test-args expects <name>=<pytest arguments>, got `{value}`"
+                    ));
+                };
+                if options
+                    .mutmut_test_args
+                    .insert(name.trim().to_string(), test_args.trim().to_string())
+                    .is_some()
+                {
+                    return Err(format!("duplicate --mutmut-test-args name `{name}`"));
+                }
             }
             "--max-mutants" | "--stryker-max-mutants" => {
                 index += 1;
@@ -460,6 +486,13 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
         if options.mutants_out.contains_key(name) || options.mutants_args.contains_key(name) {
             return Err(format!(
                 "`{name}` is scored from a mutmut dump, so --mutants-out and --mutants-arg do not apply to it"
+            ));
+        }
+    }
+    for name in options.mutmut_test_args.keys() {
+        if !options.mutmut_dumps.contains_key(name) {
+            return Err(format!(
+                "--mutmut-test-args `{name}` names no --mutmut-dump"
             ));
         }
     }
@@ -1367,7 +1400,9 @@ fn build_report(all_repos: &[RepoRun], examples: usize, analyzer: &str) -> Value
             &json!(outcome_table(&repo.records)),
         );
     }
-    let recall = recall_of_missed(&by_disposition_value, &language_outcomes);
+    let mut recall = recall_of_missed(&by_disposition_value, &language_outcomes);
+    let repo_entries = all_repos.iter().map(repo_entry).collect::<Vec<_>>();
+    annotate_reduced_suites(&mut recall, &repo_entries);
     let coverage = seam_coverage(&by_disposition_value);
     let families = Value::Object(families);
     let replacement = replacement_criterion(Some(&families), &recall, &coverage, None);
@@ -1376,7 +1411,7 @@ fn build_report(all_repos: &[RepoRun], examples: usize, analyzer: &str) -> Value
         "status": "advisory",
         "analyzer_version": analyzer,
         "claim_boundary": "Agreement is scored only on canonical_precise records: a BinaryOperator or UnaryOperator mutant that ripr calibrate joined by seam_id or by unique span containment to a predicate_boundary or return_value seam, with a caught or missed outcome. File/line fallback joins, span-overlap ties, unmatched records, and unsupported genres, seam kinds or outcomes are counted as exclusions and never scored. Claims are limited to the recorded checkout revisions, cargo-mutants versions, and this join rule; this is not a suite adequacy measure.",
-        "repos": all_repos.iter().map(repo_entry).collect::<Vec<_>>(),
+        "repos": repo_entries,
         "outcomes_by_disposition_and_grip_class": by_disposition,
         "scored_families": families,
         "recall_of_missed": recall,
@@ -1763,6 +1798,50 @@ fn recall_counts(outcomes: &Value) -> serde_json::Map<String, Value> {
     out
 }
 
+/// Names, per language figure, the repos whose mutation tool ran a reduced
+/// test suite (`mutation_tool.reduced_suite`). A test left out of the run
+/// cannot kill a mutant, so some of that repo's `missed` outcomes may be
+/// caught by the full suite: the figure is then computed under a reduced
+/// suite and says so instead of presenting those outcomes as ground truth.
+fn annotate_reduced_suites(recall: &mut Value, repos: &[Value]) {
+    let mut reduced: BTreeMap<String, Vec<Value>> = BTreeMap::new();
+    for repo in repos {
+        let tool = repo.get("mutation_tool");
+        if tool.and_then(|tool| tool.get("reduced_suite")) != Some(&Value::Bool(true)) {
+            continue;
+        }
+        let (Some(language), Some(name)) = (
+            repo.get("language").and_then(Value::as_str),
+            repo.get("name").and_then(Value::as_str),
+        ) else {
+            continue;
+        };
+        reduced
+            .entry(language.to_string())
+            .or_default()
+            .push(json!({
+                "repo": name,
+                "excluded_tests": tool
+                    .and_then(|tool| tool.get("excluded_tests"))
+                    .cloned()
+                    .unwrap_or_else(|| json!([])),
+            }));
+    }
+    for (language, repos) in reduced {
+        if let Some(row) = recall
+            .get_mut("by_language")
+            .and_then(|languages| languages.get_mut(&language))
+            .and_then(Value::as_object_mut)
+        {
+            row.insert("reduced_suite_repos".into(), json!(repos));
+            row.insert(
+                "reduced_suite_note".into(),
+                json!("these repos ran with tests deselected or ignored, so a mutant only those tests kill reads as missed; the figure is computed under that reduced suite"),
+            );
+        }
+    }
+}
+
 /// Among runtime-missed mutants across every disposition, how many ripr's grip
 /// class flagged. Two figures, never merged: the strict ungripped share and the
 /// flagged-or-unknown share. `by_language` carries the same counts per language
@@ -1880,7 +1959,10 @@ fn rederive_summaries(path: &Path) -> Result<(), String> {
             )
         })?;
     let language_outcomes = recorded_language_outcomes(&mut report, &outcomes, path)?;
-    let recall = recall_of_missed(&outcomes, &language_outcomes);
+    let mut recall = recall_of_missed(&outcomes, &language_outcomes);
+    if let Some(repos) = report.get("repos").and_then(Value::as_array) {
+        annotate_reduced_suites(&mut recall, repos);
+    }
     let coverage = seam_coverage(&outcomes);
     report["replacement_criterion"] = replacement_criterion(
         report.get("scored_families"),
@@ -2294,6 +2376,22 @@ fn derived_summaries_markdown(report: &Value) -> String {
                     m("flagged_or_unknown_missed"),
                     p("flagged_or_unknown_share_of_missed"),
                 ));
+                let reduced = row
+                    .get("reduced_suite_repos")
+                    .and_then(Value::as_array)
+                    .map(|repos| {
+                        repos
+                            .iter()
+                            .filter_map(|repo| repo.get("repo").and_then(Value::as_str))
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+                if !reduced.is_empty() {
+                    out.push_str(&format!(
+                        "  Computed under a reduced suite for {}: a mutant only the left-out tests kill reads as missed.\n",
+                        reduced.join(", ")
+                    ));
+                }
             } else {
                 let reason = row.get("reason").and_then(Value::as_str).unwrap_or("");
                 out.push_str(&format!("- {language}: not established ({reason}).\n"));
@@ -2860,6 +2958,49 @@ mod tests {
             };
             assert!(err.contains(expected), "{err}");
         }
+        Ok(())
+    }
+
+    #[test]
+    fn mutmut_test_args_need_a_dump_and_flag_the_recall_figure() -> Result<(), String> {
+        let base = ["--repo", "t=/tmp/t", "--mutmut-dump", "t=/tmp/t.jsonl"];
+        let with = |extra: &[&str]| -> Vec<String> {
+            base.iter()
+                .chain(extra)
+                .map(|arg| arg.to_string())
+                .collect()
+        };
+        let options = parse_options(&with(&["--mutmut-test-args", "t=--deselect=tests/x.py::y"]))?;
+        assert_eq!(
+            options.mutmut_test_args.get("t").map(String::as_str),
+            Some("--deselect=tests/x.py::y")
+        );
+        let orphan = parse_options(&with(&["--mutmut-test-args", "u=-q"]))
+            .err()
+            .unwrap_or_default();
+        assert!(orphan.contains("names no --mutmut-dump"), "{orphan}");
+
+        let mut recall =
+            json!({"by_language": {"python": {"status": "established", "missed_total": 3}}});
+        let repos = vec![
+            json!({"name": "t", "language": "python", "mutation_tool": {"reduced_suite": true, "excluded_tests": ["tests/x.py::y"]}}),
+            json!({"name": "full", "language": "python", "mutation_tool": {"reduced_suite": false}}),
+        ];
+        annotate_reduced_suites(&mut recall, &repos);
+        let row = &recall["by_language"]["python"];
+        assert_eq!(
+            row["reduced_suite_repos"],
+            json!([{"repo": "t", "excluded_tests": ["tests/x.py::y"]}])
+        );
+        assert!(row["reduced_suite_note"].is_string());
+
+        let mut untouched = json!({"by_language": {"python": {"status": "established"}}});
+        annotate_reduced_suites(&mut untouched, &repos[1..]);
+        assert!(
+            untouched["by_language"]["python"]
+                .get("reduced_suite_repos")
+                .is_none()
+        );
         Ok(())
     }
 

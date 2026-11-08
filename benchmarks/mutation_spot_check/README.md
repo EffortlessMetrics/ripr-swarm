@@ -330,6 +330,13 @@ must pass its own tests before mutmut runs, and mutmut must pass them again
 under its trampoline: humanize was dropped because it does not (see the corpus
 note), tomli skips its two recursion-limit tests (the trampoline's extra
 frames overflow them) and python-slugify skips one test that cannot run there.
+The job passes each package's pytest arguments as `--mutmut-test-args`, so the
+receipt records them per repo (`mutation_tool.test_args`, `excluded_tests`,
+`reduced_suite`). A left-out test cannot kill a mutant, so a mutant only it
+would catch reads as missed: the language figure then lists those repos under
+`reduced_suite_repos` and the markdown says it is computed under a reduced
+suite. pytest is pinned in the corpus beside mutmut, and both jobs build xtask
+with the repository's pinned Rust toolchain.
 The recall figure the scoreboard reads is
 `recall_of_missed.by_language.python`: of the runtime-missed mutants with a
 scoreable verdict, the strict share ripr calls a gap and the share it calls a

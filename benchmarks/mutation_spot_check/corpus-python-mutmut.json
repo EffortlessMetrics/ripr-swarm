@@ -5,6 +5,10 @@
   "mutmut": {
     "version": "3.8.1"
   },
+  "pytest": {
+    "version": "9.2.0",
+    "note": "Pinned to the version hosted run 42523543141 installed, so a pytest release cannot change the corpus baselines between weekly runs."
+  },
   "packages": [
     {
       "name": "isodate",
