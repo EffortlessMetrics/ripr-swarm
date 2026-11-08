@@ -156,6 +156,13 @@ fn retarget_relation_matches_an_initializer_containing_backticks() {
     );
     assert_eq!(let_initializer("let x: Vec<Vec<u8>>= v"), Some("v"));
     assert_eq!(let_initializer("let ok = a <= b"), Some("a <= b"));
+    // #12118: the changed-`let` suffix does not break anchor matching.
+    let suffixed = "binding_predicate_relation: changed binding `cut` initializer `input.find('`')` -> `input.rfind('`')` flows into predicate operand at line 13 (changed `let cut` declared at line 9)";
+    assert!(is_anchor_relation(
+        suffixed,
+        "    let cut = input.rfind('`');",
+        "cut"
+    ));
     // Without a distinct old initializer the relation names the new one alone.
     let single = "binding_predicate_relation: changed binding `cut` initializer `input.rfind('`')` flows into predicate operand at line 13";
     assert!(is_anchor_relation(
@@ -2816,5 +2823,123 @@ fn issue_5332_upstream_not_discriminated_and_partially_discriminated_floors() ->
             "missing #5295 spot-check corpus case `{id}`"
         );
     }
+    Ok(())
+}
+
+fn abstention_row(
+    ideal: &str,
+    observed: &str,
+    class: &[&str],
+    outcome: &str,
+) -> Result<CaseRow, serde_json::Error> {
+    let truth = if ideal == "credited" {
+        "discriminated"
+    } else {
+        "not_discriminated"
+    };
+    serde_json::from_value(json!({
+        "case_id": "c", "subject_id": "s", "origin": "authored", "anchor": "a:1",
+        "behavior_family": "f", "test_shape": "t", "hard_case": false,
+        "truth": truth, "ideal_verdict": ideal, "observed_verdict": observed,
+        "followed_retarget": false, "changed_since_labeling": false,
+        "observed_classifications": class, "outcome": outcome,
+        "contradictions": [], "findings_scored": 1, "findings_contradicted": 0,
+        "contradiction_counts": {},
+    }))
+}
+
+#[test]
+fn abstention_by_cause_counts_only_abstained_rows_by_missed_side_and_class()
+-> Result<(), serde_json::Error> {
+    let rows = vec![
+        abstention_row("gap", "limited", &["no_static_path"], "abstained")?,
+        abstention_row("gap", "limited", &["no_static_path"], "abstained")?,
+        abstention_row("credited", "limited", &["static_unknown"], "abstained")?,
+        abstention_row("credited", "limited", &[], "abstained")?,
+        abstention_row("gap", "gap", &["weakly_exposed"], "ideal")?,
+        abstention_row(
+            "limited",
+            "silent",
+            &["infection_unknown", "static_unknown"],
+            "abstained",
+        )?,
+    ];
+    let causes = abstention_by_cause(&rows);
+    assert_eq!(causes.get("gap_missed:no_static_path"), Some(&2));
+    assert_eq!(causes.get("credit_missed:static_unknown"), Some(&1));
+    assert_eq!(causes.get("credit_missed:none"), Some(&1));
+    assert_eq!(
+        causes.get("no_claim_expected:infection_unknown+static_unknown"),
+        Some(&1)
+    );
+    assert_eq!(
+        causes.values().sum::<usize>(),
+        5,
+        "the ideal row is not counted"
+    );
+    Ok(())
+}
+
+#[test]
+fn abstention_by_cause_is_kept_per_origin_and_sums_to_each_abstention_count() -> Result<(), String>
+{
+    let corpus = load_corpus(&repo_corpus_dir())?;
+    // Every case observed as no_static_path: a limited verdict, so every
+    // row of both origins abstains.
+    let checks: Vec<(String, Value)> = corpus
+        .cases
+        .iter()
+        .map(|case| {
+            let mut f = finding(
+                "no_static_path",
+                case.anchor.line as u64,
+                "candidate_current",
+            );
+            f["probe"]["file"] = json!(case.anchor.file);
+            (case.case_id.clone(), json!({"findings": [f]}))
+        })
+        .collect();
+    let report = build_report(&corpus, &checks, &BTreeMap::new())?;
+    assert!(
+        report.by_origin.len() > 1,
+        "the committed corpus has both origins"
+    );
+    let mut per_origin_total = 0;
+    for (origin, rates) in &report.by_origin {
+        let sum: usize = rates.abstention_by_cause.values().sum();
+        assert_eq!(sum, rates.abstention_rate.numerator, "{origin}");
+        assert_eq!(
+            sum, rates.cases_total,
+            "{origin} abstains on every row here"
+        );
+        per_origin_total += sum;
+    }
+    assert_eq!(
+        report.abstention_by_cause.values().sum::<usize>(),
+        per_origin_total
+    );
+    assert_eq!(per_origin_total, report.abstention_rate.numerator);
+    let markdown = render_report_markdown(&report, "rust");
+    assert!(
+        markdown.contains("| Cause | All | authored | upstream |\n| --- | --- | --- | --- |\n"),
+        "{markdown}"
+    );
+    // One full row: its cells are the overall, authored and upstream counts.
+    let count = |rates: &BTreeMap<String, usize>| {
+        rates
+            .get("credit_missed:no_static_path")
+            .copied()
+            .unwrap_or(0)
+    };
+    let authored = report.by_origin.get("authored").ok_or("no authored")?;
+    let upstream = report.by_origin.get("upstream").ok_or("no upstream")?;
+    let row = format!(
+        "| `credit_missed:no_static_path` | {} | {} | {} |\n",
+        count(&report.abstention_by_cause),
+        count(&authored.abstention_by_cause),
+        count(&upstream.abstention_by_cause)
+    );
+    assert!(count(&authored.abstention_by_cause) > 0, "{markdown}");
+    assert!(markdown.contains(&row), "{row}\n{markdown}");
     Ok(())
 }

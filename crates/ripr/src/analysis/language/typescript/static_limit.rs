@@ -367,10 +367,12 @@ fn relative_import_resolves_to_workspace_file(
 /// INVARIANT: this function is ONLY called when `workspace_root` is `Some`
 /// (i.e. when the package-local filter is active).  It is NOT called
 /// speculatively.
-pub(crate) fn named_limitations_for_unresolved_ownership(
+///
+/// `candidates` is the owner's relation-index enumeration, computed once by the
+/// caller and shared with the spy-fabrication scan (#10925).
+pub(crate) fn named_limitations_for_unresolved_ownership_from_candidates(
     owner: &TypeScriptOwner,
-    all_tests: &[TypeScriptTest],
-    relation_index: &RelationIndex,
+    candidates: &[&TypeScriptTest],
     workspace_root: &Path,
     related: &[TypeScriptRelatedCandidate<'_>],
 ) -> Vec<TypeScriptNamedLimitation> {
@@ -381,7 +383,7 @@ pub(crate) fn named_limitations_for_unresolved_ownership(
     // #10028: a test can only fire here when it references the owner by a
     // body call/name or an owner-matching import — exactly the relation
     // index's keys — so the indexed candidates are a sound superset.
-    for test in relation_index.candidates(owner, all_tests) {
+    for &test in candidates {
         if saw_target_unresolved {
             break;
         }
@@ -524,10 +526,36 @@ pub(crate) fn alias_gap_for_unresolved_import(
             // tsconfig of its own: its advice is the flag-off / load-gap one.
             // A specifier naming a workspace package (#4769) failed in its
             // own manifest; tsconfig advice would send the user elsewhere.
-            let package_dir =
-                alias_map.and_then(|map| map.workspace_package_dir_for(&import.source));
-            let tsconfig_map = alias_map.filter(|map| map.has_tsconfig());
+            // The importer's own package config governs its aliases (#12754):
+            // derive the cause, and whether a workspace package is the
+            // question, from that governing map rather than the root one.
+            let importer_map = alias_map
+                .map(|map| super::related_tests::importer_alias_map(map, map.root(), &test.file));
+            let nested_map = match &importer_map {
+                Some(super::related_tests::ImporterAliasMap::Nested(map)) => Some(map.as_ref()),
+                _ => None,
+            };
+            let nested_unavailable = match (&importer_map, alias_map) {
+                (
+                    Some(super::related_tests::ImporterAliasMap::NestedUnavailable(dir)),
+                    Some(map),
+                ) => super::related_tests::unavailable_config_claims(map, dir, &import.source),
+                _ => false,
+            };
+            let package_dir = if nested_unavailable {
+                None
+            } else {
+                match nested_map {
+                    Some(map) => map.workspace_package_dir_for(&import.source),
+                    None => alias_map.and_then(|map| map.workspace_package_dir_for(&import.source)),
+                }
+            };
+            let tsconfig_map = nested_map.or_else(|| alias_map.filter(|map| map.has_tsconfig()));
             let (cause_text, recovery_hint) = match (tsconfig_map, alias_unavailable) {
+                _ if nested_unavailable => (
+                    "the importing file's nearest package tsconfig.json/jsconfig.json declares compilerOptions.paths but cannot be followed exactly (no baseUrl, a references or cross-directory/package-name extends form, an unreadable or invalid config, or both tsconfig.json and jsconfig.json declaring paths)".to_string(),
+                    "give that package config a compilerOptions.baseUrl and inline any inherited compilerOptions.paths for credit".to_string(),
+                ),
                 _ if package_dir.is_some() => {
                     let manifest = package_dir
                         .map(|dir| normalized_path(&dir.join("package.json")))
@@ -634,16 +662,18 @@ impl TsAliasGapDisclosure {
 /// the changed sink, so the finding must not present the test as an owner
 /// observer; the relation gate already refuses the trusted relation, and this
 /// limitation names why.
-pub(crate) fn named_limitations_for_spy_fabrication(
+///
+/// `candidates` is the owner's relation-index enumeration, computed once by the
+/// caller and shared with the unresolved-ownership scan (#10925).
+pub(crate) fn named_limitations_for_spy_fabrication_from_candidates(
     owner: &TypeScriptOwner,
-    all_tests: &[TypeScriptTest],
-    relation_index: &RelationIndex,
+    candidates: &[&TypeScriptTest],
 ) -> Vec<TypeScriptNamedLimitation> {
     let mut limitations: Vec<TypeScriptNamedLimitation> = Vec::new();
     // #10028: spy fabrication names the owner in the test body (the
     // fabricated-call string literal or a default-import binding), so the
     // indexed candidates are a sound superset of potential producers.
-    for test in relation_index.candidates(owner, all_tests) {
+    for &test in candidates {
         if test_spies_owner_with_fabrication_for_owner(test, &owner.name, owner.exported_as_default)
         {
             limitations.push(TypeScriptNamedLimitation {
@@ -659,6 +689,24 @@ pub(crate) fn named_limitations_for_spy_fabrication(
         }
     }
     limitations
+}
+
+/// Test-only convenience: enumerate the relation-index candidates itself.
+#[cfg(test)]
+pub(crate) fn named_limitations_for_unresolved_ownership(
+    owner: &TypeScriptOwner,
+    all_tests: &[TypeScriptTest],
+    relation_index: &RelationIndex,
+    workspace_root: &Path,
+    related: &[TypeScriptRelatedCandidate<'_>],
+) -> Vec<TypeScriptNamedLimitation> {
+    let candidates = relation_index.candidates(owner, all_tests);
+    named_limitations_for_unresolved_ownership_from_candidates(
+        owner,
+        &candidates,
+        workspace_root,
+        related,
+    )
 }
 
 /// Check whether an import source (relative path) resolves to the same module
@@ -695,6 +743,7 @@ mod module_identity_tests {
             default_object_member: false,
             commonjs_default_export: false,
             commonjs_whole_function: false,
+            constructor_callback: false,
             module_entries: Vec::new(),
             arity: None,
             params: Vec::new(),

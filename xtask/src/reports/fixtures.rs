@@ -152,7 +152,14 @@ fn golden_check_run() -> Result<GoldenCheckRun, String> {
             violations,
         });
     }
-    let run_set = collect_golden_runs()?;
+    let mut run_set = collect_golden_runs()?;
+    // #12928: print the expected-class ledger; the per-language count may only rise.
+    let (ledger_line, ratchet_violations) = crate::fixture_expected_classes::ledger_report(
+        Path::new("fixtures"),
+        Path::new(crate::fixture_expected_classes::RATCHET_PATH),
+    );
+    println!("{ledger_line}");
+    run_set.violations.extend(ratchet_violations);
     // #8614: warn (do not fail) when a fixture input's working-tree endings
     // differ from its normalized form; `goldens bless` refuses on the same
     // evidence. Warning here keeps a local pass from looking clean.
@@ -605,6 +612,17 @@ fn goldens_bless(name: &str, reason: &str) -> Result<(), String> {
     // output must not be silently blessed as the new golden.
     validate_bless_output(&run, &fixture)?;
 
+    // #12928: a rebless must not re-pin a class that contradicts the fixture's
+    // declared `expected-classes`; change the SPEC block in the same commit.
+    let class_violations =
+        crate::fixture_expected_classes::bless_violations(&fixture, &run.check_json)?;
+    if !class_violations.is_empty() {
+        return Err(format!(
+            "goldens bless refused for fixture `{name}`: the new output contradicts the fixture's declared expected classes. No files were changed.\n{}\nnext: if the new class is intended, update the SPEC.md `expected-classes` block in the same commit, then re-run bless",
+            class_violations.join("\n")
+        ));
+    }
+
     let expected = fixture.join("expected");
     fs::create_dir_all(&expected)
         .map_err(|err| format!("failed to create {}: {err}", normalize_path(&expected)))?;
@@ -862,6 +880,9 @@ pub(crate) fn fixture_contract_violations(path: &Path) -> Result<Vec<String>, St
             violations.push(format!("{} is missing `{heading}`", normalize_path(&spec)));
         }
     }
+    violations.extend(crate::fixture_expected_classes::fixture_dir_violations(
+        path,
+    ));
     Ok(violations)
 }
 

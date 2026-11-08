@@ -59,6 +59,8 @@ mod bolero_tests;
 pub(crate) mod member_crates;
 mod model;
 mod parameterized_tests;
+mod process_memo;
+pub(crate) use process_memo::enable_process_fact_memo;
 mod proptest;
 #[cfg(test)]
 mod proptest_tests;
@@ -531,7 +533,7 @@ pub(crate) fn build_index_from_paths_with_cache_and_test_harnesses_and_consumed(
 // by every role surface (diff seeding, seam inventory, LSP scope) so a
 // misdeclared registration degrades identically everywhere.
 pub(crate) use harness_registry::validated_file_wide_harness_targets;
-pub(crate) use test_helpers::expanded_assertion_view;
+pub(crate) use test_helpers::{expanded_assertion_view, imported_forwarding_calls};
 pub(crate) use test_styles::attributes_define_proof_harness;
 pub(crate) use test_styles::attributes_define_test;
 
@@ -547,8 +549,8 @@ pub use model::{
     HarnessSelectorCapability, HarnessSubjectClaim, HarnessSubjectFact, LetBindingFact,
     LiteralFact, MacroGeneratedOrigin, ModuleDeclarationFact, ModulePathTarget, OracleFact,
     ProbeShapeFact, ProbeShapeKind, ResolvedIncludeParent, ReturnFact, RustIncludeLimitation,
-    RustIndex, SourceRoleProvenance, SourceRoleProvenanceEdge, SourceRoleProvenanceEdgeKind,
-    SourceText, TestFact, TestSummary, UnresolvedPropertyMacroFact,
+    RustIndex, SharedFactSlice, SourceRoleProvenance, SourceRoleProvenanceEdge,
+    SourceRoleProvenanceEdgeKind, SourceText, TestFact, TestSummary, UnresolvedPropertyMacroFact,
 };
 // Hot evidence loops hash each indexed file once and validate by digest.
 pub(crate) use model::WorkspaceFileAuthority;

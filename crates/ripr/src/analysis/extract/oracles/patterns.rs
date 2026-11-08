@@ -396,12 +396,7 @@ pub(crate) fn is_inline_unwrap_err_error_assertion(line: &str) -> bool {
     // `receiver_keeps_call_error` already refuses those for the uncompared
     // case. Outer grouping is looked through.
     let is_error_read = |operand: &str| {
-        let mut operand = operand.trim();
-        while operand.starts_with('(')
-            && group_end(operand, 0) == Some(operand.len().saturating_sub(1))
-        {
-            operand = operand[1..operand.len() - 1].trim();
-        }
+        let operand = peel_grouping(operand);
         let masked = mask_comments_and_strings(operand);
         let synthetic = format!(r#"assert_eq!({operand}, E::V);"#);
         if synthetic.contains("Err(") && err_constructor_is_not_directly_credited(&synthetic) {
@@ -420,6 +415,46 @@ pub(crate) fn is_inline_unwrap_err_error_assertion(line: &str) -> bool {
             && expression_pins_specific_error(&comparable_expression(expected))
     };
     pins_against(left, right) || pins_against(right, left)
+}
+
+/// Looks through outer grouping parentheses around an assertion operand.
+fn peel_grouping(operand: &str) -> &str {
+    let mut operand = operand.trim();
+    while operand.starts_with('(') && group_end(operand, 0) == Some(operand.len().saturating_sub(1))
+    {
+        operand = operand[1..operand.len() - 1].trim();
+    }
+    operand
+}
+
+/// True when an equality assertion compares an outcome the test wrote itself:
+/// an `Err(..)` constructor handed to a value-supplying adapter, or an error
+/// read (`.unwrap_err()` / `.expect_err(..)`, method or `Result::` UFCS
+/// spelling) taken through an adapter that replaces the owner's error. Only the
+/// compared operands are read: diagnostic arguments after them cannot replace
+/// the compared value. Such an assertion can pass whatever the owner
+/// returns, so the oracle classifier reads it as a relational check, never an
+/// exact kind, on every seam (#12359, #12610). This is the one owner for that
+/// reading; diff-scoped and repo seam evidence both take the classifier's kind.
+pub(super) fn asserted_outcome_independent_of_owner(line: &str) -> bool {
+    const ERROR_READS: &[&str] = &[
+        ".unwrap_err(",
+        "::unwrap_err(",
+        ".expect_err(",
+        "::expect_err(",
+    ];
+    let oracle_text = assertion_oracle_text(line);
+    let line = oracle_text.as_deref().unwrap_or(line);
+    if err_constructor_feeds_value_adapter(line) {
+        return true;
+    }
+    let Some(args) = equality_assertion_arguments(line) else {
+        return false;
+    };
+    args.iter().any(|operand| {
+        let masked = strip_turbofish(&mask_comments_and_strings(peel_grouping(operand)));
+        ERROR_READS.iter().any(|read| masked.contains(read)) && has_error_replacing_adapter(&masked)
+    })
 }
 
 /// Whether the error read goes through an adapter that can replace the error
