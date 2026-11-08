@@ -812,6 +812,8 @@ pub(crate) struct OriginRates {
     pub(crate) false_silent_rate: Ratio,
     pub(crate) ideal_rate: Ratio,
     pub(crate) abstention_rate: Ratio,
+    /// [`Report::abstention_by_cause`] for this origin's rows only.
+    pub(crate) abstention_by_cause: BTreeMap<String, usize>,
 }
 
 /// Count abstained rows by `<side missed>:<classification>`.
@@ -863,6 +865,7 @@ fn origin_rates(rows: &[&CaseRow]) -> OriginRates {
         false_silent_rate: ratio(false_silent, not_fully),
         ideal_rate: ratio(count(Outcome::Ideal), rows.len()),
         abstention_rate: ratio(count(Outcome::Abstained), rows.len()),
+        abstention_by_cause: abstention_by_cause(rows),
     }
 }
 
@@ -1149,10 +1152,34 @@ pub(crate) fn render_report_markdown(report: &Report, language: &str) -> String 
     }
     if !report.abstention_by_cause.is_empty() {
         out.push_str(
-            "\nAbstentions by cause. Each is acceptable by its case's labels; `gap_missed:no_static_path` rows are the unsound direction to promote (a no-path finding is not proof of a gap on real code).\n\n| Cause | Rows |\n| --- | --- |\n",
+            "\nAbstentions by cause. Each is acceptable by its case's labels; `gap_missed:no_static_path` rows are the unsound direction to promote (a no-path finding is not proof of a gap on real code).\n\n",
         );
+        let origins: Vec<&String> = if report.by_origin.len() > 1 {
+            report.by_origin.keys().collect()
+        } else {
+            Vec::new()
+        };
+        out.push_str("| Cause | All |");
+        for origin in &origins {
+            out.push_str(&format!(" {origin} |"));
+        }
+        out.push_str("\n| --- | --- |");
+        for _ in &origins {
+            out.push_str(" --- |");
+        }
+        out.push('\n');
         for (cause, rows) in &report.abstention_by_cause {
-            out.push_str(&format!("| `{cause}` | {rows} |\n"));
+            out.push_str(&format!("| `{cause}` | {rows} |"));
+            for origin in &origins {
+                let count = report
+                    .by_origin
+                    .get(*origin)
+                    .and_then(|rates| rates.abstention_by_cause.get(cause))
+                    .copied()
+                    .unwrap_or(0);
+                out.push_str(&format!(" {count} |"));
+            }
+            out.push('\n');
         }
     }
     if report.by_origin.len() > 1 {

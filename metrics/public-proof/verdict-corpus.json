@@ -114,6 +114,28 @@
         "numerator": 291,
         "denominator": 812,
         "rate": "0.3584"
+      },
+      "abstention_by_cause": {
+        "credit_missed:infection_unknown": 20,
+        "credit_missed:infection_unknown+propagation_unknown": 11,
+        "credit_missed:infection_unknown+static_unknown": 1,
+        "credit_missed:infection_unknown+weakly_exposed": 6,
+        "credit_missed:no_static_path": 10,
+        "credit_missed:none": 13,
+        "credit_missed:propagation_unknown": 12,
+        "credit_missed:reachable_unrevealed": 6,
+        "credit_missed:static_unknown": 56,
+        "credit_missed:weakly_exposed": 13,
+        "gap_missed:infection_unknown": 21,
+        "gap_missed:infection_unknown+propagation_unknown": 4,
+        "gap_missed:infection_unknown+static_unknown": 1,
+        "gap_missed:infection_unknown+weakly_exposed": 1,
+        "gap_missed:no_static_path": 28,
+        "gap_missed:propagation_unknown": 20,
+        "gap_missed:propagation_unknown+static_unknown": 1,
+        "gap_missed:reachable_unrevealed": 3,
+        "gap_missed:static_unknown": 60,
+        "gap_missed:weakly_exposed": 4
       }
     },
     "upstream": {
@@ -152,6 +174,17 @@
         "numerator": 36,
         "denominator": 41,
         "rate": "0.8780"
+      },
+      "abstention_by_cause": {
+        "credit_missed:infection_unknown": 5,
+        "credit_missed:infection_unknown+propagation_unknown": 2,
+        "credit_missed:no_static_path": 4,
+        "credit_missed:no_static_path+static_unknown": 1,
+        "credit_missed:propagation_unknown": 1,
+        "credit_missed:static_unknown": 6,
+        "gap_missed:infection_unknown": 5,
+        "gap_missed:no_static_path": 11,
+        "gap_missed:static_unknown": 1
       }
     }
   },

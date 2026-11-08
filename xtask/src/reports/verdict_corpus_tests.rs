@@ -2872,3 +2872,47 @@ fn abstention_by_cause_counts_only_abstained_rows_by_missed_side_and_class()
     );
     Ok(())
 }
+
+#[test]
+fn abstention_by_cause_is_kept_per_origin_and_sums_to_each_abstention_count() -> Result<(), String>
+{
+    let corpus = load_corpus(&repo_corpus_dir())?;
+    // Every case observed as no_static_path: a limited verdict, so every
+    // row of both origins abstains.
+    let checks: Vec<(String, Value)> = corpus
+        .cases
+        .iter()
+        .map(|case| {
+            let mut f = finding(
+                "no_static_path",
+                case.anchor.line as u64,
+                "candidate_current",
+            );
+            f["probe"]["file"] = json!(case.anchor.file);
+            (case.case_id.clone(), json!({"findings": [f]}))
+        })
+        .collect();
+    let report = build_report(&corpus, &checks, &BTreeMap::new())?;
+    assert!(
+        report.by_origin.len() > 1,
+        "the committed corpus has both origins"
+    );
+    let mut per_origin_total = 0;
+    for (origin, rates) in &report.by_origin {
+        let sum: usize = rates.abstention_by_cause.values().sum();
+        assert_eq!(sum, rates.abstention_rate.numerator, "{origin}");
+        assert!(sum > 0, "{origin} abstains on every row here");
+        per_origin_total += sum;
+    }
+    assert_eq!(
+        report.abstention_by_cause.values().sum::<usize>(),
+        per_origin_total
+    );
+    assert_eq!(per_origin_total, report.abstention_rate.numerator);
+    let markdown = render_report_markdown(&report, "rust");
+    assert!(
+        markdown.contains("| Cause | All | authored | upstream |"),
+        "{markdown}"
+    );
+    Ok(())
+}
