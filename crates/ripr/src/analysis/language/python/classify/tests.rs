@@ -1968,6 +1968,38 @@ fn guarded_arm_return_value_with_activating_input_stays_exposed() -> Result<(), 
     Ok(())
 }
 
+// #13621: a changed field value (`return {"status": 422}`) inside a guarding
+// arm reads as a field-construction probe and takes the same guard reading.
+const VIEW_SOURCE: &str = "def order_view(request, total):\n    if total < 0:\n        return {\"status\": 422}\n    return {\"status\": 200}\n";
+
+#[test]
+fn guarded_field_value_no_input_enters_is_weakly_exposed() -> Result<(), String> {
+    let finding = classify_added_case(
+        VIEW_SOURCE,
+        "from src.subject import order_view\n\ndef test_view_ok():\n    assert order_view(None, 100)[\"status\"] == 200\n",
+        3,
+        "        return {\"status\": 422}",
+    )?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{finding:?}");
+    assert!(
+        missing_boundary(&finding, "total < 0").is_some(),
+        "{finding:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn guarded_field_value_with_entering_input_stays_exposed() -> Result<(), String> {
+    let finding = classify_added_case(
+        VIEW_SOURCE,
+        "from src.subject import order_view\n\ndef test_view_bad():\n    assert order_view(None, -1)[\"status\"] == 422\n",
+        3,
+        "        return {\"status\": 422}",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
+
 // A return after an earlier `if X: return ...` runs only for inputs that fail
 // `X`. When every strong related call satisfies `X`, the fallthrough return
 // never runs, so the exact-value oracle cannot discriminate its change.
