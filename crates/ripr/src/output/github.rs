@@ -78,7 +78,7 @@ pub(crate) fn render_with_config(output: &CheckOutput, config: &RiprConfig) -> S
         }
         if let Some(gap) = &finding.canonical_gap {
             message.push_str(" Canonical gap: ");
-            message.push_str(&gap.id);
+            message.push_str(&crate::output::human::cap_rendered_identity(&gap.id));
         }
         if let Some(actionability) = preview_actionability_for(finding) {
             message.push_str(" Preview actionability: ");
@@ -1458,6 +1458,32 @@ mod tests {
         assert!(rendered.contains(
             "Canonical gap: gap:python:src/pricing.py:discount:predicate_boundary:predicate:amount>=threshold"
         ));
+    }
+
+    #[test]
+    fn render_caps_a_huge_canonical_gap_id_in_the_annotation() {
+        // #13660: the gap id embeds the changed expression; GitHub rejects
+        // oversized annotations, so the echoed id is capped with a marker.
+        let mut output = output_with_unknown_finding();
+        let long = format!(
+            "gap:rust:src/lib.rs:f:static_unknown:{}",
+            "x+".repeat(50_000)
+        );
+        output.findings[0].canonical_gap = Some(FindingCanonicalGap {
+            id: long.clone(),
+            language: "rust".to_string(),
+            file: "src/lib.rs".to_string(),
+            owner: "f".to_string(),
+            behavior_kind: "static_unknown".to_string(),
+            probe_kind: "predicate".to_string(),
+            normalized_discriminator: "x".to_string(),
+        });
+
+        let rendered = render(&output);
+
+        assert!(rendered.contains("… (truncated; full id in --format json)"));
+        assert!(!rendered.contains(&long));
+        assert!(rendered.len() < 5_000, "{}", rendered.len());
     }
 
     #[test]
