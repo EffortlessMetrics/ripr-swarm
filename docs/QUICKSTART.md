@@ -94,19 +94,6 @@ and that binary's help. The 0.10 CLI resolves its default base by trying
 `origin/HEAD`, then `origin/main`, `origin/master`, `main`, and `master`; use
 `--base REF` with another existing branch or commit when needed.
 
-### Tab completion (optional)
-
-Development builds can print a completion script for `bash`, `zsh`, `fish` or
-`powershell`. It completes command and subcommand names, prints to your
-terminal, and changes nothing until you load it. For example, in Bash or zsh:
-
-```bash
-source <(ripr completions bash)   # use `zsh` in zsh
-```
-
-Add that line to your shell startup file to keep it. See
-`ripr completions --help` for fish and PowerShell.
-
 ### Development build
 
 To use this guide's development features, install the development build
@@ -141,6 +128,23 @@ each channel serves today.
 
 For another installation method or a pinned server, see
 [Server provisioning](SERVER_PROVISIONING.md).
+
+### Tab completion (optional)
+
+Not in the 0.10.0 release: `ripr completions` is in 0.11 development builds
+only, so check that `ripr completions --help` works before relying on this.
+It prints a script for `bash`, `zsh`, `fish` or `powershell` that completes
+command names and the word after a command, such as `cache status`. It does
+not complete flags. It prints to your terminal and changes nothing until you
+load it. In Bash:
+
+```bash
+source <(ripr completions bash)
+```
+
+In zsh, run `autoload -Uz compinit && compinit` first (once, in your `~/.zshrc`),
+then `source <(ripr completions zsh)`. Add the line to your shell startup file
+to keep it. `ripr completions --help` shows fish and PowerShell.
 
 ## CLI First Hour
 

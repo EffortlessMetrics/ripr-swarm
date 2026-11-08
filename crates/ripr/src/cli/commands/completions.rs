@@ -3,7 +3,7 @@
 //! CLI adapter only: the command names come from the governed command catalog
 //! (`crate::cli::command_catalog`), so a command added there is completed
 //! without a second list to keep in sync. The scripts complete the command name
-//! and, for commands that have them, the subcommand. Flags are not completed.
+//! and, for commands that have them, the word after the command. Flags are not completed.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -188,36 +188,172 @@ mod tests {
         completions(&owned)
     }
 
+    fn entry(
+        path: &'static str,
+        class: CommandClass,
+        discovery: DiscoveryPosture,
+        relation: CommandRelation,
+    ) -> CommandCatalogEntry {
+        CommandCatalogEntry {
+            id: "cmd:synthetic",
+            path,
+            aliases: &[],
+            class,
+            dispatch: crate::cli::command_catalog::CommandDispatch::Help,
+            parser_owner: "cli::command",
+            dispatch_owner: "cli::execute",
+            help_owner: "cli::help",
+            discovery,
+            relation,
+        }
+    }
+
+    /// Two public commands (one with two subcommands), plus an alias, an
+    /// advanced row and a hidden row that must never be completed.
+    fn synthetic() -> Vec<CommandCatalogEntry> {
+        let public = |path| {
+            entry(
+                path,
+                CommandClass::Public,
+                DiscoveryPosture::OrdinaryPublic,
+                CommandRelation::Canonical,
+            )
+        };
+        vec![
+            public("zeta"),
+            public("alpha"),
+            public("alpha two"),
+            public("alpha one"),
+            entry(
+                "oldname",
+                CommandClass::Compatibility,
+                DiscoveryPosture::CompatibilityAlias,
+                CommandRelation::AliasOf("alpha"),
+            ),
+            entry(
+                "expert",
+                CommandClass::Advanced,
+                DiscoveryPosture::Advanced,
+                CommandRelation::Canonical,
+            ),
+            entry(
+                "internal",
+                CommandClass::Internal,
+                DiscoveryPosture::Hidden,
+                CommandRelation::Canonical,
+            ),
+        ]
+    }
+
     #[test]
-    fn every_shell_script_names_catalog_commands_and_subcommands() {
+    fn tree_keeps_only_public_canonical_rows_in_sorted_order() {
+        let tree = command_tree(&synthetic());
+        let tops: Vec<_> = tree.keys().copied().collect();
+        assert_eq!(tops, ["alpha", "zeta"]);
+        let subs: Vec<_> = tree["alpha"].iter().copied().collect();
+        assert_eq!(subs, ["one", "two"]);
+        assert!(tree["zeta"].is_empty());
+    }
+
+    #[test]
+    fn bash_output_is_exact_for_a_synthetic_catalog() {
+        let expected = "\
+# bash completion for ripr. Load it with: source <(ripr completions bash)
+_ripr() {
+    local cur=\"${COMP_WORDS[COMP_CWORD]}\"
+    if [ \"$COMP_CWORD\" -eq 1 ]; then
+        COMPREPLY=( $(compgen -W \"alpha zeta\" -- \"$cur\") )
+        return
+    fi
+    if [ \"$COMP_CWORD\" -eq 2 ]; then
+        case \"${COMP_WORDS[1]}\" in
+            alpha) COMPREPLY=( $(compgen -W \"one two\" -- \"$cur\") ) ;;
+        esac
+    fi
+}
+complete -F _ripr ripr
+";
+        assert_eq!(render("bash", &synthetic()), expected);
+    }
+
+    #[test]
+    fn zsh_output_is_exact_for_a_synthetic_catalog() {
+        let expected = "\
+#compdef ripr
+# zsh completion for ripr. Load it with: source <(ripr completions zsh)
+_ripr() {
+    if (( CURRENT == 2 )); then
+        compadd -- alpha zeta
+    elif (( CURRENT == 3 )); then
+        case \"$words[2]\" in
+            alpha) compadd -- one two ;;
+        esac
+    fi
+}
+if [ \"$funcstack[1]\" = \"_ripr\" ]; then
+    _ripr \"$@\"
+else
+    compdef _ripr ripr
+fi
+";
+        assert_eq!(render("zsh", &synthetic()), expected);
+    }
+
+    #[test]
+    fn fish_output_is_exact_for_a_synthetic_catalog() {
+        let expected = "\
+# fish completion for ripr. Load it with: ripr completions fish | source
+complete -c ripr -f -n '__fish_use_subcommand' -a 'alpha zeta'
+complete -c ripr -f -n '__fish_seen_subcommand_from alpha' -a 'one two'
+";
+        assert_eq!(render("fish", &synthetic()), expected);
+    }
+
+    #[test]
+    fn powershell_output_is_exact_for_a_synthetic_catalog() {
+        let expected = "\
+# PowerShell completion for ripr. Load it with: ripr completions powershell | Out-String | Invoke-Expression
+Register-ArgumentCompleter -Native -CommandName ripr -ScriptBlock {
+    param($wordToComplete, $commandAst, $cursorPosition)
+    $parts = @($commandAst.CommandElements | ForEach-Object { $_.ToString() })
+    $done = $parts.Count - 1
+    if ($wordToComplete -ne '') { $done = $done - 1 }
+    $choices = @()
+    if ($done -eq 0) { $choices = @('alpha', 'zeta') }
+    elseif ($done -eq 1 -and $parts[1] -eq 'alpha') { $choices = @('one', 'two') }
+    $choices | Where-Object { $_ -like \"$wordToComplete*\" } | ForEach-Object {
+        [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_)
+    }
+}
+";
+        assert_eq!(render("powershell", &synthetic()), expected);
+    }
+
+    #[test]
+    fn no_shell_completes_an_alias_or_a_non_public_row() {
         for shell in SHELLS {
-            let script = render(shell, catalog());
-            for command in ["check", "doctor", "completions", "cache", "export"] {
-                assert!(script.contains(command), "{shell} omits {command}");
+            let script = render(shell, &synthetic());
+            for hidden in ["oldname", "expert", "internal"] {
+                assert!(!script.contains(hidden), "{shell} completes {hidden}");
             }
         }
     }
 
     #[test]
-    fn scripts_leave_out_compatibility_aliases() {
+    fn real_catalog_scripts_name_real_commands_and_leave_out_aliases() {
         let tree = command_tree(catalog());
-        let mut seen_alias = false;
+        assert!(tree.contains_key("check"));
+        assert!(tree.contains_key("completions"));
+        assert!(tree["cache"].contains("export"));
         for entry in catalog() {
             if entry.class == CommandClass::Compatibility {
-                seen_alias = true;
                 assert!(!tree.contains_key(entry.path), "{}", entry.path);
             }
         }
-        assert!(seen_alias, "fixture expects at least one compatibility row");
-        assert!(tree.contains_key("check"));
-        assert!(tree["cache"].contains("status"));
-    }
-
-    #[test]
-    fn bash_script_has_the_expected_shape() {
-        let script = render("bash", catalog());
-        assert!(script.contains("complete -F _ripr ripr"));
-        assert!(script.contains("cache) COMPREPLY=("));
+        for shell in SHELLS {
+            let script = render(shell, catalog());
+            assert!(script.contains("completions"), "{shell}");
+        }
     }
 
     #[test]
@@ -231,6 +367,6 @@ mod tests {
         let two = run(&["bash", "zsh"]).err().unwrap_or_default();
         assert!(two.contains("one shell"), "{two}");
         let flag = run(&["--bogus"]).err().unwrap_or_default();
-        assert!(flag.contains("completions"), "{flag}");
+        assert!(flag.contains("--bogus"), "{flag}");
     }
 }

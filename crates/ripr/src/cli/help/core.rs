@@ -744,12 +744,13 @@ Usage: ripr completions <bash|zsh|fish|powershell>
 Options:
   --help  Show this help.
 
-The script completes ripr command names and, where a command has them, its
-subcommands. It prints to stdout and changes nothing on your machine.
+The script completes ripr command names and the word after a command, such as
+`cache status`. It does not complete flags. It prints to stdout and changes
+nothing on your machine.
 
 Try it in the current shell:
   bash        source <(ripr completions bash)
-  zsh         source <(ripr completions zsh)
+  zsh         source <(ripr completions zsh)   (run `compinit` first)
   fish        ripr completions fish | source
   powershell  ripr completions powershell | Out-String | Invoke-Expression
 
