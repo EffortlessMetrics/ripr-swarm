@@ -83,8 +83,12 @@ fn gap_decision_ledger(args: &[String]) -> Result<(), String> {
     }
     // Persist the producer's selected directory, not a label that a consumer
     // would resolve in its own invocation directory (#7382).
-    let selected_root = std::fs::canonicalize(&options.root)
-        .map_err(|error| format!("resolve gap-ledger root {} failed: {error}; pass an existing directory as `--root`", options.root))?;
+    let selected_root = std::fs::canonicalize(&options.root).map_err(|error| {
+        format!(
+            "resolve gap-ledger root {} failed: {error}; pass an existing directory as `--root`",
+            options.root
+        )
+    })?;
     let records_path = ledger_source_path(options.source.path())?;
     // An unreadable source means the command could not complete for the same
     // reason: refuse before writing a `blocked` ledger.
