@@ -4,7 +4,7 @@ Spec: RIPR-SPEC-0245
 
 ## Given
 
-Eight small authored Perl distributions under `subjects/`, our own code under
+Nine small authored Perl distributions under `subjects/`, our own code under
 this repository's license: `authored-perl-testmore-shop` (Test::More),
 `authored-perl-test2-ledger` (Test2::V0),
 `authored-perl-testexception-account` (Test::Exception),
@@ -13,8 +13,11 @@ prefix regex, a class-only `throws_ok`, `is($@->message)` after `throws_ok`,
 `eval` with `like($@)`, `lives_and { ok(...) }` and `eval` with `ok(!$@)`),
 `authored-perl-testdeep-inventory` (Test::Deep),
 `authored-perl-moose-profile` (Moose and blessed hashes),
-`authored-perl-idioms-toolkit` (closures, wantarray, local, regexes) and
-`authored-perl-hostile-source` (decoys, AUTOLOAD, generated subs). Each case is a
+`authored-perl-idioms-toolkit` (closures, wantarray, local, regexes),
+`authored-perl-hostile-source` (decoys, AUTOLOAD, generated subs) and
+`authored-perl-testmore-pathparts` (File::Spec::Unix::splitpath-shaped list
+return; Test::More `is_deeply` vs scalar-basename and self-comparison
+controls, #7851). Each case is a
 one-line behavior-preserving rewrite under `cases/` with the fact packet the
 pinned `perl-ripr-facts` producer wrote for that diff under `packets/`.
 Each case is labeled with what `prove -l t` discriminates when each listed

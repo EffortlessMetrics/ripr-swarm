@@ -1,0 +1,7 @@
+[[artifact]]
+id = "RIPR-SPEC-0404"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0404-postgresql-pgtap-dialect-schema-migration-and-database-state-evidence-contracts.md"
+status = "proposed"
+owner = "language-adapter"
+standalone_reason = "Issue #5736 defines normative PostgreSQL/pgTAP dialect, schema, migration, transaction, and database-state evidence law before adapters or support promotion; spec-only slice."

@@ -22,3 +22,15 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — owner_return_pin_loom_model_closure (3)
+
+Reason:
+RIPR-SPEC-0122: drill-in and repair-start command lines carry consumer labels naming their id domain (#12431)
+
+Command:
+`cargo xtask goldens bless owner_return_pin_loom_model_closure --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

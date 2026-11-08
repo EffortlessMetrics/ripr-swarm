@@ -19,6 +19,7 @@ Linked issues:
 - #5498 (Perl findings list tests without a reason)
 - #5566 (promote to a language-neutral related-test miss contract)
 - #5445 (Python, TypeScript and Perl related tests without a reason)
+- #6889 (TypeScript residual no-assertion admission forms)
 
 Support-tier impact:
 
@@ -120,9 +121,9 @@ Three states stay distinct: a recognized assertion; established absence of any a
 construct after complete extraction; and an assertion-like, refused, custom or
 dynamic form whose admission is unresolved. An empty recognized-assertion
 vector is not by itself `no_assertion`. `assertion_not_credited` is not a
-bucket for unsupported syntax; only a typed established refusal (#5446) may use it. Rust's current
-emission on a refused row predates this rule and stays a documented exception
-until #5446 lands.
+bucket for unsupported syntax; only a typed established refusal (#5446) may use it. Rust splits
+every such row into `assertion_inert` or `assertion_admission_unproven` from its typed
+refusal (#5446), so the unsplit value is not left on a Rust refused row.
 
 ### Minimum evidence per miss
 
@@ -131,7 +132,7 @@ until #5446 lands.
 | `no_call_path` | no established path to the changed owner under the producer's relation model |
 | `no_assertion` | path established, extraction complete, no executable assertion-like construct |
 | `assertion_not_observing` | affirmative evidence the admitted assertion observes another owner, value or sink |
-| `assertion_not_credited` | a typed established refusal accepted by #5446 |
+| `assertion_not_credited` | a typed established refusal; the Rust adapter reports it as `assertion_inert` or `assertion_admission_unproven` (#5446) |
 | `weak_assertion` | an admitted, family-relevant oracle at a weak or smoke tier, below the producer's strong or exact threshold |
 | `missing_input` | a row-owned predicate-activation or boundary omission |
 | `missing_exact_assertion` | a row-owned observed-surface or exact-discriminator omission |
@@ -153,8 +154,8 @@ unsupported state as unknown and fabricates no reason conforms.
 | --- | --- | --- | --- | --- |
 | `no_call_path` | yes | yes (closed-body reach fact on a function owner, name-only rows; residual limits below) | no (absence unprovable from one file) | no |
 | `no_assertion` | yes | yes (extraction-complete admission, fail-closed; residual limits below) | no (admission blind spots) | no |
-| `assertion_not_observing` | yes | no (credit-only alignment; withheld pending #5491) | no (withheld pending #5495) | no (#3223) |
-| `assertion_not_credited` | yes, unsplit until #5446 | no (#5446) | no (#5446) | no |
+| `assertion_not_observing` | yes | no (credit-only alignment; withheld pending #5491) | yes (affirmative other-sink only, #5528) | no (#3223) |
+| `assertion_not_credited` | yes, split into `assertion_inert` and `assertion_admission_unproven` (#5446) | no (no typed refusal) | no (no typed refusal) | no |
 | `weak_assertion` | yes | yes (weak and smoke only) | yes (weak and smoke only) | no |
 | `missing_input` | yes | yes (predicate boundary, row-owned) | yes (row-owned `MissedBoundary` fact only, hedged "seen" wording, #10040) | no (#4061, perl-lsp-swarm#17237, #5562) |
 | `missing_exact_assertion` | yes | no (no row-owned fact) | no (no row-owned fact) | no |
@@ -186,8 +187,9 @@ call, not hooks, helpers or re-exports; a sound fact needs a reach mode of the
 admission scan that treats production imports, barrel and `export *`
 re-exports, side-effect imports, `jest.mock`/`vi.mock` factories, `it.each`
 tables, dynamic `import()`/`require`, class and instance owners, hook bodies
-and runner config as reaching), `assertion_not_observing` (withheld pending
-#5495; row eligibility is the explicit role, not this value) and
+and runner config as reaching), `assertion_not_observing` (only when row-local
+changed-sink observation is `affirmatively_other_sink`, #5528; unresolved
+observation stays `observation_unconfirmed`) and
 `no_assertion` (the single-file admission scan cannot see project setup files
 or runner plugins). Rows with unresolved admission, static-limited findings,
 `exposed`, `static_unknown`
@@ -519,8 +521,8 @@ actionability. For Python, a `conftest.py` on the test's directory chain that
 declares an `autouse` fixture, a `pytest_runtest_*` hook or `pytest_plugins`,
 or a test-item hook (`pytest_collection_modifyitems` and similar), or that imports names from any module outside a short standard-library list (the name may be an autouse fixture or hook), builds an autouse fixture decorator, aliases the fixture decorator or an external fixture, star-imports or imports relatively, passes `**options` to `fixture`, or that could not be read, withholds `extraction_complete_no_assertion` from
 every test in its scope (#6657). For the Python `no_assertion` miss a conftest that declares any fixture or `pytest_*` hook, or has a top-level call, taints every test below it as well. Remaining blind spots (dynamically registered
-plugins, plugins or `usefixtures` set in pytest ini `addopts`, TypeScript setup files; Python bare sibling modules are recorded per test and withhold the Python `no_assertion` row) are tracked in #6657
-and #6889.
+plugins, plugins or `usefixtures` set in pytest ini `addopts`, TypeScript setup files and neutrally named colocated helpers; Python bare sibling modules are recorded per test and withhold the Python `no_assertion` row) are tracked in #6657
+and #6889. TypeScript admission withholds `extraction_complete_no_assertion` for AVA's default `failWithoutAssertions`, thenable `reject` aliasing, a describe/loop parameter that shadows a production import, and a sibling test that assigns an enclosing name (#6889).
 
 ### Family-relevant assertion selection (Python)
 
@@ -684,8 +686,9 @@ actionability or rendered output.
 
 - Changing any verdict. Whether a self-contradicting gap should become an
   unknown is RIPR-SPEC-0221's admission rule.
-- Splitting `assertion_not_credited` into proven-inert and admission-unproven
-  cases; that needs the typed admission refusal tracked by #5446 (see #5359).
+- Splitting `assertion_not_credited` for the Python, TypeScript and Perl adapters; the
+  Rust split into proven-inert and admission-unproven cases landed with the typed
+  admission refusal (#5446, #5359), and those adapters have no typed refusal.
 - Per-adapter miss mappings: the capability table states which reasons each
   adapter writes, and each producer PR owns its own column. Richer Perl reasons that need row-owned facts (#5562).
 - Any producer implementation, parser, call-graph or oracle expansion,
@@ -763,7 +766,7 @@ actionability or rendered output.
 
 | Surface | Responsibility |
 | --- | --- |
-| `crates/ripr/src/domain/probe.rs` | `RelatedTestMiss`, `RelatedTest::miss`, `Finding::oracle_related_tests` |
+| `crates/ripr-contract/src/domain/probe.rs` | `RelatedTestMiss`, `RelatedTest::miss`, `Finding::oracle_related_tests` |
 | `crates/ripr/src/analysis/classify/reveal.rs` | retain examined tests; set assertion-level misses; ranking |
 | `crates/ripr/src/analysis/classifier/finding.rs` | class-level misses |
 | `crates/ripr/src/analysis/language/perl/mod.rs` | Perl v1 `observation_unconfirmed` rows |

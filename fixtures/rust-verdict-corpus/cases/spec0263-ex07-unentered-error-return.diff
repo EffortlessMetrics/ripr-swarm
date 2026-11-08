@@ -1,0 +1,12 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -9,7 +9,7 @@
+         return Err(PriceError::Negative);
+     }
+     if price > 1_000_000 {
+-        return Err(PriceError::TooLarge);
++        return Err(PriceError::TooLarge)
+     }
+     Ok(price - price * pct / 100)
+ }

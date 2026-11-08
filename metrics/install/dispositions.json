@@ -1,0 +1,29 @@
+{
+  "channels": [
+    {
+      "channel": "archive",
+      "status": "tested_elsewhere",
+      "reason": "Install seconds and first-run walk per platform come from first-run-archive.yml (weekly and on demand), whose report artifact records them; five platforms were green on 2026-11-04 (run 41882613579)."
+    },
+    {
+      "channel": "binstall",
+      "status": "not_tested",
+      "reason": "cargo binstall ripr falls back to a source build until a release carries binstall metadata and archives (0.11.0); verify with a real cargo binstall after publication."
+    },
+    {
+      "channel": "vscode_extension",
+      "status": "not_tested",
+      "reason": "Marketplace and Open VSX install needs a desktop VS Code host; no hosted check installs the listed extension and starts the server."
+    },
+    {
+      "channel": "ci_init",
+      "status": "not_tested",
+      "reason": "The generated GitHub workflow downloads the release archive when one exists for the runner; no scheduled check runs a generated workflow on a clean repository."
+    },
+    {
+      "channel": "homebrew",
+      "status": "not_shipped",
+      "reason": "No tap exists; creating it needs the owner's go-ahead (docs/INSTALL_CHANNELS.md)."
+    }
+  ]
+}

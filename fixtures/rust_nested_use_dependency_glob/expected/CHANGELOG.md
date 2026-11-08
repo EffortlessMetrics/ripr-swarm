@@ -156,3 +156,29 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_nested_use_dependency_glob (13)
+
+Reason:
+RIPR-SPEC-0122: drill-in and repair-start command lines carry consumer labels naming their id domain (#12431)
+
+Command:
+`cargo xtask goldens bless rust_nested_use_dependency_glob --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — rust_nested_use_dependency_glob (14)
+
+Reason:
+RIPR-SPEC-0197: assertion_not_credited splits into assertion_inert / assertion_admission_unproven (#5446, PR #12647); only the miss label and its wording change
+
+Command:
+`cargo xtask goldens bless rust_nested_use_dependency_glob --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

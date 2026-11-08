@@ -41,6 +41,12 @@ const DIVISION: Subject = (DIVISION_OWNER, DIVISION_DIFF, "return_value");
 const DIVISION_OWNER: &str = "pub fn checked_div(a: u32, b: u32) -> Result<u32, ()> {\n    if b == 0 {\n        return Err(());\n    }\n    Ok(a / b)\n}\n";
 const DIVISION_DIFF: &str = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,6 +1,6 @@\n pub fn checked_div(a: u32, b: u32) -> Result<u32, ()> {\n     if b == 0 {\n         return Err(());\n     }\n-    Ok(a / b + 1)\n+    Ok(a / b)\n }\n";
 
+/// A changed `Some(..)` tail, which the owner-return pin can credit.
+const HALVING: Subject = (HALVING_OWNER, HALVING_DIFF, "return_value");
+
+const HALVING_OWNER: &str = "pub fn half(v: u32) -> Option<u32> {\n    if v % 2 == 1 {\n        return None;\n    }\n    Some(v / 2)\n}\n";
+const HALVING_DIFF: &str = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,6 +1,6 @@\n pub fn half(v: u32) -> Option<u32> {\n     if v % 2 == 1 {\n         return None;\n     }\n-    Some(v / 2 + 1)\n+    Some(v / 2)\n }\n";
+
 const CLAIMS: &str = "claims = \"0.8\"";
 const APPROX: &str = "approx = \"0.5\"";
 const FLOAT_CMP: &str = "float-cmp = \"0.9\"";
@@ -115,8 +121,8 @@ fn rows() -> Vec<Row> {
             none,
             Some(UNRESOLVED),
         ),
-        // Direct payload equality: exact by the macro's contract, but ripr
-        // does not yet read it, so it stays limited rather than credited.
+        // Direct payload equality on a boundary (`predicate`) probe: nothing
+        // here pins a returned tail, so it stays limited rather than credited.
         row(
             "claims_assert_some_eq",
             OPTION,
@@ -134,6 +140,29 @@ fn rows() -> Vec<Row> {
             "assert_ok_eq!(parse(5), 10);",
             none,
             Some(UNRESOLVED),
+        ),
+        // The same forms on a changed `Ok(..)` / `Some(..)` tail (the
+        // `return_value` family): credited exactly like the unwrapped
+        // `assert_eq!` twin, because the import is verified and the expected
+        // operand is a literal (#12304). The `predicate` rows above stay
+        // `unknown`: the pin credits a returned tail, not a boundary.
+        row(
+            "claims_assert_ok_eq_pins_a_changed_ok_tail",
+            DIVISION,
+            CLAIMS,
+            "use claims::assert_ok_eq;",
+            "assert_ok_eq!(checked_div(17, 5), 3);",
+            ("exact_value", "strong"),
+            None,
+        ),
+        row(
+            "claims_assert_some_eq_pins_a_changed_some_tail",
+            HALVING,
+            CLAIMS,
+            "use claims::assert_some_eq;",
+            "assert_some_eq!(half(10), 5);",
+            ("exact_value", "strong"),
+            None,
         ),
         // Payload extraction then a std assertion: the verified-import path.
         row(

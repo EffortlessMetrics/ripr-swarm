@@ -116,6 +116,17 @@ endings preserves supported alias and `tsconfig.json` build-output mappings.
 - Alias map is built once at the `analyze_diff` call site and passed as
   `Option<&TsAliasMap>` (None when flag OFF).
 
+Amendment (#12754 slice): the loader still reads only the workspace-root
+configs, but `normalized_relative_import_module` withholds that root map for
+an importer whose nearest `tsconfig.json` / `jsconfig.json` (bounded upward
+walk from the importing file, cached per run) declares its own
+`compilerOptions.paths` — with or without `baseUrl` (TS 4.1+, #12760) — and
+is not the root config. A specifier the root map would otherwise claim then
+stays unresolved and the existing `typescript_path_alias_unresolved`
+disclosure fires. Root fallback is unchanged when no nearer config declares
+`paths`, and a specifier no root key owns still falls through to workspace
+packages. Full per-package resolution remains a Non-Goal.
+
 ### 4. Always-on honesty disclosure
 
 Regardless of the `resolve_tsconfig_paths` flag,

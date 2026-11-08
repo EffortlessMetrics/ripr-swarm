@@ -574,3 +574,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — weak_error_oracle_assert_matches (48)
+
+Reason:
+RIPR-SPEC-0122: drill-in and repair-start command lines carry consumer labels naming their id domain (#12431)
+
+Command:
+`cargo xtask goldens bless weak_error_oracle_assert_matches --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

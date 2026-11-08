@@ -1,0 +1,11 @@
+.github/workflows/python-wheelhouse-qualification.yml|urllib.request|4|ci/python-wheelhouse|#13092: offline wheelhouse qualification probe; the call must fail to reach pypi.org before the offline install is trusted, never a download path.
+.github/workflows/python-wheelhouse-qualification.yml|urlopen|2|ci/python-wheelhouse|#13092: same reachability probe as the urllib.request row; failure to connect is the expected, required outcome.
+fixtures/python-real-repo-evals/werkzeug-multiple-cookie/input/src/werkzeug/http.py|urllib.request|1|fixtures/python-evals|#13092: vendored werkzeug eval input imports parse_http_list only; analyzed as text by ripr, not executed.
+fixtures/python-real-repo-evals/werkzeug-multiple-cookie/input/src/werkzeug/test.py|urllib.request|1|fixtures/python-evals|#13092: vendored werkzeug eval input constructs a Request object for its test client; analyzed as text, not executed.
+fixtures/python-real-repo-evals/werkzeug-multiple-cookie/input/src/werkzeug/serving.py|import socket|2|fixtures/python-evals|#13092: vendored werkzeug eval input (socket plus socketserver imports); analyzed as text, not executed.
+fixtures/python-real-repo-evals/werkzeug-multiple-cookie/input/tests/conftest.py|import socket|1|fixtures/python-evals|#13092: vendored werkzeug eval input test fixture; analyzed as text, not executed.
+fixtures/python-real-repo-evals/werkzeug-multiple-cookie/input/tests/conftest.py|http.client|4|fixtures/python-evals|#13092: vendored werkzeug eval input test fixture; analyzed as text, not executed.
+xtask/src/policy/distribution/wheelhouse.rs|urllib.request|1|xtask/distribution|#13092: test asserts the generated wheelhouse consumer text contains the probe string; performs no network call.
+xtask/src/policy/distribution/wheelhouse.rs|urlopen|1|xtask/distribution|#13092: same generated-text assertion as the urllib.request row; performs no network call.
+xtask/src/portable_consumer.rs|import socket|1|xtask/distribution|#13092: forbidden-token list data used to reject network-capable portable consumer code; the string performs no network behavior.
+xtask/src/portable_consumer.rs|http.client|1|xtask/distribution|#13092: forbidden-token list data, same as the import socket row; performs no network behavior.

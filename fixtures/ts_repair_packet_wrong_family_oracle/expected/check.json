@@ -97,7 +97,7 @@
         "repair_route": "add probe-specific discriminator extraction for this expression before repair packet projection",
         "source": "check_typescript_preview",
         "static_limits": [],
-        "suggested_assertion_shape": "Exact-value evidence is present; verify it targets the changed discriminator.",
+        "suggested_assertion_shape": "The related test's check is already strong, but ripr cannot tie it to the changed line. Exercise the changed branch with an input that flips it.",
         "verify": {
           "command": "npx --no-install jest tests/limiter.test.ts"
         },
@@ -137,8 +137,8 @@
       "stop_reasons": [],
       "oracle_kind": "exact_value",
       "oracle_strength": "strong",
-      "recommended_next_step": "TypeScript preview advisory: add a test that exercises the changed behavior with an exact-value assertion (`toBe` / `toEqual` / `toStrictEqual`); no actionable repair packet is emitted until the target shape is explicit.",
-      "suggested_next_action": "TypeScript preview advisory: add a test that exercises the changed behavior with an exact-value assertion (`toBe` / `toEqual` / `toStrictEqual`); no actionable repair packet is emitted until the target shape is explicit.",
+      "recommended_next_step": "TypeScript preview advisory: the related test's check is already strong, but ripr cannot tie it to the changed line; exercise the changed branch with an input that flips it. No actionable repair packet is emitted until the target shape is explicit.",
+      "suggested_next_action": "TypeScript preview advisory: the related test's check is already strong, but ripr cannot tie it to the changed line; exercise the changed branch with an input that flips it. No actionable repair packet is emitted until the target shape is explicit.",
       "language": "typescript",
       "language_status": "preview",
       "owner_kind": "function",

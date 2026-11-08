@@ -38,9 +38,9 @@ Evidence
   - discriminator weak: Discriminator unconfirmed: no assertion text references the changed expression
   - local flow reaches match arm result: (true, false) => (line 30)
   - related test tests/projection.rs:4 terminal_projection_0 uses strong exact value oracle: assert_eq!(terminal.0, "head_passed"); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
-  - related test tests/projection.rs:4 terminal_projection_0 uses strong exact value oracle: assert_eq!(terminal.1, "receipt-1=head_passed join=request_identity_v2", "request_identity_v2"); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
-  - related test tests/projection.rs:4 terminal_projection_0 uses strong exact value oracle: assert_eq!(terminal.2, vec!["request-1".to_string()]); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
-  - related test tests/projection.rs:4 terminal_projection_0 uses strong exact value oracle: assert_eq!(terminal.3, vec!["receipt-1".to_string()]); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
+  - related test tests/projection.rs:4 terminal_projection_0 uses strong exact value oracle: assert_eq!(terminal.1, "receipt-1=head_passed join=request_identity_v2", "request_identity_v2"); unconfirmed
+  - related test tests/projection.rs:4 terminal_projection_0 uses strong exact value oracle: assert_eq!(terminal.2, vec!["request-1".to_string()]); unconfirmed
+  - related test tests/projection.rs:4 terminal_projection_0 uses strong exact value oracle: assert_eq!(terminal.3, vec!["receipt-1".to_string()]); unconfirmed
   - source function argument value plan_status = "planned" at line 8
   - source function argument value task_id = "different-task" at line 8
   - source assertion argument value "head_passed" at line 9
@@ -57,6 +57,7 @@ Weakness
 Next step
   Strengthen the related assertion so it discriminates the changed behavior
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/match_arm_tuple_terminal_generated_constructor/input --diff <cwd>/fixtures/match_arm_tuple_terminal_generated_constructor/diff.patch --mode fast probe:src_work_queue.rs:match_arm:e2ddad8e
   ripr context --root <cwd>/fixtures/match_arm_tuple_terminal_generated_constructor/input --diff <cwd>/fixtures/match_arm_tuple_terminal_generated_constructor/diff.patch --mode fast --at probe:src_work_queue.rs:match_arm:e2ddad8e
 
@@ -86,9 +87,9 @@ Evidence
   - discriminator weak: Discriminator unconfirmed: no assertion text references the changed expression
   - local flow reaches match arm result: "request_identity_v1" (line 30)
   - related test tests/projection.rs:4 terminal_projection_0 uses strong exact value oracle: assert_eq!(terminal.0, "head_passed"); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
-  - related test tests/projection.rs:4 terminal_projection_0 uses strong exact value oracle: assert_eq!(terminal.1, "receipt-1=head_passed join=request_identity_v2", "request_identity_v2"); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
-  - related test tests/projection.rs:4 terminal_projection_0 uses strong exact value oracle: assert_eq!(terminal.2, vec!["request-1".to_string()]); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
-  - related test tests/projection.rs:4 terminal_projection_0 uses strong exact value oracle: assert_eq!(terminal.3, vec!["receipt-1".to_string()]); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
+  - related test tests/projection.rs:4 terminal_projection_0 uses strong exact value oracle: assert_eq!(terminal.1, "receipt-1=head_passed join=request_identity_v2", "request_identity_v2"); unconfirmed
+  - related test tests/projection.rs:4 terminal_projection_0 uses strong exact value oracle: assert_eq!(terminal.2, vec!["request-1".to_string()]); unconfirmed
+  - related test tests/projection.rs:4 terminal_projection_0 uses strong exact value oracle: assert_eq!(terminal.3, vec!["receipt-1".to_string()]); unconfirmed
   - source function argument value plan_status = "planned" at line 8
   - source function argument value task_id = "different-task" at line 8
   - source assertion argument value "head_passed" at line 9
@@ -105,5 +106,6 @@ Weakness
 Next step
   Not a candidate edit target (base_deleted): the changed source is not current on the candidate side, so this finding recommends no test change
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/match_arm_tuple_terminal_generated_constructor/input --diff <cwd>/fixtures/match_arm_tuple_terminal_generated_constructor/diff.patch --mode fast probe:src_work_queue.rs:match_arm:bb954c10
   ripr context --root <cwd>/fixtures/match_arm_tuple_terminal_generated_constructor/input --diff <cwd>/fixtures/match_arm_tuple_terminal_generated_constructor/diff.patch --mode fast --at probe:src_work_queue.rs:match_arm:bb954c10

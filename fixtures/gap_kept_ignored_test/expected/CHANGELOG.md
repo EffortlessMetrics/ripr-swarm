@@ -253,3 +253,27 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — gap_kept_ignored_test (22)
+
+Reason:
+RIPR-SPEC-0122: drill-in and repair-start command lines carry consumer labels naming their id domain (#12431)
+
+Command:
+`cargo xtask goldens bless gap_kept_ignored_test --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — gap_kept_ignored_test (23)
+
+Reason:
+RIPR-SPEC-0221: inert miss wording says shape that can keep the assertion from running
+
+Command:
+`cargo xtask goldens bless gap_kept_ignored_test --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

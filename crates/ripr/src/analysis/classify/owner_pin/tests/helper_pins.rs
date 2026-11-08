@@ -466,6 +466,30 @@ fn a_helper_scoped_assert_eq_binding_refuses_the_loan() -> Result<(), String> {
     Ok(())
 }
 
+/// #12461 (T1 control for #5695): a one-line helper whose scoped
+/// `macro_rules! assert_eq` shares its line with the borrowed assertion must
+/// still refuse the loan. `assertion_byte_range` only resolves the test's own
+/// assertions, so a borrowed oracle resolves to no bytes; that
+/// `(Some scope_bytes, None)` shape keeps the pre-PR conservative cover
+/// instead of admitting the shadowed expansion as a genuine check.
+#[test]
+fn a_one_line_helper_scoped_assert_eq_binding_refuses_the_loan() -> Result<(), String> {
+    for shadow in [
+        "macro_rules! assert_eq { ($a:expr, $b:expr) => {} }",
+        "macro_rules! assert_eq { ($a:expr, $b:expr) => { std::assert_eq!(1, 1) }; }",
+    ] {
+        let helper = format!(
+            "    fn check_tip(b: u64, t: u64, want: u64) {{ {shadow} assert_eq!(with_tip(b, t), want); }}\n"
+        );
+        assert_eq!(
+            helper_assertion_admitted(&module(&helper, CALLS))?,
+            (false, false),
+            "{shadow}"
+        );
+    }
+    Ok(())
+}
+
 /// The disclosed refusal for the helper's assertion, as
 /// [`helper_assertion_admitted`] builds it.
 fn helper_assertion_refusal(source: &str) -> Result<Option<AssertionRefusal>, String> {

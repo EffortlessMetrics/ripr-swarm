@@ -30,6 +30,7 @@ fn status_and_refresh_advertise_committed_scope_variants() -> Result<(), String>
                 "type": "string",
                 "pattern": "^(committed (default-branch diff|diff against base .+)|saved tracked-worktree diff against (the default branch|base .+))$"
             },
+            "analyzed_base": { "type": "string", "minLength": 1 },
             "uncommitted_edits": {
                 "type": "string",
                 "enum": ["outside this analysis", "saved tracked edits included"]

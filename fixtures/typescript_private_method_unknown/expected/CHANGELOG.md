@@ -1,5 +1,12 @@
 # Golden Output Changes
 
+## Pending — cross-surface annotation conformance (#12925)
+
+Add the existing finding projection as `sarif.json` and `github.txt` under
+RIPR-SPEC-0008 cross-surface conformance. Class, canonical identity,
+configured severity and refusal guidance come from the existing producer;
+the check/human goldens and analyzer behavior are unchanged.
+
 ## Pending — typescript_private_method_unknown (1)
 
 Reason:
@@ -37,3 +44,32 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human-full.txt`
+
+## Pending — typescript_private_method_unknown (4)
+
+Reason:
+RIPR-SPEC-0122: drill-in and repair-start command lines carry consumer labels naming their id domain (#12431)
+
+Command:
+`cargo xtask goldens bless typescript_private_method_unknown --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — typescript_private_method_unknown (5)
+
+Reason:
+RIPR-SPEC-0088: retain source-file provenance for advisory TypeScript-family unknown findings; verdicts and repair authority unchanged (#12930)
+
+Command:
+`cargo xtask goldens bless typescript_private_method_unknown --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+The incidental new `human.txt` copied by the blessing command was discarded;
+this update retains the existing human-surface inventory.

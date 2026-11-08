@@ -17,7 +17,7 @@ Start here:
   Gap ID (for scripts): gap:rust:src/lib.rs:can_ship:return_value:return_value:in_stock_paid
   Changed behavior: in_stock && paid
   Analyzer limit: ripr could not follow the changed value to something a test can check (a return value or side effect)
-  Related test: tests/api.rs:10 ships (assertion not credited: ripr could not establish that this assertion counts here)
+  Related test: tests/api.rs:10 ships (assertion inert: this test's assertion has a shape that can keep it from running as a standard check here)
   Next step: Trace the changed value to its output or effect, and inspect what the related test
     actually checks. If it has an assertion, inspect exactly what that assertion observes. Add or
     strengthen a test only if this inspection finds a gap. Compare the original and changed
@@ -39,6 +39,7 @@ Start here:
     - 14 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/rust_bool_assert_shadow_direct/input --diff <cwd>/fixtures/rust_bool_assert_shadow_direct/diff.patch --mode fast probe:src_lib.rs:return_value:5a8195e8
   ripr context --root <cwd>/fixtures/rust_bool_assert_shadow_direct/input --diff <cwd>/fixtures/rust_bool_assert_shadow_direct/diff.patch --mode fast --at probe:src_lib.rs:return_value:5a8195e8
   no repair start offered: `ripr check` reads a gap or limit for this change, but `ripr repair` judges the surrounding code as a whole and finds its tests already notice changes there (exposed), so it has no gap to start from. The two read different evidence (your changed lines versus the surrounding code as a whole) and ripr does not start a repair on conflicting evidence; follow the Next step above

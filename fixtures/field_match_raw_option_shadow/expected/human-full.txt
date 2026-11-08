@@ -57,6 +57,7 @@ Limitation detail
 Next step
   - Inspect `lease.settled_elapsed_ms` at the existing owner call and whether a related assertion observes that call's returned value; add or strengthen a test only if that inspection identifies a missing observation
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/field_match_raw_option_shadow/input --diff <cwd>/fixtures/field_match_raw_option_shadow/diff.patch --mode fast probe:src_lib.rs:match_arm:23efc786
   ripr context --root <cwd>/fixtures/field_match_raw_option_shadow/input --diff <cwd>/fixtures/field_match_raw_option_shadow/diff.patch --mode fast --at probe:src_lib.rs:match_arm:23efc786
 
@@ -85,6 +86,7 @@ Weakness
 Next step
   - Not a candidate edit target (base_deleted): the changed source is not current on the candidate side, so this finding recommends no test change
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/field_match_raw_option_shadow/input --diff <cwd>/fixtures/field_match_raw_option_shadow/diff.patch --mode fast probe:src_lib.rs:match_arm:dd1110e0
   ripr context --root <cwd>/fixtures/field_match_raw_option_shadow/input --diff <cwd>/fixtures/field_match_raw_option_shadow/diff.patch --mode fast --at probe:src_lib.rs:match_arm:dd1110e0
 
@@ -113,5 +115,6 @@ Weakness
 Next step
   - Not a candidate edit target (base_deleted): the changed source is not current on the candidate side, so this finding recommends no test change
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/field_match_raw_option_shadow/input --diff <cwd>/fixtures/field_match_raw_option_shadow/diff.patch --mode fast probe:src_lib.rs:return_value:e5ff3cbb
   ripr context --root <cwd>/fixtures/field_match_raw_option_shadow/input --diff <cwd>/fixtures/field_match_raw_option_shadow/diff.patch --mode fast --at probe:src_lib.rs:return_value:e5ff3cbb

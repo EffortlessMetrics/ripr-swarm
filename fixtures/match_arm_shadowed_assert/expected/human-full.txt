@@ -37,7 +37,7 @@ Evidence
   - observation no: No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)
   - discriminator no: No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)
   - local flow reaches match arm result: _ if arg.starts_with('-') => (line 61)
-  - related test src/tests.rs:3 checks_unknown uses no oracle; misses: assertion not credited: ripr could not establish that this assertion counts here
+  - related test src/tests.rs:3 checks_unknown uses no oracle; misses: assertion inert: this test's assertion has a shape that can keep it from running as a standard check here
   - source enum variant value super::SelectionRequest::Unresolved at line 6
 
 Weakness
@@ -47,5 +47,6 @@ Weakness
 Next step
   Establish that the test is collected and enabled, that the assertion runs on its executed path, and that it resolves to the intended standard macro, then check the changed returned value
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/match_arm_shadowed_assert/input --diff <cwd>/fixtures/match_arm_shadowed_assert/diff.patch --mode fast probe:src_lib.rs:match_arm:ea5b4163
   ripr context --root <cwd>/fixtures/match_arm_shadowed_assert/input --diff <cwd>/fixtures/match_arm_shadowed_assert/diff.patch --mode fast --at probe:src_lib.rs:match_arm:ea5b4163

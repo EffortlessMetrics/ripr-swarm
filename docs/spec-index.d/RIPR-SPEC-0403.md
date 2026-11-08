@@ -1,0 +1,1 @@
+| [RIPR-SPEC-0403](../specs/RIPR-SPEC-0403-powershell-edition-module-pipeline-stream-pester-system-effect-evidence-contracts.md) | proposed | PowerShell edition, module, pipeline, stream, Pester, and system-effect preview evidence contracts (#5710, #5600) |

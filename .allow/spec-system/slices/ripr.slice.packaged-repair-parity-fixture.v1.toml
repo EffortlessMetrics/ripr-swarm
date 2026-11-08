@@ -1,0 +1,54 @@
+schema_version = "2.0"
+id = "ripr.slice.packaged-repair-parity-fixture.v1"
+generation = 1
+
+source_issue = "issue:4648"
+design_reference = "fixtures/packaged_repair_parity/SPEC.md"
+change_class = "behavior_change"
+
+claim_boundary = """
+Adds the external packaged repair parity fixture manifest and typed
+cross-channel receipt/gate contract (#4648) consumed by later installed-CLI
+and packaged-VSIX qualification slices (#4650, #4651). Does not execute either
+channel journey or close parent #2929.
+"""
+
+non_goals = [
+  "installed CLI canonical attempt execution",
+  "packaged VSIX journey execution",
+  "support-tier promotion",
+  "release publication",
+]
+
+return_conditions = [
+  "Return to root if skipped or missing sections can render qualified.",
+  "Return to root if semantic mismatch can pass parity.",
+  "Return to root if synthetic rows enter real-repository dogfood denominators.",
+]
+
+owned_seams = [
+  "seam:ripr:fixtures:packaged-repair-parity",
+  "seam:ripr:xtask:packaged-repair-receipt",
+]
+
+shared_seams = [
+  "seam:ripr:fixtures:blind-journey-installed-rust",
+]
+
+forbidden_seams = [
+  "seam:ripr:release:publication",
+  "seam:ripr:analysis:runtime-mutation",
+]
+
+[[requirement_delta]]
+requirement_id = "issue:4648#fixture-and-parity-receipt"
+requirement_generation = 1
+
+[implementation_claim]
+status = "implemented"
+
+[evidence]
+state = "tests_added"
+
+[support_claim]
+state = "unchanged"

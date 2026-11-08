@@ -901,7 +901,8 @@ pub(super) fn bare_owner_call_is_shadowed(
 /// crate already trusts for item scope (#10162).
 fn body_declares_same_name_fn(test: &TestSummary, owner_name: &str) -> bool {
     use ra_ap_syntax::{ast, ast::HasName};
-    let Some(parse) = parse_clean_source_file(test.body.as_str()) else {
+    let Some(parse) = crate::analysis::syntax::parse_clean_source_file_memoized(test.body.as_str())
+    else {
         return false;
     };
     parse.tree().syntax().descendants().any(|node| {
@@ -1026,6 +1027,11 @@ fn wrapped_owner_call_arguments(operand: &str, owner_name: &str) -> Option<Vec<S
 /// or closure that the bare-path assertion does not name.
 fn fold_owner_call(owner: &FunctionSummary, arguments: &[i128]) -> Option<i128> {
     fold_function_text(owner.body.as_str(), arguments)
+}
+
+/// Fold a single-argument owner body at one integer input (#9478 path-value pin).
+pub(in crate::analysis) fn fold_owner_body_at(body: &str, argument: i128) -> Option<i128> {
+    fold_function_text(body, &[argument])
 }
 
 /// [`fold_owner_call`] over the function's source text, so a baseline body

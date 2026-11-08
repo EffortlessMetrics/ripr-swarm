@@ -362,6 +362,20 @@ pub(crate) fn snapshot_inputs_differ_in(root: &Path, directory: &Path) -> bool {
     })
 }
 
+/// `true` when the installed overlay for `root` records any snapshot input
+/// (RIPR-SPEC-0258) that differs from `HEAD`, anywhere under `root`. The Rust
+/// file-backed snapshot reading (#12189) has no single directory to ask about,
+/// so it reads "the working tree and `HEAD` disagree about a snapshot input"
+/// as unknown and keeps today's grade. Without an overlay the working tree
+/// matches `HEAD` for every such file, so this is `false`.
+pub(crate) fn any_snapshot_input_differs(root: &Path) -> bool {
+    CURRENT_OVERLAY.with(|slot| {
+        slot.borrow()
+            .as_ref()
+            .is_some_and(|overlay| overlay.serves(root) && !overlay.snapshot_inputs.is_empty())
+    })
+}
+
 /// Root-relative `/`-separated paths of every tracked `*.snap` file under
 /// `root`, from one `ls-files` call, or `None` when the repository cannot
 /// answer (no repository, the tool unavailable, over the output limit). A

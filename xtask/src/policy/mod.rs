@@ -5,6 +5,7 @@ mod capability_docs;
 mod capability_producers;
 mod changelog_fragments;
 mod ci_lane_whitelist;
+mod cli_exit_contract;
 mod covered_by;
 mod dependency_expiry;
 pub(crate) mod distribution;
@@ -13,7 +14,9 @@ pub(crate) mod droid_review;
 pub(crate) mod evidence_state_literals;
 mod executable_files;
 mod file_policy;
+pub(crate) mod file_policy_retained_evidence;
 mod fold_changelog;
+mod install_receipt;
 mod local_context;
 mod network;
 mod no_panic;
@@ -41,6 +44,7 @@ pub(crate) use changelog_fragments::{
     check_changelog_fragments, check_changelog_fragments_with_args, unfolded_fragment_paths,
 };
 pub(crate) use ci_lane_whitelist::check_ci_lane_whitelist;
+pub(crate) use cli_exit_contract::check_cli_exit_contract;
 pub(crate) use covered_by::check_covered_by;
 pub(crate) use dependency_expiry::{
     check_dependency_suppression_expiry, check_post_0_11_dependency_defer_tracking,
@@ -48,12 +52,15 @@ pub(crate) use dependency_expiry::{
 pub(crate) use doc_roles::check_doc_roles;
 pub(crate) use droid_review::check_droid_review_config;
 pub(crate) use executable_files::check_executable_files;
+#[cfg(all(test, windows))]
+pub(crate) use file_policy::FILE_POLICY_COVERED_BY_BUILD_BUDGET;
 pub(crate) use file_policy::{check_file_policy, is_covered_by_instrument_failure};
 pub(crate) use fold_changelog::fold_changelog;
+pub(crate) use install_receipt::install_receipt;
 pub(crate) use local_context::check_local_context;
 pub(crate) use network::check_network_policy;
 pub(crate) use no_panic::check_no_panic_family;
-pub(crate) use packaged_readme::check_packaged_readme;
+pub(crate) use packaged_readme::{check_packaged_readme, workspace_package_version};
 pub(crate) use positioning_language::check_positioning_language;
 pub(crate) use process::check_process_policy;
 pub(crate) use product_copy::check_product_copy;

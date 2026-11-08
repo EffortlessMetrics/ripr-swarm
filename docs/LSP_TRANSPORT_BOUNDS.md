@@ -110,8 +110,8 @@ These bounds compose with, and do not duplicate, the existing authorities:
   the committed selection (#7770, #2596); packaged editor composition proof
   for Problems visibility remains separate from these server transport contracts;
   the passive `ripr-diagnostic-preview-withheld` Hint (#11296, #11798) sits outside
-  that budget and is instead bounded by the producer (one per file, 50 per
-  snapshot; RIPR-SPEC-0126);
+  that budget and is instead bounded by the producer (one marker per file; markers plus #13442 per-line
+  rows share 50 per snapshot; RIPR-SPEC-0126);
 - cancellation is the tower-lsp built-in `$/cancelRequest` plus the ripr
   cancellation substrate (`analysis/cancellation.rs`), both of which stay
   serviceable because request concurrency is above 1;

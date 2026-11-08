@@ -126,7 +126,18 @@ to the preview-language note, which carries the `ripr.toml` recovery block
 (#10691). The static-limited `State:` line reads `ripr cannot tell from reading
 the code whether tests would notice this`, and the internal noun "observable
 sink" never appears (`something a test can check (a return value or side
-effect)`). The canonical gap id is labelled `Gap ID (for scripts)`. The promise covers renderer-controlled labels on the
+effect)`). The canonical gap id is labelled `Gap ID (for scripts)`. The
+bounded digest's drill-in commands and the repair start carry the same kind
+of consumer label (#12431): a `  (finding id, for explain/context)` line sits
+above the `ripr explain` / `ripr context --at` pair, and a
+`  (spot id, for repair)` line sits above a printed `ripr repair <seam-id>`
+start, naming the distinct id domain each selector keys on in plain
+glossary-safe words. The label is its own line, never part of the command, so
+every printed command stays byte-identical (line-copy and downstream line
+parsing keep working, and the TypeScript gap-bound start needs no label: its
+`--gap-id` flag already names its domain). `human-full`'s per-finding
+`Drill in:` block prints the same finding-id label through the same shared
+renderer. The promise covers renderer-controlled labels on the
 bounded surface; producer prose (for example a next-step sentence), file
 paths, and required CLI or probe identifiers are data, not renderer labels,
 and are unchanged. The schema ids and their meanings are unchanged and stay
@@ -262,10 +273,10 @@ carded one, so `check` does not report "no repair card" while `ripr pilot` and
 
 The digest's assertion line label reflects the assertion state. Boundary
 (#10692): stage and producer prose that is shared with JSON (for example "No
-strong discriminator was detected", "equality-boundary discriminator is
-missing", and the Python preview next-step text) still says "discriminator" in the
-default digest; changing it needs the shared producer strings and the JSON
-contracts to move together.
+strong discriminator was detected" and the Python preview next-step text) still
+says "discriminator" in the default digest; changing it needs the shared producer
+strings and the JSON contracts to move together. The "equality-boundary check is
+missing" reason was reworded at its producer (#12907).
 
 - `Missing check` — the finding is not `exposed`; the named
   discriminator is absent from the related tests (#10691: the digest says
@@ -278,10 +289,10 @@ contracts to move together.
 
 The line carries the discriminator value alone; the label is not restated
 inside it. `Finding.missing` mixes value-shaped entries, which the classifier
-builds as `Missing discriminator value: <value>`, with prose entries such as
+builds as `Missing check value: <value>`, with prose entries such as
 `No strong discriminator was detected`. Rendering a value-shaped entry verbatim
 under the label produced
-`Missing discriminator: Missing discriminator value: AuthError::RevokedToken`,
+`Missing discriminator: Missing check value: AuthError::RevokedToken`,
 so the renderer strips that prefix and emits
 `Missing check: AuthError::RevokedToken`. Prose entries carry no such
 prefix and are rendered unchanged. This governs the human digest only; no
@@ -952,10 +963,21 @@ most one `limit=` line, exactly one terminal line, and a scope-bound
   `--suppression-policy` is refused for this format because the replay cannot
   apply the policy.
 
+A `check --format agent` explain drill-in retains `--format agent` for a
+selected gap, a reach-limited open finding, or a stopped limited finding. It
+uses the existing navigation command unchanged apart from that option, so the
+selector, quoting and source scope survive. When an explicit suppression policy
+was applied, these drill-ins retain the existing human command: the projection
+does not distinguish live from artifact navigation, and artifact replay cannot
+apply that policy. Context and other commands do not inherit the option (#13157).
+
 `--format json` is refused toward `ripr context`, which remains the JSON packet.
 The format adds no verdict and claims no runtime outcome.
 
 ## Test Mapping
+
+- `crates/ripr/src/output/human/agent_tests.rs::agent_explain_navigation_preserves_scope_format_and_policy_compatibility` — three branches, source scopes, quoting and explicit-policy fallback.
+- `crates/ripr/tests/agent_compact_navigation.rs::compact_check_explain_context_journey_preserves_the_selected_subject` — literal built-binary check, explain and context journeys.
 
 - `crates/ripr/src/output/human/agent_tests.rs::explain_agent_gap_is_one_record_one_test_open_terminal_and_context_next`
 - `crates/ripr/src/output/human/agent_tests.rs::explain_agent_exposed_finding_is_done_not_open`
@@ -1064,7 +1086,7 @@ The format adds no verdict and claims no runtime outcome.
 | Kind-scoped agent-stub not-found guidance | `crates/ripr/src/app/test_stub.rs` |
 | CLI help | `crates/ripr/src/cli/help/core.rs` |
 | First-pr missing-packet recovery | `crates/ripr/src/output/first_pr.rs` |
-| First-pr command options | `crates/ripr/src/output/first_pr/options.rs` |
+| First-pr command options | `crates/ripr/src/cli/commands/first_pr.rs` |
 | Full-human fixture projection guard | `xtask/src/main.rs` |
 | Output contract docs | `docs/OUTPUT_SCHEMA.md` |
 | Human golden fixtures | `fixtures/*/expected/human.txt` |

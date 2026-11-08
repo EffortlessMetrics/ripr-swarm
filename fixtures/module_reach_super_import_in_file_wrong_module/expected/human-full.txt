@@ -36,7 +36,7 @@ Evidence
   - discriminator not established (infection_unknown); related oracle: Strong oracle found: exact value or pattern assertion
   - local flow reaches returned value: 10 <= qty (line 2)
   - related test src/lib.rs:19 discount_boundary uses strong exact value oracle: assert_eq!(order_discount(10), 5); misses: no established call path to the changed code; linked by file location only
-  - related test src/lib.rs:19 discount_boundary uses strong exact value oracle: assert_eq!(order_discount(9), 4); misses: no established call path to the changed code; linked by file location only
+  - related test src/lib.rs:19 discount_boundary uses strong exact value oracle: assert_eq!(order_discount(9), 4); misses
   - source assertion argument value 10 at line 20
   - source assertion argument value 5 at line 20
   - source assertion argument value 4 at line 21
@@ -67,6 +67,7 @@ Limitation detail
 Next step
   Tests cannot close this static-analysis limitation: ripr cannot trace entry `order_discount` -> owner `is_bulk` through a transitive Rust helper path. Inspect the named path and existing assertions through the public API; add a test only for an independently confirmed gap. This limitation does not establish a missing test. Route analyzer work to `analysis/rust-public-api-transitive-reach`
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/module_reach_super_import_in_file_wrong_module/input --diff <cwd>/fixtures/module_reach_super_import_in_file_wrong_module/diff.patch --mode fast probe:src_lib.rs:predicate:41e056ec
   ripr context --root <cwd>/fixtures/module_reach_super_import_in_file_wrong_module/input --diff <cwd>/fixtures/module_reach_super_import_in_file_wrong_module/diff.patch --mode fast --at probe:src_lib.rs:predicate:41e056ec
 
@@ -94,7 +95,7 @@ Evidence
   - discriminator weak: Discriminator unconfirmed: no assertion text references the changed expression
   - local flow reaches returned value: 10 <= qty (line 2)
   - related test src/lib.rs:19 discount_boundary uses strong exact value oracle: assert_eq!(order_discount(10), 5); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
-  - related test src/lib.rs:19 discount_boundary uses strong exact value oracle: assert_eq!(order_discount(9), 4); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
+  - related test src/lib.rs:19 discount_boundary uses strong exact value oracle: assert_eq!(order_discount(9), 4); unconfirmed
   - source assertion argument value 10 at line 20
   - source assertion argument value 5 at line 20
   - source assertion argument value 4 at line 21
@@ -123,5 +124,6 @@ Limitation detail
 Next step
   Tests cannot close this static-analysis limitation: ripr cannot trace entry `order_discount` -> owner `is_bulk` through a transitive Rust helper path. Inspect the named path and existing assertions through the public API; add a test only for an independently confirmed gap. This limitation does not establish a missing test. Route analyzer work to `analysis/rust-public-api-transitive-reach`
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/module_reach_super_import_in_file_wrong_module/input --diff <cwd>/fixtures/module_reach_super_import_in_file_wrong_module/diff.patch --mode fast probe:src_lib.rs:return_value:cc17bcd3
   ripr context --root <cwd>/fixtures/module_reach_super_import_in_file_wrong_module/input --diff <cwd>/fixtures/module_reach_super_import_in_file_wrong_module/diff.patch --mode fast --at probe:src_lib.rs:return_value:cc17bcd3

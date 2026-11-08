@@ -223,6 +223,47 @@ impl Drop for Fixture {
     }
 }
 
+/// A fresh directory under a temp base that no workspace, package or Git top
+/// level encloses, for the #12417 discovery-gate controls. `TMPDIR` can sit
+/// inside a checkout (an anchored root, where the gate is silent), so fall
+/// back to the process temp dir and `/tmp`, and fail loudly if none is free
+/// of markers: a silent early return would leave the refusal unchecked.
+#[cfg(unix)]
+fn marker_free_dir(label: &str) -> Result<PathBuf, String> {
+    let anchored = |dir: &Path| {
+        dir.ancestors().any(|ancestor| {
+            [
+                "Cargo.toml",
+                ".git",
+                "package.json",
+                "pyproject.toml",
+                "setup.py",
+                "setup.cfg",
+            ]
+            .iter()
+            .any(|name| ancestor.join(name).exists())
+        })
+    };
+    let candidates = [
+        std::env::var_os("TMPDIR").map(PathBuf::from),
+        Some(std::env::temp_dir()),
+        Some(PathBuf::from("/tmp")),
+    ];
+    let base = candidates
+        .into_iter()
+        .flatten()
+        .filter_map(|dir| dir.canonicalize().ok())
+        .find(|dir| !anchored(dir))
+        .ok_or("no temp directory outside every project was found for the unanchored control")?;
+    let outer = base.join(format!(
+        "ripr-{label}-{}-{}",
+        std::process::id(),
+        TEMP_COUNTER.fetch_add(1, Ordering::Relaxed)
+    ));
+    std::fs::create_dir_all(&outer).map_err(|e| e.to_string())?;
+    Ok(outer)
+}
+
 fn attempt_ids(root: &Path) -> Vec<String> {
     let dir = root.join("target/ripr/repair-attempts");
     let mut ids = Vec::new();
@@ -439,14 +480,104 @@ fn repair_after_explicit_base_check_points_back_to_its_gap_start() -> Result<(),
     Ok(())
 }
 
+/// Switches the Python and TypeScript preview adapters on for a fixture, so a
+/// test of the enabled-language repair guidance does not depend on zero-config
+/// marker detection (#13571).
+#[cfg(all(feature = "lang-python", feature = "lang-typescript"))]
+fn enable_preview_languages(root: &Path) -> Result<(), String> {
+    std::fs::write(
+        root.join("ripr.toml"),
+        "[languages]\nenabled = [\"rust\", \"python\", \"typescript\"]\n",
+    )
+    .map_err(|e| e.to_string())
+}
+
+/// #13571: a Python change in a repo with no project marker and no
+/// `ripr.toml` is not analyzed, so `ripr repair` says that and names the
+/// `ripr.toml` line, instead of pointing at a `ripr check` that analyzes
+/// nothing.
+#[test]
+#[cfg(all(feature = "lang-python", feature = "lang-typescript"))]
+fn repair_with_python_not_enabled_says_it_was_not_analyzed() -> Result<(), String> {
+    let fixture = Fixture::empty("facade-python-not-enabled")?;
+    let root = &fixture.root;
+    let root_arg = root.to_string_lossy().into_owned();
+    std::fs::create_dir_all(root.join("lib")).map_err(|e| e.to_string())?;
+    std::fs::write(
+        root.join("lib/pricing.py"),
+        "def limit(x):\n    return x > 3\n",
+    )
+    .map_err(|e| e.to_string())?;
+    run_git(root, &["add", "lib"])?;
+    git_commit(root, "add flat python")?;
+    std::fs::write(
+        root.join("lib/pricing.py"),
+        "def limit(x):\n    return x >= 3\n",
+    )
+    .map_err(|e| e.to_string())?;
+    let stderr = nonrust_repair_stderr(root, &root_arg)?;
+    assert!(
+        stderr.contains("is Python, and ripr did not analyze it")
+            && stderr.contains("not enabled here")
+            && stderr.contains("enabled = [\"rust\", \"python\"]"),
+        "must say Python was not analyzed and how to enable it:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("works from Rust gaps only") && !stderr.contains("verify command"),
+        "must not promise a by-hand route that check cannot back:\n{stderr}"
+    );
+    // Control: enabling the adapter restores the enabled-language guidance.
+    enable_preview_languages(root)?;
+    let enabled = nonrust_repair_stderr(root, &root_arg)?;
+    assert!(
+        enabled.contains("is Python, and `ripr repair` works from Rust gaps only"),
+        "enabled Python keeps the gap-bound guidance:\n{enabled}"
+    );
+    Ok(())
+}
+
+/// #13571: the printed `ripr.toml` line still names `rust` when the root has a
+/// space in it (the message quotes the root; the Rust marker probe must use
+/// the real path), and a second disabled language is named too.
+#[test]
+#[cfg(all(feature = "lang-python", feature = "lang-typescript"))]
+fn repair_not_enabled_line_keeps_rust_for_a_spaced_root_and_names_every_language()
+-> Result<(), String> {
+    let fixture = Fixture::empty("facade python off spaced")?;
+    let root = &fixture.root;
+    let root_arg = root.to_string_lossy().into_owned();
+    assert!(
+        root_arg.contains(' '),
+        "fixture root must contain a space: {root_arg}"
+    );
+    std::fs::create_dir_all(root.join("lib")).map_err(|e| e.to_string())?;
+    std::fs::write(root.join("lib/pricing.py"), "T = 10\n").map_err(|e| e.to_string())?;
+    std::fs::write(root.join("lib/pricing.ts"), "export const t = 10;\n")
+        .map_err(|e| e.to_string())?;
+    run_git(root, &["add", "lib"])?;
+    git_commit(root, "add flat sources")?;
+    std::fs::write(root.join("lib/pricing.py"), "T = 11\n").map_err(|e| e.to_string())?;
+    std::fs::write(root.join("lib/pricing.ts"), "export const t = 11;\n")
+        .map_err(|e| e.to_string())?;
+    let stderr = nonrust_repair_stderr(root, &root_arg)?;
+    assert!(
+        stderr.contains("is Python and TypeScript, and ripr did not analyze it")
+            && stderr.contains("enabled = [\"rust\", \"python\", \"typescript\"]"),
+        "must keep rust and name both languages for a spaced root:\n{stderr}"
+    );
+    Ok(())
+}
+
 /// #10682: when the changed code is Python or TypeScript, `ripr repair` says
 /// repair start covers Rust only and points at `ripr check`'s manual route
 /// instead of looping through `ripr pilot`.
 #[test]
+#[cfg(all(feature = "lang-python", feature = "lang-typescript"))]
 fn repair_with_changed_non_rust_code_says_rust_only() -> Result<(), String> {
     let fixture = Fixture::empty("facade-nonrust")?;
     let root = &fixture.root;
     let root_arg = root.to_string_lossy().into_owned();
+    enable_preview_languages(root)?;
     std::fs::write(root.join("pricing.ts"), "export const t = 10;\n").map_err(|e| e.to_string())?;
     std::fs::write(root.join("pricing.py"), "T = 10\n").map_err(|e| e.to_string())?;
     run_git(root, &["add", "pricing.ts", "pricing.py"])?;
@@ -484,10 +615,12 @@ fn nonrust_repair_stderr(root: &Path, root_arg: &str) -> Result<String, String> 
 /// #10682: a clean branch whose change is committed (no dirty tree) reads the
 /// same committed diff `ripr check` analyzes, not just `git diff HEAD`.
 #[test]
+#[cfg(all(feature = "lang-python", feature = "lang-typescript"))]
 fn repair_with_committed_only_non_rust_change_says_rust_only() -> Result<(), String> {
     let fixture = Fixture::empty("facade-nonrust-committed")?;
     let root = &fixture.root;
     let root_arg = root.to_string_lossy().into_owned();
+    enable_preview_languages(root)?;
     std::fs::write(root.join("pricing.ts"), "export const t = 10;\n").map_err(|e| e.to_string())?;
     run_git(root, &["add", "pricing.ts"])?;
     git_commit(root, "add ts")?;
@@ -507,10 +640,12 @@ fn repair_with_committed_only_non_rust_change_says_rust_only() -> Result<(), Str
 
 /// #10682: a C-quoted (non-ASCII) filename is still recognised by extension.
 #[test]
+#[cfg(all(feature = "lang-python", feature = "lang-typescript"))]
 fn repair_with_quoted_non_rust_filename_says_rust_only() -> Result<(), String> {
     let fixture = Fixture::empty("facade-nonrust-quoted")?;
     let root = &fixture.root;
     let root_arg = root.to_string_lossy().into_owned();
+    enable_preview_languages(root)?;
     std::fs::write(root.join("café.ts"), "export const t = 10;\n").map_err(|e| e.to_string())?;
     run_git(root, &["add", "."])?;
     git_commit(root, "add quoted ts")?;
@@ -556,10 +691,12 @@ fn repair_ignores_non_rust_change_in_a_sibling_package() -> Result<(), String> {
 /// #10682: a deletion-only change gets no `check` finding, so the message
 /// does not promise one.
 #[test]
+#[cfg(all(feature = "lang-python", feature = "lang-typescript"))]
 fn repair_with_deletion_only_non_rust_change_does_not_promise_a_finding() -> Result<(), String> {
     let fixture = Fixture::empty("facade-nonrust-deletion")?;
     let root = &fixture.root;
     let root_arg = root.to_string_lossy().into_owned();
+    enable_preview_languages(root)?;
     std::fs::write(
         root.join("pricing.ts"),
         "export const a = 1;\nexport const b = 2;\n",
@@ -873,42 +1010,16 @@ fn member_directory_commands_use_the_resolved_workspace_root() -> Result<(), Str
 }
 
 /// #12417: `continue` with no attempt, run from a directory that no
-/// workspace, package or Git top level encloses, must say so and stop. The
-/// repair selector it used to consult reads the whole current directory, which
-/// on a large tree ran for minutes with no output. Unix-only like the other
-/// implicit-root smoke tests (the temp parent must hold no manifest or repo).
+/// workspace, package or Git top level encloses, must say so and stop at the
+/// discovery gate — not answer "no current attempt to continue" about a tree
+/// that is not a project. The repair selector it used to consult reads the
+/// whole current directory, which on a large tree ran for minutes with no
+/// output. Unix-only like the other implicit-root smoke tests (the temp
+/// parent must hold no manifest or repo).
 #[cfg(unix)]
 #[test]
 fn continue_outside_any_workspace_refuses_without_scanning() -> Result<(), String> {
-    // The claim needs a directory no project encloses. `TMPDIR` can sit inside
-    // a checkout (an anchored root, where the refusal is the ordinary scan), so
-    // fall back to `/tmp` and fail loudly if neither is free of markers: a
-    // silent early return would leave the refusal unchecked.
-    let anchored = |dir: &Path| {
-        dir.ancestors().any(|ancestor| {
-            [
-                "Cargo.toml",
-                ".git",
-                "package.json",
-                "pyproject.toml",
-                "setup.py",
-                "setup.cfg",
-            ]
-            .iter()
-            .any(|name| ancestor.join(name).exists())
-        })
-    };
-    let base = [std::env::temp_dir(), PathBuf::from("/tmp")]
-        .into_iter()
-        .filter_map(|dir| dir.canonicalize().ok())
-        .find(|dir| !anchored(dir))
-        .ok_or("no temp directory outside every project was found for the unanchored control")?;
-    let outer = base.join(format!(
-        "ripr-facade-unanchored-{}-{}",
-        std::process::id(),
-        TEMP_COUNTER.fetch_add(1, Ordering::Relaxed)
-    ));
-    std::fs::create_dir_all(&outer).map_err(|e| e.to_string())?;
+    let outer = marker_free_dir("facade-unanchored")?;
     let _cleanup = Fixture {
         root: outer.clone(),
     };
@@ -917,9 +1028,16 @@ fn continue_outside_any_workspace_refuses_without_scanning() -> Result<(), Strin
     assert_exit(&output, 3, "continue outside any workspace");
     let all = stderr_text(&output);
     assert!(
-        all.contains("no current attempt to continue")
-            && all.contains("no workspace, package or Git repository was found"),
+        all.contains("no workspace, package or Git repository was found"),
         "must name the cause:\n{all}"
+    );
+    assert!(
+        all.contains("refusal code=unanchored_root disposition=not_started"),
+        "must carry the discovery gate code:\n{all}"
+    );
+    assert!(
+        !all.contains("no current attempt to continue"),
+        "a marker-less directory is a discovery refusal, not an attempt answer:\n{all}"
     );
     assert!(
         !all.contains("starts nothing right now"),
@@ -935,10 +1053,112 @@ fn continue_outside_any_workspace_refuses_without_scanning() -> Result<(), Strin
     std::fs::write(outer.join("package.json"), "{\"name\":\"shop\"}").map_err(|e| e.to_string())?;
     let packaged = run_ripr(&outer, &["continue"])?;
     assert_exit(&packaged, 3, "continue in a plain package");
+    let packaged_all = stderr_text(&packaged);
     assert!(
-        !stderr_text(&packaged).contains("no workspace, package or Git repository was found"),
+        !packaged_all.contains("no workspace, package or Git repository was found"),
         "a plain package must not be called unanchored:\n{}",
-        stderr_text(&packaged)
+        packaged_all
+    );
+    assert!(
+        packaged_all.contains("no current attempt to continue"),
+        "a plain package keeps the ordinary attempt answer:\n{}",
+        packaged_all
+    );
+    Ok(())
+}
+
+/// #12417: the shared discovery gate refuses `repair` and `status` too, with
+/// the same typed code: a directory no project anchors has no repair start to
+/// pick and no repair state to report. `status --root` pins the directory and
+/// skips the gate. Unix-only like the other implicit-root smoke tests.
+#[cfg(unix)]
+#[test]
+fn repair_and_status_outside_any_workspace_refuse_with_the_discovery_gate() -> Result<(), String> {
+    let outer = marker_free_dir("facade-gate-repair-status")?;
+    let _cleanup = Fixture {
+        root: outer.clone(),
+    };
+    std::fs::write(outer.join("loose.rs"), FIXTURE_LIB).map_err(|e| e.to_string())?;
+    for command in ["repair", "status"] {
+        let output = run_ripr(&outer, &[command])?;
+        assert_exit(&output, 3, &format!("{command} outside any workspace"));
+        let all = stderr_text(&output);
+        assert!(
+            all.contains("no workspace, package or Git repository was found"),
+            "{command} must name the cause:\n{all}"
+        );
+        assert!(
+            all.contains("refusal code=unanchored_root disposition=not_started"),
+            "{command} must carry the discovery gate code:\n{all}"
+        );
+        assert!(
+            stdout_text(&output).is_empty(),
+            "{command} typed refusal keeps stdout empty"
+        );
+    }
+    // An explicit --root skips the gate: status answers about the named
+    // directory instead of refusing it.
+    let pinned = outer.to_string_lossy().into_owned();
+    let explicit = run_ripr(&outer, &["status", "--root", &pinned])?;
+    assert!(
+        explicit.status.code() != Some(3),
+        "an explicit --root must skip the gate, got exit {:?}: {}",
+        explicit.status.code(),
+        stderr_text(&explicit)
+    );
+    assert!(
+        !stderr_text(&explicit).contains("no workspace, package or Git repository was found"),
+        "an explicit --root must not be called unanchored:\n{}",
+        stderr_text(&explicit)
+    );
+    Ok(())
+}
+
+/// #12417: `agent status` spells the same typed refusal as `ripr status`,
+/// while `agent repair` keeps the root-resolution convention (exit 2, the
+/// plain cause on stderr, no code line). Unix-only like the other
+/// implicit-root smoke tests.
+#[cfg(unix)]
+#[test]
+fn agent_status_and_repair_spell_the_discovery_gate_like_the_facade() -> Result<(), String> {
+    let outer = marker_free_dir("facade-gate-agent")?;
+    let _cleanup = Fixture {
+        root: outer.clone(),
+    };
+    std::fs::write(outer.join("loose.rs"), FIXTURE_LIB).map_err(|e| e.to_string())?;
+
+    let status = run_ripr(&outer, &["agent", "status"])?;
+    assert_exit(&status, 3, "agent status outside any workspace");
+    let status_all = stderr_text(&status);
+    assert!(
+        status_all.contains("no workspace, package or Git repository was found")
+            && status_all.contains("refusal code=unanchored_root disposition=not_started"),
+        "agent status must spell the typed refusal:\n{status_all}"
+    );
+    assert!(
+        stdout_text(&status).is_empty(),
+        "agent status typed refusal keeps stdout empty"
+    );
+
+    // A missing --seam-id is a usage refusal before any root resolution, so
+    // the gate control names a subject: the gate fires before it is used.
+    let repair = run_ripr(
+        &outer,
+        &["agent", "repair", "--seam-id", "probe:gate-control"],
+    )?;
+    assert_exit(&repair, 2, "agent repair outside any workspace");
+    let repair_all = stderr_text(&repair);
+    assert!(
+        repair_all.contains("no workspace, package or Git repository was found"),
+        "agent repair must name the cause:\n{repair_all}"
+    );
+    assert!(
+        !repair_all.contains("refusal code="),
+        "the agent repair root error keeps the prose-only convention:\n{repair_all}"
+    );
+    assert!(
+        stdout_text(&repair).is_empty(),
+        "agent repair refusal keeps stdout empty"
     );
     Ok(())
 }
@@ -1393,6 +1613,71 @@ fn run_worktree_check(root: &Path, root_arg: &str) -> Result<Output, String> {
     )
 }
 
+/// The `finding_routes` array of a `check --format json` document.
+fn finding_routes(json_text: &str) -> Result<Vec<serde_json::Value>, String> {
+    let document: serde_json::Value =
+        serde_json::from_str(json_text).map_err(|error| format!("check JSON: {error}"))?;
+    document["finding_routes"]
+        .as_array()
+        .cloned()
+        .ok_or_else(|| format!("check JSON must carry finding_routes:\n{json_text}"))
+}
+
+/// #11976 (real CLI): a committed, repair-eligible finding makes
+/// `check --format json` emit a ready `repair` with a runnable command, and the
+/// same command and stub the human screen prints for that finding.
+#[test]
+fn check_json_finding_routes_carry_the_ready_repair_and_stub_the_screen_prints()
+-> Result<(), String> {
+    let fixture = Fixture::boundary("facade-check-json-routes")?;
+    let root = &fixture.root;
+    let root_arg = root.to_string_lossy().into_owned();
+    weaken_boundary_predicate(root)?;
+    run_git(root, &["add", "src/lib.rs"])?;
+    git_commit(root, "weaken the boundary predicate")?;
+    let committed = ["check", "--root", root_arg.as_str(), "--base", "HEAD~1"];
+    let human = stdout_text(&run_ripr(root, &committed)?);
+    let identity = printed_repair_identity(&human)
+        .ok_or_else(|| format!("premise: the screen must print a repair start:\n{human}"))?;
+    let json = run_ripr(root, &[&committed[..], &["--format", "json"][..]].concat())?;
+    let json_text = stdout_text(&json);
+    let routes = finding_routes(&json_text)?;
+    let repair = routes
+        .iter()
+        .find_map(|route| route.get("repair"))
+        .ok_or_else(|| format!("a real JSON check must emit repair:\n{json_text}"))?;
+    assert_eq!(repair["status"], "ready");
+    assert_eq!(repair["seam_id"], identity);
+    let command = repair["command"]
+        .as_str()
+        .ok_or_else(|| format!("ready repair must carry a command: {repair}"))?;
+    assert!(
+        human.lines().any(|line| line.trim() == command),
+        "the JSON command must be the line the screen prints: {command}\n{human}"
+    );
+    // The stub route: wherever the screen prints a stub for a finding, the
+    // JSON route for that finding names the identical command.
+    let printed_stub = human
+        .lines()
+        .map(str::trim)
+        .find(|line| line.starts_with("ripr agent stub "));
+    let json_stub = routes
+        .iter()
+        .find_map(|route| route["stub_command"].as_str());
+    assert_eq!(
+        printed_stub, json_stub,
+        "stub parity:\n{human}\n{json_text}"
+    );
+    // json-compact is the same document shape.
+    let compact = run_ripr(
+        root,
+        &[&committed[..], &["--format", "json-compact"][..]].concat(),
+    )?;
+    let compact_routes = finding_routes(&stdout_text(&compact))?;
+    assert_eq!(compact_routes, routes);
+    Ok(())
+}
+
 /// #8166 Slice C (positive control): the bounded human check drill-down for
 /// a repair-eligible top finding prints a `ripr repair` line naming the seam
 /// identity the repair resolver accepts, and running that exact identity
@@ -1459,10 +1744,20 @@ fn check_drill_down_prints_repair_identity_that_starts_the_same_seam() -> Result
             "json",
         ],
     )?;
+    // #11976: JSON gains only the additive `finding_routes` projection, and
+    // its repair command is the identity-bound line the screen printed.
+    let json_text = stdout_text(&json);
+    let routes = finding_routes(&json_text)?;
+    let repair = routes
+        .iter()
+        .find_map(|route| route.get("repair"))
+        .ok_or_else(|| format!("JSON must carry the repair route:\n{json_text}"))?;
+    assert_eq!(repair["status"], "ready");
+    assert_eq!(repair["seam_id"], identity);
+    let command = repair["command"].as_str().unwrap_or_default();
     assert!(
-        !stdout_text(&json).contains("ripr repair"),
-        "JSON must not gain a repair next step:\n{}",
-        stdout_text(&json)
+        stdout.lines().any(|line| line.trim() == command),
+        "JSON command must be a printed line: {command}\n{stdout}"
     );
     // Round-trip: the printed identity resolves through `ripr repair` to
     // the same seam and starts exactly one before-phase attempt for it.
@@ -2994,6 +3289,142 @@ fn repair_still_starts_when_a_weak_asserting_test_sits_beside_should_panic() -> 
     Ok(())
 }
 
+/// #12977: public pilot artifacts retain the named panic reason and brief
+/// omits the exact seam with that reason. A weak asserting sibling keeps
+/// the ordinary gap selectable on both surfaces. A snapshot configured to
+/// carry no strength supplies concrete propagation without granting grip,
+/// exercising named-only selection through the real configured analyzer.
+#[test]
+fn pilot_and_brief_withhold_the_should_panic_limitation() -> Result<(), String> {
+    let seam_id = "498b9581c66564c1";
+    for (fixture_name, extra_test, snapshot_disabled, selected) in [
+        ("facade-panic-selection", "", false, false),
+        (
+            "facade-panic-selection-weak",
+            "\n#[test]\nfn ok() {\n    assert!(div(4, 2) > 0);\n}\n",
+            false,
+            true,
+        ),
+        (
+            "facade-panic-selection-snapshot",
+            "\n#[test]\nfn snapshot_result() {\n    let result = div(8, 2);\n    insta::assert_debug_snapshot!(result, @\"4\");\n}\n",
+            true,
+            false,
+        ),
+    ] {
+        let fixture = Fixture::dir(fixture_name)?;
+        let root = &fixture.root;
+        populate_should_panic_fixture(root, extra_test)?;
+        if snapshot_disabled {
+            std::fs::write(
+                root.join("ripr.toml"),
+                "[oracles]\nsnapshot_strength = \"none\"\n",
+            )
+            .map_err(|error| format!("write snapshot policy: {error}"))?;
+            std::fs::write(
+                root.join("Cargo.toml"),
+                format!("{FIXTURE_CARGO_TOML}\n[dev-dependencies]\ninsta = \"1\"\n"),
+            )
+            .map_err(|error| format!("write snapshot fixture manifest: {error}"))?;
+        }
+        let root_arg = root.to_string_lossy().into_owned();
+        let pilot = run_ripr(root, &["pilot", "--root", &root_arg, "--quiet"])?;
+        assert_exit(&pilot, 0, "pilot on the should_panic fixture");
+        let summary: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(root.join("target/ripr/pilot/pilot-summary.json"))
+                .map_err(|error| format!("read pilot summary: {error}"))?,
+        )
+        .map_err(|error| format!("parse pilot summary: {error}"))?;
+        assert_eq!(summary["status"], "complete", "{summary}");
+        let ranked = summary["top_actionable_seams"]
+            .as_array()
+            .ok_or("pilot must emit top_actionable_seams")?;
+        let exposure: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(root.join("target/ripr/pilot/repo-exposure.json"))
+                .map_err(|error| format!("read repo exposure: {error}"))?,
+        )
+        .map_err(|error| format!("parse repo exposure: {error}"))?;
+        let seam = exposure["seams"]
+            .as_array()
+            .and_then(|seams| seams.iter().find(|entry| entry["seam_id"] == seam_id))
+            .ok_or("repo exposure must contain the div predicate seam")?;
+        let limitations = seam["evidence_record"]["static_limitations"]
+            .as_array()
+            .ok_or("the seam must retain its static limitations")?;
+        assert_eq!(
+            limitations
+                .iter()
+                .any(|limit| limit["category"] == "rust_panic_outcome_unresolved"),
+            !selected,
+            "{seam}"
+        );
+        if snapshot_disabled {
+            let record = &seam["evidence_record"];
+            assert_eq!(record["grip_class"], "reachable_unrevealed", "{record}");
+            for stage in ["reach", "activate", "propagate", "observe", "discriminate"] {
+                let state = record["evidence_path"][stage]["state"]
+                    .as_str()
+                    .ok_or("the seam must retain every evidence stage")?;
+                assert!(!matches!(state, "unknown" | "opaque"), "{stage}: {record}");
+            }
+            assert_eq!(
+                limitations.len(),
+                1,
+                "only the named panic limit applies: {record}"
+            );
+        }
+        assert_eq!(
+            ranked.iter().any(|entry| entry["seam_id"] == seam_id),
+            selected
+        );
+        if !selected {
+            assert!(
+                summary["withheld_static_limitations_total"]
+                    .as_u64()
+                    .is_some_and(|count| count > 0),
+                "{summary}"
+            );
+        }
+
+        let brief = run_ripr(
+            root,
+            &[
+                "agent",
+                "brief",
+                "--root",
+                &root_arg,
+                "--seam-id",
+                seam_id,
+                "--json",
+            ],
+        )?;
+        assert_exit(&brief, 0, "brief on the exact should_panic seam");
+        let brief: serde_json::Value = serde_json::from_slice(&brief.stdout)
+            .map_err(|error| format!("parse agent brief: {error}"))?;
+        let top = brief["top_seams"]
+            .as_array()
+            .ok_or("brief must emit top_seams")?;
+        assert_eq!(top.len(), usize::from(selected), "{brief}");
+        if selected {
+            assert_eq!(top[0]["seam_id"], seam_id);
+        } else {
+            assert!(
+                brief["warnings"].as_array().is_some_and(|warnings| {
+                    warnings.iter().any(|warning| {
+                        warning.as_str().is_some_and(|warning| {
+                            warning.contains(
+                                "cannot tell whether the changed code causes the expected panic",
+                            )
+                        })
+                    })
+                }),
+                "{brief}"
+            );
+        }
+    }
+    Ok(())
+}
+
 /// Control 4: one current attempt — `ripr continue` advances that exact
 /// attempt through the accepted after path.
 #[test]
@@ -3614,6 +4045,96 @@ fn repeated_repair_resumes_the_awaiting_attempt_instead_of_duplicating() -> Resu
     Ok(())
 }
 
+/// #13216: a real ambiguous capture survives process restart as a limited
+/// attempt. Ordinary continue refuses without invoking after, and repeat
+/// repair captures a fresh baseline instead of reusing that historical one.
+#[test]
+fn retained_ambiguous_baseline_blocks_continue_and_repeat_repair_reuse() -> Result<(), String> {
+    let fixture = Fixture::boundary("facade-retained-baseline")?;
+    let root = &fixture.root;
+    let root_arg = root.to_string_lossy().into_owned();
+    let object = run_git(root, &["hash-object", "-w", "src/lib.rs"])?;
+    for name in ["baseline-collision.txt", "BASELINE-COLLISION.txt"] {
+        run_git(
+            root,
+            &[
+                "update-index",
+                "--add",
+                "--cacheinfo",
+                "100644",
+                object.trim(),
+                name,
+            ],
+        )?;
+    }
+    let before = run_ripr(root, &["repair", FIXTURE_SEAM, "--root", &root_arg])?;
+    assert_exit(&before, 0, "ambiguous before publication");
+    let attempt_id = attempt_id_from_before_stderr(&stderr_text(&before))?;
+    let original = manifest_bytes(root, &attempt_id)?;
+    let status = run_ripr(
+        root,
+        &[
+            "status",
+            "--root",
+            &root_arg,
+            "--attempt",
+            &attempt_id,
+            "--json",
+        ],
+    )?;
+    assert_exit(&status, 0, "ambiguous retained status");
+    let document: serde_json::Value = serde_json::from_slice(&status.stdout)
+        .map_err(|error| format!("ambiguous status JSON: {error}"))?;
+    assert_eq!(document["attempt"]["state"], "awaiting_edit");
+    assert_eq!(document["attempt"]["status_class"], "limited");
+    assert_eq!(document["attempt"]["baseline_ambiguous"], true);
+    assert_eq!(document["next_action"]["step"], "repair_attempt_before");
+    for explicit in [false, true] {
+        let mut args = vec!["continue", "--root", root_arg.as_str()];
+        if explicit {
+            args.extend(["--attempt", attempt_id.as_str()]);
+        }
+        let continued = run_ripr(root, &args)?;
+        assert_exit(&continued, 3, "baseline-blocked continuation");
+        assert_refusal_code(
+            &continued,
+            "attempt_baseline_blocked",
+            "not_started",
+            "baseline block",
+        );
+        assert!(continued.stdout.is_empty());
+        assert!(stderr_text(&continued).contains("baseline is ambiguous"));
+        assert_eq!(manifest_bytes(root, &attempt_id)?, original);
+    }
+    // Removing the capture cause does not repair the old immutable baseline.
+    for name in ["baseline-collision.txt", "BASELINE-COLLISION.txt"] {
+        run_git(root, &["update-index", "--force-remove", name])?;
+    }
+    let repeated = run_ripr(root, &["repair", FIXTURE_SEAM, "--root", &root_arg])?;
+    assert_exit(&repeated, 0, "repair captures a fresh baseline");
+    let new_id = attempt_id_from_before_stderr(&stderr_text(&repeated))?;
+    assert_ne!(new_id, attempt_id);
+    assert_eq!(attempt_ids(root).len(), 2);
+    assert_eq!(manifest_bytes(root, &attempt_id)?, original);
+    let current = run_ripr(
+        root,
+        &[
+            "status",
+            "--root",
+            &root_arg,
+            "--attempt",
+            &new_id,
+            "--json",
+        ],
+    )?;
+    assert_exit(&current, 0, "fresh retained status");
+    let current: serde_json::Value = serde_json::from_slice(&current.stdout)
+        .map_err(|error| format!("fresh status JSON: {error}"))?;
+    assert_eq!(current["attempt"]["baseline_ambiguous"], false);
+    assert_eq!(current["attempt"]["status_class"], "awaiting_edit");
+    Ok(())
+}
+
 /// Control 6: stale head — continue refuses with the canonical
 /// restart/recompute route and leaves the attempt awaiting its edit.
 #[test]
@@ -4186,8 +4707,12 @@ fn help_surfaces_stay_task_first() -> Result<(), String> {
         assert!(row["accepts_json_flag"].is_null(), "{id} has no JSON flag");
     }
     let status = find("cmd:status")?;
-    assert_eq!(status["exit"]["kind"], "completed_or_failed");
+    // #12417: the unanchored discovery refusal is a typed decision, so both
+    // status spellings advertise decision exits beside their 0/2 outcomes.
+    assert_eq!(status["exit"]["kind"], "decision_or_refusal");
     assert_eq!(status["accepts_json_flag"], "--json");
+    let agent_status = find("cmd:agent.status")?;
+    assert_eq!(agent_status["exit"]["kind"], "decision_or_refusal");
     for id in ["cmd:agent.repair", "cmd:agent.status"] {
         let row = find(id)?;
         assert_eq!(row["class"], "advanced", "{id} must be advanced");
@@ -5982,6 +6507,10 @@ fn member_context_selector_shadowed_by_a_root_package_file_is_refused() -> Resul
 
 #[path = "task_first_facade/brief_diff_status.rs"]
 mod brief_diff_status;
+#[path = "task_first_facade/field_snapshot.rs"]
+mod field_snapshot;
+#[path = "task_first_facade/panic_marker.rs"]
+mod panic_marker;
 
 /// #11598: `--quiet` (and `RIPR_QUIET`) on `repair` / `continue` drop the
 /// phase narration and `wrote <path>` lines but never the results (attempt
@@ -6159,6 +6688,150 @@ fn assert_refusal_stderr_has_prefix(stderr: &str) {
         stderr.lines().any(|line| line.starts_with("ripr: ")),
         "refusal prose keeps the `ripr:` prefix:\n{stderr}"
     );
+}
+
+/// #13382: genuine after-phase states own the card's next step.
+#[test]
+fn repair_loop_projection_tracks_real_attempt_states() -> Result<(), String> {
+    for terminal in [false, true] {
+        let fixture = Fixture::boundary("repair-loop-projection")?;
+        let root = &fixture.root;
+        run_git(root, &["checkout", "-b", "repair-loop-change"])?;
+        weaken_boundary_predicate(root)?;
+        run_git(root, &["add", "src/lib.rs"])?;
+        git_commit(root, "change boundary behavior")?;
+        let root_arg = root.to_string_lossy().into_owned();
+        let start = run_ripr(root, &["repair", FIXTURE_SEAM, "--root", &root_arg])?;
+        assert_exit(&start, 0, "start repair-loop fixture");
+        let ids = attempt_ids(root);
+        assert_eq!(ids.len(), 1);
+        let id = &ids[0];
+        assert_eq!(read_manifest(root, id)?["state"], "awaiting_edit");
+        let text = stdout_text(&start);
+        assert!(
+            text.contains("Next, after the test edit: ripr continue"),
+            "{text}"
+        );
+        assert!(!text.contains("Next: ripr agent packet"), "{text}");
+        let card = run_ripr(
+            root,
+            &[
+                "agent",
+                "card",
+                "--root",
+                &root_arg,
+                "--seam-id",
+                FIXTURE_SEAM,
+                "--json",
+            ],
+        )?;
+        assert_exit(&card, 0, "awaiting card");
+        let card: serde_json::Value =
+            serde_json::from_slice(&card.stdout).map_err(|e| e.to_string())?;
+        let action = card["canonical_next_action"].to_string();
+        assert!(
+            action.contains("ripr continue") && action.contains(id),
+            "{action}"
+        );
+        assert!(!action.contains("ripr:agent:packet"), "{action}");
+        let path = if terminal {
+            "src/lib.rs"
+        } else {
+            "tests/pricing.rs"
+        };
+        let edit = if terminal {
+            format!(
+                "{}\n// outside the allowed surface\n",
+                FIXTURE_LIB.replace(">=", ">")
+            )
+        } else {
+            format!("{FIXTURE_WEAK_TEST}{FIXTURE_OFF_BOUNDARY_TEST}")
+        };
+        std::fs::write(root.join(path), edit).map_err(|e| e.to_string())?;
+        let after = run_ripr(root, &["continue", "--root", &root_arg, "--attempt", id])?;
+        assert_exit(&after, if terminal { 2 } else { 0 }, "real after phase");
+        let manifest = read_manifest(root, id)?;
+        assert_eq!(
+            manifest["state"],
+            if terminal {
+                "failed"
+            } else {
+                "ready_to_finish"
+            }
+        );
+        if terminal {
+            let reason = manifest["last_after_refusal"]["reason"]
+                .as_str()
+                .ok_or("missing refusal")?;
+            assert!(
+                reason.contains("src/lib.rs") && reason.contains("tests/pricing.rs"),
+                "{reason}"
+            );
+            assert!(
+                !reason.contains("Src/lib.rs")
+                    && !reason.contains("Tests/pricing.rs")
+                    && !reason.contains(":."),
+                "{reason}"
+            );
+        } else {
+            assert!(stdout_text(&after).contains("Static grip did not improve"));
+            assert!(stdout_text(&after).contains("Test run: none recorded"));
+        }
+        let card = run_ripr(
+            root,
+            &[
+                "agent",
+                "card",
+                "--root",
+                &root_arg,
+                "--seam-id",
+                FIXTURE_SEAM,
+            ],
+        )?;
+        assert_exit(&card, 0, "ended card on an open gap");
+        let text = stdout_text(&card);
+        assert!(
+            !text.contains("waiting for your test") && !text.contains("Repair in progress"),
+            "{text}"
+        );
+        assert!(
+            text.contains("ripr agent status") && text.contains(id),
+            "{text}"
+        );
+        assert!(!text.contains("Next: ripr agent packet"), "{text}");
+        if terminal {
+            std::fs::write(root.join("src/lib.rs"), FIXTURE_LIB.replace(">=", ">"))
+                .map_err(|e| e.to_string())?;
+            std::fs::write(
+                root.join("tests/pricing.rs"),
+                format!("{FIXTURE_WEAK_TEST}\n#[test]\nfn current_boundary() {{ assert_eq!(discounted_total(100,100),100); }}\n"),
+            )
+            .map_err(|e| e.to_string())?;
+            let start = run_ripr(root, &["repair", FIXTURE_SEAM, "--root", &root_arg])?;
+            assert_exit(&start, 3, "gripped start is withheld");
+            assert!(stderr_text(&start).contains("already check it"));
+            let status = run_ripr(
+                root,
+                &[
+                    "agent",
+                    "status",
+                    "--root",
+                    &root_arg,
+                    "--attempt",
+                    id,
+                    "--json",
+                ],
+            )?;
+            assert_exit(&status, 0, "withheld selected status");
+            let text = stdout_text(&status);
+            assert!(text.contains("a new attempt is not offered"), "{text}");
+            assert!(
+                !text.contains("start a new attempt with") && !text.contains("--phase before"),
+                "{text}"
+            );
+        }
+    }
+    Ok(())
 }
 
 /// #11600: `ripr status --attempt <bad>` is the façade the caller typed, so its

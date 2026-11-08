@@ -31,6 +31,7 @@ Start here:
     - 8 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/radix_literal_boundary_match/input --diff <cwd>/fixtures/radix_literal_boundary_match/diff.patch --mode fast probe:src_lib.rs:predicate:7432bf5c
   ripr context --root <cwd>/fixtures/radix_literal_boundary_match/input --diff <cwd>/fixtures/radix_literal_boundary_match/diff.patch --mode fast --at probe:src_lib.rs:predicate:7432bf5c
   no repair start offered: nothing to repair here; the related tests already notice this change (exposed)

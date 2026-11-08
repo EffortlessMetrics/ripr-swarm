@@ -1,0 +1,10 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,5 +1,5 @@
+ pub fn pick(n: u32) -> Option<u32> {
+-    if n < 3 {
++    if 3 > n {
+         return None;
+     }
+     Some(n * 2)

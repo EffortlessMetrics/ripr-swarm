@@ -1,0 +1,2 @@
+xtask/src/readiness_snapshot/identity.rs|Command::new|4|readiness-snapshot|#4640: bounded git rev-parse/status/show probes to bind snapshot subject SHA, worktree cleanliness, and commit-scoped lockfile or manifest digests; read-only, no shell or network.
+xtask/src/readiness_snapshot/identity.rs|use std::process::Command|1|readiness-snapshot|#4640: import for the git identity probes above.

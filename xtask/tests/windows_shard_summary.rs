@@ -48,6 +48,11 @@ fn colored_nextest_rows_still_reach_the_summary() -> Result<(), String> {
                \u{1b}[31;1m     Summary\u{1b}[0m [  30.0s] 10 tests run: 8 passed, 1 failed\n";
     fs::write(dir.join("target/shard-1.log"), log).map_err(|e| e.to_string())?;
     fs::write(dir.join("target/shard-1.status"), "100\n").map_err(|e| e.to_string())?;
+    fs::write(
+        dir.join("target/shard-1.heartbeat"),
+        "heartbeat poll=1/1\n        SLOW [> 120.0s] xtask hung::forever\n",
+    )
+    .map_err(|e| e.to_string())?;
     let summary = dir.join("summary.md");
     let script = dir.join("step.sh");
     fs::write(&script, summarize_step()?).map_err(|e| e.to_string())?;
@@ -67,6 +72,8 @@ fn colored_nextest_rows_still_reach_the_summary() -> Result<(), String> {
         "some::leaky_test",
         "Summary",
         "status: 100",
+        "hung::forever",
+        "heartbeat:",
     ] {
         if !out.contains(needle) {
             return Err(format!("summary lost `{needle}`:\n{out}"));

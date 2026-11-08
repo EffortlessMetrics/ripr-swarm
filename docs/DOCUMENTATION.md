@@ -57,6 +57,7 @@ Current how-to docs:
 - [Sibling-tool interop and learning ledger](interop/sibling-tools.md)
 - [Integrations](INTEGRATIONS.md)
 - [Install channels](INSTALL_CHANNELS.md)
+- [Windows](WINDOWS.md)
 - [Security policy](../SECURITY.md)
 - [Repository settings](REPO_SETTINGS.md)
 - [Swarm development](swarm-development.md)
@@ -129,6 +130,9 @@ Current how-to docs:
 - [0.11.0 Windows packaged dispatch checklist](releases/0.11.0-windows-packaged-dispatch.md) -
   read-only inputs and expected shape of the candidate Windows packaged run
   (#9274)
+- [0.11.0 release-candidate tracking anchor](releases/0.11.0-rc-tracking.md) -
+  durable pointer to the post-campaign cycle's one watch surface (tracking
+  issue #12830)
 - [Live-history release transaction runbook](RELEASE_TRANSACTION.md) - exact
   two-repository release lifecycle, J/K transport, receipts, and stop rules
 - [Source-promotion preflight](SOURCE_PROMOTION_PREFLIGHT.md)
@@ -175,6 +179,7 @@ Current reference docs:
 - [Output schema](OUTPUT_SCHEMA.md)
 - [Static exposure model](STATIC_EXPOSURE_MODEL.md)
 - [Configuration](CONFIGURATION.md)
+- [CLI reference](CLI_REFERENCE.md)
 - [Exit codes](EXIT_CODES.md)
 - [Terminology](TERMINOLOGY.md)
 - [User text glossary](USER_TEXT_GLOSSARY.md)

@@ -152,6 +152,36 @@ match (`evidence_promotion_human_oracle_line_accepts_absent_oracle_wording`,
      each related test's `oracle_strength` and `relation_reason`. Producer
      version, timestamps and the root are not judged. A repo-seam case without a
      regenerable subject fails (#12144).
+     Every committed report under `reports/` that carries
+     `source_subject.corpus.cache_schema_version` must record the analyzer's
+     current `CACHE_SCHEMA_VERSION`, read from `seam_cache.rs`; an older
+     generation is allowed only through a `report_cache_schema_pins` entry in
+     the corpus naming the report, the version it is held at and a reason. A
+     pin that disagrees with the report, is not older than the current version, or names
+     no capture fails (#12293).
+     Every committed full capture (a report carrying the producer's `artifact`
+     block or `source_subject.corpus`) must carry an `artifact.content_sha256`
+     that matches its own bytes under `raw_json_placeholder_v1` (#12602). A
+     capture with no digest fails and names the file, so deleting the field
+     does not evade the check; the only way past it is a
+     `report_digest_exemptions` entry in the corpus naming the report and a
+     reason. An exemption is judged too: it must name a committed capture that
+     really carries no digest, and is a violation once the capture gains one or
+     is removed (#12745).
+     Content alone cannot tell a stamped capture stripped of `artifact` and
+     `source_subject.corpus` from a trimmed projection, so the corpus also
+     lists in `report_digest_required` every report that carries a digest, and
+     each listed report must still carry one; an entry naming no committed
+     report fails. The list is a rule, not a snapshot: a committed report that
+     carries a digest and is not listed fails, and a missing or non-array
+     `report_digest_required` is a violation rather than a disabled guard
+     (#12816).
+     Scope of the guarantee: the digest is recomputed from the file's own
+     bytes, so anyone who can recompute it can bless an edit. The check
+     detects a stale or hand-edited capture. It is not a tamper-proof seal and
+     is no evidence that the analyzer produced the report. The only sanctioned
+     way to change a report is to recapture it with `ripr check --mode draft
+     --format repo-exposure-json --root <subject>`.
 2a. Validates the case tier before trusting the expectation:
    - `pure` cases are checked-in tiny examples and must not carry
      pinned-external metadata.
@@ -508,7 +538,7 @@ gate-specific artifacts.
 | rust_macro_wrapped_test_call_named_limitation | rust | rust_macro_wrapped_test_call_limitation | direct_test_macro_call_named_not_silently_clean (also `must_not_report_clean` + `must_disclose_scope` + `must_emit_limitation: rust_macro_wrapped_test_call_unresolved` + `must_not_emit_repair_packet` + no verify/receipt commands + `must_disclose_witness` + `must_disclose_limitation_detail` + `expected_limitation_detail` + `expected_limitation_route: analysis/rust-macro-aware-reach` + `must_not_claim_no_tests_found`) |
 | rust_macro_wrapped_assertion_named_limitation | rust | rust_macro_wrapped_assertion_limitation | custom_assertion_macro_named_not_silently_clean (also `must_not_report_clean` + `must_disclose_scope` + `must_emit_limitation: rust_macro_wrapped_assertion_unresolved` + `must_not_emit_repair_packet` + no verify/receipt commands + `must_disclose_witness` + `must_disclose_limitation_detail` + `expected_limitation_detail` + `expected_limitation_route: analysis/rust-macro-assertion-oracle` + `must_not_claim_no_tests_found`) |
 | rust_same_method_other_type | rust | rust_adversarial_same_method_other_type | method_owner_same_name_different_impl_type_identity (also `expected_class=reachable_unrevealed`, `must_not_report_clean`, `must_disclose_scope`, and no repair packet or receipt command) |
-| rust_free_function_receiver_qualified_call | rust | rust_adversarial_free_function_receiver | free_function_receiver_qualified_call_not_direct_owner_call (also `expected_class=reachable_unrevealed`, `must_not_report_clean`, `must_disclose_scope`, and no repair packet or receipt command) |
+| rust_free_function_receiver_qualified_call | rust | rust_adversarial_free_function_receiver | free_function_receiver_qualified_call_not_direct_owner_call (also `expected_class=no_static_path`, `must_not_report_clean`, `must_disclose_scope`, and no repair packet or receipt command) |
 | rust_atomic_ordering_swap_strong_object_oracle_not_exposed | rust | atomic_ordering_swap_strong_object_oracle | atomic_ordering_only_call_edit_cannot_borrow_a_strong_whole_object_oracle (also `expected_class=static_unknown`, `expected_finding_count=1`, `must_not_report_clean`, and `must_not_promote`) |
 | rust_macro_passthrough_sibling_binding_not_promoted | rust | macro_passthrough_sibling_item_macro_binding | identity_item_macro_wrapped_test_with_sibling_binding_macro_never_promoted (predicate-family probe only; the fixture's second, return_value probe is not separately pinned) (also `expected_class=no_static_path`, `expected_finding_count=1`, `must_not_report_clean`, and `must_not_promote`) |
 | rust_shared_error_variant_proximity_other_owner | rust | rust_adversarial_shared_error_variant_proximity | shared_error_variant_same_file_pin_on_other_owner_not_confirmed (also `expected_class=weakly_exposed`, `must_not_report_clean`, `must_disclose_scope`, and no repair packet or receipt command) |
@@ -639,12 +669,16 @@ Rust family coverage for same-method-other-impl identity (#4760):
 | true owner constructed and observed | `rust_same_method_owner_type_positive_control` | `exposed` (`direct_owner_call`) |
 | workspace-trait impl no source names, beside a same-file test of another function | `rust_unreached_workspace_trait_impl_borrows_no_oracle` | `no_static_path` (only a foreign trait's impl is dispatched without spelling its method; #9169) |
 | impl of a trait declared in a sibling workspace crate, beside a same-leaf-name file's doctest | `rust_cross_crate_trait_impl_borrows_no_doctest` | `no_static_path` (a trait imported from a workspace member is the workspace's; the same-crate control reads the same; #10061) |
+| changed `Display::fmt` (a foreign trait's method) with no related test, in diff mode | `given_foreign_trait_impl_with_no_related_test_when_classified_then_reach_is_undecided` | `infection_unknown`, reach `weak` (formatting, operators and generic code run it without spelling its name; #12900) |
+| the same body under a trait the workspace declares, and a plain function no source names | the same unit test | `no_static_path` (no dispatch allowance) |
 | owner whose only naming is a same-named call (`self.inner.get()`) inside its own body, beside an unrelated same-file test | `rust_owner_self_body_same_name_no_unseen_reach` | `no_static_path` (#10160) |
 | the same owner with a caller (`self.get()`) outside its body | `rust_owner_self_body_same_name_with_caller_control` | `weakly_exposed` (reach stays undecided; fixtures differ only by that caller) |
 | private owner whose only same-file test is a compile-time `assert_*::<T>()` check | `rust_compile_time_marker_test_no_observation` | `reachable_unrevealed`, observation `no` (a zero-argument turbofish helper call passes no value and is not an oracle; #10091) |
 | same owner with that marker test beside a test that calls it and asserts its value | `rust_asserting_same_file_test_positive_control` | `exposed` (`direct_owner_call`; the marker neither earns nor withdraws credit; #10091) |
 
 Sibling-crate trait rule (#10061): a trait named through a workspace member crate (`use rcore::Stream;` or `impl rcore::Stream for ..`) is the workspace's only when some workspace member's sources declare a trait of that name, resolved on demand from the member directories when the diff index does not hold the member. A member that merely re-exports a foreign trait (`pub use std::fmt::Display;`) declares none, so the impl keeps the #9342 dispatch allowance (fixture `member_reexport_foreign_trait_keeps_dispatch_allowance`), and a direct owner call keeps its evidence (fixture `cross_crate_trait_impl_direct_owner_positive`). Limits, none of which gain behavior there: a glob import of a member's trait (`use rcore::*;`), a re-export of a member trait through the impl's own crate (`pub use rcore::Stream;` then `use crate::Stream;`), a trait generated by a macro, a leading-`::` path (`::rcore::Stream`), a dependency renamed with `package =` and a trait declared in the root package itself (only member directories are scanned) are not recognized and keep the foreign-trait reading, so those impls can still borrow a same-leaf-name oracle (fail-open). `[workspace] members` globs that are not a trailing `/*` are not expanded (pre-existing). A member that declares a trait with a std name (`Display`) while another member re-exports the std one reads as the workspace's (fail-closed: credit withheld). The member scan runs once per analysis, only when a member-rooted trait impl is met, and never per function. `cross_crate_trait_impl_direct_owner_positive` is an over-refusal guard, not a discriminator: `cross_crate_trait_impl_borrows_no_doctest` discriminates the refusal and `member_reexport_foreign_trait_keeps_dispatch_allowance` discriminates the declaration requirement.
+
+Foreign-trait dispatch rule (#12900): in diff mode a probe whose resolved owner is a method of a trait the workspace does not declare (`Display::fmt`, `Add::add`, `Arbitrary::arbitrary`) and that has no related test reads reach `weak` (low confidence) instead of `no`, so the class is `infection_unknown`, never `no_static_path`. `owner_runs_through_language_dispatch` is the trait-impl clause of `owner_may_be_reached_unseen` alone, so the rule does not widen to "named elsewhere" (a private helper reached through a caller keeps `no_static_path`; transitive reach is separate). Methods of workspace-declared traits and plain functions are unchanged.
 
 Own-body naming rule (#10160): `owner_may_be_reached_unseen` ignores namings of the owner inside the owner's own body, because that body cannot run before the owner is entered and the entry spells the name outside it (a field call such as `Cell::get`, or real recursion). It counts namings across all sources and subtracts the namings in the owner's verbatim parser-backed body (`item.has_body`); an owner without parser facts, any caller, any same-named call on another receiver in a different function, a doc or a macro keeps the allowance, so receivers are not told apart outside the owner (fail closed). The body and total counts come from the same indexed source snapshot, and a same-named method in another impl of the same file names the owner outside its body, so it keeps the allowance. Both the per-owner and batch paths apply it (unit test `a_name_inside_the_owners_own_body_is_not_an_unseen_caller`).
 
@@ -656,7 +690,7 @@ Rust family coverage for free-function receiver identity (#7006):
 
 | family | corpus case | expected state |
 |---|---|---|
-| receiver-qualified-only call against a free-function owner | `rust_free_function_receiver_qualified_call` | `reachable_unrevealed` (name-only; method-call syntax never resolves to a free function) |
+| receiver-qualified-only call against a free-function owner | `rust_free_function_receiver_qualified_call` | `no_static_path` (method-call syntax never resolves to a free function, and no other spelling can reach it unseen; #13080) |
 
 Positive controls (same-entity relations must still fire; preview/advisory
 per support policy, no gate, badge, or RIPR Zero role):

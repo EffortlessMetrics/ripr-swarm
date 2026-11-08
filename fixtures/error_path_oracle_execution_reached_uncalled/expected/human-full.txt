@@ -36,7 +36,7 @@ Evidence
   - observation no: No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)
   - discriminator no: No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)
   - local flow reaches error variant: let n = rdr.read(&mut buf)? (line 5)
-  - related test src/lib.rs:21 reports_read_failure uses no oracle; misses: assertion not credited: ripr could not establish that this assertion counts here
+  - related test src/lib.rs:21 reports_read_failure uses no oracle; misses: assertion inert: this test's assertion has a shape that can keep it from running as a standard check here
   - source enum variant value io::ErrorKind::Other at line 24
 
 Weakness
@@ -46,6 +46,7 @@ Weakness
 Next step
   ripr did not credit the `assert_eq!` in reports_read_failure at src/lib.rs:24; the "not credited" note says why. That shape can keep the assertion from checking the change, so this is not a static limit: make the check run on every default test run, as the standard `assert_eq!`, in a test expected to pass
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/error_path_oracle_execution_reached_uncalled/input --diff <cwd>/fixtures/error_path_oracle_execution_reached_uncalled/diff.patch --mode fast probe:src_lib.rs:error_path:fedbf836
   ripr context --root <cwd>/fixtures/error_path_oracle_execution_reached_uncalled/input --diff <cwd>/fixtures/error_path_oracle_execution_reached_uncalled/diff.patch --mode fast --at probe:src_lib.rs:error_path:fedbf836
 
@@ -88,5 +89,6 @@ Stop reasons:
 Next step
   Not a candidate edit target (base_deleted): the changed source is not current on the candidate side, so this finding recommends no test change
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/error_path_oracle_execution_reached_uncalled/input --diff <cwd>/fixtures/error_path_oracle_execution_reached_uncalled/diff.patch --mode fast probe:src_lib.rs:static_unknown:afc04379
   ripr context --root <cwd>/fixtures/error_path_oracle_execution_reached_uncalled/input --diff <cwd>/fixtures/error_path_oracle_execution_reached_uncalled/diff.patch --mode fast --at probe:src_lib.rs:static_unknown:afc04379

@@ -282,7 +282,19 @@ pub(in crate::analysis) fn oracle_owner_call_is_shadowed(
                 identity.resolve_call(test, index, qualifier) == CallTarget::Other
             })
     };
-    let items = ItemBindings::read(source, name, import_is_other);
+    // Only an `fn name` item or a `use` item can declare or shadow the owner
+    // here. A body with neither has no declaration or shadow to read, so the
+    // per-assertion tree walk is skipped (it ran once per oracle of every
+    // naming test and dominated the large-workspace cold pilot). The parse
+    // still decides readability.
+    let items = if body_has_no_owner_item_syntax(source, name) {
+        ItemBindings {
+            unreadable: crate::analysis::syntax::parse_clean_source_file_memoized(source).is_none(),
+            ..ItemBindings::default()
+        }
+    } else {
+        ItemBindings::read(source, name, import_is_other)
+    };
     if items.unreadable {
         return None;
     }
@@ -384,7 +396,7 @@ fn identifier_offsets<'a>(code: &'a str, name: &'a str) -> impl Iterator<Item = 
 /// The test's code names `name` as a value: not called, not a macro, not a
 /// method, field label or definition, the test binds no local of that name,
 /// and a qualifying path (`other::inc`) can still name the owner.
-fn names_owner_as_value(
+pub(in crate::analysis::classify) fn names_owner_as_value(
     code: &str,
     owner: &FunctionFact,
     test: &TestFact,
@@ -425,6 +437,7 @@ fn names_value(
         let reference_at = code[..at].strip_suffix("r#").map_or(at, str::len);
         let before = code[..reference_at].trim_end();
         if items.declaration_at(at)
+            || items.inert_macro_at(at)
             || (!before.ends_with("::") && items.shadows_at(at))
             || (items.unreadable && use_line_mention(code, at))
         {
@@ -562,6 +575,33 @@ fn is_bound_locally(code: &str, name: &str) -> bool {
         })
 }
 
+/// Whether `source` holds no syntax that [`ItemBindings::read`] turns into a
+/// declaration or a shadow of `name`: no `use` item and no `fn` item (or raw
+/// identifier) spelled with `name`. Conservative: any doubt reads the tree.
+fn body_has_no_owner_item_syntax(source: &str, name: &str) -> bool {
+    if identifier_offsets(source, "use").next().is_some() {
+        return false;
+    }
+    // Only a plain identifier may follow `fn` for the textual check below to
+    // see the name. A comment (`fn /* c */ inc`, `fn // c` newline `inc`,
+    // `fn/**/inc`), or whitespace the lexer accepts but `trim_start` does not
+    // (U+200E), hides it, so any other next character reads the tree.
+    if identifier_offsets(source, "fn").any(|at| {
+        !source[at + "fn".len()..]
+            .trim_start()
+            .starts_with(|ch: char| ch.is_ascii_alphabetic() || ch == '_')
+    }) {
+        return false;
+    }
+    !identifier_offsets(source, name).any(|at| {
+        let before = source[..at].trim_end();
+        before.ends_with("r#")
+            || before
+                .strip_suffix("fn")
+                .is_some_and(|rest| rest.chars().next_back().is_none_or(|ch| !is_ident_char(ch)))
+    })
+}
+
 /// Declaration ranges and hoisted item bindings in the test's real lexical
 /// blocks. Macro arguments remain text: their function values are token trees,
 /// not `PathExpr` nodes. An unreadable parse cannot prove a shadow.
@@ -569,6 +609,14 @@ fn is_bound_locally(code: &str, name: &str) -> bool {
 struct ItemBindings {
     declarations: Vec<ra_ap_syntax::TextRange>,
     scopes: Vec<(ra_ap_syntax::TextRange, bool)>,
+    /// Bodies of `macro_rules!` definitions that are inert: the macro is not
+    /// exported and its name occurs as no identifier token outside its own
+    /// definition, so its token tree is never expanded into the test (#12231).
+    /// A macro whose name appears anywhere else (an invocation, a forwarded
+    /// `$m!()` argument, a comment-separated `name/**/!`), or that
+    /// `#[macro_export]` may expose to another file, is absent here and its
+    /// body text keeps counting.
+    inert_macros: Vec<ra_ap_syntax::TextRange>,
     /// The shared parser refused the body, so no declaration range is known.
     /// Mentions on lexical `use` lines then keep the import exclusion instead
     /// of counting the import as the owner passed as a value (RIPR-SPEC-0240).
@@ -577,23 +625,52 @@ struct ItemBindings {
 
 impl ItemBindings {
     fn read(source: &str, name: &str, import_is_other: impl Fn(&[String]) -> bool) -> Self {
-        use crate::analysis::syntax::{UseBinding, parse_clean_source_file, use_item_bindings};
+        use crate::analysis::syntax::{
+            UseBinding, parse_clean_source_file_memoized, use_item_bindings,
+        };
         use ra_ap_syntax::{
             AstNode,
             ast::{self, HasAttrs, HasName},
         };
 
         let mut result = Self::default();
-        let Some(parse) = parse_clean_source_file(source) else {
+        let Some(parse) = parse_clean_source_file_memoized(source) else {
             result.unreadable = true;
             return result;
         };
+        // `include!` expands code this scan never sees, and a `#[path]` module
+        // reads another file; either can invoke a local macro. Keep every
+        // macro definition live when one is present rather than prove a
+        // negative about unseen text (#12231 review).
+        let expansion_unknown = identifier_offsets(source, "include").next().is_some()
+            || source
+                .split_whitespace()
+                .collect::<String>()
+                .contains("#[path=");
         for node in parse.tree().syntax().descendants() {
             // An item scope cannot inherit the surrounding function's local
             // shadow. Its imports also need their own module context; leave
             // that identity unresolved instead of borrowing the test's.
             if ast::ItemList::can_cast(node.kind()) {
                 result.scopes.push((node.text_range(), false));
+                continue;
+            }
+            if let Some(definition) = ast::MacroRules::cast(node.clone()) {
+                let exported = definition
+                    .attrs()
+                    .any(|attr| attr.syntax().text().to_string().contains("macro_export"));
+                let range = definition.syntax().text_range();
+                if let Some(macro_name) = definition.name()
+                    && !exported
+                    && !expansion_unknown
+                    && !macro_is_mentioned(
+                        source,
+                        macro_name.text().trim_start_matches("r#"),
+                        range,
+                    )
+                {
+                    result.inert_macros.push(range);
+                }
                 continue;
             }
             let shadow = if let Some(function) = ast::Fn::cast(node.clone()) {
@@ -647,6 +724,14 @@ impl ItemBindings {
             .any(|range| contains_offset(*range, at))
     }
 
+    /// The offset sits in the body of a macro definition that is never
+    /// expanded, so its raw token text is not a mention of the owner.
+    fn inert_macro_at(&self, at: usize) -> bool {
+        self.inert_macros
+            .iter()
+            .any(|range| contains_offset(*range, at))
+    }
+
     fn shadows_at(&self, at: usize) -> bool {
         let Some((innermost, _)) = self
             .scopes
@@ -663,6 +748,14 @@ impl ItemBindings {
             .filter(|(range, _)| range == innermost)
             .all(|(_, shadow)| *shadow)
     }
+}
+
+/// Whether `source` mentions `name` as an identifier token anywhere outside
+/// the definition at `definition`. Any spelling counts, including a forwarded
+/// `forward!(name)`, `name/*note*/!()`, a comment, a string or another macro's
+/// body: only a certain absence makes the definition inert (#12231).
+fn macro_is_mentioned(source: &str, name: &str, definition: ra_ap_syntax::TextRange) -> bool {
+    identifier_offsets(source, name).any(|at| !contains_offset(definition, at))
 }
 
 fn contains_offset(range: ra_ap_syntax::TextRange, at: usize) -> bool {
@@ -792,6 +885,44 @@ fn call_end(code: &str, open: usize) -> Option<usize> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn owner_item_syntax_is_detected_conservatively() {
+        assert!(body_has_no_owner_item_syntax(
+            "let x = inc(1); assert_eq!(x, 2);",
+            "inc"
+        ));
+        // A same-name fn item, a raw-identifier fn and any use item all read the tree.
+        assert!(!body_has_no_owner_item_syntax("fn inc() {} inc();", "inc"));
+        assert!(!body_has_no_owner_item_syntax(
+            "fn r#inc() {} inc();",
+            "inc"
+        ));
+        assert!(!body_has_no_owner_item_syntax(
+            "use other::inc; inc();",
+            "inc"
+        ));
+        // `fn` inside a longer identifier is not a declaration.
+        assert!(body_has_no_owner_item_syntax(
+            "let gfn = 1; gfn_inc(inc());",
+            "inc"
+        ));
+        // A comment between `fn` and the name still declares the item.
+        for spelled in [
+            "fn /* c */ inc() {} inc();",
+            "fn // c\n inc() {} inc();",
+            "fn/**/inc() {} inc();",
+            "fn /** d */ inc() {} inc();",
+            "fn\u{200E}inc() {} inc();",
+        ] {
+            assert!(!body_has_no_owner_item_syntax(spelled, "inc"), "{spelled}");
+        }
+        // A different fn name does not shadow the owner.
+        assert!(body_has_no_owner_item_syntax(
+            "fn helper() {} inc();",
+            "inc"
+        ));
+    }
+
     use super::*;
 
     fn owner_names() -> Vec<String> {

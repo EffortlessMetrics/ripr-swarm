@@ -33,7 +33,7 @@ pub(in crate::analysis) const SAME_TEST_PAIRING_MISSING: &str = "same_test_pairi
 
 pub(in crate::analysis) fn same_test_pairing_missing_summary() -> String {
     format!(
-        "Discriminator unconfirmed: no admitted discriminating oracle is paired with the owner's boundary call ({SAME_TEST_PAIRING_MISSING}); a boundary input and a separate exact oracle do not establish that discriminator"
+        "Check unconfirmed: no supported assertion that distinguishes the changed behavior is paired with the owner's boundary call ({SAME_TEST_PAIRING_MISSING}); a boundary input and a separate exact assertion do not establish that pairing"
     )
 }
 
@@ -669,7 +669,7 @@ fn fact_matches_fed_literals(value: &str, fed: &[(String, String)]) -> bool {
 /// past their spelling (`10u32` and `10`, `1_000` and `1000`); a hex, octal,
 /// binary, float or other form must match exactly, since a partial reader
 /// would equate `0x10` with `0`.
-fn same_scalar_literal(fed: &str, literal: &str) -> bool {
+pub(in crate::analysis) fn same_scalar_literal(fed: &str, literal: &str) -> bool {
     fed == literal
         || decimal_integer_value(fed)
             .is_some_and(|value| Some(value) == decimal_integer_value(literal))
@@ -691,6 +691,13 @@ fn decimal_integer_value(text: &str) -> Option<String> {
     ];
     (!digits.is_empty() && !rest.starts_with('_') && integer_suffix.contains(&suffix))
         .then(|| format!("{sign}{digits}"))
+}
+
+/// #13037: whether `text` is exactly one whole decimal integer literal
+/// (optional sign, `_` separators, integer type suffix), the only scalar
+/// shape the multi-exit scalar return gates read past its spelling.
+pub(in crate::analysis) fn is_whole_decimal_literal(text: &str) -> bool {
+    decimal_integer_value(text).is_some()
 }
 
 /// The helper call's arguments when each is a whole scalar literal and no
@@ -3121,6 +3128,7 @@ mod tests {
                 receiver: None,
                 through_macro: false,
                 module_qualified: false,
+                crate_qualifier: None,
                 transparent_macros_rebound: false,
                 diverging_handlers: Vec::new(),
             }],
@@ -4231,6 +4239,7 @@ mod tests {
             attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            generated: None,
         }
     }
 

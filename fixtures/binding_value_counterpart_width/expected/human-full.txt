@@ -57,6 +57,7 @@ Stop reasons:
 Next step
   - Open the related test, check whether it reaches the changed code, and inspect other existing tests. Trace their inputs through the local or computed operand (including default and empty cases) to see which side of the changed condition they exercise, then name an input that would exercise the other side. ripr.toml does not support fixture/builder value mappings. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/binding_value_counterpart_width/input --diff <cwd>/fixtures/binding_value_counterpart_width/diff.patch --mode fast probe:src_lib.rs:predicate:4f4e88fc
   ripr context --root <cwd>/fixtures/binding_value_counterpart_width/input --diff <cwd>/fixtures/binding_value_counterpart_width/diff.patch --mode fast --at probe:src_lib.rs:predicate:4f4e88fc
 
@@ -87,6 +88,7 @@ Stop reasons:
 Next step
   - Open the related test, check whether it reaches the changed code, and inspect other existing tests. Trace their inputs through the local or computed operand (including default and empty cases) to see what the changed expression produces for each, then name an input for which the original and changed code would produce different results. ripr.toml does not support fixture/builder value mappings. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/binding_value_counterpart_width/input --diff <cwd>/fixtures/binding_value_counterpart_width/diff.patch --mode fast probe:src_lib.rs:return_value:59f646a1
   ripr context --root <cwd>/fixtures/binding_value_counterpart_width/input --diff <cwd>/fixtures/binding_value_counterpart_width/diff.patch --mode fast --at probe:src_lib.rs:return_value:59f646a1
 
@@ -118,6 +120,7 @@ Stop reasons:
 Next step
   - Open the related test, check whether it reaches the changed code, and inspect other existing tests. Trace their inputs through the local or computed operand (including default and empty cases) to see which side of the changed condition they exercise, then name an input that would exercise the other side. ripr.toml does not support fixture/builder value mappings. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/binding_value_counterpart_width/input --diff <cwd>/fixtures/binding_value_counterpart_width/diff.patch --mode fast probe:src_lib.rs:predicate:cdd0dddc
   ripr context --root <cwd>/fixtures/binding_value_counterpart_width/input --diff <cwd>/fixtures/binding_value_counterpart_width/diff.patch --mode fast --at probe:src_lib.rs:predicate:cdd0dddc
 
@@ -148,5 +151,6 @@ Stop reasons:
 Next step
   - Open the related test, check whether it reaches the changed code, and inspect other existing tests. Trace their inputs through the local or computed operand (including default and empty cases) to see what the changed expression produces for each, then name an input for which the original and changed code would produce different results. ripr.toml does not support fixture/builder value mappings. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/binding_value_counterpart_width/input --diff <cwd>/fixtures/binding_value_counterpart_width/diff.patch --mode fast probe:src_lib.rs:return_value:67e13b53
   ripr context --root <cwd>/fixtures/binding_value_counterpart_width/input --diff <cwd>/fixtures/binding_value_counterpart_width/diff.patch --mode fast --at probe:src_lib.rs:return_value:67e13b53

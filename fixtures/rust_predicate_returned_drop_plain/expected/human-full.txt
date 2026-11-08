@@ -44,5 +44,6 @@ Evidence
   - source assertion argument value 1 at line 29
   - source function argument value x = 11 at line 29
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/rust_predicate_returned_drop_plain/input --diff <cwd>/fixtures/rust_predicate_returned_drop_plain/diff.patch --mode fast probe:src_lib.rs:predicate:bca747dd
   ripr context --root <cwd>/fixtures/rust_predicate_returned_drop_plain/input --diff <cwd>/fixtures/rust_predicate_returned_drop_plain/diff.patch --mode fast --at probe:src_lib.rs:predicate:bca747dd

@@ -197,6 +197,12 @@ Test discovery:
   `describe` names, the placeholder `<computed title, line N>`, and the line
   of the registration. A string literal or a substitution-free template keeps
   its text.
+- a Vitest `test.for(rows)(title, fn)` / `it.for(rows)(title, fn)`
+  registration is not indexed (the table call and the title/callback call
+  are not decomposed), so an active, non-empty, non-skipped one is disclosed
+  as the `test.for registration` shape of
+  `typescript_test_extraction_partial` instead of being silently lost; an
+  empty table, a skip option and an unrelated `.for` helper are not (#10757).
 - a registration the extractor drops makes the analysis partial
   (`typescript_test_extraction_partial`) only when a test in that file can be
   related to the diff. The test index is workspace-wide, so the disclosure is
@@ -698,6 +704,30 @@ values defined in RIPR-SPEC-0026:
   observed)
 - `unsupported_syntax` (e.g., TypeScript syntax the parser flags as
   unsupported for this preview)
+
+### Strong check that is not tied to the changed line
+
+When a related test carries a strong exact-value or snapshot check, the
+classifier reached the generic fallthrough, and no missing discriminator,
+static limit or named limitation applies, the finding's next step says the
+check is already strong but cannot be tied to the changed line and asks for an
+input that flips the changed branch (#12463). The text lives in one shared
+constant that the classifier writes and the preview card reads; the card
+wording applies only to a non-exposed finding carrying exactly that next step
+with a strong snapshot or exact-value oracle. It never asks for another
+exact-value assertion and never produces a repair packet.
+
+The decision is excluded, and keeps the generic "add a test that exercises the
+changed behavior" step, when no input can flip the change: an unwitnessed
+update of a field (`this.hits += 1`) whose new value reads none of the owner's
+parameters, as when the test overwrites the field before reading it, reads an
+accessor-backed field, or runs a table whose rows never call the method
+(`ts_field_update_overwrite_*`, `ts_field_update_table_zero_rows`,
+`ts_field_update_getter_backed`). A deleted call is also excluded, counted or
+not, because it has no branch for an input to flip; the
+`typescript_call_removal_*` fixtures keep their previous wording. The positive fixtures are
+`ts_strong_snapshot_untied` (literal inline snapshot) and
+`ts_coincident_state_update`.
 
 ## Required Evidence
 

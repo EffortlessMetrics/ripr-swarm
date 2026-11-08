@@ -32,25 +32,30 @@ tests or mutants; "exposed" is static evidence only. It does not edit files.
 
 Before you start: commit the source change; `/target/` must be in .gitignore.
 Only edit tests. Never change production code to make a gap go away.
+Keep the same --base and source options for every check below.
 
 Loop (max 3 rounds per gap):
-1. FIND    `ripr check --quiet`   (add `--base <branch>` if there is no origin/main|master)
-           Read "Start here": File, Missing check, Related test, Next step.
-           Exit code is 0 even with gaps. 2 = could not run; 3 = ripr declined (read stderr).
-2. DETAIL  Run the `ripr explain ...` / `ripr context ...` lines it printed, exactly as printed
-           (ids belong to that run). Optional: `ripr agent stub --at FILE:LINE --kind KIND [--write]`
-           prints a compiling skeleton; it fails on purpose (`todo!`) until you fill it in.
-3. WRITE   One focused test next to the existing tests (the file "Related test" names).
-           Use assert_eq! on the exact changed value(s): every changed field, branch and
-           boundary (below, equal, above). Not `.is_some()`, `.is_empty()`, `<=`, or only
-           whole-struct equality.
-4. VERIFY  `cargo test <your_test_name>` must pass. Then `ripr check --quiet` again
-           (a dirty tree is analyzed automatically; new files need `git add -N PATH`).
-5. DONE    when `ripr check --quiet --json | jq '[.findings[]|select(.classification!="exposed")]|length'`
-           prints 0 (human form: "State: no gap selected for repair").
-           Report what you added; ripr's pass is static, not proof that tests catch real bugs.
+1. FIND    `ripr check --quiet --format agent` (add `--base <branch>` if no origin/main|master).
+           Read gap, test and next lines. Exit 0 can still mean gaps; 2/3 = stop (read stderr).
+2. DETAIL  Follow the printed `ripr explain ...` with its selector and scope. Add `--format agent`
+           only if no `--format` is present; for `--from` plus `--suppression-policy`, keep it as printed.
+           Follow `ripr context ...` as-is (JSON). Optional: `ripr agent stub --at FILE:LINE --kind KIND [--write]`.
+3. WRITE   One focused test next to the related test. Use assert_eq! on exact changed
+           values: every changed field, branch and boundary (below, equal, above). Not
+           `.is_some()`, `.is_empty()`, `<=`, or only whole-struct equality.
+4. VERIFY  `cargo test <your_test_name>` must pass. Then run `ripr check --quiet --format json-compact`
+           once on the same root, base and saved source (new files need `git add -N PATH`).
+           Check its exit status before reading the JSON; do not change inputs before DONE.
+5. DONE    Use that same report; require exit 0 and these fields:
+           `analysis_outcome.outcome.kind`: `complete_no_findings` or `complete_with_findings`;
+           `analysis_outcome.analysis_complete`: true; `summary.findings` = `summary.exposed`.
+           Missing required fields, `analysis_outcome.document_complete: false`, or
+           `unanalyzed_working_tree: true` mean STOP. Empty `.findings` alone is never enough.
+           If gaps remain, return to FIND; if inputs change, repeat VERIFY before DONE.
+           Report tests and static result; this does not establish runtime bug detection.
 
 STOP and report instead of looping when:
+- the outcome names empty scope, no changed behavior, partial analysis, unsupported input or failed analysis;
 - the top finding says "Analyzer limit" / "Tests cannot close this static-analysis limitation";
 - the same gap remains after 3 exact-assert tests (it may be an equivalent change, e.g. `>` vs
   `>=` where both branches return the same value); or `ripr check` exits 2 or 3.
@@ -279,6 +284,39 @@ mod tests {
             "ripr repair",
         ] {
             assert!(AGENT_BLOCK.contains(needle), "block lost {needle:?}");
+        }
+    }
+
+    #[test]
+    fn block_uses_one_complete_post_edit_report() {
+        let find = AGENT_BLOCK.split("1. FIND").nth(1).unwrap_or("");
+        let verify = AGENT_BLOCK.split("4. VERIFY").nth(1).unwrap_or("");
+        let done = verify.split("5. DONE").nth(1).unwrap_or("");
+        let done = done.split("STOP and report").next().unwrap_or("");
+        assert!(find.contains("ripr check --quiet --format agent"));
+        assert!(find.contains("Add `--format agent`"));
+        assert!(find.contains(
+            "only if no `--format` is present; for `--from` plus `--suppression-policy`"
+        ));
+        assert!(find.contains("keep it as printed"));
+        assert_eq!(
+            verify
+                .matches("ripr check --quiet --format json-compact")
+                .count(),
+            1
+        );
+        assert!(!done.contains("ripr check"));
+        for condition in [
+            "same report",
+            "complete_no_findings",
+            "complete_with_findings",
+            "analysis_outcome.analysis_complete",
+            "summary.findings` = `summary.exposed",
+            "analysis_outcome.document_complete: false",
+            "unanalyzed_working_tree: true",
+            "if inputs change, repeat VERIFY",
+        ] {
+            assert!(done.contains(condition), "block lost {condition:?}");
         }
     }
 

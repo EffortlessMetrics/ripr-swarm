@@ -35,6 +35,7 @@ Language
 
 Static exposure
   exposed (info, confidence 0.60)
+  Why capped: preview adapter: infection/propagation not modeled (Python); syntax-first, no type or import resolution. Preview score, not on the same scale as Rust confidence.
 
 Evidence
   - reach yes: 1 related Python test(s) found for owner `lookup`
@@ -51,6 +52,7 @@ Weakness
 Next step
   Python preview: changed behavior is observed under a strong oracle; verify the assertion targets the changed behavior
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/python_unreached_get_default_control/input --diff <cwd>/fixtures/python_unreached_get_default_control/diff.patch --mode fast probe:src_rates.py:python_preview:0a52360f
   ripr context --root <cwd>/fixtures/python_unreached_get_default_control/input --diff <cwd>/fixtures/python_unreached_get_default_control/diff.patch --mode fast --at probe:src_rates.py:python_preview:0a52360f
 
