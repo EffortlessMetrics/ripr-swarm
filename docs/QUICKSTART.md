@@ -422,9 +422,9 @@ ripr agent repair --gap-id gap:typescript:... --base main --phase before
    TypeScript runners write cache files that the attempt would otherwise
    observe) and keep the test only if it passes.
 
-`ripr repair` (seam-based) and `ripr agent stub` are Rust-only: on a TypeScript
-path `ripr repair` points back to `ripr check`, and `ripr agent stub --at
-src/file.ts:N` exits `3` with `stub generation supports Rust files only`.
+`ripr repair` (seam-based) and `ripr agent stub` are Rust-only: on a Python or
+TypeScript path `ripr repair` points back to `ripr check`, and `ripr agent stub
+--at PATH:N` exits `3` with `stub generation supports Rust files only`.
 
 ## VS Code First Hour
 
