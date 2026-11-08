@@ -236,7 +236,14 @@ impl<'index> InvisibleOwners<'index> {
                 // Absent at the selected snapshot: not an owner there.
                 continue;
             };
-            unindexed.push((file.clone(), file_text(&String::from_utf8(bytes).ok()?)?));
+            let source = String::from_utf8(bytes).ok()?;
+            // The include resolver only visits indexed files, so an
+            // `include!` here (of the child itself, or of an owner) has no
+            // edge the composition pass can see: refuse.
+            if has_include_macro(&source) {
+                return None;
+            }
+            unindexed.push((file.clone(), file_text(&source)?));
         }
         let hidden = hidden_entries(root, package)?;
         let mut hidden_targets = Vec::new();
@@ -329,6 +336,12 @@ impl<'index> InvisibleOwners<'index> {
                 }
             };
             let text = file_text(&source)?;
+            // Only `mod <name>;` text is credited to the includer. A `#[path]`
+            // (an owner under another name) or a further `include!` in the
+            // target cannot be accounted for: refuse.
+            if !text.path_literals.is_empty() || has_include_macro(&source) {
+                return None;
+            }
             declared.extend(text.out_of_line_modules.into_keys());
         }
         Some(declared)

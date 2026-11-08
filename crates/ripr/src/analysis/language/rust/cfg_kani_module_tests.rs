@@ -78,9 +78,10 @@ fn parent_source(gate: &str, module: &str) -> String {
     )
 }
 
-/// A Kani harness and a plain helper `fn` (no proof attribute). Line 5 is the
+/// A Kani harness and a plain helper `fn` (no proof attribute), in a raw
+/// string so the Kani lane's harness discovery skips it. Line 5 is the
 /// helper's predicate, the only line the diff changes; line 4 opens the hunk.
-const PROOF_FILE: &str = "use super::*;
+const PROOF_FILE: &str = r#"use super::*;
 
 fn any_total() -> u32 {
     let total: u32 = kani::any();
@@ -92,7 +93,7 @@ fn charge_never_grows() {
     let total = any_total();
     assert!(charge(total) <= total);
 }
-";
+"#;
 
 /// The helper-only edit: `total > 6` became `total > 7`. `first_line` is the
 /// line of the leading `let total` context line.
@@ -390,10 +391,7 @@ fn an_ungated_sibling_on_the_gated_line_keeps_production_probes() -> Result<(), 
 fn a_second_cfg_or_cfg_attr_on_the_declaration_keeps_production_probes() -> Result<(), String> {
     for (label, gate) in [
         ("second-cfg", "#[cfg(kani)]\n#[cfg(feature = \"x\")]"),
-        (
-            "cfg-attr",
-            "#[cfg(kani)]\n#[cfg_attr(kani, allow(dead_code))]",
-        ),
+        ("cfg-attr", "#[cfg(kani)]\n#[cfg_attr(kani, doc(hidden))]"),
     ] {
         let observed = out_of_line(label, gate, "proofs", None)?;
         assert_production(&observed, gate);
@@ -816,5 +814,87 @@ fn a_symlinked_owner_keeps_production_probes() -> Result<(), String> {
     )?;
     let reached = observe(&fixture, path, &helper_diff(path, "", 4))?;
     assert_production(&reached, "mod alias; through a symlink to proofs.rs");
+    Ok(())
+}
+
+/// #13736 review (Devin): the include resolver only visits indexed files, so
+/// a binary root outside a partial index that `include!`s the child compiles
+/// it in production with no edge the composition pass can see.
+#[test]
+fn an_unindexed_file_with_an_include_refuses_the_verdict() -> Result<(), String> {
+    let fixture = Fixture::new("unindexed-include")?;
+    fixture.write("src/lib.rs", &parent_source("#[cfg(kani)]", "proofs"))?;
+    fixture.write("src/proofs.rs", PROOF_FILE)?;
+    let partial = |fixture: &Fixture| {
+        crate::analysis::facts::build_index(
+            &fixture.0,
+            &["src/lib.rs", "src/proofs.rs"].map(PathBuf::from),
+        )
+    };
+    for (main, grants) in [
+        ("fn main() {}\n", true),
+        ("include!(\"proofs.rs\");\nfn main() {}\n", false),
+    ] {
+        fixture.write("src/main.rs", main)?;
+        let index = partial(&fixture)?;
+        assert!(
+            index.files().get(Path::new("src/main.rs")).is_none()
+                && index.files().get(Path::new("src/proofs.rs")).is_some(),
+            "the partial index holds the child but not main.rs"
+        );
+        assert_eq!(
+            kani_only(&index, "src/proofs.rs"),
+            grants,
+            "unindexed main.rs {main:?}"
+        );
+    }
+    Ok(())
+}
+
+/// #13736 review (Devin): a nested-module include whose target sits in a
+/// discovery-skipped directory can own the child through `#[path]` under
+/// another name, or pull in more text through `include!`.
+#[test]
+fn a_nested_include_into_a_skipped_directory_with_an_owner_keeps_production_probes()
+-> Result<(), String> {
+    for (label, body) in [
+        (
+            "nested-include-path-owner",
+            "#[path = \"../proofs.rs\"]\nmod alternate;\n",
+        ),
+        ("nested-include-include", "include!(\"more.rs\");\n"),
+    ] {
+        let fixture = Fixture::new(label)?;
+        fixture.write(
+            "src/lib.rs",
+            &format!(
+                "{}mod other {{\n    include!(\"fixtures/extra.rs\");\n}}\n",
+                parent_source("#[cfg(kani)]", "proofs")
+            ),
+        )?;
+        fixture.write("src/fixtures/extra.rs", body)?;
+        fixture.write(
+            "src/fixtures/more.rs",
+            "#[path = \"../proofs.rs\"]\nmod p;\n",
+        )?;
+        fixture.write("src/proofs.rs", PROOF_FILE)?;
+        let index = fixture_index(&fixture)?;
+        assert!(
+            index
+                .files()
+                .get(Path::new("src/fixtures/extra.rs"))
+                .is_none(),
+            "{label}: discovery skips the include target"
+        );
+        assert!(
+            index.include_limitations.iter().any(|limitation| {
+                limitation.reason_code == "rust_include_nested_module_context"
+            }),
+            "{label}: the inline-module include is an unresolved include"
+        );
+        let path = "src/proofs.rs";
+        let observed = observe(&fixture, path, &helper_diff(path, "", 4))?;
+        assert_production(&observed, label);
+    }
     Ok(())
 }
