@@ -136,7 +136,7 @@ const REDERIVE_USAGE: &str =
 const USAGE: &str = "usage: cargo xtask mutation-spot-check --repo <name>=<checkout> [--repo ...] [--mutants-out <name>=<mutants.out dir>] [--run-mutants] [--mutants-arg <name>=<arg>] [--jobs <n>] [--mutant-timeout-secs <n>] [--examples <n>] [--ripr <binary>]
   TypeScript (real Stryker outcomes, synthetic-diff verdict join): --repo <name>=<checkout> --stryker-report <name>=<mutation.json> [--max-mutants <n>]
   Python (real cosmic-ray outcomes, same join): --repo <name>=<checkout> --cosmic-ray-dump <name>=<cosmic-ray dump output> [--cosmic-ray-version <v>] [--max-mutants <n>]
-  Python (real mutmut outcomes, same join): --repo <name>=<checkout> --mutmut-dump <name>=<mutmut apply+diff JSONL> [--mutmut-version <v>] [--max-mutants <n>]
+  Python (real mutmut outcomes, same join): --repo <name>=<checkout> --mutmut-dump <name>=<mutmut show JSONL> [--mutmut-version <v>] [--max-mutants <n>]
   One run scores one synthetic-diff language and tool; do not mix --stryker-report, --cosmic-ray-dump and --mutmut-dump.";
 
 fn harness_owned_mutants_arg(arg: &str) -> bool {
@@ -266,7 +266,7 @@ struct Options {
     cosmic_ray_dumps: BTreeMap<String, PathBuf>,
     /// The cosmic-ray version that produced the dumps; a dump does not say.
     cosmic_ray_version: Option<String>,
-    /// Repos scored from a mutmut apply+diff dump (Python).
+    /// Repos scored from a `mutmut show` dump (Python).
     mutmut_dumps: BTreeMap<String, PathBuf>,
     /// The mutmut version that produced the dumps; a dump does not say.
     mutmut_version: Option<String>,

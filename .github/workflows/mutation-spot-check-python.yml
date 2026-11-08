@@ -15,9 +15,8 @@ name: Mutation spot check (Python)
 # `mutmut show <name>` as one {name, status, diff} JSON line; `--mutmut-dump`
 # scores that file. Both tools run on schedule; `tool` picks one on demand.
 #
-# STATUS: both jobs have run (#13776, #13842). No package in the corpus has been
-# confirmed to install, pass its tests, or produce a cosmic-ray session; the
-# first run is the first evidence. The receipt is advisory and its
+# STATUS: both jobs have run (cosmic-ray: #13776; mutmut: #13842, see the
+# corpus notes for which packages finished). The receipt is advisory and its
 # `synthetic_diff_verdict` figures are never merged with the Rust span-join
 # figures.
 
@@ -200,10 +199,13 @@ jobs:
             : > "$dump"
             sed -n 's/^    \([^:]*\): \(.*\)$/\1\t\2/p' "$RUNNER_TEMP/$name-results.txt" \
               | while IFS=$'\t' read -r mutant result; do
-                  diff=$(cd "$dir" && mutmut show "$mutant" 2> /dev/null)
+                  diff=$(cd "$dir" && mutmut show "$mutant" < /dev/null 2> /dev/null)
                   jq -nc --arg name "$mutant" --arg status "$result" --arg diff "$diff" \
                     '{name: $name, status: $status, diff: $diff}' >> "$dump"
                 done
+            # Every listed mutant must have its record, and a package must list some.
+            listed=$(grep -c '^    ' "$RUNNER_TEMP/$name-results.txt"); dumped=$(wc -l < "$dump")
+            [ "$listed" -gt 0 ] && [ "$listed" -eq "$dumped" ] || printf '%s\t%s listed, %s dumped\n' "$name" "$listed" "$dumped" >> "$reports/python-mutmut-dump-check.tsv"
             # Leave the checkout as pinned, so ripr reads the real tree.
             (cd "$dir" && rm -rf mutants && git checkout -q -- . && git clean -fdqx)
             [ -s "$dump" ] && printf -- '--repo %s=%s --mutmut-dump %s=%s ' "$name" "$dir" "$name" "$dump" >> "$RUNNER_TEMP/xtask-args"
@@ -226,6 +228,7 @@ jobs:
             target/ripr/reports/mutation-spot-check.json
             target/ripr/reports/mutation-spot-check.md
             target/ripr/reports/python-mutmut-status.tsv
+            target/ripr/reports/python-mutmut-dump-check.tsv
             target/ripr/reports/python-mutmut-*-dump.jsonl
           if-no-files-found: error
 
@@ -236,5 +239,6 @@ jobs:
           status=target/ripr/reports/python-mutmut-status.tsv
           [ -s target/ripr/reports/mutation-spot-check.json ] || { echo "no mutation-spot-check receipt was written"; exit 1; }
           [ -f "$status" ] || { echo "no per-package mutmut status was recorded"; exit 1; }
+          [ ! -s target/ripr/reports/python-mutmut-dump-check.tsv ] || { echo "mutmut records missing:"; cat target/ripr/reports/python-mutmut-dump-check.tsv; exit 1; }
           bad=$(awk -F'\t' '$2 != 0 {print $1 " (exit " $2 ")"}' "$status")
           [ -z "$bad" ] || { echo "mutmut or setup failed for: $bad"; exit 1; }

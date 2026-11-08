@@ -297,10 +297,13 @@ function and a method is dedented to column 0. The parser (`mutmut.rs`) finds
 the hunk's original side (context and removed lines) in the checkout at one
 constant indent (a line inside a multi-line string may also match verbatim)
 and requires exactly one placement, so code repeated verbatim in two places
-(`unlocatable_ambiguous`) or a dump from another revision (`unlocatable_diff`)
-is never scored. The replaced range is the smallest span (common prefix and
-suffix removed) that turns the removed lines into the re-indented added ones,
-so multi-line mutants are located exactly; a diff with several changed hunks
+(`unlocatable_ambiguous`) is never scored, and neither is a hunk with no
+placement (`unlocatable_diff`: a dump from another revision, or a package not
+indented with 4 spaces, since `mutmut show` re-renders blocks at 4 spaces per
+level). The replaced range is the smallest span (common prefix and
+suffix removed) between the dump's own removed and added lines, mapped onto
+the checkout (a line matched through the indent shifts by it, a line inside a
+multi-line string does not), so multi-line mutants are located exactly; a diff with several changed hunks
 is `unlocatable_multihunk`. A record with an empty diff has no path, so it is
 counted by status in the receipt's `mutation_tool.records_without_diff` rather
 than dropped. `--mutmut-version` records the version; the workflow passes the

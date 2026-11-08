@@ -23,10 +23,13 @@
 //! (context and removed lines) is found in the checkout as a block at one
 //! constant indent (a line inside a multi-line string may also match
 //! verbatim); it must occur exactly once, so a dump from another revision, or
-//! code repeated verbatim in two places, is not scored. The replaced range
-//! and replacement are the smallest span that turns the located removed lines
-//! into the re-indented added lines (common prefix and suffix removed), so a
-//! multi-line mutant is located exactly too. A diff that cannot be located,
+//! code repeated verbatim in two places, is not scored. `mutmut show`
+//! re-renders blocks at 4 spaces per level, so a package indented otherwise
+//! finds no placement. The replaced range and replacement are the smallest
+//! span between the dump's own removed and added lines (common prefix and
+//! suffix removed), mapped onto the checkout (a line matched through the
+//! indent shifts by it, a string-interior line does not), so a multi-line
+//! mutant is located exactly too. A diff that cannot be located,
 //! has several changed hunks, or only inserts or deletes whole lines keeps an
 //! `unlocatable_*` outcome token: it stays countable in the receipt and is
 //! never scored. A record with no diff at all has no path, so it cannot join
@@ -134,33 +137,36 @@ fn line_matches(source: &str, indent: &str, line: &str) -> bool {
 }
 
 /// Every `(start index, indent)` at which `old` (the hunk's original side)
-/// occurs in `source_lines`.
+/// occurs in `source_lines`. Each non-blank line of `old` is tried as the
+/// anchor that fixes the indent, because a line inside a multi-line string
+/// keeps its absolute indent in `mutmut show` and would fix the wrong one.
 fn placements<'s>(old: &[&str], source_lines: &[&'s str]) -> Vec<(usize, &'s str)> {
-    let Some((anchor, anchor_text)) = old
-        .iter()
-        .enumerate()
-        .find(|(_, line)| !line.trim().is_empty())
-    else {
-        return Vec::new();
-    };
     let mut found: Vec<(usize, &str)> = Vec::new();
-    for (index, source) in source_lines.iter().enumerate() {
-        let Some(indent) = source.strip_suffix(*anchor_text) else {
-            continue;
-        };
-        if !indent.chars().all(char::is_whitespace) {
+    for (anchor, anchor_text) in old.iter().enumerate() {
+        if anchor_text.trim().is_empty() {
             continue;
         }
-        let Some(start) = index.checked_sub(anchor) else {
-            continue;
-        };
-        let fits = old.iter().enumerate().all(|(offset, line)| {
-            source_lines
-                .get(start + offset)
-                .is_some_and(|source| line_matches(source, indent, line))
-        });
-        if fits && !found.iter().any(|(at, _)| *at == start) {
-            found.push((start, indent));
+        for (index, source) in source_lines.iter().enumerate() {
+            let Some(indent) = source.strip_suffix(*anchor_text) else {
+                continue;
+            };
+            if !indent.chars().all(char::is_whitespace) {
+                continue;
+            }
+            let Some(start) = index.checked_sub(anchor) else {
+                continue;
+            };
+            if found.iter().any(|(at, _)| *at == start) {
+                continue;
+            }
+            let fits = old.iter().enumerate().all(|(offset, line)| {
+                source_lines
+                    .get(start + offset)
+                    .is_some_and(|source| line_matches(source, indent, line))
+            });
+            if fits {
+                found.push((start, indent));
+            }
         }
     }
     found
@@ -219,18 +225,22 @@ fn locate(diff: &str, source_lines: &[&str]) -> Result<Location, &'static str> {
         _ => return Err(UNLOCATABLE_AMBIGUOUS),
     };
     let first = start + removed_at;
-    let old = source_lines[first..first + removed_count].join("\n");
-    let new = added
+    // The edit is found on the dump's own lines, then mapped onto the
+    // checkout: a line that matched through the indent shifts its columns by
+    // the indent, a line inside a multi-line string (matched verbatim) does
+    // not.
+    let removed = &old[removed_at..removed_at + removed_count];
+    let via_indent: Vec<bool> = removed
         .iter()
-        .map(|line| {
-            if line.trim().is_empty() {
-                String::new()
-            } else {
-                format!("{indent}{line}")
-            }
+        .enumerate()
+        .map(|(offset, line)| {
+            !line.trim().is_empty()
+                && source_lines[first + offset].strip_prefix(indent) == Some(*line)
+                && !indent.is_empty()
         })
-        .collect::<Vec<_>>()
-        .join("\n");
+        .collect();
+    let old = removed.join("\n");
+    let new = added.join("\n");
     if old == new {
         return Err(UNLOCATABLE_DIFF);
     }
@@ -248,9 +258,41 @@ fn locate(diff: &str, source_lines: &[&str]) -> Result<Location, &'static str> {
         .take_while(|(a, b)| a == b)
         .map(|(a, _)| a.len_utf8())
         .sum();
-    let start_pos = position_in(&old, prefix, first + 1);
-    let end_pos = position_in(&old, old.len() - suffix, first + 1);
-    let replacement = new[prefix..new.len() - suffix].to_string();
+    let indent_width = utf16_len(indent);
+    let to_source = |offset: usize| {
+        let (line, column) = position_in(&old, offset, 0);
+        let index = usize::try_from(line).unwrap_or(usize::MAX);
+        let shift = if via_indent.get(index).copied().unwrap_or(false) {
+            indent_width
+        } else {
+            0
+        };
+        ((first + index + 1) as u64, column + shift)
+    };
+    let start_pos = to_source(prefix);
+    let end_pos = to_source(old.len() - suffix);
+    // A replacement that spans lines re-indents its later lines when the
+    // edit starts in code (not inside a multi-line string).
+    let raw = &new[prefix..new.len() - suffix];
+    let starts_in_code = via_indent
+        .get(usize::try_from(position_in(&old, prefix, 0).0).unwrap_or(usize::MAX))
+        .copied()
+        .unwrap_or(false);
+    let replacement = if starts_in_code {
+        raw.split('\n')
+            .enumerate()
+            .map(|(index, part)| {
+                if index == 0 || part.is_empty() {
+                    part.to_string()
+                } else {
+                    format!("{indent}{part}")
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    } else {
+        raw.to_string()
+    };
     Ok((start_pos, end_pos, replacement))
 }
 
@@ -467,6 +509,54 @@ mod tests {
     }
 
     #[test]
+    fn docstring_interior_context_before_the_change_does_not_fix_the_indent() -> Result<(), String>
+    {
+        // The first context lines sit inside a docstring, so they keep their
+        // absolute indent; the anchor must come from a code line.
+        let src = "class K:\n    def m(self):\n        \"\"\"Doc.\n\n        Details.\n        \"\"\"\n        return 1 + 2\n";
+        let read_k = |_: &str| Some(src.to_string());
+        let diff = show(concat!(
+            "         Details.\n",
+            "         \"\"\"\n",
+            "-    return 1 + 2\n",
+            "+    return 1 - 2",
+        ));
+        let dump = record("m.xǁKǁm__mutmut_1", "survived", &diff); // ripr-allow: static-language: mutmut status name
+        let (sources, _) = parse_mutmut_dump(&dump, &read_k, None)?;
+        let mutant = &sources[0].mutants[0];
+        assert_eq!(mutant.outcome, "missed");
+        assert_eq!(mutant.replacement, "-");
+        assert_eq!(
+            (mutant.start_line, mutant.start_col, mutant.end_col),
+            (7, 17, 18)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn an_edit_inside_a_multi_line_string_is_not_re_indented() -> Result<(), String> {
+        let src = "def f():\n    s = \"\"\"a\n        b\"\"\"\n    return s\n";
+        let read_f = |_: &str| Some(src.to_string());
+        let diff = show(concat!(
+            " def f():\n",
+            "-    s = \"\"\"a\n",
+            "-        b\"\"\"\n",
+            "+    s = \"\"\"XXa\n",
+            "+        bXX\"\"\"\n",
+            "     return s",
+        ));
+        let dump = record("m.x_f__mutmut_1", "killed", &diff); // ripr-allow: static-language: mutmut status name
+        let (sources, _) = parse_mutmut_dump(&dump, &read_f, None)?;
+        let mutant = &sources[0].mutants[0];
+        let edit = synthesize_edit("src/m.py", src, mutant).map_err(str::to_string)?;
+        assert_eq!(
+            edit.mutated,
+            "def f():\n    s = \"\"\"XXa\n        bXX\"\"\"\n    return s\n"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn code_repeated_verbatim_is_ambiguous_and_never_scored() -> Result<(), String> {
         let diff = show(concat!(
             " def __init__(self, s):\n",
@@ -559,6 +649,7 @@ mod tests {
             ("caught by type check", "unviable"), // ripr-allow: static-language: mutmut status name
             ("segfault", "runtime_error"),
             ("suspicious", "runtime_error"),
+            ("check was interrupted by user", "pending"),
             ("something new", "unknown_status"),
         ] {
             assert_eq!(outcome_of(status), outcome, "{status}");
