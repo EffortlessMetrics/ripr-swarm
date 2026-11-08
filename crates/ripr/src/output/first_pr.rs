@@ -8,7 +8,9 @@ use crate::domain::{CommandSpec, LanguageId};
 use crate::output::gap_decision_ledger::projection_eligible_from_value;
 use crate::output::receipt_lifecycle::receipt_lifecycle_state;
 use crate::output::receipt_write::receipt_write_command;
-use crate::output::review_comments::SUMMARY_REASON_NO_SAFE_PLACEMENT;
+use crate::output::review_comments::{
+    SUMMARY_REASON_NAVIGATION_ONLY_CROSS_LANGUAGE, SUMMARY_REASON_NO_SAFE_PLACEMENT,
+};
 use crate::output::start_here_state::{
     START_HERE_PREVIEW_LIMITED, normalize_start_here_output_state, start_here_output_state_is_known,
 };
@@ -1882,11 +1884,12 @@ fn review_card_repair_start(
         if let Some(top_gap) = top_gap_from_review_card(card, options) {
             return Ok(top_gap);
         }
-        // Only a card with a real changed-line placement counts; summary-only
-        // cards (no safe placement, navigation-only cross-language targets)
-        // carry no changed line to hand over.
+        // Only a card with a real changed-line placement counts. A
+        // navigation-only cross-language card names a test target, not a
+        // changed line; a placed card past the inline cap still counts.
         if !cards_from_gap_ledger
-            && card.get("summary_reason").is_none_or(Value::is_null)
+            && string_path(card, &["summary_reason"]).as_deref()
+                != Some(SUMMARY_REASON_NAVIGATION_ONLY_CROSS_LANGUAGE)
             && card_is_unrepaired_changed_line_gap(card)
         {
             let placement = card.get("placement");
@@ -6785,9 +6788,9 @@ mod tests {
         settled["gap_state"] = json!("already_observed");
         let mut unplaced = limited_card();
         unplaced["placement"] = Value::Null;
+        // Placement kept, so only the navigation-only guard can hold this.
         let mut navigation_only = limited_card();
-        navigation_only["placement"] = Value::Null;
-        navigation_only["summary_reason"] = json!("navigation_only_cross_language_target");
+        navigation_only["summary_reason"] = json!(SUMMARY_REASON_NAVIGATION_ONLY_CROSS_LANGUAGE);
         for (name, card, options) in [
             (
                 "first-pr-limited-unplaced",
