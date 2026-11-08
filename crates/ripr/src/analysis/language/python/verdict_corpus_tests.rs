@@ -2601,7 +2601,7 @@ fn shadow_class(workspace_sources: &[&str]) -> Result<ExposureClass, String> {
     let mut owners = extract_owners(owner_file, SHADOW_OWNER);
     let files = workspace_sources
         .iter()
-        .map(|file| PathBuf::from(*file))
+        .map(|file| std::path::PathBuf::from(*file))
         .collect::<Vec<_>>();
     related_tests::apply_src_module_ambiguity(&mut owners, files.iter());
     let tests = extract_tests(Path::new("svc/a/tests/test_core.py"), SHADOW_TEST);
