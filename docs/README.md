@@ -38,6 +38,7 @@ result means.
 
 ## Limits, recovery, and installation
 
+- [CLI reference](CLI_REFERENCE.md) — every command and option, generated from the binary's help.
 - [Exit codes](EXIT_CODES.md) — the three-value CLI exit contract and what each state means.
 - [Static limits](STATIC_LIMITS.md) — what syntax-first evidence could not safely infer, stated as part of the evidence.
 - [Repair attempt identity and recovery](REPAIR_ATTEMPT.md) — what a repair attempt is and how to recover its before/edit/after phases.
