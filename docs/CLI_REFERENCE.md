@@ -1868,13 +1868,22 @@ Examples:
 ```text
 Continue the current repair attempt through its after phase.
 
-Usage: ripr continue [--attempt ID] [--root PATH] [--quiet]
+Usage: ripr continue [--attempt ID] [--root PATH] [--json] [--quiet]
 
 Options:
   --attempt ID     Select one repair attempt by ID.
   --root PATH      Workspace root. Defaults to the current directory, then
                    walks up to the enclosing workspace or package, or the git
                    top level; `--root .` pins this directory.
+  --json           Print the after-phase JSON document, or the attempt's
+                   status JSON when it is already complete. A typed after-phase
+                   refusal or failure prints its JSON document on stdout
+                   (`repair_after_refusal`, `repair_after_failure`, or the
+                   verify document) beside the stderr prose and the same
+                   exit code. Selection refusals (no current attempt,
+                   several attempts, an ended attempt, a blocked baseline,
+                   an unanchored root) and operational errors before
+                   the verify step keep stdout empty.
   --quiet          Drop the after phase's progress narration and `wrote
                    <path>` lines from stderr. Refusal prose and the result
                    stay. `RIPR_QUIET` does the same.
@@ -4462,7 +4471,7 @@ Examples:
 ```text
 Start a repair attempt from a Rust gap, or select a gap to repair.
 
-Usage: ripr repair [<item>] [--root PATH] [--base REF] [--quiet]
+Usage: ripr repair [<item>] [--root PATH] [--base REF] [--json] [--quiet]
 
 Options:
   --root PATH      Workspace root. Defaults to the current directory, then
@@ -4472,6 +4481,11 @@ Options:
                    `ripr check --base`. Without it, repair infers the base
                    the way `ripr check` does. Only for a start ripr picks;
                    not allowed with an item.
+  --json           Print the repair packet JSON, including
+                   `repair_attempt.attempt_id`, instead of the summary and
+                   card. A repeated start prints the existing attempt's
+                   status JSON. Refusals keep stderr prose, empty stdout
+                   and their exit codes.
   --quiet          Drop the start's progress narration and `wrote <path>`
                    lines from stderr. Refusal prose, the attempt id and the
                    next command stay. `RIPR_QUIET` (any value except empty,
