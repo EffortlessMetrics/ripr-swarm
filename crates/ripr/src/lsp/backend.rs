@@ -8187,7 +8187,11 @@ impl Backend {
     }
 
     fn collect_workspace_status(&self) -> Option<LSPAny> {
-        let health = self.analysis_health_snapshot();
+        // Same currentness projection as hover, code actions and the repair
+        // packet (#13680): a snapshot older than the saved revision, or one
+        // inside the interactive debounce window, is not current, so status
+        // must not report it as current or hand out its top packet (#13783).
+        let health = self.analysis_health_for_currentness();
         let authority = self.workspace_root_authority();
         let latest_analysis = self.latest_analysis.lock().ok()?.clone();
         let open_documents = self.open_document_statuses_json(latest_analysis.as_deref());
