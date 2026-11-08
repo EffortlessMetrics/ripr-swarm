@@ -38,6 +38,8 @@ pub(crate) const TERMINAL_RECEIPT_ROLE: &str = "agent_receipt";
 pub(crate) const TERMINAL_VERIFY_ROLE: &str = "agent_verify";
 /// The exact gap producer snapshot used by the retained verify/receipt pair.
 pub(crate) const TERMINAL_GAP_AFTER_ROLE: &str = "after_check_findings";
+/// The validated caller-supplied focused test run (#13203 slice B).
+pub(crate) const TERMINAL_FOCUSED_RUN_ROLE: &str = "focused_test_result";
 /// Cargo's default build directory, relative to the workspace root.
 const CARGO_DEFAULT_BUILD_OUTPUT_DIR: &str = "target";
 /// The lockfile Cargo writes at the workspace root when it resolves
@@ -1998,7 +2000,7 @@ fn complete_repair_attempt(
             // baseline that IS staged cannot silently dodge the read: these
             // bytes were just bound by digest, so a failure here is
             // publication trouble.
-            let baseline_ambiguous = artifacts
+            let baseline_state = artifacts
                 .iter()
                 .find(|artifact| artifact.role == "edit_cage_baseline")
                 .map(|artifact| {
@@ -2020,13 +2022,42 @@ fn complete_repair_attempt(
                         serde_json::from_slice(&bytes).map_err(|error| {
                             format!("decode staged edit-cage baseline failed: {error}")
                         })?;
-                    Ok(baseline.is_ambiguous())
+                    let followed = baseline
+                        .followed_new_test_proposal()
+                        .map(|proposal| (proposal.kind, proposal.file.clone()));
+                    Ok((baseline.is_ambiguous(), followed))
                 })
                 .transpose()?
-                .unwrap_or(false);
+                .unwrap_or((false, None));
+            let (baseline_ambiguous, followed_proposal) = baseline_state;
             let mut limitations = vec![
                 "after-phase verify and receipt outputs remain mirrored through target/ripr/workflow compatibility paths; those files are compatibility projections and not the sole surviving copy of an attempt result".to_string(),
             ];
+            // #13205: a followed new-test proposal has no test yet. Say so, with
+            // the owning package, instead of leaving a missing result to read
+            // as an empty one; a target that no longer passes the preflight
+            // fails the start closed.
+            if let Some((kind, file)) = &followed_proposal {
+                match crate::analysis::new_test_target::preflight_new_test_target(
+                    canonical_root,
+                    *kind,
+                    file,
+                ) {
+                    crate::analysis::new_test_target::ProposedTargetPreflight::NoTestYet {
+                        package,
+                    } => limitations.push(match kind {
+                        crate::analysis::new_test_target::NewTestKind::Integration => format!(
+                            "target preflight: the proposed test file `{file}` (package `{package}`) does not exist yet, so there is no test result for it; the test must be written first"
+                        ),
+                        crate::analysis::new_test_target::NewTestKind::InlineUnit => format!(
+                            "target preflight: the proposed inline test module in `{file}` (package `{package}`) does not exist yet, so there is no test result for it; the test must be written first"
+                        ),
+                    }),
+                    crate::analysis::new_test_target::ProposedTargetPreflight::Refused(reason) => {
+                        return Err(reason);
+                    }
+                }
+            }
             if baseline_ambiguous {
                 limitations.push("the captured edit-cage baseline recorded `ambiguous: true`, so the cage cannot prove the exact worktree state this attempt measures: the after phase can refuse the attempt as Incomparable with an empty violations list even when the edit stays inside the allowed test surface. Resolve the workspace condition that made the baseline ambiguous (a stale target/ state is a common Windows trigger) and start a fresh attempt if a scorable result is needed".to_string());
             }
@@ -2474,6 +2505,7 @@ pub(crate) fn retain_terminal_evidence_from(
         if source.role != TERMINAL_RECEIPT_ROLE
             && source.role != TERMINAL_VERIFY_ROLE
             && source.role != TERMINAL_GAP_AFTER_ROLE
+            && source.role != TERMINAL_FOCUSED_RUN_ROLE
         {
             return Err(format!(
                 "repair attempt terminal artifact role `{}` is not a retained after-phase result",
@@ -3095,6 +3127,37 @@ pub(crate) fn edit_cage_policy_from_packet(
     } else {
         None
     };
+    // #13203: a packet that names a producer-owned new-test proposal binds
+    // the attempt to it. The proposal's file must be the selected target, so
+    // the attempt cannot follow one proposal while the cage confines another.
+    let new_test_proposal = match value
+        .get("recommended_test")
+        .and_then(|test| test.get("target_kind"))
+        .and_then(serde_json::Value::as_str)
+    {
+        None => None,
+        Some(label) => {
+            let kind =
+                crate::analysis::new_test_target::NewTestKind::from_packet_target_kind(label)
+                    .ok_or_else(|| {
+                        format!("repair packet names an unknown new-test proposal kind `{label}`")
+                    })?;
+            let proposed_file = value
+                .get("recommended_test")
+                .and_then(|test| test.get("file"))
+                .and_then(serde_json::Value::as_str);
+            if proposed_file != Some(selected_target.path()) {
+                return Err(format!(
+                    "repair packet new-test proposal file {proposed_file:?} does not match the selected edit target `{}`",
+                    selected_target.path()
+                ));
+            }
+            Some(crate::edit_cage::FollowedNewTestProposal {
+                kind,
+                file: selected_target.path().to_string(),
+            })
+        }
+    };
     Ok(EditCagePolicy {
         selected_target,
         allowed_edit_surface: allowed,
@@ -3107,6 +3170,7 @@ pub(crate) fn edit_cage_policy_from_packet(
         ignored_build_output,
         untracked_build_lockfile,
         inline_test_module_target,
+        new_test_proposal,
     })
 }
 
@@ -4697,14 +4761,33 @@ fn validate_manifest(manifest: &RepairAttemptManifest) -> Result<(), String> {
             .iter()
             .any(|artifact| artifact.role == role)
     };
+    if manifest.terminal_artifacts.iter().any(|artifact| {
+        ![
+            TERMINAL_RECEIPT_ROLE,
+            TERMINAL_VERIFY_ROLE,
+            TERMINAL_GAP_AFTER_ROLE,
+            TERMINAL_FOCUSED_RUN_ROLE,
+        ]
+        .contains(&artifact.role.as_str())
+    }) {
+        return Err(
+            "repair attempt manifest contains an unknown terminal artifact role".to_string(),
+        );
+    }
+    // The optional caller-reported focused result is a fourth role beside
+    // the three required gap roles; it never stands in for one of them.
+    let required_terminal_roles = terminal_roles
+        .iter()
+        .filter(|role| role.as_str() != TERMINAL_FOCUSED_RUN_ROLE)
+        .count();
     if has_terminal_role(TERMINAL_GAP_AFTER_ROLE)
         && (manifest.gap_binding.is_none()
-            || terminal_roles.len() != 3
+            || required_terminal_roles != 3
             || !has_terminal_role(TERMINAL_RECEIPT_ROLE)
             || !has_terminal_role(TERMINAL_VERIFY_ROLE))
     {
         return Err(
-            "gap after retention requires exactly the gap snapshot, receipt and verify roles"
+            "gap after retention requires the gap snapshot, receipt and verify roles, plus at most one focused test result"
                 .to_string(),
         );
     }
@@ -5983,6 +6066,61 @@ mod tests {
         std::fs::remove_dir_all(&root)
             .map_err(|error| format!("remove {} failed: {error}", root.display()))?;
         Ok(())
+    }
+
+    fn terminal_artifact(role: &str) -> RepairAttemptArtifact {
+        RepairAttemptArtifact {
+            role: role.to_string(),
+            path: format!("target/ripr/repair-attempts/sample/artifacts/{role}.json"),
+            sha256: "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+                .to_string(),
+            bytes: 2,
+        }
+    }
+
+    #[test]
+    fn a_gap_attempt_accepts_one_optional_focused_result_but_no_other_extra_role()
+    -> Result<(), String> {
+        let root = test_root("terminal-roles")?;
+        let gap_roles = [
+            TERMINAL_RECEIPT_ROLE,
+            TERMINAL_VERIFY_ROLE,
+            TERMINAL_GAP_AFTER_ROLE,
+        ];
+        let build = |roles: &[&str]| -> Result<RepairAttemptManifest, String> {
+            let mut manifest = sample_manifest(&root)?;
+            manifest.gap_binding = Some(RepairAttemptGapBinding {
+                base: "HEAD~1".to_string(),
+                base_commit: Some("0123456789abcdef0123456789abcdef01234567".to_string()),
+            });
+            manifest.terminal_artifacts = roles.iter().map(|r| terminal_artifact(r)).collect();
+            Ok(manifest)
+        };
+        let mut with_focused = gap_roles.to_vec();
+        with_focused.push(TERMINAL_FOCUSED_RUN_ROLE);
+        let mut with_foreign = gap_roles.to_vec();
+        with_foreign.push("foreign_role");
+        let outcome = (|| {
+            validate_manifest(&build(&gap_roles)?)
+                .map_err(|e| format!("three gap roles refused: {e}"))?;
+            validate_manifest(&build(&with_focused)?)
+                .map_err(|e| format!("gap roles plus focused result refused: {e}"))?;
+            if validate_manifest(&build(&with_foreign)?).is_ok() {
+                return Err("a foreign terminal role was accepted".to_string());
+            }
+            if validate_manifest(&build(&[
+                TERMINAL_GAP_AFTER_ROLE,
+                TERMINAL_FOCUSED_RUN_ROLE,
+            ])?)
+            .is_ok()
+            {
+                return Err("the focused result stood in for a required gap role".to_string());
+            }
+            Ok(())
+        })();
+        std::fs::remove_dir_all(&root)
+            .map_err(|error| format!("remove {} failed: {error}", root.display()))?;
+        outcome
     }
 
     #[test]
