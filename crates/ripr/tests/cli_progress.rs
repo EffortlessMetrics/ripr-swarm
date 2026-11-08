@@ -1385,6 +1385,7 @@ const NO_NARRATION: &[&str] = &[
     "calibrate",
     "calibrate cargo-mutants",
     "capabilities",
+    "completions",
     "config",
     "config validate",
     "coverage-grip",
