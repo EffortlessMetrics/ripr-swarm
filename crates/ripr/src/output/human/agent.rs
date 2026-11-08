@@ -286,7 +286,7 @@ pub(super) fn render_finding(
     {
         (
             "done=a related test appears to notice this change; static advisory, not runtime proof",
-            strongest_test(finding),
+            noticing_test(finding),
         )
     } else {
         (
@@ -688,6 +688,24 @@ fn strongest_test(finding: &Finding) -> Option<&RelatedTest> {
                 test.relation_confidence
                     .map_or(RelationConfidence::Opaque.rank(), RelationConfidence::rank),
                 strength_rank(&test.oracle_strength),
+            )
+        })
+}
+
+/// The related test a `done=` line names as the one that appears to notice
+/// the change: the strongest oracle leads, so a direct caller holding only a
+/// smoke check is never named as the noticer over a test that pins the value;
+/// relation confidence breaks ties (#13603 review).
+fn noticing_test(finding: &Finding) -> Option<&RelatedTest> {
+    finding
+        .related_tests
+        .iter()
+        .filter(|test| test.is_contributing())
+        .min_by_key(|test| {
+            (
+                strength_rank(&test.oracle_strength),
+                test.relation_confidence
+                    .map_or(RelationConfidence::Opaque.rank(), RelationConfidence::rank),
             )
         })
 }

@@ -1455,3 +1455,29 @@ fn rows_without_a_recorded_relation_still_pick_the_stronger_oracle() {
     assert!(text.contains("exact_pin"), "{text}");
     assert!(!text.contains("discount_runs"), "{text}");
 }
+
+/// #13603 review: a `done=` line names the test that appears to notice the
+/// change, so a stronger pin outranks a direct caller holding a smoke check.
+#[test]
+fn a_done_line_names_the_pinning_test_over_a_smoke_only_direct_caller() {
+    use crate::domain::{RelationConfidence, RelationReason};
+    let mut done = weak_gap("probe:done", 4);
+    done.class = ExposureClass::Exposed;
+    done.activation.missing_discriminators.clear();
+    let mut caller = done.related_tests[0].clone();
+    caller.name = "caller_smoke".to_string();
+    caller.oracle_strength = OracleStrength::Smoke;
+    caller.miss = None;
+    caller.relation_reason = Some(RelationReason::DirectOwnerCall);
+    caller.relation_confidence = Some(RelationConfidence::High);
+    done.related_tests[0].name = "exact_pin".to_string();
+    done.related_tests[0].oracle_strength = OracleStrength::Strong;
+    done.related_tests[0].miss = None;
+    done.related_tests[0].relation_reason = Some(RelationReason::SameTestFile);
+    done.related_tests[0].relation_confidence = Some(RelationConfidence::Medium);
+    done.related_tests.insert(0, caller);
+    let text = explained(&done);
+    assert!(text.lines().any(|line| line.starts_with("done=")), "{text}");
+    assert!(text.contains("exact_pin"), "{text}");
+    assert!(!text.contains("caller_smoke"), "{text}");
+}
