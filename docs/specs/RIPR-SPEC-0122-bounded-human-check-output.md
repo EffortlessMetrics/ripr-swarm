@@ -126,7 +126,11 @@ to the preview-language note, which carries the `ripr.toml` recovery block
 (#10691). The static-limited `State:` line reads `ripr cannot tell from reading
 the code whether tests would notice this`, and the internal noun "observable
 sink" never appears (`something a test can check (a return value or side
-effect)`). The canonical gap id is labelled `Gap ID (for scripts)`. The
+effect)`). The canonical gap id is labelled `Gap ID (for scripts)`; because the id
+embeds a slug of the changed expression, the human and GitHub renderings cap
+it at 240 characters and end a cut id with `… (truncated; full id in --format
+json)` (display only, #13660: JSON and agent output keep the full id, and a
+truncated id does not resolve in `ripr repair`). The
 bounded digest's drill-in commands and the repair start carry the same kind
 of consumer label (#12431): a `  (finding id, for explain/context)` line sits
 above the `ripr explain` / `ripr context --at` pair, and a
@@ -1071,6 +1075,8 @@ The format adds no verdict and claims no runtime outcome.
 - `crates/ripr/src/output/human.rs::tests::hidden_identity_completeness_requires_unbounded_json`
 - `crates/ripr/src/output/human.rs::tests::hidden_identity_window_discloses_only_a_real_tail`
 - `crates/ripr/src/output/json/mod.rs::tests::check_findings_completeness_at_byte_boundary`
+- `crates/ripr/src/output/human.rs::tests::long_gap_id_is_capped_in_the_default_view_and_short_ids_are_whole`
+- `crates/ripr/src/output/github.rs::tests::render_caps_a_huge_canonical_gap_id_in_the_annotation`
 - `cargo xtask goldens check`
 
 ## Implementation Mapping

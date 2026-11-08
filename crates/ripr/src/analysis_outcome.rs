@@ -21,11 +21,13 @@ pub(crate) const MAX_ANALYSIS_LIMITATION_DETAIL_CHARS: usize = 512;
 /// parse failure (#11799).
 pub(crate) const RUST_PARSE_FAILURE_RECOVERY: &str =
     "Fix the file so it parses as Rust, then re-run the analysis.";
-/// Recovery text of the `rust_nesting_budget` static-limit decline. The file is
-/// valid Rust that ripr declined to parse, so it must not read as a syntax
-/// error (#13660). The editor still marks the file (see
+/// Recovery text of the `rust_nesting_budget` static-limit decline. ripr
+/// declined to parse the file over a static limit, so it must not read as a
+/// syntax error; it does not certify the file as valid Rust either, because
+/// the nesting scan runs before parsing and a syntax error can coexist
+/// (#13660). The editor still marks the file (see
 /// `lsp::diagnostics::limitation_is_file_parse_failure`) with this text.
-pub(crate) const RUST_NESTING_BUDGET_RECOVERY: &str = "The file is valid Rust that ripr declined to parse because it exceeds the nesting budget; split or flatten the deeply nested expression, long operator chain or `else if` chain, then re-run the analysis.";
+pub(crate) const RUST_NESTING_BUDGET_RECOVERY: &str = "ripr declined to parse this file because it exceeds the nesting budget; split or flatten the deeply nested expression, long operator chain or `else if` chain, then re-run the analysis.";
 pub(crate) const RUST_NOT_UTF8_RECOVERY: &str = "Save the file as UTF-8, then re-run the analysis.";
 pub(crate) const PYTHON_PARSE_FAILURE_RECOVERY: &str =
     "Fix the file so it parses as Python, then re-run the analysis.";

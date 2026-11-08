@@ -2251,7 +2251,7 @@ pub(super) fn file_has_parse_failure(
     file_parse_failure_limitation(root, file, outcome).is_some()
 }
 
-/// True when the file's parse-failure limitation is the valid-Rust
+/// True when the file's parse-failure limitation is the
 /// `rust_nesting_budget` decline rather than a syntax error (#13660). A file
 /// that also carries a real parse failure is not a nesting decline.
 pub(super) fn file_parse_failure_is_nesting_budget(

@@ -246,7 +246,7 @@ fn lens_line(snapshot: &AnalysisSnapshot, finding: &Finding) -> u32 {
 const PARSE_FAILED_LENS_TITLE: &str =
     "ripr: related tests unknown, this file did not parse · fix the syntax error and save";
 
-/// Advisory for valid Rust the nesting budget declined: not a syntax error
+/// Advisory for a file the nesting budget declined: not a syntax error claim
 /// (#13660).
 const NESTING_BUDGET_LENS_TITLE: &str = "ripr: related tests unknown, this file is over the parse nesting budget · split the deeply nested expression and save";
 
@@ -1762,6 +1762,54 @@ mod tests {
         assert!(lens_title_is_static_language_clean(
             NESTING_BUDGET_LENS_TITLE
         ));
+        Ok(())
+    }
+
+    #[test]
+    fn real_parse_failure_wins_over_a_nesting_decline_on_the_same_path_in_either_order()
+    -> Result<(), String> {
+        let limitation = |text: &str| -> Result<AnalysisLimitation, String> {
+            AnalysisLimitation::new(
+                AnalysisLimitationKind::ProducerFailure,
+                AnalysisStage::LanguageAdapter,
+                AnalysisRecovery::new(AnalysisRecoveryKind::InspectFailure, text)?,
+            )
+            .with_path("src/lib.rs")
+        };
+        let nesting = crate::analysis_outcome::RUST_NESTING_BUDGET_RECOVERY;
+        let parse = crate::analysis_outcome::RUST_PARSE_FAILURE_RECOVERY;
+        for order in [[nesting, parse], [parse, nesting]] {
+            let finding = make_finding("src/lib.rs", 10, ExposureClass::WeaklyExposed, 0, None);
+            let mut snapshot = snapshot_with_parse_failure_limitation(
+                "/workspace",
+                vec![finding],
+                limitation(order[0])?,
+            )?;
+            let outcome = snapshot
+                .analysis_outcome
+                .as_mut()
+                .ok_or("outcome must be present")?;
+            outcome.limitations.push(limitation(order[1])?);
+            assert!(
+                !super::super::diagnostics::file_parse_failure_is_nesting_budget(
+                    &snapshot.root,
+                    std::path::Path::new("src/lib.rs"),
+                    snapshot.analysis_outcome.as_ref(),
+                ),
+                "{order:?}"
+            );
+            let uri = parse_uri("file:///workspace/src/lib.rs")?;
+            let title =
+                code_lens_response(&uri, Some(&snapshot), &ClientFeatureProfile::unsupported())
+                    .first()
+                    .and_then(|lens| lens.command.as_ref())
+                    .map(|command| command.title.clone())
+                    .ok_or("expected one lens")?;
+            assert!(
+                title.contains(PARSE_FAILED_LENS_TITLE),
+                "{order:?}: {title}"
+            );
+        }
         Ok(())
     }
 

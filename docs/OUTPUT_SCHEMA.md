@@ -1387,10 +1387,11 @@ limitation names up to three files with their limit token and counts the rest in
 `rust_lexical_test_index_partial` rule above. Changed declined files keep their
 own per-file #4722 limitation. A changed file that fails the Rust parser keeps
 the recovery "Fix the file so it parses as Rust, then re-run the analysis."; a
-changed file that is valid Rust but over the `rust_nesting_budget` carries its
-own recovery naming the budget (split or flatten the deeply nested expression,
-operator chain or `else if` chain), so it is never told to fix valid syntax
-(#13660). The human and GitHub reports cap an echoed canonical gap id (which
+changed file that ripr declined over the `rust_nesting_budget` carries its own
+recovery naming the budget (split or flatten the deeply nested expression,
+operator chain or `else if` chain). That recovery does not claim the file is
+valid Rust, because the nesting scan runs before parsing and an unrelated
+syntax error can coexist (#13660). The human and GitHub reports cap an echoed canonical gap id (which
 embeds the changed expression) at 240 characters with a truncation marker; JSON
 and agent output keep the full id. A capped id is for display only: the
 "for scripts" line is truncated above 240 characters, so take the id from

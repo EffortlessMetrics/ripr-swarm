@@ -4465,13 +4465,16 @@ mod tests {
         // shapes and its own tests. The run must disclose a typed producer
         // limitation naming the file, so downstream gates fail closed, and
         // the parsing control must stay complete.
-        // #13660: valid Rust over the nesting budget is not a syntax error,
-        // so its recovery must not tell the user to make the file parse.
+        // #13660: a file over the nesting budget was declined by a static
+        // limit, so its recovery must not tell the user to fix a syntax
+        // error nor certify the file as valid (the scan runs before parsing,
+        // so a real syntax error can coexist with the excess nesting).
         let deep = format!(
             "pub fn f(x: i32) -> bool {{ {}x >= 1{} }}\n",
             "(".repeat(5_000),
             ")".repeat(5_000)
         );
+        let deep_and_broken = format!("{deep}pub fn broken( {{\n");
         for (label, source, degraded, recovery) in [
             (
                 "lexical-fallback-changed",
@@ -4482,6 +4485,12 @@ mod tests {
             (
                 "lexical-fallback-nesting-budget",
                 deep.as_bytes(),
+                true,
+                "nesting budget",
+            ),
+            (
+                "lexical-fallback-nesting-budget-and-syntax-error",
+                deep_and_broken.as_bytes(),
                 true,
                 "nesting budget",
             ),
@@ -4538,6 +4547,7 @@ mod tests {
                 assert!(detail.contains("lexical fallback"), "{label}: {detail}");
                 let action = &limitation.recovery.detail;
                 assert!(action.contains(recovery), "{label}: {action}");
+                assert!(!action.contains("valid"), "{label}: {action}");
                 assert_eq!(
                     action == crate::analysis_outcome::RUST_PARSE_FAILURE_RECOVERY,
                     recovery == "parses as Rust",
