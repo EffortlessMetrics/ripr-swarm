@@ -1011,6 +1011,25 @@ impl TypeScriptAdapter {
             Some(&options.root),
         );
 
+        // #13592: an owner of a changed file that no test calls directly is
+        // also reached through exports of OTHER modules that call it by an
+        // imported binding. Resolved only for changed files, through the
+        // re-export index's import identity, and bounded like the
+        // same-module caller chain.
+        for owner in &mut all_owners {
+            if owner.class_name.is_none()
+                && changed_paths.contains(&normalized_path(&owner.file))
+                && !reexport_index.is_empty_outbound()
+            {
+                let cross =
+                    reexport_index.cross_module_entries(owner, alias_map_ref, Some(&options.root));
+                if !cross.is_empty() {
+                    owner.module_entries.extend(cross);
+                    owner.module_entries.sort();
+                }
+            }
+        }
+
         // #10028: invert the test corpus once so each owner's relation scans
         // (pass-1 candidates, module-entry union, the two named-limitation
         // passes) pre-filter by body-name / import-shape / re-export-exposure

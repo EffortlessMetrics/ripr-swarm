@@ -78,6 +78,16 @@ pub(crate) struct ReExportIndex {
     /// `entries` for that module, so `enum_exported_names` stops scanning
     /// every entry key per graph visit.
     entry_names_by_module: std::sync::OnceLock<HashMap<String, Vec<String>>>,
+    /// Imported bindings each non-test module's exported code bare-calls
+    /// (#13592): `(importing file, call)`. Resolved lazily per changed owner by
+    /// [`Self::cross_module_entries`]; nothing here credits a test by itself.
+    outbound_calls: Vec<(PathBuf, OutboundImportCall)>,
+    /// Imported (export) name -> indexes into `outbound_calls`, so an owner
+    /// looks up only the calls that could bind it.
+    outbound_by_imported: HashMap<String, Vec<usize>>,
+    /// Original declaration name -> export names that rename it, so a call
+    /// through `import { alias }` is still a candidate for the declaration.
+    rename_aliases: HashMap<String, Vec<String>>,
 }
 
 /// Outcome of resolving one exported name through the re-export graph.
@@ -203,6 +213,7 @@ impl ReExportIndex {
         let mut indexed_modules = modules.clone();
         let mut module_files = HashMap::new();
         let mut ambiguous_enum_modules = HashSet::new();
+        let mut outbound_calls: Vec<(PathBuf, OutboundImportCall)> = Vec::new();
         for file in workspace_files {
             let module = normalized_module_path(file);
             let path = normalized_path(file);
@@ -243,6 +254,12 @@ impl ReExportIndex {
                 entries.entry(key).or_insert_with(|| value);
             }
             star_edges.extend(file_facts.star_edges);
+            outbound_calls.extend(
+                file_facts
+                    .outbound_calls
+                    .into_iter()
+                    .map(|call| (relative.clone(), call)),
+            );
             for (key, target) in file_facts.namespace_exports {
                 namespace_exports.entry(key).or_insert(target);
             }
@@ -263,7 +280,7 @@ impl ReExportIndex {
                     .extend(file_facts.local_exports);
             }
         }
-        Self {
+        let mut index = Self {
             entries,
             star_edges,
             namespace_exports,
@@ -276,7 +293,210 @@ impl ReExportIndex {
             unstable_enum_roots,
             star_sources_by_module: std::sync::OnceLock::new(),
             entry_names_by_module: std::sync::OnceLock::new(),
+            outbound_calls,
+            outbound_by_imported: HashMap::new(),
+            rename_aliases: HashMap::new(),
+        };
+        index.index_outbound_calls();
+        index
+    }
+
+    /// `true` when no module's exported code calls an imported binding.
+    pub(crate) fn is_empty_outbound(&self) -> bool {
+        self.outbound_calls.is_empty()
+    }
+
+    /// Derive the lookup maps over `outbound_calls` and the rename exports.
+    fn index_outbound_calls(&mut self) {
+        self.outbound_by_imported.clear();
+        for (position, (_, call)) in self.outbound_calls.iter().enumerate() {
+            if let Some(imported) = call.import.imported.as_ref() {
+                self.outbound_by_imported
+                    .entry(imported.clone())
+                    .or_default()
+                    .push(position);
+            }
         }
+        self.rename_aliases.clear();
+        for ((_, exported), (original, _)) in &self.entries {
+            if exported != original {
+                self.rename_aliases
+                    .entry(original.clone())
+                    .or_default()
+                    .push(exported.clone());
+            }
+        }
+        for aliases in self.rename_aliases.values_mut() {
+            aliases.sort();
+            aliases.dedup();
+        }
+    }
+
+    /// Exports of OTHER modules whose code reaches `owner` through an imported
+    /// binding (#13592): the cross-module continuation of the bounded
+    /// same-module caller chain. A test calls `normalize` (module X), which
+    /// calls `decodeThing` imported from module Y; `decodeThing` is then
+    /// reached through `normalize` exactly like a same-module wrapper.
+    ///
+    /// Each link reuses the import identity of a direct call: the importer's
+    /// binding must resolve through [`Self::resolve_export`] (relative or
+    /// aliased specifier, bounded re-export chain, rename exports; an
+    /// ambiguous star export fails closed) to the standing-in owner's own
+    /// declaration, and the importing function must bare-call the binding with
+    /// every mention in scope a bare call (the shadow guard, applied when the
+    /// facts were extracted). The whole chain — export edges, import edges and
+    /// the owner's own same-module edges — stays within `MODULE_ENTRY_MAX_HOPS`.
+    /// The modules and binding names on the chain are recorded so a test that
+    /// mocks or fabricates any of them is refused per test.
+    pub(crate) fn cross_module_entries(
+        &self,
+        owner: &TypeScriptOwner,
+        alias_map: Option<&TsAliasMap>,
+        workspace_root: Option<&Path>,
+    ) -> Vec<TypeScriptModuleEntry> {
+        if self.outbound_calls.is_empty()
+            || owner.class_name.is_some()
+            || owner.owner_kind == OwnerKind::ModuleFunction
+            || owner.commonjs_whole_function
+        {
+            return Vec::new();
+        }
+        struct Frame {
+            stand_in: TypeScriptOwner,
+            hops: usize,
+            via: BTreeSet<String>,
+            names: BTreeSet<String>,
+        }
+        let owner_module = normalized_module_path(&owner.file);
+        let mut frontier: std::collections::VecDeque<Frame> = std::collections::VecDeque::new();
+        frontier.push_back(Frame {
+            stand_in: owner.clone(),
+            hops: 0,
+            via: BTreeSet::new(),
+            names: BTreeSet::from([owner.name.clone()]),
+        });
+        // The owner's own exported wrappers are importable too: a caller of
+        // `parseQuery` reaches the owner `parseQuery` calls in its module.
+        for entry in owner.module_entries.iter().filter(|entry| {
+            entry.class_member.is_none()
+                && entry.decorated.is_none()
+                && !entry.instance_factory
+                && entry.cross_module.is_none()
+        }) {
+            frontier.push_back(Frame {
+                stand_in: module_entry_owner(owner, entry),
+                hops: usize::from(entry.hops),
+                via: BTreeSet::new(),
+                names: BTreeSet::from([owner.name.clone(), entry.name.clone()]),
+            });
+        }
+        let mut best: std::collections::BTreeMap<(String, String), TypeScriptModuleEntry> =
+            std::collections::BTreeMap::new();
+        while let Some(frame) = frontier.pop_front() {
+            let target_module = normalized_module_path(&frame.stand_in.file);
+            let mut imported_names: BTreeSet<&str> = BTreeSet::from([frame.stand_in.name.as_str()]);
+            if frame.stand_in.exported_as_default {
+                imported_names.insert("default");
+            }
+            if let Some(aliases) = self.rename_aliases.get(&frame.stand_in.name) {
+                imported_names.extend(aliases.iter().map(String::as_str));
+            }
+            let candidates: BTreeSet<usize> = imported_names
+                .iter()
+                .filter_map(|name| self.outbound_by_imported.get(*name))
+                .flatten()
+                .copied()
+                .collect();
+            for position in candidates {
+                let (file, call) = &self.outbound_calls[position];
+                // Same-module reach is the owner module's own entry graph.
+                if normalized_module_path(file) == target_module {
+                    continue;
+                }
+                let Some(visited) = self.import_binding_reaches(
+                    file,
+                    &call.import,
+                    &frame.stand_in,
+                    alias_map,
+                    workspace_root,
+                ) else {
+                    continue;
+                };
+                for exported in &call.entries {
+                    let total = frame.hops + 1 + usize::from(exported.hops);
+                    let key = (normalized_module_path(file), exported.name.clone());
+                    if total > MODULE_ENTRY_MAX_HOPS
+                        || key.0 == owner_module
+                        || best
+                            .get(&key)
+                            .is_some_and(|seen| usize::from(seen.hops) <= total)
+                    {
+                        continue;
+                    }
+                    let mut via = frame.via.clone();
+                    via.extend(visited.iter().cloned());
+                    let mut names = frame.names.clone();
+                    names.insert(exported.name.clone());
+                    let entry = TypeScriptModuleEntry {
+                        name: exported.name.clone(),
+                        exported_as_default: exported.exported_as_default,
+                        class_member: None,
+                        decorated: None,
+                        instance_factory: false,
+                        hops: u8::try_from(total).unwrap_or(u8::MAX),
+                        cross_module: Some(TypeScriptCrossModuleLink {
+                            file: file.clone(),
+                            via_modules: via.iter().cloned().collect(),
+                            chain_names: names.iter().cloned().collect(),
+                        }),
+                    };
+                    best.insert(key, entry.clone());
+                    frontier.push_back(Frame {
+                        stand_in: module_entry_owner(owner, &entry),
+                        hops: total,
+                        via,
+                        names,
+                    });
+                }
+            }
+        }
+        best.into_values().collect()
+    }
+
+    /// The modules `import`, written in `importer`, resolves through when it
+    /// binds `target`'s own declaration; `None` when it does not, or when the
+    /// binding cannot be decided (namespace import, unresolved specifier,
+    /// ambiguous star export, over-deep chain).
+    fn import_binding_reaches(
+        &self,
+        importer: &Path,
+        import: &TypeScriptImport,
+        target: &TypeScriptOwner,
+        alias_map: Option<&TsAliasMap>,
+        workspace_root: Option<&Path>,
+    ) -> Option<BTreeSet<String>> {
+        if import.namespace || target.commonjs_whole_function {
+            return None;
+        }
+        let imported = import.imported.as_deref()?;
+        let source_module =
+            normalized_relative_import_module(importer, &import.source, alias_map, workspace_root)?;
+        let visited: std::cell::RefCell<BTreeSet<String>> =
+            std::cell::RefCell::new(BTreeSet::new());
+        let record = |module: &str| {
+            visited.borrow_mut().insert(module.to_string());
+            false
+        };
+        let mut stack = Vec::new();
+        let ExportResolution::Found(found_module, found_name) =
+            self.resolve_export(&source_module, imported, 0, &mut stack, &record)
+        else {
+            return None;
+        };
+        let lands_on_target = found_module == normalized_module_path(&target.file)
+            && (found_name == target.name
+                || (found_name == "default" && target.exported_as_default));
+        lands_on_target.then(|| visited.into_inner())
     }
 
     /// This module's `export *` targets, sorted and de-duplicated — exactly
@@ -1106,6 +1326,10 @@ pub(crate) struct ModuleExportFacts {
     /// cannot tell a re-export from an own rename.
     #[serde(default)]
     pub(crate) re_exports_from_source: bool,
+    /// Imported bindings the module's exported code bare-calls (#13592),
+    /// from the same module graph as the owners' same-module entries.
+    #[serde(default)]
+    pub(crate) outbound_calls: Vec<OutboundImportCall>,
 }
 
 impl ModuleExportFacts {
@@ -1159,6 +1383,21 @@ impl ModuleExportFacts {
                 self.unstable_enum_roots
                     .iter()
                     .map(|name| name.len())
+                    .sum::<usize>(),
+            )
+            .saturating_add(
+                self.outbound_calls
+                    .iter()
+                    .map(|call| {
+                        call.import.source.len()
+                            + call.import.local.len()
+                            + call.import.imported.as_ref().map_or(0, |name| name.len())
+                            + call
+                                .entries
+                                .iter()
+                                .map(|entry| entry.name.len() + 8)
+                                .sum::<usize>()
+                    })
                     .sum::<usize>(),
             )
     }
@@ -1758,7 +1997,8 @@ pub(crate) fn owner_call_relation(
 /// it were the changed owner, so the test must satisfy every identity gate a
 /// direct or imported owner call does (declaration anchor, shadowing, mocks,
 /// spy fabrication, import source). The stand-in owner carries no entries of
-/// its own, so reach through entries is never chained across modules.
+/// its own: chains across modules are resolved once, up front, by
+/// [`ReExportIndex::cross_module_entries`] (#13592).
 fn module_entry_relation(
     test: &TypeScriptTest,
     owner: &TypeScriptOwner,
@@ -1769,8 +2009,39 @@ fn module_entry_relation(
     // A test that reaches the owner through any ordinary entry keeps the weak
     // `ModuleEntryCall` reading; `DecoratedMethodCall` holds only when every
     // entry the test reaches is a decorated method.
-    let mut decorated = false;
-    let mut ordinary = false;
+    let reached = reaching_module_entries(test, owner, reexport_index, alias_map, workspace_root);
+    let ordinary = reached.iter().any(|entry| entry.decorated.is_none());
+    let decorated = reached.iter().any(|entry| entry.decorated.is_some());
+    match (ordinary, decorated) {
+        (true, _) => Some(TypeScriptRelationKind::ModuleEntryCall),
+        (false, true) => Some(TypeScriptRelationKind::DecoratedMethodCall),
+        (false, false) => None,
+    }
+}
+
+/// `true` when the test reaches the owner only through exports of OTHER
+/// modules that call it by an imported binding (#13592): every entry the test
+/// reaches is cross-module. Such reach is two modules removed from the
+/// assertion, so the classifier reads it as unknown whatever the oracle.
+pub(crate) fn module_entry_reach_is_cross_module_only(
+    test: &TypeScriptTest,
+    owner: &TypeScriptOwner,
+    reexport_index: &ReExportIndex,
+    alias_map: Option<&TsAliasMap>,
+    workspace_root: Option<&Path>,
+) -> bool {
+    let reached = reaching_module_entries(test, owner, reexport_index, alias_map, workspace_root);
+    !reached.is_empty() && reached.iter().all(|entry| entry.cross_module.is_some())
+}
+
+/// The owner's module entries this test calls through every identity gate.
+fn reaching_module_entries<'o>(
+    test: &TypeScriptTest,
+    owner: &'o TypeScriptOwner,
+    reexport_index: &ReExportIndex,
+    alias_map: Option<&TsAliasMap>,
+    workspace_root: Option<&Path>,
+) -> Vec<&'o TypeScriptModuleEntry> {
     // A test that replaces the changed method, or a sibling on the chain to it,
     // runs the replacement and not the class code (#9942): a spy that fabricates
     // the value, an assignment on an instance or the prototype, or a
@@ -1792,36 +2063,41 @@ fn module_entry_relation(
                     || class_entries::assigns_member_named(&test.body_text, name)
             });
     if replaced {
-        return None;
+        return Vec::new();
     }
-    for entry in &owner.module_entries {
-        // An instance factory is reached by reading the getter on its product,
-        // not by calling it (`factory_built_getter_read`).
-        if entry.instance_factory {
-            continue;
-        }
-        let entry_owner = module_entry_owner(owner, entry);
-        if owner_call_relation(
-            test,
-            &entry_owner,
-            reexport_index,
-            alias_map,
-            workspace_root,
-        )
-        .is_some_and(TypeScriptRelationKind::uses_oracle)
-        {
-            if entry.decorated.is_some() {
-                decorated = true;
-            } else {
-                ordinary = true;
+    owner
+        .module_entries
+        .iter()
+        .filter(|entry| {
+            // An instance factory is reached by reading the getter on its
+            // product, not by calling it (`factory_built_getter_read`).
+            if entry.instance_factory {
+                return false;
             }
-        }
-    }
-    match (ordinary, decorated) {
-        (true, _) => Some(TypeScriptRelationKind::ModuleEntryCall),
-        (false, true) => Some(TypeScriptRelationKind::DecoratedMethodCall),
-        (false, false) => None,
-    }
+            // A test that mocks or fabricates a module or binding on the
+            // cross-module chain runs the replacement, not the changed code.
+            if let Some(link) = entry.cross_module.as_ref()
+                && (link
+                    .via_modules
+                    .iter()
+                    .any(|module| test_mocks_module(test, module, alias_map, workspace_root))
+                    || link
+                        .chain_names
+                        .iter()
+                        .any(|name| test_spies_owner_with_fabrication_for_owner(test, name, false)))
+            {
+                return false;
+            }
+            owner_call_relation(
+                test,
+                &module_entry_owner(owner, entry),
+                reexport_index,
+                alias_map,
+                workspace_root,
+            )
+            .is_some_and(TypeScriptRelationKind::uses_oracle)
+        })
+        .collect()
 }
 
 /// The owner as a test of `entry` sees it: same module, the entry's exported
@@ -1866,6 +2142,11 @@ pub(crate) fn module_entry_owner(
     }
     TypeScriptOwner {
         name: entry.name.clone(),
+        // A cross-module entry is an export of the importing module.
+        file: entry
+            .cross_module
+            .as_ref()
+            .map_or_else(|| owner.file.clone(), |link| link.file.clone()),
         owner_kind: OwnerKind::Function,
         class_name: None,
         exported_as_default: entry.exported_as_default,
@@ -2687,12 +2968,25 @@ fn test_mocks_owner_module(
     alias_map: Option<&TsAliasMap>,
     workspace_root: Option<&Path>,
 ) -> bool {
-    let owner_module = normalized_module_path(&owner.file);
+    test_mocks_module(
+        test,
+        &normalized_module_path(&owner.file),
+        alias_map,
+        workspace_root,
+    )
+}
+
+/// Whether the test mocks `module` (a normalized module path), by a resolved
+/// or root-relative specifier, a directory mock of its `index`, or any mock
+/// specifier the adapter could not resolve.
+fn test_mocks_module(
+    test: &TypeScriptTest,
+    module: &str,
+    alias_map: Option<&TsAliasMap>,
+    workspace_root: Option<&Path>,
+) -> bool {
     // A mock of a directory (`../src/cart`) replaces its `index` module.
-    let owner_modules = [
-        Some(owner_module.as_str()),
-        owner_module.strip_suffix("/index"),
-    ];
+    let owner_modules = [Some(module), module.strip_suffix("/index")];
     test.mocks_in_file.iter().any(|source| {
         source == UNRESOLVED_MOCK_SPECIFIER
             || owner_modules.iter().flatten().any(|module| {

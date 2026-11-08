@@ -7451,6 +7451,22 @@ pub(crate) fn classify_resolved_owner(
             .iter()
             .filter(|candidate| candidate.relation.uses_oracle())
             .all(|candidate| candidate.relation == TypeScriptRelationKind::ModuleEntryCall);
+    // #13592: reach only through exports of OTHER modules that call the owner
+    // by an imported binding is two modules removed from the assertion, so a
+    // weak oracle there is unknown too, never an actionable gap.
+    let reach_only_through_cross_module_entry = reach_only_through_module_entry
+        && related_candidates
+            .iter()
+            .filter(|candidate| candidate.relation.uses_oracle())
+            .all(|candidate| {
+                module_entry_reach_is_cross_module_only(
+                    candidate.test,
+                    owner,
+                    reexport_index,
+                    alias_map,
+                    workspace_root,
+                )
+            });
     // Owner-call evidence is broader than trusted relation credit: a test
     // whose relation was denied by the #4102/#4103 gates still observes an
     // owner-name call, so its oracle classification and missing-discriminator
@@ -7800,8 +7816,9 @@ pub(crate) fn classify_resolved_owner(
         // missing stronger assertion is actionable on any reach.
         // The strong oracle must observe a computed value: a constant exact
         // assertion in the same test says nothing about the entry's result.
-        let entry_oracle_is_strong = strongest_strength >= OracleStrength::Strong.rank()
-            && ts_entry_result_is_asserted(related_candidates);
+        let entry_oracle_is_strong = (strongest_strength >= OracleStrength::Strong.rank()
+            && ts_entry_result_is_asserted(related_candidates))
+            || reach_only_through_cross_module_entry;
         let (class, observe, discriminate) = if entry_oracle_is_strong {
             (
                 ExposureClass::StaticUnknown,
@@ -10427,7 +10444,7 @@ fn module_entry_reach_summary(
     workspace_root: Option<&Path>,
     discriminator_unknown: bool,
 ) -> String {
-    let called: Vec<String> = owner
+    let called_entries: Vec<&TypeScriptModuleEntry> = owner
         .module_entries
         .iter()
         .filter(|entry| !entry.instance_factory)
@@ -10445,6 +10462,9 @@ fn module_entry_reach_summary(
                     .is_some_and(TypeScriptRelationKind::uses_oracle)
             })
         })
+        .collect();
+    let called: Vec<String> = called_entries
+        .iter()
         .map(|entry| format!("`{}`", entry.name))
         .collect();
     let entries = if called.is_empty() {
@@ -10454,6 +10474,14 @@ fn module_entry_reach_summary(
     };
     let scope = if owner.class_name.is_some() {
         "same-class"
+    } else if !called_entries.is_empty()
+        && called_entries
+            .iter()
+            .all(|entry| entry.cross_module.is_some())
+    {
+        // #13592: every entry the tests call is an export of another module
+        // that reaches the owner through an imported binding.
+        "cross-module"
     } else {
         "same-module"
     };

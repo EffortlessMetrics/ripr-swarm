@@ -20,7 +20,7 @@ pub(crate) fn extract_owners(file: &Path, source: &str) -> Vec<TypeScriptOwner> 
         if !ret.errors.is_empty() {
             return Vec::new();
         }
-        owners_from_program(&ret.program, file, source)
+        owners_from_program(&ret.program, file, source).0
     }) else {
         return Vec::new();
     };
@@ -31,12 +31,13 @@ pub(crate) fn extract_owners(file: &Path, source: &str) -> Vec<TypeScriptOwner> 
 /// [`extract_owners`], so the combined per-file facts cache can derive
 /// owners, export facts, and phase-2 facts from ONE parse. Builds its own
 /// line index from `source`; behavior is identical to the dedicated
-/// extraction.
+/// extraction. The second value is the module's outbound imported-binding
+/// calls (#13592), derived from the same module graph as the entries.
 pub(crate) fn owners_from_program(
     program: &oxc_ast::ast::Program<'_>,
     file: &Path,
     source: &str,
-) -> Vec<TypeScriptOwner> {
+) -> (Vec<TypeScriptOwner>, Vec<OutboundImportCall>) {
     let imports = extract_imports_from_statements(&program.body);
     // One line index per source; every owner line below is a binary
     // search against it rather than a rescan from byte 0.
@@ -61,7 +62,11 @@ pub(crate) fn owners_from_program(
     // #7812: keep the original owner when `export default ident`
     // snapshots the binding before that reassignment.
     owners = without_reassigned_esm_bindings(&program.body, owners);
-    let entries = module_entries_by_owner(&program.body, source);
+    let (entries, outbound) = module_entries_and_outbound(
+        &program.body,
+        source,
+        &extract_imports_for_test_file(&program.body),
+    );
     for owner in &mut owners {
         if owner.class_name.is_none()
             && owner.owner_kind != OwnerKind::ModuleFunction
@@ -82,7 +87,7 @@ pub(crate) fn owners_from_program(
     );
     assign_decorated_entries(program, source, &mut owners);
     reshare_owner_imports(&mut owners);
-    owners
+    (owners, outbound)
 }
 
 pub(crate) fn owners_from_statement(
