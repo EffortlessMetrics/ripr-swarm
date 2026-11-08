@@ -345,6 +345,15 @@ pub(crate) enum EvidencePromotionSemanticAssertion {
         oracle_strength: String,
         relation_reason: Option<String>,
     },
+    /// A named limitation may change recommendation admission while the raw
+    /// grip class and every stage stay unchanged (#13278). Pin its presence
+    /// or absence on an exact, unambiguous seam selector independently.
+    ExpectedRepoSeamLimitation {
+        owner: String,
+        expression: String,
+        category: String,
+        present: bool,
+    },
     MustDiscloseWitness,
     MustDiscloseLimitationDetail,
     ExpectedLimitationDetail {
@@ -972,6 +981,34 @@ fn evidence_promotion_parse_assertion(
                 },
             )
         }
+        "expected_repo_seam_limitation" => {
+            let present = assertion
+                .get("present")
+                .and_then(Value::as_bool)
+                .ok_or_else(|| {
+                    format!(
+                        "evidence promotion case `{case_id}` assertion {index}: \
+                         expected_repo_seam_limitation.present must be a boolean"
+                    )
+                })?;
+            Ok(
+                EvidencePromotionSemanticAssertion::ExpectedRepoSeamLimitation {
+                    owner: evidence_promotion_required_assertion_string(
+                        case_id, index, assertion, "owner",
+                    )?,
+                    expression: evidence_promotion_required_assertion_string(
+                        case_id,
+                        index,
+                        assertion,
+                        "expression",
+                    )?,
+                    category: evidence_promotion_required_assertion_string(
+                        case_id, index, assertion, "category",
+                    )?,
+                    present,
+                },
+            )
+        }
         "must_disclose_witness" => Ok(EvidencePromotionSemanticAssertion::MustDiscloseWitness),
         "must_disclose_limitation_detail" => {
             Ok(EvidencePromotionSemanticAssertion::MustDiscloseLimitationDetail)
@@ -1067,11 +1104,13 @@ fn evidence_promotion_optional_related_test_miss(
         None => Ok(None),
         Some(Value::Null) => Ok(Some(ExpectedRelatedTestMissConstraint::Absent)),
         Some(Value::String(value)) => {
-            const KNOWN_MISSES: [&str; 8] = [
+            const KNOWN_MISSES: [&str; 10] = [
                 "no_call_path",
                 "no_assertion",
                 "assertion_not_observing",
                 "assertion_not_credited",
+                "assertion_inert",
+                "assertion_admission_unproven",
                 "weak_assertion",
                 "missing_input",
                 "missing_exact_assertion",
@@ -1642,6 +1681,19 @@ pub(crate) fn evidence_promotion_semantic_violations_scoped(
                     }
                 }
             }
+            EvidencePromotionSemanticAssertion::ExpectedRepoSeamLimitation {
+                owner,
+                expression,
+                category,
+                present,
+            } => violations.extend(repo_seam_reports::expected_limitation_violations(
+                &case_label,
+                check_json,
+                owner,
+                expression,
+                category,
+                *present,
+            )),
             EvidencePromotionSemanticAssertion::ExpectedRepoSeamGrip {
                 owner,
                 expression,

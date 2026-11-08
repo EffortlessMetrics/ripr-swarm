@@ -134,9 +134,9 @@ pub(crate) use probes::{
     fingerprint_probe_id, legacy_whole_line_diff_probe_id, normalize_expression,
     normalize_rust_expression, sanitize_path,
 };
-pub(crate) use rust_index::DeclinedRustFile;
+pub(crate) use rust_index::{DeclinedRustFile, RustIndex};
 #[cfg(test)]
-pub(crate) use rust_index::{FileFacts, RaRustSyntaxAdapter, RustIndex, RustSyntaxAdapter};
+pub(crate) use rust_index::{FileFacts, RaRustSyntaxAdapter, RustSyntaxAdapter};
 /// Parser-backed related-test retention fixture for consumer tests (#9175);
 /// a narrow cfg(test) entry so output tests need no analysis internals.
 #[cfg(test)]
@@ -147,6 +147,7 @@ pub(crate) fn retention_fixture_finding(
 ) -> crate::domain::Finding {
     classifier::tests::retention_finding(docs, demoted_call, demoted_asserts)
 }
+pub(crate) use rust_index::SecondaryPassGuard;
 pub use seam_cache::cache_layer_names;
 pub(crate) use seam_classification::ClassifiedSeam;
 #[cfg(test)]
@@ -157,16 +158,19 @@ pub(crate) use seam_classification::classify_seam;
 pub(crate) use seam_inventory::apply_pilot_seam_budget_inner;
 pub(crate) use seam_inventory::file_fact_store_failure_rows;
 #[cfg(test)]
+pub(crate) use seam_inventory::hold_seam_limit_mutators;
+#[cfg(test)]
+#[cfg(test)]
 pub(crate) use seam_inventory::inventory_seams_from_index;
 pub(crate) use seam_inventory::{
     ClassifiedChangeReport, ClassifiedSeamsReport, DEFAULT_REPO_EXPOSURE_SEAM_LIMIT,
     DiffScopedCacheStatsAttribution, FileSeamIndex, PilotInventoryDefault,
     PreparedDiffScopedClassifiedWorkspace, PreparedDiffScopedEvaluationInput,
     REPO_EXPOSURE_SEAM_LIMIT_ENV, ScopedClassifiedSeamInventory, ScopedEvidenceConsumer,
-    SeamLimitInfo, SeamLimitSource, TargetedTestInventoryError, announce_seam_facts_cache_misses,
-    apply_pilot_seam_budget, classify_seams_in_file_with_shared_index,
-    classify_seams_in_files_at_with_config, diff_only_rust_files,
-    evaluate_diff_scoped_classified_seams_from_prepared,
+    SeamLimitInfo, SeamLimitSource, SecondStageFilter, TargetedTestInventoryError,
+    announce_seam_facts_cache_misses, apply_pilot_seam_budget,
+    classify_seams_in_file_with_shared_index, classify_seams_in_files_at_with_config,
+    diff_only_rust_files, evaluate_diff_scoped_classified_seams_from_prepared,
     inventory_changed_test_classified_seams_at_with_config_node,
     inventory_classified_seams_at_with_config, inventory_classified_seams_report_at_with_config,
     inventory_compact_classified_seams_at_with_config,
@@ -186,6 +190,23 @@ pub(crate) use syntax::fn_signature::{
 };
 pub(crate) use syntax::governed_cfg_test_modules;
 pub(crate) use syntax::parse_clean_source_file;
+
+/// Names of the executable test functions defined in one Rust file, from the
+/// parser-backed facts (the same role authority the test selector uses). The
+/// focused-run record counts a ran test only when its name is in this set.
+pub(crate) fn executable_test_function_names(
+    path: &Path,
+    source: &str,
+) -> Result<std::collections::BTreeSet<String>, String> {
+    use syntax::{RaRustSyntaxAdapter, RustSyntaxAdapter};
+    let facts = RaRustSyntaxAdapter.summarize_file(path, source)?;
+    Ok(facts
+        .functions
+        .iter()
+        .filter(|function| function.source_role.registers_executable_test())
+        .map(|function| function.name.clone())
+        .collect())
+}
 pub(crate) use workspace::DiffOnlySource;
 pub(crate) use workspace::PathDependencyAdjacency;
 pub(crate) use workspace::SourceRoleContext;
@@ -1024,65 +1045,7 @@ impl PreviewLanguageAdvisory {
     }
 }
 
-/// Per-language run status for one language adapter invocation.
-///
-/// A `LanguageRun` is recorded for every language that was *attempted* but
-/// did not complete successfully. Languages that ran to completion are
-/// omitted (their findings speak for themselves). This keeps the field
-/// conditional on non-success so the common single-language-success case
-/// stays silent and no golden re-bless is needed.
-///
-/// This is the non-abort contract (Campaign 31 PR 10, ripr-swarm#1403): a
-/// single language's failure (e.g. a Perl preview adapter that returns
-/// `Err`, or a packet-ingestion rejection) must not abort the whole report.
-/// Instead the failed language is recorded here and the other languages'
-/// findings still emit.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct LanguageRun {
-    /// Stable language wire string (e.g. `"rust"`, `"perl"`).
-    pub language: String,
-    /// Outcome of the run.
-    pub status: LanguageRunStatus,
-    /// Human-readable reason for a non-ok status (absent for `Ok`).
-    pub reason: Option<String>,
-}
-
-/// Outcome of one language adapter invocation.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum LanguageRunStatus {
-    /// The adapter completed (findings, if any, are in `result.findings`).
-    /// Recorded only when the caller explicitly asks for full accounting;
-    /// the pipeline omits `Ok` runs by default to keep the field conditional.
-    Ok,
-    /// The adapter was invoked but returned a named limitation (e.g. a Perl
-    /// preview adapter that is scaffold-only and returns `Err`).
-    Unavailable,
-    /// The adapter ran but produced a partial result (e.g. a packet was
-    /// rejected by ingestion checks; some findings may still be present).
-    Partial,
-    /// The adapter could not run at all (e.g. required Cargo feature is off,
-    /// or the producer binary is missing).
-    Invalid,
-    /// A *configured* managed fact producer was invoked and failed (spawn
-    /// error, timeout, or non-zero exit). Distinct from `Unavailable`
-    /// (nothing configured) so the typed limitation and `language_runs`
-    /// reason carry the real exporter failure instead of re-advising a
-    /// configuration the user already made (#6828).
-    Failed,
-}
-
-impl LanguageRunStatus {
-    /// Stable wire string for JSON / human output.
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Ok => "ok",
-            Self::Unavailable => "unavailable",
-            Self::Partial => "partial",
-            Self::Invalid => "invalid",
-            Self::Failed => "failed",
-        }
-    }
-}
+pub use ripr_contract::analysis::language_run::{LanguageRun, LanguageRunStatus};
 
 #[derive(Clone, Debug)]
 pub struct AnalysisResult {
