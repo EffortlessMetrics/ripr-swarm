@@ -25,6 +25,9 @@ async fn sdk_session(
     let mut child = tokio::process::Command::new(env!("CARGO_BIN_EXE_ripr"))
         .args(["mcp", "--stdio", "--root"])
         .arg(workspace_root()?)
+        // The bound checks below read the advertised outputSchema, which only
+        // the opt-in full listing carries (#13803).
+        .env("RIPR_MCP_TOOLS_LIST", "full")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

@@ -133,7 +133,7 @@ Cursor and Claude Code share one entry shape:
 }
 ```
 
-The `env` line asks for the slim `tools/list` (about 29 KB smaller at every session start; results are unchanged). Delete it if your host validates results against `outputSchema`.
+The slim `tools/list` is the default, and the `env` line keeps older ripr builds slim too (results are unchanged). If your host validates results against `outputSchema`, set the value to `full`.
 
 `ripr init --mcp` and the Cursor file were exercised against the real
 `ripr` binary. The `claude`, `codex` and Cursor clients' own registration and
