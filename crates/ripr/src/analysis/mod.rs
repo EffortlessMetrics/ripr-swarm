@@ -119,9 +119,9 @@ pub(crate) use facts::cfg_predicates;
 pub(crate) use facts::validated_file_wide_harness_targets;
 pub(crate) use generated_rust_corpus::{CorpusPayloadSize, analyzable_corpus_payload_size};
 pub(crate) use language::{
-    DIFF_SCOPE_OVERSIZED_PREFIX, JAVASCRIPT_SOURCE_EXTENSIONS, TYPESCRIPT_SOURCE_EXTENSIONS,
-    TsJsSourceKind, is_diff_scope_oversized, is_generated_rust_file_with_patterns,
-    is_ts_js_source_extension, route, ts_js_source_kind,
+    DIFF_CHANGED_RUST_LINE_LIMIT_ENV, DIFF_SCOPE_OVERSIZED_PREFIX, JAVASCRIPT_SOURCE_EXTENSIONS,
+    TYPESCRIPT_SOURCE_EXTENSIONS, TsJsSourceKind, is_diff_scope_oversized,
+    is_generated_rust_file_with_patterns, is_ts_js_source_extension, route, ts_js_source_kind,
 };
 #[cfg(all(test, feature = "lang-perl"))]
 pub(crate) use language::{

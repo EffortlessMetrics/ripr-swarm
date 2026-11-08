@@ -114,7 +114,7 @@ const DIFF_CHANGED_RUST_LINE_LIMIT: usize = 2_000;
 
 /// Env override for [`DIFF_CHANGED_RUST_LINE_LIMIT`]. Operators can raise it
 /// for larger runners or lower it to exercise the guard.
-const DIFF_CHANGED_RUST_LINE_LIMIT_ENV: &str = "RIPR_MAX_DIFF_CHANGED_RUST_LINES";
+pub(crate) const DIFF_CHANGED_RUST_LINE_LIMIT_ENV: &str = "RIPR_MAX_DIFF_CHANGED_RUST_LINES";
 
 /// Named, matchable prefix for the diff-scope guard errors (#1023, #1324).
 /// The LSP refresh path matches this prefix to convert the fail-closed guard
@@ -703,7 +703,7 @@ pub(crate) const PARTIAL_DIFF_LINE_BUDGET_ENV: &str = "RIPR_PARTIAL_DIFF_LINE_BU
 /// Selection-algorithm version stamped into the partition identity
 /// (RIPR-PROP-0019 decision 7). Bumps only on a contract revision of the
 /// selection algorithm.
-pub const PARTIAL_DIFF_SELECTION_VERSION: &str = "partial-diff-v1";
+pub const PARTIAL_DIFF_SELECTION_VERSION: &str = "partial-diff-v2";
 
 /// Language-tier ordering version stamped into the partition identity
 /// (RIPR-PROP-0019 decision 7). Bumps if language tiers are added or
@@ -837,6 +837,13 @@ pub struct PartialDiffScope {
     /// refusing the run (#13641), in selector order. Also listed in
     /// `unselected_files` and counted in the uninspected lower bounds.
     pub over_limit_files: Vec<OverLimitFile>,
+    /// The distinct changed-line limits (env override, effective value) of the
+    /// enabled languages, in selector order. The line budget is clamped to
+    /// the smallest, so a widen instruction asking for a larger line budget
+    /// must also name every limit below it, or re-running with only the
+    /// budget raised would be clamped back to the same partition (#13641
+    /// review).
+    pub line_budget_limits: Vec<(&'static str, usize)>,
     /// Lowercase hex sha256 of the canonical partition form (decision 7).
     pub partition_identity: String,
 }
@@ -913,18 +920,43 @@ impl PartialDiffScope {
             whole_lines,
             self.line_budget,
         );
+        // #13641 review: the line budget is clamped to the smallest enabled
+        // language limit, so a line raise above a limit only takes effect
+        // once that limit is raised to the same value; otherwise following
+        // the advice re-selects the same partition.
+        let line_raised = line_min > self.line_budget;
+        let clamp_minimum = |env: &str| {
+            self.line_budget_limits
+                .iter()
+                .find(|(limit_env, _)| *limit_env == env)
+                .filter(|(_, limit)| line_raised && *limit < line_min)
+                .map_or(0, |_| line_min)
+        };
         // #13641: a file over its language limit is admitted only once that
         // limit reaches its size, named per language env.
-        let over_limit_raises = self.over_limit_envs().into_iter().map(|env| {
+        let over_limit_envs = self.over_limit_envs();
+        let over_limit_raises = over_limit_envs.iter().map(|env| {
             let (count, largest) = self
                 .over_limit_files
                 .iter()
-                .filter(|file| file.limit_env == env)
+                .filter(|file| file.limit_env == *env)
                 .fold((0usize, 0usize), |(count, largest), file| {
                     (count + 1, largest.max(file.changed_lines))
                 });
-            format!("{env} to at least {largest} ({count} file(s) exceed it on their own)")
+            let minimum = largest.max(clamp_minimum(env));
+            format!("{env} to at least {minimum} ({count} file(s) exceed it on their own)")
         });
+        let clamp_raises: Vec<String> = self
+            .line_budget_limits
+            .iter()
+            .filter(|(env, _)| !over_limit_envs.contains(env) && clamp_minimum(env) > 0)
+            .map(|(env, limit)| {
+                format!(
+                    "{env} to at least {line_min} (it caps the line budget, currently \
+                     {limit})"
+                )
+            })
+            .collect();
         let budget_raises: Vec<String> = match self.stop_reason {
             PartialDiffStopReason::FileBudget => [file_raise, line_raise],
             PartialDiffStopReason::LineBudget
@@ -935,10 +967,15 @@ impl PartialDiffScope {
         .flatten()
         .collect();
         let raises: Vec<String> = match self.stop_reason {
-            PartialDiffStopReason::FileExceedsAnalysisLimit => {
-                over_limit_raises.chain(budget_raises).collect()
-            }
-            _ => budget_raises.into_iter().chain(over_limit_raises).collect(),
+            PartialDiffStopReason::FileExceedsAnalysisLimit => over_limit_raises
+                .chain(budget_raises)
+                .chain(clamp_raises)
+                .collect(),
+            _ => budget_raises
+                .into_iter()
+                .chain(clamp_raises)
+                .chain(over_limit_raises)
+                .collect(),
         };
         if raises.is_empty() {
             // Unreachable for a selector-built scope; keep a usable route.
@@ -1328,9 +1365,10 @@ impl PartialSelection {
 }
 
 /// The refusal for a diff in which no changed file fits its language limit
-/// (#13641). It names the limit env of the largest file so the limited
-/// `--json` artifact's basis follows the language that refused, and it never
-/// echoes a diff path into the terminal-facing message.
+/// (#13641). It names the limit env of the largest file first — the limited
+/// `--json` artifact's basis follows the env named earliest in the message —
+/// then every other limit that refused a file, and it never echoes a diff
+/// path into the terminal-facing message.
 fn nothing_fits_error(files: &[OverLimitFile]) -> String {
     let Some(largest) = files.iter().max_by_key(|file| file.changed_lines) else {
         return format!(
@@ -1338,12 +1376,14 @@ fn nothing_fits_error(files: &[OverLimitFile]) -> String {
              analysis was not run"
         );
     };
-    let envs = files.iter().fold(Vec::<&str>::new(), |mut envs, file| {
-        if !envs.contains(&file.limit_env) {
-            envs.push(file.limit_env);
-        }
-        envs
-    });
+    let envs = files
+        .iter()
+        .fold(vec![largest.limit_env], |mut envs, file| {
+            if !envs.contains(&file.limit_env) {
+                envs.push(file.limit_env);
+            }
+            envs
+        });
     format!(
         "{DIFF_SCOPE_OVERSIZED_PREFIX}: every one of the {} changed file(s) ripr's enabled \
          adapters read exceeds its language's changed-line limit on its own (largest: {} \
@@ -1363,11 +1403,43 @@ fn nothing_fits_error(files: &[OverLimitFile]) -> String {
     )
 }
 
+/// Selection under the default language configuration (tests and direct
+/// adapter calls); production callers pass the run's configuration through
+/// [`select_admitted_partial_diff_partition`].
 fn select_partial_diff_partition_with_identity(
     changed_files: &[ChangedFile],
     identity_files: &[ChangedFile],
     budgets: &PartialDiffBudgets,
     enabled_languages: &[LanguageId],
+) -> PartialSelection {
+    select_admitted_partial_diff_partition(
+        changed_files,
+        identity_files,
+        budgets,
+        enabled_languages,
+        &crate::config::LanguagesConfig::default(),
+    )
+}
+
+/// Whether the enabled set runs the adapter `language` routes to. `route`
+/// maps `.js`-family paths to [`LanguageId::TypeScript`], and the TypeScript
+/// adapter serves both ids, so a JavaScript-only run enables them (#13641).
+fn language_adapter_enabled(enabled_languages: &[LanguageId], language: LanguageId) -> bool {
+    match language {
+        LanguageId::TypeScript | LanguageId::JavaScript => {
+            enabled_languages.contains(&LanguageId::TypeScript)
+                || enabled_languages.contains(&LanguageId::JavaScript)
+        }
+        _ => enabled_languages.contains(&language),
+    }
+}
+
+fn select_admitted_partial_diff_partition(
+    changed_files: &[ChangedFile],
+    identity_files: &[ChangedFile],
+    budgets: &PartialDiffBudgets,
+    enabled_languages: &[LanguageId],
+    language_config: &crate::config::LanguagesConfig,
 ) -> PartialSelection {
     let mut candidates: Vec<PartitionCandidate> = changed_files
         .iter()
@@ -1380,9 +1452,22 @@ fn select_partial_diff_partition_with_identity(
                 return None;
             }
             let language = route(&file.path)?;
+            // A preview file its adapter's generated-name or excluded-directory
+            // authority refuses is never counted by that adapter, so it is no
+            // partition candidate either — the same way generated Rust is
+            // dropped before selection. Otherwise it could consume the budget,
+            // or be named over its limit with advice to raise a limit that can
+            // never admit it (#13641 review).
+            if !crate::analysis::pipeline::language_admits_changed_path(
+                &file.path,
+                language,
+                language_config,
+            ) {
+                return None;
+            }
             let language_tier = if language == LanguageId::Rust { 0 } else { 1 };
             let normalized_path = normalize_changed_path(&file.path);
-            let enabled = enabled_languages.contains(&language);
+            let enabled = language_adapter_enabled(enabled_languages, language);
             let (limit, limit_env) = budgets.file_line_limit(language);
             Some(PartitionCandidate {
                 package: workspace::package_root(&file.path).unwrap_or_default(),
@@ -1550,6 +1635,15 @@ fn select_partial_diff_partition_with_identity(
             && enabled_lines <= budgets.line_limit)
             .then_some((enabled_files, enabled_lines)),
         over_limit_files,
+        line_budget_limits: budgets.language_line_limits.iter().fold(
+            Vec::new(),
+            |mut limits: Vec<(&'static str, usize)>, limit| {
+                if !limits.iter().any(|(env, _)| *env == limit.env) {
+                    limits.push((limit.env, limit.limit));
+                }
+                limits
+            },
+        ),
         partition_identity: sha256_hex(canonical.as_bytes()),
     }))
 }
@@ -1563,13 +1657,15 @@ fn select_partial_diff_partition_with_identity(
 pub(crate) fn select_partial_diff_scope(
     changed_files: &[ChangedFile],
     enabled_languages: &[LanguageId],
+    language_config: &crate::config::LanguagesConfig,
 ) -> Result<Option<PartialDiffScope>, String> {
     let budgets = partial_diff_budgets(enabled_languages)?;
-    select_partial_diff_partition_with_identity(
+    select_admitted_partial_diff_partition(
         changed_files,
         changed_files,
         &budgets,
         enabled_languages,
+        language_config,
     )
     .into_scope()
 }
@@ -2427,9 +2523,13 @@ impl RustAdapter {
             changed_files,
             enabled_languages,
             &crate::config::RustLanguageConfig::default(),
+            &crate::config::LanguagesConfig::default(),
         )
     }
 
+    /// `language_config` carries the preview adapters' generated-name and
+    /// excluded-directory authorities, so the partition never budgets, selects
+    /// or names over-limit a preview file no adapter would count (#13641).
     pub(crate) fn analyze_diff_for_languages_with_rust_config(
         &self,
         options: &AnalysisOptions,
@@ -2437,6 +2537,7 @@ impl RustAdapter {
         changed_files: &[ChangedFile],
         enabled_languages: &[LanguageId],
         rust_config: &crate::config::RustLanguageConfig,
+        language_config: &crate::config::LanguagesConfig,
     ) -> Result<LanguageDiffResult, String> {
         let _syntax_memo = crate::analysis::syntax::run_memo::enter();
         // Exclude conventional generated surfaces before hard line limits and
@@ -2455,11 +2556,12 @@ impl RustAdapter {
         // failing closed with zero findings. A malformed override fails closed
         // as `partial_budget_invalid`.
         let partial_budgets = partial_diff_budgets(enabled_languages)?;
-        let mut partial_scope = select_partial_diff_partition_with_identity(
+        let mut partial_scope = select_admitted_partial_diff_partition(
             &analyzable_changed_files,
             changed_files,
             &partial_budgets,
             enabled_languages,
+            language_config,
         )
         .into_scope()?;
         // #13641: the changed-Rust-line guard measures what this run will
@@ -7512,6 +7614,115 @@ fn absent_delimiter_boundary_returns_head() {
     }
 
     #[test]
+    fn generated_preview_files_are_never_partition_candidates() -> Result<(), String> {
+        // #13641 review (N1): a preview file its adapter's generated-name
+        // authority refuses is never counted by that adapter, so it neither
+        // consumes the budget nor is named over its limit (advice to raise a
+        // limit that can never admit it). Generated-only: the run proceeds.
+        let languages = [LanguageId::Rust, LanguageId::Python];
+        let budgets = partial_diff_budgets(&languages)?;
+        let generated_only = vec![changed_file("pkg/generated_models.py", 2_001, 0)];
+        let selection = select_partial_diff_partition_with_identity(
+            &generated_only,
+            &generated_only,
+            &budgets,
+            &languages,
+        );
+        assert_eq!(selection, PartialSelection::Fits);
+        // Beside admitted files over the budget, it is still no candidate:
+        // never selected, never over-limit, never counted as uninspected.
+        let mixed = vec![
+            changed_file("pkg/generated_models.py", 2_001, 0),
+            changed_file("pkg/a.py", 800, 0),
+            changed_file("pkg/b.py", 800, 0),
+        ];
+        let scope = select_partial_diff_partition(&mixed, &budgets, &languages)
+            .ok_or("two admitted 800-line files over the budget must be partial")?;
+        assert_eq!(scope.selected_files, vec!["pkg/a.py"]);
+        assert!(scope.over_limit_files.is_empty(), "{scope:?}");
+        assert_eq!(scope.uninspected_files_lower_bound, 1);
+        assert!(
+            !scope
+                .unselected_files
+                .contains(&"pkg/generated_models.py".to_string())
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn javascript_only_enablement_selects_javascript_files() -> Result<(), String> {
+        // #13641 review (N2): `route` maps `.js` to the TypeScript adapter's
+        // id, which a JavaScript-only run enables; its files are selectable.
+        let languages = [LanguageId::JavaScript];
+        let budgets = partial_diff_budgets(&languages)?;
+        let files = vec![
+            changed_file("web/a.js", 800, 0),
+            changed_file("web/b.js", 800, 0),
+            changed_file("web/c.js", 800, 0),
+        ];
+        let scope = select_partial_diff_partition(&files, &budgets, &languages)
+            .ok_or("a JavaScript-only diff over the budget must be partial")?;
+        assert_eq!(scope.selected_files, vec!["web/a.js"]);
+        assert_eq!(scope.stop_reason, PartialDiffStopReason::LineBudget);
+        Ok(())
+    }
+
+    /// The `{env} to at least {N}` minimum a widen instruction names.
+    fn advised_minimum(instruction: &str, env: &str) -> Option<String> {
+        let tail = instruction.split(&format!("{env} to at least ")).nth(1)?;
+        Some(tail.chars().take_while(char::is_ascii_digit).collect())
+    }
+
+    #[test]
+    fn widen_advice_raises_the_language_limit_that_clamps_the_line_budget() -> Result<(), String> {
+        // #13641 review (N3): with the Python limit at 500 the line budget is
+        // clamped to 500. Advice naming only a larger line budget would be
+        // clamped back to the same partition on re-run; it must also name
+        // the Python limit, and following it must widen the partition.
+        let languages = [LanguageId::Rust, LanguageId::Python];
+        let python_env = crate::analysis::DIFF_CHANGED_PYTHON_LINE_LIMIT_ENV;
+        let files = vec![
+            changed_file("src/a.rs", 300, 0),
+            changed_file("pkg/a.py", 400, 0),
+            changed_file("pkg/b.py", 400, 0),
+        ];
+        let budgets = with_forced_diff_limit_env(&[(python_env, "500")], || {
+            partial_diff_budgets(&languages)
+        })?;
+        let scope = select_partial_diff_partition(&files, &budgets, &languages)
+            .ok_or("the clamped run must be partial")?;
+        assert_eq!(scope.selected_files, vec!["src/a.rs"]);
+        let advice = scope.widen_instruction();
+        let line = advised_minimum(&advice, PARTIAL_DIFF_LINE_BUDGET_ENV)
+            .ok_or_else(|| format!("line budget raise missing: {advice}"))?;
+        let python = advised_minimum(&advice, python_env)
+            .ok_or_else(|| format!("the clamping Python limit must be named: {advice}"))?;
+        assert_eq!((line.as_str(), python.as_str()), ("700", "700"), "{advice}");
+        assert!(advice.contains("currently 500"), "{advice}");
+        assert!(
+            !advice.contains(DIFF_CHANGED_RUST_LINE_LIMIT_ENV),
+            "the Rust limit does not clamp below 700: {advice}"
+        );
+        // The line budget raise alone re-selects the same partition...
+        let budget_only = with_forced_diff_limit_env(
+            &[(python_env, "500"), (PARTIAL_DIFF_LINE_BUDGET_ENV, &line)],
+            || partial_diff_budgets(&languages),
+        )?;
+        let same = select_partial_diff_partition(&files, &budget_only, &languages)
+            .ok_or("still partial")?;
+        assert_eq!(same.selected_files, scope.selected_files);
+        // ...while following the whole advice widens it.
+        let followed = with_forced_diff_limit_env(
+            &[(python_env, &python), (PARTIAL_DIFF_LINE_BUDGET_ENV, &line)],
+            || partial_diff_budgets(&languages),
+        )?;
+        let wider = select_partial_diff_partition(&files, &followed, &languages)
+            .ok_or("one 400-line file is still left out")?;
+        assert_eq!(wider.selected_files, vec!["src/a.rs", "pkg/a.py"]);
+        Ok(())
+    }
+
+    #[test]
     fn changed_rust_line_limit_rejects_oversized_diff_before_probe_expansion() -> Result<(), String>
     {
         let files = vec![changed_file("src/lib.rs", 2, 1)];
@@ -8431,7 +8642,7 @@ fn absent_delimiter_boundary_returns_head() {
             baseline.partition_identity,
             "the identity must be the sha256 of the canonical form"
         );
-        let bumped = canonical.replacen(PARTIAL_DIFF_SELECTION_VERSION, "partial-diff-v2", 1);
+        let bumped = canonical.replacen(PARTIAL_DIFF_SELECTION_VERSION, "partial-diff-v3", 1);
         assert_ne!(
             sha256_hex(bumped.as_bytes()),
             baseline.partition_identity,

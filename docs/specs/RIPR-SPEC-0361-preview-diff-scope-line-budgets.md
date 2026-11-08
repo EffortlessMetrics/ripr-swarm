@@ -138,11 +138,16 @@ explainable refusal to repair from.
 1. `ripr check --diff django.diff` whose single `pkg/mod.py` carries 2100
    admitted changed Python lines, with the Python adapter enabled: exits
    non-zero with
-   `diff_scope_oversized: 2100 changed Python lines ...` naming
-   `RIPR_MAX_DIFF_CHANGED_PYTHON_LINES`, `--path` and `--exclude`; `--json`
-   emits the limited artifact with `basis: "python_diff_scope_budget"`.
+   `diff_scope_oversized: every one of the 1 changed file(s) ripr's enabled
+   adapters read exceeds its language's changed-line limit on its own
+   (largest: 2100 changed lines over the RIPR_MAX_DIFF_CHANGED_PYTHON_LINES
+   limit (2000)) ...` naming `RIPR_MAX_DIFF_CHANGED_PYTHON_LINES`, `--path` and
+   `--exclude` (a partition never splits a file, so no file fits, #13641);
+   `--json` emits the limited artifact with
+   `basis: "python_diff_scope_budget"`, the env the refusal names first.
 2. The same diff where 2001 of the lines are in `pkg/generated_models.py`:
-   the run proceeds; the generated file's lines do not count.
+   the run proceeds; the generated file's lines do not count, and the file is
+   never a partition candidate nor named in `over_limit_files` (#13641).
 3. `RIPR_MAX_DIFF_CHANGED_TYPESCRIPT_LINES=5000 ripr check --diff web.diff`:
    a 4500-line TypeScript diff is analyzed instead of refused.
 4. A 2400-line Python diff spread over three 800-line files: the run reports

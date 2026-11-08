@@ -1516,6 +1516,7 @@ fn run_pipeline_for_diff_text_with_language_config(
                 &analysis_changed_files,
                 languages,
                 rust_config,
+                language_config,
             )
         })?;
         cancellation::checkpoint()?;
@@ -1605,8 +1606,11 @@ fn run_pipeline_for_diff_text_with_language_config(
         && enforce_changed_preview_line_limits(languages, &analysis_changed_files, language_config)
             .is_err()
     {
-        partial_scope =
-            super::language::select_partial_diff_scope(&analysis_changed_files, languages)?;
+        partial_scope = super::language::select_partial_diff_scope(
+            &analysis_changed_files,
+            languages,
+            language_config,
+        )?;
     }
     // #13641: the Rust not-selected outcome is recorded once the run's scope
     // is settled, so a preview-only partial run labels it partial too.
@@ -8752,6 +8756,7 @@ index 0000000..1111111 100644
             next_file_changed_lines: (uninspected_lines > 0).then_some(uninspected_lines),
             whole_diff_budgets: None,
             over_limit_files: Vec::new(),
+            line_budget_limits: Vec::new(),
             partition_identity: "sha256:partition".to_string(),
         }
     }
@@ -10054,6 +10059,73 @@ index 0000000..1111111 100644
             "{refusal}"
         );
         Ok(())
+    }
+
+    #[test]
+    fn generated_python_bulk_beside_rust_proceeds_and_is_never_over_limit() -> Result<(), String> {
+        // #13641 review (N1): with Rust and Python enabled, a 2,001-line
+        // generated `.py` is no partition candidate — the Python adapter
+        // never counts it — so the run proceeds instead of refusing, and the
+        // file is never named over its limit.
+        let root = temp_root("py-generated-beside-rust")?;
+        write(
+            root.join("src/lib.rs").as_path(),
+            "pub fn seed() -> u32 { 0 }\n",
+        )?;
+        let generated_only = oversized_preview_diff("pkg/generated_models.py", "def", 2_001);
+        let mut with_admitted_bulk = generated_only.clone();
+        with_admitted_bulk.push_str(&multi_file_diff(
+            &["pkg/a.py", "pkg/b.py", "pkg/c.py"],
+            800,
+            |index| format!("v_{index} = {index}"),
+        ));
+        for (label, diff) in [
+            ("generated-only", generated_only),
+            ("with-admitted-bulk", with_admitted_bulk),
+        ] {
+            let result = run_pipeline_for_diff_text(
+                &sample_rust_diff_options(root.clone()),
+                &OraclePolicy::default(),
+                &[LanguageId::Rust, LanguageId::Python],
+                &crate::config::RustLanguageConfig::default(),
+                &diff,
+            )
+            .map_err(|error| format!("{label}: must proceed, not refuse: {error}"))?;
+            if let Some(scope) = result.partial_scope.as_ref() {
+                assert!(scope.over_limit_files.is_empty(), "{label}: {scope:?}");
+                assert!(
+                    !scope
+                        .unselected_files
+                        .contains(&"pkg/generated_models.py".to_string()),
+                    "{label}: {scope:?}"
+                );
+            }
+            assert_eq!(
+                result.partial_scope.is_some(),
+                label == "with-admitted-bulk",
+                "{label}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn javascript_diff_over_the_changed_line_guard_degrades_into_partial_scope()
+    -> Result<(), String> {
+        // #13641 review (N2): JavaScript-only enablement. `route` maps `.js`
+        // to the TypeScript adapter's id; the selector must treat it as
+        // enabled, or nothing is selected and the guard refuses.
+        let root = temp_root("js-guard-degrade")?;
+        let result = run_pipeline_for_diff_text(
+            &sample_rust_diff_options(root),
+            &OraclePolicy::default(),
+            &[LanguageId::JavaScript],
+            &crate::config::RustLanguageConfig::default(),
+            &multi_file_diff(&["web/a.js", "web/b.js", "web/c.js"], 800, |index| {
+                format!("export const v_{index} = {index};")
+            }),
+        )?;
+        assert_degraded_to_first_of_three(&result, "web/a.js")
     }
 
     #[test]
