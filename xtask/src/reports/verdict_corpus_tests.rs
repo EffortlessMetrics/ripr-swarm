@@ -2818,3 +2818,47 @@ fn issue_5332_upstream_not_discriminated_and_partially_discriminated_floors() ->
     }
     Ok(())
 }
+
+fn abstention_row(
+    ideal: &str,
+    observed: &str,
+    class: &[&str],
+    outcome: &str,
+) -> Result<CaseRow, serde_json::Error> {
+    let truth = if ideal == "credited" {
+        "discriminated"
+    } else {
+        "not_discriminated"
+    };
+    serde_json::from_value(json!({
+        "case_id": "c", "subject_id": "s", "origin": "authored", "anchor": "a:1",
+        "behavior_family": "f", "test_shape": "t", "hard_case": false,
+        "truth": truth, "ideal_verdict": ideal, "observed_verdict": observed,
+        "followed_retarget": false, "changed_since_labeling": false,
+        "observed_classifications": class, "outcome": outcome,
+        "contradictions": [], "findings_scored": 1, "findings_contradicted": 0,
+        "contradiction_counts": {},
+    }))
+}
+
+#[test]
+fn abstention_by_cause_counts_only_abstained_rows_by_missed_side_and_class()
+-> Result<(), serde_json::Error> {
+    let rows = vec![
+        abstention_row("gap", "limited", &["no_static_path"], "abstained")?,
+        abstention_row("gap", "limited", &["no_static_path"], "abstained")?,
+        abstention_row("credited", "limited", &["static_unknown"], "abstained")?,
+        abstention_row("credited", "limited", &[], "abstained")?,
+        abstention_row("gap", "gap", &["weakly_exposed"], "ideal")?,
+    ];
+    let causes = abstention_by_cause(&rows);
+    assert_eq!(causes.get("gap_missed:no_static_path"), Some(&2));
+    assert_eq!(causes.get("credit_missed:static_unknown"), Some(&1));
+    assert_eq!(causes.get("credit_missed:none"), Some(&1));
+    assert_eq!(
+        causes.values().sum::<usize>(),
+        4,
+        "the ideal row is not counted"
+    );
+    Ok(())
+}

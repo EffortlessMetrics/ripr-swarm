@@ -770,6 +770,12 @@ pub(crate) struct Report {
     pub(crate) abstention_rate: Ratio,
     pub(crate) contradiction_rate: Ratio,
     pub(crate) contradictions_by_code: BTreeMap<String, usize>,
+    /// Abstained rows again, by what the abstention missed (`gap_missed` or
+    /// `credit_missed`, from the row's ideal verdict) and the observed
+    /// classification. Every abstained row is acceptable by its case's own
+    /// labels; this split shows where a promotion could pay off and which
+    /// ones (`gap_missed:no_static_path`) would raise false gaps on real code.
+    pub(crate) abstention_by_cause: BTreeMap<String, usize>,
     /// The verdict rates again, per subject origin. Authored cases are chosen
     /// to fill cells, so only the upstream rates describe real-world tests.
     pub(crate) by_origin: BTreeMap<String, OriginRates>,
@@ -805,6 +811,28 @@ pub(crate) struct OriginRates {
     pub(crate) false_silent_rate: Ratio,
     pub(crate) ideal_rate: Ratio,
     pub(crate) abstention_rate: Ratio,
+}
+
+/// Count abstained rows by `<side missed>:<classification>`.
+fn abstention_by_cause<R: std::borrow::Borrow<CaseRow>>(rows: &[R]) -> BTreeMap<String, usize> {
+    let mut causes = BTreeMap::new();
+    for row in rows.iter().map(std::borrow::Borrow::borrow) {
+        if row.outcome != Outcome::Abstained {
+            continue;
+        }
+        let side = match row.ideal_verdict {
+            Verdict::Credited => "credit_missed",
+            Verdict::Gap => "gap_missed",
+            Verdict::Limited | Verdict::Silent => "no_claim_expected",
+        };
+        let class = if row.observed_classifications.is_empty() {
+            "none".to_string()
+        } else {
+            row.observed_classifications.join("+")
+        };
+        *causes.entry(format!("{side}:{class}")).or_insert(0) += 1;
+    }
+    causes
 }
 
 fn origin_rates(rows: &[&CaseRow]) -> OriginRates {
@@ -1020,6 +1048,7 @@ pub(crate) fn summarize(spec: String, non_claims: Vec<String>, rows: Vec<CaseRow
         abstention_rate: ratio(count(Outcome::Abstained), rows.len()),
         contradiction_rate: ratio(findings_contradicted, findings_scored),
         contradictions_by_code: by_code,
+        abstention_by_cause: abstention_by_cause(&rows),
         by_origin,
         by_packet_provenance,
         spec_example_coverage: None,
@@ -1116,6 +1145,14 @@ pub(crate) fn render_report_markdown(report: &Report, language: &str) -> String 
             "| {label} | {}/{} | {} |\n",
             ratio.numerator, ratio.denominator, ratio.rate
         ));
+    }
+    if !report.abstention_by_cause.is_empty() {
+        out.push_str(
+            "\nAbstentions by cause. Each is acceptable by its case's labels; `gap_missed:no_static_path` rows are the unsound direction to promote (a no-path finding is not proof of a gap on real code).\n\n| Cause | Rows |\n| --- | --- |\n",
+        );
+        for (cause, rows) in &report.abstention_by_cause {
+            out.push_str(&format!("| `{cause}` | {rows} |\n"));
+        }
     }
     if report.by_origin.len() > 1 {
         out.push_str(
