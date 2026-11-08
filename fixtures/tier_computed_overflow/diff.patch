@@ -1,0 +1,17 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 1111111..2222222 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,11 +1,11 @@
+ pub fn tier(weight: u32, order: u32, express: bool) -> u32 {
+     if order >= 100 && !express {
+         return 0;
+     }
+     let base = if weight <= 10 {
+-        3000000000
++        2500000000
+     } else {
+         20
+     };
+     if express { base * 2 } else { base }
+ }

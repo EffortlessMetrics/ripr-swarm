@@ -18176,6 +18176,78 @@
           "relation_reason": "direct_owner_call"
         }
       ]
+    },
+    {
+      "id": "rust_tier_computed_wrong_multiplier",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/tier_computed_wrong_multiplier",
+      "vector": "computed_tier_pin_with_wrong_multiplier_does_not_distinguish",
+      "probe_family": "static_unknown",
+      "assertions": [
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "static_unknown"
+        }
+      ]
+    },
+    {
+      "id": "rust_tier_computed_reversed_mul",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/tier_computed_reversed_mul",
+      "vector": "reversed_literal_times_binding_is_not_the_admitted_computed_shape",
+      "probe_family": "static_unknown",
+      "assertions": [
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "static_unknown"
+        }
+      ]
+    },
+    {
+      "id": "rust_tier_computed_overflow",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/tier_computed_overflow",
+      "vector": "computed_tier_product_above_u32_max_cannot_be_pinned",
+      "probe_family": "static_unknown",
+      "assertions": [
+        {
+          "type": "expected_finding_count",
+          "count": 2
+        },
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "static_unknown"
+        }
+      ]
     }
   ]
 }

@@ -1,8 +1,9 @@
 //! A bounded selected literal, local binding and direct-return witness.
 //!
 //! This is deliberately limited to primitive, literal-input paths. Unknown
-//! syntax, unresolved names, transformed outputs and ambiguous test calls
-//! produce no witness.
+//! syntax, unresolved names, outputs transformed by anything other than the
+//! one admitted `binding * <u32 literal>` return shape and ambiguous test
+//! calls produce no witness.
 
 use super::const_flow::expr::{
     Assertion, BinOp, Expr, Machine, Reader, Ty, Value, parse_assertion, parse_const_decl,
@@ -361,8 +362,10 @@ fn tier_trace(
     }
 }
 
-/// A sink leaf is credited only when it is the binding itself; a different
-/// branch is represented as false, never as a transformed observation.
+/// A sink leaf reaches the return when it is the binding itself or the one
+/// admitted computed shape `binding * <u32 literal>`; a different branch is
+/// represented as false. Which value the assertion must pin is decided by
+/// `plain_assertion` and the whole-test distinguishing replay, not here.
 fn sink_trace(
     expr: ast::Expr,
     binding: &str,
@@ -393,8 +396,10 @@ fn sink_trace(
             Some(choose(cond, yes, no))
         }
         ast::Expr::PathExpr(path) => (path.syntax().text() == binding).then(|| boolean(true)),
-        // Recognize only a well-typed, simple transformed alternative. It is
-        // never credited when selected; it allows the other direct branch.
+        // The one admitted computed shape: the binding multiplied by a u32
+        // literal. It reaches the return exactly like the binding itself;
+        // the pin and replay gates decide whether the asserted product
+        // actually distinguishes the changed tier.
         ast::Expr::BinExpr(binary) => {
             let parsed = bounded_expression(&binary.syntax().text().to_string())?;
             match parsed {
@@ -402,7 +407,7 @@ fn sink_trace(
                     if matches!(*left, Expr::Var(ref name) if name == binding)
                         && matches!(*right, Expr::Literal(Value::Int(value)) if (0..=u32::MAX as i64).contains(&value)) =>
                 {
-                    Some(boolean(false))
+                    Some(boolean(true))
                 }
                 _ => None,
             }
@@ -564,7 +569,50 @@ fn changed_literal(
     (old != now).then_some(Some(old))
 }
 
-fn plain_assertion(assertion: &Assertion, name: &str, now: u32, old: Option<u32>) -> bool {
+/// The literal multipliers of every admitted `binding * <u32 literal>` leaf
+/// in the return tail. Any other leaf shape withholds the witness, matching
+/// `returned_value`.
+fn sink_multipliers(expr: ast::Expr, binding: &str) -> Option<BTreeSet<u32>> {
+    match expr {
+        ast::Expr::IfExpr(branch) => {
+            let mut found = sink_multipliers(only_tail(&branch.then_branch()?)?, binding)?;
+            let rest = match branch.else_branch()? {
+                ast::ElseBranch::Block(block) => sink_multipliers(only_tail(&block)?, binding)?,
+                ast::ElseBranch::IfExpr(other) => {
+                    sink_multipliers(ast::Expr::IfExpr(other), binding)?
+                }
+            };
+            found.extend(rest);
+            Some(found)
+        }
+        ast::Expr::PathExpr(path) if path.syntax().text() == binding => Some(BTreeSet::new()),
+        ast::Expr::BinExpr(binary) => {
+            match bounded_expression(&binary.syntax().text().to_string())? {
+                Expr::Bin(BinOp::Mul, left, right) if matches!(*left, Expr::Var(ref name) if name == binding) =>
+                {
+                    let Expr::Literal(Value::Int(value)) = *right else {
+                        return None;
+                    };
+                    let value = u32::try_from(value).ok()?;
+                    Some(BTreeSet::from([value]))
+                }
+                _ => None,
+            }
+        }
+        ast::Expr::Literal(literal) => {
+            number(&literal.syntax().text().to_string()).map(|_| BTreeSet::new())
+        }
+        _ => None,
+    }
+}
+
+fn plain_assertion(
+    assertion: &Assertion,
+    name: &str,
+    now: u32,
+    old: Option<u32>,
+    multipliers: &BTreeSet<u32>,
+) -> bool {
     match assertion {
         Assertion::Eq(Expr::Call(callee, args), Expr::Literal(Value::Int(expected)))
             if callee == name
@@ -572,7 +620,18 @@ fn plain_assertion(assertion: &Assertion, name: &str, now: u32, old: Option<u32>
                     .iter()
                     .all(|arg| matches!(arg, Expr::Literal(Value::Int(_) | Value::Bool(_)))) =>
         {
-            *expected == i64::from(now) || old.is_some_and(|old| *expected == i64::from(old))
+            if *expected == i64::from(now) || old.is_some_and(|old| *expected == i64::from(old)) {
+                return true;
+            }
+            // A computed pin must name the current or previous tier times the
+            // admitted multiplier, with the product representable as u32.
+            let Ok(expected) = u32::try_from(*expected) else {
+                return false;
+            };
+            multipliers.iter().any(|factor| {
+                now.checked_mul(*factor) == Some(expected)
+                    || old.is_some_and(|old| old.checked_mul(*factor) == Some(expected))
+            })
         }
         _ => false,
     }
@@ -888,6 +947,7 @@ pub(in crate::analysis) fn evaluate_tier_flow(
     }
     let (new_tier, old_tier) = tier_values(binding_initializer(&statements)?, owner, probe, old)?;
     let tail = body.tail_expr()?;
+    let multipliers = sink_multipliers(tail.clone(), &binding)?;
     let mut new_value = returned_value(tail.clone(), &binding, &new_tier)?;
     let mut old_value = returned_value(tail, &binding, &old_tier)?;
     if let Some((condition, value)) = guard {
@@ -941,7 +1001,7 @@ pub(in crate::analysis) fn evaluate_tier_flow(
             let Some(assertion) = bounded_assertion(&oracle.text) else {
                 continue;
             };
-            if !plain_assertion(&assertion, &name, now, old) {
+            if !plain_assertion(&assertion, &name, now, old, &multipliers) {
                 continue;
             }
             if machine.call_result(&assertion) != Some(Value::Bool(true)) {

@@ -456,7 +456,7 @@ fn only_selected_unchanged_return_path_gets_a_witness() -> Result<(), String> {
         (
             "transformed selected tier",
             "assert_eq!(tier(4, 30, true), 12);",
-            false,
+            true,
         ),
         (
             "transformed other tier",
@@ -466,7 +466,7 @@ fn only_selected_unchanged_return_path_gets_a_witness() -> Result<(), String> {
         (
             "express overrides free guard",
             "assert_eq!(tier(4, 100, true), 12);",
-            false,
+            true,
         ),
     ];
     for (label, assertion, should_credit) in cases {
@@ -834,6 +834,194 @@ fn owner_file_budget_has_an_unpadded_positive_twin() -> Result<(), String> {
         if !should_credit {
             assert_ne!(f.class, ExposureClass::WeaklyExposed);
         }
+    }
+    Ok(())
+}
+
+#[test]
+fn computed_selected_tier_return_is_credited() -> Result<(), String> {
+    // now * K: 6 * 2 = 12 holds on the new code, 9 * 2 = 18 on the old.
+    let after = "pub fn tier(weight: u32, order: u32, express: bool) -> u32 {\n    if order >= 100 && !express {\n        return 0;\n    }\n    let base = if weight <= 10 {\n        6\n    } else {\n        20\n    };\n    if express { base * 2 } else { base }\n}";
+    let before = after.replace("        6\n", "        9\n");
+    for assertion in [
+        "assert_eq!(tier(4, 30, true), 12);",
+        "assert_eq!(tier(4, 30, true), 18);",
+    ] {
+        let findings =
+            TempRepo::create(&lib(after, assertion), &fn_diff(&before, after))?.findings()?;
+        require_exposed(&findings, 6, "6")?;
+    }
+    // The multiplied branch may be the else tail instead.
+    let swapped = "pub fn tier(weight: u32, order: u32, express: bool) -> u32 {\n    if order >= 100 && !express {\n        return 0;\n    }\n    let base = if weight <= 10 {\n        6\n    } else {\n        20\n    };\n    if express { base } else { base * 2 }\n}";
+    let swapped_before = swapped.replace("        6\n", "        9\n");
+    let findings = TempRepo::create(
+        &lib(swapped, "assert_eq!(tier(4, 30, false), 12);"),
+        &fn_diff(&swapped_before, swapped),
+    )?
+    .findings()?;
+    require_exposed(&findings, 6, "6")
+}
+
+#[test]
+fn shipping_scaled_computed_tier_is_credited() -> Result<(), String> {
+    let after = "pub fn shipping_cost(weight: u32, order: u32, express: bool) -> u32 {\n    if order >= 5000 && !express {\n        return 0;\n    }\n    let base = if weight <= 500 {\n        400\n    } else if weight <= 2000 {\n        900\n    } else {\n        1800\n    };\n    if express {\n        base * 2\n    } else {\n        base\n    }\n}";
+    let before = after.replace("        400\n", "        450\n");
+    let findings = TempRepo::create(
+        &lib(after, "assert_eq!(shipping_cost(100, 10, true), 800);"),
+        &fn_diff(&before, after),
+    )?
+    .findings()?;
+    require_exposed(&findings, 6, "400")
+}
+
+#[test]
+fn computed_tier_negatives_stay_unknown() -> Result<(), String> {
+    use ripr::domain::StageState;
+    let guard_fn = "pub fn tier(weight: u32, order: u32, express: bool) -> u32 {\n    if order >= 100 && !express {\n        return 0;\n    }\n    let base = if weight <= 10 {\n        6\n    } else {\n        20\n    };\n    if express { base * 2 } else { base }\n}";
+    let cases: [(&str, &str, &str); 11] = [
+        (
+            "untransformed pin on transformed path",
+            guard_fn,
+            "assert_eq!(tier(4, 30, true), 6);",
+        ),
+        (
+            "wrong multiplier",
+            guard_fn,
+            "assert_eq!(tier(4, 30, true), 24);",
+        ),
+        (
+            "guard-taken early return",
+            guard_fn,
+            "assert_eq!(tier(4, 100, false), 0);",
+        ),
+        (
+            "same-line multi-call",
+            guard_fn,
+            "assert_eq!(tier(4, 30, true), 12); assert_eq!(tier(11, 30, true), 40);",
+        ),
+        (
+            "literal on the left",
+            "pub fn tier(weight: u32, order: u32, express: bool) -> u32 {\n    if order >= 100 && !express {\n        return 0;\n    }\n    let base = if weight <= 10 {\n        6\n    } else {\n        20\n    };\n    if express { 2 * base } else { base }\n}",
+            "assert_eq!(tier(4, 30, true), 12);",
+        ),
+        (
+            "added binding",
+            "pub fn tier(weight: u32, order: u32, express: bool) -> u32 {\n    if order >= 100 && !express {\n        return 0;\n    }\n    let base = if weight <= 10 {\n        6\n    } else {\n        20\n    };\n    if express { base + base } else { base }\n}",
+            "assert_eq!(tier(4, 30, true), 12);",
+        ),
+        (
+            "parameter multiplier",
+            "pub fn tier(weight: u32, order: u32, express: bool, factor: u32) -> u32 {\n    if order >= 100 && !express {\n        return 0;\n    }\n    let base = if weight <= 10 {\n        6\n    } else {\n        20\n    };\n    if express { base * factor } else { base }\n}",
+            "assert_eq!(tier(4, 30, true, 2), 12);",
+        ),
+        (
+            "chained multiplication",
+            "pub fn tier(weight: u32, order: u32, express: bool) -> u32 {\n    if order >= 100 && !express {\n        return 0;\n    }\n    let base = if weight <= 10 {\n        6\n    } else {\n        20\n    };\n    if express { base * 2 * 2 } else { base }\n}",
+            "assert_eq!(tier(4, 30, true), 24);",
+        ),
+        (
+            "cast return",
+            "pub fn tier(weight: u32, order: u32, express: bool) -> u32 {\n    if order >= 100 && !express {\n        return 0;\n    }\n    let base = if weight <= 10 {\n        6\n    } else {\n        20\n    };\n    if express { (base * 2) as u32 } else { base }\n}",
+            "assert_eq!(tier(4, 30, true), 12);",
+        ),
+        (
+            "helper-call return",
+            "pub fn tier(weight: u32, order: u32, express: bool) -> u32 {\n    if order >= 100 && !express {\n        return 0;\n    }\n    let base = if weight <= 10 {\n        6\n    } else {\n        20\n    };\n    if express { double(base) } else { base }\n}",
+            "assert_eq!(tier(4, 30, true), 12);",
+        ),
+        (
+            "overflowing product",
+            "pub fn tier(weight: u32, order: u32, express: bool) -> u32 {\n    if order >= 100 && !express {\n        return 0;\n    }\n    let base = if weight <= 10 {\n        2500000000\n    } else {\n        20\n    };\n    if express { base * 2 } else { base }\n}",
+            "assert_eq!(tier(4, 30, true), 5000000000);",
+        ),
+    ];
+    for (label, after, assertion) in cases {
+        let before = if label == "overflowing product" {
+            after.replace("2500000000", "3000000000")
+        } else {
+            after.replace("        6\n", "        9\n")
+        };
+        let header = if label == "helper-call return" {
+            "fn double(value: u32) -> u32 { value * 2 }\n"
+        } else {
+            ""
+        };
+        let full_after = format!("{header}{after}");
+        let source = lib(&full_after, assertion);
+        let before = format!("{header}{before}");
+        let findings = TempRepo::create(&source, &fn_diff(&before, &full_after))?.findings()?;
+        let changed: Vec<_> = findings
+            .iter()
+            .filter(|finding| {
+                finding.probe.expression.trim() == "6"
+                    || finding.probe.expression.trim() == "2500000000"
+            })
+            .collect();
+        assert!(!changed.is_empty(), "{label}: missing changed tier finding");
+        assert!(
+            changed.iter().all(|finding| !matches!(
+                finding.class,
+                ExposureClass::Exposed | ExposureClass::WeaklyExposed
+            ) && finding.ripr.reveal.discriminate.state
+                != StageState::Yes),
+            "{label}: {changed:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn computed_pin_context_and_identity_uncertainty_withholds_credit() -> Result<(), String> {
+    use ripr::domain::StageState;
+    let after = "pub fn tier(weight: u32, order: u32, express: bool) -> u32 {\n    if order >= 100 && !express {\n        return 0;\n    }\n    let base = if weight <= 10 {\n        6\n    } else {\n        20\n    };\n    if express { base * 2 } else { base }\n}";
+    let before = after.replace("        6\n", "        9\n");
+    let cases = [
+        (
+            "shadowed macro",
+            lib(
+                after,
+                "macro_rules! assert_eq { ($($t:tt)*) => {}; }\n        assert_eq!(tier(4, 30, true), 12);",
+            ),
+        ),
+        (
+            "rival local owner",
+            lib(
+                after,
+                "fn tier(_: u32, _: u32, _: bool) -> u32 { 12 }\n        assert_eq!(tier(4, 30, true), 12);",
+            ),
+        ),
+        (
+            "failing prefix",
+            lib(
+                after,
+                "assert!(false);\n        assert_eq!(tier(4, 30, true), 12);",
+            ),
+        ),
+        (
+            "opaque suffix",
+            lib(
+                after,
+                "assert_eq!(tier(4, 30, true), 12);\n        panic!();",
+            ),
+        ),
+    ];
+    for (label, source) in cases {
+        let findings = TempRepo::create(&source, &fn_diff(&before, after))?.findings()?;
+        let changed: Vec<_> = findings
+            .iter()
+            .filter(|finding| {
+                finding.probe.location.line == 6 && finding.probe.expression.trim() == "6"
+            })
+            .collect();
+        assert!(!changed.is_empty(), "{label}: missing changed tier finding");
+        assert!(
+            changed.iter().all(|finding| !matches!(
+                finding.class,
+                ExposureClass::Exposed | ExposureClass::WeaklyExposed
+            ) && finding.ripr.reveal.discriminate.state
+                != StageState::Yes),
+            "{label}: {changed:?}"
+        );
     }
     Ok(())
 }

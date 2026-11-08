@@ -1,0 +1,56 @@
+schema_version = "2.0"
+id = "ripr.slice.computed-tier-return.v1"
+generation = 1
+
+source_issue = "issue:13037"
+design_reference = "RIPR-SPEC-0197"
+change_class = "behavior_change"
+
+claim_boundary = """
+Credits a changed decimal u32 tier literal when the selected tier reaches
+the function return through exactly `binding * <u32 literal>` in either
+if/else tail branch, the exact pin equals the current or previous tier times
+that same literal with both products representable as u32, and the existing
+whole-test distinguishing replay passes. Slug, invoice and same-line
+multi-call flows are explicitly out of scope; they need separate probe or
+pairing authorities.
+"""
+
+non_goals = [
+  "slug and invoice computed flows (they need new probe classes)",
+  "same-line multi-call owner pairing (#13373/#13380 scope)",
+  "any transformation other than the one admitted binding-times-literal shape",
+  "support-tier promotion or public schema changes",
+]
+
+return_conditions = [
+  "Return to root if any pinned negative control (wrong multiplier, reversed or chained multiplication, cast or helper-call return, overflowing product, guard-taken early return) promotes to exposed.",
+  "Return to root if the untransformed tier witness regresses.",
+]
+
+owned_seams = [
+  "seam:ripr:analysis:tier-flow",
+  "seam:ripr:fixtures:evidence-promotion-honesty-corpus",
+]
+
+shared_seams = [
+  "seam:ripr:spec:owner-return-pins",
+]
+
+forbidden_seams = [
+  "seam:ripr:output:schema-shape",
+  "seam:ripr:analysis:classification-decision",
+]
+
+[[requirement_delta]]
+requirement_id = "RIPR-SPEC-0197"
+requirement_generation = 1
+
+[implementation_claim]
+status = "implemented"
+
+[evidence]
+state = "outstanding"
+
+[support_claim]
+state = "unchanged"

@@ -2396,8 +2396,12 @@ owner the current value model supplies the readable version. The witness also
 withholds at its bounded source-size, syntax-depth, branch-node, test and
 assertion-count limits.
 
-The selected return path must carry the binding untransformed. A different
-selected tier, an early return, multiplication of the selected value, an opaque
+The selected return path must carry the binding untransformed, or through
+exactly `binding * <u32 literal>` in either tail branch when the exact pin
+equals the current or previous tier times that same literal with both
+products representable as `u32` and the whole-test distinguishing replay
+still passes. A different
+selected tier, an early return, any other transformation of the selected value, an opaque
 input, an unrelated or unexecuted assertion, or multiple same-line owner calls
 does not earn this witness. Other return paths may include the bounded
 multiplication shape but cannot borrow its observation. When an independently
