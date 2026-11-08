@@ -236,7 +236,7 @@ analysis is a syntax-first preview, so the figures say how often a diff-time
 verdict agrees with a real mutant, not suite adequacy.
 
 `.github/workflows/mutation-spot-check-typescript.yml` runs it weekly on the
-pinned packages of `corpus-typescript.json` (Stryker 8.7.1 with the vitest
+pinned packages of `corpus-typescript.json` (Stryker 9.6.1 with the vitest
 runner), uploads the receipt and a per-package Stryker exit-status file, and
 ends with a step that fails the job when the receipt is missing or a package
 failed. **That workflow and corpus have not run**: no package has been

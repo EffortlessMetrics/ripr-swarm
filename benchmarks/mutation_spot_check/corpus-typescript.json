@@ -3,7 +3,7 @@
   "status": "unrun",
   "note": "Pinned for .github/workflows/mutation-spot-check-typescript.yml. The workflow has not run yet, so no package here has been confirmed to install, pass its own tests under Stryker, or produce a report. Revisions are the HEAD commits read with a read-only ls-remote on 2026-11-08; package contents were not inspected.",
   "stryker": {
-    "version": "8.7.1",
+    "version": "9.6.1",
     "packages": ["@stryker-mutator/core", "@stryker-mutator/vitest-runner"]
   },
   "packages": [
