@@ -571,9 +571,10 @@ pub(crate) fn init_detected_preview_languages(root: &Path) -> Vec<LanguageId> {
 /// wrote a config that doctor then told the user to edit. It applies only to
 /// the explicit, reviewable file `init` writes, never to no-config detection.
 /// Source is required, so `package.json` or `tsconfig.json` alone never counts.
-/// Hidden, excluded (`node_modules`, `dist`, ...) and `docs` directories never
-/// count, and beside a `Cargo.toml` neither do `test`/`tests`, which hold Rust
-/// integration tests and fixtures (#11418).
+/// For this child-directory rule, hidden, excluded (`node_modules`, `dist`,
+/// ...) and `docs` directories never count, and beside a `Cargo.toml` neither
+/// do `test`/`tests` (host case rule), which hold Rust integration tests and
+/// fixtures (#11418). Marker detection above still reads `tests/` on its own.
 fn init_child_dir_holds_typescript_source(root: &Path) -> bool {
     if !LanguageId::TypeScript.is_available() {
         return false;
@@ -587,10 +588,14 @@ fn init_child_dir_holds_typescript_source(root: &Path) -> bool {
         .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
         .filter(|entry| {
             entry.file_name().to_str().is_some_and(|name| {
-                !name.starts_with('.')
-                    && name != "docs"
-                    && !is_typescript_excluded_dir_everywhere(name)
-                    && !(beside_cargo && matches!(name, "test" | "tests"))
+                // Host case rule, so `Test/` beside a Cargo.toml on a
+                // case-insensitive host is excluded too.
+                let rust_test_dir = beside_cargo
+                    && javascript_led_source_dir_marker_name(name).is_some_and(|dir| dir != "src");
+                !(name.starts_with('.')
+                    || name == "docs"
+                    || is_typescript_excluded_dir_everywhere(name)
+                    || rust_test_dir)
             })
         })
         .any(|entry| {

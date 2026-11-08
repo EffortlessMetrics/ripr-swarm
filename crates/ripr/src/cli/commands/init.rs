@@ -1371,7 +1371,7 @@ mod tests {
             ("ts-manifest-only", &["package.json"]),
             ("ts-declarations-only", &["package.json", "web/types.d.ts"]),
             ("ts-node-modules", &["package.json", "node_modules/x.ts"]),
-            ("ts-hidden", &["package.json", ".cache/x.ts"]),
+            ("ts-hidden", &["package.json", ".storybook/x.ts"]),
             ("ts-docs-site", &["package.json", "docs/site.ts"]),
             ("ts-two-deep", &["package.json", "web/app/x.ts"]),
             ("ts-rust-fixture", &["Cargo.toml", "test/fixture.ts"]),
@@ -1385,6 +1385,19 @@ mod tests {
             assert!(body.contains("\nenabled = [\"rust\"]\n"), "{label}: {body}");
             std::fs::remove_dir_all(&root).map_err(|err| format!("cleanup: {err}"))?;
         }
+        // `Test/` beside a Cargo.toml follows the host path case rule: it is
+        // the Rust fixture directory on a case-insensitive host only.
+        let root = temp_root("ts-rust-fixture-cap")?;
+        write_nested(&root.join("Cargo.toml"), "{}\n")?;
+        write_nested(&root.join("Test/fixture.ts"), "{}\n")?;
+        let body = generated_init_config_for_root(&root);
+        let pinned = body.contains("\nenabled = [\"rust\"]\n");
+        assert_eq!(
+            pinned,
+            crate::output::path::host_paths_case_insensitive(),
+            "Test/ beside Cargo.toml: {body}"
+        );
+        std::fs::remove_dir_all(&root).map_err(|err| format!("cleanup: {err}"))?;
         Ok(())
     }
 

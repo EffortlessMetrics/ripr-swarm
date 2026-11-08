@@ -195,9 +195,11 @@ materializes the built-in defaults as repo policy so a team can review, commit,
 and tune them. `ripr.toml` is not required — missing config uses the same
 defaults. `[languages] enabled` starts at `["rust"]` and adds each Python or
 TypeScript project that `ripr init` detects. That includes TypeScript source
-directly inside a child directory such as `web/`, which `ripr doctor` also
-detects. Review the list before committing. With `--ci github`, `ripr init` also writes a non-blocking GitHub
-Actions workflow for pilot/report/agent artifacts and optional SARIF
+directly inside a child directory such as `web/`. `ripr doctor` uses a looser
+check (a bare `package.json`, `.d.ts` files, or JavaScript also count), so it
+can still suggest TypeScript after `init`; enable it by hand if that fits.
+Review the list before committing. With `--ci github`, `ripr init` also writes
+a non-blocking GitHub Actions workflow for pilot/report/agent artifacts and optional SARIF
 rendering/upload. It does not run mutation
 testing, enable CI blocking policy, or unlock basic CLI usefulness.
 
