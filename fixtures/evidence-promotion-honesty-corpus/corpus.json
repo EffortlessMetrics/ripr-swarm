@@ -333,6 +333,35 @@
       ]
     },
     {
+      "id": "typescript_sinon_spy_arguments",
+      "language": "typescript",
+      "tier": "pure",
+      "source_fixture": "fixtures/typescript_sinon_spy_arguments",
+      "vector": "sinon_argument_pin_control_keeps_credit",
+      "probe_family": "side_effect",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "exposed"
+        },
+        {
+          "type": "expected_oracle",
+          "kind": "exact_value",
+          "strength": "strong"
+        }
+      ]
+    },
+    {
       "id": "typescript_mock_count_nested_alias",
       "language": "typescript",
       "tier": "pure",
@@ -367,6 +396,35 @@
       "tier": "pure",
       "source_fixture": "fixtures/typescript_mock_count_block_alias",
       "vector": "unconditional_block_count_alias_does_not_pin_changed_argument",
+      "probe_family": "side_effect",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "expected_oracle",
+          "kind": "exact_value",
+          "strength": "strong"
+        }
+      ]
+    },
+    {
+      "id": "typescript_sinon_spy_count",
+      "language": "typescript",
+      "tier": "pure",
+      "source_fixture": "fixtures/typescript_sinon_spy_count",
+      "vector": "sinon_spy_count_does_not_pin_changed_argument",
       "probe_family": "side_effect",
       "assertions": [
         {

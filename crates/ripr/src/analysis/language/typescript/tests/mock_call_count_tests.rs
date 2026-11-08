@@ -13,6 +13,13 @@ fn node_test(assertion: &str) -> String {
     )
 }
 
+/// A real `sinon.spy()` receiver; the same shape as `node_test` otherwise.
+fn sinon_test(assertion: &str) -> String {
+    format!(
+        "import sinon from \"sinon\";\nimport assert from \"node:assert/strict\";\nimport {{ notify }} from \"../src/notify\";\n\ntest(\"notify\", () => {{\n  const fn = sinon.spy();\n  notify(4, {{ send: fn }});\n  {assertion}\n}});\n"
+    )
+}
+
 fn jest_test(assertion: &str) -> String {
     format!(
         "import {{ notify }} from \"../src/notify\";\n\ntest(\"notify\", () => {{\n  const fn = jest.fn();\n  notify(4, {{ send: fn }});\n  {assertion}\n}});\n"
@@ -496,6 +503,21 @@ fn worker_refusal_falls_back_to_textual_mock_count_demotion() {
 }
 
 #[test]
+fn worker_refusal_fallback_demotes_plain_sinon_counts_only() {
+    let source = sinon_test(
+        "assert.equal(fn.callCount, 1); assert.equal(fn.callCount(), 1); assert.equal(fn.getCalls().length, 1); assert.equal(fn?.callCount, 1); assert.equal(fn.firstCall.args[0], 8);",
+    );
+    let mut tests = extract_tests(Path::new("tests/notify.test.ts"), &source);
+    assert_eq!(tests.len(), 1);
+    assert_eq!(tests[0].assertions.len(), 5);
+    tests[0].body_text = "(".repeat(3000);
+    assert_eq!(
+        mock_call_count_assertions(&tests[0]),
+        vec![true, true, true, false, false]
+    );
+}
+
+#[test]
 fn unused_block_mock_call_count_alias_does_not_capture_an_outer_argument_pin() -> Result<(), String>
 {
     let source = "import { test, mock } from \"node:test\";\nimport assert from \"node:assert/strict\";\nimport { notify } from \"../src/notify\";\nlet count = 0;\ntest(\"notify\", () => {\n const fn = mock.fn((value: number) => { count = value; });\n notify(4, {send: fn});\n { const count = fn.mock.calls.length; }\n assert.equal(count, 8);\n});\n";
@@ -521,7 +543,7 @@ fn sinon_style_call_counts_are_mock_counts() {
         "assert.equal(fn.getCalls().length, 1);",
         "const n = fn.callCount; assert.equal(n, 1);",
     ] {
-        let tests = extract_tests(Path::new("tests/notify.test.ts"), &node_test(assertion));
+        let tests = extract_tests(Path::new("tests/notify.test.ts"), &sinon_test(assertion));
         let found: Vec<_> = tests
             .iter()
             .flat_map(|test| test.assertions.iter())
@@ -545,7 +567,7 @@ fn sinon_style_call_counts_do_not_credit_a_changed_side_effect() -> Result<(), S
     .enumerate()
     {
         assert_eq!(
-            notify_class(&format!("sinon-count-{index}"), &node_test(assertion))?,
+            notify_class(&format!("sinon-count-{index}"), &sinon_test(assertion))?,
             ExposureClass::WeaklyExposed,
             "{assertion}"
         );
@@ -554,7 +576,7 @@ fn sinon_style_call_counts_do_not_credit_a_changed_side_effect() -> Result<(), S
     assert_ne!(
         notify_class(
             "sinon-count-pin",
-            &node_test("assert.equal(fn.mock.calls[0].arguments[0], 8);")
+            &sinon_test("assert.equal(fn.firstCall.args[0], 8);")
         )?,
         ExposureClass::WeaklyExposed
     );
