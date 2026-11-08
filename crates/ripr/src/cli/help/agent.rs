@@ -394,6 +394,7 @@ pub(super) const AGENT_REPAIR_HELP: &str = r#"Run the before/edit/after repair t
 Usage: ripr agent repair [--root PATH] [--store PATH] --seam-id ID --phase before [--json]
        ripr agent repair [--root PATH] [--store PATH] --gap-id ID --base REF --phase before [--json]
        ripr agent repair [--root PATH] [--store PATH] (--attempt ID|--seam-id ID) --phase after [--json]
+           [--test-result FILE]
        ripr agent repair [--root PATH] [--store PATH] --attempt ID --phase verify [--json]
            [--verify-authorized --verify-authority ID] [--verify-rollback]
 
@@ -460,6 +461,22 @@ Options:
   --verify-rollback    After the observation, restore the applied edit and
                        record the rollback proof; `verify` only; requires the
                        verification authorization.
+  --test-result FILE   A focused `cargo test` result you ran yourself, as a JSON
+                       file with schema_version "0.1", kind
+                       "focused_test_result", attempt_id, head, test_file and
+                       libtest_events. `after` only. ripr does not run tests: it
+                       checks that the result is bound to this attempt and the
+                       current HEAD, names the selected test file, and has at
+                       least one test that ran in that file or module, and that
+                       no failure falls outside it and that the events it reports
+                       close (every started test ends, every announced suite
+                       finishes), then records the normalized result with the
+                       attempt as a caller-reported claim.
+                       Optional; it does not gate finish yet. Anything else is
+                       refused and the attempt keeps waiting. Rust test files
+                       only; save the file outside the checkout. A finish that
+                       stops after the receipt evaluation began shows as
+                       limited in status; start a new attempt.
 
 The ordinary repair path is:
 

@@ -176,6 +176,21 @@ Select additional proof for the changed behavior before requesting qualification
 
 ## Full validation inventory
 
+Before compiling Rust or installing editor dependencies, the explicit Linux
+[provisioning command](../CONTRIBUTING.md#provision-a-linux-cloud-image) can prepare
+the checkout's requirements. Its focused controls run without live downloads:
+
+```bash
+node --test tools/provision-dev.test.cjs
+```
+
+On Unix, `cargo test -p xtask --test developer_provisioning` runs the same
+controls as part of workspace testing. These exercise pin changes, dependency
+reuse and failure boundaries with isolated fixtures. Linux-specific native
+process controls explicitly skip on other hosts. These tests do not establish a
+real SDK installation, editor-host pass or managed-task restoration. The
+provisioner's native editor smoke and the full preset below are separate runs.
+
 The commands below inventory applicable checks. `cargo xtask ci-full` composes
 the complete local review/evidence/package pass; choose the aggregate for the
 intended proof without repeating its constituent commands.

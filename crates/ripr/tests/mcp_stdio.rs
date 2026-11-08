@@ -6216,9 +6216,12 @@ fn truncated_seam_inventory_refuses_repair_readiness_over_stdio() -> Result<(), 
     let _guard = FixtureGuard { root: root.clone() };
     std::fs::write(root.join(".gitignore"), "/target\n").map_err(|error| error.to_string())?;
     // A second seam makes `limit=1` a real truncation (analyzed 1 < total 2).
+    // It is private so the producer admits it no new-test proposal (#13538: a
+    // public proposal-only seam is now ready on a complete inventory), keeping
+    // the control's finding-level-unready item.
     let mut source =
         std::fs::read_to_string(root.join("src/lib.rs")).map_err(|error| error.to_string())?;
-    source.push_str("\npub fn sign(x: i32) -> i32 {\n    if x > 0 { 1 } else { 2 }\n}\n");
+    source.push_str("\nfn sign(x: i32) -> i32 {\n    if x > 0 { 1 } else { 2 }\n}\n");
     std::fs::write(root.join("src/lib.rs"), source).map_err(|error| error.to_string())?;
     commit_fixture(&root, "add a second seam")?;
 

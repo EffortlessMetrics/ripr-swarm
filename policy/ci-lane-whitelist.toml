@@ -84,7 +84,7 @@ id = "rust"
 posture = "required"
 workflow = ".github/workflows/rust-gates.yml"
 jobs = ["rust-gates"]
-commands = ["cargo fmt --check", "cargo xtask ci-policy", "cargo check -p ripr --all-targets --all-features", "cargo clippy --workspace --all-targets -- -D warnings", "cargo nextest run --workspace --profile ci", "cargo test --workspace --doc"]
+commands = ["cargo fmt --check", "cargo xtask ci-policy", "cargo clippy -p ripr --all-targets --all-features -- -D warnings", "cargo clippy --workspace --all-targets -- -D warnings", "cargo nextest run --workspace --profile ci", "cargo test --workspace --doc"]
 estimated_lem = 12
 artifact_families = []
 description = "Reusable required Rust compile, lint, nextest, and doctest contract invoked by the routed lane."
@@ -94,7 +94,7 @@ id = "routed-rust-small"
 posture = "required"
 workflow = ".github/workflows/routed-rust.yml"
 jobs = ["Ripr Rust Small Result"]
-commands = ["cargo fmt --check", "cargo check -p ripr --all-targets --all-features", "cargo clippy --workspace --all-targets -- -D warnings", "cargo nextest run --workspace --profile ci", "cargo test --workspace --doc", "cargo xtask precommit", "cargo xtask ci-policy", "cargo xtask check-evidence-promotion-honesty", "cargo xtask check-agent-skills", "cargo xtask check-dependencies", "cargo xtask check-process-policy", "cargo xtask check-network-policy", "cargo xtask goldens check", "cargo xtask fixtures"]
+commands = ["cargo fmt --check", "cargo clippy -p ripr --all-targets --all-features -- -D warnings", "cargo clippy --workspace --all-targets -- -D warnings", "cargo nextest run --workspace --profile ci", "cargo test --workspace --doc", "cargo xtask precommit", "cargo xtask ci-policy", "cargo xtask check-evidence-promotion-honesty", "cargo xtask check-agent-skills", "cargo xtask check-dependencies", "cargo xtask check-process-policy", "cargo xtask check-network-policy", "cargo xtask goldens check", "cargo xtask fixtures"]
 estimated_lem = 12
 artifact_families = ["ripr-evidence"]
 description = "Swarm Rust Small result gate routed through CX53, CX43, or GitHub-hosted fallback."
@@ -158,6 +158,16 @@ commands = ["cargo xtask check-doc-artifacts", "cargo xtask check-support-tiers"
 estimated_lem = 6
 artifact_families = []
 description = "Proof-stack artifact and support-tier claim map checks, plus the non-blocking spec maintenance digest (#3467): candidate counts never gate, and an instrument failure is a failed advisory observation."
+
+[[lane]]
+id = "workflow-lint"
+posture = "advisory"
+workflow = ".github/workflows/workflow-lint.yml"
+jobs = ["jactionlint"]
+commands = ["jactionlint --profile correctness --no-online --shellcheck= --pyflakes="]
+estimated_lem = 1
+artifact_families = []
+description = "Optional path-filtered workflow correctness check with a checksum-verified jactionlint 2.5.0 binary, no Rust build and no API access. Findings fail this job; it is not a new branch-protection requirement."
 
 [[lane]]
 id = "badge-endpoints"

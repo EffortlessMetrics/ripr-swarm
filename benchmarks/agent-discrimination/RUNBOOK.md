@@ -13,8 +13,8 @@ then records the run with `record-run.sh`.
 This encoding applies the measurement-validity fixes from issue #13113 over
 the Nov 2-4 seed-study harness: **per-run cloned crates** (never a shared
 scenario crate), **toolchain PATH normalization**, **true cargo exit codes**
-in the evaluator, **populated structured record fields**, and **atomic
-report+summary writes**. Do not weaken any of them to save a step.
+in the evaluator, **populated structured record fields**, and **individual
+atomic report and summary writes**. Do not weaken any of them to save a step.
 
 ## Layout
 
@@ -25,6 +25,8 @@ benchmarks/agent-discrimination/
   eval.sh                      the evaluator (sole discriminator oracle)
   record-run.sh                run-record writer (validates fields, atomic
                                report + derived summary.csv)
+  test-harness.sh              focused controls for the evaluator, recorder,
+                               and context builder (retains its evidence)
   make-scenario-crates.sh      materializes the 3 scenario crates as fresh
                                2-commit git repos under a destination you pass
   build-contexts.sh            regenerates {vanilla,ripr-context,tool-note}.txt
@@ -35,7 +37,6 @@ benchmarks/agent-discrimination/
   results/seed-study/          RECORDED first calibration (see README.md)
   scratch/                     gitignored; not used by the protocol — clones
                                live outside any Cargo workspace checkout
-  logs/                        gitignored; eval phase logs
 ```
 
 Each scenario crate is a git repo with EXACTLY two commits:
@@ -81,11 +82,11 @@ Run id format: `<scenario>-<variant>-r<NN>`, e.g. `flipped-comparison-vanilla-r0
 1. **Materialize a run-owned crate clone** (validity fix for the seed-study
    shared-crate collisions — never reuse or share a materialized crate, and
    never materialize into shared temp space). The scratch root must be
-   **outside the ripr checkout and any other Cargo workspace**: cargo
-   resolves the nearest ancestor `[workspace]` and rejects the materialized
-   package ("not a member of the workspace"), breaking every cargo step —
-   both scripts refuse such destinations with exit 2 and name the ancestor
-   manifest:
+   **outside the ripr checkout and any other Cargo manifest**. Cargo can
+   reject a nested package when an ancestor owns a workspace; the scripts
+   conservatively refuse ancestor `Cargo.toml` files (including a root
+   manifest and some non-workspace manifests Cargo itself would accept).
+   They exit 2 and name the manifest:
 
    ```bash
    SCRATCH=<run-namespaced-dir-outside-checkouts>/<run_id>   # one per run
@@ -124,11 +125,21 @@ Run id format: `<scenario>-<variant>-r<NN>`, e.g. `flipped-comparison-vanilla-r0
    ```
 
    Exit code 0 and `DISCRIMINATES: yes` = discriminating test.
-   Anything else: keep the verbatim output; the score is `no`.
+   Exit code 1 and `DISCRIMINATES: no` = non-discriminating test. Exit 2
+   indicates an invalid setup, including an ambiguous function name; repair it
+   before scoring. The named function must occur in exactly one top-level
+   `tests/*.rs` integration target, which is run with an exact name filter.
+   The output also carries a `TEST_SOURCE_SHA256:` digest of the exact test
+   source the verdict is bound to; recording checks it (step 6).
 
 6. **Record the run** (structured fields are validated; `context_bytes` is
-   measured from the actual context file — for `ripr-tool` pass the saved
-   solver ripr output file; reports and summary are written atomically):
+   measured from the actual context file; the final test bytes must match the
+   evaluator's `TEST_SOURCE_SHA256:` digest. This binds that file only, not
+   the contents of any included modules or other dependencies; retain those
+   separately when used. Concurrent record writers to one results directory
+   are refused and may be retried after the current writer finishes. For
+   `ripr-tool` pass the saved solver ripr output file; each report and
+   summary is written by atomic rename):
 
    ```bash
    bash <benchmark-dir>/record-run.sh \
@@ -143,9 +154,23 @@ Run id format: `<scenario>-<variant>-r<NN>`, e.g. `flipped-comparison-vanilla-r0
    ```
 
    `record-run.sh` rebuilds `summary.csv` from every report in the results
-   directory on each write, so the summary cannot lose rows.
+   directory on each successful write, so the summary cannot lose rows.
+   Concurrent recorders are refused and must retry. A crash between the
+   report and summary renames can leave the summary stale until a subsequent
+   successful rebuild;
+   inspect reports before rebuilding it. A stale `.record-run.lock` requires
+   inspection for a live writer before removal. After confirming no live
+   writer and removing a stale lock, rebuild the summary without recording a
+   new run (same lock discipline, no report write):
 
-7. **Clean up the run**: delete `$SCRATCH` (the clone is run-owned; no reset
+   ```bash
+   bash <benchmark-dir>/record-run.sh \
+        --results-dir <benchmark-dir>/results/<study-or-scratch-dir> \
+        --rebuild-summary
+   ```
+
+7. **Clean up the run**: retain the phase logs needed for evidence before
+   deleting `$SCRATCH` (the clone is run-owned; no reset
    protocol is needed because nothing is shared). Keep the transcript, the
    eval output, and any saved ripr output with the run's records.
 
@@ -199,8 +224,10 @@ test_name, final_test_source, eval_output, discriminates, notes -> report body
 `record-run.sh` fails closed on: empty structured fields, a `context_bytes`
 that measures 0, a run-id that does not match `<scenario>-<variant>-rNN`,
 non-positive `rounds`, a final test that does not define the named function,
-or a `--discriminates` value that contradicts the evaluator's own
-`DISCRIMINATES:` line. Do not bypass it with hand-written reports.
+a final test whose SHA-256 digest does not match the evaluator's
+`TEST_SOURCE_SHA256:` line, or a `--discriminates` value that contradicts the
+evaluator's own `DISCRIMINATES:` line. Do not bypass it with hand-written
+reports.
 
 ## Scoring
 
@@ -211,7 +238,18 @@ or a `--discriminates` value that contradicts the evaluator's own
    exact `test <name> ... FAILED` line).
 
 A test that passes on both, fails to compile, or fails for a setup reason
-scores `no`. The full phase logs are kept in `logs/<crate>-eval-*.log`.
+scores `no`. Full phase logs are kept in a run-owned sibling directory
+`.agent-bench-logs/<crate-dir-name>/` next to each crate — never inside the
+crate, so a submitted test cannot observe evaluator artifacts; repeated
+evaluation of that same crate overwrites them.
+
+To exercise the recorder overlap and same-basename evaluation controls, run
+`bash benchmarks/agent-discrimination/test-concurrency.sh <fresh-directory>`
+outside a Cargo workspace. To exercise the evaluator-binding, source-digest,
+context-build, and root-manifest refusal controls, run
+`bash benchmarks/agent-discrimination/test-harness.sh <fresh-directory> <ripr-binary>`
+with an executable ripr build. Both retain their evidence in the given
+directory and need the normal Git and Cargo toolchain on `PATH`.
 
 ## ripr invocation (per run-owned clone)
 
