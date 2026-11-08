@@ -165,6 +165,10 @@ pub(crate) struct CallIdentityMemos {
     /// sources, so the per-(seam, test) enum-variant check reads it once
     /// instead of masking every file that mentions the name each time.
     sole_type_declarers: Mutex<BTreeMap<String, Option<std::path::PathBuf>>>,
+    /// #12886: the cross-file resolver for assertion-forwarding workspace
+    /// macros, built on first use by a gap that needs it.
+    assertion_wrapper_visibility:
+        std::sync::OnceLock<crate::analysis::facts::macro_visibility::MacroVisibility>,
 }
 
 impl CallIdentityMemos {
@@ -206,6 +210,14 @@ impl CallIdentityMemos {
             cache.insert(name.to_string(), answer.clone());
         }
         answer
+    }
+
+    /// The memoized assertion-wrapper resolver, built by `build` on first use.
+    pub(super) fn assertion_wrapper_visibility(
+        &self,
+        build: impl FnOnce() -> crate::analysis::facts::macro_visibility::MacroVisibility,
+    ) -> &crate::analysis::facts::macro_visibility::MacroVisibility {
+        self.assertion_wrapper_visibility.get_or_init(build)
     }
 
     pub(super) fn hidden_impls(&self, index: &RustIndex) -> &super::implicit_call::HiddenImpls {
