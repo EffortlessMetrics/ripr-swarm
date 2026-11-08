@@ -2055,6 +2055,126 @@ fn nested_src_layout_rival_claims_tests_under_its_own_root() {
     ));
 }
 
+/// #13745: a src short name that a plain module of the same project also
+/// produces identifies neither; the same short name with no such rival keeps
+/// its credit (discriminating pair).
+#[test]
+fn src_short_name_with_a_same_project_plain_module_identifies_neither() {
+    let owner = |file: &str| PythonOwner {
+        name: "price".to_string(),
+        qualified_name: "price".to_string(),
+        file: PathBuf::from(file),
+        start_line: 1,
+        end_line: 4,
+        owner_kind: Some(OwnerKind::Function),
+        decorators: Vec::new(),
+        imports: Vec::new(),
+        cli_receiver_names: Vec::new(),
+        route_paths: Vec::new(),
+        route_methods: Vec::new(),
+        route_receivers: Vec::new(),
+        dynamic_route_decorators: Vec::new(),
+        unplain_decorators: Vec::new(),
+        decorator_lines: None,
+        parameters: Vec::new(),
+        reexport_modules: Vec::new(),
+        star_exported: false,
+        ambiguous_src_modules: Vec::new(),
+        rival_definition_modules: Vec::new(),
+        module_constants: Vec::new(),
+        same_class_callees: Vec::new(),
+        module_callees: Vec::new(),
+        class_path: String::new(),
+        term_facts: Default::default(),
+        class_facts: Default::default(),
+        foreign_writes: Default::default(),
+        version_conditional: false,
+        cli_subcommand: None,
+        nested_called_by_parent: false,
+        nested_result_discarded: false,
+        trusted_stdlib_click_alias: false,
+    };
+    let import = |module: &str| PythonImport {
+        imported: "price".to_string(),
+        alias: "price".to_string(),
+        source_module: module.to_string(),
+    };
+    let identifies = |sources: &[&str], owner_file: &str, module: &str, test: &str| {
+        let sources = sources
+            .iter()
+            .map(|file| PathBuf::from(*file))
+            .collect::<Vec<_>>();
+        let mut owners = vec![owner(owner_file)];
+        super::related_tests::apply_src_module_ambiguity(&mut owners, sources.iter());
+        import_source_module_matches_owner(&import(module), &owners[0], Path::new(test))
+    };
+    // Positive control: no rival, the short name identifies the owner.
+    assert!(identifies(
+        &["svc/a/src/core.py"],
+        "svc/a/src/core.py",
+        "core",
+        "svc/a/tests/test_core.py"
+    ));
+    // A repo-root `core.py` (full path `core`) is a rival from every test.
+    let root_rival = ["svc/a/src/core.py", "core.py"];
+    assert!(!identifies(
+        &root_rival,
+        "svc/a/src/core.py",
+        "core",
+        "svc/a/tests/test_core.py"
+    ));
+    // A top-level module beside the project's `src/` is a rival too.
+    let sibling_rival = ["svc/a/src/core.py", "svc/a/core.py"];
+    assert!(!identifies(
+        &sibling_rival,
+        "svc/a/src/core.py",
+        "core",
+        "svc/a/tests/test_core.py"
+    ));
+    // The full repository path stays unambiguous.
+    assert!(identifies(
+        &sibling_rival,
+        "svc/a/src/core.py",
+        "svc.a.src.core",
+        "svc/a/tests/test_core.py"
+    ));
+    // A top-level module of a different project does not shadow this one.
+    assert!(identifies(
+        &["svc/a/src/core.py", "svc/b/core.py"],
+        "svc/a/src/core.py",
+        "core",
+        "svc/a/tests/test_core.py"
+    ));
+    // The repo-root module keeps its credit for tests outside the src
+    // project, and loses it inside (the src project's rival claims them).
+    assert!(identifies(
+        &root_rival,
+        "core.py",
+        "core",
+        "tests/test_core.py"
+    ));
+    assert!(!identifies(
+        &root_rival,
+        "core.py",
+        "core",
+        "svc/a/tests/test_core.py"
+    ));
+    // A root `src/core.py` beside a root `core.py` shadows both.
+    let same_root = ["src/core.py", "core.py"];
+    assert!(!identifies(
+        &same_root,
+        "src/core.py",
+        "core",
+        "tests/test_core.py"
+    ));
+    assert!(!identifies(
+        &same_root,
+        "core.py",
+        "core",
+        "tests/test_core.py"
+    ));
+}
+
 #[test]
 fn same_stem_related_handles_missing_stems() {
     let owner = PythonOwner {
