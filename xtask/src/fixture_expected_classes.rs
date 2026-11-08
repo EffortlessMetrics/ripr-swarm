@@ -109,12 +109,16 @@ fn findings_by_id(check_json: &str) -> Result<BTreeMap<String, String>, String> 
         .and_then(Value::as_array)
         .ok_or_else(|| "check.json has no `findings` array".to_string())?;
     let mut map = BTreeMap::new();
-    for finding in findings {
-        if let (Some(id), Some(class)) = (
+    for (index, finding) in findings.iter().enumerate() {
+        let (Some(id), Some(class)) = (
             finding.get("id").and_then(Value::as_str),
             finding.get("classification").and_then(Value::as_str),
-        ) && map.insert(id.to_string(), class.to_string()).is_some()
-        {
+        ) else {
+            return Err(format!(
+                "check.json finding #{index} lacks a string `id` or `classification`"
+            ));
+        };
+        if map.insert(id.to_string(), class.to_string()).is_some() {
             return Err(format!("check.json has duplicate finding id `{id}`"));
         }
     }
@@ -419,6 +423,25 @@ mod tests {
         assert_eq!(violations.len(), 1, "{violations:?}");
         assert!(violations[0].contains("probe:a:2"), "{violations:?}");
         assert!(class_violations("plain_case", &partial, CHECK).is_empty());
+    }
+
+    #[test]
+    fn finding_without_id_or_classification_is_a_violation() {
+        let no_class = r#"{"findings":[{"id":"probe:a:1","classification":"weakly_exposed"},{"id":"probe:a:2"}]}"#;
+        let no_id = r#"{"findings":[{"id":"probe:a:1","classification":"weakly_exposed"},{"classification":"exposed"}]}"#;
+        let partial = spec("probe:a:1 -> weakly_exposed");
+        for json in [no_class, no_id] {
+            let mandatory = class_violations("x_negative_case", &partial, json);
+            assert_eq!(mandatory.len(), 1, "{mandatory:?}");
+            assert!(mandatory[0].contains("lacks a string"), "{mandatory:?}");
+            // Also fails for an optional fixture that has a block.
+            assert_eq!(class_violations("plain_case", &partial, json).len(), 1);
+        }
+        // Mandatory fixture without any block fails on the malformed finding too.
+        assert_eq!(
+            class_violations("x_control", "# Fixture\n", no_class).len(),
+            1
+        );
     }
 
     #[test]
