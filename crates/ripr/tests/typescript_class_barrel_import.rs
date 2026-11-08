@@ -22,6 +22,15 @@ struct Subject(PathBuf);
 
 impl Subject {
     fn create(test_import: &str, mock: &str) -> Result<Self, String> {
+        Self::create_with(test_import, mock, SOURCE, "export * from \"./u\";\n")
+    }
+
+    fn create_with(
+        test_import: &str,
+        mock: &str,
+        source: &str,
+        barrel: &str,
+    ) -> Result<Self, String> {
         static SEQUENCE: AtomicU64 = AtomicU64::new(0);
         let root = std::env::temp_dir().join(format!(
             "ripr-ts-class-barrel-{}-{}",
@@ -43,8 +52,8 @@ impl Subject {
                 "{\"name\":\"class-barrel\",\"devDependencies\":{\"vitest\":\"^2.0.0\"}}"
                     .to_string(),
             ),
-            ("src/u.ts", SOURCE.to_string()),
-            ("src/index.ts", "export * from \"./u\";\n".to_string()),
+            ("src/u.ts", source.to_string()),
+            ("src/index.ts", barrel.to_string()),
             ("test/u.test.ts", test),
         ];
         for (name, body) in files {
@@ -98,6 +107,28 @@ fn mocking_the_declaring_module_keeps_the_barrel_import_unrelated() -> Result<()
     let mocked = class_of(&Subject::create("../src", "vi.mock(\"../src/u\");")?.json()?)?;
     if mocked != "no_static_path" {
         return Err(format!("a mocked chain must stay unreached, got {mocked}"));
+    }
+    Ok(())
+}
+
+#[test]
+fn mocking_the_barrel_keeps_the_class_unrelated() -> Result<(), String> {
+    // Only the rewrite's own mock guard can withhold credit here: after a
+    // rewrite the import names `../src/u`, which this test does not mock.
+    let mocked = class_of(&Subject::create("../src", "vi.mock(\"../src\");")?.json()?)?;
+    if mocked != "no_static_path" {
+        return Err(format!("a mocked barrel must stay unreached, got {mocked}"));
+    }
+    Ok(())
+}
+
+#[test]
+fn default_class_re_exported_by_name_matches_the_direct_import() -> Result<(), String> {
+    let source = SOURCE.replace("export class Url", "export default class Url");
+    let barrel = "export { default as Url } from \"./u\";\n";
+    let barrel_class = class_of(&Subject::create_with("../src", "", &source, barrel)?.json()?)?;
+    if barrel_class == "no_static_path" {
+        return Err("a default class re-exported by name must reach the getter".to_string());
     }
     Ok(())
 }
