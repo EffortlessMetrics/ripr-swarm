@@ -124,7 +124,7 @@ Resolution law:
   shares the store's name as a prefix (`repair-attempts-old`, a plain file named
   `repair-attempts`) is not the store. An explicit store outside `target/ripr`
   accepts the same pair only inside its own `<store>/<attempt>` subtree, which
-  the cage reads from the policy's operational writes; a sibling attempt, a
+  the capture reads from the policy's operational writes; a sibling attempt, a
   sibling store and an exact-file operational write stay refused (#13553).
 - Store identity does not prove an attempt is current, correct, or useful.
 

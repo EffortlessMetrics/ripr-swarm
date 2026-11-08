@@ -507,11 +507,7 @@ pub(crate) fn visit_reconstructed_workflow_deltas(
                 .expected_operational_writes
                 .iter()
                 .any(|rule| rule.matches(&path))
-            || !writable_path_components_are_safe_in(
-                &baseline.root,
-                &path,
-                &explicit_store_pair_scopes(policy),
-            )?
+            || !writable_path_components_are_safe(&baseline.root, &path)?
         {
             return Err(format!(
                 "missing workflow projection `{path}` is not eligible for reconstruction"
@@ -5682,6 +5678,44 @@ mod tests {
                 "{dir_relative}: default policy must keep refusing"
             );
         }
+        Ok(())
+    }
+
+    /// The capture path carries the explicit store's scope into the pair rule
+    /// (#13553): an interrupted pair in the store leaves the baseline
+    /// comparable, while the same pair elsewhere under an operational write
+    /// still marks it ambiguous.
+    #[cfg(unix)]
+    #[test]
+    fn capture_accepts_an_explicit_store_pair_and_still_flags_other_pairs() -> Result<(), String> {
+        let mut outcomes = Vec::new();
+        for dir_relative in ["stores/one/attempt-1/artifacts", "target/ripr/artifacts"] {
+            let fixture = git_fixture("capture-explicit-store-pair")?;
+            commit_target_ignore(&fixture)?;
+            let dir = fixture.root.join(dir_relative);
+            fs::create_dir_all(&dir).map_err(|err| format!("create {dir_relative}: {err}"))?;
+            let destination = dir.join("lib.rs");
+            fs::write(&destination, "{}\n")
+                .map_err(|err| format!("write {dir_relative}: {err}"))?;
+            fs::hard_link(&destination, dir.join("lib.tmp-1-1"))
+                .map_err(|err| format!("link staging name in {dir_relative}: {err}"))?;
+            let mut policy = policy()?;
+            policy
+                .expected_operational_writes
+                .push(CagePathRule::subtree("stores/one/attempt-1")?);
+            let baseline = capture_attempt_baseline(&fixture.root, &policy)?;
+            // The after phase re-captures through the same inventory path.
+            let after = reevaluation_capture(&baseline)?;
+            outcomes.push((dir_relative, baseline.is_ambiguous(), after.is_ambiguous()));
+        }
+        assert_eq!(
+            outcomes,
+            vec![
+                ("stores/one/attempt-1/artifacts", false, false),
+                ("target/ripr/artifacts", true, true)
+            ],
+            "the explicit store's pair is comparable; a pair outside any store is ambiguous"
+        );
         Ok(())
     }
 
