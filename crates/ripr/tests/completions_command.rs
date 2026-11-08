@@ -1,6 +1,5 @@
 //! Runs the built `ripr completions` binary end to end (#7438).
 
-use std::path::PathBuf;
 use std::process::Command;
 
 struct Run {
@@ -76,10 +75,13 @@ fn unknown_shell_is_refused_with_a_suggestion() {
 
 /// Syntax-checks and, for bash, sources each script in the shells installed on
 /// this machine. `RIPR_REQUIRE_COMPLETION_SHELLS=1` (set by the hosted lane)
-/// turns a missing shell into a failure instead of a skip.
+/// turns a missing shell into a failure instead of a skip. Unix only: on
+/// Windows `bash` can resolve to the WSL launcher rather than a real shell.
+#[cfg(unix)]
 #[test]
 fn scripts_load_in_the_installed_shells() {
-    let require = std::env::var_os("RIPR_REQUIRE_COMPLETION_SHELLS").is_some();
+    let require = std::env::var("RIPR_REQUIRE_COMPLETION_SHELLS")
+        .is_ok_and(|value| !value.is_empty() && value != "0");
     let dir = std::env::temp_dir().join(format!("ripr-completions-{}", std::process::id()));
     assert_eq!(
         std::fs::create_dir_all(&dir).map_err(|e| e.to_string()),
@@ -93,7 +95,7 @@ fn scripts_load_in_the_installed_shells() {
     ];
     for (shell, program, flags) in checks {
         let script = ripr(&["completions", shell]).stdout;
-        let file: PathBuf = dir.join(format!("ripr.{shell}"));
+        let file: std::path::PathBuf = dir.join(format!("ripr.{shell}"));
         assert_eq!(
             std::fs::write(&file, script).map_err(|e| e.to_string()),
             Ok(())
