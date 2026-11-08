@@ -32,7 +32,7 @@ pub(super) fn find_related_tests_with_context<'context, 'index>(
     let mut candidates: BTreeMap<usize, RelationReason> = BTreeMap::new();
     match_direct_owner_call(&mut candidates, context, prefix, &owner);
     let inaccessible_direct: BTreeSet<usize> = context
-        .owner_function(seam.file(), seam.display_line())
+        .owner_for_seam(seam)
         .map(|function| {
             candidates
                 .keys()
@@ -85,7 +85,7 @@ pub(super) fn find_related_tests_with_context<'context, 'index>(
         });
     } else if owner.free_function
         && owner.same_name_count > 1
-        && let Some(owner_fn) = context.owner_function(seam.file(), seam.display_line())
+        && let Some(owner_fn) = context.owner_for_seam(seam)
     {
         // #10855: no identity exists when the only rival sits in another
         // crate class (an integration test's own module). A test whose every
@@ -109,7 +109,7 @@ pub(super) fn find_related_tests_with_context<'context, 'index>(
     // A policy-modified fact must not become ordinary when its exact receipt
     // no longer matches; registration provenance and authority are distinct.
     // Ordinary relation rows retain their existing rules.
-    let owner_fn = context.owner_function(seam.file(), seam.display_line());
+    let owner_fn = context.owner_for_seam(seam);
     candidates.retain(|test_index, _| {
         context.tests.get(*test_index).is_some_and(|indexed| {
             !context.index.is_registered_proptest(indexed.test)
@@ -157,7 +157,7 @@ pub(super) struct OwnerContext<'index> {
 
 impl<'index> OwnerContext<'index> {
     fn resolve(seam: &RepoSeam, context: &CompactGripContext<'index>) -> Self {
-        let owner_fn = context.owner_function(seam.file(), seam.display_line());
+        let owner_fn = context.owner_for_seam(seam);
         let name = owner_fn.map(|f| f.name.as_str()).unwrap_or("").to_string();
         let name_lower = name.to_ascii_lowercase();
         let owner_file = owner_fn.map(|f| f.file.as_path());
@@ -732,7 +732,7 @@ pub(super) fn find_related_tests_ranked<'a>(
     context: &'a CompactGripContext<'_>,
 ) -> Vec<(&'a CompactTest<'a>, RelationReason)> {
     let mut related = find_related_tests_with_context(seam, context);
-    let owner_fn = context.owner_function(seam.file(), seam.display_line());
+    let owner_fn = context.owner_for_seam(seam);
     let _best_oracles = sort_related_tests_for_seam(seam, context, owner_fn, &mut related);
     related
 }

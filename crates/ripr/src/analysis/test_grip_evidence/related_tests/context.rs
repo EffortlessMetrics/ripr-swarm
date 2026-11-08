@@ -812,6 +812,37 @@ impl<'a> CompactGripContext<'a> {
         parsed
     }
 
+    /// Bind a retained seam to an unambiguous production definition.
+    /// A missing span does not prove that its byte anchor is synthetic.
+    pub(in crate::analysis::test_grip_evidence) fn owner_for_seam(
+        &self,
+        seam: &RepoSeam,
+    ) -> Option<&'a FunctionSummary> {
+        let cached = memo(&self.owner_lookups).get(seam.file()).cloned();
+        let lookup = match cached {
+            Some(lookup) => lookup,
+            None => {
+                let lookup = rust_index::find_file_facts(self.index, seam.file()).map(|facts| {
+                    Arc::new(rust_index::FileOwnerLookup::with_source(
+                        facts.functions.iter(),
+                        &facts.source,
+                    ))
+                });
+                if crate::analysis::cancellation::checkpoint().is_err()
+                    || lookup
+                        .as_ref()
+                        .is_some_and(|value| !value.source_complete())
+                {
+                    return None;
+                }
+                memo(&self.owner_lookups).insert(seam.file().to_path_buf(), lookup.clone());
+                lookup
+            }
+        };
+        let owner = lookup?.production_owner_at(seam.byte_offset(), None)?;
+        (owner.id.0.replace('\\', "/") == seam.owner()).then_some(owner)
+    }
+
     /// Innermost indexed function containing `line` of `file`; the same
     /// answer as [`rust_index::find_owner_function`], from a per-file sorted
     /// lookup built once.
@@ -825,8 +856,18 @@ impl<'a> CompactGripContext<'a> {
             Some(lookup) => lookup,
             None => {
                 let lookup = rust_index::find_file_facts(self.index, file).map(|facts| {
-                    Arc::new(rust_index::FileOwnerLookup::new(facts.functions.iter()))
+                    Arc::new(rust_index::FileOwnerLookup::with_source(
+                        facts.functions.iter(),
+                        &facts.source,
+                    ))
                 });
+                if crate::analysis::cancellation::checkpoint().is_err()
+                    || lookup
+                        .as_ref()
+                        .is_some_and(|value| !value.source_complete())
+                {
+                    return None;
+                }
                 memo(&self.owner_lookups).insert(file.to_path_buf(), lookup.clone());
                 lookup
             }
@@ -907,6 +948,62 @@ impl<'a> CompactGripContext<'a> {
 #[cfg(test)]
 mod candidate_index_tests {
     use super::*;
+
+    #[test]
+    fn seam_owner_requires_matching_identity_and_placed_anchor() -> Result<(), String> {
+        use crate::analysis::rust_index::{RaRustSyntaxAdapter, RustSyntaxAdapter};
+        use crate::analysis::seams::{ExpectedSink, RequiredDiscriminator, SeamKind};
+        let source = "fn alpha() -> i32 { 11 } fn beta() -> i32 { 22 }";
+        let path = PathBuf::from("src/lib.rs");
+        let facts = RaRustSyntaxAdapter.summarize_file(&path, source)?;
+        let mut index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: facts.functions.clone(),
+            ..Default::default()
+        });
+        index.insert_file_only(path.clone(), facts);
+        let context = CompactGripContext::new(&index);
+        let make = |owner: &str, anchor: usize| {
+            RepoSeam::new(
+                &path,
+                owner,
+                SeamKind::ReturnValue,
+                anchor,
+                1,
+                "11",
+                RequiredDiscriminator::ReturnValue {
+                    description: "value".to_string(),
+                },
+                ExpectedSink::ReturnValue,
+            )
+        };
+        let anchor = source.find("11").ok_or("missing anchor")?;
+        let token = crate::analysis::cancellation::AnalysisCancellationToken::new();
+        let _ = token.cancel(crate::analysis::cancellation::AnalysisAbortKind::Cancelled);
+        let cancelled = crate::analysis::cancellation::with_token(&token, || {
+            context
+                .owner_for_seam(&make("src/lib.rs::alpha", anchor))
+                .is_none()
+        });
+        assert!(cancelled);
+        assert!(!memo(&context.owner_lookups).contains_key(&path));
+        assert_eq!(
+            context
+                .owner_for_seam(&make("src/lib.rs::alpha", anchor))
+                .map(|f| f.name.as_str()),
+            Some("alpha")
+        );
+        assert!(
+            context
+                .owner_for_seam(&make("src/lib.rs::beta", anchor))
+                .is_none()
+        );
+        assert!(
+            context
+                .owner_for_seam(&make("src/lib.rs::alpha", source.len() + 1))
+                .is_none()
+        );
+        Ok(())
+    }
 
     #[test]
     fn retained_import_lines_preserve_unbounded_affinity_and_owner_matching() -> Result<(), String>

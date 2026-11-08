@@ -838,7 +838,7 @@ fn evidence_for_seam_with_context(
     context: &CompactGripContext<'_>,
 ) -> TestGripEvidence {
     let mut related_with_reason = find_related_tests_with_context(seam, context);
-    let owner_fn = context.owner_function(seam.file(), seam.display_line());
+    let owner_fn = context.owner_for_seam(seam);
     let best_oracles =
         sort_related_tests_for_seam(seam, context, owner_fn, &mut related_with_reason);
     let related_indexed: Vec<&CompactTest<'_>> = related_with_reason
@@ -2664,7 +2664,7 @@ fn new_test_target_admission(
         | SeamKind::MatchArm => Some(new_test_target::admit_new_test_target(
             seam,
             context.index,
-            context.owner_function(seam.file(), seam.display_line()),
+            context.owner_for_seam(seam),
             &context.inline_unit_layouts,
         )),
         SeamKind::SideEffect | SeamKind::CallPresence => None,
@@ -2690,7 +2690,7 @@ pub(crate) fn compact_evidence_for_seam(
         .map(|(indexed, _reason)| *indexed)
         .collect();
     let related: Vec<&TestSummary> = related_indexed.iter().map(|indexed| indexed.test).collect();
-    let owner_fn = context.owner_function(seam.file(), seam.display_line());
+    let owner_fn = context.owner_for_seam(seam);
 
     let reach = reach_evidence(seam, &related_reasons, owner_fn, context);
     let (activate, mut missing_discriminators) =
@@ -3687,7 +3687,7 @@ pub(super) fn seam_owner_activation<'index>(
     seam: &RepoSeam,
     context: &CompactGripContext<'index>,
 ) -> Option<SeamOwnerActivation<'index>> {
-    let owner_fn = context.owner_function(seam.file(), seam.display_line())?;
+    let owner_fn = context.owner_for_seam(seam)?;
     if owner_fn.name.is_empty() {
         return None;
     }

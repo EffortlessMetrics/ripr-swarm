@@ -700,6 +700,17 @@ impl SourceText {
         }
     }
 
+    /// Return coordinates only when they belong to this exact source allocation.
+    pub(crate) fn range_in(&self, parent: &Arc<str>) -> Option<std::ops::Range<usize>> {
+        match &self.inner {
+            SourceTextInner::Shared { source, start, len } if Arc::ptr_eq(source, parent) => {
+                let start = *start as usize;
+                Some(start..start.checked_add(*len as usize)?)
+            }
+            _ => None,
+        }
+    }
+
     /// The shared allocation, for mechanism pins that prove children reuse
     /// the file's `source` instead of copying it. `None` for `Owned` text.
     #[cfg(test)]
