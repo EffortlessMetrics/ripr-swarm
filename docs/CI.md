@@ -2738,7 +2738,7 @@ The coverage and Test Analytics workflows run on `ubuntu-latest`. Both lanes
 remain advisory, but release candidates need an observable green boundary; these
 lanes must not depend on self-hosted runner availability just to prove that the
 current workspace can produce coverage and JUnit artifacts. The jobs still run
-only on pull requests, pushes to `main`/`master`, and manual dispatches, and
+only on pull requests, a daily schedule on `main`, and manual dispatches, and
 Codecov upload remains non-blocking.
 
 The `future-clippy` job runs on `ubuntu-latest` with installation and invocation
