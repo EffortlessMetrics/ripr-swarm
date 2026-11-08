@@ -2654,15 +2654,20 @@ fn run_agent_repair_phase(
                 )
             })?;
             if let Some(id) = attempt_id.as_deref() {
-                // Revalidate a proposal's claim before any historical recovery.
-                // Older B normalized records did not preserve suite framing.
+                // Revalidate a proposal's focused claim before any historical
+                // recovery. Older B normalized records did not preserve suite
+                // framing. A proposal finish without a focused claim keeps the
+                // ordinary pending-retention route below.
                 if let Ok(parsed_id) =
                     crate::app::repair_attempt::RepairAttemptId::parse(id.to_string())
                     && let Ok(manifest) =
                         crate::app::repair_attempt::load_repair_attempt_manifest_from(
                             &root, store_ref, &parsed_id,
                         )
-                    && let Some(after) = manifest.after.as_ref()
+                    && let Some(pending) = manifest
+                        .after
+                        .as_ref()
+                        .and_then(|after| after.focused_result.as_ref())
                     && manifest.state
                         == crate::app::repair_attempt::RepairAttemptState::ReadyToFinish
                 {
@@ -2684,7 +2689,6 @@ fn run_agent_repair_phase(
                             crate::app::repair_attempt::quoted_store_flag(store_ref),
                             crate::agent::loop_commands::shell_arg(id)
                         );
-                        let pending = after.focused_result.as_ref().ok_or_else(|| format!("the proposal finish retained no focused test result; inspect `{status}` before starting a new attempt"))?;
                         let path = test_result.as_deref().ok_or_else(|| format!("proposal recovery needs a --test-result FILE matching the retained normalized claim to validate reported completion; inspect `{status}` before retrying"))?;
                         crate::app::repair_attempt::include_resolved_explicit_store_operational_write(&mut policy, &root, store_ref, Some(&parsed_id), crate::app::repair_attempt::RepairAttemptStoreAccess::Open)?;
                         let supplied =

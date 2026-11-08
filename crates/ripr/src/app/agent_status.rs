@@ -889,7 +889,7 @@ fn status_repair_attempt(
             }
         }),
         diverged_recovery,
-        focused_recovery: focused_receipt_recovery(manifest),
+        focused_recovery: focused_receipt_recovery(root, manifest),
     }
 }
 
@@ -3160,7 +3160,7 @@ pub(crate) fn build_agent_attempt_status(
         _ => {}
     }
     let mut limitations = manifest.limitations.clone();
-    if let Some(limitation) = focused_receipt_recovery_limitation(&manifest) {
+    if let Some(limitation) = focused_receipt_recovery_limitation(root, &manifest) {
         limitations.push(limitation.to_string());
     }
     if matches!(
@@ -3262,16 +3262,18 @@ fn corrupt_attempt_status(
 /// Status cannot assume the shared receipt is the accepted one; the after
 /// phase verifies the exact durable digests before recovering it.
 pub(crate) fn focused_receipt_recovery_limitation(
+    root: &Path,
     manifest: &RepairAttemptManifest,
 ) -> Option<&'static str> {
-    focused_receipt_recovery(manifest).map(|recovery| recovery.limitation)
+    focused_receipt_recovery(root, manifest).map(|recovery| recovery.limitation)
 }
 
 /// The recovery route for an interrupted focused finish, matching what the
 /// after phase enforces: it recovers only a durable-v1 finish with no
-/// evaluation or an accepted one, and only when re-run with the same
-/// `--test-result FILE`.
+/// evaluation or an accepted one whose receipt and verify files exist with the
+/// accepted digests, and only when re-run with the same `--test-result FILE`.
 pub(crate) fn focused_receipt_recovery(
+    root: &Path,
     manifest: &RepairAttemptManifest,
 ) -> Option<FocusedRecovery> {
     let new_attempt = |limitation| {
@@ -3309,6 +3311,13 @@ pub(crate) fn focused_receipt_recovery(
         Some(crate::app::repair_attempt::FocusedReceiptEvaluation::Started) => new_attempt(
             "focused receipt evaluation has started but no outcome is recorded; if the after phase is no longer running, inspect the attempt and start a new attempt",
         ),
+        Some(crate::app::repair_attempt::FocusedReceiptEvaluation::Accepted { .. })
+            if !crate::app::repair_attempt::focused_accepted_projection_present(root, manifest) =>
+        {
+            new_attempt(
+                "the focused receipt decision was committed but its receipt and verify files are not present with the accepted digests, so the after phase cannot recover it; start a new attempt",
+            )
+        }
         Some(crate::app::repair_attempt::FocusedReceiptEvaluation::Accepted { .. }) => retry(
             "the focused receipt decision was committed; if the after phase is no longer running, retry with the same --test-result FILE (an after phase without it is refused) and, for a trust-bound attempt, its original edit authority; recovery rechecks that result against the current HEAD, the attempt and its test file and the exact committed receipt and verify bytes",
         ),

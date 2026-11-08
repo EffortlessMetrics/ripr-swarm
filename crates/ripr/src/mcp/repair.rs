@@ -400,7 +400,7 @@ fn durable_attempt_document(
     }
     limitations.extend(route_limitations);
     if let Some(limitation) =
-        crate::app::agent_status::focused_receipt_recovery_limitation(manifest)
+        crate::app::agent_status::focused_receipt_recovery_limitation(root, manifest)
     {
         limitations.push(limitation.to_string());
     }

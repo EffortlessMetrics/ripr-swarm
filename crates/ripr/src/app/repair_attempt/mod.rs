@@ -2837,6 +2837,34 @@ pub(crate) fn complete_pending_terminal_retention_from(
     complete_pending_terminal_retention_authorized_from(root, store, attempt_id, false)
 }
 
+/// Whether the compatibility receipt and verify files an accepted focused
+/// receipt decision named are present with exactly the accepted digests: the
+/// precondition pending retention needs to promote that decision. Status uses
+/// it to offer the same-result retry only when that retry can recover.
+pub(crate) fn focused_accepted_projection_present(
+    root: &Path,
+    manifest: &RepairAttemptManifest,
+) -> bool {
+    let Some(FocusedReceiptEvaluation::Accepted {
+        receipt_sha256,
+        verify_sha256,
+    }) = &manifest.focused_receipt_evaluation
+    else {
+        return false;
+    };
+    let matches = |relative: &str, expected: &str| {
+        crate::bounded_input::read(root.join(relative))
+            .is_ok_and(|bytes| sha256_bytes(&bytes) == expected)
+    };
+    matches(
+        crate::agent::loop_commands::WORKFLOW_AGENT_RECEIPT_ARTIFACT,
+        receipt_sha256,
+    ) && matches(
+        crate::agent::loop_commands::WORKFLOW_AGENT_VERIFY_ARTIFACT,
+        verify_sha256,
+    )
+}
+
 /// `focused_claim_rechecked` means the caller re-validated the same
 /// caller-reported focused result (current HEAD, attempt and test file, and
 /// record-equal to the pending claim) and, for a trust-bound attempt, its

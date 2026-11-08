@@ -1189,6 +1189,17 @@ fn after_with_publication_hook(
     result: &Path,
     mode: &str,
 ) -> Result<Output, String> {
+    after_with_optional_result_hook(root, attempt, Some(result), mode)
+}
+
+/// The publication hook around an after phase that may omit `--test-result`.
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+fn after_with_optional_result_hook(
+    root: &Path,
+    attempt: &Attempt,
+    result: Option<&Path>,
+    mode: &str,
+) -> Result<Output, String> {
     let dir = root.join(".git/ripr-publication-hook");
     fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
     let source = dir.join("hook.c");
@@ -1295,9 +1306,12 @@ int rename(const char *old, const char *new) {
             &attempt.id,
             "--phase",
             "after",
-            "--test-result",
-            &result.display().to_string(),
         ])
+        .args(
+            result
+                .map(|path| vec!["--test-result".to_string(), path.display().to_string()])
+                .unwrap_or_default(),
+        )
         .output()
         .map_err(|error| error.to_string())?;
     if !marker.exists() {
@@ -1530,8 +1544,91 @@ fn interrupted_receipt_evaluation_fails_closed() -> Result<(), String> {
         assert_eq!(manifest(root, &attempt)?, state);
         let retry = after_with(root, &attempt, &result)?;
         assert_eq!(retry.status.code(), Some(3), "{}", combined(&retry));
+        assert!(
+            combined(&retry).contains("start a new attempt"),
+            "{}",
+            combined(&retry)
+        );
         assert_eq!(manifest(root, &attempt)?, state);
+        if mode == "stop-accepted" {
+            // The decision is accepted but its receipt was never written, so
+            // status gives the new-attempt route, not the same-result retry.
+            let missing_projection = "not present with the accepted digests";
+            let default = run_ripr(
+                root,
+                &["agent", "status", "--json", "--root", &attempt.root_arg],
+            )?;
+            let warnings = stdout_json(&default)?["warnings"].to_string();
+            assert!(
+                warnings.contains(missing_projection)
+                    && !warnings.contains("retry with the same --test-result FILE")
+                    && (warnings.contains("Start a new attempt with")
+                        || warnings.contains("no new repair attempt is offered")),
+                "{warnings}"
+            );
+            let selected = run_ripr(
+                root,
+                &[
+                    "agent",
+                    "status",
+                    "--json",
+                    "--root",
+                    &attempt.root_arg,
+                    "--attempt",
+                    &attempt.id,
+                ],
+            )?;
+            let limitations = stdout_json(&selected)?["limitations"].to_string();
+            assert!(
+                limitations.contains(missing_projection)
+                    && !limitations.contains("retry with the same --test-result FILE"),
+                "{limitations}"
+            );
+        }
     }
+    Ok(())
+}
+
+/// A new-test proposal finished without `--test-result` (allowed before the
+/// finish gate) that stopped after its receipt was published keeps the
+/// ordinary pending-retention route: a retry without a result retains its
+/// receipt and verify as terminal evidence instead of refusing for a missing
+/// focused claim.
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+#[test]
+fn proposal_finish_without_a_result_is_retained_after_receipt_publication() -> Result<(), String> {
+    let (fixture, attempt) = edited_attempt("proposal-no-result-recovery")?;
+    let root = &fixture.root;
+    let stopped = after_with_optional_result_hook(root, &attempt, None, "stop")?;
+    assert_eq!(stopped.status.code(), Some(77), "{}", combined(&stopped));
+    let pending = manifest(root, &attempt)?;
+    assert_eq!(pending["state"], "ready_to_finish", "{pending}");
+    assert!(
+        pending
+            .pointer("/after/focused_result")
+            .is_none_or(Value::is_null),
+        "{pending}"
+    );
+    assert!(terminal_roles(&pending).is_empty(), "{pending}");
+    // The retry promotes the published receipt and verify as this attempt's
+    // terminal evidence, then reports the attempt as already finished, as for
+    // any interrupted finish without a focused claim.
+    let recovered = review_after_without_result(root, &attempt)?;
+    assert!(
+        combined(&recovered).contains("already finished"),
+        "{}",
+        combined(&recovered)
+    );
+    let finished = manifest(root, &attempt)?;
+    for role in ["agent_receipt", "agent_verify"] {
+        retained_terminal(root, &finished, role)?;
+    }
+    assert!(
+        !terminal_roles(&finished)
+            .iter()
+            .any(|role| role == RESULT_ROLE),
+        "{finished}"
+    );
     Ok(())
 }
 
