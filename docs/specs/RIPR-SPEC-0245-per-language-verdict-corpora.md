@@ -96,7 +96,8 @@ rows (`verdict-corpus:` sources), so the scoreboard gate compares the
 committed rates against its baseline; it does not re-run the corpus.
 
 A report also splits its abstained rows by cause (`abstention_by_cause`,
-#13657), overall and per subject origin, keyed
+#13657), overall, per subject origin and (Perl) per fact-packet
+provenance, keyed
 `<side>:<classifications>`. The side comes from the row's ideal verdict:
 `credit_missed` for a credited ideal and `gap_missed` for a gap ideal
 (`no_claim_expected` is kept for a `limited` or `silent` ideal, which the

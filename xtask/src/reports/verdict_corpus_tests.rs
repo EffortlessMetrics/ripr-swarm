@@ -2901,7 +2901,10 @@ fn abstention_by_cause_is_kept_per_origin_and_sums_to_each_abstention_count() ->
     for (origin, rates) in &report.by_origin {
         let sum: usize = rates.abstention_by_cause.values().sum();
         assert_eq!(sum, rates.abstention_rate.numerator, "{origin}");
-        assert!(sum > 0, "{origin} abstains on every row here");
+        assert_eq!(
+            sum, rates.cases_total,
+            "{origin} abstains on every row here"
+        );
         per_origin_total += sum;
     }
     assert_eq!(
@@ -2911,8 +2914,25 @@ fn abstention_by_cause_is_kept_per_origin_and_sums_to_each_abstention_count() ->
     assert_eq!(per_origin_total, report.abstention_rate.numerator);
     let markdown = render_report_markdown(&report, "rust");
     assert!(
-        markdown.contains("| Cause | All | authored | upstream |"),
+        markdown.contains("| Cause | All | authored | upstream |\n| --- | --- | --- | --- |\n"),
         "{markdown}"
     );
+    // One full row: its cells are the overall, authored and upstream counts.
+    let count = |rates: &BTreeMap<String, usize>| {
+        rates
+            .get("credit_missed:no_static_path")
+            .copied()
+            .unwrap_or(0)
+    };
+    let authored = report.by_origin.get("authored").ok_or("no authored")?;
+    let upstream = report.by_origin.get("upstream").ok_or("no upstream")?;
+    let row = format!(
+        "| `credit_missed:no_static_path` | {} | {} | {} |\n",
+        count(&report.abstention_by_cause),
+        count(&authored.abstention_by_cause),
+        count(&upstream.abstention_by_cause)
+    );
+    assert!(count(&authored.abstention_by_cause) > 0, "{markdown}");
+    assert!(markdown.contains(&row), "{row}\n{markdown}");
     Ok(())
 }
