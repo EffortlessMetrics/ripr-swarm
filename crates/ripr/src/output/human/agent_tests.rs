@@ -1783,6 +1783,8 @@ fn verification_record_refuses_a_partial_scope_run() -> Result<(), String> {
         next_file_changed_lines: Some(1),
         whole_diff_budgets: None,
         partition_identity: "sha256:partition".to_string(),
+        over_limit_files: Vec::new(),
+        line_budget_limits: Vec::new(),
     });
     assert_eq!(
         verify_line(&partial)?,
