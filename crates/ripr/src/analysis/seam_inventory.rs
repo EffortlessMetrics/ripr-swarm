@@ -404,7 +404,8 @@ impl ClassifiedSeamsReport {
     }
 }
 
-/// The one refusal wording shared by the report and the scoped inventory.
+/// The one refusal text for a consumer that cannot render the pass-wide
+/// `producer_failure` limitation; the full and the scoped inventory share it.
 fn refuse_failed_evidence(
     limitations: &[AnalysisLimitation],
     consumer: &str,
@@ -1493,9 +1494,9 @@ impl ScopedClassifiedSeamInventory {
         !self.evidence_limitations.is_empty()
     }
 
-    /// Fail closed for a scoped-walk consumer that produces actionable output
-    /// and cannot render the pass-wide limitation (#13340). Same owner and
-    /// wording as [`ClassifiedSeamsReport::require_complete_evidence`].
+    /// Fail closed for a scoped consumer that cannot render the pass-wide
+    /// limitation (#13340); the same refusal as
+    /// `ClassifiedSeamsReport::require_complete_evidence`.
     pub(crate) fn require_complete_evidence(&self, consumer: &str) -> Result<(), String> {
         refuse_failed_evidence(&self.evidence_limitations, consumer)
     }

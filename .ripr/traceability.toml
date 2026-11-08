@@ -3519,11 +3519,11 @@ tests = [
   "crates/ripr/src/analysis/pipeline.rs::tests::rust_repo_hard_refusals_stay_non_recoverable",
   "crates/ripr/src/config.rs::tests::languages_section",
   "crates/ripr/src/config.rs::tests::languages_section_rejects_unavailable_perl_adapter",
-  "crates/ripr/src/analysis/language/router.rs::tests::ts_js_extension_authority_classifies_exactly_the_routed_surface",
+  "crates/ripr-contract/src/analysis/source_kind.rs::tests::ts_js_extension_authority_classifies_exactly_the_routed_surface",
   "crates/ripr/src/cli/rerun.rs::tests::typescript_rerun_covers_every_accepted_extension",
   "crates/ripr/src/analysis/repair_route.rs::tests::external_language_test_extensions_cover_bridge_language_families",
   "crates/ripr/src/output/agent_seam_packets.rs::tests::external_language_labels_cover_modern_ts_js_extensions",
-  "crates/ripr/src/config/typescript.rs::tests::detection_requires_a_marker_or_typescript_source",
+  "crates/ripr-contract/src/config/typescript.rs::tests::detection_requires_a_marker_or_typescript_source",
   "crates/ripr/src/output/first_pr.rs::tests::first_use_typescript_detection_follows_the_config_rules",
   "crates/ripr/src/lsp/actions.rs::tests::path_matches_diagnostic_language_covers_modern_ts_js_extensions",
   "crates/ripr/src/cli/commands/doctor.rs::tests::detect_languages_treats_modern_ts_js_extensions_as_language_markers",
@@ -3532,8 +3532,8 @@ tests = [
   "crates/ripr/src/config.rs::tests::missing_config_detects_typescript_markers_and_source",
   "crates/ripr/src/config.rs::tests::missing_config_ignores_package_json_and_plain_javascript",
   "crates/ripr/src/config.rs::tests::explicit_config_keeps_typescript_disabled_in_a_typescript_repo",
-  "crates/ripr/src/config/typescript.rs::tests::detection_requires_a_marker_or_typescript_source",
-  "crates/ripr/src/config/typescript.rs::tests::excluded_and_generated_source_does_not_enable_detection",
+  "crates/ripr-contract/src/config/typescript.rs::tests::detection_requires_a_marker_or_typescript_source",
+  "crates/ripr-contract/src/config/typescript.rs::tests::excluded_and_generated_source_does_not_enable_detection",
   "crates/ripr/src/analysis/seam_cache.rs::tests::typescript_detection_inputs_change_cache_identity",
   "crates/ripr/src/lsp/backend.rs::workspace_input_tests::typescript_detection_inputs_classify_like_the_detector",
   "crates/ripr/src/lsp/backend.rs::workspace_input_tests::dynamic_watchers_cover_the_canonical_detection_input_set",
@@ -3564,7 +3564,7 @@ fixtures = [
 code = [
   "crates/ripr/Cargo.toml",
   "crates/ripr/src/config.rs",
-  "crates/ripr/src/config/typescript.rs",
+  "crates/ripr-contract/src/config/typescript.rs",
   "crates/ripr/src/analysis/seam_cache.rs",
   "crates/ripr/src/lsp/backend.rs",
   "crates/ripr-contract/src/domain/language.rs",
@@ -18286,6 +18286,9 @@ id = "RIPR-SPEC-0238"
 name = "Python oracle and reach rules"
 spec = "docs/specs/RIPR-SPEC-0238-python-oracle-and-reach-rules.md"
 tests = [
+  "crates/ripr/src/analysis/language/python/module_value_tests.rs::a_module_receiver_is_refused_when_the_package_init_rebinds_the_submodule_name",
+  "crates/ripr/src/analysis/language/python/module_value_tests.rs::a_module_receiver_still_reaches_a_submodule_reexported_from_the_package_init",
+  "crates/ripr/src/analysis/language/python/module_value_tests.rs::an_ancestor_package_init_rebinding_a_path_segment_refuses_the_receiver",
   "crates/ripr/src/analysis/language/python/owners_tests/tests.rs::nested_owner_records_whether_the_enclosing_body_calls_it",
   "crates/ripr/src/analysis/language/python/owners_tests/tests.rs::nested_owner_call_check_skips_defs_in_compound_blocks_lambdas_and_rebinds",
   "crates/ripr/src/analysis/language/python/owners_tests/tests.rs::nested_owner_records_when_the_enclosing_body_discards_the_result",

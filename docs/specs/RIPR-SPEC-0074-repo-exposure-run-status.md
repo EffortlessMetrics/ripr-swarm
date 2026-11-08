@@ -219,17 +219,6 @@ tool ran to completion, so this is a notification, not a refusal
 alert with no source location). A healthy run emits no `invocations` and is
 byte-identical to before.
 
-`ripr review-comments` has no limitations channel for ranked review items, so
-it refuses a failed pass instead of rendering the stand-ins as ordinary seams
-(#13340): the diff-scoped streamed walk's `evidence_limitations` go through
-`ScopedClassifiedSeamInventory::require_complete_evidence`, which shares the
-`producer_failure` refusal wording with the classified-seam report owner. The
-run receipt records `failed` at `canonical_analysis` with the pass-wide
-repair route, and no review artifact is written. `BoundedAgentBrief` is only
-the streaming sink for that walk; its sole production caller is
-`review-comments`, so the gate sits at the caller that owns the result. A
-healthy run is byte-identical.
-
 `ripr agent status` (the pilot withheld-every-seam stop) reads the retained
 pilot `repo-exposure.json` by `limitations[]` category as well as `run_status`.
 A pass-wide `producer_failure` (or `limited_seam_evidence`) replaces the
@@ -239,6 +228,19 @@ the seams again or that no repair applies. A seam-cap or declined-files entry
 that coexists with the failure still adds its own repair step. A per-file
 `producer_failure` without `"scope": "pass_wide"` is not this fact, and a
 healthy report keeps its message unchanged.
+
+The scoped (diff-scoped) inventory consumers that have no limitation channel
+refuse a failed warm through `ScopedClassifiedSeamInventory::
+require_complete_evidence`, which shares its `producer_failure` refusal text
+(pass-wide scope, bounded detail, repair route) with
+`ClassifiedSeamsReport::require_complete_evidence` (#13340): the canonical-gap
+`ripr rerun --gap` selection, the `--at` test stub and `ripr review-comments`.
+The stub's inventory class disclosure is omitted rather than read from a
+stand-in. `review-comments` records a `failed` run receipt at
+`canonical_analysis` with the pass-wide repair route and writes no review
+artifact; `BoundedAgentBrief` is only the streaming sink for that walk and its
+sole production caller is `review-comments`, so the gate sits at the caller
+that owns the result. A healthy run is byte-identical.
 
 ### Static-language boundary
 

@@ -1902,8 +1902,12 @@ mod tests {
     /// control runs on a separate root first (the cache replays healthy walks).
     #[test]
     fn review_comments_refuses_a_failed_seam_evidence_warm() -> Result<(), String> {
-        fn run(label: &str, armed: Option<u8>) -> Result<(PathBuf, Result<(), String>), String> {
+        fn run(
+            label: &str,
+            armed: Option<u8>,
+        ) -> Result<(OwnedDeadlineFixture, Result<(), String>), String> {
             let root = unique_command_test_dir(label);
+            let cleanup = OwnedDeadlineFixture(root.clone());
             std::fs::create_dir_all(root.join("src"))
                 .map_err(|err| format!("create src: {err}"))?;
             std::fs::write(
@@ -1937,20 +1941,19 @@ mod tests {
                 }
                 None => review_comments_with_diff_loader(&call_args, loader),
             };
-            Ok((root, result))
+            Ok((cleanup, result))
         }
 
         let (control_root, control) = run("review-failed-warm-control", None)?;
         control?;
-        let control_out = control_root.join("target/ripr/review/comments.json");
+        let control_out = control_root.0.join("target/ripr/review/comments.json");
         if !control_out.exists() {
             return Err("healthy control must publish review artifacts".to_string());
         }
-        let _ = std::fs::remove_dir_all(&control_root);
 
         for n in [1, 2] {
-            let (root, result) = run(&format!("review-failed-warm-{n}"), Some(n))?;
-            let out = root.join("target/ripr/review/comments.json");
+            let (fixture, result) = run(&format!("review-failed-warm-{n}"), Some(n))?;
+            let out = fixture.0.join("target/ripr/review/comments.json");
             let error = match result {
                 Ok(()) => {
                     return Err(format!("arm({n}) must refuse a failed evidence warm"));
@@ -1976,7 +1979,6 @@ mod tests {
                     "arm({n}) receipt must record the failure: {receipt}"
                 ));
             }
-            let _ = std::fs::remove_dir_all(&root);
         }
         Ok(())
     }
