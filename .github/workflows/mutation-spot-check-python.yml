@@ -9,7 +9,14 @@ name: Mutation spot check (Python)
 # verdict with the real outcome. Runs on demand and weekly, never on a pull
 # request. Read-only: no secrets, nothing is published or pushed.
 #
-# STATUS: this workflow has NOT run. No package in the corpus has been
+# The `mutmut` job does the same with mutmut (#13842) on the packages of
+# benchmarks/mutation_spot_check/corpus-python-mutmut.json. mutmut has no
+# machine-readable location export, so for every mutant the job runs
+# `mutmut apply <name>`, records `git diff -U0` of the module, restores the
+# tree, and writes one {name, status, diff} JSON line; `--mutmut-dump` scores
+# that file. Both tools run on schedule; `tool` picks one on demand.
+#
+# STATUS: the cosmic-ray job has run (#13776); the mutmut job has NOT run. No package in the corpus has been
 # confirmed to install, pass its tests, or produce a cosmic-ray session; the
 # first run is the first evidence. The receipt is advisory and its
 # `synthetic_diff_verdict` figures are never merged with the Rust span-join
@@ -22,6 +29,15 @@ on:
         description: "Comma-separated corpus package names to run (default: all)"
         required: false
         default: ""
+      tool:
+        description: "Mutation tool to run"
+        required: false
+        default: all
+        type: choice
+        options:
+          - all
+          - cosmic-ray
+          - mutmut
   schedule:
     - cron: "43 5 * * 4"
 
@@ -35,6 +51,7 @@ concurrency:
 jobs:
   python:
     name: python (cosmic-ray)
+    if: ${{ inputs.tool != 'mutmut' }}
     runs-on: ubuntu-latest
     timeout-minutes: 300
     steps:
@@ -116,3 +133,106 @@ jobs:
           [ -f "$status" ] || { echo "no per-package cosmic-ray status was recorded"; exit 1; }
           bad=$(awk -F'\t' '$2 != 0 {print $1 " (exit " $2 ")"}' "$status")
           [ -z "$bad" ] || { echo "cosmic-ray or setup failed for: $bad"; exit 1; }
+
+  mutmut:
+    name: python (mutmut)
+    if: ${{ inputs.tool != 'cosmic-ray' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
+
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+
+      - name: Mutate the pinned packages with mutmut
+        shell: bash
+        env:
+          PACKAGES: ${{ inputs.packages }}
+        run: |
+          set -uo pipefail
+          corpus=benchmarks/mutation_spot_check/corpus-python-mutmut.json
+          version=$(jq -r .mutmut.version "$corpus")
+          reports="$GITHUB_WORKSPACE/target/ripr/reports"
+          status="$reports/python-mutmut-status.tsv"
+          mkdir -p "$RUNNER_TEMP/corpus" "$reports"
+          : > "$status"; : > "$RUNNER_TEMP/xtask-args"
+          python -m pip install --disable-pip-version-check "mutmut==$version" pytest
+          for name in $(jq -r '.packages[].name' "$corpus"); do
+            if [ -n "$PACKAGES" ] && ! [[ ",$PACKAGES," == *",$name,"* ]]; then continue; fi
+            pkg() { jq -r --arg n "$name" ".packages[]|select(.name==\$n).$1" "$corpus"; }
+            url=$(pkg url); sha=$(pkg sha); module=$(pkg module_path); tests=$(pkg tests_dir)
+            extra=$(pkg pip_extra); pytest_args=$(pkg pytest_args)
+            dir="$RUNNER_TEMP/corpus/$name"
+            rc=0
+            { [[ $sha =~ ^[0-9a-f]{40}$ ]] && mkdir "$dir" && cd "$dir" \
+              && git init -q && git remote add origin "$url" \
+              && git fetch -q --depth 1 origin "$sha" && git checkout -q FETCH_HEAD \
+              && [ "$(git rev-parse HEAD)" = "$sha" ] \
+              && python -m pip install --disable-pip-version-check -e . $extra \
+              && { printf '\n[mutmut]\npaths_to_mutate = %s\ntests_dir = %s\npytest_add_cli_args =\n' "$module" "$tests"
+                   for arg in $pytest_args; do printf '    %s\n' "$arg"; done; } >> setup.cfg \
+              && python -m pytest -q $pytest_args "$tests" \
+              && mutmut run --max-children 4 \
+              && mutmut results --all true > "$RUNNER_TEMP/$name-results.txt"; } || rc=$?
+            if [ "$rc" = 0 ]; then
+              # One {name, status, diff} line per listed mutant; a mutant that
+              # cannot be applied keeps an empty diff and is counted, not dropped.
+              : > dump.jsonl
+              sed -n 's/^    \([^:]*\): \(.*\)$/\1\t\2/p' "$RUNNER_TEMP/$name-results.txt" \
+                | while IFS=$'\t' read -r mutant result; do
+                    mutmut apply "$mutant" > /dev/null 2>&1 || true
+                    diff=$(git diff --no-color --no-ext-diff -U0 -- "$module")
+                    git checkout -q -- "$module"
+                    jq -nc --arg name "$mutant" --arg status "$result" --arg diff "$diff" \
+                      '{name: $name, status: $status, diff: $diff}' >> dump.jsonl
+                  done || rc=$?
+              mv dump.jsonl "$RUNNER_TEMP/$name-dump.jsonl"
+              # Leave the checkout as pinned, so ripr reads the real tree, not
+              # mutmut's trampolined copy.
+              rm -rf mutants && git checkout -q -- . && git clean -fdqx
+            fi
+            cd "$GITHUB_WORKSPACE"
+            printf '%s\t%s\n' "$name" "$rc" >> "$status"
+            if [ -s "$RUNNER_TEMP/$name-dump.jsonl" ]; then
+              printf -- '--repo %s=%s --mutmut-dump %s=%s ' "$name" "$dir" "$name" "$RUNNER_TEMP/$name-dump.jsonl" >> "$RUNNER_TEMP/xtask-args"
+              cp "$RUNNER_TEMP/$name-dump.jsonl" "$reports/python-mutmut-$name-dump.jsonl"
+            fi
+          done
+          [ -s "$RUNNER_TEMP/xtask-args" ] || { echo "no mutmut dump was produced"; exit 1; }
+
+      - name: Score ripr against the mutmut outcomes
+        # Advisory lane: a scoring failure must not hide the receipt upload;
+        # the final step turns a missing receipt into a red job.
+        continue-on-error: true
+        shell: bash
+        run: cargo xtask mutation-spot-check --mutmut-version "$(jq -r .mutmut.version benchmarks/mutation_spot_check/corpus-python-mutmut.json)" $(cat "$RUNNER_TEMP/xtask-args")
+
+      - name: Upload the spot-check receipt, dumps and per-package status
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: mutation-spot-check-python-mutmut
+          path: |
+            target/ripr/reports/mutation-spot-check.json
+            target/ripr/reports/mutation-spot-check.md
+            target/ripr/reports/python-mutmut-status.tsv
+            target/ripr/reports/python-mutmut-*-dump.jsonl
+          if-no-files-found: error
+
+      - name: Fail when the receipt is missing or a package failed
+        if: always()
+        shell: bash
+        run: |
+          status=target/ripr/reports/python-mutmut-status.tsv
+          [ -s target/ripr/reports/mutation-spot-check.json ] || { echo "no mutation-spot-check receipt was written"; exit 1; }
+          [ -f "$status" ] || { echo "no per-package mutmut status was recorded"; exit 1; }
+          bad=$(awk -F'\t' '$2 != 0 {print $1 " (exit " $2 ")"}' "$status")
+          [ -z "$bad" ] || { echo "mutmut or setup failed for: $bad"; exit 1; }

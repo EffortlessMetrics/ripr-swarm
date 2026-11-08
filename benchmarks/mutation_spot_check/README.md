@@ -284,6 +284,42 @@ the cosmic-ray dump field names were taken from its source, not from a real
 dump. The first run is the first evidence; it uploads the raw dumps beside the
 receipt so a parser mismatch can be diagnosed.
 
+## Python: real mutmut mutants (same join)
+
+`--mutmut-dump <name>=<file>` (with the matching `--repo <name>=<checkout>`)
+scores Python mutmut (3.x) outcomes through the same join (#13842). mutmut
+has no machine-readable export of a mutant's location, so the workflow writes
+the file: for each mutant listed by `mutmut results --all true` it runs
+`mutmut apply <name>`, records `git diff -U0 -- <module>`, restores the tree,
+and writes one `{"name", "status", "diff"}` JSON line. The parser (`mutmut.rs`)
+takes the path from the diff's `+++ b/` header and the replaced range from its
+one hunk: the smallest span (common prefix and suffix removed) that turns the
+removed lines into the added ones, so multi-line mutants are located exactly.
+Every removed and context line must match the checkout at the hunk's line
+numbers. A diff that does not match, has several hunks, or only inserts or
+deletes whole lines keeps an `unlocatable_diff` or `unlocatable_multihunk`
+token and is never scored. A record with an empty diff (the mutant could not be
+applied) has no path, so it is counted by status in the receipt's
+`mutation_tool.records_without_diff` rather than dropped. `--mutmut-version`
+records the version; the workflow passes the corpus pin.
+
+Status mapping: mutmut's detected status is `caught` and its undetected status
+is `missed`; `timeout`, `no tests`, `skipped`, `not checked`, `suspicious`,
+`segfault` and the type-checker rejection (the tests never ran) are never
+scored. As with cosmic-ray, a mutant that breaks import also reads as detected,
+so `caught` is an upper bound on tests discriminating. One run scores one tool:
+`--mutmut-dump` together with `--cosmic-ray-dump` or `--stryker-report` is
+refused.
+
+The `mutmut` job of `.github/workflows/mutation-spot-check-python.yml` runs it
+weekly beside cosmic-ray (or alone with `tool=mutmut`) on the pinned packages of
+`corpus-python-mutmut.json` (humanize, itsdangerous, tomli, python-slugify, and
+cachetools at the cosmic-ray revision for a cross-tool comparison). Each package
+must pass its own tests before mutmut runs. The recall figure the scoreboard
+reads is `recall_of_missed.by_language.python`: of the runtime-missed mutants with a
+scoreable verdict, the strict share ripr calls a gap and the share it calls a
+gap, weak or unknown.
+
 ## Pilot top recommendations
 
 The receipt also runs `ripr pilot --max-seams 10` on each checkout and judges

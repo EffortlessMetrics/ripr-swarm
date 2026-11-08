@@ -36,6 +36,7 @@
 //! developer meets first.
 
 mod cosmic_ray;
+mod mutmut;
 pub(crate) mod pilot;
 mod stryker;
 mod synthetic_diff;
@@ -135,7 +136,8 @@ const REDERIVE_USAGE: &str =
 const USAGE: &str = "usage: cargo xtask mutation-spot-check --repo <name>=<checkout> [--repo ...] [--mutants-out <name>=<mutants.out dir>] [--run-mutants] [--mutants-arg <name>=<arg>] [--jobs <n>] [--mutant-timeout-secs <n>] [--examples <n>] [--ripr <binary>]
   TypeScript (real Stryker outcomes, synthetic-diff verdict join): --repo <name>=<checkout> --stryker-report <name>=<mutation.json> [--max-mutants <n>]
   Python (real cosmic-ray outcomes, same join): --repo <name>=<checkout> --cosmic-ray-dump <name>=<cosmic-ray dump output> [--cosmic-ray-version <v>] [--max-mutants <n>]
-  One run scores one synthetic-diff language; do not mix --stryker-report and --cosmic-ray-dump.";
+  Python (real mutmut outcomes, same join): --repo <name>=<checkout> --mutmut-dump <name>=<mutmut apply+diff JSONL> [--mutmut-version <v>] [--max-mutants <n>]
+  One run scores one synthetic-diff language and tool; do not mix --stryker-report, --cosmic-ray-dump and --mutmut-dump.";
 
 fn harness_owned_mutants_arg(arg: &str) -> bool {
     if let Some(bundle) = arg.strip_prefix('-').filter(|rest| !rest.starts_with('-')) {
@@ -210,6 +212,17 @@ pub(crate) fn mutation_spot_check(args: &[String]) -> Result<(), String> {
             )
             .map_err(|err| format!("`{name}`: {err}"))?;
             Some((synthetic_diff::PYTHON, parsed))
+        } else if let Some(dump_path) = options.mutmut_dumps.get(name) {
+            let dump = fs::read_to_string(dump_path)
+                .map_err(|err| format!("read {}: {err}", dump_path.display()))?;
+            let read_source = |path: &str| {
+                let relative = synthetic_diff::checkout_relative(path)?;
+                fs::read_to_string(checkout.join(relative)).ok()
+            };
+            let parsed =
+                mutmut::parse_mutmut_dump(&dump, &read_source, options.mutmut_version.as_deref())
+                    .map_err(|err| format!("`{name}`: {err}"))?;
+            Some((synthetic_diff::PYTHON, parsed))
         } else {
             None
         };
@@ -253,6 +266,10 @@ struct Options {
     cosmic_ray_dumps: BTreeMap<String, PathBuf>,
     /// The cosmic-ray version that produced the dumps; a dump does not say.
     cosmic_ray_version: Option<String>,
+    /// Repos scored from a mutmut apply+diff dump (Python).
+    mutmut_dumps: BTreeMap<String, PathBuf>,
+    /// The mutmut version that produced the dumps; a dump does not say.
+    mutmut_version: Option<String>,
     max_mutants: usize,
     run_mutants: bool,
     jobs: usize,
@@ -269,6 +286,8 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
         stryker_reports: BTreeMap::new(),
         cosmic_ray_dumps: BTreeMap::new(),
         cosmic_ray_version: None,
+        mutmut_dumps: BTreeMap::new(),
+        mutmut_version: None,
         max_mutants: synthetic_diff::DEFAULT_MAX_MUTANTS,
         run_mutants: false,
         jobs: DEFAULT_JOBS,
@@ -280,7 +299,8 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
     while index < args.len() {
         let flag = args[index].as_str();
         match flag {
-            "--repo" | "--mutants-out" | "--stryker-report" | "--cosmic-ray-dump" => {
+            "--repo" | "--mutants-out" | "--stryker-report" | "--cosmic-ray-dump"
+            | "--mutmut-dump" => {
                 index += 1;
                 let (name, path) = parse_named_path(required_arg(args, index, flag)?, flag)?;
                 if flag == "--repo" {
@@ -299,6 +319,10 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
                         .is_some()
                     {
                         return Err(format!("duplicate --cosmic-ray-dump name `{name}`"));
+                    }
+                } else if flag == "--mutmut-dump" {
+                    if options.mutmut_dumps.insert(name.clone(), path).is_some() {
+                        return Err(format!("duplicate --mutmut-dump name `{name}`"));
                     }
                 } else if options.mutants_out.insert(name.clone(), path).is_some() {
                     return Err(format!("duplicate --mutants-out name `{name}`"));
@@ -327,6 +351,10 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
             "--cosmic-ray-version" => {
                 index += 1;
                 options.cosmic_ray_version = Some(required_arg(args, index, flag)?.to_string());
+            }
+            "--mutmut-version" => {
+                index += 1;
+                options.mutmut_version = Some(required_arg(args, index, flag)?.to_string());
             }
             "--max-mutants" | "--stryker-max-mutants" => {
                 index += 1;
@@ -393,6 +421,27 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
                 "`{name}` is scored from a cosmic-ray dump, so --mutants-out and --mutants-arg do not apply to it"
             ));
         }
+    }
+    for name in options.mutmut_dumps.keys() {
+        if !options.repos.iter().any(|(repo, _)| repo == name) {
+            return Err(format!("--mutmut-dump `{name}` names no --repo"));
+        }
+        if options.mutants_out.contains_key(name) || options.mutants_args.contains_key(name) {
+            return Err(format!(
+                "`{name}` is scored from a mutmut dump, so --mutants-out and --mutants-arg do not apply to it"
+            ));
+        }
+    }
+    if options.mutmut_version.is_some() && options.mutmut_dumps.is_empty() {
+        return Err("--mutmut-version only applies with --mutmut-dump".to_string());
+    }
+    if !options.mutmut_dumps.is_empty()
+        && !(options.stryker_reports.is_empty() && options.cosmic_ray_dumps.is_empty())
+    {
+        return Err(
+            "--mutmut-dump with --stryker-report or --cosmic-ray-dump in one run would mix tools in the one synthetic_diff_verdict section; run them separately"
+                .to_string(),
+        );
     }
     if options.cosmic_ray_version.is_some() && options.cosmic_ray_dumps.is_empty() {
         return Err("--cosmic-ray-version only applies with --cosmic-ray-dump".to_string());
@@ -2773,6 +2822,57 @@ mod tests {
             (
                 vec!["--run-mutants", "--mutants-arg", "hex=--list-files"],
                 "would override how the harness runs",
+            ),
+        ] {
+            let Err(err) = parse_options(&args(&extra)) else {
+                return Err(format!("{extra:?} should be refused"));
+            };
+            assert!(err.contains(expected), "{err}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn mutmut_dumps_score_one_tool_per_run() -> Result<(), String> {
+        let args = |extra: &[&str]| -> Vec<String> {
+            ["--repo", "h=/tmp/h", "--repo", "c=/tmp/c"]
+                .iter()
+                .chain(extra)
+                .map(|arg| arg.to_string())
+                .collect()
+        };
+        let options = parse_options(&args(&[
+            "--mutmut-dump",
+            "h=/tmp/h.jsonl",
+            "--mutmut-version",
+            "3.8.1",
+        ]))?;
+        assert_eq!(
+            options.mutmut_dumps.get("h"),
+            Some(&PathBuf::from("/tmp/h.jsonl"))
+        );
+        assert_eq!(options.mutmut_version.as_deref(), Some("3.8.1"));
+        for (extra, expected) in [
+            (
+                vec!["--mutmut-dump", "h=/a", "--cosmic-ray-dump", "c=/b"],
+                "would mix tools",
+            ),
+            (
+                vec!["--mutmut-dump", "h=/a", "--stryker-report", "c=/b"],
+                "would mix tools",
+            ),
+            (vec!["--mutmut-dump", "x=/a"], "names no --repo"),
+            (
+                vec!["--mutmut-dump", "h=/a", "--mutmut-dump", "h=/b"],
+                "duplicate --mutmut-dump",
+            ),
+            (
+                vec!["--mutmut-version", "3"],
+                "only applies with --mutmut-dump",
+            ),
+            (
+                vec!["--mutmut-dump", "h=/a", "--mutants-out", "h=/b"],
+                "do not apply",
             ),
         ] {
             let Err(err) = parse_options(&args(&extra)) else {
