@@ -1171,12 +1171,21 @@ fn after_with_publication_hook(
         r#"
 #define _GNU_SOURCE
 #include <dlfcn.h>
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 int rename(const char *old, const char *new) {
     int (*next)(const char *, const char *) = dlsym(RTLD_NEXT, "rename");
+    const char *early_mode = getenv("RIPR_HOOK_MODE");
+    const char *early_target = getenv("RIPR_HOOK_TARGET");
+    static int early_matches = 0;
+    if (early_mode && early_target && !strcmp(early_mode, "fail-start") && !strcmp(new, early_target) && ++early_matches == 2) {
+        FILE *mark = fopen(getenv("RIPR_HOOK_MARKER"), "w"); if (mark) fclose(mark);
+        errno = EIO;
+        return -1;
+    }
     int result = next(old, new);
     const char *target = getenv("RIPR_HOOK_TARGET");
     if (result || !target || strcmp(new, target)) return result;
@@ -1218,6 +1227,7 @@ int rename(const char *old, const char *new) {
         || mode == "stop-retention"
         || mode == "stop-start"
         || mode == "stop-accepted"
+        || mode == "fail-start"
     {
         root.join("target/ripr/repair-attempts")
             .join(&attempt.id)
@@ -1270,6 +1280,50 @@ int rename(const char *old, const char *new) {
         ));
     }
     Ok(output)
+}
+
+/// The finish commits before evaluation starts. If the evaluation marker cannot
+/// be committed, the finish is given back instead of stranding the attempt
+/// ready_to_finish, and the same claim then finishes on a retry.
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+#[test]
+fn a_failed_evaluation_start_restores_the_attempt_for_retry() -> Result<(), String> {
+    let (fixture, attempt) = edited_attempt("focused-start-failure")?;
+    let root = &fixture.root;
+    let input = result_document(
+        &attempt.id,
+        &head_sha(root)?,
+        PROPOSED_FILE,
+        serde_json::json!([ok_event("equality_boundary_discounts")]),
+    );
+    let result = write_result(root, "start-failure", &input)?;
+    let failed = after_with_publication_hook(root, &attempt, &result, "fail-start")?;
+    assert_eq!(failed.status.code(), Some(2), "{}", combined(&failed));
+    assert!(
+        combined(&failed).contains("restored to awaiting_edit"),
+        "{}",
+        combined(&failed)
+    );
+    let state = manifest(root, &attempt)?;
+    assert_eq!(state["state"], "awaiting_edit", "{state}");
+    assert!(
+        state.pointer("/after").is_none_or(Value::is_null),
+        "{state}"
+    );
+    assert!(
+        state
+            .pointer("/focused_receipt_evaluation")
+            .is_none_or(Value::is_null),
+        "{state}"
+    );
+    let retry = after_with(root, &attempt, &result)?;
+    assert!(retry.status.success(), "{}", combined(&retry));
+    assert!(
+        terminal_roles(&manifest(root, &attempt)?)
+            .iter()
+            .any(|role| role == RESULT_ROLE)
+    );
+    Ok(())
 }
 
 #[cfg(all(target_os = "linux", target_env = "gnu"))]

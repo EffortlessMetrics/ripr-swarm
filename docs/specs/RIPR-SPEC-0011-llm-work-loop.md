@@ -880,7 +880,16 @@ still owned and no terminal evidence has been committed. An apply-record
 failure can also restore the exact terminal retention that this same
 invocation committed, provided its entire manifest remains unchanged; reusing
 another retainer's result grants no rollback custody. An unsuccessful restore
-is reported explicitly. The finish commits the normalized claim before
+is reported explicitly. If evaluation cannot start after the finish committed,
+the finish is restored the same way. A retainer that reuses terminal evidence
+another writer already committed receives no rollback custody: a later
+apply-record failure is reported and the attempt stays finished rather than
+being rolled back. Restoring an attempt leaves the compatibility receipt and
+verify projections under `target/ripr/` on disk; they are overwritten by the
+retry and are never the attempt's authority. Terminal retention now holds the
+manifest commit lock for the whole write for every attempt; non-focused
+attempts keep the same evidence set and the existing retention tests cover
+them. The finish commits the normalized claim before
 publishing the receipt, and retention checks the bytes against that claim.
 A focused finish records its receipt protocol before evaluation starts.
 A separate durable marker precedes evaluation, and a successful decision commits
@@ -1039,6 +1048,10 @@ read of a written field stays #11870.
 - `crates/ripr/tests/focused_test_result.rs::foreign_focused_bytes_are_not_retained` (#13203)
 - `crates/ripr/tests/focused_test_result.rs::noncompliant_finish_does_not_retain_the_supplied_focused_result` (#13203)
 - `crates/ripr/tests/focused_test_result.rs::malformed_suite_event_is_refused_even_with_a_counted_test` (#13203)
+- `crates/ripr/tests/focused_test_result.rs::interrupted_surface_refusal_cannot_be_retried` (#13203)
+- `crates/ripr/tests/focused_test_result.rs::standalone_receipt_does_not_finish_an_unresolved_evaluation` (#13203)
+- `crates/ripr/tests/focused_test_result.rs::a_failed_evaluation_start_restores_the_attempt_for_retry` (#13203)
+- `crates/ripr/src/app/repair_attempt/mod.rs::tests::focused_restore_refuses_another_finish_or_committed_evidence` (#13203)
 - `crates/ripr/tests/focused_test_result.rs::focused_result_does_not_bind_a_replaced_test_file` (#13203)
 - `crates/ripr/tests/focused_test_result.rs::focused_result_does_not_bind_an_intervening_descendant_commit` (#13203)
 - `crates/ripr/tests/focused_test_result.rs::focused_result_accepts_a_descendant_committed_before_validation` (#13203)

@@ -3138,14 +3138,32 @@ fn run_agent_repair_phase(
                 // evidence, so the outcome is carried to the end and the apply
                 // record is published either way.
                 let mut evaluation_custody = if cage_after.focused_result.is_some() {
-                    Some(
-                        crate::app::repair_attempt::start_focused_receipt_evaluation_from(
-                            &root,
-                            store_ref,
-                            &attempt.attempt_id,
-                            &cage_after,
-                        )?,
-                    )
+                    match crate::app::repair_attempt::start_focused_receipt_evaluation_from(
+                        &root,
+                        store_ref,
+                        &attempt.attempt_id,
+                        &cage_after,
+                    ) {
+                        Ok(custody) => Some(custody),
+                        Err(error) => {
+                            // The finish is committed but evaluation never
+                            // started; give the attempt back for a retry
+                            // rather than stranding it ready_to_finish.
+                            return match crate::app::repair_attempt::restore_focused_finish_from(
+                                &root,
+                                store_ref,
+                                &attempt.attempt_id,
+                                &cage_after,
+                            ) {
+                                Ok(()) => Err(format!(
+                                    "{error}; the attempt was restored to awaiting_edit; fix the publication error and retry the after phase"
+                                )),
+                                Err(restore_error) => Err(format!(
+                                    "{error}; restoring the attempt for retry also failed: {restore_error}; inspect the attempt before retrying"
+                                )),
+                            };
+                        }
+                    }
                 } else {
                     None
                 };
