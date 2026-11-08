@@ -1048,7 +1048,7 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             "target/ripr/reports/ci-policy.{json,md}",
             false,
             true,
-            "Runs the existing repository policy and complete change-set/whitespace checks with nine-scan collect-all, without local selected Clippy. CI retains its explicit full workspace/all-target Clippy obligation. Does not produce a local precommit receipt.",
+            "Runs the existing repository policy and complete change-set/whitespace checks with nine-scan collect-all, without formatting or local selected Clippy. CI retains its explicit cargo fmt --check and full workspace/all-target Clippy obligations. Does not produce a local precommit receipt.",
         ),
         command_entry(
             "check-pr",
