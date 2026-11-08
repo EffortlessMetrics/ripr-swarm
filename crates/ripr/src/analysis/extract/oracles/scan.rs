@@ -83,7 +83,8 @@ pub(crate) fn extract_assertions_in(
             }
             match leftover {
                 Some(rest)
-                    if is_assertion_line(&rest) || starts_discarded_matcher_computation(&rest) =>
+                    if may_start_assertion(&rest)
+                        || starts_discarded_matcher_computation(&rest) =>
                 {
                     trimmed = rest;
                     fact_offset = offset + extra_lines;
@@ -91,8 +92,8 @@ pub(crate) fn extract_assertions_in(
                 _ => continue,
             }
         }
-        if is_assertion_line(&trimmed) || starts_discarded_matcher_computation(&trimmed) {
-            let admitted = is_assertion_line(&trimmed);
+        if may_start_assertion(&trimmed) || starts_discarded_matcher_computation(&trimmed) {
+            let admitted = may_start_assertion(&trimmed);
             if !collect_owned_observer_statement(&mut trimmed, &mut lines, admitted) {
                 continue;
             }
@@ -2746,9 +2747,9 @@ fn is_unwrap_err_statement_continuation(joined_so_far: &str, next: &str) -> bool
     let depth = masked_group_depth(&masked);
     if depth == 0 {
         let incomplete_let = masked.trim_start().starts_with("let ") && masked.contains('=');
-        return incomplete_let && !is_assertion_line(next) && !next.starts_with("let ");
+        return incomplete_let && !may_start_assertion(next) && !next.starts_with("let ");
     }
-    !is_assertion_line(next) && !is_control_or_block_start(next) && !next.starts_with("let ")
+    !may_start_assertion(next) && !is_control_or_block_start(next) && !next.starts_with("let ")
 }
 
 /// Whether body line `offset` starts a statement: the previous non-empty
@@ -3129,6 +3130,18 @@ fn append_matcher_free_statement(statement: &str, output: &mut String, depth: us
     output.extend(std::iter::repeat_n('\n', remaining_lines));
 }
 
+fn may_start_assertion(line: &str) -> bool {
+    // Admission may see only the first line of a comparison. The snapshot
+    // classifier checks the complete joined statement and its receiver.
+    let compact: String = line.chars().filter(|ch| !ch.is_whitespace()).collect();
+    let expect_comparison_start = (compact.contains("expect![")
+        || compact.contains("expect_file!["))
+        && (compact.contains(".assert_eq(")
+            || compact.contains(".assert_debug_eq(")
+            || compact.contains(".assert_json_eq("));
+    expect_comparison_start || is_assertion_line(line)
+}
+
 fn is_assertion_line(line: &str) -> bool {
     line.contains("assert!")
         || line.contains("assert_eq!")
@@ -3240,6 +3253,28 @@ mod spec_0106_scan_tests {
     }
 
     // Control 1 end-to-end: extract_assertions upgrades the oracle kind to ExactErrorVariant.
+    #[test]
+    fn multiline_expect_comparison_is_joined_before_classification() {
+        let facts = extract_assertions("expect![[\"x\"]].assert_eq(\n    &render(4));", 1);
+        assert_eq!(facts.len(), 1);
+        assert_eq!(facts[0].kind, OracleKind::Snapshot);
+        assert_eq!(facts[0].strength, OracleStrength::Medium);
+    }
+
+    #[test]
+    fn unrelated_or_unrun_comparisons_are_not_snapshot_oracles() {
+        for body in [
+            r#"expect!["x"]; other.assert_eq(&render(4));"#,
+            r#"let unused = || expect!["x"].assert_eq(&render(4));"#,
+        ] {
+            let facts = extract_assertions(body, 1);
+            assert!(
+                facts.iter().all(|fact| fact.kind != OracleKind::Snapshot),
+                "{body}: {facts:?}"
+            );
+        }
+    }
+
     #[test]
     fn extract_assertions_upgrades_unwrap_err_variant_to_exact_error_variant() {
         let body = r"

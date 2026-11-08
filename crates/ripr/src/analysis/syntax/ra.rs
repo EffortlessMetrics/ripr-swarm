@@ -2195,11 +2195,23 @@ fn ident_name(spelling: &str) -> &str {
 /// including single-bracket and harmlessly spaced spellings (#7878).
 pub(crate) fn is_expect_test_comparison_line(line: &str) -> bool {
     let normalized: String = line.chars().filter(|ch| !ch.is_whitespace()).collect();
-    let macro_open = normalized.contains("expect![") || normalized.contains("expect_file![");
-    macro_open
-        && (normalized.contains(".assert_eq(")
-            || normalized.contains(".assert_debug_eq(")
-            || normalized.contains(".assert_json_eq("))
+    if !(normalized.contains("expect![") || normalized.contains("expect_file![")) {
+        return false;
+    }
+    let wrapped = format!("fn __ripr_snapshot_check() {{\n{line}\n}}");
+    let Some(parse) = parse_clean_source_file(&wrapped) else {
+        return false;
+    };
+    parse.tree().syntax().descendants().filter_map(ast::MethodCallExpr::cast).any(|call| {
+        let supported_method = call.name_ref().is_some_and(|name| {
+            matches!(name.text(), "assert_eq" | "assert_debug_eq" | "assert_json_eq")
+        });
+        let bracket_receiver = matches!(call.receiver(), Some(ast::Expr::MacroExpr(receiver))
+            if receiver.macro_call().and_then(|mac| mac.token_tree()).is_some_and(|tree|
+                tree.syntax().first_token().is_some_and(|token| token.kind() == SyntaxKind::L_BRACK)));
+        let in_closure = call.syntax().ancestors().any(|node| ast::ClosureExpr::cast(node).is_some());
+        supported_method && bracket_receiver && !in_closure && expect_test_receiver(&call).is_some()
+    })
 }
 
 /// Bare `Unit` in `fn run() -> Unit`, with no qualifier, turbofish, or `Self`.
@@ -4312,12 +4324,24 @@ pub fn wrap(value: u64) -> Result<Option<u64>, ()> {
             r#"expect!["w12"].assert_eq(&render(4));"#,
             r#"expect! [["w12"]].assert_eq (&render(4));"#,
             r#"expect_file!["w.txt"].assert_eq(&render(4));"#,
+            r#"expect_test::expect!["w12"].assert_debug_eq(&render(4));"#,
+            r#"expect!["w12"].assert_json_eq(&render(4));"#,
         ] {
             assert!(super::is_expect_test_comparison_line(line), "{line}");
         }
         assert!(!super::is_expect_test_comparison_line(
             r#"assert_eq!(render(4), "w12");"#
         ));
+        for line in [
+            r#"expect!["x"]; other.assert_eq(&render(4));"#,
+            r#"let text = "expect![x].assert_eq(y)";"#,
+            r#"// expect!["x"].assert_eq(&render(4));"#,
+            r#"r#expect!["x"].assert_eq(&render(4));"#,
+            r#"expect!("x").assert_eq(&render(4));"#,
+            r#"let unused = || expect!["x"].assert_eq(&render(4));"#,
+        ] {
+            assert!(!super::is_expect_test_comparison_line(line), "{line}");
+        }
     }
 }
 
