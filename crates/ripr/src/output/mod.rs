@@ -80,6 +80,7 @@ pub(crate) mod preview_actionability;
 pub(crate) mod python_repair_card;
 pub mod receipt_lifecycle;
 pub(crate) mod receipt_write;
+pub(crate) mod refusal;
 pub(crate) mod related_test_miss;
 pub(crate) mod render;
 pub(crate) mod repo_exposure;
