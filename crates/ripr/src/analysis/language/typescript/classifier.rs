@@ -7472,6 +7472,23 @@ pub(crate) fn classify_resolved_owner(
                     workspace_root,
                 )
             });
+    // Mixed entry reach: some related test reaches the owner through another
+    // module's export, but not every one does, so neither "same-module" nor
+    // "cross-module" alone describes it.
+    let reach_through_mixed_module_entries = reach_only_through_module_entry
+        && !reach_only_through_cross_module_entry
+        && related_candidates
+            .iter()
+            .filter(|candidate| candidate.relation.uses_oracle())
+            .any(|candidate| {
+                module_entry_reach_includes_cross_module(
+                    candidate,
+                    owner,
+                    reexport_index,
+                    alias_map,
+                    workspace_root,
+                )
+            });
     // Owner-call evidence is broader than trusted relation credit: a test
     // whose relation was denied by the #4102/#4103 gates still observes an
     // owner-name call, so its oracle classification and missing-discriminator
@@ -7772,6 +7789,26 @@ pub(crate) fn classify_resolved_owner(
                 owner.name
             )],
         )
+    } else if related.is_empty() && context.cross_module_fan_in_limited {
+        // #13592: more than `MAX_CROSS_MODULE_ENTRIES` exports of other
+        // modules call the owner and none was followed, so an empty relation
+        // set says nothing about whether a test reaches it through one of
+        // them. Unknown, not the confident negative `no_static_path` would be.
+        (
+            ExposureClass::StaticUnknown,
+            StageState::Unknown,
+            StageState::Unknown,
+            StageState::Unknown,
+            {
+                let mut missing = vec![cross_module_fan_in_limit_missing(owner)];
+                // #4550: an unresolved alias on the owner's own import still
+                // names its specific cause, after the limit.
+                if let Some(gap) = &alias_gap {
+                    missing.push(gap.no_static_path_missing(&owner.name));
+                }
+                missing
+            },
+        )
     } else if related.is_empty() {
         (
             ExposureClass::NoStaticPath,
@@ -7781,16 +7818,10 @@ pub(crate) fn classify_resolved_owner(
             // #4550: an uncredited owner import through an unresolved
             // alias is the more specific no-reach cause; name it instead of
             // claiming no test references the owner.
-            {
-                let mut missing = vec![match &alias_gap {
-                    Some(gap) => gap.no_static_path_missing(&owner.name),
-                    None => no_static_path_missing(owner),
-                }];
-                if context.cross_module_fan_in_limited {
-                    missing.push(cross_module_fan_in_limit_missing(owner));
-                }
-                missing
-            },
+            vec![match &alias_gap {
+                Some(gap) => gap.no_static_path_missing(&owner.name),
+                None => no_static_path_missing(owner),
+            }],
         )
     } else if !has_oracle_eligible_relation {
         (
@@ -7982,8 +8013,14 @@ pub(crate) fn classify_resolved_owner(
     // Same unknown arm, different cause: the registration, not an assertion
     // callback, is what static analysis cannot resolve (#10438, #10501).
     let private_member_unknown = ladder_unresolved_unknown && is_private_member_owner(owner);
+    // #13592: the fan-in-limit arm, the only other empty-relation unknown.
+    let fan_in_limited_unknown = ladder_unresolved_unknown
+        && !private_member_unknown
+        && related.is_empty()
+        && context.cross_module_fan_in_limited;
     let conditional_registration_unknown = ladder_unresolved_unknown
         && !private_member_unknown
+        && !fan_in_limited_unknown
         && only_conditionally_registered_tests(related_candidates);
     let post_ladder_context = TsPostLadderContext {
         all_tests,
@@ -8273,12 +8310,18 @@ pub(crate) fn classify_resolved_owner(
         // #13592: the caller is an export of another module that imports and
         // calls the owner (RIPR-SPEC-0243).
         "TypeScript preview adapter: the related tests reach the changed owner only through an exported function of another module that imports and calls it; discriminate unknown (RIPR-SPEC-0243).".to_string()
+    } else if ladder_entry_unknown && reach_through_mixed_module_entries {
+        "TypeScript preview adapter: the related tests reach the changed owner only through same-module callers or exported functions of other modules that import and call it; discriminate unknown (RIPR-SPEC-0243).".to_string()
     } else if ladder_entry_unknown {
         "TypeScript preview adapter: the related tests reach the changed owner only through a same-module caller; discriminate unknown (RIPR-SPEC-0027).".to_string()
     } else if hook_owner_unknown {
         "TypeScript preview adapter: a synchronous mocha setup hook calls the changed owner outside every test body; discriminate unknown (RIPR-SPEC-0246 rule 7).".to_string()
     } else if private_member_unknown {
         "TypeScript preview adapter: the changed owner is a `#private` class member no test can call by name; discriminate unknown (RIPR-SPEC-0243).".to_string()
+    } else if fan_in_limited_unknown {
+        format!(
+            "TypeScript preview adapter: more than {MAX_CROSS_MODULE_ENTRIES} exported functions of other modules import and call the changed owner, past the limit ripr follows, so reach through them was not checked; discriminate unknown (RIPR-SPEC-0243)."
+        )
     } else if conditional_registration_unknown {
         "TypeScript preview adapter: every related test is registered under a condition or loop static analysis cannot evaluate; discriminate unknown (RIPR-SPEC-0243).".to_string()
     } else if ladder_unresolved_unknown {
@@ -8363,6 +8406,11 @@ pub(crate) fn classify_resolved_owner(
         {
             "TypeScript preview advisory: the related test reaches the changed owner only through an exported function of another module that imports and calls it, so no new assertion is needed on that evidence; no repair packet is emitted.".to_string()
         }
+        ExposureClass::StaticUnknown
+            if ladder_entry_unknown && reach_through_mixed_module_entries =>
+        {
+            "TypeScript preview advisory: the related tests reach the changed owner only through same-module callers or exported functions of other modules that import and call it, so no new assertion is needed on that evidence; no repair packet is emitted.".to_string()
+        }
         ExposureClass::StaticUnknown if ladder_entry_unknown => {
             "TypeScript preview advisory: the related test reaches the changed owner only through a same-module caller, so no new assertion is needed on that evidence; no repair packet is emitted.".to_string()
         }
@@ -8374,6 +8422,11 @@ pub(crate) fn classify_resolved_owner(
         }
         ExposureClass::StaticUnknown if private_member_unknown => {
             "TypeScript preview advisory: the changed owner is a `#private` class member, so no test can reference it directly and reach through a public method is not established; no new assertion is needed on that evidence, and no repair packet is emitted.".to_string()
+        }
+        ExposureClass::StaticUnknown if fan_in_limited_unknown => {
+            format!(
+                "TypeScript preview advisory: more than {MAX_CROSS_MODULE_ENTRIES} exported functions of other modules import and call the changed owner, so reach through them was not checked; no new assertion is needed on that evidence, and no repair packet is emitted."
+            )
         }
         ExposureClass::StaticUnknown if conditional_registration_unknown => {
             "TypeScript preview advisory: every related test is registered under a condition or loop static analysis cannot evaluate, so whether it runs is not established; no new assertion is needed on that evidence, and no repair packet is emitted.".to_string()
@@ -10495,16 +10548,20 @@ fn module_entry_reach_summary(
     } else {
         called.join(", ")
     };
+    let cross_module_called = called_entries
+        .iter()
+        .filter(|entry| entry.cross_module.is_some())
+        .count();
     let scope = if owner.class_name.is_some() {
         "same-class"
-    } else if !called_entries.is_empty()
-        && called_entries
-            .iter()
-            .all(|entry| entry.cross_module.is_some())
-    {
+    } else if cross_module_called > 0 && cross_module_called == called_entries.len() {
         // #13592: every entry the tests call is an export of another module
         // that reaches the owner through an imported binding.
         "cross-module"
+    } else if cross_module_called > 0 {
+        // Some tests reach it through a same-module caller, others through
+        // another module's export.
+        "same-module or cross-module"
     } else {
         "same-module"
     };

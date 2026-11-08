@@ -944,11 +944,19 @@ Candidates come from the first non-empty tier:
    never invokes, still counts as an edge and can credit `static_unknown`
    (never `exposed`). Fan-in is capped: when more than 32 exports of other
    modules call one owner (`MAX_CROSS_MODULE_ENTRIES`), none of them is
-   followed, the owner keeps the reading it would have without them, and a
-   `no_static_path` finding adds a line saying the limit was hit, so the
-   per-test relation scan never grows with the importer count. Each related
-   test records the entries it reaches once, so per-line classification does
-   not rescan them. The importer's calls ride in the per-file export facts
+   followed, so the per-test relation scan never grows with the importer
+   count. An owner that some other relation reaches keeps that reading. An
+   owner left with no relation reads `static_unknown`, not `no_static_path`:
+   reach, observe and discriminate are unknown, the first missing line says
+   reach through more than 32 importers was not checked, and the
+   discriminate summary and next step say so and offer no repair packet (an
+   empty relation set past the limit is not the confident negative). The
+   limit is carried on every changed-line path, deleted lines included. When
+   some related tests reach the owner through same-module callers and others
+   through other modules' exports, the text names both ("same-module or
+   cross-module callers"); the class follows the same-module rule because not
+   every test's reach is cross-module. Each related test records the entries
+   it reaches once, so per-line classification does not rescan them. The importer's calls ride in the per-file export facts
    (file-fact schema 7), so resolution never re-parses an importer, and run
    only for owners of changed files.
 3. **Heuristic relations** when tiers 1 and 2 are empty, package-filtered,

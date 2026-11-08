@@ -717,21 +717,216 @@ fn fan_in_past_the_limit_follows_no_importer_and_says_so() -> Result<(), String>
     );
     assert!(cross_entries(&files, "src/a.ts", "decodeThing").is_empty());
     let finding = finding("fan-in-past-limit", &files)?;
+    assert_fan_in_limited("fan-in-past-limit", &finding);
+    Ok(())
+}
+
+/// An owner over the fan-in limit with no other relation: unknown, not the
+/// confident negative `no_static_path`, with the limit as the lead line and
+/// its own summary and next step, and no repair start.
+fn assert_fan_in_limited(label: &str, finding: &Finding) {
     assert!(
-        !relates_through_entry(&finding),
-        "related: {:?}",
+        finding.related_tests.is_empty(),
+        "{label}: related: {:?}",
         finding.related_tests
     );
-    assert_eq!(finding.class, ExposureClass::NoStaticPath);
+    assert_eq!(finding.class, ExposureClass::StaticUnknown, "{label}");
+    assert_eq!(finding.ripr.reach.state, StageState::Unknown, "{label}");
+    assert_eq!(
+        finding.ripr.reveal.observe.state,
+        StageState::Unknown,
+        "{label}"
+    );
+    assert_eq!(
+        finding.ripr.reveal.discriminate.state,
+        StageState::Unknown,
+        "{label}"
+    );
     assert!(
         finding
             .missing
-            .iter()
-            .any(|line| line.contains("past the limit ripr follows")),
-        "the limit is disclosed: {:?}",
+            .first()
+            .is_some_and(|line| line.contains("past the limit ripr follows")),
+        "{label}: the limit leads the missing lines: {:?}",
         finding.missing
     );
+    assert!(
+        !finding
+            .missing
+            .iter()
+            .any(|line| line.contains("No statically linked test call")),
+        "{label}: no confident negative: {:?}",
+        finding.missing
+    );
+    assert!(
+        finding
+            .ripr
+            .reveal
+            .discriminate
+            .summary
+            .contains("past the limit ripr follows, so reach through them was not checked"),
+        "{label}: {}",
+        finding.ripr.reveal.discriminate.summary
+    );
+    assert!(
+        finding
+            .recommended_next_step
+            .as_deref()
+            .is_some_and(|step| step.contains("reach through them was not checked")
+                && step.contains("no repair packet is emitted")),
+        "{label}: {:?}",
+        finding.recommended_next_step
+    );
+    assert!(
+        !finding
+            .evidence
+            .iter()
+            .any(|line| line.contains("repair_packet_ready: true")),
+        "{label}: evidence: {:?}",
+        finding.evidence
+    );
+}
+
+const A_DELETED: &str = "  text = text.trim();";
+const A_AFTER_DELETE: &str = "export function decodeThing(text: string): string {\n  return decodeURIComponent(text.replace(/%252F/g, \"%2F\"));\n}\n";
+
+/// A deletion-only change to `decodeThing` (old line 2 removed).
+fn deletion_finding(label: &str, files: &Files<'_>) -> Result<Finding, String> {
+    let root = ts_unique_tempdir(label)?;
+    for (path, source) in files {
+        ts_write_file(&root.join(path), source)?;
+    }
+    let deleted = ChangedFile {
+        path: PathBuf::from("src/a.ts"),
+        added_lines: Vec::new(),
+        removed_lines: vec![crate::analysis::diff::ChangedLine {
+            line: 2,
+            text: A_DELETED.to_string(),
+            new_side_line: 2,
+        }],
+    };
+    let result = TypeScriptAdapter.analyze_diff(
+        &ts_analysis_options(root.clone()),
+        &OraclePolicy::default(),
+        &[deleted],
+    )?;
+    let _ = std::fs::remove_dir_all(&root);
+    result
+        .findings
+        .into_iter()
+        .find(|finding| {
+            finding
+                .probe
+                .owner
+                .as_ref()
+                .is_some_and(|owner| owner.0.ends_with("::decodeThing"))
+        })
+        .ok_or_else(|| format!("{label}: expected a deleted-line finding for `decodeThing`"))
+}
+
+#[test]
+fn a_deletion_only_change_keeps_the_fan_in_limit() -> Result<(), String> {
+    // The deleted-line pass builds the owner context on its own path; it must
+    // carry the limit like the added-line pass. Twin at the limit relates.
+    let at_limit = with(
+        fan_in(MAX_CROSS_MODULE_ENTRIES),
+        "src/a.ts",
+        A_AFTER_DELETE.to_string(),
+    );
+    let twin = deletion_finding("fan-in-delete-at-limit", &at_limit)?;
+    assert!(
+        relates_through_entry(&twin),
+        "related: {:?}",
+        twin.related_tests
+    );
+    assert_eq!(twin.class, ExposureClass::StaticUnknown);
+    let past = with(
+        fan_in(MAX_CROSS_MODULE_ENTRIES + 1),
+        "src/a.ts",
+        A_AFTER_DELETE.to_string(),
+    );
+    assert_parsed(
+        "fan-in-delete-past-limit",
+        &past,
+        &[("src/a.ts", "decodeThing"), ("src/m0.ts", "get0")],
+    );
+    let finding = deletion_finding("fan-in-delete-past-limit", &past)?;
+    assert_fan_in_limited("fan-in-delete-past-limit", &finding);
     Ok(())
+}
+
+#[test]
+fn mixed_same_module_and_cross_module_reach_names_both() -> Result<(), String> {
+    // One test reaches `decodeThing` through a same-module export of `a`, the
+    // other through `normalize` in `b`: neither scope alone describes it.
+    let a = format!(
+        "{A}export function viaA(p: string): string {{\n  return decodeThing(p) + \"!\";\n}}\n"
+    );
+    let a_test = "import { expect, test } from \"vitest\";\nimport { viaA } from \"../src/a\";\ntest(\"viaA\", () => {\n  expect(viaA(\"a%252Fb\")).toBe(\"a%2Fb!\");\n});\n";
+    let files = with(
+        with(base(), "src/a.ts", a),
+        "tests/a.test.ts",
+        a_test.to_string(),
+    );
+    assert_parsed(
+        "mixed-reach",
+        &files,
+        &[
+            ("src/a.ts", "decodeThing"),
+            ("src/a.ts", "viaA"),
+            ("src/b.ts", "normalize"),
+        ],
+    );
+    let finding = finding("mixed-reach", &files)?;
+    assert_eq!(
+        finding.related_tests.len(),
+        2,
+        "{:?}",
+        finding.related_tests
+    );
+    assert!(relates_through_entry(&finding));
+    assert_eq!(finding.class, ExposureClass::StaticUnknown);
+    assert!(
+        finding.missing.iter().any(|line| line
+            .contains("only through same-module or cross-module callers (`normalize`, `viaA`)")),
+        "missing: {:?}",
+        finding.missing
+    );
+    let wording =
+        "same-module callers or exported functions of other modules that import and call it";
+    assert!(
+        finding.ripr.reveal.discriminate.summary.contains(wording),
+        "{}",
+        finding.ripr.reveal.discriminate.summary
+    );
+    assert!(
+        finding
+            .recommended_next_step
+            .as_deref()
+            .is_some_and(|step| step.contains(wording)),
+        "{:?}",
+        finding.recommended_next_step
+    );
+    let text = format!("{finding:?}");
+    assert!(
+        !text.contains("only through a same-module caller"),
+        "{text}"
+    );
+    assert!(
+        !text.contains("only through same-module callers ("),
+        "{text}"
+    );
+    Ok(())
+}
+
+#[test]
+fn the_reached_entry_mask_refuses_a_position_it_cannot_hold() {
+    use crate::analysis::language::typescript::related_tests::entry_position_mask;
+    assert_eq!(entry_position_mask(&[]), Some(0));
+    assert_eq!(entry_position_mask(&[0, 63]), Some(1 | (1u64 << 63)));
+    // Position 64 does not fit: no truncated set, the consumer recomputes.
+    assert_eq!(entry_position_mask(&[64]), None);
+    assert_eq!(entry_position_mask(&[0, 64]), None);
 }
 
 #[test]

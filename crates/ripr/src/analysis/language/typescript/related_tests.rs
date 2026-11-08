@@ -2067,7 +2067,7 @@ fn module_entry_relation_kind(
 
 /// Bit set over `owner.module_entries` positions; `None` when a position does
 /// not fit, so a consumer recomputes instead of reading a truncated set.
-fn entry_position_mask(positions: &[usize]) -> Option<u64> {
+pub(crate) fn entry_position_mask(positions: &[usize]) -> Option<u64> {
     positions.iter().try_fold(0u64, |mask, position| {
         u32::try_from(*position)
             .ok()
@@ -2079,6 +2079,13 @@ fn entry_position_mask(positions: &[usize]) -> Option<u64> {
 /// The owner's module entries a candidate reaches: the positions recorded
 /// when the candidate was related, or, for a candidate built without them,
 /// recomputed through the same gates.
+///
+/// Invariant: admission evaluates only the positions whose stand-in lists the
+/// test in `RelationIndex::candidate_indices`, and the fallback evaluates every
+/// position. The two agree because `candidate_indices` is a complete
+/// pre-filter (#10028): it drops only tests that `owner_call_relation` cannot
+/// relate to that stand-in, so the extra positions the fallback checks all
+/// fail the same gate.
 pub(crate) fn candidate_reached_entries<'o>(
     candidate: &TypeScriptRelatedCandidate<'_>,
     owner: &'o TypeScriptOwner,
@@ -2130,6 +2137,21 @@ pub(crate) fn module_entry_reach_is_cross_module_only(
     let reached =
         candidate_reached_entries(candidate, owner, reexport_index, alias_map, workspace_root);
     !reached.is_empty() && reached.iter().all(|entry| entry.cross_module.is_some())
+}
+
+/// `true` when the candidate reaches the owner through at least one export of
+/// another module (#13592); with [`module_entry_reach_is_cross_module_only`]
+/// false for some candidate, the reach is mixed.
+pub(crate) fn module_entry_reach_includes_cross_module(
+    candidate: &TypeScriptRelatedCandidate<'_>,
+    owner: &TypeScriptOwner,
+    reexport_index: &ReExportIndex,
+    alias_map: Option<&TsAliasMap>,
+    workspace_root: Option<&Path>,
+) -> bool {
+    candidate_reached_entries(candidate, owner, reexport_index, alias_map, workspace_root)
+        .iter()
+        .any(|entry| entry.cross_module.is_some())
 }
 
 /// The owner with what a stand-in never reads dropped (its entries, source
