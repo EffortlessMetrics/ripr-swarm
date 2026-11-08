@@ -137,9 +137,9 @@ pub(crate) use probes::{
     fingerprint_probe_id, legacy_whole_line_diff_probe_id, normalize_expression,
     normalize_rust_expression, sanitize_path,
 };
-pub(crate) use rust_index::{DeclinedRustFile, RustIndex};
+pub(crate) use rust_index::DeclinedRustFile;
 #[cfg(test)]
-pub(crate) use rust_index::{FileFacts, RaRustSyntaxAdapter, RustSyntaxAdapter};
+pub(crate) use rust_index::{FileFacts, RaRustSyntaxAdapter, RustIndex, RustSyntaxAdapter};
 /// Parser-backed related-test retention fixture for consumer tests (#9175);
 /// a narrow cfg(test) entry so output tests need no analysis internals.
 #[cfg(test)]
@@ -170,7 +170,7 @@ pub(crate) use seam_inventory::{
     DiffScopedCacheStatsAttribution, FileSeamIndex, PilotInventoryDefault,
     PreparedDiffScopedClassifiedWorkspace, PreparedDiffScopedEvaluationInput,
     REPO_EXPOSURE_SEAM_LIMIT_ENV, ScopedClassifiedSeamInventory, ScopedEvidenceConsumer,
-    SeamLimitInfo, SeamLimitSource, SecondStageFilter, TargetedTestInventoryError,
+    SeamLimitInfo, SeamLimitSource, SecondStageScope, TargetedTestInventoryError,
     announce_seam_facts_cache_misses, apply_pilot_seam_budget,
     classify_seams_in_file_with_shared_index, classify_seams_in_files_at_with_config,
     diff_only_rust_files, evaluate_diff_scoped_classified_seams_from_prepared,
@@ -1255,11 +1255,14 @@ pub(crate) fn owner_symbols_for_lines(
 /// every function whose span contains a changed line, so a consumer can tell
 /// whether an outer owner's span overlaps the diff even when attribution named
 /// a nested function. A line outside every function span has no entry in
-/// either list.
+/// either list. `edited_function_headers` holds the `(file, start_line)` of
+/// each of those enclosing functions, sorted and deduplicated, so a consumer
+/// can tell whether a test (identified by its header line) was edited.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ChangedLineOwnership {
     pub(crate) owners: Vec<ChangedLineOwner>,
     pub(crate) enclosing_owners: Vec<ChangedLineOwner>,
+    pub(crate) edited_function_headers: Vec<(PathBuf, usize)>,
 }
 
 pub(crate) fn changed_line_ownership_for_lines(
@@ -1296,9 +1299,19 @@ pub(crate) fn changed_line_ownership_for_lines(
             })
         })
         .collect::<Vec<_>>();
+    let edited_function_headers = lines
+        .iter()
+        .flat_map(|(file, line)| {
+            rust_index::find_enclosing_functions(&index, file, *line)
+                .map(|function| (file.clone(), function.start_line))
+        })
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
     Ok(ChangedLineOwnership {
         owners: sorted_owners(owners),
         enclosing_owners: sorted_owners(enclosing_owners),
+        edited_function_headers,
     })
 }
 

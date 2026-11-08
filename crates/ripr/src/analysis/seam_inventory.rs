@@ -2582,9 +2582,27 @@ pub(crate) fn diff_only_rust_files(
 
 /// A bounded consumer of classified windows. Implementations retain their
 /// result payloads independently from the complete evaluation denominator.
-/// Predicate over remaining seams; `false` means the consumer provably
-/// discards the seam whatever its evidence says (#12940).
-pub(crate) type SecondStageFilter<'s> = Box<dyn Fn(&RepoSeam) -> bool + 's>;
+/// How a consumer narrows the second stage (#12940). A remaining seam is
+/// evaluated when `keep_without_relation` accepts it, or when it relates to
+/// a test that `relation_pool` admits. Every other seam must be one the
+/// consumer provably discards whatever its evidence says.
+/// Admits a test by `(file, header line)`; see [`SecondStageScope`].
+pub(crate) type RelationPoolPredicate<'s> = Box<dyn Fn(&Path, usize) -> bool + 's>;
+
+pub(crate) struct SecondStageScope<'s> {
+    /// Seam-only predicate, decided without related-test evidence.
+    pub(crate) keep_without_relation: Box<dyn Fn(&RepoSeam) -> bool + Sync + 's>,
+    /// Admits a test by `(file, header line)` when a seam related to it may
+    /// still be kept. Relation lookups run only against admitted tests, so a
+    /// small pool keeps the narrowing cheap.
+    pub(crate) relation_pool: RelationPoolPredicate<'s>,
+    /// Which relation reasons to a pool test keep a seam. Must accept every
+    /// reason through which the consumer could still keep the seam.
+    pub(crate) counts_relation: fn(test_grip_evidence::RelationReason) -> bool,
+    /// False when the pool may be too large for per-seam lookups: any
+    /// admitted test then keeps every seam, as if all were related.
+    pub(crate) relation_lookup: bool,
+}
 
 pub(crate) trait ScopedEvidenceConsumer {
     fn in_first_stage(&self, seam: &RepoSeam) -> bool;
@@ -2592,10 +2610,9 @@ pub(crate) trait ScopedEvidenceConsumer {
     fn first_stage_sufficient(&self) -> bool;
     fn retained_payloads(&self) -> usize;
     /// Narrows the second stage after the first stage ran and was not
-    /// sufficient. Returns a predicate over the remaining seams that must be
-    /// `false` only for a seam the consumer will provably discard whatever its
-    /// evidence says. `None` evaluates every remaining seam.
-    fn second_stage_filter<'s>(&'s self, _index: &RustIndex) -> Option<SecondStageFilter<'s>> {
+    /// sufficient; see [`SecondStageScope`]. `None` evaluates every
+    /// remaining seam.
+    fn second_stage_scope(&self) -> Option<SecondStageScope<'_>> {
         None
     }
 }
@@ -2701,8 +2718,8 @@ fn classify_scoped_seams_streamed(
     }
     // Skipped seams are not counted as unevaluated: the consumer proved it
     // would discard them, so no scoped result can depend on them.
-    if let Some(keep) = consumer.second_stage_filter(index) {
-        rest.retain(|ordinal| keep(&seams[*ordinal]));
+    if let Some(scope) = consumer.second_stage_scope() {
+        rest = narrow_second_stage(seams, rest, &pass, &scope)?;
     }
     evaluated = evaluated
         .checked_add(classify_evidence_windows(
@@ -2715,6 +2732,52 @@ fn classify_scoped_seams_streamed(
         .ok_or("review evidence evaluation count overflow")?;
     cancellation::checkpoint()?;
     Ok((evaluated, 0, pass.limitations()?))
+}
+
+/// The remaining ordinals `scope` keeps (#12940). The pool is the tests a
+/// kept seam may relate to; a seam the seam-only predicate rejects survives
+/// only through a relation to a pool test.
+fn narrow_second_stage(
+    seams: &[RepoSeam],
+    rest: Vec<usize>,
+    pass: &test_grip_evidence::EvidencePass<'_>,
+    scope: &SecondStageScope<'_>,
+) -> Result<Vec<usize>, String> {
+    let before = rest.len();
+    let started = std::time::Instant::now();
+    let pool = pass.related_test_pool(|file, line| (scope.relation_pool)(file, line));
+    if !scope.relation_lookup && !pool.is_empty() {
+        trace_latency_phase(
+            "evidence_for_seams",
+            &format!("second_stage_unnarrowed_pool_{}_rest_{before}", pool.len()),
+            started.elapsed(),
+        );
+        return Ok(rest);
+    }
+    let keep_without_relation = &scope.keep_without_relation;
+    let keep = pass.seams_kept_by_scope(
+        seams,
+        &rest,
+        |seam| keep_without_relation(seam),
+        &pool,
+        scope.counts_relation,
+    );
+    cancellation::checkpoint()?;
+    let kept = rest
+        .into_iter()
+        .zip(keep)
+        .filter_map(|(ordinal, kept)| kept.then_some(ordinal))
+        .collect::<Vec<_>>();
+    trace_latency_phase(
+        "evidence_for_seams",
+        &format!(
+            "second_stage_narrowed_pool_{}_rest_{before}_kept_{}",
+            pool.len(),
+            kept.len()
+        ),
+        started.elapsed(),
+    );
+    Ok(kept)
 }
 
 fn classify_evidence_windows(

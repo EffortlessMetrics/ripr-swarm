@@ -406,6 +406,29 @@ pub(super) fn agent_brief_owners_for_lines(
         .collect()
 }
 
+/// Owner attribution for changed lines from one index build.
+pub(super) struct AgentBriefOwnerAttribution {
+    /// Innermost owner per changed line.
+    pub(super) changed_owners: Vec<AgentBriefChangedOwner>,
+    /// Every owner whose span contains a changed line.
+    pub(super) enclosing_owners: Vec<AgentBriefChangedOwner>,
+    /// Header line of every function whose span contains a changed line.
+    /// `None` when attribution failed, so "was this test edited" stays
+    /// unknown instead of reading as "no".
+    pub(super) edited_function_headers: Option<Vec<AgentBriefLine>>,
+}
+
+impl AgentBriefOwnerAttribution {
+    /// No attribution: owner-span overlap and test edits stay unknown.
+    pub(super) fn unknown() -> Self {
+        Self {
+            changed_owners: Vec::new(),
+            enclosing_owners: Vec::new(),
+            edited_function_headers: None,
+        }
+    }
+}
+
 /// Innermost and enclosing owner attribution for changed lines from one
 /// index build. PR review placement uses the enclosing list to decide whether
 /// a seam owner's span overlaps the diff (RIPR-SPEC-0012). A resolution error
@@ -414,13 +437,13 @@ pub(super) fn agent_brief_owners_for_lines(
 pub(super) fn agent_brief_owner_attribution_for_lines(
     root: &Path,
     lines: &[AgentBriefLine],
-) -> (Vec<AgentBriefChangedOwner>, Vec<AgentBriefChangedOwner>) {
+) -> AgentBriefOwnerAttribution {
     let owner_inputs = lines
         .iter()
         .map(|line| (line.file.clone(), line.line))
         .collect::<Vec<_>>();
     let Ok(ownership) = analysis::changed_line_ownership_for_lines(root, &owner_inputs) else {
-        return (Vec::new(), Vec::new());
+        return AgentBriefOwnerAttribution::unknown();
     };
     let project = |owners: Vec<analysis::ChangedLineOwner>| {
         owners
@@ -428,10 +451,17 @@ pub(super) fn agent_brief_owner_attribution_for_lines(
             .map(|owner| AgentBriefChangedOwner::new(owner.file, owner.line, owner.owner))
             .collect::<Vec<_>>()
     };
-    (
-        project(ownership.owners),
-        project(ownership.enclosing_owners),
-    )
+    AgentBriefOwnerAttribution {
+        changed_owners: project(ownership.owners),
+        enclosing_owners: project(ownership.enclosing_owners),
+        edited_function_headers: Some(
+            ownership
+                .edited_function_headers
+                .into_iter()
+                .map(|(file, line)| AgentBriefLine::new(file, line))
+                .collect(),
+        ),
+    }
 }
 
 /// Confine an agent-brief `--files` entry to the workspace (#2100): strip
