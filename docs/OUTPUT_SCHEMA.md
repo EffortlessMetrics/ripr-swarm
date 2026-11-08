@@ -3680,7 +3680,10 @@ count on the `Summary` line; the findings leave the triage selection the same
 way policy-suppressed findings do. GitHub output skips their annotations and
 counts them in the denominator `::notice`. SARIF (`sarif`, `sarif-compact`)
 emits no result for them and adds a `withheld_by_owner_opt_out` count to
-`runs[0].properties` (absent when zero). The diff-scope badges (`badge-json`,
+`runs[0].properties` (absent when zero). `missed-txt` lists no line for
+them and counts them in its leading `# ripr: N finding(s) not listed` comment
+under the same reason; a policy suppression of the same finding counts there
+instead. The diff-scope badges (`badge-json`,
 `badge-shields`, `badge-plus-json`, `badge-plus-shields`) do not count them
 as unsuppressed exposure gaps or calibrated unknowns; an explicit badge
 suppression that matches one still counts it as suppressed.

@@ -561,6 +561,45 @@ fn github_skips_withheld_annotations_and_discloses_them() -> Result<(), String> 
     Ok(())
 }
 
+/// `missed-txt` lists no line for the skipped owner, keeps the other
+/// owner's lines, and names the withholding in its leading comment.
+#[test]
+fn missed_txt_skips_withheld_lines_and_discloses_them() -> Result<(), String> {
+    let gap_lines = |text: &str| -> Vec<u64> {
+        text.lines()
+            .filter(|line| !line.starts_with("# "))
+            .filter_map(|line| line.strip_prefix("src/lib.rs:"))
+            .filter_map(|rest| rest.split(':').next()?.parse().ok())
+            .collect()
+    };
+    let plain = Repo::new(&free_fn_lib("//", "//"), &mixed_diff())?;
+    let plain_lines = gap_lines(&plain.run(&["--format", "missed-txt"])?);
+    assert!(
+        plain_lines.contains(&3) && plain_lines.contains(&8),
+        "premise: both owners are listed without the attribute: {plain_lines:?}"
+    );
+    let limit_count = line_findings(&plain.report()?, 3)?.len();
+
+    let repo = Repo::new(&free_fn_lib("#[mutants::skip]", "//"), &mixed_diff())?;
+    let text = repo.run(&["--format", "missed-txt"])?;
+    let lines = gap_lines(&text);
+    assert!(
+        !lines.contains(&3),
+        "no line for the withheld owner:\n{text}"
+    );
+    assert!(
+        lines.contains(&8),
+        "the ordinary owner stays listed:\n{text}"
+    );
+    assert!(
+        text.contains(&format!(
+            "{limit_count} withheld by owner opt-out ({REASON}: the changed function carries #[mutants::skip])"
+        )),
+        "the leading comment names the count and reason:\n{text}"
+    );
+    Ok(())
+}
+
 /// SARIF emits no result for a withheld finding, keeps the other owner's
 /// results, and discloses the count in the run properties.
 #[test]
