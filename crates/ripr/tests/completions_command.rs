@@ -114,3 +114,77 @@ fn scripts_load_in_the_installed_shells() {
     }
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Runs an installed shell and returns its stdout. `None` means the shell is
+/// not installed and `RIPR_REQUIRE_COMPLETION_SHELLS` did not require it.
+#[cfg(unix)]
+fn shell_stdout(program: &str, args: &[&str]) -> Option<String> {
+    let require = std::env::var("RIPR_REQUIRE_COMPLETION_SHELLS")
+        .is_ok_and(|value| !value.is_empty() && value != "0");
+    match Command::new(program).args(args).output() {
+        Ok(output) => {
+            assert!(
+                output.status.success(),
+                "{program} failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            Some(String::from_utf8_lossy(&output.stdout).into_owned())
+        }
+        Err(_) => {
+            assert!(!require, "{program} is required but not installed");
+            None
+        }
+    }
+}
+
+#[cfg(unix)]
+fn script_file(shell: &str) -> std::path::PathBuf {
+    let file = std::env::temp_dir().join(format!("ripr-offer-{}.{shell}", std::process::id()));
+    assert_eq!(
+        std::fs::write(&file, ripr(&["completions", shell]).stdout).map_err(|e| e.to_string()),
+        Ok(())
+    );
+    file
+}
+
+/// `cache` offers its sub-words in second position and nothing once one is typed.
+#[cfg(unix)]
+#[test]
+fn bash_offers_the_second_word_only_in_second_position() {
+    let file = script_file("bash");
+    let path = file.to_string_lossy().into_owned();
+    let offer = |words: &str, cword: u8| {
+        let script = format!(
+            "source \"$0\"; COMP_WORDS=({words}); COMP_CWORD={cword}; _ripr; echo \"${{COMPREPLY[*]}}\""
+        );
+        shell_stdout("bash", &["-c", &script, &path])
+    };
+    if let Some(second) = offer("ripr cache ''", 2) {
+        assert!(second.contains("status"), "{second}");
+        assert!(second.contains("export"), "{second}");
+    }
+    if let Some(third) = offer("ripr cache status ''", 3) {
+        assert_eq!(third.trim(), "", "{third}");
+    }
+    let _ = std::fs::remove_file(&file);
+}
+
+#[cfg(unix)]
+#[test]
+fn fish_offers_the_second_word_only_in_second_position() {
+    let file = script_file("fish");
+    let path = file.to_string_lossy().into_owned();
+    let offer = |line: &str| {
+        let script = format!("source {path}; complete -C '{line}'");
+        shell_stdout("fish", &["-c", &script])
+    };
+    if let Some(second) = offer("ripr cache ") {
+        assert!(second.contains("status"), "{second}");
+        assert!(second.contains("export"), "{second}");
+    }
+    if let Some(third) = offer("ripr cache status ") {
+        assert!(!third.contains("export"), "{third}");
+        assert!(!third.contains("clear"), "{third}");
+    }
+    let _ = std::fs::remove_file(&file);
+}

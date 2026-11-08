@@ -1449,10 +1449,6 @@ are scoped or reviewed.
 
 ### Added
 
-- `ripr completions <bash|zsh|fish|powershell>` prints a tab-completion script
-  for command names and the word after a command (such as `cache status`),
-  built from the command catalog. It does not complete flags and installs
-  nothing (#7438).
 - **Perl is an opt-in, advisory preview in this release, not a supported language.** It needs a `lang-perl` build and an external fact-packet producer; the `perl-ripr-facts` exporter is not published, so no released build and exporter combination is usable yet. Repo config cannot choose the Perl executable without `RIPR_ALLOW_REPO_PERL_EXECUTABLE=1`. Rows where the tests discriminate but `ripr` cannot show it read `static_unknown` or `limited`, which costs missed credit rather than a wrong verdict, and Perl findings carry the generic next action instead of a Perl-specific repair (#2766, #1409, #4438).
 
 - Bounded repair states its inline-test boundary as permanent scope:
