@@ -225,6 +225,21 @@ fn bare_tothrow_generic_error_lookup_message_offers_no_packet() -> Result<(), St
         DIVIDE_LOOKUP_DIFF,
         DIVIDE_BARE_TEST,
     )?;
+    // Precondition: the lookup-key line still yields the weak error-path
+    // finding whose discriminator names the key, so the absence below is the
+    // message guard refusing it, not a different classification.
+    let discriminator = check
+        .finding
+        .pointer("/activation/missing_discriminators/0/value")
+        .and_then(Value::as_str);
+    if check.class() != Some("weakly_exposed")
+        || discriminator != Some("throws Error matching 'division by zero'")
+    {
+        return Err(format!(
+            "lookup-key fixture lost its weak discriminator: {}",
+            check.finding
+        ));
+    }
     if check
         .assertion_shape()
         .is_some_and(|shape| shape.contains("toThrow('"))
