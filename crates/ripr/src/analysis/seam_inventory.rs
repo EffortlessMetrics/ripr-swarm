@@ -7741,6 +7741,195 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
         Ok(())
     }
 
+    /// Writes `core_src` plus `extra_src` to a fixture, builds a core over
+    /// `core_src`, reuses it for both, and requires the reused index to
+    /// serialize identically to a fresh build (#13754). Returns the number of
+    /// `index_cached_parse` phases the reuse started: 1 when only the extras
+    /// were parsed into the core, 2 when a guard fell back to a fresh build.
+    ///
+    /// The target list is path-ordered, like the diff pipeline's loaded
+    /// files. An extension appends the added files' facts after the core's,
+    /// so a fixture that expects an extension lists core paths that sort
+    /// before every added path, keeping the flat fact order comparable.
+    fn include_reuse_builds(
+        name: &str,
+        core_src: &[(&str, &str)],
+        extra_src: &[(&str, &str)],
+    ) -> Result<(usize, RustIndex), String> {
+        use crate::analysis::facts::index_build_probe::observe;
+        let mut target_src: Vec<(&str, &str)> = core_src.iter().chain(extra_src).copied().collect();
+        target_src.sort_unstable();
+        let root = reuse_fixture_root(name, &target_src)?;
+        let result = (|| {
+            let core = bytes_of(core_src);
+            let target = bytes_of(&target_src);
+            let core_index = rust_index::build_analysis_index_from_loaded_files(&root, &core, &[])?;
+            let (reused, builds) = observe(|| {
+                rust_index::reuse_cached_index_with_loaded_files(core_index, &root, &target, &[])
+            });
+            let reused = reused?;
+            let fresh = rust_index::build_analysis_index_from_loaded_files(&root, &target, &[])?;
+            let reused_json =
+                serde_json::to_string(&reused.index).map_err(|err| err.to_string())?;
+            let fresh_json = serde_json::to_string(&fresh.index).map_err(|err| err.to_string())?;
+            if reused_json != fresh_json {
+                let at = reused_json
+                    .bytes()
+                    .zip(fresh_json.bytes())
+                    .position(|(left, right)| left != right)
+                    .unwrap_or(reused_json.len().min(fresh_json.len()));
+                let context = |json: &str| {
+                    let start = json.floor_char_boundary(at.saturating_sub(300));
+                    let end = json.ceil_char_boundary((at + 200).min(json.len()));
+                    json[start..end].to_string()
+                };
+                return Err(format!(
+                    "reused index must serialize identically to a fresh build (builds={builds}); \
+                     reused: …{}… fresh: …{}…",
+                    context(&reused_json),
+                    context(&fresh_json)
+                ));
+            }
+            Ok((builds, reused.index))
+        })();
+        let _ = std::fs::remove_dir_all(&root);
+        result
+    }
+
+    /// #13754: added files whose `include!` only reaches other added files,
+    /// or nothing indexed, or appears only in a string or a comment, leave
+    /// every retained file's include view unchanged, so the core is
+    /// extended in place (one parse phase) and still equals a fresh build.
+    #[test]
+    fn reuse_extends_core_when_added_includes_leave_retained_files_alone() -> Result<(), String> {
+        let core_src = [
+            (
+                "src/lib.rs",
+                "include!(concat!(env!(\"OUT_DIR\"), \"/core.rs\"));\npub fn top() -> i32 { 1 }\n",
+            ),
+            (
+                "tests/common/shared.rs",
+                "pub fn unrelated() -> i32 { 3 }\n",
+            ),
+        ];
+        let extra_src = [
+            (
+                "tests/helper.rs",
+                "include!(\"support/fixture.rs\");\n#[test]\nfn helper_runs() { assert_eq!(fixture(), 2); }\n",
+            ),
+            (
+                "tests/support/fixture.rs",
+                "pub fn fixture() -> i32 { 2 }\n",
+            ),
+            (
+                "tests/generated.rs",
+                "include!(concat!(env!(\"OUT_DIR\"), \"/token.rs\"));\n#[test]\nfn generated_runs() {}\n",
+            ),
+            (
+                "tests/mentions.rs",
+                "// an unresolved `include!` is disclosed\nconst TEXT: &str = r#\"include!(\"nope.rs\");\"#;\n#[test]\nfn mentions_run() { assert!(!TEXT.is_empty()); }\n",
+            ),
+        ];
+        let (builds, reused) = include_reuse_builds("reuse-include-leaf", &core_src, &extra_src)?;
+        if builds != 1 {
+            return Err(format!(
+                "added includes that leave retained files alone must extend the core, got {builds} parse phases"
+            ));
+        }
+        let fixture = reused
+            .include_parents
+            .get(&PathBuf::from("tests/support/fixture.rs"))
+            .ok_or("the added fragment must resolve to its added parent")?;
+        if fixture.parent != Path::new("tests/helper.rs") {
+            return Err(format!("unexpected include parent {:?}", fixture.parent));
+        }
+        let rebased = reused.functions().iter().any(|function| {
+            function.name == "fixture" && function.id.0.starts_with("tests/helper.rs::")
+        });
+        if !rebased {
+            return Err("the added fragment's function must be rebased onto its parent".into());
+        }
+        Ok(())
+    }
+
+    /// #13754 fail-closed: an added `include!` that gives a retained file an
+    /// include parent changes that file's compilation unit and composed
+    /// context, so the reuse falls back to a fresh build.
+    #[test]
+    fn reuse_falls_back_when_added_include_reparents_a_retained_file() -> Result<(), String> {
+        let core_src = [
+            ("src/lib.rs", "pub fn top() -> i32 { 1 }\n"),
+            ("src/frag.rs", "pub fn fragment() -> i32 { 2 }\n"),
+        ];
+        let extra_src = [("src/extra.rs", "include!(\"frag.rs\");\n")];
+        let (builds, reused) =
+            include_reuse_builds("reuse-include-reparent", &core_src, &extra_src)?;
+        if builds != 2 {
+            return Err(format!(
+                "re-parenting a retained file must fall back to a fresh build, got {builds} parse phases"
+            ));
+        }
+        if !reused
+            .include_parents
+            .contains_key(Path::new("src/frag.rs"))
+        {
+            return Err("fixture must re-parent the retained fragment".into());
+        }
+        Ok(())
+    }
+
+    /// #13754 fail-closed: the first unresolved `include!` withdraws
+    /// workspace-wide module-tree claims a retained file already carries.
+    #[test]
+    fn reuse_falls_back_when_added_include_adds_the_first_limitation() -> Result<(), String> {
+        let core_src = [("src/lib.rs", "pub fn top() -> i32 { 1 }\n")];
+        let extra_src = [(
+            "tests/generated.rs",
+            "include!(concat!(env!(\"OUT_DIR\"), \"/token.rs\"));\n",
+        )];
+        let (builds, reused) = include_reuse_builds("reuse-include-limit", &core_src, &extra_src)?;
+        if builds != 2 || reused.include_limitations.is_empty() {
+            return Err(format!(
+                "a first include limitation must fall back to a fresh build, got {builds} parse phases"
+            ));
+        }
+        Ok(())
+    }
+
+    /// #13754 fail-closed: two added files where one includes the other
+    /// rebase the fragment onto that parent while the added files are
+    /// indexed alone; a retained file that also includes the fragment makes
+    /// its parent ambiguous in the whole index, so the fragment keeps its own
+    /// identity in a fresh build and the early rebase cannot be undone.
+    #[test]
+    fn reuse_falls_back_when_whole_index_moves_an_added_fragment() -> Result<(), String> {
+        let core_src = [
+            (
+                "src/lib.rs",
+                "include!(\"shared.rs\");\npub fn top() -> i32 { 1 }\n",
+            ),
+            ("src/other.rs", "pub fn other() -> i32 { 3 }\n"),
+        ];
+        let extra_src = [
+            ("src/extra.rs", "include!(\"shared.rs\");\n"),
+            ("src/shared.rs", "pub fn shared() -> i32 { 2 }\n"),
+        ];
+        let (builds, reused) =
+            include_reuse_builds("reuse-include-ambiguous", &core_src, &extra_src)?;
+        if builds != 2 {
+            return Err(format!(
+                "a moved added fragment must fall back to a fresh build, got {builds} parse phases"
+            ));
+        }
+        if reused
+            .include_parents
+            .contains_key(Path::new("src/shared.rs"))
+        {
+            return Err("fixture must leave the shared fragment with an ambiguous parent".into());
+        }
+        Ok(())
+    }
+
     /// A changed file differing from the indexed one only by a BOM is
     /// current: no re-parse, no fact-cache lookup, index untouched.
     #[test]

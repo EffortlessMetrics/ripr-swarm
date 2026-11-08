@@ -344,36 +344,32 @@ fn reuse_cached_index(
     }
     // Post-processing is only incrementally exact when the file set grows by
     // leaf additions. A dropped file can retract module provenance and helper
-    // credits already applied to retained files, and an added or changed file
-    // with an `include!` directive can re-parent already rebased function
-    // identities; none of those can be undone in place, so fail closed to a
-    // fresh build over exactly `files` (verdicts equal a non-reusing build).
-    // A changed file (an extra replacing an indexed path) retracts too:
-    // `remove_file` leaves include parents/targets/limitations and module
-    // provenance derived from the old bytes in place.
+    // credits already applied to retained files; that cannot be undone in
+    // place, so fail closed to a fresh build over exactly `files` (verdicts
+    // equal a non-reusing build). A changed file (an extra replacing an
+    // indexed path) retracts too: `remove_file` leaves include
+    // parents/targets/limitations and module provenance derived from the old
+    // bytes in place.
     let retracts = !dropped.is_empty()
         || extras
             .iter()
             .any(|(path, _)| cached.index.files().get(path).is_some());
-    let rebases_includes = extras
-        .iter()
-        .any(|(_, bytes)| bytes.windows(8).any(|w| w == b"include!"));
-    if retracts || rebases_includes {
+    if retracts {
         drop(cached);
-        return build_cached_index_with_test_harnesses(
-            root,
-            files,
-            registrations,
-            MissAttribution::Skipped,
-        );
-    }
-    for path in &dropped {
-        cached.index.remove_file(path);
+        return reuse_fallback(root, files, registrations, "retracts");
     }
     if !extras.is_empty() {
-        let stats = index_phase("index_cached_parse", || {
+        // #13754: an added file's `include!` is no longer by itself a reason
+        // to rebuild. It could re-parent function identities already rebased
+        // in retained files, or change the include view their composed roles
+        // were derived from, and neither can be undone in place. So snapshot
+        // that view now and, after the whole-index include resolution the
+        // extension runs, keep the extension only when the view is unchanged.
+        let retained_includes = RetainedIncludeView::capture(&cached.index);
+        let extension = index_phase("index_cached_parse", || {
             build::extend_index_from_loaded_files_with_cache(&mut cached.index, root, &extras)
         })?;
+        let stats = extension.stats;
         cached.file_fact_cache.hits += stats.hits;
         cached.file_fact_cache.misses += stats.misses;
         cached.file_fact_cache.corrupt_ignored += stats.corrupt_ignored;
@@ -404,12 +400,17 @@ fn reuse_cached_index(
         });
         if unknowable {
             drop(cached);
-            return build_cached_index_with_test_harnesses(
-                root,
-                files,
-                registrations,
-                MissAttribution::Skipped,
-            );
+            return reuse_fallback(root, files, registrations, "unknowable_module_composition");
+        }
+        let added: std::collections::BTreeSet<&Path> =
+            extras.iter().map(|(path, _)| path.as_path()).collect();
+        if let Err(reason) = retained_includes.check_preserved(
+            &cached.index,
+            &added,
+            &extension.added_include_parents,
+        ) {
+            drop(cached);
+            return reuse_fallback(root, files, registrations, reason);
         }
     }
     let mut hash = crate::analysis::seam_cache::FilesContentHashBuilder::new();
@@ -418,6 +419,112 @@ fn reuse_cached_index(
     }
     cached.files_content_hash = hash.finish();
     post_process_cached_index(cached, root, registrations)
+}
+
+/// The fail-closed rebuild of [`reuse_cached_index`]: a fresh build over
+/// exactly `files`. The reason is reported on the opt-in latency stream so a
+/// profile can tell which guard refused the reuse.
+fn reuse_fallback(
+    root: &Path,
+    files: &[(PathBuf, Vec<u8>)],
+    registrations: &[TestHarnessRegistration],
+    reason: &str,
+) -> Result<build::CachedRustIndex, String> {
+    if std::env::var_os("RIPR_REPO_EXPOSURE_LATENCY_TRACE").is_some() {
+        eprintln!(
+            "ripr_repo_exposure_latency phase=index_reuse_fallback status={reason} duration_ms=0"
+        );
+    }
+    build_cached_index_with_test_harnesses(root, files, registrations, MissAttribution::Skipped)
+}
+
+/// The include graph as the retained files of a reused index saw it (#13754).
+///
+/// Include resolution is recomputed over the whole index on every extension,
+/// so the extended `include_parents`, `include_targets` and
+/// `include_limitations` always equal a fresh build's. What is not recomputed
+/// is state derived from them earlier: the function identities already
+/// rebased onto a compilation unit (a rebase only rewrites an identity that
+/// still carries its own file's prefix), and the composed roles, provenance
+/// and grants of retained files. Post-processing re-derives the latter from
+/// the extended view, but not every earlier write is withdrawn when the view
+/// moves. So the extension is kept only when, for every retained file, the
+/// include view it was composed against is unchanged: added files bring only
+/// edges of their own, the shape a leaf addition (#8547) already has.
+struct RetainedIncludeView {
+    parents: std::collections::BTreeMap<PathBuf, ResolvedIncludeParent>,
+    targets: std::collections::BTreeSet<PathBuf>,
+    limitations_empty: bool,
+}
+
+impl RetainedIncludeView {
+    fn capture(index: &RustIndex) -> Self {
+        Self {
+            parents: index.include_parents.clone(),
+            targets: index.include_targets.clone(),
+            limitations_empty: index.include_limitations.is_empty(),
+        }
+    }
+
+    /// Whether `index`, extended by the `added` files, still shows every
+    /// retained file the include view captured before the extension, and
+    /// whether each added file's identities, first rebased against
+    /// `added_parents` (the edges among the added files alone), sit on the
+    /// compilation unit the whole index resolves for them.
+    fn check_preserved(
+        &self,
+        index: &RustIndex,
+        added: &std::collections::BTreeSet<&Path>,
+        added_parents: &std::collections::BTreeMap<PathBuf, ResolvedIncludeParent>,
+    ) -> Result<(), &'static str> {
+        // An exceeded edge limit leaves `include_targets` as the extension
+        // merged it instead of resetting it as a fresh build does.
+        if index
+            .include_limitations
+            .iter()
+            .any(|limitation| limitation.reason_code == "rust_include_edge_limit_exceeded")
+        {
+            return Err("include_edge_limit");
+        }
+        // Composition withdraws module-tree and crate-root claims while any
+        // include is unresolved; a claim already granted to a retained file
+        // cannot be withdrawn in place. (Resolving the last limitation only
+        // enables claims, which composition writes, so that direction is
+        // the ordinary leaf addition #8547 already reuses.)
+        if self.limitations_empty && !index.include_limitations.is_empty() {
+            return Err("include_limitation_added");
+        }
+        // Every retained file keeps exactly its include parent (or none).
+        // Before the extension every parent edge had a retained child and a
+        // retained parent, so equality also keeps each retained file's whole
+        // parent chain, and with it its compilation unit, unchanged.
+        let retained_parents = index
+            .include_parents
+            .iter()
+            .filter(|(child, _)| !added.contains(child.as_path()));
+        if !retained_parents.eq(self.parents.iter()) {
+            return Err("retained_include_parent_changed");
+        }
+        let retained_targets = index
+            .include_targets
+            .iter()
+            .filter(|target| !added.contains(target.as_path()));
+        if !retained_targets.eq(self.targets.iter()) {
+            return Err("retained_include_target_changed");
+        }
+        // An added file rebased against the added-only edges cannot be moved
+        // again; one that was not rebased there is rebased by the
+        // whole-index pass exactly as a fresh build rebases it.
+        for file in added {
+            let partial = compilation_unit_path_from_parents(added_parents, file);
+            if partial.as_path() != *file
+                && partial != compilation_unit_path_from_parents(&index.include_parents, file)
+            {
+                return Err("added_include_unit_changed");
+            }
+        }
+        Ok(())
+    }
 }
 
 fn build_cached_index_with_test_harnesses(

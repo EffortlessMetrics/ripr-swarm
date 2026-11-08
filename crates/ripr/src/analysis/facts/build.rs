@@ -24,6 +24,15 @@ pub fn build_index(root: &Path, files: &[PathBuf]) -> Result<RustIndex, String> 
     build_index_with_adapters(root, files, &RaRustSyntaxAdapter, &LexicalRustSyntaxAdapter)
 }
 
+/// What [`extend_index_from_loaded_files_with_cache`] did.
+pub(crate) struct IndexExtension {
+    pub(crate) stats: FileFactCacheStats,
+    /// The include parents resolved among the added files alone, against
+    /// which their function identities were first rebased.
+    pub(crate) added_include_parents:
+        std::collections::BTreeMap<PathBuf, super::ResolvedIncludeParent>,
+}
+
 pub(crate) struct CachedRustIndex {
     pub(crate) index: RustIndex,
     pub(crate) file_fact_cache: FileFactCacheStats,
@@ -89,14 +98,20 @@ fn build_index_from_loaded_files_with_cache_and_adapters(
 /// as a fresh whole build does. The caller re-runs the shared post-parse
 /// phases, so the result equals a fresh build over the union file set
 /// without re-decoding or re-parsing the files already indexed.
+///
+/// The added files are first indexed on their own, which rebases their
+/// function identities against the include edges among themselves alone;
+/// those edges are returned so the caller can prove the whole-index rebase
+/// that follows did not need to move an identity already rebased (#13754).
 pub(crate) fn extend_index_from_loaded_files_with_cache(
     index: &mut RustIndex,
     root: &Path,
     files: &[(PathBuf, Vec<u8>)],
-) -> Result<FileFactCacheStats, String> {
+) -> Result<IndexExtension, String> {
     let extra = build_index_from_loaded_files_with_cache(root, files, MissAttribution::Skipped)?;
     let stats = extra.file_fact_cache;
     let extra_index = extra.index;
+    let added_include_parents = extra_index.include_parents.clone();
     let paths: Vec<PathBuf> = extra_index
         .files()
         .iter()
@@ -138,7 +153,10 @@ pub(crate) fn extend_index_from_loaded_files_with_cache(
     index.workspace_member_dirs = absolute_member_dirs(root);
     index.drop_in_manifests = super::drop_in::DropInManifests::new(root);
     index.member_crates = super::member_crates::MemberCrates::new(root);
-    Ok(stats)
+    Ok(IndexExtension {
+        stats,
+        added_include_parents,
+    })
 }
 
 /// Streaming variant of [`build_index_from_loaded_files_with_cache`]
