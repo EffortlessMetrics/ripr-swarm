@@ -1,0 +1,1 @@
+| [RIPR-SPEC-0406](../specs/RIPR-SPEC-0406-terraform-module-native-test-plan-apply-provider-value-state-and-external-edge-boundaries.md) | proposed | Terraform module, native-test, plan/apply, provider, value, state, and external-edge preview boundaries (#5969, #5603) |

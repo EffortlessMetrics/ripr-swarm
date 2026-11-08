@@ -1,0 +1,7 @@
+[[artifact]]
+id = "RIPR-SPEC-0401"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0401-r-preview-package-testthat-numerical-data-boundaries.md"
+status = "proposed"
+owner = "language-adapter"
+standalone_reason = "Epic #5592 leaf #5850 defines the R preview contract before parser or adapter implementation."

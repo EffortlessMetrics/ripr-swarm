@@ -34,6 +34,7 @@ Start here:
     - 7 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/rust_twin_collection_read_self_computed/input --diff <cwd>/fixtures/rust_twin_collection_read_self_computed/diff.patch --mode fast probe:src_lib.rs:call_deletion:3c28bb05
   ripr context --root <cwd>/fixtures/rust_twin_collection_read_self_computed/input --diff <cwd>/fixtures/rust_twin_collection_read_self_computed/diff.patch --mode fast --at probe:src_lib.rs:call_deletion:3c28bb05
   no repair start offered: ripr found 4 spots in this finding's file, but could not tie one to this finding's changed line, so it cannot pick one for you; `ripr pilot` lists them, or follow the Next step above

@@ -363,3 +363,29 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — typescript_effect_owner_alias (29)
+
+Reason:
+RIPR-SPEC-0224 #5528: spy/mock owner-path rows earn assertion_not_observing for affirmative other-target evidence
+
+Command:
+`cargo xtask goldens bless typescript_effect_owner_alias --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — typescript_effect_owner_alias (30)
+
+Reason:
+RIPR-SPEC-0122: drill-in and repair-start command lines carry consumer labels naming their id domain (#12431)
+
+Command:
+`cargo xtask goldens bless typescript_effect_owner_alias --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

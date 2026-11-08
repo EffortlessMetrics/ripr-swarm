@@ -827,3 +827,27 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — typescript_parse_error_unsupported_syntax (36)
+
+Reason:
+RIPR-SPEC-0122: drill-in and repair-start command lines carry consumer labels naming their id domain (#12431)
+
+Command:
+`cargo xtask goldens bless typescript_parse_error_unsupported_syntax --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — typescript_parse_error_unsupported_syntax (37)
+
+Reason:
+RIPR-SPEC-0088: retain source-file provenance for advisory TypeScript-family unknown findings; verdicts and repair authority unchanged (#12930)
+
+Command:
+`cargo xtask goldens bless typescript_parse_error_unsupported_syntax --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

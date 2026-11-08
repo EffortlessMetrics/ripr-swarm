@@ -1,0 +1,16 @@
+# Governing issue #5899: Lua preview spec leaf (documentation registration only).
+[[behavior]]
+id = "RIPR-SPEC-0398"
+name = "Lua preview dialect, Busted, table, metatable, host, and native boundaries"
+spec = "docs/specs/RIPR-SPEC-0398-lua-preview-dialect-busted-host-contract.md"
+tests = []
+fixtures = []
+code = []
+outputs = [
+  "docs/specs/RIPR-SPEC-0398-lua-preview-dialect-busted-host-contract.md",
+  "docs/spec-index.d/RIPR-SPEC-0398.md",
+  "policy/doc-artifacts.d/RIPR-SPEC-0398.toml",
+]
+metrics = [
+  "lua_preview_contract_spec_proposed",
+]

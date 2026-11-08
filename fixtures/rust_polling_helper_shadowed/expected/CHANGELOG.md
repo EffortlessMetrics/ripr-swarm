@@ -93,3 +93,29 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_polling_helper_shadowed (8)
+
+Reason:
+RIPR-SPEC-0122: drill-in and repair-start command lines carry consumer labels naming their id domain (#12431)
+
+Command:
+`cargo xtask goldens bless rust_polling_helper_shadowed --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — rust_polling_helper_shadowed (9)
+
+Reason:
+RIPR-SPEC-0122: the digest drops the generic Why unknown hint when the rust_indirect_owner_call_unresolved Analyzer limit and Next step already name the reason, keeping the first-view check on fastrand-2.3.0 within the 60-line read budget (#11519)
+
+Command:
+`cargo xtask goldens bless rust_polling_helper_shadowed --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

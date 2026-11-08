@@ -13,6 +13,8 @@
 
 mod boolean_boundary_pin;
 mod call_budget;
+mod claims_payload_pin;
+mod framework_snapshot;
 mod owner_result_binding;
 mod panic_outcome;
 mod reach_limit;
@@ -32,6 +34,7 @@ use value_contradiction::{
 };
 pub(in crate::analysis) use value_contradiction::{
     InvisibilityReason, PointerReturnChange, change_is_invisible_to_every_assertion,
+    fold_owner_body_at,
 };
 
 pub(crate) use related_tests::CompactGripContext;
@@ -43,9 +46,11 @@ use related_tests::{
 
 use super::classify::{
     assertion_observes_collection_argument, assertion_observes_direct_collection_for_probe,
-    call_text_may_call_free_function, direct_collection_mutation_receiver, is_ignored,
-    owner_call_text, predicate_line_arms_all_agree, reach_evidence as classify_reach_evidence,
+    assertion_pins_pushed_collection_count, call_text_may_call_free_function,
+    direct_collection_mutation_receiver, is_ignored, owner_call_text,
+    predicate_line_arms_all_agree, reach_evidence as classify_reach_evidence,
     related_tests_reach_owner_indirectly, relation_establishes_reach, test_calls_free_function,
+    test_count_pins_pushed_collection, test_counts_pushed_collection_argument,
 };
 use super::facts::{CallFact, FunctionImplContext};
 use super::new_test_target::{self, NewTestTargetAdmission};
@@ -58,8 +63,8 @@ use super::seams::{ExpectedSink, RepoSeam, SeamId, SeamKind};
 use crate::analysis::cancellation;
 use crate::{
     domain::{
-        Confidence, MissingDiscriminatorFact, OracleKind, OracleStrength, StageEvidence,
-        StageState, SymbolId, ValueContext,
+        Confidence, DiscriminatorShape, MissingDiscriminatorFact, OracleKind, OracleStrength,
+        StageEvidence, StageState, SymbolId, ValueContext,
     },
     value_origins::LocatedValueFact as ValueFact,
 };
@@ -106,10 +111,21 @@ pub(crate) struct TestGripEvidence {
 }
 
 impl TestGripEvidence {
-    /// Whether any stage summary names the typed static `limit`: the evidence
-    /// record's own marker that a named limitation, not a missing test,
-    /// explains the stage (#10703).
+    /// Whether the producer names the typed static `limit` (#10703).
+    /// Panic and framework uncertainty have a reserved discriminator prefix:
+    /// a source identifier mentioned by another stage is not that marker.
     pub(crate) fn names_static_limit(&self, limit: crate::domain::StaticLimitKind) -> bool {
+        if matches!(
+            limit,
+            crate::domain::StaticLimitKind::RustFrameworkOracleUnresolved
+                | crate::domain::StaticLimitKind::RustPanicOutcomeUnresolved
+        ) {
+            return self
+                .discriminate
+                .summary
+                .strip_prefix(limit.as_str())
+                .is_some_and(|rest| rest.starts_with(": "));
+        }
         [
             &self.reach,
             &self.activate,
@@ -119,6 +135,17 @@ impl TestGripEvidence {
         ]
         .iter()
         .any(|stage| stage.summary.contains(limit.as_str()))
+    }
+
+    /// #11402: whether the changed push is followed only to a local the
+    /// test reads back by a count that pins the single push, the
+    /// propagation stage's own marker.
+    pub(crate) fn follows_push_to_counted_local(&self) -> bool {
+        self.propagate.state == StageState::Yes
+            && self
+                .propagate
+                .summary
+                .contains(PUSHED_COLLECTION_COUNT_PINNED)
     }
 }
 
@@ -278,8 +305,74 @@ pub(crate) struct OracleSemantics {
 /// A cancellation checkpoint can stop this non-fallible helper early, so a
 /// caller that runs under a cancellation context must checkpoint immediately
 /// after this function returns before using or publishing the vector.
+#[cfg(test)]
 pub(crate) fn evidence_for_seams(seams: &[RepoSeam], index: &RustIndex) -> Vec<TestGripEvidence> {
     EvidencePass::new(index).evidence_for(seams)
+}
+
+/// [`evidence_for_seams`] plus the pass's limitations: the one pass-wide
+/// `producer_failure` when the pass answered with the fail-closed stand-in
+/// because its shared-table warm panicked (#11524), else empty. A caller that
+/// persists or replays the result must not store it when the list is
+/// non-empty: the stand-in is a transient fault of one run, not a property of
+/// the inputs the cache key names (#13340). An undescribable failure is `Err`.
+pub(crate) fn evidence_for_seams_reporting_failure(
+    seams: &[RepoSeam],
+    index: &RustIndex,
+) -> Result<
+    (
+        Vec<TestGripEvidence>,
+        Vec<crate::analysis_outcome::AnalysisLimitation>,
+    ),
+    String,
+> {
+    let pass = EvidencePass::new(index);
+    let evidence = pass.evidence_for(seams);
+    let limitations = pass.limitations()?;
+    Ok((evidence, limitations))
+}
+
+/// Whether `evidence` is the fail-closed stand-in of [`EvidencePass::incomplete_evidence`]
+/// (#11524): all five stages opaque with the `seam_evidence_incomplete` summary.
+/// Code before #13340 could store such a result; a loader treats an entry
+/// holding one as a miss, because the stand-in is one run's transient fault.
+pub(crate) fn is_incomplete_stand_in(evidence: &TestGripEvidence) -> bool {
+    [
+        &evidence.reach,
+        &evidence.activate,
+        &evidence.propagate,
+        &evidence.observe,
+        &evidence.discriminate,
+    ]
+    .iter()
+    .all(|stage| stage.summary == SEAM_EVIDENCE_INCOMPLETE)
+}
+
+/// Test-only: arm the shared-table warm panic of every [`EvidencePass`] built
+/// on this thread until the guard drops, and force the warm even for a stage
+/// below [`WARM_MIN_SEAMS`]. Lets a test drive a cached entry point, which
+/// builds its own pass, through the #11524 failure.
+#[cfg(test)]
+pub(crate) struct WarmPanicGuard;
+
+#[cfg(test)]
+std::thread_local! {
+    static THREAD_WARM_PANIC: std::cell::Cell<u8> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+impl WarmPanicGuard {
+    pub(crate) fn arm(point: u8) -> Self {
+        THREAD_WARM_PANIC.with(|slot| slot.set(point));
+        Self
+    }
+}
+
+#[cfg(test)]
+impl Drop for WarmPanicGuard {
+    fn drop(&mut self) {
+        THREAD_WARM_PANIC.with(|slot| slot.set(0));
+    }
 }
 
 /// One test context shared by several [`EvidencePass::evidence_for`]
@@ -290,10 +383,37 @@ pub(crate) fn evidence_for_seams(seams: &[RepoSeam], index: &RustIndex) -> Vec<T
 /// front.
 const WARM_MIN_SEAMS: usize = 1_000;
 
+/// Stage summary of a seam answered without evidence because the shared-table
+/// warm panicked (#11524).
+pub(crate) const SEAM_EVIDENCE_INCOMPLETE: &str = "seam_evidence_incomplete: seam evidence stopped on an internal error; no exposure claim is made";
+
+/// Paths listed in the [`EvidencePass::pass_failure`] sample.
+const PASS_FAILURE_SAMPLE_PATHS: usize = 3;
+
+/// Scope of the stand-ins a failed pass answered with; accumulates across
+/// stages, so each seam and file is counted once.
+#[derive(Default)]
+struct IncompleteScope {
+    seams: BTreeSet<String>,
+    files: BTreeSet<PathBuf>,
+}
+
 pub(crate) struct EvidencePass<'index> {
     context: Option<CompactGripContext<'index>>,
     /// The whole-index tables are paid once per pass, not per stage.
     shared_tables_warmed: std::sync::Once,
+    /// #11524: the shared-table warm panicked, so the memos it fills may be
+    /// incomplete. Once set, no seam reads them; every seam gets the fail-closed
+    /// stand-in instead.
+    warm_failed: std::sync::atomic::AtomicBool,
+    /// Seams and files answered with the stand-in. The failure is
+    /// pass-wide (the memos are shared), so this is the scope of the pass's
+    /// stand-ins, not the file whose input caused the panic.
+    incomplete_scope: std::sync::Mutex<IncompleteScope>,
+    /// Test-only fault injection: 1 panics before any table is built, 2 panics
+    /// after the macro-site scan memo is populated and before the rest.
+    #[cfg(test)]
+    inject_warm_panic: std::sync::atomic::AtomicU8,
 }
 
 impl<'index> EvidencePass<'index> {
@@ -312,7 +432,156 @@ impl<'index> EvidencePass<'index> {
         Self {
             context,
             shared_tables_warmed: std::sync::Once::new(),
+            warm_failed: std::sync::atomic::AtomicBool::new(false),
+            incomplete_scope: std::sync::Mutex::new(IncompleteScope::default()),
+            #[cfg(test)]
+            inject_warm_panic: std::sync::atomic::AtomicU8::new(
+                THREAD_WARM_PANIC.with(|slot| slot.get()),
+            ),
         }
+    }
+
+    /// Whether the shared-table warm panicked, so every seam of this pass was
+    /// answered with the fail-closed stand-in (#11524).
+    pub(crate) fn warm_failed(&self) -> bool {
+        self.warm_failed.load(Ordering::Acquire)
+    }
+
+    #[cfg(test)]
+    fn warm_forced(&self) -> bool {
+        self.inject_warm_panic.load(Ordering::Acquire) != 0
+    }
+
+    #[cfg(not(test))]
+    fn warm_forced(&self) -> bool {
+        false
+    }
+
+    /// This pass's limitations: the one [`Self::pass_failure`] limitation, or
+    /// none for a healthy pass (#13340). A pass whose failure cannot be
+    /// described is an explicit error, never a dropped limitation, so a
+    /// walk cannot read as complete when its evidence pass failed closed.
+    pub(crate) fn limitations(
+        &self,
+    ) -> Result<Vec<crate::analysis_outcome::AnalysisLimitation>, String> {
+        self.pass_failure()
+            .map(|limitation| limitation.into_iter().collect())
+            .map_err(|error| {
+                format!(
+                    "seam evidence pass failure could not be described as a limitation: {error}"
+                )
+            })
+    }
+
+    /// The single pass-wide `producer_failure` limitation for a pass whose
+    /// shared-table warm panicked (#11524, #13340), or `None` when it did not.
+    ///
+    /// The warm is shared by the whole pass, so the failing input is unknown
+    /// and every seam the pass answered is affected. The limitation therefore
+    /// carries a bounded count of affected seams and files plus a capped path
+    /// sample, states the failure is pass-wide, and sets no `path`: a named
+    /// file is scope, never the cause. The panic payload is not kept. No
+    /// output renders this yet; the stage summaries carry the named limit on
+    /// every output meanwhile.
+    pub(crate) fn pass_failure(
+        &self,
+    ) -> Result<Option<crate::analysis_outcome::AnalysisLimitation>, String> {
+        use crate::analysis_outcome::{
+            AnalysisLimitation, AnalysisLimitationKind, AnalysisRecovery, AnalysisRecoveryKind,
+            AnalysisStage, MAX_ANALYSIS_LIMITATION_DETAIL_CHARS,
+        };
+        if !self.warm_failed() {
+            return Ok(None);
+        }
+        let scope = self
+            .incomplete_scope
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let lead = format!(
+            "Seam evidence stopped on an internal error ({SEAM_EVIDENCE_INCOMPLETE}); \
+             the failure is pass-wide and its causing input is unknown. \
+             {} seams in {} files read as opaque stand-ins that make no exposure claim",
+            scope.seams.len(),
+            scope.files.len()
+        );
+        let mut detail = lead.clone();
+        let mut shown = 0usize;
+        for path in scope.files.iter().take(PASS_FAILURE_SAMPLE_PATHS) {
+            let portable = path.to_string_lossy().replace('\\', "/");
+            let next = format!(
+                "{detail}{} {portable}",
+                if shown == 0 {
+                    "; affected sample:"
+                } else {
+                    ","
+                }
+            );
+            if next.chars().count() > MAX_ANALYSIS_LIMITATION_DETAIL_CHARS {
+                break;
+            }
+            detail = next;
+            shown += 1;
+        }
+        if scope.files.len() > shown {
+            let next = format!(
+                "{detail}; {} more files not listed",
+                scope.files.len() - shown
+            );
+            if next.chars().count() <= MAX_ANALYSIS_LIMITATION_DETAIL_CHARS {
+                detail = next;
+            }
+        }
+        let limitation = AnalysisLimitation::new(
+            AnalysisLimitationKind::ProducerFailure,
+            AnalysisStage::LanguageAdapter,
+            AnalysisRecovery::new(
+                AnalysisRecoveryKind::InspectFailure,
+                "Report the failure with the diff, then re-run; the affected seams read opaque until it is fixed.",
+            )?,
+        )
+        .with_detail(detail)?;
+        Ok(Some(limitation))
+    }
+
+    /// The fail-closed answer for a pass whose shared-table warm panicked
+    /// (#11524): no memo is read, no related test or discriminator is named,
+    /// and every stage is opaque, so the seam classifies `opaque` and is never
+    /// a repair candidate. The panic payload is not kept: it can quote
+    /// repository text.
+    fn incomplete_evidence(&self, seams: &[RepoSeam]) -> Vec<TestGripEvidence> {
+        let mut scope = self
+            .incomplete_scope
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let stage = || {
+            StageEvidence::new(
+                StageState::Opaque,
+                Confidence::Low,
+                SEAM_EVIDENCE_INCOMPLETE,
+            )
+        };
+        let mut out: Vec<TestGripEvidence> = seams
+            .iter()
+            .map(|seam| {
+                scope.files.insert(seam.file().to_path_buf());
+                scope.seams.insert(seam.id().as_str().to_owned());
+                TestGripEvidence {
+                    seam_id: seam.id().clone(),
+                    related_tests: Vec::new(),
+                    reach: stage(),
+                    activate: stage(),
+                    propagate: stage(),
+                    observe: stage(),
+                    discriminate: stage(),
+                    observed_values: Vec::new(),
+                    missing_discriminators: Vec::new(),
+                    statically_contradicted_related_tests: 0,
+                    new_test_target: None,
+                }
+            })
+            .collect();
+        out.sort_by(|a, b| a.seam_id.as_str().cmp(b.seam_id.as_str()));
+        out
     }
 
     /// Drop memoized owner/AST detail at a window boundary. Immutable test
@@ -342,13 +611,24 @@ impl<'index> EvidencePass<'index> {
         // partial vector exactly as it did for the serial loop.
         let token = cancellation::current_token();
         let overlay = crate::analysis::committed_source::current_overlay();
+        // Capture the listener on this thread. Rayon workers do not inherit
+        // the inventory-progress thread-local, so they must hold the Arc.
+        let units_listener = super::inventory_progress::current_listener();
+        let total_units = u64::try_from(seams.len()).unwrap_or(u64::MAX);
+        // Report the honest denominator before the whole-index warm so a
+        // tens-of-seconds table build is not another unquantified stall
+        // (#8643).
+        super::inventory_progress::report_units(0, total_units);
         // #9211: a stage large enough to need the whole-index tables pays
         // for them here, before any seam is queued, instead of the first
         // worker to ask building one in line while its siblings wait. A first
         // review stage of a few dozen seams reads none of them, and the warm
         // costs tens of seconds on a workspace the size of ripr-swarm.
-        if seams.len() >= WARM_MIN_SEAMS {
+        if seams.len() >= WARM_MIN_SEAMS || self.warm_forced() {
             self.warm_shared_tables(context, token.as_ref(), &overlay);
+        }
+        if self.warm_failed.load(Ordering::Acquire) {
+            return self.incomplete_evidence(seams);
         }
         let processed = AtomicUsize::new(0);
         let mut out: Vec<TestGripEvidence> = seams
@@ -367,6 +647,10 @@ impl<'index> EvidencePass<'index> {
                                 &format!("processed_{processed}_of_{}", seams.len()),
                                 evidence_started.elapsed(),
                             );
+                            if let Some(listener) = units_listener.as_ref() {
+                                let completed = u64::try_from(processed).unwrap_or(u64::MAX);
+                                listener(completed, total_units);
+                            }
                         }
                         Some(evidence)
                     })
@@ -374,6 +658,16 @@ impl<'index> EvidencePass<'index> {
             })
             .collect();
         out.sort_by(|a, b| a.seam_id.as_str().cmp(b.seam_id.as_str()));
+        if out.is_empty()
+            && cancellation::current_token()
+                .as_ref()
+                .and_then(|token| token.observed_abort())
+                .is_some()
+        {
+            // #5341: a cancelled pass must not leave provisional shared-grip
+            // records pinned on the generation-local pool.
+            context.clear_window_memos();
+        }
         out
     }
 
@@ -387,30 +681,51 @@ impl<'index> EvidencePass<'index> {
         overlay: &Option<std::sync::Arc<crate::analysis::committed_source::CommittedSourceOverlay>>,
     ) {
         self.shared_tables_warmed.call_once(|| {
-            cancellation::with_optional_token(token, || {
-                crate::analysis::committed_source::with_overlay(overlay.clone(), || {
-                    // A cancelled pass returns no evidence, so it stops paying
-                    // for tables nobody will read.
-                    if cancellation::checkpoint().is_err() {
-                        return;
-                    }
-                    let started = Instant::now();
-                    context.prime_pin_syntax_scan();
-                    trace_latency_phase("evidence_macro_scan", "primed", started.elapsed());
-                    if cancellation::checkpoint().is_err() {
-                        return;
-                    }
-                    let started = Instant::now();
-                    context.unseen_reach_names();
-                    trace_latency_phase("evidence_unseen_reach", "built", started.elapsed());
-                    if cancellation::checkpoint().is_err() {
-                        return;
-                    }
-                    let started = Instant::now();
-                    context.type_mentions();
-                    trace_latency_phase("evidence_type_mentions", "built", started.elapsed());
+            // #11524: a panic here must not unwind the caller or leave a
+            // possibly-incomplete memo readable. The payload is dropped from
+            // evidence and findings because it can quote repository text; the
+            // process panic hook may still report it separately.
+            let warmed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                cancellation::with_optional_token(token, || {
+                    crate::analysis::committed_source::with_overlay(overlay.clone(), || {
+                        // A cancelled pass returns no evidence, so it stops paying
+                        // for tables nobody will read.
+                        if cancellation::checkpoint().is_err() {
+                            return;
+                        }
+                        #[cfg(test)]
+                        if self.inject_warm_panic.load(Ordering::Acquire) == 1 {
+                            std::panic::resume_unwind(Box::new(
+                                "injected seam warm panic (#11524)",
+                            ));
+                        }
+                        let started = Instant::now();
+                        context.prime_pin_syntax_scan();
+                        trace_latency_phase("evidence_macro_scan", "primed", started.elapsed());
+                        #[cfg(test)]
+                        if self.inject_warm_panic.load(Ordering::Acquire) == 2 {
+                            std::panic::resume_unwind(Box::new(
+                                "injected seam warm panic after scan (#11524)",
+                            ));
+                        }
+                        if cancellation::checkpoint().is_err() {
+                            return;
+                        }
+                        let started = Instant::now();
+                        context.unseen_reach_names();
+                        trace_latency_phase("evidence_unseen_reach", "built", started.elapsed());
+                        if cancellation::checkpoint().is_err() {
+                            return;
+                        }
+                        let started = Instant::now();
+                        context.type_mentions();
+                        trace_latency_phase("evidence_type_mentions", "built", started.elapsed());
+                    });
                 });
-            });
+            }));
+            if warmed.is_err() {
+                self.warm_failed.store(true, Ordering::Release);
+            }
         });
     }
 }
@@ -422,6 +737,34 @@ pub(crate) fn evidence_for_seam(seam: &RepoSeam, index: &RustIndex) -> TestGripE
     evidence_for_seam_with_context(seam, &context)
 }
 
+/// Whether a test that pins another function lends this seam no oracle
+/// (#12060 match arms, #12434 predicate boundaries, #12600/#12671 returned
+/// values). All three kinds read a value another indexed function also
+/// produces, so an assertion on that function says nothing about the owner's
+/// branch.
+///
+/// A predicate boundary or returned value refuses only when some related test
+/// is tied to the owner by a relation that establishes reach. With no such
+/// test every
+/// related test is proximity-only, activation stays unknown, and stripping
+/// the lent oracle would move the seam from `activation_unknown` to
+/// `reachable_unrevealed` (rule 4 of seam classification), claiming tests run
+/// a seam nothing is seen calling. Callers pass the complete relation set,
+/// never a rank-limited or per-test slice, so every entry point agrees.
+fn refuses_other_function_oracle(
+    seam: &RepoSeam,
+    relations: impl IntoIterator<Item = RelationReason>,
+    owner_is_function: bool,
+) -> bool {
+    match seam.kind() {
+        SeamKind::MatchArm => true,
+        SeamKind::PredicateBoundary | SeamKind::ReturnValue => relations
+            .into_iter()
+            .any(|reason| reason.establishes_reach(owner_is_function)),
+        _ => false,
+    }
+}
+
 /// #12060: the related tests as the stage evidence should read them. A match
 /// arm names an enum variant other functions also return, so a test related
 /// to the owner only by file or module cannot confirm the arm through an
@@ -429,36 +772,63 @@ pub(crate) fn evidence_for_seam(seam: &RepoSeam, index: &RustIndex) -> TestGripE
 /// owner (`assert_eq!(reduce(..), Reduction::Over(..))` for an arm of
 /// `consume`). Repo relation also ties such a test by assertion affinity,
 /// because the assertion names the arm's variant, so that tie is refused
-/// the same way. `ripr check` refuses the same assertion per assertion
-/// (RIPR-SPEC-0094, #11552); the repo seam must agree.
+/// the same way. A predicate boundary in the owner (`wait < 5` in `consume`)
+/// is refused alike (#12434). `ripr check` refuses the same assertion per
+/// assertion (RIPR-SPEC-0094, #11552); the repo seam must agree.
+///
+/// Owner reach is a reverse graph walk plus a lazy unbounded closure. Build it
+/// once per call and pass the whole related set: ranking must not rebuild it
+/// with a one-element slice per related test (#12478).
 fn credited_related_tests<'a>(
-    seam: &RepoSeam,
     context: &CompactGripContext<'_>,
     owner_fn: Option<&FunctionSummary>,
     related: &[(&'a TestSummary, RelationReason)],
+    refuse_other_function_oracle: bool,
+    claims_pin: Option<&claims_payload_pin::ClaimsPayloadPin<'_>>,
 ) -> Vec<std::borrow::Cow<'a, TestSummary>> {
-    let owner_reach = (seam.kind() == SeamKind::MatchArm)
-        .then(|| owner_fn.map(|owner| context.transitive_reach.owner_reach(&owner.name)))
+    let owner_reach = refuse_other_function_oracle
+        .then(|| {
+            owner_fn.map(|owner| {
+                #[cfg(test)]
+                CREDITED_OWNER_REACH_BUILDS.with(|count| count.set(count.get() + 1));
+                (owner, context.transitive_reach.owner_reach(&owner.name))
+            })
+        })
         .flatten();
     related
         .iter()
         .map(|(test, reason)| {
-            let Some(owner_reach) = owner_reach.as_ref() else {
-                return std::borrow::Cow::Borrowed(*test);
-            };
-            if !(reason.is_proximity_only() || *reason == RelationReason::AssertionTargetAffinity)
-                || !test
-                    .assertions
-                    .iter()
-                    .any(|oracle| owner_reach.assertion_pins_other_function(&oracle.text))
+            let mut view = std::borrow::Cow::Borrowed(*test);
+            if let Some((owner, owner_reach)) = owner_reach.as_ref()
+                && (reason.is_proximity_only()
+                    || *reason == RelationReason::AssertionTargetAffinity)
+                && test.assertions.iter().any(|oracle| {
+                    owner_reach.assertion_pins_other_function(owner, test, oracle, &oracle.text)
+                })
             {
-                return std::borrow::Cow::Borrowed(*test);
+                view.to_mut().assertions.retain(|oracle| {
+                    !owner_reach.assertion_pins_other_function(owner, test, oracle, &oracle.text)
+                });
             }
-            let mut credited = (*test).clone();
-            credited
-                .assertions
-                .retain(|oracle| !owner_reach.assertion_pins_other_function(&oracle.text));
-            std::borrow::Cow::Owned(credited)
+            // #12394 item 3: the claims statements `ripr check` credits
+            // through the owner pin join the view the stages read.
+            if let Some(pin) = claims_pin {
+                let admitted = pin.admitted_oracles(&view, context.index, context.pin_syntax());
+                if !admitted.is_empty() {
+                    view.to_mut().assertions.extend(admitted);
+                }
+                // #13005: a plain `assert_eq!` whose literal the current
+                // owner provably does not return fails at baseline.
+                let withheld = pin.literal_withheld(&view, context.index, context.pin_syntax());
+                if !withheld.is_empty() {
+                    let mut position = 0;
+                    view.to_mut().assertions.retain(|_| {
+                        position += 1;
+                        !withheld.contains(&(position - 1))
+                    });
+                }
+            }
+            view
         })
         .collect()
 }
@@ -486,7 +856,24 @@ fn evidence_for_seam_with_context(
     let (activate, observed_values, missing_discriminators) =
         activate_evidence(seam, &related_indexed, context, owner_fn);
     let pin_syntax = context.pin_syntax();
-    let credited_views = credited_related_tests(seam, context, owner_fn, &related_reasons);
+    let refuse = refuses_other_function_oracle(
+        seam,
+        related_reasons.iter().map(|(_, reason)| *reason),
+        owner_fn.is_some(),
+    );
+    let claims_pin = claims_payload_pin::ClaimsPayloadPin::establish(
+        seam,
+        owner_fn,
+        context.index,
+        related_reasons.iter().map(|(test, _)| *test),
+    );
+    let credited_views = credited_related_tests(
+        context,
+        owner_fn,
+        &related_reasons,
+        refuse,
+        claims_pin.as_ref(),
+    );
     let credited: Vec<&TestSummary> = credited_views.iter().map(AsRef::as_ref).collect();
     let propagate = propagate_evidence(seam, &credited, owner_fn, context.index, pin_syntax);
     let observe = observe_evidence(&credited);
@@ -535,6 +922,16 @@ fn evidence_for_seam_with_context(
         })
         .unwrap_or_default();
     let mut missing_discriminators = missing_discriminators;
+    if activate.state == StageState::Yes {
+        let reaching: Vec<&TestSummary> = related_with_reason
+            .iter()
+            .filter(|(_, reason)| reason.establishes_reach(owner_fn.is_some()))
+            .map(|(indexed, _)| indexed.test)
+            .collect();
+        missing_discriminators.extend(owner_result_binding::assigned_field_weak_read_fact(
+            seam, &reaching, context, owner_fn,
+        ));
+    }
     let path_established = [&reach, &activate, &propagate]
         .iter()
         .all(|stage| stage.state == StageState::Yes);
@@ -587,6 +984,17 @@ fn evidence_for_seam_with_context(
         context.index,
     );
     panic_outcome::withhold(seam, &mut evidence, &panicking);
+    // #13278: the shared field-snapshot reader sees every direct relation,
+    // before a rendered related-test cap can hide a deciding oracle.
+    framework_snapshot::withhold(
+        seam,
+        &mut evidence,
+        owner_fn,
+        related_with_reason
+            .iter()
+            .filter(|(_, reason)| *reason == RelationReason::DirectOwnerCall)
+            .map(|(indexed, _)| indexed.test),
+    );
     evidence
 }
 
@@ -761,6 +1169,8 @@ fn return_value_missing_discriminator(
         value: description.clone(),
         reason: reason.to_string(),
         flow_sink: None,
+        shape: DiscriminatorShape::Other,
+        drafted_boundary: None,
     })
 }
 
@@ -777,6 +1187,8 @@ fn is_should_panic(test: &TestSummary) -> bool {
 thread_local! {
     /// Times the masked-source memo was built on this thread (#10701 work pin).
     static MASK_BUILD_COUNT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// Times credited-view owner reach was built on this thread (#12478).
+    static CREDITED_OWNER_REACH_BUILDS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// Whether the owner's signature or the changed expression may name a type
@@ -787,7 +1199,11 @@ thread_local! {
 /// generic parameters withholds; a workspace holding a macro or outside-crate
 /// item calls no type plain. A name no workspace source declares is a
 /// standard-library type, whose `Drop` cannot exit the process.
-fn names_non_plain_drop_type(owner: &FunctionSummary, expression: &str, index: &RustIndex) -> bool {
+pub(in crate::analysis) fn names_non_plain_drop_type(
+    owner: &FunctionSummary,
+    expression: &str,
+    index: &RustIndex,
+) -> bool {
     let body: &str = &owner.body;
     let signature = body.find('{').map_or(body, |open| &body[..open]);
     if returns_generic_or_opaque_type(owner, signature, index) {
@@ -2277,15 +2693,46 @@ pub(crate) fn compact_evidence_for_seam(
     let owner_fn = context.owner_function(seam.file(), seam.display_line());
 
     let reach = reach_evidence(seam, &related_reasons, owner_fn, context);
-    let (activate, missing_discriminators) =
+    let (activate, mut missing_discriminators) =
         compact_activate_evidence(seam, &related_indexed, context, owner_fn);
+    if activate.state == StageState::Yes {
+        // #11870: the weak-read start is asked over every test that runs the
+        // owner, not the rank-limited slice.
+        let reaching: Vec<&TestSummary> = ranked
+            .iter()
+            .filter(|(_, reason)| reason.establishes_reach(owner_fn.is_some()))
+            .map(|(indexed, _)| indexed.test)
+            .collect();
+        missing_discriminators.extend(owner_result_binding::assigned_field_weak_read_fact(
+            seam, &reaching, context, owner_fn,
+        ));
+    }
     let pin_syntax = context.pin_syntax();
     let limited_reasons: Vec<(&TestSummary, RelationReason)> = ranked
         .iter()
         .take(COMPACT_RELATED_TEST_LIMIT)
         .map(|(indexed, reason)| (indexed.test, *reason))
         .collect();
-    let credited_views = credited_related_tests(seam, context, owner_fn, &limited_reasons);
+    // The gate reads every ranked relation, not the rank-limited slice, so the
+    // compact view agrees with the full one (#12434).
+    let refuse = refuses_other_function_oracle(
+        seam,
+        related_reasons.iter().map(|(_, reason)| *reason),
+        owner_fn.is_some(),
+    );
+    let claims_pin = claims_payload_pin::ClaimsPayloadPin::establish(
+        seam,
+        owner_fn,
+        context.index,
+        limited_reasons.iter().map(|(test, _)| *test),
+    );
+    let credited_views = credited_related_tests(
+        context,
+        owner_fn,
+        &limited_reasons,
+        refuse,
+        claims_pin.as_ref(),
+    );
     let credited: Vec<&TestSummary> = credited_views.iter().map(AsRef::as_ref).collect();
     let propagate = propagate_evidence(seam, &credited, owner_fn, context.index, pin_syntax);
     let observe = observe_evidence(&credited);
@@ -2329,6 +2776,16 @@ pub(crate) fn compact_evidence_for_seam(
         context.index,
     );
     panic_outcome::withhold(seam, &mut evidence, &panicking);
+    // #13278: use the full ranked set, not the compact display projection.
+    framework_snapshot::withhold(
+        seam,
+        &mut evidence,
+        owner_fn,
+        ranked
+            .iter()
+            .filter(|(_, reason)| *reason == RelationReason::DirectOwnerCall)
+            .map(|(indexed, _)| indexed.test),
+    );
     evidence
 }
 
@@ -2512,6 +2969,13 @@ fn activate_evidence(
         boundary_equality_observed,
         boundary_constant.as_ref(),
         boundary.as_ref(),
+    );
+    attach_drafted_boundary_assertion(
+        seam,
+        owner_fn,
+        boundary.as_ref(),
+        &activation_credited,
+        &mut missing,
     );
     let direct_value_insensitive_owner_call = !owner_name.is_empty()
         && !requires_concrete_activation_values(seam)
@@ -3469,6 +3933,56 @@ fn compact_activate_evidence(
     (stage, Vec::new())
 }
 
+/// The concrete drafted boundary call (agent-efficiency study tweak #4):
+/// when the boundary operand's observed values pin ONE equality-boundary
+/// input from the related tests' own owner-call rows and the owner's branch
+/// value folds there, the fact carries the paste-ready arguments and the
+/// folded expected value. `expected: None` keeps the `/* expected */`
+/// placeholder while the concrete input side still emits. The draft is a
+/// static model of the current behavior; ripr has not run or verified it.
+fn attach_drafted_boundary_assertion(
+    seam: &RepoSeam,
+    owner_fn: Option<&FunctionSummary>,
+    boundary: Option<&PredicateBoundaryOperand>,
+    activation_credited: &[&CompactTest<'_>],
+    missing: &mut [MissingDiscriminatorFact],
+) {
+    let Some(owner_fn) = owner_fn else {
+        return;
+    };
+    let Some(boundary) = boundary else {
+        return;
+    };
+    let Some(fact) = missing.first_mut() else {
+        return;
+    };
+    let call_rows: Vec<Vec<String>> = activation_credited
+        .iter()
+        .flat_map(|indexed| {
+            indexed
+                .test
+                .calls
+                .iter()
+                .filter(|call| call.name == owner_fn.name)
+                .filter_map(|call| {
+                    owner_call_text(&call.text, owner_fn)
+                        .and_then(|text| call_arguments(text, &owner_fn.name))
+                })
+        })
+        .collect();
+    let drafted = super::classify::drafted_boundary::drafted_boundary_assertion(
+        owner_fn,
+        &boundary.tested,
+        &boundary.token,
+        seam.expression(),
+        seam.display_line(),
+        &call_rows,
+    );
+    if let Some(drafted) = drafted {
+        fact.drafted_boundary = Some(drafted);
+    }
+}
+
 fn missing_discriminators_for(
     seam: &RepoSeam,
     observed: &[ValueFact],
@@ -3499,6 +4013,8 @@ fn missing_discriminators_for(
                     value: format!("{boundary_token} (boundary value)"),
                     reason: "no observed activation values for boundary predicate".to_string(),
                     flow_sink: None,
+                    shape: DiscriminatorShape::Other,
+                    drafted_boundary: None,
                 }];
             }
             // We do not yet know the literal value of `boundary_token`,
@@ -3539,6 +4055,8 @@ fn missing_discriminators_for(
                     value: format!("{boundary_token} (equality boundary)"),
                     reason,
                     flow_sink: None,
+                    shape: DiscriminatorShape::Other,
+                    drafted_boundary: None,
                 }]
             }
         }
@@ -3627,6 +4145,9 @@ fn test_passes_boundary_constant(
 /// evaluator can say about it.
 struct PredicateBoundaryOperand {
     token: String,
+    /// The compared operand the boundary token is not: the tested input a
+    /// drafted boundary call varies (`amount` for `amount >= threshold`).
+    tested: String,
     local: super::classify::LocalBoundary,
 }
 
@@ -3658,12 +4179,21 @@ fn predicate_boundary_operand(
     let reversed = boundary_operand_argument(owner_fn, &parameters, &left).is_none()
         && left_is_boundary_value(owner_fn, &left, seam.display_line())
         && boundary_operand_argument(owner_fn, &parameters, &right).is_some();
-    let token = boundary_token(if reversed { &left } else { &right });
+    let (boundary_operand, tested_operand) = if reversed {
+        (&left, &right)
+    } else {
+        (&right, &left)
+    };
+    let token = boundary_token(boundary_operand);
     if token.is_empty() {
         return None;
     }
     let local = super::classify::local_boundary(owner_fn, &token, seam.display_line());
-    Some(PredicateBoundaryOperand { token, local })
+    Some(PredicateBoundaryOperand {
+        token,
+        tested: tested_operand.clone(),
+        local,
+    })
 }
 
 /// Whether the left operand of a predicate is a boundary value rather than
@@ -3826,21 +4356,43 @@ fn propagate_evidence(
     // matches the expected sink class (e.g., return value -> assert_eq!),
     // call it Yes. Otherwise Unknown.
     let any_oracle = related.iter().any(|t| !t.assertions.is_empty());
-    let any_matching_sink = related
+    let sink_matched = related
         .iter()
         .any(|t| oracles_match_sink(seam, t, owner_fn, index, pin_syntax));
-    let state = match (any_oracle, any_matching_sink) {
+    let pushed_followed = !sink_matched
+        && related
+            .iter()
+            .any(|t| pushed_collection_argument_followed(seam, t, owner_fn, index, pin_syntax));
+    let state = match (any_oracle, sink_matched || pushed_followed) {
         (true, true) => StageState::Yes,
         (true, false) => StageState::Unknown,
         (false, _) => StageState::Unknown,
     };
-    let summary = format!(
+    let mut summary = format!(
         "Static propagation to `{}` sink is {}",
         seam.expected_sink().as_str(),
         state.as_str()
     );
+    // #11402: name, for the repair route, that the value is followed only to
+    // a local the test reads back by a count that pins the single push, so
+    // an exact check of that local's contents is the one thing missing.
+    if state == StageState::Yes
+        && pushed_followed
+        && related
+            .iter()
+            .any(|t| pushed_collection_count_pins_push(seam, t, owner_fn, index, pin_syntax))
+    {
+        summary.push_str("; ");
+        summary.push_str(PUSHED_COLLECTION_COUNT_PINNED);
+    }
     StageEvidence::new(state, Confidence::Low, summary)
 }
+
+/// #11402: the propagation-stage marker for a push followed only to a local
+/// the test reads back by a count that pins the single push. Read through
+/// [`TestGripEvidence::follows_push_to_counted_local`].
+pub(crate) const PUSHED_COLLECTION_COUNT_PINNED: &str =
+    "followed to a local the test reads back only by a count that pins the single push";
 
 fn oracles_match_sink(
     seam: &RepoSeam,
@@ -3887,6 +4439,42 @@ fn oracles_match_sink(
         })
 }
 
+/// #11402: a push into a `&mut` collection parameter whose test passes its
+/// own fresh local there and reads it back. The pushed value is followed to
+/// that local, so propagation holds; the read is only a count, so it grants
+/// no assertion strength and the check stays weak.
+fn pushed_collection_argument_followed(
+    seam: &RepoSeam,
+    test: &TestSummary,
+    owner_fn: Option<&FunctionSummary>,
+    index: &RustIndex,
+    pin_syntax: &crate::analysis::classify::OwnerPinSyntax,
+) -> bool {
+    matches!(seam.kind(), SeamKind::SideEffect | SeamKind::CallPresence)
+        && direct_collection_mutation_receiver(seam.expression())
+            .zip(owner_fn)
+            .is_some_and(|(receiver, owner)| {
+                test_counts_pushed_collection_argument(receiver, owner, index, test, pin_syntax)
+            })
+}
+
+/// #11402: as [`pushed_collection_argument_followed`], and one count read
+/// pins the single push.
+fn pushed_collection_count_pins_push(
+    seam: &RepoSeam,
+    test: &TestSummary,
+    owner_fn: Option<&FunctionSummary>,
+    index: &RustIndex,
+    pin_syntax: &crate::analysis::classify::OwnerPinSyntax,
+) -> bool {
+    matches!(seam.kind(), SeamKind::SideEffect | SeamKind::CallPresence)
+        && direct_collection_mutation_receiver(seam.expression())
+            .zip(owner_fn)
+            .is_some_and(|(receiver, owner)| {
+                test_count_pins_pushed_collection(receiver, owner, index, test, pin_syntax)
+            })
+}
+
 fn observe_evidence(related: &[&TestSummary]) -> StageEvidence {
     if related.is_empty() {
         return StageEvidence::new(
@@ -3930,7 +4518,11 @@ fn discriminate_evidence(
     let mut contradictions: Vec<String> = Vec::new();
     for test in related {
         for oracle in &test.assertions {
-            if !collection_assertion_admitted(seam, oracle, test, index, pin_syntax) {
+            // The same two gates `best_oracle` applies, so this stage and the
+            // related-test record cannot disagree about one assertion (#12733).
+            if !collection_assertion_admitted(seam, oracle, test, index, pin_syntax)
+                || !error_pin_can_see_return_value(seam, oracle)
+            {
                 continue;
             }
             // A statically contradicted exact-value assertion keeps at most
@@ -4195,6 +4787,15 @@ fn oracle_discriminates_seam_in_test(
     {
         return false;
     }
+    // #12189: a file-backed insta assertion whose committed `.snap` file is
+    // certainly missing fails on its first run, so it notices nothing. An
+    // inline snapshot, or a shape whose file name is not certain, keeps its
+    // grade.
+    if matches!(oracle.kind, OracleKind::Snapshot)
+        && crate::analysis::rust_snapshot_files::file_backed_snapshot_missing(index, test, oracle)
+    {
+        return false;
+    }
     // #11398: a field write is checked only by an exact read of the written
     // field that the diff probe's own rule confirms. The seam's field name
     // alone (any binding, any sibling) is never a discriminator.
@@ -4212,9 +4813,17 @@ fn oracle_discriminates_seam_in_test(
             .zip(owner)
             .is_some_and(|(receiver, owner)| {
                 collection_state_write_oracle_kind(&oracle.kind)
-                    && assertion_observes_collection_argument(
+                    && (assertion_observes_collection_argument(
                         receiver, owner, index, test, oracle, pin_syntax,
                     )
+                        // #11402: a count read that pins the single push
+                        // notices a deleted push into the passed local, by
+                        // the same rule the diff-side deleted-call probe
+                        // reads; it never notices a changed pushed value.
+                        || (seam.kind() == SeamKind::CallPresence
+                            && assertion_pins_pushed_collection_count(
+                                receiver, owner, index, test, oracle, pin_syntax,
+                            )))
             })
 }
 
@@ -4228,6 +4837,27 @@ fn collection_assertion_admitted(
     !matches!(seam.kind(), SeamKind::SideEffect | SeamKind::CallPresence)
         || direct_collection_mutation_receiver(seam.expression()).is_none()
         || pin_syntax.admits_effect_assertion(test, oracle, index)
+}
+
+/// #12722: an exact error-variant pin reads the owner's `Err` arm, so on a
+/// returned-value seam it is published as an oracle only when it names the
+/// exact `Err(..)` that seam constructs (#11111). Otherwise a test such as
+/// `assert_eq!(f(2).unwrap_err(), E::Even)` showed `strong` on the same
+/// owner's `Ok(n)` seam while the seam itself graded weak, because the
+/// assertion cannot see the value `Ok(n)` returns. Mirrors the rule
+/// `oracle_discriminates_seam` already applies to the grade.
+fn error_pin_can_see_return_value(seam: &RepoSeam, oracle: &OracleFact) -> bool {
+    seam.kind() != SeamKind::ReturnValue
+        || !matches!(oracle.kind, OracleKind::ExactErrorVariant)
+        || exact_err_return_matches_error_pin(seam, &oracle.text)
+}
+
+/// An exact error-variant assertion published at no strength is the one
+/// `error_pin_can_see_return_value` withholds: it pins the owner's `Err` arm,
+/// not the value the returned-value seam produces (#12722, #12734). No other
+/// producer path yields that pair.
+pub(crate) fn pins_other_arm(kind: &OracleKind, strength: &OracleStrength) -> bool {
+    matches!(kind, OracleKind::ExactErrorVariant) && matches!(strength, OracleStrength::None)
 }
 
 fn oracle_discriminates_seam(seam: &RepoSeam, oracle: &super::facts::OracleFact) -> bool {
@@ -4857,6 +5487,14 @@ fn oracle_semantics_by_kind(
     strength: &OracleStrength,
     seam_kind: SeamKind,
 ) -> OracleSemantics {
+    if pins_other_arm(kind, strength) {
+        return OracleSemantics {
+            observes: "an exact error variant, on a different arm than this seam's returned value"
+                .to_string(),
+            missing: "an observable discriminator for this seam".to_string(),
+            upgrade_suggestion: Some(upgrade_suggestion_for_seam(seam_kind).to_string()),
+        };
+    }
     if matches!(strength, OracleStrength::None) {
         return OracleSemantics {
             observes: "no recognized test oracle".to_string(),
@@ -4966,6 +5604,9 @@ fn related_test_grip<'a>(
 ) -> RelatedTestGrip {
     let summary = if let Some(contradiction) = contradiction {
         contradiction
+    } else if pins_other_arm(&kind, &strength) {
+        "exact error-variant assertion on a different arm than this seam's returned value"
+            .to_string()
     } else if matches!(strength, OracleStrength::None) {
         "no oracle in test body".to_string()
     } else {
@@ -5067,12 +5708,37 @@ fn best_oracle(
     let mut best_matching_kind = OracleKind::Unknown;
     let mut best_matching_strength = OracleStrength::None;
     let mut best_matching_contradiction = None;
+    let mut skipped_error_pin = false;
     for oracle in &test.assertions {
         if !collection_assertion_admitted(seam, oracle, test, index, pin_syntax) {
             continue;
         }
+        if !error_pin_can_see_return_value(seam, oracle) {
+            skipped_error_pin = true;
+            continue;
+        }
         let (strength, contradiction) =
             effective_oracle_strength(owner_fn, oracle, test, boolean_pin, index, pin_syntax);
+        // #12836: the classify stage grades a strong or medium oracle weak when
+        // it does not pin this error-variant seam's own variant (`kind-match
+        // false`). An exact pin on a sibling variant gets the same grade here,
+        // so the record and the stage cannot disagree about one assertion.
+        // Only the exact pin and a guarded `Result` match (#12897), which
+        // `oracle_discriminates_seam_in_test` reads by the same variant rule:
+        // a broad `is_err()` keeps the strength the operator configured for it
+        // (`oracles.broad_error_strength`).
+        let strength = if seam.kind() == SeamKind::ErrorVariant
+            && matches!(
+                oracle.kind,
+                OracleKind::ExactErrorVariant | OracleKind::GuardedResultMatch
+            )
+            && matches!(strength, OracleStrength::Strong | OracleStrength::Medium)
+            && !oracle_discriminates_seam_in_test(seam, oracle, test, owner_fn, index, pin_syntax)
+        {
+            OracleStrength::Weak
+        } else {
+            strength
+        };
         if strength.rank() > best_strength.rank() {
             best_strength = strength.clone();
             best_kind = oracle.kind.clone();
@@ -5099,6 +5765,10 @@ fn best_oracle(
             best_matching_strength,
             best_matching_contradiction,
         )
+    } else if skipped_error_pin && matches!(best_strength, OracleStrength::None) {
+        // #12734: the test does assert an exact error variant, on an arm this
+        // returned-value seam does not return. Publish that, not "no oracle".
+        (OracleKind::ExactErrorVariant, OracleStrength::None, None)
     } else {
         (best_kind, best_strength, best_contradiction)
     }
@@ -5291,3 +5961,6 @@ fn sort_value_facts(values: &mut Vec<ValueFact>) {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+pub(crate) use tests::panic_marker::panic_marker_test_entries;

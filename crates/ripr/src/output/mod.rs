@@ -12,6 +12,7 @@ pub(crate) mod baseline;
 pub(crate) mod baseline_delta;
 pub(crate) mod baseline_update;
 pub(crate) mod ci_summary;
+pub(crate) mod compact_json;
 pub(crate) mod count_noun;
 pub(crate) mod coverage_grip_frontier;
 pub(crate) mod diff_report;
@@ -46,6 +47,8 @@ pub(crate) mod mutation_calibration;
 pub(crate) mod oracle_phrase;
 #[cfg(test)]
 mod related_test_role_tests;
+#[cfg(test)]
+mod shared_grip_consumer_matrix_tests;
 pub use mutation_calibration::{
     CargoMutantsLocationJoin, CargoMutantsOutcomeRecord, CargoMutantsRuntimeSpan,
     CargoMutantsSeamLocation, join_cargo_mutants_location, parse_cargo_mutants_outcomes_json,
@@ -56,7 +59,6 @@ pub(crate) mod next_step;
 pub(crate) mod observed_values;
 pub(crate) mod outcome;
 pub(crate) mod path;
-mod path_unicode;
 #[cfg(all(test, feature = "lang-perl"))]
 mod perl_composition_tests;
 pub(crate) mod perl_gap_record_projection;

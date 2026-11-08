@@ -109,7 +109,7 @@ fn visit_executable_sites(
     for node in syntax.descendants().filter(executable) {
         visit(node.clone(), None);
         if let Some(call) = ast::MacroCall::cast(node) {
-            assertion_arguments_resolve(&call, Some(index), visit);
+            assertion_arguments_resolve(&call, Some(index), false, visit);
         }
     }
 }

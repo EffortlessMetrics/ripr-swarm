@@ -4,6 +4,78 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 const EXPIRY_MARKER: &str = "expires:";
 
+const POST_0_11_DEFER_OWNER: &str = "#5084";
+const POST_0_11_DEFER_LINKED_REVISIT: &str = "#3811";
+const POST_0_11_DEFER_SECTION_MARKER: &str = "Post-0.11 dependency refresh tracker";
+
+pub(crate) fn check_post_0_11_dependency_defer_tracking(path: &Path) -> Result<(), String> {
+    let text = fs::read_to_string(path)
+        .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
+    check_post_0_11_dependency_defer_tracking_text(&text, path)
+}
+
+fn check_post_0_11_dependency_defer_tracking_text(text: &str, path: &Path) -> Result<(), String> {
+    let path_label = path.display();
+    let Some(start) = text.find(POST_0_11_DEFER_SECTION_MARKER) else {
+        return Err(format!(
+            "{path_label}: missing `{POST_0_11_DEFER_SECTION_MARKER}` section for post-0.11 `oxc_*`/`sha2` deferrals"
+        ));
+    };
+    let section_end = text[start..]
+        .find("\n### ")
+        .map(|offset| start + offset)
+        .unwrap_or(text.len());
+    let section = &text[start..section_end];
+
+    let mut saw_owner_line = false;
+    let mut saw_linked_revisit_line = false;
+    for line in section.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("Owner issue:") {
+            saw_owner_line = true;
+            if !trimmed.contains(POST_0_11_DEFER_OWNER) {
+                return Err(format!(
+                    "{path_label}: `Owner issue:` must name {POST_0_11_DEFER_OWNER}, not a different owner"
+                ));
+            }
+        }
+        if trimmed.starts_with("Linked revisit:") {
+            saw_linked_revisit_line = true;
+            if !trimmed.contains(POST_0_11_DEFER_LINKED_REVISIT) {
+                return Err(format!(
+                    "{path_label}: `Linked revisit:` must name {POST_0_11_DEFER_LINKED_REVISIT}"
+                ));
+            }
+        }
+    }
+    if !saw_owner_line {
+        return Err(format!(
+            "{path_label}: post-0.11 defer tracker is missing an `Owner issue:` line"
+        ));
+    }
+    if !saw_linked_revisit_line {
+        return Err(format!(
+            "{path_label}: post-0.11 defer tracker is missing a `Linked revisit:` line"
+        ));
+    }
+
+    for required in ["Revisit trigger:", "`oxc_*`", "`sha2`"] {
+        if !section.contains(required) {
+            return Err(format!(
+                "{path_label}: post-0.11 defer tracker is missing required marker `{required}`"
+            ));
+        }
+    }
+    for required in ["safe_defer_post_0_11", "| `oxc_*` |", "| `sha2` |"] {
+        if !text.contains(required) {
+            return Err(format!(
+                "{path_label}: dependency graph receipt is missing required defer row `{required}`"
+            ));
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn check_dependency_suppression_expiry(path: &Path) -> Result<(), String> {
     let text = fs::read_to_string(path)
         .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
@@ -170,7 +242,10 @@ mod tests {
     use std::fs;
     use std::path::Path;
 
-    use super::{check_dependency_suppression_expiry, check_dependency_suppression_expiry_text};
+    use super::{
+        check_dependency_suppression_expiry, check_dependency_suppression_expiry_text,
+        check_post_0_11_dependency_defer_tracking, check_post_0_11_dependency_defer_tracking_text,
+    };
 
     #[test]
     fn checks_a_real_policy_file_using_the_current_utc_date() {
@@ -329,6 +404,38 @@ mod tests {
             result
                 .err()
                 .is_some_and(|message| message.contains("not after today"))
+        );
+    }
+
+    #[test]
+    fn post_0_11_defer_tracker_is_present_in_the_release_receipt() {
+        let receipt = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("docs/releases/0.11.0-dependency-graphs.md");
+        let result = check_post_0_11_dependency_defer_tracking(&receipt);
+        assert!(
+            result.is_ok(),
+            "post-0.11 defer tracker check failed: {result:?}"
+        );
+    }
+
+    #[test]
+    fn post_0_11_defer_tracker_requires_owner_and_linked_revisit() {
+        let text = concat!(
+            "safe_defer_post_0_11\n",
+            "Post-0.11 dependency refresh tracker (#5084)\n",
+            "Owner issue: #9999\n",
+            "Linked revisit: #3811\n",
+            "Revisit trigger:\n",
+            "`oxc_*`\n",
+            "`sha2`\n",
+        );
+        let result = check_post_0_11_dependency_defer_tracking_text(text, Path::new("fixture.md"));
+        assert!(result.is_err());
+        assert!(
+            result
+                .err()
+                .is_some_and(|message| message.contains("Owner issue:"))
         );
     }
 }

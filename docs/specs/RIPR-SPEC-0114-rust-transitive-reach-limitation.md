@@ -32,8 +32,8 @@ Support-tier impact:
 Policy impact:
 
 - Register this spec in `policy/doc-artifacts.toml`.
-- Register `RustTransitiveReachUnresolved` in `crates/ripr/src/domain/language.rs`.
-- Register `TransitiveReachUnresolved` in `crates/ripr/src/domain/probe.rs`.
+- Register `RustTransitiveReachUnresolved` in `crates/ripr-contract/src/domain/language.rs`.
+- Register `TransitiveReachUnresolved` in `crates/ripr-contract/src/domain/probe.rs`.
 - No new crates, binaries, dependencies, parsers, runtime executors, or LSP servers introduced.
 
 ## Problem
@@ -231,7 +231,7 @@ transitive helper witnesses keep `rust_transitive_reach_unresolved`.
 - `StopReason::TransitiveReachUnresolved` added to `domain/probe.rs`.
 - `analysis/classify/transitive_reach.rs` module with BFS walk, bounded at depth 5, fail-closed on
   macros/externals.
-- Wired in `analysis/language/rust/mod.rs` `analyze_diff` and `analyze_repo` post-classify guards.
+- Wired in `analysis/language/rust/mod.rs` `analyze_diff` and `analysis/language/rust/repo.rs` `analyze_repo_with_rust_config` post-classify guards.
 - Positive fixture: `fixtures/rust_transitive_reach_positive/` — limitation fires.
 - Test-helper public API fixture: `fixtures/rust_transitive_reach_test_helper_chain/` — limitation fires.
 - Negative fixture: `fixtures/rust_transitive_reach_negative/` — limitation does NOT fire.
@@ -306,12 +306,12 @@ transitive helper witnesses keep `rust_transitive_reach_unresolved`.
 
 | Component | Location |
 |---|---|
-| `StaticLimitKind::RustTransitiveReachUnresolved` | `crates/ripr/src/domain/language.rs` |
-| `StopReason::TransitiveReachUnresolved` | `crates/ripr/src/domain/probe.rs` |
+| `StaticLimitKind::RustTransitiveReachUnresolved` | `crates/ripr-contract/src/domain/language.rs` |
+| `StopReason::TransitiveReachUnresolved` | `crates/ripr-contract/src/domain/probe.rs` |
 | BFS walk module | `crates/ripr/src/analysis/classify/transitive_reach.rs` |
 | Module export | `crates/ripr/src/analysis/classify/mod.rs` |
 | Wiring (diff mode) | `crates/ripr/src/analysis/language/rust/mod.rs::analyze_diff` |
-| Wiring (repo mode) | `crates/ripr/src/analysis/language/rust/mod.rs::analyze_repo` |
+| Wiring (repo mode) | `crates/ripr/src/analysis/language/rust/repo.rs::analyze_repo_with_rust_config` |
 | JSON evidence detail | `crates/ripr/src/analysis/classify/transitive_reach.rs::transitive_reach_limitation_detail_lines` |
 | Human renderer detail | `crates/ripr/src/output/human/sections.rs` |
 | Positive fixture | `fixtures/rust_transitive_reach_positive/` |

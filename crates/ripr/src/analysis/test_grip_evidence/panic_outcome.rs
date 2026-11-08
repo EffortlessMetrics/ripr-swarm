@@ -11,11 +11,11 @@
 //! `check` reports as a named limitation rather than a gap.
 //!
 //! The seam keeps its stage states and missing values, so seam
-//! classification and every ranking that reads them (pilot picks, repo
-//! exposure counts) are unchanged. Only the discrimination summary gains the
-//! typed limit, and the repair eligibility flip refuses any seam whose
-//! evidence names it (`TestGripEvidence::names_static_limit`). Fail-closed: it
-//! only withholds a repair start, never admits one.
+//! classification and repo exposure class counts are unchanged. Only the
+//! discrimination summary gains the typed limit. Repair eligibility and the
+//! shared static-limitation predicate honor it, withholding repair starts,
+//! pilot picks and agent briefs (`TestGripEvidence::names_static_limit`).
+//! Fail-closed: the marker only withholds work, never admits it.
 //!
 //! Scope: `check` applies the predicate to each changed line; a repo seam is
 //! a candidate changed line, so the repair decision for one seam is the
@@ -49,8 +49,7 @@ pub(super) fn deciding_tests<'a>(
 
 fn clause(tests: &[String]) -> String {
     format!(
-        "{} ({} passes only if something panics, and ripr does not resolve whether the changed code causes that panic), so no gap is reported",
-        LIMIT.as_str(),
+        "({} passes only if something panics, and ripr does not resolve whether the changed code causes that panic), so no gap is reported",
         tests.join(", ")
     )
 }
@@ -70,9 +69,10 @@ pub(super) fn withhold(seam: &RepoSeam, evidence: &mut TestGripEvidence, tests: 
         return false;
     }
     evidence.discriminate.summary = format!(
-        "{}; Discrimination unresolved: {}",
-        evidence.discriminate.summary,
-        clause(tests)
+        "{}: {}; Original discrimination: {}",
+        LIMIT.as_str(),
+        clause(tests),
+        evidence.discriminate.summary
     );
     true
 }

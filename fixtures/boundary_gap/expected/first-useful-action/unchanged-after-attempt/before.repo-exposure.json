@@ -20,7 +20,7 @@
       "worktree": "dirty"
     },
     "canonicalization": "raw_json_placeholder_v1",
-    "content_sha256": "sha256:fcbfbdb69cae482ebc13b3a77522d478e72a58da5e7a1d602296ab934f1d68e9",
+    "content_sha256": "sha256:1b9211cd68b5a17ea2423a53e38098cfb0e72639e9d3d268521c47520bc14443",
     "kind": "repo_exposure",
     "producer": {
       "tool": "ripr",
@@ -58,7 +58,7 @@
       "end_line": 2,
       "evidence": {
         "activate": "yes",
-        "discriminate": "yes",
+        "discriminate": "weak",
         "observe": "yes",
         "propagate": "yes",
         "reach": "yes"
@@ -200,7 +200,7 @@
             }
           ],
           "receipt_command": "ripr agent receipt --root . --verify-json target/ripr/workflow/agent-verify.json --seam-id 67fc764ba37d77bd --json --out target/ripr/reports/agent-receipt.json",
-          "recommended_repair": "Add or strengthen `assert_eq!(discounted_total(/* boundary input where amount >= discount_threshold */), /* expected */)` for `discount_threshold (equality boundary)` in `tests/pricing.rs` as `discounted_total_boundary_discriminator`.",
+          "recommended_repair": "Add or strengthen `assert_eq!(discounted_total(100, 100), 90)` for `discount_threshold (equality boundary)` in `tests/pricing.rs` as `discounted_total_boundary_discriminator`.",
           "related_test": {
             "file": "tests/pricing.rs",
             "line": 4,
@@ -210,7 +210,7 @@
           "repair_command": "ripr agent repair --root . --seam-id 67fc764ba37d77bd --phase before",
           "repair_route": {
             "repair_kind": "add_boundary_assertion",
-            "suggested_assertion": "assert_eq!(discounted_total(/* boundary input where amount >= discount_threshold */), /* expected */)",
+            "suggested_assertion": "assert_eq!(discounted_total(100, 100), 90)",
             "target_test_type": "boundary_discriminator"
           },
           "static_limitations": [],
@@ -252,6 +252,13 @@
         },
         "missing_discriminators": [
           {
+            "drafted_boundary": {
+              "arguments": [
+                "100",
+                "100"
+              ],
+              "expected": "90"
+            },
             "flow_sink": null,
             "reason": "observed values do not include the equality-boundary case for this predicate",
             "value": "discount_threshold (equality boundary)"
@@ -289,7 +296,7 @@
         "recommendation": {
           "action": "write_targeted_test",
           "assertion_shape": {
-            "example": "assert_eq!(discounted_total(/* boundary input where amount >= discount_threshold */), /* expected */)",
+            "example": "assert_eq!(discounted_total(100, 100), 90)",
             "kind": "exact_return_value"
           },
           "candidate_values": [
@@ -415,7 +422,7 @@
       "analyzed_production_files": [
         "src/lib.rs"
       ],
-      "cache_schema_version": "1.139",
+      "cache_schema_version": "1.170",
       "files_content_hash": "16ab297ea99e68bf",
       "scope": "rust_workspace"
     },

@@ -54,6 +54,7 @@ Limitation detail
 Next step
   shared guidance: N1
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/rust_transitive_reach_test_helper_chain/input --diff <cwd>/fixtures/rust_transitive_reach_test_helper_chain/diff.patch --mode fast probe:src_eval.rs:predicate:f66d616d
   ripr context --root <cwd>/fixtures/rust_transitive_reach_test_helper_chain/input --diff <cwd>/fixtures/rust_transitive_reach_test_helper_chain/diff.patch --mode fast --at probe:src_eval.rs:predicate:f66d616d
 
@@ -90,6 +91,7 @@ Limitation detail
 Next step
   shared guidance: N1
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/rust_transitive_reach_test_helper_chain/input --diff <cwd>/fixtures/rust_transitive_reach_test_helper_chain/diff.patch --mode fast probe:src_eval.rs:return_value:7334f366
   ripr context --root <cwd>/fixtures/rust_transitive_reach_test_helper_chain/input --diff <cwd>/fixtures/rust_transitive_reach_test_helper_chain/diff.patch --mode fast --at probe:src_eval.rs:return_value:7334f366
 

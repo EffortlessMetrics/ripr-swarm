@@ -1,2 +1,0 @@
-<!-- section: Fixed -->
-- A TypeScript `test.each` table whose title, string or comment holds an ordinary word such as `with` or `this` now resolves its rows instead of keeping the dynamic-assertion refusal; a real `eval`, `with`, `Function`, `arguments` or `this` in code, or as a computed key such as `globalThis["eval"]`, is still refused. The same syntax-aware guards now cover `for...of` tables (RIPR-SPEC-0243, #12253, #12572).

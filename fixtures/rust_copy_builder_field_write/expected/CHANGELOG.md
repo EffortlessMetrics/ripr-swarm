@@ -34,3 +34,15 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — rust_copy_builder_field_write (4)
+
+Reason:
+RIPR-SPEC-0122: drill-in and repair-start command lines carry consumer labels naming their id domain (#12431)
+
+Command:
+`cargo xtask goldens bless rust_copy_builder_field_write --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

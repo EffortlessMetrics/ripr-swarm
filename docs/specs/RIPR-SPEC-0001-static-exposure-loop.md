@@ -11,6 +11,16 @@ for live draft feedback.
 
 ## Behavior
 
+The opt-in `json-terse` profile retains finding identity and outcomes while
+replacing eligible repeated evidence strings with collision-free legend codes
+only when each value's JSON-escaped byte savings pay its complete standalone
+legend cost, independent of encounter order. The selected set shares the field
+overhead once; marginal byte savings alone do not admit an entry. The 24-byte
+threshold is UTF-8 length, which may differ from schema character length. Singletons
+stay inline. Its marker is always emitted; token cost and overall byte savings
+are not guaranteed. The precise fields, alias behavior, and decoding rules are
+specified in [Output Schema](../OUTPUT_SCHEMA.md#json-terse-semantically-compacted-check-json).
+
 Given a Rust/Cargo workspace and a diff, `ripr` identifies changed Rust behavior,
 creates mutation-shaped probes, and reports whether current tests appear to
 contain a discriminator that would notice if that behavior were wrong.
@@ -217,6 +227,13 @@ rather than picking a class (#11554).
 captured call, a helper chain, or assertion affinity. A test linked only by
 sharing the changed file, module, or a name token stays listed as the likely
 place to add a test, but reach is `weak` and the finding cannot be `exposed`.
+When reach is built from proximity-only relations, the reach-stage summary's
+look-text may name tests linked by same test file, same module, or
+owner-named test, but must not name tests linked only by
+`weak_token_substring`. When every related test is a name-token match, the
+summary reads that tests share only a name token without listing names. That
+filter applies only to the reach evidence summary; related-test rows and
+other evidence paths may still name token-linked tests (#8387).
 When a `weakly_exposed` finding has weak reach and every related row is a
 canonical proximity relation, its next step asks the reader to inspect existing
 tests, doctests and examples before changing assertions. Proximity does not

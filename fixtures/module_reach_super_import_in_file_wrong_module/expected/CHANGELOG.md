@@ -152,3 +152,29 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — module_reach_super_import_in_file_wrong_module (13)
+
+Reason:
+RIPR-SPEC-0122: drill-in and repair-start command lines carry consumer labels naming their id domain (#12431)
+
+Command:
+`cargo xtask goldens bless module_reach_super_import_in_file_wrong_module --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — module_reach_super_import_in_file_wrong_module (14)
+
+Reason:
+RIPR-SPEC-0001: evidence-first human output now states a repeated related-test miss sentence once per test and the explain verdict block references the Evidence row instead of re-listing the assertion and reason; every fact remains exactly once (agent-efficiency study, Nov 2-4)
+
+Command:
+`cargo xtask goldens bless module_reach_super_import_in_file_wrong_module --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

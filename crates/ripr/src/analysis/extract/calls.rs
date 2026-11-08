@@ -1,7 +1,9 @@
 mod function_alias;
+pub(in crate::analysis) mod path_value_map;
 
 use function_alias::add_local_alias_calls;
 pub(crate) use function_alias::local_fn_pointer_call;
+use path_value_map::add_path_value_map_calls;
 
 use super::mask_comments_and_strings;
 use crate::analysis::facts::{CallFact, CallText};
@@ -132,6 +134,7 @@ pub(crate) fn extract_call_facts(body: &str, start_line: usize) -> Vec<CallFact>
         line_offset += masked_line.len();
     }
     add_local_alias_calls(&masked, body, start_line, &mut calls);
+    add_path_value_map_calls(&masked, body, start_line, &mut calls);
     calls.sort_by(|a, b| a.line.cmp(&b.line).then(a.name.cmp(&b.name)));
     calls.dedup_by(|a, b| a.line == b.line && a.name == b.name);
     calls
@@ -204,6 +207,65 @@ pub(crate) fn attribute_ranges(masked: &str) -> Vec<std::ops::Range<usize>> {
         i = end;
     }
     ranges
+}
+
+fn is_ascii_ident_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || byte == b'_'
+}
+
+fn skip_ascii_whitespace(source: &str, start: usize) -> usize {
+    let bytes = source.as_bytes();
+    let mut cursor = start;
+    while cursor < bytes.len() && bytes[cursor].is_ascii_whitespace() {
+        cursor += 1;
+    }
+    cursor
+}
+
+/// Whether `{`/`(`/[` opens a `macro_rules! name …` body rather than a normal
+/// item block.
+fn macro_rules_definition_opens_delimiter(before_delimiter: &str) -> bool {
+    const MARKER: &str = "macro_rules!";
+    let Some(marker_start) = before_delimiter.rfind(MARKER) else {
+        return false;
+    };
+    let mut cursor = skip_ascii_whitespace(before_delimiter, marker_start + MARKER.len());
+    let bytes = before_delimiter.as_bytes();
+    let Some(&first) = bytes.get(cursor) else {
+        return false;
+    };
+    if !(first.is_ascii_alphabetic() || first == b'_') {
+        return false;
+    }
+    cursor += 1;
+    while bytes
+        .get(cursor)
+        .is_some_and(|byte| is_ascii_ident_byte(*byte))
+    {
+        cursor += 1;
+    }
+    skip_ascii_whitespace(before_delimiter, cursor) == before_delimiter.len()
+}
+
+/// Whether `offset` sits inside macro token trees: invocation delimiters
+/// (`name!(..)`, `name![..]`, `name!{..}`) or a `macro_rules!` definition body.
+pub(crate) fn offset_inside_macro_invocation_delimiters(masked: &str, offset: usize) -> bool {
+    let bytes = masked.as_bytes();
+    let mut stack: Vec<bool> = Vec::new();
+    for (index, byte) in bytes[..offset.min(bytes.len())].iter().enumerate() {
+        match byte {
+            b'(' | b'[' | b'{' => {
+                let before = masked[..index].trim_end();
+                let invocation = before.as_bytes().last() == Some(&b'!');
+                stack.push(invocation || macro_rules_definition_opens_delimiter(before));
+            }
+            b')' | b']' | b'}' => {
+                stack.pop();
+            }
+            _ => {}
+        }
+    }
+    stack.into_iter().any(|is_macro| is_macro)
 }
 
 /// CallFact already owns a source line. Exclude opaque arguments from that
@@ -372,6 +434,15 @@ mod tests {
                 "{body}: {names:?}"
             );
         }
+    }
+
+    #[test]
+    fn path_value_map_calls_add_owner_reach_on_assert_line() {
+        let calls = extract_call_facts(
+            "    assert_eq!(vec![1, 2].into_iter().map(inc).collect::<Vec<_>>(), vec![2, 3]);",
+            7,
+        );
+        assert!(calls.iter().any(|call| call.name == "inc"), "{calls:?}");
     }
 
     #[test]
@@ -718,5 +789,46 @@ let spaced = render_pipeline ("beta");
                 .iter()
                 .all(|call| call.text.shares_allocation(&calls[0].text))
         );
+    }
+
+    #[test]
+    fn offset_inside_macro_invocation_delimiters_skips_token_tree_text() {
+        let masked = crate::analysis::extract::mask_comments_and_strings(
+            "fn t() {\n let s = stringify!(#[derive(Error)]);\n #[derive(Error)]\n struct E;\n}\n",
+        );
+        let attrs = attribute_ranges(&masked);
+        let derive_offsets: Vec<usize> = attrs
+            .into_iter()
+            .filter(|range| masked[range.clone()].contains("derive("))
+            .map(|range| range.start)
+            .collect();
+        assert_eq!(derive_offsets.len(), 2);
+        assert!(offset_inside_macro_invocation_delimiters(
+            &masked,
+            derive_offsets[0]
+        ));
+        assert!(!offset_inside_macro_invocation_delimiters(
+            &masked,
+            derive_offsets[1]
+        ));
+    }
+
+    #[test]
+    fn offset_inside_macro_invocation_delimiters_skips_macro_rules_definition_bodies() {
+        let masked = crate::analysis::extract::mask_comments_and_strings(
+            "macro_rules! unused {\n    () => { #[derive(Error)] struct E; };\n}\n\
+             #[test]\nfn smoke() {}\n",
+        );
+        let attrs = attribute_ranges(&masked);
+        let derive_offsets: Vec<usize> = attrs
+            .into_iter()
+            .filter(|range| masked[range.clone()].contains("derive("))
+            .map(|range| range.start)
+            .collect();
+        assert_eq!(derive_offsets.len(), 1);
+        assert!(offset_inside_macro_invocation_delimiters(
+            &masked,
+            derive_offsets[0]
+        ));
     }
 }

@@ -52,6 +52,11 @@ pub(crate) struct PilotSummaryContext<'a> {
     /// `seams[]` (#12108). The file then carries fewer seams than ranked here.
     pub(crate) repo_exposure_byte_bound:
         Option<&'a crate::output::repo_exposure::RepoExposureByteBound>,
+    /// The inventory's seam-evidence pass failed (#13340): one pass-wide
+    /// `producer_failure` limitation, so every classified seam is an opaque
+    /// stand-in. Empty for a healthy run, which keeps the summary
+    /// byte-identical. Distinct from `current_change`'s own supplement pass.
+    pub(crate) inventory_evidence_limitations: &'a [crate::analysis_outcome::AnalysisLimitation],
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -120,6 +125,21 @@ impl PilotPythonFirstUse {
 }
 
 impl PilotPythonFirstUseStatus {
+    /// Plain words for the terminal and Markdown screens. `as_str` stays the
+    /// machine token in JSON; people read this instead.
+    pub(crate) fn plain_label(self) -> &'static str {
+        match self {
+            PilotPythonFirstUseStatus::AnalysisUnavailable => {
+                "Python could not be analyzed (see the analysis note)"
+            }
+            PilotPythonFirstUseStatus::NoPythonFindings => "no Python findings in this change",
+            PilotPythonFirstUseStatus::NoRepairCards => {
+                "Python findings exist, but none is ready to repair"
+            }
+            PilotPythonFirstUseStatus::Ready => "a Python repair is ready",
+        }
+    }
+
     pub(crate) fn as_str(self) -> &'static str {
         match self {
             PilotPythonFirstUseStatus::AnalysisUnavailable => "analysis_unavailable",
@@ -244,6 +264,24 @@ mod tests {
             "no_repair_cards"
         );
         assert_eq!(PilotPythonFirstUseStatus::Ready.as_str(), "ready");
+    }
+
+    #[test]
+    fn plain_labels_never_show_the_machine_status_token() {
+        for status in [
+            PilotPythonFirstUseStatus::AnalysisUnavailable,
+            PilotPythonFirstUseStatus::NoPythonFindings,
+            PilotPythonFirstUseStatus::NoRepairCards,
+            PilotPythonFirstUseStatus::Ready,
+        ] {
+            let label = status.plain_label();
+            assert!(!label.contains('_'), "{label}");
+            assert_ne!(label, status.as_str());
+        }
+        assert_eq!(
+            PilotPythonFirstUseStatus::NoPythonFindings.plain_label(),
+            "no Python findings in this change"
+        );
     }
 
     #[test]

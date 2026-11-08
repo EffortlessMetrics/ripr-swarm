@@ -22,6 +22,12 @@ pub(crate) struct ConsumedRustSources {
 }
 
 impl ConsumedRustSources {
+    /// True when this carrier recorded no Rust source observations (for example
+    /// the diff-scoped no-impact fast path, which reads no Rust content).
+    pub(crate) fn is_empty(&self) -> bool {
+        self.paths.is_empty()
+    }
+
     /// Observe the raw loaded buffer before parsing or consulting fact caches.
     pub(crate) fn record(&mut self, path: &Path, bytes: Option<&[u8]>) {
         // An empty, absolute or escaping key cannot be vouched for under the

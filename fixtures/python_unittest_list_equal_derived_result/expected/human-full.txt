@@ -34,6 +34,7 @@ Language
 
 Static exposure
   static_unknown (note, confidence 0.20)
+  Why capped: preview adapter: infection/propagation not modeled (Python); syntax-first, no type or import resolution; whether a test checks this behavior is not established. Preview score, not on the same scale as Rust confidence.
 
 Evidence
   - reach yes: 1 related Python test(s) found for owner `labels`
@@ -54,6 +55,7 @@ Static limitation
   opaque_custom_assertion_helper — A custom assertion helper hides what is checked, so ripr cannot confirm the assertion would discriminate this change.
   Next: Assert inline on the changed value with the framework's own assertion (`assert_eq!`, `assert`, `expect`), or make the helper call one ripr can see.
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/python_unittest_list_equal_derived_result/input --diff <cwd>/fixtures/python_unittest_list_equal_derived_result/diff.patch --mode fast probe:src_labels.py:python_preview:6f48e65a
   ripr context --root <cwd>/fixtures/python_unittest_list_equal_derived_result/input --diff <cwd>/fixtures/python_unittest_list_equal_derived_result/diff.patch --mode fast --at probe:src_labels.py:python_preview:6f48e65a
 

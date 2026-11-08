@@ -67,8 +67,9 @@ const artifactFields = {
   agent_receipt_json: 'target/ripr/agent/agent-receipt.json',
 };
 
+// Repair-packet agent repair is gated on fix_site_ready (#1663); multi-root
+// fixtures do not project that state, so omit it from required loop commands.
 const commandArtifacts: Record<string, string> = {
-  'ripr.copyAgentRepairCommand': 'target/ripr/repair-attempts',
   'ripr.copyAgentPacketCommand': artifactFields.agent_packet_json,
   'ripr.copyAgentBriefCommand': artifactFields.agent_brief_json,
   'ripr.copyAfterSnapshotCommand': artifactFields.after_snapshot,

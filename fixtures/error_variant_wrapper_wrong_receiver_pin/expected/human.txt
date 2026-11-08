@@ -29,11 +29,12 @@ Start here:
       no test path = no test path found; unclear = analysis limited, not a verdict;
       found = listed for review; suppressed by your settings = hidden by your suppression policy;
       base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
-    - reach weak: No test is seen calling parse_summary; tests share only its file or a name token: parse_summary_callee_witness_pins_variant, parse_summary_other_receiver_pins_same_vari…
+    - reach weak: No test is seen calling parse_summary; tests share only its file or a name token: parse_summary_callee_witness_pins_variant
     - infection yes: Reachable tests can plausibly activate this changed behavior
     - 9 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/error_variant_wrapper_wrong_receiver_pin/input --diff <cwd>/fixtures/error_variant_wrapper_wrong_receiver_pin/diff.patch --mode fast probe:src_lib.rs:call_deletion:0fc3c3da
   ripr context --root <cwd>/fixtures/error_variant_wrapper_wrong_receiver_pin/input --diff <cwd>/fixtures/error_variant_wrapper_wrong_receiver_pin/diff.patch --mode fast --at probe:src_lib.rs:call_deletion:0fc3c3da
   no repair start offered: ripr cannot build a repair packet for this finding yet because it is still missing: producer-owned test symbol; direct owner relationship; a way to follow the changed value to something a test can check; follow the Next step above, then rerun `ripr check`

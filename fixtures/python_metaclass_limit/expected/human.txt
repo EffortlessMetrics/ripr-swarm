@@ -17,6 +17,7 @@ Start here:
   Language: python
   Language status: preview
   Static exposure: unknown (severity: note, confidence 0.20)
+  Why capped: preview adapter: infection/propagation not modeled (Python); syntax-first, no type or import resolution; whether a test checks this behavior is not established. Preview score, not on the same scale as Rust confidence.
   Why unknown: the analysis could not determine a static exposure state
   Changed behavior: class InvoiceRecord(metaclass=AuditMeta):
   Analyzer limit: Static limit `metaprogramming`: the Python preview adapter saw metaprogramming syntax and does not infer runtime-created behavior
@@ -37,6 +38,7 @@ Start here:
     - 4 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/python_metaclass_limit/input --diff <cwd>/fixtures/python_metaclass_limit/diff.patch --mode fast probe:src_models.py:python_preview:563ce1fa
   ripr context --root <cwd>/fixtures/python_metaclass_limit/input --diff <cwd>/fixtures/python_metaclass_limit/diff.patch --mode fast --at probe:src_models.py:python_preview:563ce1fa
   no repair start offered: this finding has no gap ID, so there is no gap to start a repair from; follow the Next step above

@@ -43,6 +43,7 @@ Start here:
     - 4 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/typescript_monorepo_package_local/input --diff <cwd>/fixtures/typescript_monorepo_package_local/diff.patch --mode fast probe:packages_pkg-a_src_discount.ts:typescript_preview:c4053b5a
   ripr context --root <cwd>/fixtures/typescript_monorepo_package_local/input --diff <cwd>/fixtures/typescript_monorepo_package_local/diff.patch --mode fast --at probe:packages_pkg-a_src_discount.ts:typescript_preview:c4053b5a
   no repair start offered: this finding has no gap ID, so there is no gap to start a repair from; follow the Next step above

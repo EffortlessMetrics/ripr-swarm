@@ -1,6 +1,6 @@
 use super::evidence::{AssertionRefusalNote, ClassifiedProbeEvidence};
 use crate::analysis::classify::{
-    ASSERTION_CONTEXT_UNESTABLISHED, ProbeContext, body_contains_owner_call,
+    ASSERTION_CONTEXT_UNESTABLISHED, OwnerPinSyntax, ProbeContext, body_contains_owner_call,
     ensure_unknown_stop_reason, exact_error_variant, exact_oracle_gap_next_step,
     is_partial_eq_method, missing_evidence, oracle_crediting_relations, recommended_next_step,
     recommended_next_step_with_boundary, stop_reasons, wrapper_error_seam_expression,
@@ -84,6 +84,10 @@ pub(in crate::analysis) fn build_finding_with_origins(
     if context.const_flow.is_some() || context.binding_return_flow.is_some() {
         stop_reasons.retain(|reason| reason.as_str() != StopReason::NoChangedRustLine.as_str());
     }
+    #[cfg(feature = "lang-rust")]
+    if context.tier_flow.is_some() {
+        stop_reasons.retain(|reason| reason.as_str() != StopReason::NoChangedRustLine.as_str());
+    }
     ensure_unknown_stop_reason(&class, &mut stop_reasons);
     // RIPR-SPEC-0263: no related test call enters the guard around the
     // changed line, so the repair is an input, not a stronger assertion.
@@ -144,6 +148,15 @@ pub(in crate::analysis) fn build_finding_with_origins(
             &evidence.implicit_dispatch_tests,
         );
     }
+    let fallback_pin_syntax = OwnerPinSyntax::default();
+    let collection_contents_check_side_effect =
+        crate::analysis::repair_route::probe_needs_collection_contents_guidance(
+            context.probe,
+            context.owner_fn,
+            context.index,
+            &test_summaries,
+            context.owner_pin_syntax.unwrap_or(&fallback_pin_syntax),
+        );
     // RIPR-SPEC-0229 / #11024: no related test input selects the changed
     // match arm, so the repair is an input that selects it, not a stronger
     // assertion. The arm pattern is the backticked span of the fact reason.
@@ -276,6 +289,7 @@ pub(in crate::analysis) fn build_finding_with_origins(
                 &related_tests,
                 &stop_reasons,
             ),
+            collection_contents_check_side_effect,
         )
     };
     let invalid_propagation_witness = evidence.propagation_witness().is_some_and(|diagnostic| {
@@ -1087,11 +1101,15 @@ mod tests {
     /// miss itself is unchanged by the support (control 9).
     #[test]
     fn rust_attaches_the_universal_fact_only_to_rows_it_assigns_the_miss() {
-        use crate::domain::{MissingDiscriminatorFact, RelatedTestMiss, RelatedTestMissSupport};
+        use crate::domain::{
+            DiscriminatorShape, MissingDiscriminatorFact, RelatedTestMiss, RelatedTestMissSupport,
+        };
         let fact = |value: &str| MissingDiscriminatorFact {
             value: value.to_string(),
             reason: "no related test passes the boundary".to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Boundary,
+            drafted_boundary: None,
         };
         let rows = || {
             vec![
@@ -1248,6 +1266,7 @@ mod tests {
             observe: yes.clone(),
             discriminate: yes,
             reach_ruled_out: true,
+            assigned_field_weakly_read: false,
             assertion_refusal: None,
             refusals_are_analyzer_limits: false,
             mixed_refusal_is_analyzer_limit: false,
@@ -1270,6 +1289,7 @@ mod tests {
             attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            generated: None,
         }
     }
 

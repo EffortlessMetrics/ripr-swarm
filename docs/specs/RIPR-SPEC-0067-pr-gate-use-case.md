@@ -142,6 +142,13 @@ Gate reasons are expressed over these deltas and states only:
   completeness contract), which degrades the decision rather than
   silently shrinking it.
 
+A snapshot that repeats a `canonical_gap_id` is not comparable: attribution
+would depend on row order. The producer (`xtask ripr-pr`) withholds the whole
+offending snapshot as unavailable, with a reason naming the base or head side,
+so coverage is never complete and no relation is affirmed from it; the consumer
+(`CausalDeltaArtifact::load`) independently rejects duplicate output ids
+(#12727).
+
 ### What the gate MUST NOT block on
 
 - raw finding count churn (finding totals are not canonical debt);

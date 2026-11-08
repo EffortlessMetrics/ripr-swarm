@@ -36,6 +36,7 @@ Start here:
     - 4 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/macro_passthrough_sibling_item_macro_binding/input --diff <cwd>/fixtures/macro_passthrough_sibling_item_macro_binding/diff.patch --mode fast probe:src_lib.rs:predicate:fa1d51d0
   ripr context --root <cwd>/fixtures/macro_passthrough_sibling_item_macro_binding/input --diff <cwd>/fixtures/macro_passthrough_sibling_item_macro_binding/diff.patch --mode fast --at probe:src_lib.rs:predicate:fa1d51d0
 Write a test for it:

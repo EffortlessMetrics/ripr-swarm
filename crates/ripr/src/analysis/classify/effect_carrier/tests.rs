@@ -746,3 +746,331 @@ fn whole_object_admits_tokenizes_each_test_body_once() {
     let _ = carrier.admits(&test_b, &history);
     TEST_BODY_TOKENIZE_COUNT.with(|count| assert_eq!(count.get(), 2));
 }
+
+/// #6579: a free `callee(self)` helper with `&mut Inventory` uses the same
+/// carrier as `self.refresh_low_stock(sku)`.
+const LEDGER_FREE_HELPER: &str = r#"use std::collections::{BTreeMap, BTreeSet};
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Event {
+    Received { sku: String, qty: u32 },
+    Shipped { sku: String, qty: u32 },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Receipt {
+    pub sku: String,
+    pub qty: u32,
+    pub remaining: u32,
+}
+
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Inventory {
+    stock: BTreeMap<String, u32>,
+    log: Vec<Event>,
+    shipped_total: u64,
+    low_stock: BTreeSet<String>,
+    low_threshold: u32,
+}
+
+fn refresh_low_stock_fn(inv: &mut Inventory, sku: &str) {
+    if inv.on_hand(sku) < inv.low_threshold {
+        inv.low_stock.insert(sku.to_string());
+    } else {
+        inv.low_stock.remove(sku);
+    }
+}
+
+impl Inventory {
+    pub fn new(low_threshold: u32) -> Self {
+        Self {
+            low_threshold,
+            ..Self::default()
+        }
+    }
+
+    pub fn receive(&mut self, sku: &str, qty: u32) {
+        *self.stock.entry(sku.to_string()).or_insert(0) += qty;
+        self.log.push(Event::Received { sku: sku.to_string(), qty });
+        refresh_low_stock_fn(self, sku);
+    }
+
+    pub fn on_hand(&self, sku: &str) -> u32 {
+        self.stock.get(sku).copied().unwrap_or(0)
+    }
+
+    pub fn history(&self) -> &[Event] {
+        &self.log
+    }
+
+    fn refresh_low_stock(&mut self, sku: &str) {
+        if self.on_hand(sku) < self.low_threshold {
+            self.low_stock.insert(sku.to_string());
+        } else {
+            self.low_stock.remove(sku);
+        }
+    }
+}
+"#;
+
+const LEDGER_FREE_TESTS: &str = r#"
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn history_after_receive() {
+        let mut inv = Inventory::new(5);
+        inv.receive("BOLT-M8", 10);
+        assert_eq!(inv.history(), &[Event::Received { sku: "BOLT-M8".to_string(), qty: 10 }]);
+    }
+}
+"#;
+
+#[test]
+fn free_self_argument_call_name_accepts_extra_args() {
+    assert_eq!(
+        super::free_self_argument_call_name("refresh_low_stock_fn(self, sku)"),
+        Some("refresh_low_stock_fn".to_string())
+    );
+}
+
+#[test]
+fn free_helper_field_use_finds_low_stock_writes() {
+    let index = index(&[(LIB, LEDGER_FREE_HELPER)]);
+    let callee = index
+        .functions()
+        .iter()
+        .find(|function| function.name == "refresh_low_stock_fn");
+    assert!(callee.is_some(), "free helper must be indexed");
+    let Some(callee) = callee else {
+        return;
+    };
+    assert!(super::split_signature(callee).is_some(), "split signature");
+    let Some((signature, body)) = super::split_signature(callee) else {
+        return;
+    };
+    assert!(
+        super::free_fn_mut_self_param_name(&signature).is_some(),
+        "mut-self param"
+    );
+    let Some(param) = super::free_fn_mut_self_param_name(&signature) else {
+        return;
+    };
+    assert_eq!(param, "inv");
+    let uses = super::free_fn_field_use(&body, &param);
+    assert!(
+        uses.writes.contains("low_stock"),
+        "expected low_stock write, writes={:?}",
+        uses.writes
+    );
+    assert!(!uses.opaque, "free helper field scan must stay bounded");
+}
+
+#[test]
+fn free_helper_callee_resolves_from_probe_expression() {
+    let index = index(&[
+        (LIB, LEDGER_FREE_HELPER),
+        ("tests/free.rs", LEDGER_FREE_TESTS),
+    ]);
+    let owner = owner(&index, "receive");
+    assert!(
+        super::container_self_type(&owner.item.container).is_some(),
+        "self ty"
+    );
+    let Some(self_ty) = super::container_self_type(&owner.item.container) else {
+        return;
+    };
+    let methods = super::SelfTypeMethods::collect(&self_ty, &index);
+    assert!(
+        super::resolve_effect_callee(
+            "refresh_low_stock_fn(self, sku)",
+            &self_ty,
+            &index,
+            &methods,
+        )
+        .is_some(),
+        "free helper callee"
+    );
+    let Some((_callee, name)) = super::resolve_effect_callee(
+        "refresh_low_stock_fn(self, sku)",
+        &self_ty,
+        &index,
+        &methods,
+    ) else {
+        return;
+    };
+    assert_eq!(name, "refresh_low_stock_fn");
+    let probe = effect_probe(owner, "refresh_low_stock_fn(self, sku)");
+    assert!(
+        super::EffectStateCarrier::establish(&probe, owner, &index, true).is_some(),
+        "free-helper probe must establish a carrier"
+    );
+}
+
+#[test]
+fn free_self_argument_call_establishes_carrier_and_refuses_unrelated_projection() {
+    let index = index(&[
+        (LIB, LEDGER_FREE_HELPER),
+        ("tests/free.rs", LEDGER_FREE_TESTS),
+    ]);
+    let carrier = establish(&index, "refresh_low_stock_fn(self, sku)");
+    assert!(
+        carrier.is_some(),
+        "free `callee(self)` must establish the same carrier shape"
+    );
+    let Some(carrier) = carrier else {
+        return;
+    };
+    let test = the_test(&index);
+    assert!(
+        !carrier.admits(
+            test,
+            &whole_object(
+                r#"assert_eq!(inv.history(), &[Event::Received { sku: "BOLT-M8".to_string(), qty: 10 }]);"#
+            ),
+        ),
+        "history must not carry a free-helper write to low_stock"
+    );
+}
+
+#[test]
+fn whole_object_refused_when_owner_fed_binding_is_rewritten_before_assertion() {
+    const REWRITE: &str = r#"
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn rewrite_check() {
+        let mut inv = Inventory::new(5);
+        let fresh = Inventory::new(5);
+        inv.receive("BOLT-M8", 10);
+        inv.stock.insert("OTHER".to_string(), 99);
+        assert_eq!(inv, fresh);
+    }
+}
+"#;
+    let index = index(&[(LIB, LEDGER), ("tests/rewrite.rs", REWRITE)]);
+    let test = the_test(&index);
+    let carrier = establish(&index, "self.refresh_low_stock(sku);");
+    assert!(
+        carrier.is_some(),
+        "ledger carrier must establish for rewrite fixture"
+    );
+    let Some(carrier) = carrier else {
+        return;
+    };
+    let indexed = test
+        .assertions
+        .iter()
+        .find(|fact| fact.text.contains("assert_eq!(inv, fresh)"));
+    assert!(
+        indexed.is_some(),
+        "rewrite fixture must hold the whole-object assertion"
+    );
+    let Some(indexed) = indexed else {
+        return;
+    };
+    let assertion = OracleFact {
+        line: indexed.line,
+        ..whole_object("assert_eq!(inv, fresh);")
+    };
+    assert!(
+        !carrier.admits(test, &assertion),
+        "a statement that names the binding between the owner call and the assertion must refuse"
+    );
+}
+
+#[test]
+fn whole_object_refused_when_compared_binding_reassigned_after_owner_call() {
+    const REPLACE: &str = r#"
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn replace_check() {
+        let mut inv = Inventory::new(5);
+        inv.receive("BOLT-M8", 10);
+        inv = Inventory::new(5);
+        assert_eq!(inv, Inventory::new(5));
+    }
+}
+"#;
+    let index = index(&[(LIB, LEDGER), ("tests/replace.rs", REPLACE)]);
+    let test = the_test(&index);
+    let carrier = establish(&index, "self.refresh_low_stock(sku);");
+    assert!(
+        carrier.is_some(),
+        "ledger carrier must establish for replace fixture"
+    );
+    let Some(carrier) = carrier else {
+        return;
+    };
+    let indexed = test
+        .assertions
+        .iter()
+        .find(|fact| fact.text.contains("assert_eq!(inv, Inventory::new(5))"));
+    assert!(
+        indexed.is_some(),
+        "replace fixture must hold the whole-object assertion"
+    );
+    let Some(indexed) = indexed else {
+        return;
+    };
+    let assertion = OracleFact {
+        line: indexed.line,
+        ..whole_object("assert_eq!(inv, Inventory::new(5));")
+    };
+    assert!(
+        !carrier.admits(test, &assertion),
+        "a reassigned compared binding must not confirm the deleted effect"
+    );
+}
+
+#[test]
+fn unrelated_binding_rewrite_does_not_veto_compared_receiver_equality() {
+    const SIBLING: &str = r#"
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn sibling_rewrite() {
+        let mut other = Inventory::new(5);
+        let mut inv = Inventory::new(5);
+        let fresh = Inventory::new(5);
+        other.receive("A", 1);
+        other.stock.insert("B".to_string(), 2);
+        inv.receive("BOLT-M8", 10);
+        assert_eq!(inv, fresh);
+    }
+}
+"#;
+    let index = index(&[(LIB, LEDGER), ("tests/sibling.rs", SIBLING)]);
+    let test = the_test(&index);
+    let carrier = establish(&index, "self.refresh_low_stock(sku);");
+    assert!(
+        carrier.is_some(),
+        "ledger carrier must establish for sibling rewrite fixture"
+    );
+    let Some(carrier) = carrier else {
+        return;
+    };
+    let indexed = test
+        .assertions
+        .iter()
+        .find(|fact| fact.text.contains("assert_eq!(inv, fresh)"));
+    assert!(
+        indexed.is_some(),
+        "sibling fixture must hold the whole-object assertion"
+    );
+    let Some(indexed) = indexed else {
+        return;
+    };
+    let assertion = OracleFact {
+        line: indexed.line,
+        ..whole_object("assert_eq!(inv, fresh);")
+    };
+    assert!(
+        carrier.admits(test, &assertion),
+        "rewriting an unrelated owner-fed binding must not refuse the compared receiver"
+    );
+}

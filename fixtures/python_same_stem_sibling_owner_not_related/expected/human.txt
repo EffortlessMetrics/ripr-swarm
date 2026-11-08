@@ -17,13 +17,14 @@ Start here:
   Language: python
   Language status: preview
   Static exposure: weak (severity: warning, confidence 0.40)
+  Why capped: preview adapter: infection/propagation not modeled (Python); syntax-first, no type or import resolution; no observed call supplies the changed boundary input. Preview score, not on the same scale as Rust confidence.
   Why weak: a related test reaches this change but does not observe the exact changed value
   Gap ID (for scripts): gap:python:pricing.py:discounted_total:predicate_boundary:predicate:amount>=discount_threshold
   Changed behavior: if amount >= DISCOUNT_THRESHOLD:
-  Missing check (1 of 2): A strong Python oracle reaches `discounted_total`, but static evidence
-    does not place a related test input at the changed predicate boundary `amount ==
-    DISCOUNT_THRESHOLD`. No strong related test call places amount equal to DISCOUNT_THRESHOLD
-    (module constant DISCOUNT_THRESHOLD = 10000 at line 1); observed amount values: 20000, 5000
+  Missing check: A strong Python oracle reaches `discounted_total`, but static evidence does not
+    place a related test input at the changed predicate boundary `amount == DISCOUNT_THRESHOLD`. No
+    strong related test call places amount equal to DISCOUNT_THRESHOLD (module constant
+    DISCOUNT_THRESHOLD = 10000 at line 1); observed amount values: 20000, 5000
   Related test (1 of 2 matched rows): tests/test_pricing.py:8 test_discounts_far_above_threshold (no test input reaches `amount == DISCOUNT_THRESHOLD`)
   Suggested test file: tests/test_pricing.py
   Suggested test: test_discounts_far_above_threshold
@@ -46,6 +47,7 @@ Start here:
     - 8 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/python_same_stem_sibling_owner_not_related/input --diff <cwd>/fixtures/python_same_stem_sibling_owner_not_related/diff.patch --mode fast probe:pricing.py:python_preview:2267e505
   ripr context --root <cwd>/fixtures/python_same_stem_sibling_owner_not_related/input --diff <cwd>/fixtures/python_same_stem_sibling_owner_not_related/diff.patch --mode fast --at probe:pricing.py:python_preview:2267e505
   no repair start offered: the spot list behind `ripr repair` and `ripr agent repair --phase before` covers Rust files only, so this Python finding in `pricing.py` has no spot to start a repair from; this is a terminal state of the delegated loop, not a stale id. The gap, test node and verify command that `ripr check` prints are the manual route: add the missing check to that test by hand and run the printed verify command

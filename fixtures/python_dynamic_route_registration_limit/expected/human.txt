@@ -17,6 +17,7 @@ Start here:
   Language: python
   Language status: preview
   Static exposure: unknown (severity: note, confidence 0.20)
+  Why capped: preview adapter: infection/propagation not modeled (Python); syntax-first, no type or import resolution; whether a test checks this behavior is not established. Preview score, not on the same scale as Rust confidence.
   Why unknown: the analysis could not determine a static exposure state
   Changed behavior: return {"detail": "coupon expired"}
   Analyzer limit: Static limit `dynamic_route_registration`: owner `checkout` uses dynamic route
@@ -38,6 +39,7 @@ Start here:
     - 7 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/python_dynamic_route_registration_limit/input --diff <cwd>/fixtures/python_dynamic_route_registration_limit/diff.patch --mode fast probe:app_checkout.py:python_preview:v1-35ebabec
   ripr context --root <cwd>/fixtures/python_dynamic_route_registration_limit/input --diff <cwd>/fixtures/python_dynamic_route_registration_limit/diff.patch --mode fast --at probe:app_checkout.py:python_preview:v1-35ebabec
   no repair start offered: this finding has no gap ID, so there is no gap to start a repair from; follow the Next step above

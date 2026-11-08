@@ -45,5 +45,6 @@ Weakness
 Next step
   Add boundary tests for below, equal, and above the changed threshold with exact assertions
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/rust_let_literal_pattern_rebound/input --diff <cwd>/fixtures/rust_let_literal_pattern_rebound/diff.patch --mode fast probe:src_lib.rs:predicate:447aae2b
   ripr context --root <cwd>/fixtures/rust_let_literal_pattern_rebound/input --diff <cwd>/fixtures/rust_let_literal_pattern_rebound/diff.patch --mode fast --at probe:src_lib.rs:predicate:447aae2b

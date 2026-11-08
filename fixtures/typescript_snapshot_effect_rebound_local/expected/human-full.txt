@@ -86,6 +86,7 @@ TypeScript repair packet (advisory)
 Next step
   TypeScript preview advisory: add an exact-value assertion alongside the snapshot for the missing check `call queue.push includes "shipped "`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/typescript_snapshot_effect_rebound_local/input --diff <cwd>/fixtures/typescript_snapshot_effect_rebound_local/diff.patch --mode fast probe:src_lib.ts:typescript_preview:1066bfb8
   ripr context --root <cwd>/fixtures/typescript_snapshot_effect_rebound_local/input --diff <cwd>/fixtures/typescript_snapshot_effect_rebound_local/diff.patch --mode fast --at probe:src_lib.ts:typescript_preview:1066bfb8
 

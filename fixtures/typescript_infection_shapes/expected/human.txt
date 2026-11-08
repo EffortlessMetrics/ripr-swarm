@@ -42,6 +42,7 @@ Start here:
     - 5 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/typescript_infection_shapes/input --diff <cwd>/fixtures/typescript_infection_shapes/diff.patch --mode fast probe:src_guard.ts:typescript_preview:0e63c99e
   ripr context --root <cwd>/fixtures/typescript_infection_shapes/input --diff <cwd>/fixtures/typescript_infection_shapes/diff.patch --mode fast --at probe:src_guard.ts:typescript_preview:0e63c99e
   no repair start offered: this finding has no gap ID, so there is no gap to start a repair from; follow the Next step above

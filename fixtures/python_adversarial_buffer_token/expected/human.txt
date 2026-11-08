@@ -17,13 +17,14 @@ Start here:
   Language: python
   Language status: preview
   Static exposure: weak (severity: warning, confidence 0.40)
+  Why capped: preview adapter: infection/propagation not modeled (Python); syntax-first, no type or import resolution; no observed call supplies the changed boundary input. Preview score, not on the same scale as Rust confidence.
   Why weak: a related test reaches this change but does not observe the exact changed value
   Gap ID (for scripts): gap:python:src/pack.py:pack:predicate_boundary:predicate:len_buffer<=limit
   Changed behavior: if len(buffer) <= limit:
   Missing check (1 of 2): A strong Python oracle reaches `pack`, but its assertion does not observe
     the changed owner's output; static evidence cannot confirm the changed behavior is
     discriminated. Add an assertion on the changed owner's output
-  Related test: tests/test_pack.py:4 test_pack_returns_list (ripr could not confirm that this assertion observes the changed behavior)
+  Related test: tests/test_pack.py:4 test_pack_returns_list
   Suggested test file: tests/test_pack.py
   Suggested test: test_pack_returns_list
   Test node: tests/test_pack.py::test_pack_returns_list
@@ -45,6 +46,7 @@ Start here:
     - 6 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/python_adversarial_buffer_token/input --diff <cwd>/fixtures/python_adversarial_buffer_token/diff.patch --mode fast probe:src_pack.py:python_preview:cfc61771
   ripr context --root <cwd>/fixtures/python_adversarial_buffer_token/input --diff <cwd>/fixtures/python_adversarial_buffer_token/diff.patch --mode fast --at probe:src_pack.py:python_preview:cfc61771
   no repair start offered: the spot list behind `ripr repair` and `ripr agent repair --phase before` covers Rust files only, so this Python finding in `src/pack.py` has no spot to start a repair from; this is a terminal state of the delegated loop, not a stale id. The gap, test node and verify command that `ripr check` prints are the manual route: add the missing check to that test by hand and run the printed verify command

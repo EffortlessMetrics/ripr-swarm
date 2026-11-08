@@ -15,7 +15,7 @@ Start here:
   Why weak: a related test reaches this change but does not observe the exact changed value
   Gap ID (for scripts): gap:rust:src/lib.rs:weight:return_value:return_value:x*3
   Changed behavior: x * 3
-  Missing check: No strong assertion was detected
+  Missing check: No assertion was tied to the changed value
   Related test (1 of 2 matched rows): src/lib.rs:25 deref_store_is_not_independent (ripr could not confirm that this assertion observes the changed behavior)
   Next step: The related test `match_destructuring_is_not_independent` already has an exact
     assertion; this does not establish observation of the returned value. Check whether the change
@@ -38,6 +38,7 @@ Start here:
     - 11 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/owner_pin_written_expected_not_a_pin/input --diff <cwd>/fixtures/owner_pin_written_expected_not_a_pin/diff.patch --mode fast probe:src_lib.rs:return_value:c70c15c1
   ripr context --root <cwd>/fixtures/owner_pin_written_expected_not_a_pin/input --diff <cwd>/fixtures/owner_pin_written_expected_not_a_pin/diff.patch --mode fast --at probe:src_lib.rs:return_value:c70c15c1
   no repair start offered: `ripr check` reads a gap or limit for this change, but `ripr repair` judges the surrounding code as a whole and finds its tests already notice changes there (exposed), so it has no gap to start from. The two read different evidence (your changed lines versus the surrounding code as a whole) and ripr does not start a repair on conflicting evidence; follow the Next step above
