@@ -1903,11 +1903,7 @@ fn review_card_repair_start(
         // start is not "no actionable gap": the diff-aware `check` names the
         // missing check and its by-hand route, so stopping here would be a
         // false all-clear. Hand over that one command instead.
-        let places = changed_line_gaps_without_start
-            .iter()
-            .cloned()
-            .collect::<Vec<_>>()
-            .join(", ");
+        let places = changed_line_gaps_without_start.join(", ");
         return Err(CardFallback::Recover(Selection::blocked_with_reason(
             "blocked_artifact",
             "changed_gaps_without_repair_start",
