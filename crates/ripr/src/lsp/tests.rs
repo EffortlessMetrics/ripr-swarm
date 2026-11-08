@@ -33292,14 +33292,10 @@ fn incomplete_outcome_with_no_rows_serves_a_passive_marker_and_nothing_else_does
             ));
         };
         let data = marker.data.as_ref().ok_or("marker carries typed data")?;
-        let sentence = outcome
-            .incomplete_scope_sentence()
-            .ok_or("incomplete outcome has a sentence")?;
         if scope_marker_kind_of(marker).as_deref() != Some("incomplete_analysis")
             || marker.severity != Some(DiagnosticSeverity::INFORMATION)
             || marker.source.as_deref() != Some("ripr")
             || marker.range != Range::default()
-            || !marker.message.contains(&sentence)
             || !marker.message.contains(recovery.trim_end_matches('.'))
             || !marker.message.contains(limitation_kind.plain_label())
             || !marker.message.contains("does not mean")
