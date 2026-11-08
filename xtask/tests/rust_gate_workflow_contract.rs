@@ -195,7 +195,16 @@ fn user_text_summary_rejects_missing_or_swapped_outcome_bindings() {
 fn user_text_summary_reports_each_actual_outcome_and_missing_value()
 -> Result<(), Box<dyn std::error::Error>> {
     use std::fs;
+    use std::path::PathBuf;
     use std::process::Command;
+
+    struct Scratch(PathBuf);
+
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
 
     let summary = WORKFLOW
         .split("\n      - ")
@@ -218,7 +227,8 @@ fn user_text_summary_reports_each_actual_outcome_and_missing_value()
     let scratch =
         std::env::temp_dir().join(format!("ripr-user-text-summary-{}", std::process::id()));
     fs::create_dir(&scratch)?;
-    let path = scratch.join("summary.md");
+    let scratch = Scratch(scratch);
+    let path = scratch.0.join("summary.md");
     for target in 0..3 {
         for outcome in ["success", "failure", "skipped", "cancelled", ""] {
             let mut command = Command::new("bash");
@@ -278,7 +288,7 @@ fn user_text_summary_reports_each_actual_outcome_and_missing_value()
         }
     }
     fs::remove_file(path)?;
-    fs::remove_dir(scratch)?;
+    fs::remove_dir(&scratch.0)?;
     Ok(())
 }
 
