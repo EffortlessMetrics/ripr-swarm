@@ -912,11 +912,12 @@ fn mark_default_object_members(body: &[Statement<'_>], owners: &mut [TypeScriptO
         };
         if owner.class_name.is_none() && callable && members.contains(owner.name.as_str()) {
             owner.default_object_member = true;
-            let mut siblings: Vec<String> = members
-                .iter()
-                .filter(|name| **name != owner.name.as_str() && unsafe_names.contains(**name))
-                .map(|name| (*name).to_string())
-                .collect();
+            let mut siblings: Vec<String> = Vec::new();
+            for name in &members {
+                if *name != owner.name.as_str() && unsafe_names.contains(*name) {
+                    siblings.push((*name).to_string());
+                }
+            }
             siblings.sort();
             owner.default_object_unsafe_siblings = siblings;
         }
