@@ -670,7 +670,7 @@ fn spans_overlap(helper: &FunctionFact, test: &TestFact) -> bool {
 
 mod assertion_macros;
 pub(super) use assertion_macros::credit_same_file_assertion_macros;
-pub(crate) use assertion_macros::expanded_assertion_view;
+pub(crate) use assertion_macros::{expanded_assertion_view, imported_forwarding_calls};
 
 #[cfg(test)]
 mod tests;

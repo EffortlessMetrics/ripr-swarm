@@ -424,7 +424,7 @@ pub(crate) fn unanalyzed_state_notes(output: &CheckOutput) -> Vec<UnanalyzedStat
                     str::to_string,
                 );
                 message.push_str(&format!(
-                    " Untracked files ({listing}) are invisible to both; stage them first \
+                    " Untracked files ({listing}) are not in either diff yet; stage them first \
                      (`git add <paths>`, or `git add -N <paths>` intent-to-add makes a new file \
                      visible to `--worktree`) and rerun `ripr check --worktree`, or pass \
                      `--diff PATH`."
@@ -1490,7 +1490,7 @@ mod tests {
         let rendered = render(&output);
 
         assert!(
-            rendered.contains("Untracked files (src/new.rs, tests/new.rs, Cargo.toml and 1 more) are invisible to both"),
+            rendered.contains("Untracked files (src/new.rs, tests/new.rs, Cargo.toml and 1 more) are not in either diff yet"),
             "{rendered}"
         );
         assert!(rendered.contains("git add -N <paths>"), "{rendered}");

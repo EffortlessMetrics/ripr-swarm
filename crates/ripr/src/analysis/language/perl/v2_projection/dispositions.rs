@@ -6,7 +6,7 @@
 use super::super::{BehaviorHint, OracleKind, OracleStrength, RelationKind};
 use crate::domain::ProbeFamily;
 
-pub(crate) fn behavior_hint_to_probe_family(hint: BehaviorHint) -> ProbeFamily {
+pub(in super::super) fn behavior_hint_to_probe_family(hint: BehaviorHint) -> ProbeFamily {
     match hint {
         BehaviorHint::PredicateBoundary => ProbeFamily::Predicate,
         BehaviorHint::ReturnValue => ProbeFamily::ReturnValue,
@@ -20,7 +20,7 @@ pub(crate) fn behavior_hint_to_probe_family(hint: BehaviorHint) -> ProbeFamily {
     }
 }
 
-pub(crate) fn perl_oracle_kind_to_domain(kind: OracleKind) -> crate::domain::OracleKind {
+pub(in super::super) fn perl_oracle_kind_to_domain(kind: OracleKind) -> crate::domain::OracleKind {
     use crate::domain::OracleKind as DomainOracleKind;
     match kind {
         OracleKind::ExactReturnAssertion => DomainOracleKind::ExactValue,
@@ -41,7 +41,7 @@ pub(crate) fn perl_oracle_kind_to_domain(kind: OracleKind) -> crate::domain::Ora
 
 /// Domain projection for a Perl oracle strength (#3228): same
 /// single-authority contract as `perl_oracle_kind_to_domain`.
-pub(crate) fn perl_oracle_strength_to_domain(
+pub(in super::super) fn perl_oracle_strength_to_domain(
     strength: OracleStrength,
 ) -> crate::domain::OracleStrength {
     use crate::domain::OracleStrength as DomainOracleStrength;
@@ -53,7 +53,7 @@ pub(crate) fn perl_oracle_strength_to_domain(
     }
 }
 
-pub(crate) fn perl_relation_to_domain(
+pub(in super::super) fn perl_relation_to_domain(
     kind: RelationKind,
 ) -> (
     Option<crate::domain::RelationReason>,
