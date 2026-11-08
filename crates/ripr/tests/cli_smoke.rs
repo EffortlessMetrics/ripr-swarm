@@ -174,6 +174,9 @@ mod ts_limitations_truncation;
 #[path = "cli_smoke/typescript_caught_assertions.rs"]
 mod typescript_caught_assertions;
 #[cfg(feature = "lang-typescript")]
+#[path = "cli_smoke/typescript_constructor_callback.rs"]
+mod typescript_constructor_callback;
+#[cfg(feature = "lang-typescript")]
 #[path = "cli_smoke/typescript_effect_aliases.rs"]
 mod typescript_effect_aliases;
 #[cfg(feature = "lang-typescript")]
@@ -17311,6 +17314,93 @@ fn init_agents_appends_marked_section_idempotently_and_never_clobbers() -> Resul
     Ok(())
 }
 
+/// #13596: a Python or TypeScript root gets pytest/jest advice and matching
+/// Cursor globs instead of the Rust text; a Rust root keeps the Rust text.
+/// Needs the Python and TypeScript analyzers: a build without them correctly
+/// reports those files as not analyzed instead of writing the preview loop.
+#[cfg(all(feature = "lang-python", feature = "lang-typescript"))]
+#[test]
+fn init_agents_writes_language_appropriate_instructions() -> Result<(), String> {
+    let cases: [(&str, &str, &[&str], &[&str]); 3] = [
+        (
+            "pyproject.toml",
+            "[project]\nname = \"x\"\n",
+            &["pytest -k", "(Python, preview)", "**/*.py"],
+            &["cargo test", "assert_eq!", "**/*.rs", "ripr repair <"],
+        ),
+        // `tsconfig.json` is a TypeScript project marker, so the generated
+        // config enables TypeScript; a bare `package.json` would not, and the
+        // block must then not promise TypeScript analysis.
+        (
+            "tsconfig.json",
+            "{}\n",
+            &["npx jest", "npx vitest", "**/*.ts", "**/*.tsx"],
+            &["cargo test", "assert_eq!", "**/*.rs", "ripr repair <"],
+        ),
+        (
+            "Cargo.toml",
+            "[package]\nname = \"x\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+            &["cargo test", "assert_eq!", "**/*.rs"],
+            &["pytest", "jest", "**/*.py"],
+        ),
+    ];
+    for (marker, text, wanted, banned) in cases {
+        let workspace = unique_temp_workspace("init-agents-language");
+        std::fs::create_dir_all(&workspace).map_err(|e| e.to_string())?;
+        std::fs::write(workspace.join(marker), text).map_err(|e| e.to_string())?;
+        let root = workspace.display().to_string();
+        let out = run_ripr(&["init", "--root", &root, "--agents", "all"]);
+        assert_success(&out);
+        let mut combined = String::new();
+        for file in ["CLAUDE.md", "AGENTS.md", ".cursor/rules/ripr.mdc"] {
+            combined.push_str(
+                &std::fs::read_to_string(workspace.join(file)).map_err(|e| e.to_string())?,
+            );
+        }
+        for needle in wanted {
+            assert!(combined.contains(needle), "{marker}: missing {needle:?}");
+        }
+        for needle in banned {
+            assert!(
+                !combined.contains(needle),
+                "{marker}: unexpected {needle:?}"
+            );
+        }
+        ignore_remove_dir_all(&workspace);
+    }
+    // A kept ripr.toml that enables only Rust: the Python loop is not
+    // promised, and the block says Python is not analyzed.
+    let workspace = unique_temp_workspace("init-agents-language-disabled");
+    std::fs::create_dir_all(&workspace).map_err(|e| e.to_string())?;
+    std::fs::write(
+        workspace.join("pyproject.toml"),
+        "[project]\nname = \"x\"\n",
+    )
+    .map_err(|e| e.to_string())?;
+    std::fs::write(
+        workspace.join("ripr.toml"),
+        "[languages]\nenabled = [\"rust\"]\n",
+    )
+    .map_err(|e| e.to_string())?;
+    let root = workspace.display().to_string();
+    let out = run_ripr(&[
+        "init", "--root", &root, "--agents", "claude", "--agents", "cursor",
+    ]);
+    assert_success(&out);
+    for file in ["CLAUDE.md", ".cursor/rules/ripr.mdc"] {
+        let text = std::fs::read_to_string(workspace.join(file)).map_err(|e| e.to_string())?;
+        assert!(
+            text.contains("Python files here are NOT analyzed"),
+            "{file}: {text}"
+        );
+        for banned in ["pytest", "(Python, preview)", "**/*.py"] {
+            assert!(!text.contains(banned), "{file}: unexpected {banned:?}");
+        }
+    }
+    ignore_remove_dir_all(&workspace);
+    Ok(())
+}
+
 /// #4378: on Windows the init preview mixed a forward-slash argv prefix with the
 /// joined `\ripr.toml` suffix, and doctor mixed `.\`-relative lines with a
 /// verbatim `\\?\` executable. Both surfaces render one slash convention.
@@ -27515,7 +27605,7 @@ fn check_untracked_files_keep_committed_default_and_working_tree_reads_name_them
     }
     let untracked_only_human = human(&["check", "--root", &root_str]);
     if !untracked_only_human
-        .contains("Untracked files (src/new.rs) are invisible to both; stage them first")
+        .contains("Untracked files (src/new.rs) are not in either diff yet; stage them first")
     {
         return Err(format!(
             "the untracked-only default must print the #5258 note; got:\n{untracked_only_human}"
@@ -27694,11 +27784,24 @@ fn check_gitignored_files_are_disclosed_not_silent() -> Result<(), String> {
     .map_err(|err| format!("write alpha lib.rs: {err}"))?;
     std::fs::write(
         root.join(".gitignore"),
-        "target/\ncrates/alpha/src/ignored_gen.rs\n",
+        "target/\ncrates/alpha/src/ignored_gen.rs\nnode_modules/\n.venv/\n",
     )
     .map_err(|err| format!("write .gitignore: {err}"))?;
     run_git(&root, &["add", "."])?;
     run_git(&root, &["commit", "-m", "initial"])?;
+    // #13597: installed dependency trees are ignored but are not the user's
+    // sources; they must not be listed or drive the `git add -f` advice.
+    for (dir, file, body) in [
+        ("node_modules", "vendored.rs", "pub fn v() {}\n"),
+        ("node_modules/pkg/lib", "index.js", "module.exports = 1;\n"),
+        ("node_modules/pkg/src", "vendored.rs", "pub fn v() {}\n"),
+        (".venv/lib/site-packages/dep", "mod.py", "VALUE = 1\n"),
+    ] {
+        std::fs::create_dir_all(root.join(dir))
+            .map_err(|err| format!("create vendored dir {dir}: {err}"))?;
+        std::fs::write(root.join(dir).join(file), body)
+            .map_err(|err| format!("write vendored file {file}: {err}"))?;
+    }
     std::fs::create_dir_all(root.join("crates/alpha/target"))
         .map_err(|err| format!("create alpha target: {err}"))?;
     std::fs::write(
@@ -27773,6 +27876,14 @@ fn check_gitignored_files_are_disclosed_not_silent() -> Result<(), String> {
             "JSON must not name root target/ build output; got:\n{report}"
         ));
     }
+    if ignored.iter().any(|path| {
+        path.as_str()
+            .is_some_and(|p| p.contains("node_modules") || p.contains(".venv"))
+    }) {
+        return Err(format!(
+            "JSON must not name vendored dependency files; got:\n{report}"
+        ));
+    }
 
     // Human and human-full name the files and the force intent-to-add repair
     // (`git add -N` refuses ignored paths, verified against real git).
@@ -27794,6 +27905,11 @@ fn check_gitignored_files_are_disclosed_not_silent() -> Result<(), String> {
                     "{label} must disclose {expected:?}; got:\n{rendered}"
                 ));
             }
+        }
+        if rendered.contains("node_modules") || rendered.contains(".venv") {
+            return Err(format!(
+                "{label} must not name vendored dependency files; got:\n{rendered}"
+            ));
         }
         if rendered.contains("crunchy-x") {
             return Err(format!(
@@ -27821,6 +27937,38 @@ fn check_gitignored_files_are_disclosed_not_silent() -> Result<(), String> {
                 "worktree read must disclose {expected:?}; got:\n{dirty}"
             ));
         }
+    }
+    if dirty.contains("node_modules") || dirty.contains(".venv") {
+        return Err(format!(
+            "worktree read must not name vendored dependency files; got:\n{dirty}"
+        ));
+    }
+    let dirty_report = parse(&run_ripr(&[
+        "check",
+        "--root",
+        &root_str,
+        "--worktree",
+        "--json",
+    ]))?;
+    let dirty_ignored = dirty_report["ignored_working_tree_source_paths"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    if !dirty_ignored
+        .iter()
+        .any(|path| path == "crates/alpha/src/ignored_gen.rs")
+    {
+        return Err(format!(
+            "worktree JSON must name the ignored source; got:\n{dirty_report}"
+        ));
+    }
+    if dirty_ignored.iter().any(|path| {
+        path.as_str()
+            .is_some_and(|p| p.contains("node_modules") || p.contains(".venv"))
+    }) {
+        return Err(format!(
+            "worktree JSON must not name vendored dependency files; got:\n{dirty_report}"
+        ));
     }
 
     ignore_remove_dir_all(&root);
