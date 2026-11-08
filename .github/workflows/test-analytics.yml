@@ -175,7 +175,7 @@ jobs:
   rust-tests-combine:
     name: rust-tests-combine
     needs: rust-tests
-    if: ${{ !cancelled() && needs.rust-tests.result != 'skipped' }}
+    if: ${{ !cancelled() && needs.rust-tests.result != 'skipped' && (github.event_name != 'pull_request' || (github.event.action == 'labeled' && github.event.label.name == 'merge-ready')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
