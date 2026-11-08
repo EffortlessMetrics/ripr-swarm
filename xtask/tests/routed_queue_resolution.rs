@@ -58,6 +58,7 @@ fn resolve_shell(source: &str) -> Result<String, String> {
         .split_once("        run: |\n")
         .ok_or("missing Resolve queued PR shell")?;
     body.lines()
+        .take_while(|line| line.is_empty() || line.starts_with("          "))
         .map(|line| {
             if line.is_empty() {
                 Ok("")
@@ -256,7 +257,7 @@ fn run_resolve(world: &World, shell: &str, run: &Run) -> Result<Outcome, String>
         .iter()
         .map(|name| json!({"name": name}))
         .collect::<Vec<_>>();
-    let pr = json!({"head": {"sha": run.api_head}, "labels": labels});
+    let pr = json!({"node_id": "PR_fixture42", "head": {"sha": run.api_head}, "labels": labels});
     let graphql = json!({"data": {"repository": {"pullRequest": {
         "headRefOid": run.api_head,
         "mergeQueueEntry": {"id": "entry-42"},
@@ -307,6 +308,7 @@ esac
         .env("REPOSITORY", REPOSITORY)
         .env("PR_NUMBER", "")
         .env("PR_HEAD_SHA", "")
+        .env("PR_NODE_ID", "")
         .env("PR_LABELS", "")
         .env("GROUP_HEAD_REF", head_ref)
         .env("GROUP_BASE_SHA", &run.group_base)
