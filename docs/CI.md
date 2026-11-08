@@ -929,7 +929,14 @@ changing protected checks.
 Use the pinned [local command](agent-context/validation.md#workflow-policy)
 before publishing workflow changes; a successful YAML parse is not equivalent.
 
-### Swarm Routed Rust
+### Historical bootstrap routed Rust
+
+The label-route descriptions in this section and the conflict-notice/watchdog
+sections below describe the archived bootstrap generation. Their replays read
+`fixtures/convergence/queue-bootstrap`, not active Actions workflows. The current
+queue-only caller is described above; live queue resolution and terminal-result
+controls read `.github/workflows/routed-rust.yml`. Historical replay results do
+not establish current queue qualification or activation.
 
 `ripr-swarm` adds `.github/workflows/routed-rust.yml` as the development-trunk
 Rust gate. It exposes one branch-protection-facing check:
@@ -1346,7 +1353,7 @@ Unlike coverage upload, this step does not explicitly set `fail_ci_if_error`.
 The retained push/PR and fork-skip predicates are dormant; fork PRs do not start
 tests or artifact generation through this workflow.
 
-### Merge-ready Conflict Notice
+### Historical merge-ready conflict notice
 
 A `merge-ready` label on a PR that conflicts with its base starts no
 `routed-rust.yml` run, because GitHub creates no `pull_request` run without a
@@ -1377,7 +1384,7 @@ older than 2.38 (no `merge-tree --write-tree`), emits a warning and passes. Its
 outcome has its own row in the gate summary. `xtask/tests/rust_gate_merge_ref_check.rs`
 runs the step's script against real Git repositories.
 
-### PR Staleness Watchdog
+### Historical PR staleness watchdog
 
 GitHub sometimes silently drops the `pull_request` event delivery that creates
 the `routed-rust.yml` run for a pushed PR head SHA, leaving a PR blocked with

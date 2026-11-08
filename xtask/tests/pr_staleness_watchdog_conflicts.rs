@@ -1,3 +1,4 @@
+//! Historical bootstrap replay only; the live workflow is retired under #4838.
 //! Run the PR staleness watchdog's sweep against a fake `gh` (#10136).
 //!
 //! A merge-ready PR that conflicts with its base has no merge ref, so no
@@ -13,7 +14,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-const WORKFLOW: &str = ".github/workflows/pr-staleness-watchdog.yml";
+const WORKFLOW: &str = "fixtures/convergence/queue-bootstrap/pr-staleness-watchdog.yml";
 const OURS_FAILURE: &str = r#"[{"context":"merge-ready conflict","state":"failure","creator":{"login":"github-actions[bot]"}}]"#;
 
 const FAKE_GH: &str = r#"#!/bin/bash

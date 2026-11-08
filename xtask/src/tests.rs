@@ -9287,8 +9287,8 @@ jobs = ["Ripr Rust Small Result"]
 }
 
 #[test]
-fn routed_rust_live_contract_rejects_reviewed_semantic_regressions() {
-    let workflow = include_str!("../../.github/workflows/routed-rust.yml");
+fn routed_rust_bootstrap_contract_rejects_reviewed_semantic_regressions() {
+    let workflow = include_str!("../../fixtures/convergence/queue-bootstrap/routed-rust.yml");
     let reusable = include_str!("../../.github/workflows/rust-gates.yml");
     let settings = include_str!("../../.github/settings.yml");
     let lane = include_str!("../../policy/ci-lane-whitelist.toml");
@@ -9502,8 +9502,8 @@ jobs = ["Ripr Rust Small Result", "Ripr Rust Small on CX53"]
 }
 
 #[test]
-fn routed_rust_ready_event_matrix_withholds_draft_and_label_context() {
-    let workflow = include_str!("../../.github/workflows/routed-rust.yml");
+fn routed_rust_bootstrap_event_matrix_withholds_draft_and_label_context() {
+    let workflow = include_str!("../../fixtures/convergence/queue-bootstrap/routed-rust.yml");
     let cases = [
         (
             "pull_request",
@@ -53913,8 +53913,8 @@ fn route_quality_cross_validates_with_attempt_ledger_repair_route_quality() -> R
 /// Issue #2258: every routed-rust required lane must invoke the shared
 /// `cargo xtask precommit` gate table instead of enumerating a subset, so the
 /// lanes cannot drift from the precommit contract again.
-fn routed_rust_workflow_text() -> Result<String, String> {
-    let path = repo_root()?.join(".github/workflows/routed-rust.yml");
+fn bootstrap_routed_rust_workflow_text() -> Result<String, String> {
+    let path = repo_root()?.join("fixtures/convergence/queue-bootstrap/routed-rust.yml");
     std::fs::read_to_string(&path).map_err(|err| format!("read {}: {err}", path.display()))
 }
 
@@ -53948,10 +53948,10 @@ fn require_single_bare_precommit_line(lines: &[String], context: &str) -> Result
 /// command, unconditional, ordered, outcome-reported) is owned by
 /// `xtask/tests/rust_gate_workflow_contract.rs`. `cargo xtask precommit` and
 /// the lightweight `cargo policy preflight` stay inline in the docs-gate job,
-/// which `routed_rust_docs_gate_runs_full_precommit_table` covers.
+/// which `bootstrap_routed_rust_docs_gate_runs_full_precommit_table` covers.
 #[test]
-fn routed_rust_required_lanes_run_full_precommit_table() -> Result<(), String> {
-    let workflow = routed_rust_workflow_text()?;
+fn bootstrap_routed_rust_required_lanes_run_full_precommit_table() -> Result<(), String> {
+    let workflow = bootstrap_routed_rust_workflow_text()?;
     for lane_only in [
         "cargo xtask check-evidence-promotion-honesty",
         "cargo xtask check-dependencies",
@@ -53986,8 +53986,8 @@ fn routed_rust_required_lanes_run_full_precommit_table() -> Result<(), String> {
 }
 
 #[test]
-fn routed_rust_docs_gate_runs_full_precommit_table() -> Result<(), String> {
-    let workflow = routed_rust_workflow_text()?;
+fn bootstrap_routed_rust_docs_gate_runs_full_precommit_table() -> Result<(), String> {
+    let workflow = bootstrap_routed_rust_workflow_text()?;
     let docs_gate = workflow
         .split("\n  docs-gate:")
         .nth(1)
@@ -54005,8 +54005,9 @@ fn routed_rust_docs_gate_runs_full_precommit_table() -> Result<(), String> {
 }
 
 #[test]
-fn routed_rust_precommit_invocation_count_matches_delegated_owner() -> Result<(), String> {
-    let workflow = routed_rust_workflow_text()?;
+fn bootstrap_routed_rust_precommit_invocation_count_matches_delegated_owner() -> Result<(), String>
+{
+    let workflow = bootstrap_routed_rust_workflow_text()?;
     let reusable = reusable_rust_workflow_text()?;
     let routed_count = workflow.matches("cargo xtask precommit").count();
     let reusable_count = reusable.matches("cargo xtask ci-policy").count();
@@ -56154,8 +56155,8 @@ fn cache_family_store_failure_rows_reach_the_report_for_each_new_stage() -> Resu
 /// invoke both commands, key off the SUPPORT_TIERS.md, LANGUAGE_ADAPTER_PREVIEW.md and docs/specs paths, and
 /// must not use a failure-swallowing form.
 #[test]
-fn routed_rust_docs_gate_runs_capability_registry_checks() -> Result<(), String> {
-    let workflow = routed_rust_workflow_text()?;
+fn bootstrap_routed_rust_docs_gate_runs_capability_registry_checks() -> Result<(), String> {
+    let workflow = bootstrap_routed_rust_workflow_text()?;
     let docs_gate = workflow
         .split("\n  docs-gate:")
         .nth(1)

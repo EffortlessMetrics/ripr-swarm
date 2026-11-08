@@ -3,7 +3,9 @@
 
 const WORKFLOW: &str = include_str!("../../.github/workflows/rust-gates.yml");
 const SHARDS: &str = include_str!("../../.github/workflows/rust-test-shards.yml");
-const ROUTED: &str = include_str!("../../.github/workflows/routed-rust.yml");
+/// Historical hosted-caller wiring; reusable Rust and shard payloads above stay live.
+const BOOTSTRAP_ROUTED: &str =
+    include_str!("../../fixtures/convergence/queue-bootstrap/routed-rust.yml");
 /// The only condition the required test step may carry: the hosted caller passes
 /// `test-shards: 4` and runs the same tests in `rust-test-shards.yml` instead (#10507).
 const SHARDED_TEST_CONDITION: &str = "        if: inputs.test-shards == 1";
@@ -521,13 +523,30 @@ fn shard_contract_violations(shards: &str, routed: &str) -> Vec<String> {
     for required in [
         "      test-shards: 4\n",
         "  rust-github-tests:\n    name: Ripr Rust Small tests on GitHub Hosted\n    needs: [rust-github]\n    if: ${{ !cancelled() && needs.rust-github.result == 'success' }}\n    uses: ./.github/workflows/rust-test-shards.yml\n",
-        "rust-github, rust-github-tests, docs-gate,",
         "GITHUB_TESTS_RESULT: ${{ needs.rust-github-tests.result }}",
         "elif [ \"$GITHUB_TESTS_RESULT\" != \"success\" ]; then status=fail",
     ] {
         if !routed.contains(required) {
             findings.push(format!("routed: lost `{required}`"));
         }
+    }
+    let result = routed
+        .split_once("\n  result:\n")
+        .map(|(_, tail)| tail)
+        .unwrap_or("");
+    let header = result.split("    steps:\n").next().unwrap_or("");
+    let needs = header
+        .lines()
+        .find_map(|line| {
+            line.strip_prefix("    needs: [")
+                .and_then(|v| v.strip_suffix(']'))
+        })
+        .unwrap_or("");
+    if !needs
+        .split(',')
+        .any(|name| name.trim() == "rust-github-tests")
+    {
+        findings.push("routed: result must depend on hosted shards".to_owned());
     }
     if count(
         routed,
@@ -541,7 +560,7 @@ fn shard_contract_violations(shards: &str, routed: &str) -> Vec<String> {
 
 #[test]
 fn sharded_hosted_tests_keep_the_one_command_selection() {
-    let findings = shard_contract_violations(SHARDS, ROUTED);
+    let findings = shard_contract_violations(SHARDS, BOOTSTRAP_ROUTED);
     assert!(findings.is_empty(), "{findings:?}");
 }
 
@@ -561,18 +580,18 @@ fn sharded_hosted_tests_reject_legacy_and_mixed_partition_commands() {
             );
             let expected = format!("shards: expected exactly one {label} hash-partition command");
             assert!(
-                shard_contract_violations(&changed, ROUTED).contains(&expected),
+                shard_contract_violations(&changed, BOOTSTRAP_ROUTED).contains(&expected),
                 "{label}/{mode} was not rejected"
             );
             let decoy = format!("{changed}\n# {command}\n");
             assert!(
-                shard_contract_violations(&decoy, ROUTED).contains(&expected),
+                shard_contract_violations(&decoy, BOOTSTRAP_ROUTED).contains(&expected),
                 "a comment hid the {label}/{mode} drift"
             );
         }
         let changed = SHARDS.replace("--partition hash:", &format!("--partition {mode}:"));
         assert_ne!(changed, SHARDS);
-        let findings = shard_contract_violations(&changed, ROUTED);
+        let findings = shard_contract_violations(&changed, BOOTSTRAP_ROUTED);
         for label in ["test", "list", "receipt"] {
             assert!(findings.contains(&format!(
                 "shards: expected exactly one {label} hash-partition command"
@@ -587,12 +606,12 @@ fn sharded_hosted_tests_reject_a_changed_nextest_version() {
         let changed = SHARDS.replace("tool: nextest@0.9.149", replacement);
         assert_ne!(changed, SHARDS);
         assert!(
-            shard_contract_violations(&changed, ROUTED)
+            shard_contract_violations(&changed, BOOTSTRAP_ROUTED)
                 .contains(&"shards: nextest must remain pinned to 0.9.149".to_owned())
         );
         let decoy = format!("{changed}\n# tool: nextest@0.9.149\n");
         assert!(
-            shard_contract_violations(&decoy, ROUTED)
+            shard_contract_violations(&decoy, BOOTSTRAP_ROUTED)
                 .contains(&"shards: nextest must remain pinned to 0.9.149".to_owned())
         );
     }
@@ -659,7 +678,7 @@ fn sharded_hosted_tests_reject_a_dropped_or_softened_shard_check() {
             "fixture must change the shard workflow: {from}"
         );
         assert!(
-            !shard_contract_violations(&changed, ROUTED).is_empty(),
+            !shard_contract_violations(&changed, BOOTSTRAP_ROUTED).is_empty(),
             "softening `{from}` was not rejected"
         );
     }
@@ -673,17 +692,17 @@ fn routed_result_cannot_pass_without_the_hosted_shards() {
             "elif [ \"$GITHUB_TESTS_RESULT\" != \"success\" ]; then status=fail",
             "elif false; then status=fail",
         ),
-        (
-            "rust-github, rust-github-tests, docs-gate,",
-            "rust-github, docs-gate,",
-        ),
+        ("rust-github, rust-github-tests,", "rust-github,"),
         (
             "needs.rust-github.result == 'success' }}\n    uses: ./.github/workflows/rust-test-shards.yml",
             "needs.rust-github.result != 'cancelled' }}\n    uses: ./.github/workflows/rust-test-shards.yml",
         ),
     ] {
-        let changed = ROUTED.replace(from, to);
-        assert_ne!(changed, ROUTED, "fixture must change the caller: {from}");
+        let changed = BOOTSTRAP_ROUTED.replace(from, to);
+        assert_ne!(
+            changed, BOOTSTRAP_ROUTED,
+            "fixture must change the caller: {from}"
+        );
         assert!(
             !shard_contract_violations(SHARDS, &changed).is_empty(),
             "weakening `{from}` was not rejected"

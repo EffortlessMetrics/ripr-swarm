@@ -1,4 +1,4 @@
-"""Execute the workflow's history-sync scope and result blocks (issue #12437).
+"""Replay historical bootstrap history-sync scope and result blocks (#12437).
 
 These use Bash with controlled job results, not hosted GitHub execution. No
 network, candidate code or protected check publication is involved.
@@ -14,7 +14,7 @@ import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[3]
-WORKFLOW = ROOT / '.github/workflows/routed-rust.yml'
+WORKFLOW = ROOT / 'fixtures/convergence/queue-bootstrap/routed-rust.yml'
 HEAD = 'a' * 40
 
 

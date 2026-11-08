@@ -1,3 +1,4 @@
+//! Historical bootstrap replay only; the live workflow is retired under #4838.
 //! Run the merge-ready conflict notice's script block against a fake `gh`.
 //!
 //! GitHub creates no `pull_request` run for a PR that conflicts with its base,
@@ -14,7 +15,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-const WORKFLOW: &str = ".github/workflows/merge-ready-conflict-notice.yml";
+const WORKFLOW: &str = "fixtures/convergence/queue-bootstrap/merge-ready-conflict-notice.yml";
 const HEAD: &str = "abc12345abc12345abc12345abc12345abc12345";
 
 const FAKE_GH: &str = r#"#!/bin/bash

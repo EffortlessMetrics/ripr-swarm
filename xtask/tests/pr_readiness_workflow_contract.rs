@@ -1,15 +1,10 @@
-//! Pin the protected PR qualification event at the workflow boundary.
-//!
-//! Draft, Ready, push and ordinary-label activity must not create the required
-//! `Ripr Rust Small Result` check. An explicit `merge-ready` label event is the
-//! only pull-request admission event; main and explicit manual authorities remain separate. The PR
-//! staleness watchdog is alert-only: it must never qualify a Ready head by
-//! dispatching the protected workflow on its branch (#4986).
+//! Historical label-route contracts plus live queue-only retirement checks.
+//! Archived fixture results do not qualify the current native-G caller.
 
 use std::fs;
 use std::path::Path;
 
-const WORKFLOW: &str = ".github/workflows/routed-rust.yml";
+const WORKFLOW: &str = "fixtures/convergence/queue-bootstrap/routed-rust.yml";
 const EXPECTED_EVENT_DECLARATIONS: &[&str] = &[
     "on:",
     "  pull_request:",
@@ -28,7 +23,7 @@ const REQUIRED_CONTEXT: &str = "Ripr Rust Small Result";
 /// runs and an explicit merge-ready request. Every other label event posts a
 /// different name; a skipped job would report success for a static name.
 const EXPECTED_RESULT_NAME: &str = "${{ (github.event_name != 'pull_request' || github.event.label.name == 'merge-ready') && 'Ripr Rust Small Result' || 'Merge-ready Nonrequest' }}";
-const WATCHDOG: &str = ".github/workflows/pr-staleness-watchdog.yml";
+const WATCHDOG: &str = "fixtures/convergence/queue-bootstrap/pr-staleness-watchdog.yml";
 /// Executable (non-comment) fragments that would let the watchdog start or
 /// authorize a workflow run.
 const WATCHDOG_DISPATCH_FRAGMENTS: &[&str] = &["actions: write", "gh workflow run", "/dispatches"];
@@ -130,7 +125,7 @@ fn terminal_context(source: &str) -> Option<&str> {
 }
 
 #[test]
-fn required_pr_context_is_withheld_until_merge_ready() -> Result<(), String> {
+fn bootstrap_required_pr_context_is_withheld_until_merge_ready() -> Result<(), String> {
     let source = workflow_source()?;
 
     assert_eq!(
@@ -148,7 +143,7 @@ fn required_pr_context_is_withheld_until_merge_ready() -> Result<(), String> {
 }
 
 #[test]
-fn contract_rejects_draft_or_mutation_triggers() -> Result<(), String> {
+fn bootstrap_contract_rejects_draft_or_mutation_triggers() -> Result<(), String> {
     let source = workflow_source()?;
     let changed = source.replace("types: [labeled]", "types: [labeled, synchronize]");
     assert_ne!(changed, source, "trigger mutation must engage");
@@ -161,7 +156,7 @@ fn contract_rejects_draft_or_mutation_triggers() -> Result<(), String> {
 }
 
 #[test]
-fn contract_rejects_disabled_ready_cancellation() -> Result<(), String> {
+fn bootstrap_contract_rejects_disabled_ready_cancellation() -> Result<(), String> {
     let source = workflow_source()?;
     let changed = source.replace(
         "  cancel-in-progress: ${{ github.event_name == 'pull_request' }}",
@@ -176,7 +171,7 @@ fn contract_rejects_disabled_ready_cancellation() -> Result<(), String> {
 }
 
 #[test]
-fn contract_rejects_a_noncanonical_terminal_context() -> Result<(), String> {
+fn bootstrap_contract_rejects_a_noncanonical_terminal_context() -> Result<(), String> {
     let source = workflow_source()?;
     // A static required name would be skipped-as-success on ordinary labels.
     let changed = source.replace(
@@ -196,7 +191,7 @@ fn contract_rejects_a_noncanonical_terminal_context() -> Result<(), String> {
 }
 
 #[test]
-fn block_scalar_decoy_cannot_hide_a_renamed_result_job() {
+fn bootstrap_block_scalar_decoy_cannot_hide_a_renamed_result_job() {
     let source = "jobs:\n  route:\n    run: |\n      result:\n        name: Ripr Rust Small Result\n  result:\n    name: Ripr Rust Small Draft Result\n";
     assert_eq!(
         terminal_context(source),
@@ -205,7 +200,7 @@ fn block_scalar_decoy_cannot_hide_a_renamed_result_job() {
 }
 
 #[test]
-fn staleness_watchdog_reports_without_dispatching() -> Result<(), String> {
+fn bootstrap_staleness_watchdog_reports_without_dispatching() -> Result<(), String> {
     let source = repo_file(WATCHDOG)?;
     assert!(
         source.contains("REQUIRED_CHECK: Ripr Rust Small Result"),
@@ -239,7 +234,7 @@ fn watchdog_reports_in_flight_before_dark(source: &str) -> bool {
 }
 
 #[test]
-fn staleness_watchdog_does_not_call_an_in_flight_run_dark() -> Result<(), String> {
+fn bootstrap_staleness_watchdog_does_not_call_an_in_flight_run_dark() -> Result<(), String> {
     let source = repo_file(WATCHDOG)?;
     assert!(
         watchdog_reports_in_flight_before_dark(&source),
@@ -249,7 +244,7 @@ fn staleness_watchdog_does_not_call_an_in_flight_run_dark() -> Result<(), String
 }
 
 #[test]
-fn contract_rejects_a_watchdog_without_the_in_flight_check() -> Result<(), String> {
+fn bootstrap_contract_rejects_a_watchdog_without_the_in_flight_check() -> Result<(), String> {
     let source = repo_file(WATCHDOG)?;
     let changed = source.replace(WATCHDOG_IN_FLIGHT_QUERY, "actions/runs?head_sha=$head_sha");
     assert_ne!(changed, source, "in-flight mutation must engage");
@@ -276,7 +271,7 @@ fn watchdog_reports_mergeable_state(source: &str) -> bool {
 }
 
 #[test]
-fn staleness_watchdog_reports_mergeable_state() -> Result<(), String> {
+fn bootstrap_staleness_watchdog_reports_mergeable_state() -> Result<(), String> {
     let source = repo_file(WATCHDOG)?;
     assert!(
         watchdog_reports_mergeable_state(&source),
@@ -286,7 +281,7 @@ fn staleness_watchdog_reports_mergeable_state() -> Result<(), String> {
 }
 
 #[test]
-fn contract_rejects_a_watchdog_without_mergeable_state() -> Result<(), String> {
+fn bootstrap_contract_rejects_a_watchdog_without_mergeable_state() -> Result<(), String> {
     let source = repo_file(WATCHDOG)?;
     let changed = source.replace(
         WATCHDOG_MERGEABLE_STATE_QUERY,
@@ -301,7 +296,7 @@ fn contract_rejects_a_watchdog_without_mergeable_state() -> Result<(), String> {
 }
 
 #[test]
-fn contract_rejects_a_dispatching_watchdog() -> Result<(), String> {
+fn bootstrap_contract_rejects_a_dispatching_watchdog() -> Result<(), String> {
     let source = repo_file(WATCHDOG)?;
     let changed = source
         .replace("  contents: read\n", "  contents: read\n  actions: write\n")
@@ -353,7 +348,7 @@ fn advisory_review_actions_are_retired_without_removing_review_configuration() -
 }
 
 #[test]
-fn contract_rejects_replacing_required_merge_ready_admission() -> Result<(), String> {
+fn bootstrap_contract_rejects_replacing_required_merge_ready_admission() -> Result<(), String> {
     let source = workflow_source()?;
     let changed = source.replace("types: [labeled]", "types: [opened]");
     assert_ne!(changed, source, "required-admission mutation engages");
@@ -386,6 +381,54 @@ fn automatic_droid_review_is_retired() -> Result<(), String> {
             !repo_file(path)?.is_empty(),
             "{path}: retained Droid workflow is required"
         );
+    }
+    Ok(())
+}
+
+#[test]
+fn live_queue_caller_has_no_pr_ready_label_or_main_entry_point() -> Result<(), String> {
+    let source = repo_file(".github/workflows/routed-rust.yml")?;
+    let reusable = repo_file(".github/workflows/rust-gates.yml")?;
+    let findings = repo_policy::queue_workflow::violations(&source, Some(&reusable));
+    assert!(findings.is_empty(), "{findings:?}");
+    for event in [
+        "pull_request",
+        "pull_request_target",
+        "push",
+        "workflow_dispatch",
+    ] {
+        let changed = source.replacen("on:\n", &format!("on:\n  {event}:\n"), 1);
+        assert_ne!(changed, source);
+        assert!(
+            repo_policy::queue_workflow::violations(&changed, Some(&reusable))
+                .iter()
+                .any(|v| v.contains("only native merge_group")),
+            "{event}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn live_label_recovery_workflows_remain_retired() -> Result<(), String> {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .ok_or("repository parent")?;
+    let allowance = repo_file("policy/workflow_allowlist.txt")?;
+    for name in ["merge-ready-conflict-notice", "pr-staleness-watchdog"] {
+        for extension in ["yml", "yaml"] {
+            let path = format!(".github/workflows/{name}.{extension}");
+            assert!(
+                !root.join(&path).try_exists().map_err(|e| e.to_string())?,
+                "{path}"
+            );
+            assert!(
+                !allowance
+                    .lines()
+                    .any(|line| line.starts_with(&format!("{path}|"))),
+                "{path}"
+            );
+        }
     }
     Ok(())
 }

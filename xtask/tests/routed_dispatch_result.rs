@@ -1,5 +1,5 @@
-//! #5394: execute the checked-in Result shell, including a real manual
-//! admission producer, without dispatching a workflow or creating a check.
+//! Historical bootstrap replays (#5394) and live queue terminal controls (#4838).
+//! Each source is explicit; no workflow dispatch or protected check is created.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -43,8 +43,21 @@ impl Drop for Scratch {
     }
 }
 
-fn workflow() -> Result<String, String> {
+fn bootstrap_workflow() -> Result<String, String> {
+    fs::read_to_string(root().join("fixtures/convergence/queue-bootstrap/routed-rust.yml"))
+        .map_err(|e| e.to_string())
+}
+
+fn live_queue_workflow() -> Result<String, String> {
     fs::read_to_string(root().join(".github/workflows/routed-rust.yml")).map_err(|e| e.to_string())
+}
+
+fn named_step<'a>(source: &'a str, name: &str) -> Result<&'a str, String> {
+    let marker = format!("      - name: {name}\n");
+    let (_, tail) = source
+        .split_once(&marker)
+        .ok_or_else(|| format!("missing step {name}"))?;
+    Ok(tail.split("\n      - ").next().ok_or("missing step body")?)
 }
 
 fn result_step(source: &str) -> Result<&str, String> {
@@ -118,6 +131,7 @@ fn run_result(
     overrides: &[(&str, &str)],
 ) -> Result<(bool, String), String> {
     let scratch = Scratch::new()?;
+    let queue = source.contains("  CI_LIFECYCLE_GENERATION: merge-queue-v1\n");
     let step = result_step(source)?;
     let mut env = BTreeMap::new();
     let (own_run, first_page) = current_runs(event);
@@ -157,6 +171,18 @@ fn run_result(
         ("GROUP_HEAD_SHA", GROUP_HEAD),
         ("MOCK_RUN", own_run.as_str()),
         ("MOCK_RUNS_1", first_page.as_str()),
+        ("SUBJECT", r#"{"base":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","head":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","kind":"merge-group","merge":"cccccccccccccccccccccccccccccccccccccccc","request_id":"100-1","version":3,"workflow_generation":"dddddddddddddddddddddddddddddddddddddddd"}"#),
+        ("IDENTITY", "bcc569613c5a07c034a76124ba75bf8ab79a28823e7ba95dc6f4a1ad173c4b03"),
+        ("HEAD", PR_HEAD),
+        ("BASE", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"),
+        ("GROUP", GROUP_HEAD),
+        ("GENERATION", "dddddddddddddddddddddddddddddddddddddddd"),
+        ("CUT_STATUS", "inactive"),
+        ("OWNED_RESULT", "success"),
+        ("WINDOWS_RESULT", "success"),
+        ("WHEEL_RESULT", "success"),
+        ("CI_RESULT", "success"),
+        ("PRINTED_RESULT", "success"),
     ]
     .into_iter()
     .chain(overrides.iter().copied())
@@ -289,12 +315,7 @@ esac
                     .get("LABEL_NAME")
                     .is_some_and(|label| label == "merge-ready")))
     {
-        let (_, job) = source
-            .split_once("      - name: Recheck initially admitted eligibility\n")
-            .ok_or("missing actual eligibility step")?;
-        let (step, _) = job
-            .split_once("      - name: Require the extension e2e result for the admitted head\n")
-            .ok_or("missing summary after eligibility")?;
+        let step = named_step(source, "Recheck initially admitted eligibility")?;
         let eligibility_script = scratch.0.join("eligibility.sh");
         fs::write(&eligibility_script, result_shell(step)?).map_err(|e| e.to_string())?;
         let output = run_shell(&eligibility_script, &env)?;
@@ -322,24 +343,45 @@ esac
         }
         .to_string(),
     );
+    let mut group_proof = true;
+    if queue {
+        let proof = named_step(source, "Require complete native group portfolio")?;
+        let proof_script = scratch.0.join("group-proof.sh");
+        fs::write(&proof_script, result_shell(proof)?).map_err(|e| e.to_string())?;
+        let output = run_shell(&proof_script, &env)?;
+        group_proof = output.status.success();
+        env.insert(
+            "GROUP_PROOF_RESULT".to_string(),
+            if group_proof { "success" } else { "failure" }.to_string(),
+        );
+    }
     let output = run_shell(&script, &env)?;
-    let report =
-        fs::read_to_string(summary).map_err(|e| format!("missing summary: {e}; {output:?}"))?;
-    assert!(report.contains("### Ripr Rust Small Result"));
+    let report = if queue && !output.status.success() && !summary.exists() {
+        String::new()
+    } else {
+        fs::read_to_string(summary).map_err(|e| format!("missing summary: {e}; {output:?}"))?
+    };
+    if queue {
+        if output.status.success() {
+            assert!(report.contains("Native-G portfolio and current eligibility passed."));
+        }
+    } else {
+        assert!(report.contains("### Ripr Rust Small Result"));
+    }
     let calls = fs::read_to_string(scratch.0.join("calls.log")).unwrap_or_default();
     // The eligibility step's own log follows the summary so a test can read
     // the stage it named when it refused (#8858).
     Ok((
-        eligibility && output.status.success(),
+        eligibility && group_proof && output.status.success(),
         format!("{report}\n{eligibility_log}\nAPI calls:\n{calls}"),
     ))
 }
 
 #[test]
-fn branch_dispatch_cannot_qualify_even_when_every_child_succeeds() -> Result<(), String> {
+fn bootstrap_branch_dispatch_cannot_qualify_even_when_every_child_succeeds() -> Result<(), String> {
     for reference in ["refs/heads/fix/5394", "refs/tags/v0.11.0", "", "main"] {
         let (success, report) = run_result(
-            &workflow()?,
+            &bootstrap_workflow()?,
             "workflow_dispatch",
             reference,
             "success",
@@ -359,7 +401,7 @@ fn branch_dispatch_cannot_qualify_even_when_every_child_succeeds() -> Result<(),
 }
 
 #[test]
-fn ready_and_main_authorities_keep_real_child_result_checks() -> Result<(), String> {
+fn bootstrap_ready_and_main_authorities_keep_real_child_result_checks() -> Result<(), String> {
     for (event, reference, status) in [
         ("pull_request", "refs/pull/10/merge", "admitted"),
         (
@@ -371,10 +413,20 @@ fn ready_and_main_authorities_keep_real_child_result_checks() -> Result<(), Stri
         ("workflow_dispatch", "refs/heads/master", "not_applicable"),
         ("push", "refs/heads/main", "not_applicable"),
     ] {
-        assert!(run_result(&workflow()?, event, reference, "success", status, &[])?.0);
+        assert!(
+            run_result(
+                &bootstrap_workflow()?,
+                event,
+                reference,
+                "success",
+                status,
+                &[]
+            )?
+            .0
+        );
         assert!(
             !run_result(
-                &workflow()?,
+                &bootstrap_workflow()?,
                 event,
                 reference,
                 "success",
@@ -391,7 +443,7 @@ fn ready_and_main_authorities_keep_real_child_result_checks() -> Result<(), Stri
     ] {
         assert!(
             !run_result(
-                &workflow()?,
+                &bootstrap_workflow()?,
                 "pull_request",
                 "refs/pull/10/merge",
                 admission,
@@ -403,7 +455,7 @@ fn ready_and_main_authorities_keep_real_child_result_checks() -> Result<(), Stri
     }
     assert!(
         run_result(
-            &workflow()?,
+            &bootstrap_workflow()?,
             "pull_request",
             "refs/pull/10/merge",
             "success",
@@ -414,7 +466,7 @@ fn ready_and_main_authorities_keep_real_child_result_checks() -> Result<(), Stri
     );
     assert!(
         !run_result(
-            &workflow()?,
+            &bootstrap_workflow()?,
             "pull_request",
             "refs/pull/10/merge",
             "success",
@@ -427,10 +479,10 @@ fn ready_and_main_authorities_keep_real_child_result_checks() -> Result<(), Stri
 }
 
 #[test]
-fn refused_admission_summary_names_the_concrete_detail() -> Result<(), String> {
+fn bootstrap_refused_admission_summary_names_the_concrete_detail() -> Result<(), String> {
     let detail = "missing or placeholder PR body line(s): Governing issue or accepted claim:, Acceptance delta (one sentence):";
     let (success, report) = run_result(
-        &workflow()?,
+        &bootstrap_workflow()?,
         "pull_request",
         "refs/pull/10/merge",
         "failure",
@@ -449,10 +501,10 @@ fn refused_admission_summary_names_the_concrete_detail() -> Result<(), String> {
 }
 
 #[test]
-fn hard_cut_refusal_of_admitted_candidate_names_the_cut_reason() -> Result<(), String> {
+fn bootstrap_hard_cut_refusal_of_admitted_candidate_names_the_cut_reason() -> Result<(), String> {
     let cut_detail = "the active hard-cut freeze refuses ordinary qualification";
     let (success, report) = run_result(
-        &workflow()?,
+        &bootstrap_workflow()?,
         "pull_request",
         "refs/pull/10/merge",
         "failure",
@@ -482,10 +534,10 @@ fn hard_cut_refusal_of_admitted_candidate_names_the_cut_reason() -> Result<(), S
 /// #11736 Proposal B v1: the result report carries the live ownership claims
 /// next to the competing PRs row, without failing an admitted qualification.
 #[test]
-fn live_ownership_claims_surface_in_the_result_report() -> Result<(), String> {
+fn bootstrap_live_ownership_claims_surface_in_the_result_report() -> Result<(), String> {
     let claims = "root (@steven), updated 40m";
     let (success, report) = run_result(
-        &workflow()?,
+        &bootstrap_workflow()?,
         "pull_request",
         "refs/pull/10/merge",
         "success",
@@ -507,7 +559,7 @@ fn live_ownership_claims_surface_in_the_result_report() -> Result<(), String> {
 }
 
 #[test]
-fn manual_admission_producer_does_not_supply_pr_qualification() -> Result<(), String> {
+fn bootstrap_manual_admission_producer_does_not_supply_pr_qualification() -> Result<(), String> {
     let scratch = Scratch::new()?;
     let action = root().join(".github/actions/pr-candidate-admission");
     let source = fs::read_to_string(action.join("action.yml")).map_err(|e| e.to_string())?;
@@ -545,7 +597,7 @@ fn manual_admission_producer_does_not_supply_pr_qualification() -> Result<(), St
     assert!(outputs.contains("cut_reason=cut_non_pull_request_invocation"));
     assert!(
         !run_result(
-            &workflow()?,
+            &bootstrap_workflow()?,
             "workflow_dispatch",
             "refs/heads/fix/5394",
             "success",
@@ -556,7 +608,7 @@ fn manual_admission_producer_does_not_supply_pr_qualification() -> Result<(), St
     );
     assert!(
         run_result(
-            &workflow()?,
+            &bootstrap_workflow()?,
             "workflow_dispatch",
             "refs/heads/main",
             "success",
@@ -569,8 +621,8 @@ fn manual_admission_producer_does_not_supply_pr_qualification() -> Result<(), St
 }
 
 #[test]
-fn event_identity_is_wired_from_github_not_candidate_inputs() -> Result<(), String> {
-    let source = workflow()?;
+fn bootstrap_event_identity_is_wired_from_github_not_candidate_inputs() -> Result<(), String> {
+    let source = bootstrap_workflow()?;
     let step = result_step(&source)?;
     assert!(step.contains("          EVENT_NAME: ${{ github.event_name }}\n"));
     assert!(step.contains("          WORKFLOW_REF: ${{ github.ref }}\n"));
@@ -579,10 +631,11 @@ fn event_identity_is_wired_from_github_not_candidate_inputs() -> Result<(), Stri
 }
 
 #[test]
-fn hosted_result_requires_the_sharded_tests_and_self_hosted_does_not() -> Result<(), String> {
+fn bootstrap_hosted_result_requires_the_sharded_tests_and_self_hosted_does_not()
+-> Result<(), String> {
     let result = |overrides: &[(&str, &str)]| {
         run_result(
-            &workflow()?,
+            &bootstrap_workflow()?,
             "pull_request",
             "refs/pull/10/merge",
             "success",
@@ -629,8 +682,9 @@ fn hosted_result_requires_the_sharded_tests_and_self_hosted_does_not() -> Result
 }
 
 #[test]
-fn terminal_result_rejects_late_eligibility_changes_and_old_attempts() -> Result<(), String> {
-    let source = workflow()?;
+fn bootstrap_terminal_result_rejects_late_eligibility_changes_and_old_attempts()
+-> Result<(), String> {
+    let source = bootstrap_workflow()?;
     let bad_prs = [
         LIVE_PR.replace("\"open\"", "\"closed\""),
         LIVE_PR.replace("\"draft\":false", "\"draft\":true"),
@@ -756,8 +810,8 @@ fn terminal_result_rejects_late_eligibility_changes_and_old_attempts() -> Result
 }
 
 #[test]
-fn refused_eligibility_names_the_stage_that_refused() -> Result<(), String> {
-    let source = workflow()?;
+fn bootstrap_refused_eligibility_names_the_stage_that_refused() -> Result<(), String> {
+    let source = bootstrap_workflow()?;
     let closed = LIVE_PR.replace("\"open\"", "\"closed\"");
     let unresolved = LIVE_GRAPHQL.replace("\"nodes\":[]", "\"nodes\":[{\"isResolved\":false}]");
     // This invocation is attempt 1; a run read showing attempt 2 is superseded.
@@ -881,8 +935,8 @@ fn assert_read_counts(report: &str, prs: usize, graphs: usize, backoffs: usize) 
 }
 
 #[test]
-fn transient_pr_reads_recollect_within_the_same_admission() -> Result<(), String> {
-    let source = workflow()?;
+fn bootstrap_transient_pr_reads_recollect_within_the_same_admission() -> Result<(), String> {
+    let source = bootstrap_workflow()?;
     for event in ["pull_request", "merge_group"] {
         for status in [502, 503, 504] {
             for second_read in [false, true] {
@@ -908,8 +962,8 @@ fn transient_pr_reads_recollect_within_the_same_admission() -> Result<(), String
 }
 
 #[test]
-fn empty_transient_frames_recover() -> Result<(), String> {
-    let source = workflow()?;
+fn bootstrap_empty_transient_frames_recover() -> Result<(), String> {
+    let source = bootstrap_workflow()?;
     let event = "pull_request";
     for status in [502, 503, 504] {
         for headers in ["content-type: application/json\r\n", ""] {
@@ -938,8 +992,9 @@ fn empty_transient_frames_recover() -> Result<(), String> {
 }
 
 #[test]
-fn second_pr_read_retry_discards_reviews_threads_queue_and_pagination() -> Result<(), String> {
-    let source = workflow()?;
+fn bootstrap_second_pr_read_retry_discards_reviews_threads_queue_and_pagination()
+-> Result<(), String> {
+    let source = bootstrap_workflow()?;
     let page = LIVE_GRAPHQL.replace(
         r#""hasNextPage":false,"endCursor":null"#,
         r#""hasNextPage":true,"endCursor":"next""#,
@@ -987,8 +1042,9 @@ fn second_pr_read_retry_discards_reviews_threads_queue_and_pagination() -> Resul
 }
 
 #[test]
-fn retrying_only_the_second_pr_read_exposes_the_stale_review_false_green() -> Result<(), String> {
-    let source = workflow()?;
+fn bootstrap_retrying_only_the_second_pr_read_exposes_the_stale_review_false_green()
+-> Result<(), String> {
+    let source = bootstrap_workflow()?;
     let refusal = "                pr=; return \"$native\"\n";
     assert_eq!(source.matches(refusal).count(), 1);
     let only_pr_retry = source.replace(
@@ -1017,8 +1073,9 @@ fn retrying_only_the_second_pr_read_exposes_the_stale_review_false_green() -> Re
 }
 
 #[test]
-fn recovered_pr_read_still_refuses_changed_semantics_and_succession() -> Result<(), String> {
-    let source = workflow()?;
+fn bootstrap_recovered_pr_read_still_refuses_changed_semantics_and_succession() -> Result<(), String>
+{
+    let source = bootstrap_workflow()?;
     for changed in [
         LIVE_PR.replace("\"open\"", "\"closed\""),
         LIVE_PR.replace("\"draft\":false", "\"draft\":true"),
@@ -1055,9 +1112,9 @@ fn recovered_pr_read_still_refuses_changed_semantics_and_succession() -> Result<
 }
 
 #[test]
-fn freshly_admitted_attempt_two_can_recover_without_adopting_another_request() -> Result<(), String>
-{
-    let source = workflow()?;
+fn bootstrap_freshly_admitted_attempt_two_can_recover_without_adopting_another_request()
+-> Result<(), String> {
+    let source = bootstrap_workflow()?;
     for event in ["pull_request", "merge_group"] {
         let own = run_entry(event, 100, 7, 2);
         let run = own.to_string();
@@ -1089,8 +1146,8 @@ fn freshly_admitted_attempt_two_can_recover_without_adopting_another_request() -
 }
 
 #[test]
-fn only_framed_transient_pr_failures_are_retried() -> Result<(), String> {
-    let source = workflow()?;
+fn bootstrap_only_framed_transient_pr_failures_are_retried() -> Result<(), String> {
+    let source = bootstrap_workflow()?;
     let mut terminal = Vec::new();
     for status in [401, 403, 404, 422, 429, 500] {
         let mut response = read_response("HTTP 503", status, 1);
@@ -1141,8 +1198,8 @@ fn only_framed_transient_pr_failures_are_retried() -> Result<(), String> {
 }
 
 #[test]
-fn transient_budget_exhaustion_and_non_pr_errors_remain_terminal() -> Result<(), String> {
-    let source = workflow()?;
+fn bootstrap_transient_budget_exhaustion_and_non_pr_errors_remain_terminal() -> Result<(), String> {
+    let source = bootstrap_workflow()?;
     let transient = read_response("unavailable", 503, 1);
     for second_read in [false, true] {
         let prs = if second_read {
@@ -1182,8 +1239,9 @@ fn transient_budget_exhaustion_and_non_pr_errors_remain_terminal() -> Result<(),
 
 #[cfg(target_os = "linux")]
 #[test]
-fn stalled_pr_transport_is_bounded_and_keeps_its_native_exit_cause() -> Result<(), String> {
-    let source = workflow()?;
+fn bootstrap_stalled_pr_transport_is_bounded_and_keeps_its_native_exit_cause() -> Result<(), String>
+{
+    let source = bootstrap_workflow()?;
     let mut stalled = read_response(LIVE_PR, 200, 0);
     stalled["hang_seconds"] = 30.into();
     let started = std::time::Instant::now();
@@ -1197,8 +1255,8 @@ fn stalled_pr_transport_is_bounded_and_keeps_its_native_exit_cause() -> Result<(
 }
 
 #[test]
-fn removed_terminal_guard_exposes_the_same_closed_pr_false_green() -> Result<(), String> {
-    let source = workflow()?;
+fn bootstrap_removed_terminal_guard_exposes_the_same_closed_pr_false_green() -> Result<(), String> {
+    let source = bootstrap_workflow()?;
     let guard = "            if current_eligibility; then break; else rc=$?; fi\n";
     assert_eq!(source.matches(guard).count(), 1);
     let removed = source.replace(guard, "            break\n");
@@ -1235,7 +1293,7 @@ fn with_runs(event: &str, own: &str, pages: &[String]) -> Result<bool, String> {
         overrides.push(("MOCK_RUNS_2", page.as_str()));
     }
     run_result(
-        &workflow()?,
+        &bootstrap_workflow()?,
         event,
         "refs/pull/10/merge",
         "success",
@@ -1246,7 +1304,7 @@ fn with_runs(event: &str, own: &str, pages: &[String]) -> Result<bool, String> {
 }
 
 #[test]
-fn current_invocation_is_accepted_and_older_or_unrelated_runs_do_not_revoke_it()
+fn bootstrap_current_invocation_is_accepted_and_older_or_unrelated_runs_do_not_revoke_it()
 -> Result<(), String> {
     for event in ["pull_request", "merge_group"] {
         let own = run_entry(event, 100, 7, 1);
@@ -1298,8 +1356,8 @@ fn current_invocation_is_accepted_and_older_or_unrelated_runs_do_not_revoke_it()
 }
 
 #[test]
-fn a_newer_run_or_attempt_on_the_same_head_revokes_the_superseded_invocation() -> Result<(), String>
-{
+fn bootstrap_a_newer_run_or_attempt_on_the_same_head_revokes_the_superseded_invocation()
+-> Result<(), String> {
     for event in ["pull_request", "merge_group"] {
         let own = run_entry(event, 100, 7, 1);
         // Newer runs revoke regardless of their own outcome or attempt count.
@@ -1344,7 +1402,7 @@ fn a_newer_run_or_attempt_on_the_same_head_revokes_the_superseded_invocation() -
 }
 
 #[test]
-fn succession_reads_follow_every_page_and_fail_closed() -> Result<(), String> {
+fn bootstrap_succession_reads_follow_every_page_and_fail_closed() -> Result<(), String> {
     for event in ["pull_request", "merge_group"] {
         let own = run_entry(event, 100, 7, 1);
         let own_text = own.to_string();
@@ -1511,12 +1569,12 @@ fn succession_reads_follow_every_page_and_fail_closed() -> Result<(), String> {
 }
 
 #[test]
-fn succession_reads_are_pinned_read_only_gets_of_the_same_workflow_head_and_event()
+fn bootstrap_succession_reads_are_pinned_read_only_gets_of_the_same_workflow_head_and_event()
 -> Result<(), String> {
     // The step must only GET its own run and the same-workflow listing for the
     // same head and event; a mutation or a broader listing would be a new
     // authority.
-    let source = workflow()?;
+    let source = bootstrap_workflow()?;
     let (_, job) = source
         .split_once("      - name: Recheck initially admitted eligibility\n")
         .ok_or("missing eligibility step")?;
@@ -1549,8 +1607,8 @@ fn succession_reads_are_pinned_read_only_gets_of_the_same_workflow_head_and_even
 }
 
 #[test]
-fn removed_succession_guard_exposes_the_superseded_false_green() -> Result<(), String> {
-    let source = workflow()?;
+fn bootstrap_removed_succession_guard_exposes_the_superseded_false_green() -> Result<(), String> {
+    let source = bootstrap_workflow()?;
     let guard = "            read_succession\n          }\n";
     assert_eq!(source.matches(guard).count(), 1);
     let removed = source.replace(guard, "            true\n          }\n");
@@ -1637,7 +1695,7 @@ fn sync_result(
     ];
     overrides.extend_from_slice(extra);
     run_result(
-        &workflow()?,
+        &bootstrap_workflow()?,
         "pull_request",
         "refs/pull/10/merge",
         "success",
@@ -1647,7 +1705,7 @@ fn sync_result(
 }
 
 #[test]
-fn history_sync_skip_qualifies_only_for_a_history_sync_admission_of_the_same_head()
+fn bootstrap_history_sync_skip_qualifies_only_for_a_history_sync_admission_of_the_same_head()
 -> Result<(), String> {
     let record = sync_record(PR_HEAD);
     let (success, report) = sync_result("history_sync_admitted", &record, &[])?;
@@ -1751,10 +1809,10 @@ fn history_sync_skip_qualifies_only_for_a_history_sync_admission_of_the_same_hea
 }
 
 #[test]
-fn history_sync_skip_cannot_qualify_a_merge_group() -> Result<(), String> {
+fn bootstrap_history_sync_skip_cannot_qualify_a_merge_group() -> Result<(), String> {
     let record = sync_record(PR_HEAD);
     let (success, report) = run_result(
-        &workflow()?,
+        &bootstrap_workflow()?,
         "merge_group",
         "refs/heads/gh-readonly-queue/main/pr-10-aaaa",
         "success",
@@ -1896,7 +1954,8 @@ fn pr_evidence_step(
 }
 
 #[test]
-fn rust_gates_skips_pr_evidence_only_for_a_bound_history_sync_admission() -> Result<(), String> {
+fn bootstrap_rust_gates_skips_pr_evidence_only_for_a_bound_history_sync_admission()
+-> Result<(), String> {
     // A single-parent repair commit H on top of the sync merge, tested as G.
     let (success, outputs, cargo, history) = pr_evidence_step("good", &|_| Vec::new())?;
     assert!(success, "{outputs}");
@@ -1966,5 +2025,182 @@ fn rust_gates_skips_pr_evidence_only_for_a_bound_history_sync_admission() -> Res
         );
         assert!(cargo.contains("xtask ripr-annotations --check"), "{cargo}");
     }
+    Ok(())
+}
+
+#[test]
+fn live_queue_requires_each_mandatory_leaf_and_bound_subject() -> Result<(), String> {
+    let source = live_queue_workflow()?;
+    assert!(source.contains("CI_LIFECYCLE_GENERATION: merge-queue-v1"));
+    assert!(run_result(&source, "merge_group", "", "success", "admitted", &[])?.0);
+    for leaf in [
+        "OWNED_RESULT",
+        "WINDOWS_RESULT",
+        "WHEEL_RESULT",
+        "CI_RESULT",
+        "PRINTED_RESULT",
+    ] {
+        for value in ["", "failure", "cancelled", "skipped"] {
+            assert!(
+                !run_result(
+                    &source,
+                    "merge_group",
+                    "",
+                    "success",
+                    "admitted",
+                    &[(leaf, value)]
+                )?
+                .0,
+                "{leaf}={value:?} must refuse"
+            );
+        }
+    }
+    for (field, value) in [
+        ("SUBJECT", "{}"),
+        ("IDENTITY", ""),
+        ("HEAD", "wrong"),
+        ("BASE", "wrong"),
+        ("GROUP", "wrong"),
+        ("GENERATION", "wrong"),
+        ("CUT_STATUS", "refused"),
+    ] {
+        assert!(
+            !run_result(
+                &source,
+                "merge_group",
+                "",
+                "success",
+                "admitted",
+                &[(field, value)]
+            )?
+            .0,
+            "{field}"
+        );
+    }
+    for (admission, status) in [("failure", "admitted"), ("success", "refused")] {
+        assert!(!run_result(&source, "merge_group", "", admission, status, &[])?.0);
+    }
+    Ok(())
+}
+
+#[test]
+fn live_queue_rechecks_head_reviews_entry_and_succession() -> Result<(), String> {
+    let source = live_queue_workflow()?;
+    let changed_head = LIVE_PR.replace(&"a".repeat(40), &"b".repeat(40));
+    for bad in [
+        LIVE_PR.replace("\"open\"", "\"closed\""),
+        LIVE_PR.replace("\"draft\":false", "\"draft\":true"),
+        changed_head.clone(),
+    ] {
+        assert!(
+            !run_result(
+                &source,
+                "merge_group",
+                "",
+                "success",
+                "admitted",
+                &[("MOCK_PR", &bad)]
+            )?
+            .0
+        );
+    }
+    for bad in [
+        LIVE_GRAPHQL.replace("APPROVED", "CHANGES_REQUESTED"),
+        LIVE_GRAPHQL.replace("entry-10", "new-entry"),
+        LIVE_GRAPHQL.replace("\"nodes\":[]", "\"nodes\":[{\"isResolved\":false}]"),
+    ] {
+        assert!(
+            !run_result(
+                &source,
+                "merge_group",
+                "",
+                "success",
+                "admitted",
+                &[("MOCK_GRAPHQL", &bad)]
+            )?
+            .0
+        );
+    }
+    for (key, value) in [
+        ("MOCK_PR_AFTER", changed_head.as_str()),
+        ("GITHUB_RUN_ATTEMPT", "2"),
+    ] {
+        assert!(
+            !run_result(
+                &source,
+                "merge_group",
+                "",
+                "success",
+                "admitted",
+                &[(key, value)]
+            )?
+            .0
+        );
+    }
+    let own = run_entry("merge_group", 100, 7, 1);
+    let newer = run_entry("merge_group", 101, 8, 1);
+    let page = runs_page(2, &[own, newer]);
+    assert!(
+        !run_result(
+            &source,
+            "merge_group",
+            "",
+            "success",
+            "admitted",
+            &[("MOCK_RUNS_1", &page)]
+        )?
+        .0
+    );
+    Ok(())
+}
+
+#[test]
+fn live_queue_transient_reads_recollect_without_changing_admission() -> Result<(), String> {
+    let source = live_queue_workflow()?;
+    let responses = [
+        read_response("unavailable", 503, 1),
+        read_response(LIVE_PR, 200, 0),
+    ];
+    let (success, report) = with_read_responses(&source, "merge_group", &responses, &[], &[])?;
+    assert!(success, "{report}");
+    assert_read_counts(&report, 3, 1, 1);
+    Ok(())
+}
+
+#[test]
+fn live_queue_control_detects_an_omitted_leaf_check() -> Result<(), String> {
+    let source = live_queue_workflow()?;
+    let changed = source.replace(
+        "\"$OWNED_RESULT\" \"$WINDOWS_RESULT\" \"$WHEEL_RESULT\"",
+        "\"$OWNED_RESULT\" \"$WHEEL_RESULT\"",
+    );
+    assert_ne!(
+        changed, source,
+        "mutation must remove the production Windows result check"
+    );
+    let overrides = [("WINDOWS_RESULT", "failure")];
+    assert!(
+        !run_result(
+            &source,
+            "merge_group",
+            "",
+            "success",
+            "admitted",
+            &overrides
+        )?
+        .0
+    );
+    assert!(
+        run_result(
+            &changed,
+            "merge_group",
+            "",
+            "success",
+            "admitted",
+            &overrides
+        )?
+        .0,
+        "the intentional wrong implementation must expose the false green"
+    );
     Ok(())
 }
