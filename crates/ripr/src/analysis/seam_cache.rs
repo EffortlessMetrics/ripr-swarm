@@ -3112,8 +3112,7 @@ const FILE_FACT_RETAINED_OTHER_BUILDS: usize = 2;
 /// never pruned, whatever its rank: a frequently rebuilt local CLI must not
 /// evict an editor server that is still in use. Builds that only wrote get no
 /// grace, so dirty rebuilds cannot accumulate.
-const FILE_FACT_RECENT_BUILD_GRACE: std::time::Duration =
-    std::time::Duration::from_secs(7 * 24 * 60 * 60);
+const FILE_FACT_RECENT_BUILD_GRACE: std::time::Duration = std::time::Duration::from_hours(7 * 24);
 
 /// Directory, beside the schema directories, holding one "last used" marker
 /// per build. Its name never parses as a schema version, so the
@@ -3121,7 +3120,7 @@ const FILE_FACT_RECENT_BUILD_GRACE: std::time::Duration =
 const FILE_FACT_BUILD_USE_DIR: &str = ".build-use";
 
 /// A long-running process (the editor server) refreshes its marker this often.
-const FILE_FACT_BUILD_USE_REFRESH: std::time::Duration = std::time::Duration::from_secs(60 * 60);
+const FILE_FACT_BUILD_USE_REFRESH: std::time::Duration = std::time::Duration::from_hours(1);
 
 static FILE_FACT_BUILD_USE_NOTED: Mutex<BTreeMap<PathBuf, std::time::Instant>> =
     Mutex::new(BTreeMap::new());
