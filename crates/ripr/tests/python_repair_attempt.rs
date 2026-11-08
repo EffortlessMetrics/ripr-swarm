@@ -1854,8 +1854,39 @@ fn focused_trust_interruption_after_receipt_retries_apply() -> Result<(), String
     let apply_path = fixture
         .root
         .join("target/ripr/workflow/python-repair-driver-after.json");
+    // Before any apply record exists, status offers the same-result retry.
+    let retry_route = "retry with the same --test-result FILE";
+    let occupied_route = "apply record path is already occupied";
+    let selected_limitations = |fixture: &TempFixture| -> Result<String, String> {
+        let output = run_ripr(
+            &fixture.root,
+            &[
+                "agent",
+                "status",
+                "--json",
+                "--root",
+                ".",
+                "--attempt",
+                &attempt,
+            ],
+        )?;
+        require_success(&output, "selected status")?;
+        Ok(parse_json(&stdout_text(&output), "selected status")?["limitations"].to_string())
+    };
+    let free = selected_limitations(&fixture)?;
+    assert!(
+        free.contains(retry_route) && !free.contains(occupied_route),
+        "{free}"
+    );
     std::fs::write(&apply_path, b"foreign apply projection\n")
         .map_err(|error| error.to_string())?;
+    // An occupied apply record path makes the finish unrecoverable, so status
+    // gives the new-attempt route, and the after phase below refuses.
+    let occupied = selected_limitations(&fixture)?;
+    assert!(
+        occupied.contains(occupied_route) && !occupied.contains(retry_route),
+        "{occupied}"
+    );
     let foreign = run_ripr(
         &fixture.root,
         &[
