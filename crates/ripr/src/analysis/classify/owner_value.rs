@@ -534,8 +534,24 @@ impl ClosedChange {
         }
         let after_line = definition.lines().nth(changed_line)?;
         Some(Self {
-            after: scalar_field_owner(definition, name, changed_line, after_line, field, field_ty)?,
-            before: scalar_field_owner(definition, name, changed_line, before, field, field_ty)?,
+            after: scalar_field_owner(
+                definition,
+                name,
+                changed_line,
+                after_line,
+                true,
+                field,
+                field_ty,
+            )?,
+            before: scalar_field_owner(
+                definition,
+                name,
+                changed_line,
+                before,
+                false,
+                field,
+                field_ty,
+            )?,
         })
     }
 
@@ -571,11 +587,17 @@ fn scalar_field_owner(
     name: &str,
     changed_line: usize,
     line: &str,
+    source_line: bool,
     field: &str,
     field_ty: &str,
 ) -> Option<ClosedOwner> {
     let range = range_of(field_ty)?;
-    let mut initializer = field_initializer(line, field)?;
+    // The diff's removed side arrives as the probe's own text with the trailing
+    // comma already stripped (`retries: n + 2`), so only a source line is held
+    // to carrying its own terminator. A removed line that was itself wrapped
+    // cannot be told from that fragment; the source line still has to be
+    // terminated, so a wrapped initializer on the new side is never read.
+    let mut initializer = field_initializer(line, field, !source_line)?;
     let masked = crate::analysis::extract::mask_comments_and_strings(definition);
     let item = masked.find(&format!("fn {name}"))?;
     let signature_end = masked[item..].find(')')? + item;
@@ -674,7 +696,7 @@ fn substitute(text: &str, bindings: &[(String, String)]) -> String {
 /// The text of `field`'s initializer on `line`: after `field:` up to the
 /// top-level `,` or the bracket that closes the literal. A line with a string,
 /// a char, a comment or a second mention of the field is not read.
-fn field_initializer(line: &str, field: &str) -> Option<String> {
+fn field_initializer(line: &str, field: &str, may_end_unterminated: bool) -> Option<String> {
     if line.contains(['"', '\'']) || line.contains("//") || line.contains("/*") {
         return None;
     }
@@ -697,23 +719,32 @@ fn field_initializer(line: &str, field: &str) -> Option<String> {
     }
     let rest = found?;
     let mut depth = 0usize;
-    let mut stop = rest.len();
+    // The initializer must end on this line. Reaching the end of the line
+    // without a top-level `,` or closing bracket means the expression may
+    // continue on the next line (rustfmt wraps `retries: n` / `+ 1,`), and a
+    // truncated initializer would be judged as the whole one.
+    let mut stop = None;
     for (at, byte) in rest.bytes().enumerate() {
         match byte {
             b'(' | b'[' | b'{' => depth += 1,
             b')' | b']' | b'}' if depth == 0 => {
-                stop = at;
+                stop = Some(at);
                 break;
             }
             b')' | b']' | b'}' => depth -= 1,
             b',' if depth == 0 => {
-                stop = at;
+                stop = Some(at);
                 break;
             }
             _ => {}
         }
     }
-    let text = rest[..stop].trim();
+    let text = match stop {
+        Some(stop) => &rest[..stop],
+        None if may_end_unterminated => rest,
+        None => return None,
+    }
+    .trim();
     (!text.is_empty()).then(|| text.to_string())
 }
 
@@ -807,6 +838,23 @@ mod tests {
         // A call outside the subset, or a non-decimal pin, is no evidence.
         assert!(!change.provably_unpinned("config", "config(n)", "9"));
         assert!(!change.provably_unpinned("config", "config(2)", "limit"));
+    }
+
+    /// #12865 review: rustfmt wraps a long initializer with the operator on the
+    /// next line, so a changed line that ends without a terminator may be only
+    /// the head of the expression. It is not read, instead of read as `n`.
+    #[test]
+    fn a_wrapped_initializer_is_not_read_as_its_first_line() {
+        let wrapped = "pub fn config(n: u32) -> Result<Config, ()> {\n    Ok(Config {\n        retries: n\n            + 1,\n    })\n}\n";
+        let change = ClosedChange::read_field(
+            wrapped,
+            "config",
+            2,
+            "        retries: n + 2,",
+            "retries",
+            "u32",
+        );
+        assert!(change.is_none());
     }
 
     #[test]
@@ -925,7 +973,8 @@ mod tests {
 
     #[test]
     fn the_initializer_stops_at_the_literal_s_closing_bracket_or_comma() {
-        let read = |line, field| field_initializer(line, field);
+        let read = |line, field| field_initializer(line, field, true);
+        let read_source = |line, field| field_initializer(line, field, false);
         assert_eq!(
             read("Ok(Config { retries: n + 1 })", "retries").as_deref(),
             Some("n + 1")
@@ -937,6 +986,15 @@ mod tests {
         // A longer field name is another field.
         assert_eq!(read("Ok(Config { max_retries: 4 })", "retries"), None);
         assert_eq!(read("retries::new(1)", "retries"), None);
+        // An initializer that reaches the end of the line unterminated may
+        // continue on the next one (`retries: n` then `+ 1,`), so it is not read.
+        assert_eq!(read_source("    retries: n", "retries"), None);
+        assert_eq!(
+            read_source("    retries: n // wrapped below", "retries"),
+            None
+        );
+        // The removed side is the probe's text, comma already stripped.
+        assert_eq!(read("retries: n + 2", "retries").as_deref(), Some("n + 2"));
     }
 
     #[test]
