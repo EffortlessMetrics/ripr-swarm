@@ -85,7 +85,7 @@ const FAILING_JUNIT: &str =
 
 /// Runs the workflow's own `Verify retained JUnit report` block in a scratch
 /// checkout shape and reports whether it exited successfully plus whether the
-/// retained XML survived (the upload step reads it after this verdict step).
+/// retained XML remains on disk (the upload step reads it after this verdict step).
 fn run_verify(outcome: &str, junit: Option<&str>) -> Result<(bool, bool), String> {
     let script =
         step("Verify retained JUnit report")?.replace("${{ steps.rust-tests.outcome }}", outcome);
