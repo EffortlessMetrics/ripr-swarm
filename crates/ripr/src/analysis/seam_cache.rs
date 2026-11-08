@@ -718,7 +718,11 @@ pub(crate) struct CachedSeamLimitInfo {
 /// `1.173`: `#[async_std::test]` bodies admit owner-return pins read through one
 /// `.await` on an async owner (#5040). Old entries would keep those assertions
 /// refused as async tests.
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.173";
+/// `1.174`: a claims `assert_ok_eq!` / `assert_some_eq!` pins a whole-value
+/// field of the struct the owner returns, and a whole-value field pin whose
+/// field value neither owner version computes no longer credits (#12394,
+/// #12864).
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.174";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -933,7 +937,8 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.173";
 /// `0.173`: same cross-file wrapper limit as full `1.171` (#12886).
 /// `0.174`: reserved for #12669 (in flight).
 /// `0.175`: same `#[async_std::test]` admission as full `1.173` (#5040).
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.175";
+/// `0.176`: same claims field-construction pin as full `1.174` (#12394, #12864).
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.176";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -1150,7 +1155,8 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.175";
 /// `0.173`: same cross-file wrapper limit as full `1.171` (#12886).
 /// `0.174`: reserved for #12669 (in flight).
 /// `0.175`: same `#[async_std::test]` admission as full `1.173` (#5040).
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.175";
+/// `0.176`: same claims field-construction pin as full `1.174` (#12394, #12864).
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.176";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -5296,7 +5302,8 @@ mod tests {
         // 1.170 -> 1.171: cross-file forwarding wrapper names the limit (#12886).
         // 1.171 -> 1.172: reserved for #12669 (in flight).
         // 1.172 -> 1.173: `#[async_std::test]` owner-return pins (#5040).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.173");
+        // 1.173 -> 1.174: claims field-construction pin; field value neither version computes (#12394, #12864).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.174");
         // 1.168 -> 1.169: plain `assert_eq!` literal withhold in the audit (#13005).
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
@@ -5451,8 +5458,9 @@ mod tests {
         // 0.172 -> 0.173: same cross-file wrapper limit as full 1.171 (#12886).
         // 0.173 -> 0.174: reserved for #12669 (in flight).
         // 0.174 -> 0.175: same async_std test admission as full 1.173 (#5040).
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.175");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.175");
+        // 0.175 -> 0.176: same claims field-construction pin as full 1.174 (#12394, #12864).
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.176");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.176");
         // 0.170 -> 0.171: same plain `assert_eq!` literal withhold as full 1.169 (#13005).
     }
 
