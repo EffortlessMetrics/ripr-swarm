@@ -2056,7 +2056,12 @@ pub(crate) fn receiver_owner_call_relation(
         return receiver_names
             .iter()
             .any(|receiver| contains_member_read_name(&test.body_text, receiver, &owner.name))
-            || receiver_matcher_key_getter_read(test, &receiver_names, &owner.name)
+            || receiver_matcher_key_getter_read(
+                test,
+                &receiver_names,
+                &constructor_names,
+                &owner.name,
+            )
             || factory_built_getter_read(test, owner, alias_map, workspace_root);
     }
     false
@@ -2081,6 +2086,7 @@ pub(crate) fn receiver_owner_call_relation(
 fn receiver_matcher_key_getter_read(
     test: &TypeScriptTest,
     receiver_names: &[String],
+    constructor_names: &[String],
     getter: &str,
 ) -> bool {
     if !is_safe_javascript_identifier(getter) {
@@ -2103,12 +2109,18 @@ fn receiver_matcher_key_getter_read(
         let names_getter = match assertion.matcher.as_str() {
             "toMatchObject" => {
                 assertion.argument_count == 1
+                    && direct_matcher_call_args(&test.body_text, subject, "toMatchObject")
+                        .iter()
+                        .any(|args| args.len() == 1)
                     && !assertion.has_dynamic_matcher_arg
                     && flat_object_keys(expected)
                         .is_some_and(|keys| keys.iter().any(|key| key == getter))
             }
             "toHaveProperty" => {
                 assertion.argument_count == 2
+                    && direct_matcher_call_args(&test.body_text, subject, "toHaveProperty")
+                        .iter()
+                        .any(|args| args.len() == 2 && is_plain_literal_value(&args[1]))
                     && expected
                         .strip_prefix('"')
                         .and_then(|rest| rest.strip_suffix('"'))
@@ -2126,9 +2138,175 @@ fn receiver_matcher_key_getter_read(
         // receiver the body writes again (`url = {...}`) may no longer be the
         // constructed instance.
         names_getter
+            && receiver_initializer_is_exact_constructor(
+                &test.body_text,
+                subject,
+                constructor_names,
+            )
             && !body_binds_shadow_identifier(&test.body_text, subject)
             && !receiver_written_after_declaration(&test.body_text, subject)
     })
+}
+
+/// Argument texts of every `expect(<subject>).<matcher>(...)` call in `body`
+/// whose matcher is chained directly on the `expect(...)` call: a `.not`,
+/// `.resolves` or `.rejects` modifier between them leaves the call out, since
+/// each changes what the matcher is applied to or what it asserts.
+fn direct_matcher_call_args(body: &str, subject: &str, matcher: &str) -> Vec<Vec<String>> {
+    let needle = format!("expect({subject})");
+    let call = format!(".{matcher}");
+    let mut found = Vec::new();
+    for (idx, _) in body.match_indices(&call) {
+        let Some(open) = body[idx + call.len()..].trim_start().strip_prefix('(') else {
+            continue;
+        };
+        let Some(head) = body[..idx].trim_end().strip_suffix(&needle) else {
+            continue;
+        };
+        if head
+            .chars()
+            .next_back()
+            .is_some_and(|ch| is_javascript_identifier_char(ch) || ch == '.')
+        {
+            continue;
+        }
+        let Some(end) = super::classifier::balanced_close_offset(open) else {
+            continue;
+        };
+        found.push(split_top_level_arguments(&open[..end]));
+    }
+    found
+}
+
+/// Top-level comma-separated pieces of an argument list (a trailing comma adds
+/// no empty argument), string- and bracket-aware.
+fn split_top_level_arguments(args: &str) -> Vec<String> {
+    let mut pieces = Vec::new();
+    let mut depth = 0usize;
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+    let mut start = 0usize;
+    for (idx, ch) in args.char_indices() {
+        if let Some(open) = quote {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == open {
+                quote = None;
+            }
+            continue;
+        }
+        match ch {
+            '"' | '\'' | '`' => quote = Some(ch),
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth = depth.saturating_sub(1),
+            ',' if depth == 0 => {
+                pieces.push(args[start..idx].trim().to_string());
+                start = idx + 1;
+            }
+            _ => {}
+        }
+    }
+    let last = args[start..].trim();
+    if !last.is_empty() {
+        pieces.push(last.to_string());
+    }
+    pieces
+}
+
+/// `true` for a scalar literal argument: one quoted string without
+/// interpolation or an inner quote, a number, `true`, `false` or `null`. A
+/// variable, call, `expect.any(...)` or other asymmetric matcher is not.
+fn is_plain_literal_value(text: &str) -> bool {
+    let text = text.trim();
+    if matches!(text, "true" | "false" | "null") {
+        return true;
+    }
+    if text.parse::<f64>().is_ok() {
+        return true;
+    }
+    ['"', '\'', '`'].iter().any(|quote| {
+        text.len() >= 2
+            && text.starts_with(*quote)
+            && text.ends_with(*quote)
+            && !text[1..text.len() - 1].contains([*quote, '\\'])
+            && !(text.starts_with('`') && text.contains("${"))
+    })
+}
+
+/// `true` when every `const`/`let`/`var` declaration of `name` in `body` is
+/// initialised by exactly `new <Ctor>(...)` for a constructor in `ctors`: the
+/// call is balanced and nothing continues the expression after it (no ternary,
+/// `||`/`??`, member chain, `await`, parentheses or `as` cast). A receiver the
+/// body does not declare (a scope binding) has no initializer to inspect.
+fn receiver_initializer_is_exact_constructor(body: &str, name: &str, ctors: &[String]) -> bool {
+    for keyword in ["const", "let", "var"] {
+        for (idx, _) in body.match_indices(keyword) {
+            let before = body[..idx].chars().next_back();
+            if before.is_some_and(|ch| is_javascript_identifier_char(ch) || ch == '.') {
+                continue;
+            }
+            let Some(rest) = body[idx + keyword.len()..].strip_prefix(char::is_whitespace) else {
+                continue;
+            };
+            let Some(rest) = rest.trim_start().strip_prefix(name) else {
+                continue;
+            };
+            if rest
+                .chars()
+                .next()
+                .is_some_and(is_javascript_identifier_char)
+            {
+                continue;
+            }
+            let Some(init) = rest
+                .trim_start()
+                .strip_prefix('=')
+                .filter(|init| !init.starts_with('='))
+            else {
+                return false;
+            };
+            if !exact_constructor_initializer(init.trim_start(), ctors) {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+fn exact_constructor_initializer(init: &str, ctors: &[String]) -> bool {
+    let Some(rest) = init
+        .strip_prefix("new")
+        .and_then(|rest| rest.strip_prefix(char::is_whitespace))
+    else {
+        return false;
+    };
+    let rest = rest.trim_start();
+    let len: usize = rest
+        .chars()
+        .take_while(|ch| is_javascript_identifier_char(*ch))
+        .map(char::len_utf8)
+        .sum();
+    if !ctors.iter().any(|ctor| ctor == &rest[..len]) {
+        return false;
+    }
+    let Some(args) = rest[len..].trim_start().strip_prefix('(') else {
+        return false;
+    };
+    let Some(end) = super::classifier::balanced_close_offset(args) else {
+        return false;
+    };
+    let tail = args[end + 1..].trim_start_matches([' ', '\t']);
+    match tail.chars().next() {
+        None | Some(';') => true,
+        Some('\n' | '\r') => tail
+            .trim_start()
+            .chars()
+            .next()
+            .is_none_or(|ch| !".?|&+-*/%[(`,<>=:".contains(ch)),
+        Some(_) => false,
+    }
 }
 
 /// `true` when `body` writes `name` anywhere but its single `const`/`let`/`var`

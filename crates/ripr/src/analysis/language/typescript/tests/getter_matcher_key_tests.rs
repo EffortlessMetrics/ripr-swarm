@@ -20,13 +20,21 @@ fn test_file(body: &str) -> String {
 }
 
 fn origin_finding(label: &str, test_source: &str) -> Result<Finding, String> {
-    let line = URL_CLASS
+    origin_finding_in(label, URL_CLASS, test_source)
+}
+
+fn origin_finding_in(
+    label: &str,
+    class_source: &str,
+    test_source: &str,
+) -> Result<Finding, String> {
+    let line = class_source
         .lines()
         .position(|line| line == CHANGED)
         .map(|index| index + 1)
         .ok_or_else(|| format!("{label}: the changed line is missing from the owner"))?;
     let root = ts_unique_tempdir(label)?;
-    ts_write_file(&root.join("src/u.ts"), URL_CLASS)?;
+    ts_write_file(&root.join("src/u.ts"), class_source)?;
     ts_write_file(&root.join("tests/u.test.ts"), test_source)?;
     let result = TypeScriptAdapter.analyze_diff(
         &ts_analysis_options(root.clone()),
@@ -220,4 +228,81 @@ fn a_shadowed_or_rebound_receiver_earns_no_credit() -> Result<(), String> {
         "import { describe, expect, test, vi } from 'vitest';\nimport { Url } from '../src/u';\n\ndescribe('Url', () => {\n  test('getters', () => {\n    const url = new Url('https://x');\n    vi.spyOn(url, 'origin', 'get').mockReturnValue('https://host');\n    expect(url).toMatchObject({ origin: 'https://host' });\n  });\n});\n",
     )?;
     Ok(())
+}
+
+#[test]
+fn a_receiver_not_initialised_by_exactly_a_constructor_call_earns_no_credit() -> Result<(), String>
+{
+    for (label, init) in [
+        (
+            "ternary",
+            "false ? new Url('https://x') : { origin: 'https://host' }",
+        ),
+        (
+            "logical-or",
+            "{ origin: 'https://host' } || new Url('https://x')",
+        ),
+        ("nullish", "other ?? new Url('https://x')"),
+        ("member-chain", "new Url('https://x').clone()"),
+        ("awaited", "await new Url('https://x')"),
+        ("cast", "new Url('https://x') as Url"),
+        ("wrapped", "(new Url('https://x'))"),
+        ("trailing-member", "new Url('https://x').self"),
+    ] {
+        let body = format!(
+            "    const other: any = undefined;\n    const url = {init};\n    expect(url).toMatchObject({{ origin: 'https://host' }});"
+        );
+        assert_body_uncredited(&format!("getter-init-{label}"), &body)?;
+    }
+    // Control: the exact constructor call initialiser stays credited.
+    assert_credited(
+        "getter-init-exact",
+        "    const url = new Url('https://x');\n    expect(url).toMatchObject({ origin: 'https://host' });",
+    )
+}
+
+#[test]
+fn a_resolves_or_rejects_modifier_earns_no_credit() -> Result<(), String> {
+    let thenable = URL_CLASS.replace(
+        "  get hasProtocol()",
+        "  then(resolve: (value: unknown) => void) {\n    resolve({ origin: \"https://host\" });\n  }\n  get hasProtocol()",
+    );
+    for modifier in ["resolves", "rejects"] {
+        let source = format!(
+            "import {{ describe, expect, test }} from 'vitest';\nimport {{ Url }} from '../src/u';\n\ndescribe('Url', () => {{\n  test('getters', async () => {{\n    const url = new Url('https://x');\n    await expect(url).{modifier}.toMatchObject({{ origin: 'https://host' }});\n  }});\n}});\n"
+        );
+        let finding = origin_finding_in(&format!("getter-{modifier}"), &thenable, &source)?;
+        assert!(
+            finding.related_tests.is_empty(),
+            "{modifier}: the matcher runs on the settled value, related: {:?}",
+            finding.related_tests
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn a_non_literal_or_negated_has_property_value_earns_no_credit() -> Result<(), String> {
+    for (label, assertion) in [
+        ("variable", "expect(url).toHaveProperty('origin', someVar);"),
+        (
+            "asymmetric",
+            "expect(url).toHaveProperty('origin', expect.any(String));",
+        ),
+        ("call", "expect(url).toHaveProperty('origin', host());"),
+        (
+            "negated",
+            "expect(url).not.toHaveProperty('origin', 'https://host');",
+        ),
+        ("existence", "expect(url).toHaveProperty('origin');"),
+    ] {
+        let body = format!(
+            "    const someVar = 'https://host';\n    const host = () => 'https://host';\n    const url = new Url('https://x');\n    {assertion}"
+        );
+        assert_body_uncredited(&format!("getter-has-property-{label}"), &body)?;
+    }
+    assert_credited(
+        "getter-has-property-literal",
+        "    const url = new Url('https://x');\n    expect(url).toHaveProperty('origin', 'https://host');",
+    )
 }

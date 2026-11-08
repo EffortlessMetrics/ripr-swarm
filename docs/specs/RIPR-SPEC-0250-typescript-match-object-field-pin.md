@@ -142,9 +142,13 @@ the runner, so the assertion reads `unknown` / unknown, neither "too weak" nor
 or `expect(recv).toHaveProperty("getter", <value>)`. The getter's relation
 holds when `recv` is a constructed receiver that already passes the
 identity, shadow and rebinding gates, the `expect(...)` subject is exactly
-that name and is never written again in the test body, the matcher is not negated, and the getter is a literal top-level
-key of a flat all-literal object (or the plain identifier string of a
-two-argument `toHaveProperty`). Computed or quoted-computed keys, spreads,
+that name and is never written again in the test body, the receiver's
+declaration is exactly `new Class(...)` with nothing after the call (no
+ternary, `||`, `??`, member chain, `await`, parentheses or cast), the matcher is
+chained directly on `expect(recv)` (no `.not`, `.resolves` or `.rejects`), and
+the getter is a literal top-level key of a flat all-literal object (or the plain
+identifier string of a two-argument `toHaveProperty` whose value is a scalar
+literal). Computed or quoted-computed keys, spreads,
 nested objects or dotted paths, non-literal values, asymmetric matchers, a
 different subject and any spy, mock or member replacement naming the getter
 earn no relation. The row stays `relational_check` / weak, so the verdict is
