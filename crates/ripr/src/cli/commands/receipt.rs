@@ -49,6 +49,11 @@ fn run_receipt_write(args: &[String]) -> Result<(), String> {
             .as_deref()
             .unwrap_or_else(|| std::path::Path::new(".")),
     )?;
+    // --root does not relocate the cwd-relative default receipt path. Check
+    // its actual output tree too; explicit --out keeps its existing semantics.
+    if opts.out.is_none() {
+        crate::atomic_file::ensure_relative_output_contained(&receipt_out_path(&opts))?;
+    }
     let rendered = write_receipt(&opts)?;
 
     if opts.json || opts.out.is_none() {
@@ -337,7 +342,7 @@ Options:
   --current-head SHA    Optional 40-character hex SHA asserted as the repository
                         HEAD at write time. When --root is also provided, the
                         receipt writer validates this sha against the actual git
-                        HEAD at that root and rejects mismatches (#1941).
+                        HEAD at that root and rejects mismatches.
   --root PATH           Repository root for git HEAD validation. When provided
                         alongside --current-head, the writer resolves the actual
                         git rev-parse HEAD and rejects if the caller-provided

@@ -357,7 +357,7 @@ observations for both diagnostics checks, and successful Clippy completion.
 Missing, ambiguous or malformed recipe boundaries, partial execution and stale
 run evidence fail the job. Native compiler, LLVM and profile observations stay
 in the job output. This route replaces the duplicate stable Cargo commands. It
-follows that workflow's existing main-push, manual-dispatch and
+follows that workflow's existing daily-schedule, manual-dispatch and
 `clippy-future`/`full-ci` plus `merge-ready` PR routing. A failure stays visible;
 the job does not become a required merge gate or run full workspace coverage.
 The existing future-Clippy job continues to inspect deferred lints on Rust

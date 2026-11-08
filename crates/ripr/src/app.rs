@@ -10,6 +10,7 @@ pub(crate) mod annotations;
 pub(crate) mod causal_projection;
 mod check;
 pub(crate) mod check_artifact;
+pub(crate) mod check_verification;
 mod context;
 pub(crate) mod diff_source;
 mod explain;
@@ -135,6 +136,11 @@ use crate::output;
 use std::path::PathBuf;
 
 pub(crate) const CHECK_OUTPUT_SCHEMA_VERSION: &str = "0.2";
+
+/// Schema generation of the standalone `cli_refusal` document (#11584): the
+/// shared refusal block for argv usage errors and selector misses under an
+/// explicit JSON request. Independent of every command's own generation.
+pub(crate) const CLI_REFUSAL_SCHEMA_VERSION: &str = "0.1";
 
 /// Refusal-envelope schema generation for the `analysis_timeout`
 /// input-context amendment (#10796, RIPR-SPEC-0241): generation `0.3` adds
