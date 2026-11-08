@@ -2656,18 +2656,16 @@ fn run_agent_repair_phase(
             if let Some(id) = attempt_id.as_deref() {
                 // Revalidate a proposal's focused claim before any historical
                 // recovery. Older B normalized records did not preserve suite
-                // framing. A proposal finish without a focused claim keeps the
-                // ordinary pending-retention route below.
+                // framing. Under the C gate a proposal finish must hold a
+                // passing focused claim, so one without a claim (from an
+                // earlier producer) is not promoted.
                 if let Ok(parsed_id) =
                     crate::app::repair_attempt::RepairAttemptId::parse(id.to_string())
                     && let Ok(manifest) =
                         crate::app::repair_attempt::load_repair_attempt_manifest_from(
                             &root, store_ref, &parsed_id,
                         )
-                    && let Some(pending) = manifest
-                        .after
-                        .as_ref()
-                        .and_then(|after| after.focused_result.as_ref())
+                    && let Some(after) = manifest.after.as_ref()
                     && manifest.state
                         == crate::app::repair_attempt::RepairAttemptState::ReadyToFinish
                 {
@@ -2689,6 +2687,9 @@ fn run_agent_repair_phase(
                             crate::app::repair_attempt::quoted_store_flag(store_ref),
                             crate::agent::loop_commands::shell_arg(id)
                         );
+                        let pending = after.focused_result.as_ref().ok_or_else(|| format!("the proposal finish retained no focused test result; inspect `{status}` before starting a new attempt"))?;
+                        crate::app::focused_run::require_passing_recorded_run(&pending.record, id)
+                            .map_err(|error| format!("{error}; inspect `{status}`"))?;
                         let path = test_result.as_deref().ok_or_else(|| format!("proposal recovery needs a --test-result FILE matching the retained normalized claim to validate reported completion; inspect `{status}` before retrying"))?;
                         crate::app::repair_attempt::include_resolved_explicit_store_operational_write(&mut policy, &root, store_ref, Some(&parsed_id), crate::app::repair_attempt::RepairAttemptStoreAccess::Open)?;
                         let supplied =
@@ -2699,6 +2700,7 @@ fn run_agent_repair_phase(
                                 "the supplied focused result differs from the finished proposal; use a --test-result FILE matching the retained normalized claim, or inspect `{status}` before starting a new attempt"
                             ));
                         }
+                        crate::app::focused_run::require_passing_run(Some(&supplied.record), id)?;
                         refusal.typed = false;
                     }
                 }
@@ -3492,6 +3494,43 @@ fn run_agent_repair_phase(
                     }
                 }
             };
+
+            // #13203 slice C: an attempt that follows a new-test proposal
+            // finishes only with a recorded focused run that counted a test
+            // and failed none. Refusing here leaves the attempt awaiting its
+            // edit, like any refused result. A proposal whose file was never
+            // created is left to the cage verdict, which names that.
+            if cage_policy.new_test_proposal.is_some()
+                && root.join(cage_policy.selected_target.path()).is_file()
+                && let Err(error) = crate::app::focused_run::require_passing_run(
+                    focused_run.as_ref().map(|run| &run.record),
+                    attempt.attempt_id.as_str(),
+                )
+            {
+                refusal.narrate(format!("focused test result required: {error}"));
+                let recovery = focused_result_recovery_lines(
+                    &caller_root,
+                    store_ref,
+                    &attempt,
+                    &cage_policy,
+                    prior_refusals,
+                );
+                for line in &recovery {
+                    refusal.narrate(line.clone());
+                }
+                refusal.typed = true;
+                if prior_refusals.saturating_add(1)
+                    >= crate::app::repair_attempt::REPAIR_ATTEMPT_AFTER_REFUSAL_BUDGET
+                {
+                    refusal.code =
+                        Some(crate::app::task_first::RepairRefusalCode::RetryBudgetExhausted);
+                }
+                return Err(format!(
+                    "repair attempt `{}` cannot finish: {error}; use these recovery instructions: {}",
+                    attempt.attempt_id.as_str(),
+                    recovery.join(" ")
+                ));
+            }
 
             // Review summaries consume the canonical diff-scoped producer
             // outcome. Generate it from the same current root before issuing

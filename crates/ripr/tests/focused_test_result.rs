@@ -1077,33 +1077,6 @@ fn an_inline_result_counts_only_tests_in_the_governed_module() -> Result<(), Str
     Ok(())
 }
 
-/// A failed test ran, so it counts as ran; the record keeps the failure
-/// visible so a later gate can require `failed == 0`.
-#[test]
-fn a_failed_only_result_is_recorded_as_ran_with_the_failure_visible() -> Result<(), String> {
-    let (fixture, attempt) = edited_attempt("focused-failed")?;
-    let root = &fixture.root;
-    let document = result_document(
-        &attempt.id,
-        &head_sha(root)?,
-        PROPOSED_FILE,
-        serde_json::json!([
-            {"type": "test", "event": "failed", "name": "equality_boundary_discounts"}
-        ]),
-    );
-    let result = write_result(root, "failed-only", &document)?;
-    let output = after_with(root, &attempt, &result)?;
-    assert!(output.status.success(), "{}", combined(&output));
-    let record = retained_terminal(root, &manifest(root, &attempt)?, RESULT_ROLE)?;
-    assert_eq!(record["failed"], serde_json::json!(1));
-    assert_eq!(record["passed"], serde_json::json!(0));
-    assert_eq!(
-        record["ran_tests"],
-        serde_json::json!(["equality_boundary_discounts"])
-    );
-    Ok(())
-}
-
 #[test]
 fn failed_focused_result_publication_restores_the_attempt_for_retry() -> Result<(), String> {
     let (fixture, attempt) = edited_attempt("focused-publication-failure")?;
@@ -1643,49 +1616,6 @@ fn interrupted_receipt_evaluation_fails_closed() -> Result<(), String> {
     Ok(())
 }
 
-/// A new-test proposal finished without `--test-result` (allowed before the
-/// finish gate) that stopped after its receipt was published keeps the
-/// ordinary pending-retention route: a retry without a result retains its
-/// receipt and verify as terminal evidence instead of refusing for a missing
-/// focused claim.
-#[cfg(all(target_os = "linux", target_env = "gnu"))]
-#[test]
-fn proposal_finish_without_a_result_is_retained_after_receipt_publication() -> Result<(), String> {
-    let (fixture, attempt) = edited_attempt("proposal-no-result-recovery")?;
-    let root = &fixture.root;
-    let stopped = after_with_optional_result_hook(root, &attempt, None, "stop")?;
-    assert_eq!(stopped.status.code(), Some(77), "{}", combined(&stopped));
-    let pending = manifest(root, &attempt)?;
-    assert_eq!(pending["state"], "ready_to_finish", "{pending}");
-    assert!(
-        pending
-            .pointer("/after/focused_result")
-            .is_none_or(Value::is_null),
-        "{pending}"
-    );
-    assert!(terminal_roles(&pending).is_empty(), "{pending}");
-    // The retry promotes the published receipt and verify as this attempt's
-    // terminal evidence, then reports the attempt as already finished, as for
-    // any interrupted finish without a focused claim.
-    let recovered = review_after_without_result(root, &attempt)?;
-    assert!(
-        combined(&recovered).contains("already finished"),
-        "{}",
-        combined(&recovered)
-    );
-    let finished = manifest(root, &attempt)?;
-    for role in ["agent_receipt", "agent_verify"] {
-        retained_terminal(root, &finished, role)?;
-    }
-    assert!(
-        !terminal_roles(&finished)
-            .iter()
-            .any(|role| role == RESULT_ROLE),
-        "{finished}"
-    );
-    Ok(())
-}
-
 /// An existing-test attempt whose focused finish stopped after its receipt
 /// decision was committed is not promoted by an after phase that omits the
 /// result: that run is refused and leaves the attempt as it was, and the
@@ -2221,6 +2151,206 @@ fn review_existing_test_target_keeps_result_optional() -> Result<(), String> {
     Ok(())
 }
 
+/// A failed test ran, so it counts as ran, but the full-proof finish gate
+/// (slice C) refuses it: the new test must pass. The refusal leaves the attempt
+/// retryable, and the same attempt then finishes on a passing run.
+#[test]
+fn a_failed_result_is_refused_by_the_finish_gate_and_recoverable() -> Result<(), String> {
+    let (fixture, attempt) = edited_attempt("focused-failed")?;
+    let root = &fixture.root;
+    let head = head_sha(root)?;
+    let failing = result_document(
+        &attempt.id,
+        &head,
+        PROPOSED_FILE,
+        serde_json::json!([
+            {"type": "test", "event": "failed", "name": "equality_boundary_discounts"}
+        ]),
+    );
+    let result = write_result(root, "failed-only", &failing)?;
+    let output = after_with(root, &attempt, &result)?;
+    assert_refused_and_unrecorded(root, &attempt, &output, "1 failed test(s)")?;
+    let passing = result_document(
+        &attempt.id,
+        &head,
+        PROPOSED_FILE,
+        serde_json::json!([ok_event("equality_boundary_discounts")]),
+    );
+    let result = write_result(root, "failed-then-passing", &passing)?;
+    let output = after_with(root, &attempt, &result)?;
+    assert!(output.status.success(), "{}", combined(&output));
+    let record = retained_terminal(root, &manifest(root, &attempt)?, RESULT_ROLE)?;
+    assert_eq!(record["failed"], serde_json::json!(0));
+    Ok(())
+}
+
+/// Finishing an attempt that follows a new-test proposal needs a recorded
+/// focused result; without one the attempt is refused and stays retryable.
+#[test]
+fn a_proposal_attempt_cannot_finish_without_a_focused_result() -> Result<(), String> {
+    let (fixture, attempt) = edited_attempt("focused-required")?;
+    let root = &fixture.root;
+    let output = run_ripr(
+        root,
+        &[
+            "agent",
+            "repair",
+            "--json",
+            "--root",
+            &attempt.root_arg,
+            "--attempt",
+            &attempt.id,
+            "--phase",
+            "after",
+        ],
+    )?;
+    assert_refused_and_unrecorded(root, &attempt, &output, "needs a focused test result")?;
+    Ok(())
+}
+
+#[test]
+fn review_continue_refusal_recovers_on_the_same_attempt() -> Result<(), String> {
+    let (fixture, attempt) = edited_attempt("review-continue")?;
+    let root = &fixture.root;
+    let output = run_ripr(
+        root,
+        &[
+            "continue",
+            "--root",
+            &attempt.root_arg,
+            "--attempt",
+            &attempt.id,
+        ],
+    )?;
+    assert_refused_and_unrecorded(root, &attempt, &output, "needs a focused test result")?;
+    let refused = manifest(root, &attempt)?;
+    assert_eq!(
+        refused["after_refusal_count"],
+        serde_json::json!(1),
+        "{refused}"
+    );
+    let document = result_document(
+        &attempt.id,
+        &head_sha(root)?,
+        PROPOSED_FILE,
+        serde_json::json!([ok_event("equality_boundary_discounts")]),
+    );
+    let path = write_result(root, "continue-recovery", &document)?;
+    let output = after_with(root, &attempt, &path)?;
+    assert!(output.status.success(), "{}", combined(&output));
+    let finished = manifest(root, &attempt)?;
+    assert_eq!(
+        finished["after_refusal_count"],
+        serde_json::json!(1),
+        "{finished}"
+    );
+    assert_eq!(
+        finished
+            .pointer("/after/verdict/status")
+            .and_then(Value::as_str),
+        Some("compliant"),
+        "{finished}"
+    );
+    Ok(())
+}
+
+// RIPR-SPEC-0011: execute the emitted recovery with the host shell from an
+// unrelated directory; root, store and result paths all require quoting.
+#[cfg(unix)]
+#[test]
+fn review_printed_focused_retry_preserves_explicit_store() -> Result<(), String> {
+    let fixture = fixture("review store 'quoted'")?;
+    let root = &fixture.root;
+    let root_arg = root.display().to_string();
+    let store = "target/ripr/alternative 'store'";
+    let seam = seam_id(root, &root_arg)?;
+    let before = run_ripr(
+        root,
+        &[
+            "agent",
+            "repair",
+            "--json",
+            "--root",
+            &root_arg,
+            "--store",
+            store,
+            "--seam-id",
+            &seam,
+            "--phase",
+            "before",
+        ],
+    )?;
+    assert!(before.status.success(), "{}", combined(&before));
+    let id = stdout_json(&before)?["repair_attempt"]["attempt_id"]
+        .as_str()
+        .ok_or("no attempt")?
+        .to_owned();
+    write(root, PROPOSED_FILE, NEW_TEST)?;
+    let missing = run_ripr(
+        root,
+        &[
+            "agent",
+            "repair",
+            "--json",
+            "--root",
+            &root_arg,
+            "--store",
+            store,
+            "--attempt",
+            &id,
+            "--phase",
+            "after",
+        ],
+    )?;
+    assert_eq!(missing.status.code(), Some(3), "{}", combined(&missing));
+    let text = String::from_utf8_lossy(&missing.stderr);
+    let command = text
+        .split('`')
+        .find(|s| s.starts_with("ripr agent repair "))
+        .ok_or("no retry")?;
+    let document = result_document(
+        &id,
+        &head_sha(root)?,
+        PROPOSED_FILE,
+        serde_json::json!([ok_event("equality_boundary_discounts")]),
+    );
+    let path = write_result(root, "quoted result", &document)?;
+    let quote = |s: &str| format!("'{}'", s.replace('\'', "'\\''"));
+    let script = command
+        .replacen(
+            "ripr ",
+            &format!("{} ", quote(env!("CARGO_BIN_EXE_ripr"))),
+            1,
+        )
+        .replace("FILE", &quote(&path.display().to_string()));
+    let broken = script.replace(&format!(" --store {}", quote(store)), "");
+    assert_ne!(broken, script, "negative control must remove the store");
+    let red = Command::new("sh")
+        .args(["-c", &broken])
+        .current_dir(root.parent().ok_or("no parent")?)
+        .output()
+        .map_err(|e| e.to_string())?;
+    assert_eq!(red.status.code(), Some(2), "{}", combined(&red));
+    assert!(
+        combined(&red).contains("manifest not found"),
+        "{}",
+        combined(&red)
+    );
+    let replay = Command::new("sh")
+        .args(["-c", &script])
+        .current_dir(root.parent().ok_or("no parent")?)
+        .output()
+        .map_err(|e| e.to_string())?;
+    assert!(replay.status.success(), "{script}\n{}", combined(&replay));
+    let finished: Value = serde_json::from_slice(
+        &fs::read(root.join(store).join(&id).join("attempt.json")).map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| e.to_string())?;
+    assert_eq!(finished["after"]["verdict"]["status"], "compliant");
+    assert!(terminal_roles(&finished).iter().any(|r| r == RESULT_ROLE));
+    Ok(())
+}
+
 #[test]
 fn review_absent_proposed_file_without_edits_uses_no_movement_refusal() -> Result<(), String> {
     let fixture = fixture("review-missing-file")?;
@@ -2249,7 +2379,7 @@ fn review_absent_proposed_file_without_edits_uses_no_movement_refusal() -> Resul
 
 #[test]
 fn review_fifth_focused_refusal_requires_restart() -> Result<(), String> {
-    for kind in ["zero", "incomplete"] {
+    for kind in ["missing", "zero", "failed", "incomplete"] {
         let (fixture, attempt) = edited_attempt(&format!("review-budget-{kind}"))?;
         let root = &fixture.root;
         let events = if kind == "zero" {
@@ -2257,12 +2387,16 @@ fn review_fifth_focused_refusal_requires_restart() -> Result<(), String> {
         } else if kind == "incomplete" {
             serde_json::json!([{"type":"suite","event":"started","test_count":2}, ok_event("equality_boundary_discounts"), {"type":"test","event":"started","name":"other"}])
         } else {
-            return Err(format!("unexpected refusal kind {kind}"));
+            serde_json::json!([{"type":"test","event":"failed","name":"equality_boundary_discounts"}])
         };
         let document = result_document(&attempt.id, &head_sha(root)?, PROPOSED_FILE, events);
         let path = write_result(root, "budget", &document)?;
         for index in 1..=5 {
-            let output = after_with(root, &attempt, &path)?;
+            let output = if kind == "missing" {
+                review_after_without_result(root, &attempt)?
+            } else {
+                after_with(root, &attempt, &path)?
+            };
             assert_refused_and_unrecorded(root, &attempt, &output, "")?;
             assert_eq!(output.status.code(), Some(3), "{}", combined(&output));
             let text = combined(&output);

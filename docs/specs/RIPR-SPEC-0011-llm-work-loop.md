@@ -857,9 +857,9 @@ bound attempt id and HEAD) is retained as the `focused_test_result` terminal
 artifact. The record states that ripr checked shape, binding, file membership
 and per-test outcomes and did not observe the run: the caller's claim that
 those events came from that file stays the caller's. A failed test the selected file
-does not define is refused rather than passed over. `--test-result` is
-optional and does not gate finish: it validates and records a caller-reported
-result, and requiring one to finish is a later, separate change.
+does not define is refused rather than passed over. `--test-result` validates and
+records a caller-reported result; it is optional except for an attempt that
+follows a new-test proposal (see the C amendment).
 The retained artifact is the normalized record, not the caller's bytes.
 Caller-reported progress must be complete: started or timeout tests need a
 terminal outcome, and each announced suite must close before another begins.
@@ -882,8 +882,8 @@ time. If either differs from the evaluated capture, the after phase refuses with
 can rerun the test and retry. A descendant committed before validation remains
 eligible. An edit to the test file between the caller's run and validation,
 with HEAD unchanged, is not detected: that the events came from this file's
-content stays the caller's claim. A result remains optional and does not gate
-finish.
+content stays the caller's claim. A result stays optional for attempts that follow an
+existing test target.
 If publication or terminal retention fails after a compliant finish, the
 attempt is restored to `awaiting_edit` for retry when the exact finish is
 still owned and no terminal evidence has been committed. A trust-bound apply
@@ -916,7 +916,8 @@ accepted decision whose receipt and verify files are not present with the
 accepted digests, or a trust-bound attempt whose apply-record compatibility path
 is already occupied, since the after phase recovers a trust-bound finish only
 while that path is absent). A finish that holds no focused claim keeps the ordinary
-pending-retention route. A stop before the
+pending-retention route, except a new-test proposal finish: under the C gate
+it must hold a passing focused claim, so one without a claim is not promoted. A stop before the
 marker allows the original claim to retry. A stop after the marker without a
 matching durable success and receipt is ambiguous: the attempt stays finished
 and requires a new attempt, even if evaluation had not yet made its decision.
@@ -958,13 +959,40 @@ count for `src/foo.rs`. When that module path cannot be derived (a `src/bin`
 target, a non-`src` file, a nested `tests/` file) nothing counts; a `#[path]`
 module is not detectable from the file and stays the caller's claim. A failed
 test counts as having **ran**: `ran_tests` includes it and `failed` reports it,
-so a later finish gate would have to require `failed == 0` to treat it as a pass.
+so the C gate requires `failed == 0` to treat it as a pass.
 
 A focused test result is accepted for Rust test files only: a Python or
 TypeScript attempt that passes `--test-result` is refused up front with that
 scope and the next step of finishing without the flag. A result file must be
 saved outside the checkout; one inside it would be an untracked edit the cage
 judges, so it is refused with that next step.
+
+## Amendment (#13203 C): a new-test proposal attempt finishes only with a passing focused run
+
+An attempt whose edit-cage baseline records a followed new-test proposal does
+not finish without a recorded focused result. `agent repair --phase after`
+refuses, before issuing anything and leaving the attempt awaiting its edit,
+when no `--test-result` is passed, when the result counted no test, or when it
+reports any failed test (`failed == 0` is required; a failed test counts as
+having ran but not as a pass). Each refusal names the command to run and the
+flag to pass, and counts against the after-phase retry budget. A proposal
+whose file was never created is left to the cage verdict
+(`selected_target_not_changed`) rather than this gate. Attempts that follow an
+existing test target keep `--test-result` optional. `ripr continue` and the printed `--phase after` next commands do not
+pass `--test-result`; for a proposal attempt they reach this refusal, whose text
+names the explicit `ripr agent repair --phase after --attempt <id> --test-result
+FILE` command. Teaching `continue` and the printed command to carry the flag is
+left to a follow-up. Attribution of the events to
+the file stays the caller's claim (see the B amendment).
+
+When C recovers an interrupted proposal finish from an earlier B producer, its
+committed normalized result must also satisfy the counted-passing gate before
+retention, restoration, or apply recovery. The caller must supply a focused
+result again so the current validator can check reported completion and exact
+normalized-record equality; older normalized records alone lost suite framing.
+This does not prove that the supplied raw bytes are the original events. A failed historical result is not
+promoted; status inspection and a new attempt are required. Existing-target
+attempts retain B's optional-result and visible-failure behavior.
 
 ## Amendment (#13205): a proposed new-test target is preflighted read-only
 
@@ -1102,10 +1130,14 @@ other argv usage errors keep empty stdout.
 - `crates/ripr/tests/focused_test_result.rs::an_inline_result_counts_only_tests_in_the_governed_module` (#13203)
 - `crates/ripr/tests/focused_test_result.rs::test_result_is_only_valid_with_the_after_phase` (#13203)
 - `crates/ripr/tests/focused_test_result.rs::a_failure_outside_the_file_is_refused_not_passed_over` (#13203)
+- `crates/ripr/tests/focused_test_result.rs::a_failed_result_is_refused_by_the_finish_gate_and_recoverable` (#13203)
+- `crates/ripr/tests/focused_test_result.rs::a_proposal_attempt_cannot_finish_without_a_focused_result` (#13203)
+- `crates/ripr/tests/focused_test_result.rs::review_continue_refusal_recovers_on_the_same_attempt` (#13203)
+- `crates/ripr/tests/focused_test_result.rs::review_printed_focused_retry_preserves_explicit_store` (#13203)
+- `crates/ripr/src/app/focused_run.rs::tests::the_finish_gate_needs_a_counted_passing_run` (#13203)
 - `crates/ripr/src/app/focused_run.rs::tests::a_failure_the_file_does_not_explain_is_refused` (#13203)
 - `crates/ripr/tests/focused_test_result.rs::a_result_saved_inside_the_checkout_is_refused_up_front` (#13203)
 - `crates/ripr/src/app/focused_run.rs::tests::a_non_rust_selected_file_is_refused_up_front` (#13203)
-- `crates/ripr/tests/focused_test_result.rs::a_failed_only_result_is_recorded_as_ran_with_the_failure_visible` (#13203)
 - `crates/ripr/tests/focused_test_result.rs::failed_focused_result_publication_restores_the_attempt_for_retry` (#13203)
 - `crates/ripr/tests/focused_test_result.rs::failed_receipt_publication_restores_focused_finish_for_retry` (#13203)
 - `crates/ripr/tests/focused_test_result.rs::receipt_surface_decision_is_not_mislabeled_as_publication_failure` (#13203)
@@ -1127,7 +1159,6 @@ other argv usage errors keep empty stdout.
 - `crates/ripr/tests/focused_test_result.rs::pending_promotion_rejects_an_interposed_receipt_replacement` (#13203)
 - `crates/ripr/tests/focused_test_result.rs::accepted_focused_finish_recovery_requires_the_same_result` (#13203)
 - `crates/ripr/src/app/agent_status.rs::tests::trust_bound_focused_retry_is_withheld_when_the_apply_record_path_is_occupied` (#13203)
-- `crates/ripr/tests/focused_test_result.rs::proposal_finish_without_a_result_is_retained_after_receipt_publication` (#13203)
 - `crates/ripr/tests/focused_test_result.rs::review_fifth_focused_refusal_requires_restart` (#13203)
 - `crates/ripr/src/app/repair_attempt/mod.rs::tests::focused_restore_refuses_another_finish_or_committed_evidence` (#13203)
 - `crates/ripr/tests/python_repair_attempt.rs::failed_focused_apply_record_publication_stays_retryable` (#13203)

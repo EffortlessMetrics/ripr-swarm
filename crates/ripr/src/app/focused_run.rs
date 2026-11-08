@@ -14,7 +14,8 @@
 //! a `started` test with no terminal event, and unclosed or mismatched suites
 //! are refused. The retained record is the normalized record, not the caller's
 //! bytes. It states what was checked and what was not: ripr did not observe the
-//! run, and the result does not gate finish.
+//! run. Whether a result is required to finish is decided by the caller of
+//! this module: only an attempt that follows a new-test proposal needs one.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -170,6 +171,10 @@ pub(crate) struct FocusedRunRecord {
 }
 
 impl FocusedRunRecord {
+    pub(crate) fn failed_count(&self) -> usize {
+        self.failed
+    }
+
     pub(crate) fn counted(&self) -> usize {
         self.ran_tests.len()
     }
@@ -427,6 +432,60 @@ fn name_is_in_scope(name: &str, defined: &BTreeSet<String>, scope: &NameScope) -
         NameScope::AnyPath => defined.contains(name),
         NameScope::Nothing => false,
     }
+}
+
+/// The full-proof finish gate for an attempt that follows a new-test proposal
+/// (#13203 slice C): a finish needs a recorded focused result with at least one
+/// counted test and no failed test. The result's attribution stays the
+/// caller's claim; a failed test counts as having run, so it is refused here.
+pub(crate) fn require_passing_run(
+    record: Option<&FocusedRunRecord>,
+    attempt_id: &str,
+) -> Result<(), String> {
+    let Some(record) = record else {
+        return Err(format!(
+            "attempt `{attempt_id}` follows a new-test proposal, so finishing needs a focused test result; run the new test (`cargo test -- --format json -Z unstable-options`) and pass its events with `--test-result FILE`"
+        ));
+    };
+    if record.counted() == 0 {
+        return Err(format!(
+            "attempt `{attempt_id}` has a focused test result with no counted test; run the new test and pass its events with `--test-result FILE`"
+        ));
+    }
+    if record.failed_count() > 0 {
+        return Err(format!(
+            "the focused test result reports {} failed test(s) for attempt `{attempt_id}`; fix the test or the code, rerun it and pass the new events with `--test-result FILE`",
+            record.failed_count()
+        ));
+    }
+    Ok(())
+}
+
+/// Apply C's gate to a normalized claim committed by an older B producer.
+/// This checks the retained claim's outcome; it does not attest execution.
+pub(crate) fn require_passing_recorded_run(raw: &str, attempt_id: &str) -> Result<(), String> {
+    #[derive(Deserialize)]
+    struct Outcome {
+        schema_version: String,
+        kind: String,
+        attempt_id: String,
+        ran_tests: Vec<String>,
+        passed: usize,
+        failed: usize,
+    }
+    let outcome: Outcome = serde_json::from_str(raw).map_err(|error| {
+        format!("the retained focused result cannot be read: {error}; inspect the retained attempt")
+    })?;
+    if outcome.schema_version != FOCUSED_RUN_SCHEMA_VERSION
+        || outcome.kind != FOCUSED_RUN_RECORD_KIND
+        || outcome.attempt_id != attempt_id
+        || outcome.ran_tests.is_empty()
+        || outcome.failed != 0
+        || outcome.passed != outcome.ran_tests.len()
+    {
+        return Err("the retained focused result is not a counted passing run; inspect the retained attempt and start a new attempt".to_string());
+    }
+    Ok(())
 }
 
 fn executable_test_names(file: &str, source: &str) -> Result<BTreeSet<String>, String> {
@@ -742,6 +801,39 @@ mod tests {
             Ok(1),
             "{record:?}"
         );
+    }
+
+    #[test]
+    fn the_finish_gate_needs_a_counted_passing_run() {
+        let ran = |events: Value| {
+            validate_focused_run(
+                &document("attempt-1", "abc123", "tests/math.rs", events),
+                &scope(None),
+            )
+        };
+        let passing = ran(serde_json::json!([ok("adds")]));
+        assert!(
+            passing
+                .as_ref()
+                .is_ok_and(|r| require_passing_run(Some(r), "attempt-1").is_ok()),
+            "{passing:?}"
+        );
+        let failing = ran(serde_json::json!([
+            ok("adds"),
+            {"type": "test", "event": "failed", "name": "subtracts"}
+        ]));
+        let failing = failing.as_ref().map_err(String::clone);
+        let verdict = failing.map(|r| require_passing_run(Some(r), "attempt-1"));
+        assert!(
+            verdict
+                .as_ref()
+                .is_ok_and(|v| v.as_ref().err().is_some_and(|e| e.contains("1 failed"))),
+            "{verdict:?}"
+        );
+        let missing = require_passing_run(None, "attempt-1")
+            .err()
+            .unwrap_or_default();
+        assert!(missing.contains("needs a focused test result"), "{missing}");
     }
 
     #[test]
