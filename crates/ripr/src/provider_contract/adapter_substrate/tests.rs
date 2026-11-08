@@ -585,7 +585,7 @@ fn dependency_order_does_not_change_substrate_compatibility() {
 }
 
 #[test]
-fn external_helper_fallback_must_name_a_syntax_only_variant() -> Result<(), String> {
+fn external_helper_fallback_must_be_a_registered_syntax_only_fallback() -> Result<(), String> {
     let helper = |fallback: &str| {
         let mut qualification = base_qualification(
             "helper.fallback",
@@ -596,13 +596,45 @@ fn external_helper_fallback_must_name_a_syntax_only_variant() -> Result<(), Stri
         qualification
     };
     require_ok(helper("syntax_only_in_process").validate(), "syntax_only")?;
-    require_ok(helper(" Syntax_Only_Tree ").validate(), "case and padding")?;
-    for fallback in ["full_semantic", "compiler_resolved", "not_syntax_only"] {
+    require_ok(
+        helper(" Syntax_Only_In_Process ").validate(),
+        "case and padding",
+    )?;
+    for fallback in [
+        "full_semantic",
+        "compiler_resolved",
+        "not_syntax_only",
+        "syntax_only",
+        "syntax_only_anything",
+        "syntax_only_in_process_extra",
+    ] {
         let error = require_err(helper(fallback).validate(), fallback)?;
         assert_eq!(
             error.code,
             AdapterSubstrateQualificationErrorCodeV1::ImpossibleClaimCeiling,
             "{fallback}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn external_helper_missing_or_blank_fallback_is_missing_field() -> Result<(), String> {
+    let helper = |fallback: Option<&str>| {
+        let mut qualification = base_qualification(
+            "helper.missing",
+            "python",
+            AdapterSubstrateClassV1::ExternalHelper,
+        );
+        qualification.required_fallback = fallback.map(Into::into);
+        qualification
+    };
+    for fallback in [None, Some(""), Some("   ")] {
+        let error = require_err(helper(fallback).validate(), "missing or blank")?;
+        assert_eq!(
+            error.code,
+            AdapterSubstrateQualificationErrorCodeV1::MissingField,
+            "{fallback:?}"
         );
     }
     Ok(())
