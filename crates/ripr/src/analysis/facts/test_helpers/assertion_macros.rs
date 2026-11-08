@@ -264,7 +264,20 @@ pub(crate) fn imported_forwarding_calls(
                 && call.end_line <= test.end_line + SPLICED_LINES
         })
         .filter(|call| extract_assertions(&call.text, 1).is_empty())
-        .filter(|call| macro_call_oracle(call).is_some())
+        .filter(|call| {
+            // The same never-run statements the same-file credit drops, in
+            // the file's own line numbers.
+            let Some(mut oracle) = macro_call_oracle(call) else {
+                return false;
+            };
+            let Some(line) = oracle.line.checked_sub(SPLICED_LINES) else {
+                return false;
+            };
+            oracle.line = line;
+            let mut oracles = vec![oracle];
+            retain_reached_oracles(&mut oracles, &test.body, test.start_line);
+            !oracles.is_empty()
+        })
         .filter_map(|call| {
             let expanded = expand_call(call)?;
             Some(ForwardedCall {

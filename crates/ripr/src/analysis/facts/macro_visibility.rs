@@ -330,24 +330,32 @@ impl MacroVisibility {
             .values()
             .filter(|source| source.contains("macro_rules") && source.contains(marker))
             .collect();
-        let generators: BTreeSet<String> = candidates
-            .par_iter()
-            .fold(BTreeSet::new, |mut acc, source| {
-                if let Some(scope) = shared_scope(source) {
-                    acc.extend(
-                        scope
-                            .macros
-                            .iter()
-                            .filter(|scoped| scoped.text.contains(marker))
-                            .map(|scoped| scoped.name.clone()),
-                    );
-                }
-                acc
-            })
-            .reduce(BTreeSet::new, |mut left, right| {
-                left.extend(right);
-                left
-            });
+        let names_of = |mut acc: BTreeSet<String>, source: &&Arc<str>| {
+            if let Some(scope) = shared_scope(source) {
+                acc.extend(
+                    scope
+                        .macros
+                        .iter()
+                        .filter(|scoped| scoped.text.contains(marker))
+                        .map(|scoped| scoped.name.clone()),
+                );
+            }
+            acc
+        };
+        // The assertion-wrapper resolver is built lazily inside a classify
+        // worker, under a `OnceLock`; nested rayon work there could steal a
+        // sibling probe that waits on the same lock. Scan it in line.
+        let generators: BTreeSet<String> = if marker == "assert" {
+            candidates.iter().fold(BTreeSet::new(), names_of)
+        } else {
+            candidates.par_iter().fold(BTreeSet::new, names_of).reduce(
+                BTreeSet::new,
+                |mut left, right| {
+                    left.extend(right);
+                    left
+                },
+            )
+        };
         Self {
             sources,
             generators,

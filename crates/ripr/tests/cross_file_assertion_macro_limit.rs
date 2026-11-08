@@ -287,6 +287,14 @@ fn an_owner_call_elsewhere_in_the_test_keeps_the_gap() -> Result<(), String> {
 }
 
 #[test]
+fn a_wrapper_call_after_an_unconditional_return_keeps_the_gap() -> Result<(), String> {
+    assert_gap(&Case {
+        statement: "return;\n    check_eq!(Widget::new().read(), 4);",
+        ..Case::default()
+    })
+}
+
+#[test]
 fn a_cfg_gated_wrapper_keeps_the_gap() -> Result<(), String> {
     assert_gap(&Case {
         gate: "#[cfg(feature = \"never\")]\n",
