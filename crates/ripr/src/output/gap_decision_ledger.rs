@@ -2697,10 +2697,16 @@ fn gap_record_from_python_no_repair_card_finding(
     // exists. Name that operand instead of the generic line; routing stays
     // fail-closed (no gap id, no card). The extraction is shared with the
     // human triage surface so the two wordings cannot drift.
-    let unresolved_operand =
-        crate::output::human::unresolved_boundary_operand(&string_array_at(finding, &["missing"]));
+    let missing = string_array_at(finding, &["missing"]);
+    let unresolved_operand = crate::output::human::unresolved_boundary_operand(&missing);
+    // #13790: a predicate with several comparisons names that reason, through
+    // the same extraction the human triage and the agent refusal use.
+    let multi_comparison = crate::output::human::multi_comparison_predicate(&missing)
+        .filter(|_| first_missing_discriminator_value(finding).is_none());
     let reason = if let Some(repo_reason) = repo_reason.as_deref() {
         repo_reason.to_string()
+    } else if let Some(predicate) = multi_comparison {
+        predicate.reason()
     } else if let Some(operand) = unresolved_operand {
         format!(
             "static evidence cannot bind `{operand}` to a test input, so the boundary equality cannot become a repair target"
@@ -6297,6 +6303,39 @@ mod tests {
             )
         );
         assert!(records[0].repair_route.is_none());
+        Ok(())
+    }
+
+    // #13790: a several-comparison predicate names that reason in the record
+    // detail; the record stays a non-delegatable static limitation.
+    #[test]
+    fn check_output_python_no_repair_card_names_a_multi_comparison_predicate() -> Result<(), String>
+    {
+        let mut payload: Value = serde_json::from_str(&python_no_repair_card_check_output())
+            .map_err(|error| format!("parse fixture check output: {error}"))?;
+        let findings = payload["findings"]
+            .as_array_mut()
+            .ok_or_else(|| "findings missing".to_string())?;
+        for finding in findings
+            .iter_mut()
+            .filter(|finding| finding["classification"] == "weakly_exposed")
+        {
+            finding["missing_discriminators"] = serde_json::json!([]);
+            finding["missing"] = serde_json::json!([
+                "A strong Python oracle reaches `discount`, but static evidence does not place a related test input at the changed predicate boundary. The changed predicate `rate < 0 or rate >= 1` holds 2 relational comparisons; static evidence cannot establish which boundary a related test call pins."
+            ]);
+        }
+        let report = check_output_ledger(payload.to_string());
+        let records = python_no_repair_card_records(&report);
+        assert_eq!(records.len(), 1, "{:?}", report.records);
+        assert_eq!(
+            records[0].static_limit_detail.as_deref(),
+            Some(
+                "this Python preview finding has no repair card (the changed predicate `rate < 0 or rate >= 1` holds 2 comparisons, so static evidence cannot tell which boundary a test pins), so `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; add or strengthen a test by hand, then rerun `ripr check`"
+            )
+        );
+        assert!(records[0].repair_route.is_none());
+        assert!(!projection_eligible(records[0], "agent_packet"));
         Ok(())
     }
 

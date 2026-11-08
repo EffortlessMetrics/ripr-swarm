@@ -2760,6 +2760,66 @@ fn below_case() {
 }
 
 #[test]
+fn evidence_pass_scans_each_test_body_once_not_once_per_oracle_ask() -> Result<(), String> {
+    // The seam pass asks the shadow check about the same test bodies again and
+    // again (per seam, stage and oracle). A worker's run memo must absorb the
+    // repeats: the item-syntax prefilter runs once per distinct body (#13577).
+    let prod = PathBuf::from("src/pricing.rs");
+    let prod_src = r#"
+pub fn discounted_total(amount: i32, threshold: i32) -> i32 {
+    if amount >= threshold { amount - 10 } else { amount }
+}
+"#;
+    let tests = PathBuf::from("tests/pricing_tests.rs");
+    let tests_src = r#"
+#[test]
+fn boundary_case() {
+    assert_eq!(discounted_total(100, 100), 90);
+    assert_eq!(discounted_total(101, 100), 91);
+}
+#[test]
+fn below_case() {
+    assert_eq!(discounted_total(50, 100), 50);
+}
+"#;
+    let index = index_from_files(&[(prod, prod_src), (tests, tests_src)])?;
+    let seams = inventory_seams_from_index(&[PathBuf::from("src/pricing.rs")], &index);
+    // Independent reference: the distinct test bodies the pass can ask about.
+    let distinct: std::collections::HashSet<&str> = index
+        .tests()
+        .iter()
+        .filter(|test| !test.assertions.is_empty())
+        .map(|test| test.body.as_str())
+        .collect();
+    assert_eq!(distinct.len(), 2, "fixture holds two asserting tests");
+    // One worker, so the thread-local counters see every ask.
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(1)
+        .build()
+        .map_err(|error| format!("pool builds: {error}"))?;
+    let (asks, scans) = pool.install(|| {
+        let asks = crate::analysis::classify::owner_item_ask_count();
+        let scans = crate::analysis::classify::owner_item_scan_count();
+        let _ = evidence_for_seams(&seams, &index);
+        (
+            crate::analysis::classify::owner_item_ask_count() - asks,
+            crate::analysis::classify::owner_item_scan_count() - scans,
+        )
+    });
+    assert!(
+        asks > distinct.len(),
+        "the pass must ask more often than there are bodies ({asks} asks)"
+    );
+    assert!(scans >= 1, "the prefilter ran");
+    assert!(
+        scans <= distinct.len(),
+        "{scans} prefilter runs for {} distinct bodies over {asks} asks",
+        distinct.len()
+    );
+    Ok(())
+}
+
+#[test]
 fn evidence_for_seams_matches_single_seam_evidence_while_reusing_context() -> Result<(), String> {
     let prod = PathBuf::from("src/pricing.rs");
     let prod_src = r#"
