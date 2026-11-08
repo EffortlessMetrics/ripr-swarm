@@ -485,6 +485,32 @@ fn package_name_preflight_agrees_with_cargo_metadata() -> Result<(), String> {
             "preflight for {name:?}: {}",
             combined(&output)
         );
+        let text = combined(&output);
+        if accepted {
+            assert!(
+                !text.contains("must be a valid Cargo package name"),
+                "an accepted name must not print the package refusal: {text}"
+            );
+        } else {
+            assert!(
+                text.contains("`package.name` must be a valid Cargo package name"),
+                "a rejected name must name the package diagnostic: {text}"
+            );
+            let attempts = fixture.root.join("target/ripr/repair-attempts");
+            let published: Vec<String> = fs::read_dir(&attempts)
+                .map(|entries| {
+                    entries
+                        .filter_map(Result::ok)
+                        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+                        .filter(|name| !name.starts_with('.'))
+                        .collect()
+                })
+                .unwrap_or_default();
+            assert!(
+                published.is_empty(),
+                "a rejected name must leave no durable attempt: {published:?}"
+            );
+        }
     }
     Ok(())
 }
