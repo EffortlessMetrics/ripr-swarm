@@ -3105,6 +3105,54 @@ fn retained_hover_discloses_analysis_health_without_changing_evidence() -> Resul
 }
 
 #[test]
+fn hover_during_interactive_debounce_window_is_not_presented_as_current() -> Result<(), String> {
+    // A changed save advances the workspace revision before the debounce
+    // sleep ends and the attempt is marked queued. In that window the
+    // retained snapshot describes the pre-save workspace.
+    let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
+    let backend = service.inner();
+    let finding = sample_finding();
+    let uri = test_uri("file:///workspace/src/pricing.rs")?;
+    backend
+        .refresh_plan(sample_workspace_diagnostics(
+            PathBuf::from("/workspace"),
+            uri.clone(),
+            vec![diagnostic_for_finding(Path::new("/workspace"), &finding)],
+            vec![finding],
+        ))
+        .ok_or_else(|| "expected retained snapshot".to_string())?;
+    backend.set_analysis_attempt_state_for_test(AnalysisAttemptState::Succeeded);
+    let params = hover_params(uri, 87, 1);
+    let text = || -> Result<String, String> {
+        match backend
+            .hover_for_position(&params)
+            .ok_or_else(|| "expected retained evidence hover".to_string())?
+            .contents
+        {
+            HoverContents::Markup(markup) => Ok(markup.value),
+            _ => Err("expected markup hover".to_string()),
+        }
+    };
+    assert!(!text()?.contains("retained evidence is not current"));
+    backend.set_interactive_debounce_open_for_test(true);
+    let during = text()?;
+    assert!(
+        during.starts_with("**ripr retained evidence is not current**"),
+        "debounce window hover claimed currentness: {during}"
+    );
+    assert!(during.contains("Wait for saved-workspace analysis to complete"));
+    assert!(during.contains("Add an exact boundary assertion."));
+    // The overlay is a projection: the recorded attempt state is untouched.
+    assert_eq!(
+        backend.analysis_attempt_state_for_test(),
+        AnalysisAttemptState::Succeeded
+    );
+    backend.set_interactive_debounce_open_for_test(false);
+    assert!(!text()?.contains("retained evidence is not current"));
+    Ok(())
+}
+
+#[test]
 fn hover_for_position_shows_snapshot_age_and_refresh_duration() -> Result<(), String> {
     let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
     let backend = service.inner();

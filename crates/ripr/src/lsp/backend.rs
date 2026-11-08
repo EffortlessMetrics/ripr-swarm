@@ -2075,6 +2075,25 @@ impl Backend {
             .unwrap_or_default()
     }
 
+    /// Health for answering "is the retained snapshot current right now?".
+    /// A changed save advances the workspace revision immediately, but the
+    /// attempt is only marked queued after the interactive debounce sleep.
+    /// While that window is open a `Succeeded` snapshot describes the
+    /// pre-save workspace, so it is projected as `Queued` (fail-closed, same
+    /// wording as an in-flight refresh) instead of presented as current.
+    fn analysis_health_for_currentness(&self) -> AnalysisHealth {
+        let mut health = self.analysis_health_snapshot();
+        if health.state == AnalysisAttemptState::Succeeded
+            && health.snapshot_id.is_some()
+            && self
+                .interactive_debounce_window_open
+                .load(Ordering::Acquire)
+        {
+            health.state = AnalysisAttemptState::Queued;
+        }
+        health
+    }
+
     #[cfg(test)]
     pub(super) fn set_interactive_debounce_open_for_test(&self, open: bool) {
         self.interactive_debounce_window_open
@@ -4312,7 +4331,7 @@ impl Backend {
         // Capture health before any snapshot lock: completion records health
         // while reading the snapshot. Every retained-evidence branch uses
         // this same lifecycle projection without reversing that lock order.
-        let health = self.analysis_health_snapshot();
+        let health = self.analysis_health_for_currentness();
         let with_status = |hover, snapshot: &AnalysisSnapshot| {
             let effective = self.effective_health_for_snapshot(health.clone(), snapshot);
             hover_with_analysis_health(hover, snapshot, &effective)
@@ -7219,7 +7238,7 @@ impl LanguageServer for Backend {
             .lock()
             .ok()
             .and_then(|value| value.clone());
-        let health = self.analysis_health_snapshot();
+        let health = self.analysis_health_for_currentness();
         let root_allows_analysis = self.workspace_root_authority().allows_analysis();
         // Negotiated client-command filter (#1776, RIPR-SPEC-0129): a
         // poisoned profile store fails closed to the unsupported profile,
@@ -7771,7 +7790,9 @@ impl Backend {
             // Generic-client related-test navigation: answer with
             // `window/showDocument`, guarded by the negotiated capability
             // and the current snapshot. Navigation only.
-            let snapshot = if self.analysis_health_snapshot().allows_current_repairs()
+            let snapshot = if self
+                .analysis_health_for_currentness()
+                .allows_current_repairs()
                 && self.workspace_root_authority().allows_analysis()
             {
                 self.latest_analysis
@@ -7825,7 +7846,7 @@ impl Backend {
             .lock()
             .ok()
             .and_then(|value| value.clone());
-        let health = self.analysis_health_snapshot();
+        let health = self.analysis_health_for_currentness();
         let root_allows_analysis = self.workspace_root_authority().allows_analysis();
         let action_snapshot = (health.allows_current_repairs() && root_allows_analysis)
             .then_some(snapshot)
