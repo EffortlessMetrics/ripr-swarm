@@ -1602,6 +1602,7 @@ fn refresh_output_schema() -> Value {
                         "properties": {
                             "why": { "type": "string" },
                             "pass_base": { "type": "string" },
+                            "pass_base_last_commit": { "type": "string" },
                             "pass_source": { "type": "string" }
                         },
                         "required": ["why", "pass_base", "pass_source"],

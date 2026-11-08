@@ -49,6 +49,13 @@ withheld and the unchanged input operand is not credited. A discriminating test 
 observes the owner's call result (`assert compute(10, 3) == 7`) still classifies
 `exposed` via the `direct` path (a companion unit test pins this).
 
+The expected static class per finding (machine-checked against
+`expected/check.json` by `check-fixture-contracts`, #12928):
+
+```expected-classes
+probe:src_calc.py:python_preview:3ddbe784 -> weakly_exposed
+```
+
 ## Must Not
 
 - Credit `exposed` from a `changed_sink_token` match on an unchanged input operand
