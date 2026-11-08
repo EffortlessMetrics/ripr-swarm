@@ -473,7 +473,10 @@ impl OutputFormat {
             | Self::RepoSeamsMd
             | Self::RepoExposureMd
             | Self::RepoSarif
-            | Self::RepoSarifCompact => false,
+            | Self::RepoSarifCompact
+            // #13666: missed-txt is plain one-line-per-gap text, not a JSON
+            // request document (#13720 raced the format in; the arm was lost).
+            | Self::MissedTxt => false,
         }
     }
 
