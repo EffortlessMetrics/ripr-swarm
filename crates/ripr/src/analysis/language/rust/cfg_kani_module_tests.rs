@@ -111,14 +111,7 @@ struct Observed {
 
 /// Asserts the fixture parsed as intended, then runs the real diff adapter.
 fn observe(fixture: &Fixture, path: &str, diff_text: &str) -> Result<Observed, String> {
-    let mut files = ["src/lib.rs", path]
-        .into_iter()
-        .chain((path == "src/proofs/deep.rs").then_some("src/proofs.rs"))
-        .map(PathBuf::from)
-        .collect::<Vec<_>>();
-    files.sort();
-    files.dedup();
-    let index = crate::analysis::facts::build_index(&fixture.0, &files)?;
+    let index = fixture_index(fixture)?;
     // The changed helper is a plain function, not a proof harness: only its
     // module context can make it verification source.
     let helper = index
@@ -167,20 +160,55 @@ fn observe(fixture: &Fixture, path: &str, diff_text: &str) -> Result<Observed, S
     })
 }
 
-fn out_of_line(label: &str, gate: &str, module: &str) -> Result<Observed, String> {
+/// Every `.rs` file of the fixture, indexed together as the run would.
+fn fixture_index(fixture: &Fixture) -> Result<crate::analysis::facts::RustIndex, String> {
+    let mut files = Vec::new();
+    let mut pending = vec![PathBuf::from("src")];
+    while let Some(directory) = pending.pop() {
+        for entry in fs::read_dir(fixture.0.join(&directory)).map_err(|e| e.to_string())? {
+            let name = entry.map_err(|e| e.to_string())?.file_name();
+            let relative = directory.join(&name);
+            if fixture.0.join(&relative).is_dir() {
+                pending.push(relative);
+            } else if relative.extension().is_some_and(|ext| ext == "rs") {
+                files.push(relative);
+            }
+        }
+    }
+    files.sort();
+    crate::analysis::facts::build_index(&fixture.0, &files)
+}
+
+type Guard = Option<(String, bool)>;
+
+/// The captured `(name, simple cfg guard)` of each out-of-line declaration.
+fn declarations(fixture: &Fixture, file: &str) -> Result<Vec<(String, Guard)>, String> {
+    let index = fixture_index(fixture)?;
+    Ok(index
+        .files()
+        .get(Path::new(file))
+        .ok_or_else(|| format!("fixture must index {file}"))?
+        .data()
+        .module_declarations
+        .iter()
+        .map(|declaration| (declaration.name.clone(), declaration.cfg_guard.clone()))
+        .collect())
+}
+
+fn guard(predicate: &str, negated: bool) -> Guard {
+    Some((predicate.to_string(), negated))
+}
+
+fn out_of_line(label: &str, gate: &str, module: &str, expected: Guard) -> Result<Observed, String> {
     let fixture = Fixture::new(label)?;
     let path = format!("src/{module}.rs");
     fixture.write("src/lib.rs", &parent_source(gate, module))?;
     fixture.write(&path, PROOF_FILE)?;
-    let index = crate::analysis::facts::build_index(&fixture.0, &[PathBuf::from("src/lib.rs")])?;
-    let declarations = &index
-        .files()
-        .get(Path::new("src/lib.rs"))
-        .ok_or("fixture must index src/lib.rs")?
-        .data()
-        .module_declarations;
-    assert_eq!(declarations.len(), 1, "exactly one `mod {module};`");
-    assert_eq!(declarations[0].name, module);
+    assert_eq!(
+        declarations(&fixture, "src/lib.rs")?,
+        [(module.to_string(), expected)],
+        "exactly one `mod {module};` with the intended guard"
+    );
     observe(&fixture, &path, &helper_diff(&path, "", 4))
 }
 
@@ -209,7 +237,7 @@ fn assert_verification_only(observed: &Observed, shape: &str) {
 
 #[test]
 fn out_of_line_cfg_kani_module_helper_is_verification_only() -> Result<(), String> {
-    let observed = out_of_line("positive", "#[cfg(kani)]", "proofs")?;
+    let observed = out_of_line("positive", "#[cfg(kani)]", "proofs", guard("kani", false))?;
     assert!(
         observed.kani_module_file,
         "composition marks the file Kani-only"
@@ -269,21 +297,31 @@ fn inline_cfg_kani_module_helper_is_verification_only() -> Result<(), String> {
 
 #[test]
 fn cfg_not_kani_module_keeps_production_probes() -> Result<(), String> {
-    let observed = out_of_line("not-kani", "#[cfg(not(kani))]", "proofs")?;
+    let observed = out_of_line(
+        "not-kani",
+        "#[cfg(not(kani))]",
+        "proofs",
+        guard("kani", true),
+    )?;
     assert_production(&observed, "#[cfg(not(kani))] mod proofs;");
     Ok(())
 }
 
 #[test]
 fn cfg_any_kani_module_keeps_production_probes() -> Result<(), String> {
-    let observed = out_of_line("any-kani", "#[cfg(any(kani, feature = \"x\"))]", "proofs")?;
+    let observed = out_of_line(
+        "any-kani",
+        "#[cfg(any(kani, feature = \"x\"))]",
+        "proofs",
+        None,
+    )?;
     assert_production(&observed, "#[cfg(any(kani, feature = \"x\"))] mod proofs;");
     Ok(())
 }
 
 #[test]
 fn ungated_module_named_kani_proofs_keeps_production_probes() -> Result<(), String> {
-    let observed = out_of_line("named", "", "kani_proofs")?;
+    let observed = out_of_line("named", "", "kani_proofs", None)?;
     assert_production(&observed, "mod kani_proofs; (no cfg)");
     Ok(())
 }
@@ -322,5 +360,148 @@ fn exclusive_cfg_kani_alternatives_keep_production_probes() -> Result<(), String
     let path = "src/proofs.rs";
     let observed = observe(&fixture, path, &helper_diff(path, "", 4))?;
     assert_production(&observed, "#[cfg(kani)] + #[cfg(not(kani))] mod proofs;");
+    Ok(())
+}
+
+/// #13736 review: a guard belongs to one declaration, never to a sibling
+/// declared on the same line.
+#[test]
+fn an_ungated_sibling_on_the_gated_line_keeps_production_probes() -> Result<(), String> {
+    let fixture = Fixture::new("same-line")?;
+    fixture.write(
+        "src/lib.rs",
+        "pub fn charge(total: u32) -> u32 {\n    if total > 100 { total - 5 } else { total }\n}\n\n#[cfg(kani)] mod proofs; mod helpers;\n",
+    )?;
+    fixture.write("src/proofs.rs", PROOF_FILE)?;
+    fixture.write("src/helpers.rs", PROOF_FILE)?;
+    assert_eq!(
+        declarations(&fixture, "src/lib.rs")?,
+        [
+            ("helpers".to_string(), None),
+            ("proofs".to_string(), guard("kani", false)),
+        ],
+        "both declarations share line 5; only `proofs` is gated"
+    );
+    let index = fixture_index(&fixture)?;
+    assert!(
+        index
+            .cfg_kani_module_files
+            .contains(Path::new("src/proofs.rs")),
+        "the gated sibling is still Kani-only"
+    );
+    let path = "src/helpers.rs";
+    let observed = observe(&fixture, path, &helper_diff(path, "", 4))?;
+    assert_production(
+        &observed,
+        "mod helpers; after #[cfg(kani)] mod proofs; on one line",
+    );
+    Ok(())
+}
+
+#[test]
+fn a_second_cfg_or_cfg_attr_on_the_declaration_keeps_production_probes() -> Result<(), String> {
+    for (label, gate) in [
+        ("second-cfg", "#[cfg(kani)]\n#[cfg(feature = \"x\")]"),
+        (
+            "cfg-attr",
+            "#[cfg(kani)]\n#[cfg_attr(kani, allow(dead_code))]",
+        ),
+    ] {
+        let observed = out_of_line(label, gate, "proofs", None)?;
+        assert_production(&observed, gate);
+    }
+    Ok(())
+}
+
+#[test]
+fn a_second_crate_root_declaring_the_module_keeps_production_probes() -> Result<(), String> {
+    let fixture = Fixture::new("two-roots")?;
+    fixture.write("src/lib.rs", &parent_source("#[cfg(kani)]", "proofs"))?;
+    fixture.write(
+        "src/main.rs",
+        "mod proofs;\nfn charge(total: u32) -> u32 { total }\nfn main() {}\n",
+    )?;
+    fixture.write("src/proofs.rs", PROOF_FILE)?;
+    assert_eq!(
+        declarations(&fixture, "src/main.rs")?,
+        [("proofs".to_string(), None)],
+        "the binary root declares the same module ungated"
+    );
+    let path = "src/proofs.rs";
+    let observed = observe(&fixture, path, &helper_diff(path, "", 4))?;
+    assert_production(&observed, "lib #[cfg(kani)] mod proofs; + main mod proofs;");
+    Ok(())
+}
+
+/// An owner the producer cannot capture (a `mod proofs;` inside a macro token
+/// tree) can compile the file in an ordinary build.
+#[test]
+fn an_invisible_owner_in_a_macro_token_tree_keeps_production_probes() -> Result<(), String> {
+    let fixture = Fixture::new("invisible-owner")?;
+    fixture.write("src/lib.rs", &parent_source("#[cfg(kani)]", "proofs"))?;
+    fixture.write(
+        "src/main.rs",
+        "macro_rules! declare { ($($item:item)*) => { $($item)* }; }\ndeclare! { mod proofs; }\nfn charge(total: u32) -> u32 { total }\nfn main() {}\n",
+    )?;
+    fixture.write("src/proofs.rs", PROOF_FILE)?;
+    assert!(
+        declarations(&fixture, "src/main.rs")?.is_empty(),
+        "the producer captures no declaration inside the macro call"
+    );
+    let path = "src/proofs.rs";
+    let observed = observe(&fixture, path, &helper_diff(path, "", 4))?;
+    assert_production(
+        &observed,
+        "declare! { mod proofs; } beside #[cfg(kani)] mod proofs;",
+    );
+    Ok(())
+}
+
+#[test]
+fn a_file_also_included_from_production_keeps_production_probes() -> Result<(), String> {
+    let fixture = Fixture::new("declared-and-included")?;
+    fixture.write(
+        "src/lib.rs",
+        &format!("{}mod other;\n", parent_source("#[cfg(kani)]", "proofs")),
+    )?;
+    fixture.write("src/other.rs", "include!(\"proofs.rs\");\n")?;
+    fixture.write("src/proofs.rs", PROOF_FILE)?;
+    let index = fixture_index(&fixture)?;
+    assert!(
+        index
+            .include_parents
+            .contains_key(Path::new("src/proofs.rs")),
+        "the fixture includes proofs.rs from the ungated other.rs"
+    );
+    let path = "src/proofs.rs";
+    let observed = observe(&fixture, path, &helper_diff(path, "", 4))?;
+    assert_production(
+        &observed,
+        "#[cfg(kani)] mod proofs; + include!(\"proofs.rs\")",
+    );
+    Ok(())
+}
+
+#[test]
+fn a_fragment_included_by_a_cfg_kani_module_is_verification_only() -> Result<(), String> {
+    let fixture = Fixture::new("kani-include")?;
+    fixture.write("src/lib.rs", &parent_source("#[cfg(kani)]", "proofs"))?;
+    fixture.write("src/proofs.rs", "include!(\"frag.rs\");\n")?;
+    fixture.write("src/frag.rs", PROOF_FILE)?;
+    let index = fixture_index(&fixture)?;
+    assert!(
+        index.include_parents.contains_key(Path::new("src/frag.rs")),
+        "the gated proofs.rs includes frag.rs"
+    );
+    let path = "src/frag.rs";
+    let observed = observe(&fixture, path, &helper_diff(path, "", 4))?;
+    assert!(
+        observed.kani_module_file,
+        "Kani-only context crosses the include"
+    );
+    assert_verification_only(
+        &observed,
+        "include!(\"frag.rs\") inside #[cfg(kani)] mod proofs;",
+    );
     Ok(())
 }

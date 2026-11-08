@@ -83,8 +83,17 @@ are **Kani verification artifacts**, and their lines are verification-only
   (`facts/role_composition.rs`), the same pass that makes the child of an
   out-of-line `#[cfg(test)] mod tests;` test-only; exclusive
   `#[cfg(kani)]` / `#[cfg(not(kani))]` alternatives stay production; a file both declared and
-  included is Kani-only only when both contexts are. Ambiguous, cyclic or
-  unresolved edges answer "not Kani-only". Function source roles are not
+  included is Kani-only only when both contexts are. A guard is read for its
+  own declaration only (keyed by file, line and declaration text), never for
+  a sibling declared on the same line. Ambiguous, cyclic or unresolved edges
+  answer "not Kani-only", and so does every module edge whose child could
+  have an owner the parser producer does not capture
+  (`facts/invisible_owners.rs`): a `mod name;` inside an inline module or a
+  macro token tree, in a lexical-fallback, non-UTF-8 or unindexed file, a
+  macro-generated `mod $name;`, a non-literal or `cfg_attr` `#[path]`, or an
+  unresolved include anywhere in the index. The check compares masked
+  `mod name;` and `#[path]` text across every `.rs` file of the child's
+  package on disk with the captured declarations. Function source roles are not
   changed: a helper there stays a plain function, and the file seeds no probe
   because it is verification source.
 
@@ -123,6 +132,16 @@ findings of its runtime lines.
 - Macro-invoked harnesses (`kani::proof` produced by a macro) are not
   recognised lexically and keep prior behavior.
 - `cfg(kani)` on a function, impl or `use` is not treated as verification-only.
+- The out-of-line Kani-only verdict is computed on the new side. A diff that
+  adds the `#[cfg(kani)]` gate to a parent declaration while also editing the
+  child treats the child's removed lines as verification-only too, although
+  that code was production before the change; a diff that removes the gate
+  keeps the child's probes. A child file the diff deletes outright has no
+  new-side entry and falls back to the whole-file lexical handling above.
+- The invisible-owner check scans only the child's own package (nested
+  packages excluded): a `#[path]` in another package that names the child is
+  not seen. A package over 20,000 `.rs` files, or any unreadable file in it,
+  answers "not Kani-only".
 - ripr does not run Kani or evaluate any proof; the disclosure is not a
   coverage or sufficiency claim.
 
