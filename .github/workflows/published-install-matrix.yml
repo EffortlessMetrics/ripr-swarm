@@ -22,6 +22,11 @@ on:
         required: false
         default: ""
         type: string
+      release_version:
+        description: After a publication, the exact release (for example 0.11.0). Pins cargo, PyPI and npm to it and fails any cell whose `ripr --version` differs; empty checks whatever is latest
+        required: false
+        default: ""
+        type: string
   schedule:
     - cron: "23 6 * * 1"
 
@@ -60,9 +65,13 @@ jobs:
         continue-on-error: ${{ matrix.known_gap == true }}
         env:
           CHANNEL: ${{ matrix.channel }}
-          CARGO_VERSION: ${{ inputs.cargo_version }}
+          CARGO_VERSION: ${{ inputs.cargo_version || inputs.release_version }}
+          RELEASE_VERSION: ${{ inputs.release_version }}
         run: |
           set -euo pipefail
+          if [ -n "$RELEASE_VERSION" ]; then
+            [[ $RELEASE_VERSION =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "bad release_version: $RELEASE_VERSION"; exit 1; }
+          fi
           mkdir -p "$RUNNER_TEMP/smoke" && cd "$RUNNER_TEMP/smoke"
           start=$SECONDS
           case "$CHANNEL" in
@@ -81,11 +90,15 @@ jobs:
             pypi)
               python3 -m venv "$RUNNER_TEMP/venv"
               bindir="$RUNNER_TEMP/venv/bin"; [ -d "$bindir" ] || bindir="$RUNNER_TEMP/venv/Scripts"
-              "$bindir/python" -m pip install --pre ripr-rs
+              if [ -n "$RELEASE_VERSION" ]; then
+                "$bindir/python" -m pip install "ripr-rs==$RELEASE_VERSION"
+              else
+                "$bindir/python" -m pip install --pre ripr-rs
+              fi
               echo "$bindir" >> "$GITHUB_PATH"
               ;;
             npm)
-              npm install --prefix "$RUNNER_TEMP/npm" @effortlessmetrics/ripr@next
+              npm install --prefix "$RUNNER_TEMP/npm" "@effortlessmetrics/ripr@${RELEASE_VERSION:-next}"
               echo "$RUNNER_TEMP/npm/node_modules/.bin" >> "$GITHUB_PATH"
               ;;
           esac
@@ -95,10 +108,20 @@ jobs:
         id: smoke
         if: steps.install.outcome == 'success'
         continue-on-error: ${{ matrix.known_gap == true }}
+        env:
+          RELEASE_VERSION: ${{ inputs.release_version }}
         run: |
           set -euo pipefail
           cd "$RUNNER_TEMP" && cargo new --quiet smoke-project && cd smoke-project
           ripr --version | tee version.txt
+          if [ -n "$RELEASE_VERSION" ]; then
+            # `ripr --version` may append the build commit: "ripr X.Y.Z (<40 hex>[-dirty])".
+            reported=$(head -n1 version.txt | tr -d '\r' | sed -E 's/ \([0-9a-f]{40}(-dirty)?\)$//')
+            if [ "$reported" != "ripr $RELEASE_VERSION" ]; then
+              echo "::error::expected ripr $RELEASE_VERSION but got $(head -n1 version.txt)"
+              exit 1
+            fi
+          fi
           ripr doctor
           echo "version=$(head -n1 version.txt)" >> "$GITHUB_OUTPUT"
 

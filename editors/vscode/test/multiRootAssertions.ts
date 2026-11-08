@@ -9,7 +9,7 @@ export interface RootExpectation {
   testContents: string;
   symbol: string;
   changedExpression: string;
-  /** Drafted boundary assertion (#13461): equality-boundary input from the related tests, folded owner value. */
+  /** Concrete boundary draft (#13461): equality-boundary input folded through the owner's branch. */
   suggestedAssertion: string;
   relatedTest: string;
   testNames: readonly string[];
