@@ -6,7 +6,7 @@ tests = [
 code = [
   "crates/ripr/src/cli/commands/agent.rs::run_agent_status",
   "crates/ripr/src/agent/loop_commands.rs::lexically_clean",
-  "crates/ripr/src/agent/loop_commands.rs::parent_dir_follows_symlink",
+  "crates/ripr/src/cli/commands/agent.rs::parent_dir_follows_symlink",
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0011-llm-work-loop.md",

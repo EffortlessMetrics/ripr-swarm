@@ -229,18 +229,18 @@ impl AttemptBaseline {
         &self.policy
     }
 
-    /// The new-test proposal the attempt follows, when its policy records one
-    /// (#13205: the manifest discloses the target's preflight state).
-    pub(crate) fn followed_new_test_proposal(&self) -> Option<&FollowedNewTestProposal> {
-        self.policy.new_test_proposal.as_ref()
-    }
-
     /// The governed inline test module's name when the policy confines the
     /// target to one (the focused-run binding reads it, #13203).
     pub(crate) fn inline_test_module_name(&self) -> Option<&str> {
         self.inline_test_region
             .as_ref()
             .map(|region| region.module_name.as_str())
+    }
+
+    /// The new-test proposal the attempt follows, when its policy records one
+    /// (#13205: the manifest discloses the target's preflight state).
+    pub(crate) fn followed_new_test_proposal(&self) -> Option<&FollowedNewTestProposal> {
+        self.policy.new_test_proposal.as_ref()
     }
 
     /// The baseline index entry metadata (`git ls-files --stage` shape) for
@@ -411,7 +411,22 @@ pub(crate) fn evaluate_repository_edit_cage_with_head_movement(
     baseline: &AttemptBaseline,
     movement: HeadMovement,
 ) -> Result<(AttemptDelta, EditCageVerdict), String> {
+    let (delta, verdict, _) =
+        evaluate_repository_edit_cage_with_captured_digest(baseline, movement, None)?;
+    Ok((delta, verdict))
+}
+
+/// Return the selected path's exact identity from the same capture that owns
+/// the verdict. A missing or non-regular file has no digest.
+pub(crate) fn evaluate_repository_edit_cage_with_captured_digest(
+    baseline: &AttemptBaseline,
+    movement: HeadMovement,
+    selected_path: Option<&str>,
+) -> Result<(AttemptDelta, EditCageVerdict, Option<String>), String> {
     let after = reevaluation_capture(baseline)?;
+    let selected_digest = selected_path
+        .and_then(|path| after.worktree_digest(path))
+        .map(str::to_string);
     let committed = match movement {
         HeadMovement::RequireBaselineHead => (baseline.head == after.head).then(Vec::new),
         HeadMovement::AdmitDescendantCommits => {
@@ -427,7 +442,7 @@ pub(crate) fn evaluate_repository_edit_cage_with_head_movement(
         delta.inline_test_region = Some(observe_inline_target(baseline, &after, region)?);
     }
     let verdict = evaluate_edit_cage(&baseline.policy, &delta);
-    Ok((delta, verdict))
+    Ok((delta, verdict, selected_digest))
 }
 
 /// Retained, independently validated producer bytes for one absent workflow
@@ -5511,7 +5526,15 @@ mod tests {
     fn staged_publication_pair_outside_the_attempt_store_stays_unsafe() -> Result<(), String> {
         let fixture = git_fixture("staged-pair-outside-store")?;
         commit_target_ignore(&fixture)?;
-        for dir_relative in ["src", "target/ripr/artifacts", "target/ripr/workflow"] {
+        // The sibling spellings share the store's name as a prefix without the
+        // trailing separator (#13553): they are not the store.
+        for dir_relative in [
+            "src",
+            "target/ripr/artifacts",
+            "target/ripr/workflow",
+            "target/ripr/repair-attempts-old",
+            "target/ripr/repair-attempts-old/attempt-1/artifacts",
+        ] {
             let dir = fixture.root.join(dir_relative);
             fs::create_dir_all(&dir).map_err(|err| format!("create {dir_relative}: {err}"))?;
             let destination = dir.join("lib.rs");
