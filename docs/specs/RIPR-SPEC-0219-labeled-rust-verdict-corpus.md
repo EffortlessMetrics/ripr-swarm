@@ -127,7 +127,12 @@ Expected verdicts follow one table the validator enforces:
 The observed verdict reads only candidate-current findings on the anchor:
 `exposed` is credited; a named `static_limit_kind` or a `no_static_path`,
 `infection_unknown`, `propagation_unknown`, or `static_unknown` class is
-limited; any other class is a gap; no anchored finding is silent. When the
+limited, except that a `no_static_path` finding with no named limit whose reach
+summary ends `(unreferenced in workspace)` is a gap: the workspace names the
+owner nowhere (no caller, alias, doctest, macro block or language-dispatch
+clause), so no test can run it. The classifier withholds the marker from
+`main`, build scripts and `bin` targets. Any other class is a gap; no anchored
+finding is silent. When the
 anchor is a changed single-line `let`, RIPR-SPEC-0157 moves ripr's probe to
 the predicate that uses the binding, so the projection also reads
 candidate-current findings in the anchor file whose evidence carries

@@ -30,7 +30,7 @@ Static exposure
   no_static_path (warning, confidence 0.35)
 
 Evidence
-  - reach no: No test is seen calling process; tests share only its file or a name token: other_test
+  - reach no: No test is seen calling process; tests share only its file or a name token: other_test (unreferenced in workspace)
   - infection no: No test reaches the changed owner, so no test can activate this change
   - propagation weak: No complete owner-bound propagation witness found for error variant: Result::Err("overflow".to_string())
   - observation no: No test reaches the changed owner, so no test can observe this change
@@ -70,7 +70,7 @@ Static exposure
   no_static_path (warning, confidence 0.43)
 
 Evidence
-  - reach no: No test is seen calling process; tests share only its file or a name token: other_test
+  - reach no: No test is seen calling process; tests share only its file or a name token: other_test (unreferenced in workspace)
   - infection no: No test reaches the changed owner, so no test can activate this change
   - propagation yes: Changed behavior appears to influence match arm result: None =>
   - observation no: No test reaches the changed owner, so no test can observe this change

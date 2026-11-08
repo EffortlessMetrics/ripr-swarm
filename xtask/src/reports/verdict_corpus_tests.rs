@@ -2818,3 +2818,23 @@ fn issue_5332_upstream_not_discriminated_and_partially_discriminated_floors() ->
     }
     Ok(())
 }
+
+#[test]
+fn unreferenced_in_workspace_no_static_path_reads_as_a_gap_unless_limited() {
+    let mut unreferenced = finding("no_static_path", 10, "candidate_current");
+    unreferenced["ripr"]["reach"]["summary"] =
+        json!("No test is seen calling f; tests share only its file (unreferenced in workspace)");
+    assert_eq!(finding_verdict(&unreferenced), Verdict::Gap);
+
+    let mut plain = finding("no_static_path", 10, "candidate_current");
+    plain["ripr"]["reach"]["summary"] = json!("No test is seen calling f");
+    assert_eq!(finding_verdict(&plain), Verdict::Limited);
+
+    let mut limited = unreferenced.clone();
+    limited["static_limit_kind"] = json!("rust_subprocess_binary_reach_unresolved");
+    assert_eq!(finding_verdict(&limited), Verdict::Limited);
+
+    let mut other_class = unreferenced;
+    other_class["classification"] = json!("static_unknown");
+    assert_eq!(finding_verdict(&other_class), Verdict::Limited);
+}

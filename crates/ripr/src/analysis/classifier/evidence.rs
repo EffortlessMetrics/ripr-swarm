@@ -1733,6 +1733,36 @@ impl ClassifiedProbeEvidence {
             && context
                 .owner_fn
                 .is_some_and(|owner| !context.owner_may_be_reached_unseen(owner));
+        // RIPR-SPEC-0219: a ruled-out owner is one the whole workspace never
+        // names (no caller, alias, doctest, macro block or language-dispatch
+        // clause can run it unseen), so no test can reach it. Say so on the
+        // reach stage; the verdict corpus reads this as a gap, not an
+        // abstention.
+        // Fail closed for programs a build or subprocess runs without any
+        // source naming them: `main`, build scripts and binary targets.
+        let entry_point = context.owner_fn.is_some_and(|owner| owner.name == "main")
+            || context.unmounted_build_script
+            || context
+                .probe
+                .location
+                .file
+                .file_name()
+                .is_some_and(|name| name == "build.rs")
+            || context
+                .probe
+                .location
+                .file
+                .components()
+                .any(|part| part.as_os_str() == "bin");
+        let reach = if reach_ruled_out && !entry_point {
+            StageEvidence::new(
+                reach.state,
+                reach.confidence,
+                format!("{} {UNREFERENCED_IN_WORKSPACE}", reach.summary),
+            )
+        } else {
+            reach
+        };
         // A weak stage is replaced too: with no reaching test, an
         // unconfirmed oracle (#5830 withholds confirmation from tokens that
         // only coincide with the owner's) is no discriminator at all.
@@ -2322,6 +2352,10 @@ impl PropagationWitnessDiagnostic {
         matches!(self, Self::InvalidDigest(_))
     }
 }
+
+/// Reach-summary suffix for an owner no source, test or doc in the workspace
+/// names (RIPR-SPEC-0219). The verdict corpus keys on this wording.
+pub(in crate::analysis) const UNREFERENCED_IN_WORKSPACE: &str = "(unreferenced in workspace)";
 
 fn unreached_stage(stage: &str) -> StageEvidence {
     StageEvidence::new(

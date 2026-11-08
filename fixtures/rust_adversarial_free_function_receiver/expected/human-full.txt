@@ -30,7 +30,7 @@ Static exposure
   no_static_path (warning, confidence 0.43)
 
 Evidence
-  - reach no: No test is seen calling parse; tests share only a name token
+  - reach no: No test is seen calling parse; tests share only a name token (unreferenced in workspace)
   - infection no: No test reaches the changed owner, so no test can activate this change
   - propagation yes: Complete propagation witness reaches returned value: (0, Some(input.len()))
   - observation no: Related tests were found, but no assertion appears to observe the changed value, error, field, or effect

@@ -75,7 +75,7 @@ static analysis should stop or escalate.
 | `exposed` | Static evidence suggests a complete RIPR path to a strong oracle that observes the changed sink (see Discrimination vs Coverage). |
 | `weakly_exposed` | A path exists, but infection or discrimination appears weak. |
 | `reachable_unrevealed` | Related tests appear reachable, but no meaningful oracle was found. |
-| `no_static_path` | No static test path was found for the changed owner. |
+| `no_static_path` | No static test path was found for the changed owner. When the reach line ends `(unreferenced in workspace)`, no source, test or doc in the workspace names the owner (no caller, alias, doctest, macro block or language dispatch), so no test can run it: a missing test, not a limit of the analysis. `main`, build scripts and `bin` targets never carry the marker. |
 | `infection_unknown` | Reachability exists, but input or fixture evidence is opaque. |
 | `propagation_unknown` | The changed behavior crosses an opaque propagation boundary. |
 | `static_unknown` | Syntax-first analysis cannot make a credible judgment. |

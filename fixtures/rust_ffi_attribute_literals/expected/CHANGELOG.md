@@ -228,3 +228,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — rust_ffi_attribute_literals (19)
+
+Reason:
+Reach summary of a workspace-unreferenced owner now ends '(unreferenced in workspace)' (RIPR-SPEC-0219, #12766); class unchanged
+
+Command:
+`cargo xtask goldens bless rust_ffi_attribute_literals --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

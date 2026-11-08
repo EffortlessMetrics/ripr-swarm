@@ -35,17 +35,17 @@
         "expression": "Err(\"overflow\".to_string())"
        },
       "ripr": {
-        "reach": {"state":"no","confidence":"medium","summary":"No test is seen calling process; tests share only its file or a name token: other_test"},
+        "reach": {"state":"no","confidence":"medium","summary":"No test is seen calling process; tests share only its file or a name token: other_test (unreferenced in workspace)"},
         "infect": {"state":"no","confidence":"medium","summary":"No test reaches the changed owner, so no test can activate this change"},
         "propagate": {"state":"weak","confidence":"low","summary":"No complete owner-bound propagation witness found for error variant: Result::Err(\"overflow\".to_string())"},
         "observe": {"state":"no","confidence":"medium","summary":"No test reaches the changed owner, so no test can observe this change"},
         "discriminate": {"state":"no","confidence":"medium","summary":"No test reaches the changed owner, so no test can discriminate this change"}
        },
-      "evidence_path": ["reach no: No test is seen calling process; tests share only its file or a name token: other_test", "infection no: No test reaches the changed owner, so no test can activate this change", "propagation weak: No complete owner-bound propagation witness found for error variant: Result::Err(\"overflow\".to_string())", "observation no: No test reaches the changed owner, so no test can observe this change", "discriminator no: No test reaches the changed owner, so no test can discriminate this change", "local flow reaches error variant: Result::Err(\"overflow\".to_string()) (line 11)", "related test src/lib.rs:29 other_test uses strong exact error variant oracle: assert_eq!(other(250), Err(\"big\".to_string()));", "source assertion argument value 1 at line 30", "source assertion argument value \"big\" at line 31", "source assertion argument value 250 at line 31"],
+      "evidence_path": ["reach no: No test is seen calling process; tests share only its file or a name token: other_test (unreferenced in workspace)", "infection no: No test reaches the changed owner, so no test can activate this change", "propagation weak: No complete owner-bound propagation witness found for error variant: Result::Err(\"overflow\".to_string())", "observation no: No test reaches the changed owner, so no test can observe this change", "discriminator no: No test reaches the changed owner, so no test can discriminate this change", "local flow reaches error variant: Result::Err(\"overflow\".to_string()) (line 11)", "related test src/lib.rs:29 other_test uses strong exact error variant oracle: assert_eq!(other(250), Err(\"big\".to_string()));", "source assertion argument value 1 at line 30", "source assertion argument value \"big\" at line 31", "source assertion argument value 250 at line 31"],
       "flow_sinks": [
         {"kind":"error_variant","text":"Result::Err(\"overflow\".to_string())","line":11}
       ],
-      "evidence": ["No complete owner-bound propagation witness found for error variant: Result::Err(\"overflow\".to_string())", "No test is seen calling process; tests share only its file or a name token: other_test", "No test reaches the changed owner, so no test can activate this change", "No test reaches the changed owner, so no test can discriminate this change", "No test reaches the changed owner, so no test can observe this change"],
+      "evidence": ["No complete owner-bound propagation witness found for error variant: Result::Err(\"overflow\".to_string())", "No test is seen calling process; tests share only its file or a name token: other_test (unreferenced in workspace)", "No test reaches the changed owner, so no test can activate this change", "No test reaches the changed owner, so no test can discriminate this change", "No test reaches the changed owner, so no test can observe this change"],
       "missing": ["No exact error variant discriminator was detected", "No relevant oracle was detected", "No static test path reaches the changed owner"],
       "assertion_texts": {
         "30": "assert_eq!(other(1), Ok(1));",
@@ -140,17 +140,17 @@
         "expression": "None =>"
        },
       "ripr": {
-        "reach": {"state":"no","confidence":"medium","summary":"No test is seen calling process; tests share only its file or a name token: other_test"},
+        "reach": {"state":"no","confidence":"medium","summary":"No test is seen calling process; tests share only its file or a name token: other_test (unreferenced in workspace)"},
         "infect": {"state":"no","confidence":"medium","summary":"No test reaches the changed owner, so no test can activate this change"},
         "propagate": {"state":"yes","confidence":"medium","summary":"Changed behavior appears to influence match arm result: None =>"},
         "observe": {"state":"no","confidence":"medium","summary":"No test reaches the changed owner, so no test can observe this change"},
         "discriminate": {"state":"no","confidence":"medium","summary":"No test reaches the changed owner, so no test can discriminate this change"}
        },
-      "evidence_path": ["reach no: No test is seen calling process; tests share only its file or a name token: other_test", "infection no: No test reaches the changed owner, so no test can activate this change", "propagation yes: Changed behavior appears to influence match arm result: None =>", "observation no: No test reaches the changed owner, so no test can observe this change", "discriminator no: No test reaches the changed owner, so no test can discriminate this change", "local flow reaches match arm result: None => (line 11)", "related test src/lib.rs:29 other_test uses strong exact value oracle: assert_eq!(other(1), Ok(1));", "related test src/lib.rs:29 other_test uses strong exact error variant oracle: assert_eq!(other(250), Err(\"big\".to_string()));", "source assertion argument value 1 at line 30", "source assertion argument value \"big\" at line 31", "source assertion argument value 250 at line 31"],
+      "evidence_path": ["reach no: No test is seen calling process; tests share only its file or a name token: other_test (unreferenced in workspace)", "infection no: No test reaches the changed owner, so no test can activate this change", "propagation yes: Changed behavior appears to influence match arm result: None =>", "observation no: No test reaches the changed owner, so no test can observe this change", "discriminator no: No test reaches the changed owner, so no test can discriminate this change", "local flow reaches match arm result: None => (line 11)", "related test src/lib.rs:29 other_test uses strong exact value oracle: assert_eq!(other(1), Ok(1));", "related test src/lib.rs:29 other_test uses strong exact error variant oracle: assert_eq!(other(250), Err(\"big\".to_string()));", "source assertion argument value 1 at line 30", "source assertion argument value \"big\" at line 31", "source assertion argument value 250 at line 31"],
       "flow_sinks": [
         {"kind":"match_arm","text":"None =>","line":11}
       ],
-      "evidence": ["Changed behavior appears to influence match arm result: None =>", "No test is seen calling process; tests share only its file or a name token: other_test", "No test reaches the changed owner, so no test can activate this change", "No test reaches the changed owner, so no test can discriminate this change", "No test reaches the changed owner, so no test can observe this change"],
+      "evidence": ["Changed behavior appears to influence match arm result: None =>", "No test is seen calling process; tests share only its file or a name token: other_test (unreferenced in workspace)", "No test reaches the changed owner, so no test can activate this change", "No test reaches the changed owner, so no test can discriminate this change", "No test reaches the changed owner, so no test can observe this change"],
       "missing": ["No relevant oracle was detected", "No static test path reaches the changed owner", "No strong discriminator was detected"],
       "assertion_texts": {
         "30": "assert_eq!(other(1), Ok(1));",
