@@ -11716,6 +11716,7 @@ tests = [
   "crates/ripr/src/lsp/tests.rs::framed_retained_code_actions_survive_changed_config_failure",
   "crates/ripr/src/lsp/tests.rs::gap_code_actions_disable_verify_route_when_verification_commands_missing",
   "crates/ripr/src/lsp/tests.rs::gap_code_actions_disable_receipt_route_when_receipt_command_missing",
+  "crates/ripr/src/lsp/tests.rs::gap_code_actions_same_language_static_limit_does_not_claim_a_language_boundary",
   "crates/ripr/src/lsp/tests.rs::gap_code_actions_cross_language_unresolved_yields_disabled_preview_limitation",
   "crates/ripr/src/lsp/tests.rs::seam_code_actions_cross_language_unresolved_yields_disabled_preview_limitation",
   "crates/ripr/src/lsp/tests.rs::execute_command_rejects_unsupported_commands_with_stable_invalid_params",

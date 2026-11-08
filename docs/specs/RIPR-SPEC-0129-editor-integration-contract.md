@@ -467,7 +467,8 @@ client supports:
   `stale_snapshot` (stale gap diagnostic),
   `verification_route_unavailable` / `receipt_route_unavailable` (gap
   record without a safe verify/receipt command), and
-  `preview_or_static_limitation` (cross-language unresolved target). The
+  `preview_or_static_limitation` (a static limitation; the human text names a
+  language boundary only for a cross-language unresolved target, #13797). The
   backend health gate also returns retained diagnostic-addressed actions
   inert as `analysis_not_current` when the root is valid and the client
   supports disabled actions (#7458). It names queued/running as a wait state
