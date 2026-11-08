@@ -1682,6 +1682,7 @@ impl PythonAdapter {
             &module_attribute_writes,
         );
         collection_config::apply_collection_config(&mut all_tests, &options.root);
+        test_activation::withhold_imported_module_controls(&mut all_tests);
         reexports::apply_package_reexports(
             &mut all_owners,
             |file| workspace_read.sources.get(file).map(String::as_str),

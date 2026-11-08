@@ -1171,22 +1171,36 @@ mutant calibrates the rule; ripr reports only the static shape.
     `@pytest.mark.skip` or `@unittest.skip`, a module `pytestmark` that
     applies one, a module-level `pytest.skip(..., allow_module_level=True)`,
     an empty literal parametrize table, a parametrize mark pytest refuses at
-    collection, a later binding of the test name (rule 23) and a class or
-    module `__test__` bound to the literal `False` (on a class, only when every
-    class on its MRO up to that binding is local). Such a test can fail on no
-    edit, so it is no evidence either way: it does not raise the limit, and a
-    finding no other test relates to is a gap (`weakly_exposed`, with
-    `related_test_never_runs` evidence and a missing check that says to remove
-    the control or add an active test), the way an `#[ignore]`d Rust test is.
-    A finding beside any other controlled test keeps the limit. Conditional
-    `skipif`/`skipIf`/`skipUnless`, every `xfail` (its outcome depends on
-    `strict`, `raises` and the project's `xfail_strict`),
-    `unittest.expectedFailure`, `importorskip`, an unresolved `__test__`
-    binding and the project-level collection rules below (which a command
-    line naming the file can bypass) stay unestablished (`py-trap-skipped-test`,
-    `py-trap-empty-table`, `py-trap-shadowed-test`, `py-idioms-skipped-test`,
-    the `py-uncollected-*-switch*` cases and the `py-unrun-*` module skip,
-    module `pytestmark` skip and empty tuple table). Two things are decidable from the source and
+    collection, a later non-loop binding of the test name (rule 23) and a
+    class or module `__test__` bound to the literal `False`. Such a test can
+    fail on no edit, so it is no evidence either way: it does not raise the
+    limit, and a finding no other test relates to is a gap (`weakly_exposed`,
+    with `related_test_never_runs` evidence and a missing check that says to
+    remove the control or add an active test), the way an `#[ignore]`d Rust
+    test is. Gap cases: `py-trap-skipped-test`, `py-idioms-skipped-test`,
+    `py-trap-empty-table`, `py-trap-shadowed-test`, the three
+    `py-uncollected-*-switch*` cases and the `py-unrun-*` module skip, module
+    `pytestmark` skip and empty tuple table. The exception is narrowed
+    wherever the test could still run: a unittest-style test counts only
+    `unittest.skip`, a module-level `pytest.skip` and a later binding (the
+    `python -m unittest` verify command ignores pytest marks, parametrize and
+    `__test__`); a literal `False` switch counts only when every `__test__`
+    mention in the file is a direct binding line and, on a class, no class on
+    its MRO has a decorator, a metaclass keyword, `__init_subclass__` or an
+    external base (each can re-enable it at class creation); a module-site
+    skip or switch stops counting when another test module imports the test,
+    its module object or `*` from it (matched by module stem), because pytest
+    collects the imported name there without them; and a rebinding only a
+    `for` target makes may bind nothing. A finding beside any other
+    controlled test keeps the limit. Conditional `skipif`/`skipIf`/`skipUnless`,
+    every `xfail` (its outcome depends on `strict`, `raises` and the project's
+    `xfail_strict`), `unittest.expectedFailure`, `importorskip`, an
+    unresolved `__test__` binding and the project-level collection rules
+    below (which a command line naming the file can bypass) stay
+    unestablished. Not modelled: `-p no:skipping` in `addopts` (which turns
+    skip marks off) and `empty_parameter_set_mark = xfail` (which runs the
+    body with `NOTSET` arguments, a call no exact assertion pins); both are
+    named limits, not claims that the tests run. Two things are decidable from the source and
     leave the test active: a condition that is itself the boolean literal
     that never triggers the mark and is the only condition, given with the
     string `reason` the runner requires for a boolean

@@ -600,6 +600,122 @@ fn a_test_that_provably_never_runs_leaves_a_gap_not_an_abstention() -> Result<()
     Ok(())
 }
 
+// Review of #13734: forms that look dead but still run. Each must stay an
+// abstention, never a gap.
+#[test]
+fn a_test_that_can_still_run_is_never_reported_as_never_running() -> Result<(), String> {
+    let header = "import pytest\nimport unittest\nfrom src.subject import score\n";
+    let cases = [
+        // `python -m unittest` ignores pytest marks and `__test__`.
+        format!(
+            "{header}class TestScore(unittest.TestCase):\n    __test__ = False\n    def test_score(self):\n        self.assertEqual(score(0), 8)\n"
+        ),
+        format!(
+            "{header}class TestScore(unittest.TestCase):\n    @pytest.mark.skip(reason='off')\n    def test_score(self):\n        self.assertEqual(score(0), 8)\n"
+        ),
+        // `__test__` re-enabled at runtime.
+        format!(
+            "{header}class Base:\n    __test__ = False\n    def __init_subclass__(cls):\n        cls.__test__ = True\nclass TestScore(Base):\n    def test_score(self):\n        assert score(0) == 8\n"
+        ),
+        format!(
+            "{header}def enable(cls):\n    cls.__test__ = True\n    return cls\n@enable\nclass TestScore:\n    __test__ = False\n    def test_score(self):\n        assert score(0) == 8\n"
+        ),
+        format!(
+            "{header}class TestScore:\n    __test__ = False\n    def test_score(self):\n        assert score(0) == 8\nTestScore.__test__ = True\n"
+        ),
+        format!(
+            "{header}class TestScore(metaclass=Meta):\n    __test__ = False\n    def test_score(self):\n        assert score(0) == 8\n"
+        ),
+        format!(
+            "{header}__test__ = False\ndef test_score():\n    assert score(0) == 8\nglobals()['__test__'] = True\n"
+        ),
+        // A loop over an iterable that may be empty may bind nothing.
+        format!(
+            "{header}def test_score():\n    assert score(0) == 8\nfor test_score in range(0):\n    pass\n"
+        ),
+    ];
+    for tests in &cases {
+        let finding = classify_case(
+            "def score(value):\n    return 8\n",
+            tests,
+            2,
+            "    return 7",
+            "    return 8",
+        )?;
+        assert_ne!(finding.class, ExposureClass::WeaklyExposed, "{tests}");
+        assert!(
+            !finding
+                .evidence
+                .iter()
+                .any(|line| line.starts_with("related_test_never_runs:")),
+            "{tests}: {:?}",
+            finding.evidence
+        );
+    }
+    // `unittest.skip` still never runs under either runner.
+    let tests = format!(
+        "{header}class TestScore(unittest.TestCase):\n    @unittest.skip('off')\n    def test_score(self):\n        self.assertEqual(score(0), 8)\n"
+    );
+    let finding = classify_case(
+        "def score(value):\n    return 8\n",
+        &tests,
+        2,
+        "    return 7",
+        "    return 8",
+    )?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{tests}");
+    Ok(())
+}
+
+// A module-site skip or switch does not travel with a test another test
+// module imports, so it no longer proves the test never runs there.
+#[test]
+fn a_module_control_on_a_test_imported_elsewhere_is_not_never_running() {
+    use super::super::test_activation::{never_runs, withhold_imported_module_controls};
+    for (defining, importing) in [
+        (
+            "import pytest\nfrom src.subject import score\npytestmark = pytest.mark.skip(reason='off')\ndef test_score():\n    assert score(0) == 8\n",
+            "from tests.test_shared import test_score\n\ndef test_other():\n    pass\n",
+        ),
+        (
+            "from src.subject import score\n__test__ = False\ndef test_score():\n    assert score(0) == 8\n",
+            "from tests.test_shared import *\n\ndef test_other():\n    pass\n",
+        ),
+        (
+            "from src.subject import score\n__test__ = False\ndef test_score():\n    assert score(0) == 8\n",
+            "from tests import test_shared\n\ndef test_other():\n    pass\n",
+        ),
+    ] {
+        let mut tests = extract_tests(Path::new("tests/test_shared.py"), defining);
+        tests.extend(extract_tests(Path::new("tests/test_use.py"), importing));
+        let shared = |tests: &[super::super::PythonTest]| {
+            tests
+                .iter()
+                .find(|test| test.name == "test_score")
+                .map(|test| never_runs(test).is_some())
+        };
+        assert_eq!(shared(&tests), Some(true), "{defining}");
+        withhold_imported_module_controls(&mut tests);
+        assert_eq!(shared(&tests), Some(false), "{defining} / {importing}");
+    }
+    // An unrelated import elsewhere leaves the module control definite.
+    let mut tests = extract_tests(
+        Path::new("tests/test_shared.py"),
+        "import pytest\nfrom src.subject import score\npytestmark = pytest.mark.skip(reason='off')\ndef test_score():\n    assert score(0) == 8\n",
+    );
+    tests.extend(extract_tests(
+        Path::new("tests/test_use.py"),
+        "from tests.helpers import build\n\ndef test_other():\n    pass\n",
+    ));
+    withhold_imported_module_controls(&mut tests);
+    assert!(
+        tests
+            .iter()
+            .find(|test| test.name == "test_score")
+            .is_some_and(|test| never_runs(test).is_some())
+    );
+}
+
 // A boolean-literal condition that never triggers the skip leaves the test
 // running, so its exact oracle credits the edit (#9271 trap controls).
 #[test]

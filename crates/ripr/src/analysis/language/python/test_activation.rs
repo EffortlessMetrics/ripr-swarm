@@ -60,19 +60,19 @@ fn effective_controls(test: &PythonTest) -> impl Iterator<Item = &PythonActivati
 /// `xfail_strict`, `importorskip` depends on what is installed, and the
 /// project-level collection rules can be bypassed by naming the file on the
 /// command line.
+///
+/// A unittest-style test may run under `python -m unittest` (the verify
+/// command ripr prints for it), which ignores pytest marks, parametrize and
+/// `__test__`, so only the runner-neutral controls count for it: `unittest.skip`,
+/// a module-level `pytest.skip` (the import itself fails) and a later binding.
 pub(super) fn never_runs(test: &PythonTest) -> Option<&str> {
     effective_controls(test)
-        .find(|control| {
-            matches!(
-                control.name.as_str(),
-                "pytest.mark.skip"
-                    | "unittest.skip"
-                    | "pytest.skip"
-                    | EMPTY_TABLE
-                    | COLLECTION_ERROR
-                    | LATER_BINDING
-                    | TEST_SWITCH_OFF
-            )
+        .find(|control| match control.name.as_str() {
+            "unittest.skip" | "pytest.skip" | LATER_BINDING => true,
+            "pytest.mark.skip" | EMPTY_TABLE | COLLECTION_ERROR | TEST_SWITCH_OFF => {
+                test.framework != PythonFramework::Unittest
+            }
+            _ => false,
         })
         .map(|control| control.name.as_str())
 }
@@ -80,8 +80,84 @@ pub(super) fn never_runs(test: &PythonTest) -> Option<&str> {
 const EMPTY_TABLE: &str = "pytest.mark.parametrize(empty table)";
 const COLLECTION_ERROR: &str = "pytest.mark.parametrize(collection error)";
 const LATER_BINDING: &str = "later binding of the test name";
+/// A later `for` target rebinding: the loop may bind nothing, so the earlier
+/// definition may survive and run.
+const LATER_LOOP_BINDING: &str = "later loop binding of the test name";
 const TEST_SWITCH_OFF: &str = "pytest.collection(__test__ = False)";
 const TEST_SWITCH_UNRESOLVED: &str = "pytest.collection(__test__ unresolved)";
+/// A module-site skip or `__test__` switch on a test another test module
+/// imports: pytest also collects the imported name there, without the
+/// defining module's `pytestmark` or switch.
+const IMPORTED_ELSEWHERE: &str = "module control on a test another test module imports";
+
+/// Module-site controls apply to the defining module's collection only. A test
+/// function or class another test module imports (by name, by `*`, or through
+/// the module object) is collected there too without them, so they no longer
+/// prove the test never runs; they stay an unestablished control. The match is
+/// by module stem and is deliberately broad (fail-closed).
+pub(super) fn withhold_imported_module_controls(tests: &mut [PythonTest]) {
+    let mut imports_by_file: std::collections::BTreeMap<&std::path::Path, Vec<&PythonImport>> =
+        std::collections::BTreeMap::new();
+    for test in tests.iter() {
+        let entry = imports_by_file.entry(test.file.as_path()).or_default();
+        for import in &test.imports {
+            if !entry.contains(&import) {
+                entry.push(import);
+            }
+        }
+    }
+    let imported_elsewhere = |test: &PythonTest| -> bool {
+        let Some(stem) = test.file.file_stem().and_then(|stem| stem.to_str()) else {
+            return true;
+        };
+        let top = test
+            .qualified_name
+            .split('.')
+            .next()
+            .unwrap_or(test.qualified_name.as_str());
+        let last = |dotted: &str| dotted.rsplit('.').next().unwrap_or(dotted).to_string();
+        imports_by_file
+            .iter()
+            .filter(|(file, _)| **file != test.file.as_path())
+            .flat_map(|(_, imports)| imports.iter())
+            .any(|import| {
+                if import.source_module.is_empty() {
+                    last(&import.imported) == stem
+                } else {
+                    import.imported == stem
+                        || (last(&import.source_module) == stem
+                            && (import.imported == top || import.imported == "*"))
+                }
+            })
+    };
+    let flagged: Vec<bool> = tests
+        .iter()
+        .map(|test| {
+            test.activation_controls.iter().any(|control| {
+                control.site == DeclarationSite::Module
+                    && matches!(
+                        control.name.as_str(),
+                        "pytest.mark.skip" | "unittest.skip" | TEST_SWITCH_OFF
+                    )
+            }) && imported_elsewhere(test)
+        })
+        .collect();
+    for (test, flagged) in tests.iter_mut().zip(flagged) {
+        if !flagged {
+            continue;
+        }
+        for control in &mut test.activation_controls {
+            if control.site == DeclarationSite::Module
+                && matches!(
+                    control.name.as_str(),
+                    "pytest.mark.skip" | "unittest.skip" | TEST_SWITCH_OFF
+                )
+            {
+                control.name = IMPORTED_ELSEWHERE.to_string();
+            }
+        }
+    }
+}
 
 pub(super) fn activation_controls(
     decorators: &[Expr],
@@ -342,6 +418,37 @@ fn nested_binds_test_switch(stmt: &Stmt) -> bool {
         .any(|block| test_switch(block) != TestSwitch::Unset)
 }
 
+/// A literal `False` switch is `Off` only when every `__test__` mention in
+/// the module is a direct binding statement of a module or class body; any
+/// other mention (`Cls.__test__ = True`, `setattr(..., "__test__", ...)`,
+/// `cls.__test__` in `__init_subclass__` or a decorator) may re-enable it at
+/// runtime, so the switch is unresolved.
+pub(super) fn settle_switch(switch: TestSwitch, source: &str) -> TestSwitch {
+    if switch == TestSwitch::Off && !test_switch_mentions_are_bindings(source) {
+        TestSwitch::Disabled
+    } else {
+        switch
+    }
+}
+
+/// Every `__test__` in `source` starts a line that binds it directly
+/// (`__test__ = ...` or `__test__: T = ...`). Any other mention, including
+/// one in a string or comment, fails closed.
+fn test_switch_mentions_are_bindings(source: &str) -> bool {
+    let bindings = source
+        .lines()
+        .filter(|line| {
+            line.trim_start()
+                .strip_prefix("__test__")
+                .is_some_and(|rest| {
+                    let rest = rest.trim_start();
+                    (rest.starts_with('=') && !rest.starts_with("==")) || rest.starts_with(':')
+                })
+        })
+        .count();
+    source.matches("__test__").count() == bindings
+}
+
 /// The control a class or module `__test__` binding that is not provably
 /// `True` applies: a literal `False` is pytest's own opt-out, so no test
 /// below it is collected; any other binding may opt out.
@@ -417,9 +524,20 @@ pub(super) fn parametrize_collection_error_control(
 
 /// A later binding of the same name in the same scope replaced this test
 /// definition before collection, so pytest and unittest never run its body.
-pub(super) fn shadowed_by_later_binding_control(site: DeclarationSite) -> PythonActivationControl {
+///
+/// `in_loop_only` marks a rebinding that only a `for` target makes: the loop
+/// may bind nothing, so the control stays unestablished.
+pub(super) fn shadowed_by_later_binding_control(
+    site: DeclarationSite,
+    in_loop_only: bool,
+) -> PythonActivationControl {
     PythonActivationControl {
-        name: LATER_BINDING.to_string(),
+        name: if in_loop_only {
+            LATER_LOOP_BINDING
+        } else {
+            LATER_BINDING
+        }
+        .to_string(),
         site,
     }
 }
@@ -460,6 +578,24 @@ impl<'a> LaterBindings<'a> {
             }
         }
         Self { positions }
+    }
+
+    /// Whether a statement after `index` other than a `for` loop rebinds
+    /// `name`: a definite rebinding, since a loop may bind nothing.
+    pub(super) fn rebound_later_outside_loops(
+        &self,
+        statements: &[Stmt],
+        index: usize,
+        name: &str,
+        source: &SourceText<'_>,
+    ) -> bool {
+        self.positions.get(name).is_some_and(|positions| {
+            let first = positions.partition_point(|&position| position <= index);
+            positions[first..].iter().any(|&position| {
+                let stmt = &statements[position];
+                !matches!(stmt, Stmt::For(_) | Stmt::AsyncFor(_)) && rebinds(stmt, name, source)
+            })
+        })
     }
 
     /// [`rebound_later`] over the same list `of` indexed.
@@ -620,6 +756,7 @@ pub(super) fn has_collection_error(controls: &[PythonActivationControl]) -> bool
 /// a recognized skip or xfail mark. Only unconditional top-level statements
 /// count; a guarded call may not run (#9691).
 pub(super) fn apply_module_controls(
+    source: &str,
     statements: &[Stmt],
     imports: &[PythonImport],
     tests: &mut [PythonTest],
@@ -629,7 +766,7 @@ pub(super) fn apply_module_controls(
         .flat_map(|stmt| module_statement_controls(stmt, imports))
         .collect();
     controls.extend(test_switch_control(
-        test_switch(statements),
+        settle_switch(test_switch(statements), source),
         DeclarationSite::Module,
     ));
     if controls.is_empty() {

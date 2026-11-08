@@ -894,6 +894,7 @@ pub(super) fn collect_tests_from_statements(
     };
     let local_classes = LocalTestClasses::of(
         file,
+        source,
         statements,
         import_context.definition,
         base_parametrize_scope,
@@ -1341,10 +1342,13 @@ pub(super) fn collect_tests_from_statements(
         if let Some(defined) = defined
             && later_bindings.rebound_later(statements, index, defined, source)
         {
+            let in_loop_only =
+                !later_bindings.rebound_later_outside_loops(statements, index, defined, source);
             for test in &mut out[first_pushed..] {
                 test.activation_controls.push(
                     super::test_activation::shadowed_by_later_binding_control(
                         super::test_activation::DeclarationSite::Function,
+                        in_loop_only,
                     ),
                 );
             }
@@ -1606,6 +1610,7 @@ struct LocalTestClasses<'a> {
 impl<'a> LocalTestClasses<'a> {
     fn of(
         file: &Path,
+        source: &str,
         statements: &'a [Stmt],
         initial_imports: &[PythonImport],
         parametrize_scope: ParametrizeScope<'_>,
@@ -1744,7 +1749,7 @@ impl<'a> LocalTestClasses<'a> {
                         super::test_activation::DeclarationSite::Class,
                     )
                 }))
-                .chain(class_switched_off(&scope, name).and_then(|switch| {
+                .chain(class_switched_off(&scope, name, source).and_then(|switch| {
                     super::test_activation::test_switch_control(
                         switch,
                         super::test_activation::DeclarationSite::Class,
@@ -1933,11 +1938,17 @@ impl<'a> ScopeClasses<'a> {
 /// unavailable or an external base precedes any binding, any ancestor that is
 /// not provably `True` counts, as an unresolved binding (fail-closed): only a
 /// fully local MRO whose deciding binding is a literal `False` is `Off`.
+///
+/// A deciding literal `False` is `Off` only when nothing on the hierarchy can
+/// rebind `__test__` at class creation (no class decorator, metaclass keyword,
+/// `__init_subclass__` or external base anywhere on the MRO) and every
+/// `__test__` mention in the module is a direct binding (`settle_switch`).
 fn class_switched_off<'a>(
     scope: &ScopeClasses<'a>,
     name: &'a str,
+    source: &str,
 ) -> Option<super::test_activation::TestSwitch> {
-    use super::test_activation::{TestSwitch, test_switch};
+    use super::test_activation::{TestSwitch, settle_switch, test_switch};
     let switch_of = |key: &str| {
         scope
             .defs
@@ -1945,13 +1956,26 @@ fn class_switched_off<'a>(
             .map(|(_, class)| test_switch(&class.body))
     };
     if let Some(mro) = scope.mro(name, &mut Vec::new()) {
+        let hierarchy_is_static = mro.iter().all(|entry| match entry {
+            MroEntry::Local(key) => scope.defs.get(key).is_some_and(|(_, class)| {
+                class.decorator_list.is_empty()
+                    && class.keywords.is_empty()
+                    && !class.body.iter().any(|stmt| {
+                        matches!(stmt, Stmt::FunctionDef(def) if def.name.as_str() == "__init_subclass__")
+                    })
+            }),
+            MroEntry::External(base) => base == "object",
+        });
         for entry in &mro {
             let MroEntry::Local(key) = entry else {
                 break;
             };
             match switch_of(key) {
                 Some(TestSwitch::Enabled) => return None,
-                Some(switch @ (TestSwitch::Off | TestSwitch::Disabled)) => return Some(switch),
+                Some(TestSwitch::Off) if hierarchy_is_static => {
+                    return Some(settle_switch(TestSwitch::Off, source));
+                }
+                Some(TestSwitch::Off | TestSwitch::Disabled) => return Some(TestSwitch::Disabled),
                 _ => {}
             }
         }

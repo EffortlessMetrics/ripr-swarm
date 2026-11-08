@@ -825,7 +825,12 @@ fn extract_source_facts_with(file: &Path, source: &str, workspace: bool) -> Pyth
                     _ => false,
                 })));
     with_module_rebinding(source, &module.body, &module_constants, &mut snapshot.tests);
-    super::test_activation::apply_module_controls(&module.body, &imports, &mut snapshot.tests);
+    super::test_activation::apply_module_controls(
+        source,
+        &module.body,
+        &imports,
+        &mut snapshot.tests,
+    );
     let implicit_reach = super::admission::module_implicit_reach(source, &module.body, &imports);
     let header_reach = super::admission::module_header_effects(source, &module.body, &imports);
     for test in &mut snapshot.tests {

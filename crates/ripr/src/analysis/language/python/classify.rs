@@ -1148,14 +1148,20 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
                     .map(|control| (candidate.test.name.as_str(), control))
             })
             .collect();
+        let others = never_run
+            .iter()
+            .map(|(test, _)| *test)
+            .collect::<std::collections::BTreeSet<_>>()
+            .len()
+            .saturating_sub(1);
         let missing = match never_run.as_slice() {
-            [(test, control), rest @ ..] if rest.len() + 1 == related_candidates.len() => {
+            [(test, control), ..] if never_run.len() == related_candidates.len() => {
                 format!(
                     "Related test `{test}`{} never runs (`{control}`), so no test can notice this change to `{}`; remove the control or add an active pytest or unittest test with an exact-value assertion.",
-                    if rest.is_empty() {
+                    if others == 0 {
                         String::new()
                     } else {
-                        format!(" and {} other related test(s)", rest.len())
+                        format!(" and {others} other related test(s)")
                     },
                     owner.name
                 )
