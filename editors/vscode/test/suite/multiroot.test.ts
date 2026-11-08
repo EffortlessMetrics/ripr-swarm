@@ -70,7 +70,7 @@ if (process.env.RIPR_TEST_MULTIROOT === '1') {
         sourceContents: 'pub fn beta_shipping(weight: i32, cutoff: i32) -> i32 {\n    if weight >= cutoff {\n        weight * 3\n    } else {\n        7\n    }\n}\n',
         testContents: 'use root_beta::beta_shipping;\n\n#[test]\nfn beta_light_parcel() {\n    assert_eq!(beta_shipping(5, 10), 7);\n}\n\n#[test]\nfn beta_heavy_parcel() {\n    assert_eq!(beta_shipping(100, 10), 300);\n}\n',
         symbol: 'beta_shipping', changedExpression: 'weight >= cutoff',
-        suggestedAssertion: 'assert_eq!(beta_shipping(10, 10), 30)',
+        suggestedAssertion: 'assert_eq!(beta_shipping(10, 10), /* expected */)',
         relatedTest: 'tests/beta_contract.rs',
         testNames: ['beta_light_parcel', 'beta_heavy_parcel'],
       };
