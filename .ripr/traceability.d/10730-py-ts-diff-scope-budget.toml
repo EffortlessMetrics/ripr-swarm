@@ -38,6 +38,7 @@ tests = [
   "crates/ripr/src/analysis/pipeline.rs::tests::configured_python_exclusion_keeps_the_file_out_of_partial_selection",
   "crates/ripr/src/analysis/pipeline.rs::tests::javascript_diff_over_the_changed_line_guard_degrades_into_partial_scope",
   "crates/ripr/src/analysis/language/rust/mod.rs::tests::changed_rust_line_guard_measures_the_selected_partition",
+  "crates/ripr/src/analysis/language/rust/mod.rs::tests::following_over_limit_advice_analyzes_the_whole_diff",
   "crates/ripr/src/analysis/language/rust/mod.rs::tests::each_file_is_judged_against_its_own_language_limit",
   "crates/ripr/src/analysis/language/rust/mod.rs::tests::partial_budgets_read_only_enabled_language_limits",
   "crates/ripr/src/analysis/language/rust/mod.rs::tests::generated_preview_files_are_never_partition_candidates",

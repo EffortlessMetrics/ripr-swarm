@@ -875,22 +875,27 @@ impl PartialDiffScope {
     /// CLI re-run, or an LSP sidecar restart, #5999).
     pub(crate) fn budget_raise_instruction(&self) -> String {
         let next_lines = self.next_file_changed_lines.unwrap_or(0);
+        // #13641 review: selection takes whole files in order, so once a
+        // raised limit admits an over-limit file it is selected in its place
+        // and spends budget before the files after it. Budgets that keep
+        // every file the run already selected (plus the next one) and add the
+        // over-limit files must cover all of them, not the largest alone;
+        // otherwise following the advice trades analyzed files for it.
+        let (over_limit_count, over_limit_lines) = self
+            .over_limit_files
+            .iter()
+            .fold((0usize, 0usize), |(count, lines), file| {
+                (count + 1, lines.saturating_add(file.changed_lines))
+            });
         let file_min = self
             .selected_files
             .len()
-            .saturating_add(usize::from(self.next_file_changed_lines.is_some()));
-        // #13641: admitting a file over its language limit also needs a line
-        // budget of at least its size; one line raise covers both minimums.
-        let largest_over_limit = self
-            .over_limit_files
-            .iter()
-            .map(|file| file.changed_lines)
-            .max()
-            .unwrap_or(0);
+            .saturating_add(usize::from(self.next_file_changed_lines.is_some()))
+            .saturating_add(over_limit_count);
         let line_min = self
             .selected_changed_lines
             .saturating_add(next_lines)
-            .max(largest_over_limit);
+            .saturating_add(over_limit_lines);
         // The next-file minimum alone can leave the run partial again, so the
         // budget that analyzes the whole diff rides along when it can be
         // granted (#10894).
@@ -7402,8 +7407,8 @@ fn absent_delimiter_boundary_returns_head() {
         );
         assert_eq!(
             scope.widen_instruction(),
-            "raise RIPR_MAX_DIFF_CHANGED_RUST_LINES to at least 5 (1 file(s) exceed it on their \
-             own) and RIPR_PARTIAL_DIFF_LINE_BUDGET to at least 5, then re-run"
+            "raise RIPR_MAX_DIFF_CHANGED_RUST_LINES to at least 6 (1 file(s) exceed it on their \
+             own) and RIPR_PARTIAL_DIFF_LINE_BUDGET to at least 6, then re-run"
         );
         // The partial line budget is named once even when a budget stop and
         // an over-limit file both need it (#13641 review).
@@ -7532,7 +7537,7 @@ fn absent_delimiter_boundary_returns_head() {
         assert!(
             scope
                 .widen_instruction()
-                .starts_with("raise RIPR_MAX_DIFF_CHANGED_PYTHON_LINES to at least 800"),
+                .starts_with("raise RIPR_MAX_DIFF_CHANGED_PYTHON_LINES to at least 820"),
             "{}",
             scope.widen_instruction()
         );
@@ -7720,6 +7725,79 @@ fn absent_delimiter_boundary_returns_head() {
         let wider = select_partial_diff_partition(&files, &followed, &languages)
             .ok_or("one 400-line file is still left out")?;
         assert_eq!(wider.selected_files, vec!["src/a.rs", "pkg/a.py"]);
+        Ok(())
+    }
+
+    #[test]
+    fn following_over_limit_advice_analyzes_the_whole_diff() -> Result<(), String> {
+        // #13641 review: a 10-line file beside a 2,100-line one, in both
+        // orders. Selection takes whole files in order, so advice naming only
+        // the large file's own size (2,100) either leaves it out again (small
+        // file first) or trades the analyzed small file for it (large file
+        // first). The advice must cover both files.
+        let languages = [LanguageId::Rust];
+        for (label, files, selected) in [
+            (
+                "small-first",
+                vec![
+                    changed_file("src/a.rs", 10, 0),
+                    changed_file("src/b.rs", 2_100, 0),
+                ],
+                "src/a.rs",
+            ),
+            (
+                "large-first",
+                vec![
+                    changed_file("src/a.rs", 2_100, 0),
+                    changed_file("src/b.rs", 10, 0),
+                ],
+                "src/b.rs",
+            ),
+        ] {
+            let budgets = partial_diff_budgets(&languages)?;
+            let scope = select_partial_diff_partition(&files, &budgets, &languages)
+                .ok_or_else(|| format!("{label}: must be partial"))?;
+            assert_eq!(scope.selected_files, vec![selected], "{label}");
+            assert_eq!(
+                scope.stop_reason,
+                PartialDiffStopReason::FileExceedsAnalysisLimit,
+                "{label}"
+            );
+            let advice = scope.widen_instruction();
+            let rust = advised_minimum(&advice, DIFF_CHANGED_RUST_LINE_LIMIT_ENV)
+                .ok_or_else(|| format!("{label}: the Rust limit raise is missing: {advice}"))?;
+            let line = advised_minimum(&advice, PARTIAL_DIFF_LINE_BUDGET_ENV)
+                .ok_or_else(|| format!("{label}: the line budget raise is missing: {advice}"))?;
+            assert_eq!(
+                (rust.as_str(), line.as_str()),
+                ("2110", "2110"),
+                "{label}: {advice}"
+            );
+            // The large file's own size alone does not analyze both files...
+            let own_size = with_forced_diff_limit_env(
+                &[
+                    (DIFF_CHANGED_RUST_LINE_LIMIT_ENV, "2100"),
+                    (PARTIAL_DIFF_LINE_BUDGET_ENV, "2100"),
+                ],
+                || partial_diff_budgets(&languages),
+            )?;
+            let short = select_partial_diff_partition(&files, &own_size, &languages)
+                .ok_or_else(|| format!("{label}: 2,100 cannot hold both files"))?;
+            assert_eq!(short.selected_files.len(), 1, "{label}");
+            // ...while following the advice analyzes the whole diff.
+            let followed = with_forced_diff_limit_env(
+                &[
+                    (DIFF_CHANGED_RUST_LINE_LIMIT_ENV, &rust),
+                    (PARTIAL_DIFF_LINE_BUDGET_ENV, &line),
+                ],
+                || partial_diff_budgets(&languages),
+            )?;
+            assert_eq!(
+                select_partial_diff_partition_with_identity(&files, &files, &followed, &languages,),
+                PartialSelection::Fits,
+                "{label}: following the advice must select both files"
+            );
+        }
         Ok(())
     }
 

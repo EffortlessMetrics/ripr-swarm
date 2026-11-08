@@ -178,7 +178,9 @@ selected files: exact paths, in selection order
 selected changed-line count
 uninspected files: lower-bound count (files with changed lines not selected)
 uninspected changed-line lower-bound
-stop reason: which budget bound was reached (file or line budget)
+stop reason: which bound stopped selection (file budget, line budget, or
+  file_exceeds_analysis_limit when only over-limit files were left out)
+over-limit files: files each over their own language limit, left out (#13641)
 gate eligibility: ineligible
 ```
 

@@ -9987,10 +9987,18 @@ index 0000000..1111111 100644
                 "{label}: {:?}",
                 scope.selected_files
             );
+            // #13641 review: the advice keeps every selected file and adds
+            // `pkg/big.py` (10-line `pkg/small.py`, plus the 10-line
+            // `src/lib.rs` when Rust is enabled), not only its own 800 lines.
+            let reach = if languages.contains(&LanguageId::Rust) {
+                820
+            } else {
+                810
+            };
             assert!(
-                scope
-                    .widen_instruction()
-                    .contains("RIPR_MAX_DIFF_CHANGED_PYTHON_LINES to at least 800"),
+                scope.widen_instruction().contains(&format!(
+                    "RIPR_MAX_DIFF_CHANGED_PYTHON_LINES to at least {reach}"
+                )),
                 "{label}: {}",
                 scope.widen_instruction()
             );

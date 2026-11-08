@@ -120,6 +120,10 @@ explainable refusal to repair from.
 - An over-limit file that sorts first beside fitting files is left out
   (`over_limit_files`, stop reason `file_exceeds_analysis_limit`) and the
   fitting files are analyzed; an over-limit file alone still refuses.
+- The widen advice for a run with over-limit files names budgets that keep
+  every selected file and add the over-limit ones (their summed lines, not the
+  largest alone), so following it analyzes more, never trades an analyzed
+  file for the over-limit one (#13641 review).
 
 ## Non-Goals
 
@@ -172,6 +176,7 @@ explainable refusal to repair from.
 - `crates/ripr/src/analysis/language/rust/mod.rs` tests:
   `changed_rust_line_guard_measures_the_selected_partition`,
   `each_file_is_judged_against_its_own_language_limit`,
+  `following_over_limit_advice_analyzes_the_whole_diff`,
   `partial_budgets_read_only_enabled_language_limits`.
 - `crates/ripr/src/output/limited_check.rs` tests:
   `python_budget_refusal_names_python_diff_scope_budget`,
