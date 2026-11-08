@@ -43,7 +43,7 @@ impl<'a> FunctionKey<'a> {
 /// every index consumer sees the same executable-test role regardless of
 /// which syntax producer handled the file.
 pub(super) fn normalize_index_test_styles(index: &mut RustIndex) -> Result<(), String> {
-    let generator_files = super::quickcheck_generator::verified_files(index);
+    let generator_impls = super::quickcheck_generator::verified_impls(index);
     let aliases = LocalTestAliases::collect(
         &index.files,
         &index.function_facts,
@@ -53,7 +53,7 @@ pub(super) fn normalize_index_test_styles(index: &mut RustIndex) -> Result<(), S
     for facts in index.files.values_mut() {
         cancellation::checkpoint()?;
         let alias_credit = aliases.credit_for(&facts.path);
-        let generator_file = generator_files.contains(&facts.path);
+        let generator_file = generator_impls.get(&facts.path).map(Vec::as_slice);
         normalize_indexed_file_test_styles(
             facts,
             &mut index.function_facts,
@@ -103,7 +103,7 @@ fn normalize_indexed_file_test_styles(
     functions: &mut FactArena<FunctionFact>,
     tests: &mut FactArena<TestFact>,
     alias_credit: FileAliasCredit,
-    generator_file: bool,
+    generator_file: Option<&[(usize, usize)]>,
 ) -> Result<(), String> {
     let mut existing_tests = std::mem::take(&mut facts.tests)
         .into_iter()
@@ -170,7 +170,9 @@ fn normalize_indexed_file_test_styles(
             // A proof harness is verification source, not a production seam
             // and not a test: no `TestFact`, no assertion credit.
             FunctionSourceRole::ProofHarness
-        } else if generator_file && super::quickcheck_generator::is_generator(function) {
+        } else if generator_file
+            .is_some_and(|impls| super::quickcheck_generator::is_generator(function, impls))
+        {
             FunctionSourceRole::TestInputGenerator
         } else {
             FunctionSourceRole::Production

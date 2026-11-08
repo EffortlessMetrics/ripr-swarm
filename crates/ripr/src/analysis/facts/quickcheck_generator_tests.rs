@@ -122,7 +122,7 @@ fn findings_at_with_provider_admission(
                 "fixture ambient configuration"
             );
             assert_eq!(
-                quickcheck_generator::verified_files(&index).contains(&path),
+                quickcheck_generator::verified_impls(&index).contains_key(&path),
                 expected_provider_admission,
                 "provider admission; functions: {:?}",
                 index

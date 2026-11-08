@@ -1,19 +1,100 @@
-//! Bounded identity authority for QuickCheck stimulus (#11545).
+//! Bounded identity authority for property-test input generators (#11545).
 //!
-//! The first slice admits conventional single-package crate roots only.
-//! A trait name, nearest manifest, alias, or unexpanded macro alone is not
-//! identity. Unsupported layouts retain their ordinary analysis; no role is
+//! A generator is a method of a hand-written `impl` of a provider's
+//! `Arbitrary` trait: QuickCheck (`quickcheck::Arbitrary`), proptest
+//! (`proptest::arbitrary::Arbitrary` or its `prelude` re-export) or the
+//! `arbitrary` crate (`arbitrary::Arbitrary<'a>`). The provider is the sole
+//! mandatory, manifest-verified registry dependency of a conventional
+//! single-package crate; its `src/lib.rs` / `src/main.rs` root and the files
+//! reached from it through plain out-of-line `mod name;` declarations are
+//! eligible. The trait is spelled either by its qualified provider path or
+//! by a name an explicit provider import binds in the impl's own module.
+//!
+//! A trait name, nearest manifest, glob, unexpanded macro, or derive alone is
+//! not identity. `#[derive(Arbitrary)]` generates no hand-written generator
+//! and is not a recognized attribute: a file carrying it keeps its ordinary
+//! analysis, and a change to a derived type's fields stays product data
+//! shape. Unsupported layouts retain their ordinary analysis; no role is
 //! inferred from a function named `arbitrary`.
 
 use super::{FunctionContainer, FunctionFact, FunctionSourceRole, RustIndex};
-use ra_ap_syntax::{AstNode, ast};
-use std::collections::BTreeSet;
-use std::path::PathBuf;
+use ra_ap_syntax::ast::{HasAttrs, HasModuleItem, HasName, HasVisibility};
+use ra_ap_syntax::{AstNode, SyntaxNode, ast};
+use std::collections::{BTreeMap, BTreeSet};
+use std::path::{Path, PathBuf};
 
-pub(super) fn is_generator(function: &FunctionFact) -> bool {
-    matches!(&function.item.container,
-        FunctionContainer::TraitImpl { trait_path, .. }
-        if matches!(trait_path.as_str(), "quickcheck::Arbitrary" | "::quickcheck::Arbitrary"))
+/// Inclusive 1-based line ranges of admitted generator `impl` blocks, by
+/// root-relative file.
+pub(super) type GeneratorImpls = BTreeMap<PathBuf, Vec<(usize, usize)>>;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Provider {
+    QuickCheck,
+    Proptest,
+    Arbitrary,
+}
+
+impl Provider {
+    const ALL: [Self; 3] = [Self::QuickCheck, Self::Proptest, Self::Arbitrary];
+
+    fn krate(self) -> &'static str {
+        match self {
+            Self::QuickCheck => "quickcheck",
+            Self::Proptest => "proptest",
+            Self::Arbitrary => "arbitrary",
+        }
+    }
+
+    /// Published paths of the provider's generator trait.
+    fn trait_paths(self) -> &'static [&'static [&'static str]] {
+        match self {
+            Self::QuickCheck => &[&["quickcheck", "Arbitrary"]],
+            Self::Proptest => &[
+                &["proptest", "arbitrary", "Arbitrary"],
+                &["proptest", "prelude", "Arbitrary"],
+            ],
+            Self::Arbitrary => &[&["arbitrary", "Arbitrary"]],
+        }
+    }
+
+    /// `arbitrary::Arbitrary<'a>` carries one lifetime parameter; the other
+    /// providers' traits carry none.
+    fn takes_lifetime(self) -> bool {
+        self == Self::Arbitrary
+    }
+}
+
+/// Standard derives that need no import and cannot bind a provider name.
+const BUILTIN_DERIVES: &[&str] = &[
+    "Clone",
+    "Copy",
+    "Debug",
+    "Default",
+    "Eq",
+    "Hash",
+    "Ord",
+    "PartialEq",
+    "PartialOrd",
+];
+
+/// Names a provider-, crate- or super-rooted import must not rebind: the
+/// derives and attributes the namespace check trusts.
+fn rebinds_trusted_name(name: &str) -> bool {
+    BUILTIN_DERIVES.contains(&name)
+        || matches!(name, "cfg" | "derive" | "test")
+        || Provider::ALL
+            .iter()
+            .any(|provider| provider.krate() == name)
+}
+
+/// Whether `function` is a method directly inside an admitted generator impl.
+pub(super) fn is_generator(function: &FunctionFact, impls: &[(usize, usize)]) -> bool {
+    matches!(
+        &function.item.container,
+        FunctionContainer::TraitImpl { .. }
+    ) && impls
+        .iter()
+        .any(|(start, end)| *start <= function.start_line && function.end_line <= *end)
 }
 
 /// Line coordinates cannot distinguish a generator from a production subject
@@ -40,9 +121,10 @@ pub(crate) fn is_generator_subject(index: &RustIndex, path: &std::path::Path, li
     found
 }
 
-fn sole_provider_dependency(manifest: &toml::Value) -> bool {
-    // A differently keyed dependency can export a library named quickcheck.
-    // This slice does not resolve other edges, so it cannot rule that out.
+fn sole_provider_dependency(manifest: &toml::Value) -> Option<Provider> {
+    // A differently keyed dependency can export a library named like the
+    // provider. This route does not resolve other edges, so it cannot rule
+    // that out.
     if [
         "target",
         "dev-dependencies",
@@ -53,25 +135,38 @@ fn sole_provider_dependency(manifest: &toml::Value) -> bool {
     .iter()
     .any(|key| manifest.get(*key).is_some())
     {
-        return false;
+        return None;
     }
-    let Some(dependencies) = manifest.get("dependencies").and_then(toml::Value::as_table) else {
-        return false;
-    };
-    dependencies.len() == 1
-        && dependencies.get("quickcheck").is_some_and(|spec| {
+    let dependencies = manifest
+        .get("dependencies")
+        .and_then(toml::Value::as_table)?;
+    if dependencies.len() != 1 {
+        return None;
+    }
+    Provider::ALL.into_iter().find(|provider| {
+        dependencies.get(provider.krate()).is_some_and(|spec| {
             spec.get("optional")
                 .is_none_or(|optional| optional.as_bool() == Some(false))
         })
+    })
 }
 
-pub(super) fn verified_files(index: &RustIndex) -> BTreeSet<PathBuf> {
-    let mut verified = BTreeSet::new();
+pub(super) fn verified_impls(index: &RustIndex) -> GeneratorImpls {
+    let mut verified = GeneratorImpls::new();
     let Some(root) = index.drop_in_manifests.root() else {
         return verified;
     };
     // Do not add manifest/configuration work to indexes without a candidate.
-    if !index.function_facts.iter().any(is_generator) {
+    let candidate = index.files.values().any(|facts| {
+        facts.source.contains("Arbitrary")
+            && facts.functions.iter().any(|id| {
+                matches!(
+                    index.function_facts[*id].item.container,
+                    FunctionContainer::TraitImpl { .. }
+                )
+            })
+    });
+    if !candidate {
         return verified;
     }
     let Some(manifest) = std::fs::read_to_string(root.join("Cargo.toml"))
@@ -80,12 +175,15 @@ pub(super) fn verified_files(index: &RustIndex) -> BTreeSet<PathBuf> {
     else {
         return verified;
     };
+    let Some(provider) = sole_provider_dependency(&manifest) else {
+        return verified;
+    };
+    let krate = provider.krate();
     let package = manifest.get("package");
     let edition = package
         .and_then(|package| package.get("edition"))
         .and_then(toml::Value::as_str);
     if !matches!(edition, Some("2018" | "2021" | "2024"))
-        || !sole_provider_dependency(&manifest)
         || manifest
             .get("workspace")
             .is_some_and(|workspace| !workspace.as_table().is_some_and(toml::Table::is_empty))
@@ -95,10 +193,13 @@ pub(super) fn verified_files(index: &RustIndex) -> BTreeSet<PathBuf> {
         || package
             .and_then(|package| package.get("name"))
             .and_then(toml::Value::as_str)
-            == Some("quickcheck")
+            .is_some_and(|name| name.replace('-', "_") == krate)
         || manifest.get("lib").is_some_and(|lib| {
             lib.get("path").is_some()
-                || lib.get("name").and_then(toml::Value::as_str) == Some("quickcheck")
+                || lib
+                    .get("name")
+                    .and_then(toml::Value::as_str)
+                    .is_some_and(|name| name.replace('-', "_") == krate)
         })
         || ["bin", "test", "bench", "example"]
             .iter()
@@ -108,77 +209,353 @@ pub(super) fn verified_files(index: &RustIndex) -> BTreeSet<PathBuf> {
     {
         return verified;
     }
+    let mut visited = BTreeSet::new();
     for path in [PathBuf::from("src/lib.rs"), PathBuf::from("src/main.rs")] {
-        let Some(facts) = index.files.get(&path) else {
-            continue;
-        };
-        if facts.used_lexical_fallback
-            || !facts
-                .functions
-                .iter()
-                .any(|id| is_generator(&index.function_facts[*id]))
-            || !index.member_crates.is_default_target_root(&path)
-            || !index.drop_in_manifests.verified(&path, "quickcheck")
-        {
-            continue;
-        }
-        let Some(tree) = index
-            .source_syntax
-            .get(index, &path)
-            .and_then(|snapshot| snapshot.tree())
-        else {
-            continue;
-        };
-        if namespace_is_unambiguous(&tree) {
-            verified.insert(path);
+        if index.files.contains_key(&path) && index.member_crates.is_default_target_root(&path) {
+            admit_module_file(
+                index,
+                provider,
+                &path,
+                Path::new("src"),
+                true,
+                &mut visited,
+                &mut verified,
+            );
         }
     }
     verified
 }
 
-fn namespace_is_unambiguous(tree: &ast::SourceFile) -> bool {
+/// Admit `path` and, recursively, the files its plain top-level `mod name;`
+/// declarations load (`dir/name.rs` or `dir/name/mod.rs`). A file that is
+/// unparsed, lexically indexed, unverified or namespace-ambiguous is refused
+/// with its whole subtree: a parent's opaque content can redirect a child.
+fn admit_module_file(
+    index: &RustIndex,
+    provider: Provider,
+    path: &Path,
+    module_dir: &Path,
+    crate_root: bool,
+    visited: &mut BTreeSet<PathBuf>,
+    verified: &mut GeneratorImpls,
+) {
+    if !visited.insert(path.to_path_buf()) {
+        return;
+    }
+    let Some(facts) = index.files.get(path) else {
+        return;
+    };
+    if facts.used_lexical_fallback || !index.drop_in_manifests.verified(path, provider.krate()) {
+        return;
+    }
+    let Some(tree) = index
+        .source_syntax
+        .get(index, path)
+        .and_then(|snapshot| snapshot.tree())
+    else {
+        return;
+    };
+    if !namespace_is_unambiguous(&tree, provider, crate_root) {
+        return;
+    }
+    let impls = generator_impls(&tree, provider);
+    if !impls.is_empty() {
+        verified.insert(path.to_path_buf(), impls);
+    }
+    for item in tree.items() {
+        let ast::Item::Module(module) = item else {
+            continue;
+        };
+        if module.item_list().is_some() {
+            // Out-of-line children of inline modules use nested directories;
+            // this route does not follow them.
+            continue;
+        }
+        let Some(name) = module.name().map(|name| name.text().to_string()) else {
+            continue;
+        };
+        let flat = module_dir.join(format!("{name}.rs"));
+        let nested = module_dir.join(&name).join("mod.rs");
+        let child = match (
+            index.files.contains_key(&flat),
+            index.files.contains_key(&nested),
+        ) {
+            (true, false) => flat,
+            (false, true) => nested,
+            _ => continue,
+        };
+        admit_module_file(
+            index,
+            provider,
+            &child,
+            &module_dir.join(&name),
+            false,
+            visited,
+            verified,
+        );
+    }
+}
+
+/// Line ranges of `impl <provider trait> for T` blocks whose trait spelling
+/// resolves to the provider: a qualified provider path anywhere in the file
+/// (the namespace check refuses every binding of the provider name), or a
+/// single name bound by an explicit provider import in the impl's own module.
+fn generator_impls(tree: &ast::SourceFile, provider: Provider) -> Vec<(usize, usize)> {
+    let text = tree.syntax().text().to_string();
+    let line_of = |offset: usize| {
+        text.get(..offset)
+            .map_or(0, |prefix| prefix.matches('\n').count())
+            + 1
+    };
+    tree.syntax()
+        .descendants()
+        .filter_map(ast::Impl::cast)
+        .filter(|item| {
+            // Only module-level impls: a function body may hold local items
+            // and macro expansions that this file-wide check does not read.
+            let Some(scope) = item.syntax().parent().filter(|scope| {
+                ast::SourceFile::can_cast(scope.kind()) || ast::ItemList::can_cast(scope.kind())
+            }) else {
+                return false;
+            };
+            let Some(trait_ty) = item.trait_() else {
+                return false;
+            };
+            let Some(segments) = trait_segments(&trait_ty.syntax().text().to_string(), provider)
+            else {
+                return false;
+            };
+            if provider
+                .trait_paths()
+                .iter()
+                .any(|path| path.iter().copied().eq(segments.iter().map(String::as_str)))
+            {
+                return true;
+            }
+            let [name] = segments.as_slice() else {
+                return false;
+            };
+            scope_imports_trait(&scope, name, provider)
+        })
+        .map(|item| {
+            let range = item.syntax().text_range();
+            (
+                line_of(usize::from(range.start())),
+                line_of(usize::from(range.end())),
+            )
+        })
+        .collect()
+}
+
+/// Segments of a trait path written as plain identifiers, an optional leading
+/// `::`, and, for a lifetime-carrying provider trait, only lifetime arguments
+/// on the last segment. Anything else (qualified `<T as _>` paths, type
+/// arguments, `self`/`super`/`crate` roots) is not a provider spelling.
+fn trait_segments(text: &str, provider: Provider) -> Option<Vec<String>> {
+    let compact = text.split_whitespace().collect::<String>();
+    let path = compact.strip_prefix("::").unwrap_or(&compact);
+    let path = match path.split_once('<') {
+        None => path,
+        Some((head, arguments)) => {
+            let arguments = arguments.strip_suffix('>')?;
+            if !provider.takes_lifetime()
+                || arguments.contains(['<', '>'])
+                || !arguments.split(',').all(|argument| {
+                    argument
+                        .strip_prefix('\'')
+                        .is_some_and(|name| !name.is_empty() && name.chars().all(is_ident_char))
+                })
+            {
+                return None;
+            }
+            head
+        }
+    };
+    let segments = path
+        .split("::")
+        .map(|segment| segment.strip_prefix("r#").unwrap_or(segment).to_string())
+        .collect::<Vec<_>>();
+    segments
+        .iter()
+        .all(|segment| {
+            !segment.is_empty()
+                && segment.chars().all(is_ident_char)
+                && !matches!(segment.as_str(), "self" | "super" | "crate" | "Self")
+        })
+        .then_some(segments)
+}
+
+fn is_ident_char(c: char) -> bool {
+    c.is_alphanumeric() || c == '_'
+}
+
+/// Whether a `use` item directly in `scope` (the impl's own module: a file
+/// or an inline module's item list) binds `name` to a provider trait path.
+/// A same-module item of that name would collide with the import (E0255),
+/// and an explicit import outranks globs.
+fn scope_imports_trait(scope: &SyntaxNode, name: &str, provider: Provider) -> bool {
+    scope.children().filter_map(ast::Use::cast).any(|import| {
+        flattened_use(&import).is_some_and(|bindings| {
+            bindings.iter().any(|binding| {
+                binding.name.as_deref() == Some(name)
+                    && provider.trait_paths().iter().any(|path| {
+                        path.iter()
+                            .copied()
+                            .eq(binding.path.iter().map(String::as_str))
+                    })
+            })
+        })
+    })
+}
+
+struct UseBinding {
+    path: Vec<String>,
+    /// The bound name; `None` for `as _`.
+    name: Option<String>,
+}
+
+/// Flatten a use tree into its imported paths. `None` for a glob, a `self`
+/// leaf, or a shape this route does not read.
+fn flattened_use(import: &ast::Use) -> Option<Vec<UseBinding>> {
+    fn walk(tree: &ast::UseTree, prefix: &[String], out: &mut Vec<UseBinding>) -> Option<()> {
+        if tree.star_token().is_some() {
+            return None;
+        }
+        let mut path = prefix.to_vec();
+        if let Some(own) = tree.path() {
+            for segment in own
+                .syntax()
+                .text()
+                .to_string()
+                .split_whitespace()
+                .collect::<String>()
+                .split("::")
+            {
+                if segment.is_empty() {
+                    // A leading `::` names the extern prelude root.
+                    continue;
+                }
+                if segment == "self" || !segment.chars().all(is_ident_char) {
+                    return None;
+                }
+                path.push(segment.strip_prefix("r#").unwrap_or(segment).to_string());
+            }
+        }
+        if let Some(list) = tree.use_tree_list() {
+            if tree.rename().is_some() {
+                return None;
+            }
+            for child in list.use_trees() {
+                walk(&child, &path, out)?;
+            }
+            return Some(());
+        }
+        let name = match tree.rename() {
+            Some(rename) if rename.underscore_token().is_some() => None,
+            Some(rename) => Some(rename.name()?.text().to_string()),
+            None => Some(path.last()?.clone()),
+        };
+        out.push(UseBinding { path, name });
+        Some(())
+    }
+    let mut out = Vec::new();
+    walk(&import.use_tree()?, &[], &mut out)?;
+    Some(out)
+}
+
+fn namespace_is_unambiguous(tree: &ast::SourceFile, provider: Provider, crate_root: bool) -> bool {
+    let krate = provider.krate();
     // Refusal is deliberately file-wide. Macro expansions and imported
     // namespaces cannot be used as absence certificates for shadowing.
     !tree.syntax().descendants().any(|node| {
         if let Some(name) = ast::Name::cast(node.clone()) {
-            return matches!(name.text(), "quickcheck" | "r#quickcheck");
+            // A function lives in the value namespace and cannot shadow the
+            // provider's module path (`fn arbitrary` of the `arbitrary`
+            // crate's trait). Every other binding of the name is refused.
+            let text = name.text();
+            let bare = text.strip_prefix("r#").unwrap_or(&text);
+            return bare == krate
+                && !node
+                    .parent()
+                    .is_some_and(|parent| ast::Fn::can_cast(parent.kind()));
         }
         if let Some(import) = ast::Use::cast(node.clone()) {
-            // This slice admits only direct QuickCheck type imports. Other
-            // imports could replace a derive or the provider namespace.
-            let text = import
-                .syntax()
-                .text()
-                .to_string()
-                .split_whitespace()
-                .collect::<String>();
-            return !matches!(
-                text.as_str(),
-                "usequickcheck::Arbitrary;"
-                    | "usequickcheck::Gen;"
-                    | "usequickcheck::{Arbitrary,Gen};"
-                    | "usequickcheck::{Gen,Arbitrary};"
-            );
+            return !import_is_admitted(&import, krate, crate_root);
         }
         if let Some(attribute) = ast::Attr::cast(node.clone()) {
-            let text = attribute
-                .syntax()
-                .text()
-                .to_string()
-                .split_whitespace()
-                .collect::<String>();
-            // These built-in derives cannot introduce a provider binding;
-            // imported/redefined derive names are refused above/below.
-            return !matches!(
-                text.as_str(),
-                "#[derive(Clone)]" | "#[derive(Clone,Debug)]" | "#[derive(Debug,Clone)]"
-            );
+            return !attribute_is_trusted(&attribute);
+        }
+        if ast::MacroCall::can_cast(node.kind()) {
+            // A macro invoked inside a function body expands into that block
+            // only; generator impls are admitted at module level only.
+            return !node
+                .ancestors()
+                .any(|ancestor| ast::BlockExpr::can_cast(ancestor.kind()));
         }
         ast::ExternCrate::can_cast(node.kind())
-            || ast::MacroCall::can_cast(node.kind())
             || ast::MacroRules::can_cast(node.kind())
             || ast::MacroDef::can_cast(node.kind())
     })
+}
+
+/// Admitted imports cannot rebind the provider name or a trusted built-in:
+/// non-glob paths rooted at the provider, `crate` or `super`, plus
+/// `use super::*;` inside an inline module (its parent's names are in this
+/// file and checked here).
+fn import_is_admitted(import: &ast::Use, krate: &str, crate_root: bool) -> bool {
+    if import.attrs().next().is_some() || import.visibility().is_some() {
+        return false;
+    }
+    let compact = import
+        .syntax()
+        .text()
+        .to_string()
+        .split_whitespace()
+        .collect::<String>();
+    let inline_module = import
+        .syntax()
+        .parent()
+        .is_some_and(|parent| ast::ItemList::can_cast(parent.kind()));
+    if compact == "usesuper::*;" {
+        return inline_module;
+    }
+    let Some(bindings) = flattened_use(import) else {
+        return false;
+    };
+    !bindings.is_empty()
+        && bindings.iter().all(|binding| {
+            let root_ok = match binding.path.first().map(String::as_str) {
+                Some(root) if root == krate => true,
+                Some("crate") => true,
+                Some("super") => !crate_root || inline_module,
+                _ => false,
+            };
+            root_ok
+                && binding
+                    .name
+                    .as_deref()
+                    .is_none_or(|name| !rebinds_trusted_name(name))
+        })
+}
+
+/// Built-in attributes that cannot introduce a provider binding: derives of
+/// standard traits, `#[cfg(test)]` and `#[test]`. Every other attribute,
+/// including `#[derive(Arbitrary)]`, refuses the file.
+fn attribute_is_trusted(attribute: &ast::Attr) -> bool {
+    let text = attribute
+        .syntax()
+        .text()
+        .to_string()
+        .split_whitespace()
+        .collect::<String>();
+    if matches!(text.as_str(), "#[cfg(test)]" | "#[test]") {
+        return true;
+    }
+    text.strip_prefix("#[derive(")
+        .and_then(|rest| rest.strip_suffix(")]"))
+        .is_some_and(|list| {
+            !list.is_empty() && list.split(',').all(|name| BUILTIN_DERIVES.contains(&name))
+        })
 }
 
 fn plain_compiler_configuration(root: &std::path::Path) -> bool {
