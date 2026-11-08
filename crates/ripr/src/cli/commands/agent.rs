@@ -925,7 +925,9 @@ pub(in crate::cli) fn translate_seam_id_for(
                     && matches!(*language, "TypeScript" | "Python")
             }) {
                 // #13791: the inspection surfaces name the id's family (a
-                // finding or gap id, not a seam id) and the working preview
+                // finding or gap id, not a seam id) by its shape alone, so the
+                // wording says "shaped like" rather than vouching that the
+                // finding still exists, and name the working preview
                 // route in one line, so an agent can tell this from a truly
                 // unknown id. The start stays conditional on `check`
                 // printing it: the shared readiness owner decides that.
@@ -935,7 +937,7 @@ pub(in crate::cli) fn translate_seam_id_for(
                     "finding ID"
                 };
                 format!(
-                    "{label} --seam-id `{seam_id}` is a {language} preview {family} from ripr check, not a seam ID; {}",
+                    "{label} --seam-id `{seam_id}` is shaped like a {language} preview {family} from ripr check, not a seam ID; {}",
                     crate::app::task_first::preview_seam_route(root, None, &[language])
                 )
             } else if let Some(language) = language {

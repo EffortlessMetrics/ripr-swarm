@@ -127,7 +127,7 @@ fn assert_seam_surfaces_name_preview_route(
     let (code, stdout, stderr) = ripr(root, &["agent", "card", "--seam-id", id, "--root", "."])?;
     assert_eq!(code, Some(3), "card exit: {stdout}{stderr}");
     for needle in [
-        format!("is a {language} preview {family} from ripr check, not a seam ID"),
+        format!("is shaped like a {language} preview {family} from ripr check, not a seam ID"),
         "--format agent`".to_string(),
         "`ripr agent repair --gap-id <gap> --base <base> --phase before` start".to_string(),
         "covers Rust files only".to_string(),
@@ -151,7 +151,7 @@ fn assert_seam_surfaces_name_preview_route(
         .ok_or("packet has no message")?;
     assert!(
         message.contains(&format!(
-            "is a {language} preview {family} from ripr check, not a seam ID"
+            "is shaped like a {language} preview {family} from ripr check, not a seam ID"
         )) && !message.contains("was not found"),
         "packet must name the id family: {message}"
     );

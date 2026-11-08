@@ -3292,7 +3292,23 @@ pub(crate) fn preview_only_scope_languages(
         if !matches!(id, LanguageId::TypeScript | LanguageId::Python) || !enabled.contains(&id) {
             return Vec::new();
         }
-        let name = id.display_name();
+        // The TypeScript adapter also analyzes JavaScript; name the files'
+        // own language so a JavaScript-only scope is not called TypeScript.
+        let javascript = id == LanguageId::TypeScript
+            && file
+                .extension()
+                .and_then(|ext| ext.to_str())
+                .is_some_and(|ext| {
+                    matches!(
+                        ext.to_ascii_lowercase().as_str(),
+                        "js" | "mjs" | "cjs" | "jsx"
+                    )
+                });
+        let name = if javascript {
+            "JavaScript"
+        } else {
+            id.display_name()
+        };
         if !languages.contains(&name) {
             languages.push(name);
         }
@@ -6187,6 +6203,14 @@ pub(crate) mod tests {
         assert_eq!(
             preview_only_scope_languages(&files(&["b.py", "a.ts"]), &all),
             vec!["Python", "TypeScript"]
+        );
+        assert_eq!(
+            preview_only_scope_languages(&files(&["web/app.js", "web/a.mjs"]), &all),
+            vec!["JavaScript"]
+        );
+        assert_eq!(
+            preview_only_scope_languages(&files(&["web/app.js", "src/a.ts"]), &all),
+            vec!["JavaScript", "TypeScript"]
         );
         for (scope, enabled) in [
             (files(&["src/a.ts", "src/lib.rs"]), &all[..]),
