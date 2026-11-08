@@ -805,6 +805,27 @@
         "https://github.com/EffortlessMetrics/ripr-swarm/issues/9480"
       ],
       "non_claim": "The release does not claim that the harness runs the #1609 manifest admission checks (it reads candidate.sha only, and a test requires that to agree with the admitted manifest), a decoy in a caller directory (the child always runs in the owned case root; the decoy control plants one above it), a per-path generated-exclusion cause in ripr output (attributed by a paired nonmatching-pattern run instead), an end-to-end observation of a spawned child's Git environment (the removal list is pinned), or blind rows for the harness. Nothing has run on the cut binary: the main rehearsal is not the cut packet. Gaps are tracked in #9480 and #4510 stays open."
+    },
+    {
+      "claim_id": "rust-boundary-first-use",
+      "owner_issue": 10622,
+      "materiality": "release_required",
+      "resolution": "landed_and_accepted",
+      "candidate_effect": "For the selected Rust boundary first-use repro, check advises strengthening the existing weak assertion and repair names the manual stub route when its prerequisites hold. These two landings did not change repair eligibility.",
+      "related_issues": [
+        10644,
+        10671,
+        8610
+      ],
+      "implementation_refs": [
+        "pr:10643",
+        "pr:10642"
+      ],
+      "proof_refs": [
+        "https://github.com/EffortlessMetrics/ripr-swarm/issues/10622#issuecomment-6419723248",
+        "https://github.com/EffortlessMetrics/ripr-swarm/issues/10622#issuecomment-6420398229"
+      ],
+      "non_claim": "No exact-candidate replay is claimed. Same-test pairing and summary-string coupling remain with #10671. The separate wording issue #10644 was completed by #10754, and the distinct boolean-boundary repair-credit issue #8610 was completed by #10792."
     }
   ],
   "outside_selection": [

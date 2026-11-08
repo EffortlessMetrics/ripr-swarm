@@ -134,6 +134,38 @@ fn committed_packet_passes() {
     assert_eq!(outcome.violations, Vec::<String>::new());
 }
 
+// The #2766 selection decision is independent of the historical issue census.
+fn selected_rust_boundary_claim(packet: &Value) -> bool {
+    packet["claims"].as_array().is_some_and(|claims| {
+        claims.iter().any(|claim| {
+            claim["owner_issue"] == 10622
+                && claim["resolution"] == "landed_and_accepted"
+                && claim["implementation_refs"].as_array().is_some_and(|refs| {
+                    refs.contains(&json!("pr:10643")) && refs.contains(&json!("pr:10642"))
+                })
+        })
+    })
+}
+
+#[test]
+fn selected_rust_boundary_first_use_is_recorded() {
+    let path = format!("{}/../{RELEASE_SELECTION_PATH}", env!("CARGO_MANIFEST_DIR"));
+    let text = std::fs::read_to_string(path).expect("read release selection");
+    let mut packet: Value = serde_json::from_str(&text).expect("parse release selection");
+    assert!(
+        selected_rust_boundary_claim(&packet),
+        "selected #10622 and both landings must be recorded"
+    );
+    packet["claims"]
+        .as_array_mut()
+        .expect("claims")
+        .retain(|claim| claim["owner_issue"] != 10622);
+    assert!(
+        !selected_rust_boundary_claim(&packet),
+        "control must reject omission"
+    );
+}
+
 #[test]
 fn schema_rejects_unknown_fields_and_wrong_identity() {
     let mut unknown = valid();
