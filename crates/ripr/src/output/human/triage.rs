@@ -23,6 +23,112 @@ use crate::output::python_repair_card::python_repair_card;
 use crate::output::typescript_packet_projection::typescript_gap_record_for;
 use std::collections::BTreeSet;
 
+/// A changed Python predicate that holds several relational comparisons, as
+/// the boundary analysis names it in the Missing check (`The changed predicate
+/// `rate < 0 or rate >= 1` holds 2 relational comparisons; ...`). #13790 only
+/// names this reason and the by-hand test shape where the shared readiness
+/// owner already declined the gap; it never decides readiness.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct MultiComparisonPredicate {
+    pub(crate) condition: String,
+    pub(crate) comparisons: usize,
+}
+
+impl MultiComparisonPredicate {
+    /// Why no repair target exists, in plain words.
+    pub(crate) fn reason(&self) -> String {
+        format!(
+            "the changed predicate `{}` holds {} comparisons, so static evidence cannot tell which boundary a test pins",
+            self.condition, self.comparisons
+        )
+    }
+
+    /// The by-hand test shape: one row per boundary, naming each boundary
+    /// equality when every comparison is a plain `left OP right` (or a chain
+    /// of them), otherwise the shape alone.
+    pub(crate) fn manual_test_shape(&self) -> String {
+        match self.boundary_equalities() {
+            Some(rows) => format!(
+                "add one test row per boundary ({})",
+                rows.iter()
+                    .map(|row| format!("`{row}`"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+            None => "add one test row per boundary of the predicate".to_string(),
+        }
+    }
+
+    fn boundary_equalities(&self) -> Option<Vec<String>> {
+        const OPERATORS: [&str; 6] = ["<=", ">=", "==", "!=", "<", ">"];
+        let mut rows = Vec::new();
+        let normalized = self.condition.replace(" and ", " or ");
+        for part in normalized.split(" or ") {
+            let part = part.trim().trim_start_matches('(').trim_end_matches(')');
+            let mut operands = Vec::new();
+            let mut rest = part;
+            loop {
+                let next = OPERATORS
+                    .iter()
+                    .filter_map(|op| rest.find(op).map(|at| (at, op.len())))
+                    .min_by_key(|(at, len)| (*at, usize::MAX - len));
+                match next {
+                    Some((at, len)) => {
+                        operands.push(rest.get(..at)?.trim());
+                        rest = rest.get(at + len..)?;
+                    }
+                    None => {
+                        operands.push(rest.trim());
+                        break;
+                    }
+                }
+            }
+            if operands.len() < 2 {
+                return None;
+            }
+            for pair in operands.windows(2) {
+                let [left, right] = *pair else {
+                    return None;
+                };
+                let simple = |operand: &str| {
+                    !operand.is_empty()
+                        && operand
+                            .chars()
+                            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '.' | '-'))
+                };
+                if !simple(left) || !simple(right) {
+                    return None;
+                }
+                let literal = |operand: &str| operand.parse::<f64>().is_ok();
+                let row = if literal(left) && !literal(right) {
+                    format!("{right} == {left}")
+                } else {
+                    format!("{left} == {right}")
+                };
+                if !rows.contains(&row) {
+                    rows.push(row);
+                }
+            }
+        }
+        (rows.len() > 1).then_some(rows)
+    }
+}
+
+/// The several-comparison predicate the Missing check names, if any (#13790).
+pub(crate) fn multi_comparison_predicate(missing: &[String]) -> Option<MultiComparisonPredicate> {
+    missing.iter().find_map(|line| {
+        let rest = line.split("The changed predicate `").nth(1)?;
+        let (condition, rest) = rest.split_once("` holds ")?;
+        let (count, _) = rest.split_once(" relational comparisons")?;
+        let comparisons = count.trim().parse::<usize>().ok().filter(|n| *n > 1)?;
+        let condition = condition.trim();
+        (!condition.is_empty()).then(|| MultiComparisonPredicate {
+            condition: condition.to_string(),
+            comparisons,
+        })
+    })
+}
+
 /// The operand static evidence cannot bind to a test input when a weakly
 /// exposed Python boundary finding declines its repair card: the Missing check
 /// names the equality (`amount == DISCOUNT_THRESHOLD`) but one side reads
@@ -1568,7 +1674,11 @@ fn python_preview_safe_action(finding: &Finding, recommend_repair_start: bool) -
         // Missing check but cannot bind one operand to a test input, so no
         // repair card exists. Name that operand instead of the generic line;
         // routing stays fail-closed (no gap id, no card).
-        if let Some(operand) = unresolved_boundary_operand(&finding.missing) {
+        if let Some(predicate) = multi_comparison_predicate(&finding.missing) {
+            // #13790: several comparisons in one predicate: name that and the
+            // by-hand shape (one row per boundary); routing stays closed.
+            (predicate.reason(), "add or strengthen a test by hand")
+        } else if let Some(operand) = unresolved_boundary_operand(&finding.missing) {
             (
                 format!(
                     "static evidence cannot bind `{operand}` to a test input, so the boundary equality cannot become a repair target"
@@ -3668,6 +3778,58 @@ mod tests {
             !rendered.contains("(weak, unresolved currentness)"),
             "{rendered}"
         );
+    }
+
+    #[test]
+    fn multi_comparison_predicate_names_the_condition_and_boundary_rows() {
+        // #13790: the Missing check names a several-comparison predicate.
+        let missing = ["A strong Python oracle reaches `discount`, but static evidence does not place a related test input at the changed predicate boundary. The changed predicate `rate < 0 or rate >= 1` holds 2 relational comparisons; static evidence cannot establish which boundary a related test call pins.".to_string()];
+        let predicate = multi_comparison_predicate(&missing);
+        assert_eq!(
+            predicate,
+            Some(MultiComparisonPredicate {
+                condition: "rate < 0 or rate >= 1".to_string(),
+                comparisons: 2,
+            })
+        );
+        let Some(predicate) = predicate else {
+            return;
+        };
+        assert_eq!(
+            predicate.manual_test_shape(),
+            "add one test row per boundary (`rate == 0`, `rate == 1`)"
+        );
+        // A chained comparison yields both boundaries, literal on the right.
+        let chained = MultiComparisonPredicate {
+            condition: "0 <= rate < 1".to_string(),
+            comparisons: 2,
+        };
+        assert_eq!(
+            chained.manual_test_shape(),
+            "add one test row per boundary (`rate == 0`, `rate == 1`)"
+        );
+        // An operand that is not a plain name or literal keeps the shape only.
+        let computed = MultiComparisonPredicate {
+            condition: "len(xs) > 0 and x < limit(y)".to_string(),
+            comparisons: 2,
+        };
+        assert_eq!(
+            computed.manual_test_shape(),
+            "add one test row per boundary of the predicate"
+        );
+        // Other Missing checks, a single comparison and a computed operand
+        // are not this shape.
+        assert_eq!(
+            multi_comparison_predicate(&["The changed predicate `x < limit(y)` compares a computed operand; static evidence cannot establish that a related test call pins its boundary".to_string()]),
+            None
+        );
+        assert_eq!(
+            multi_comparison_predicate(&[
+                "The changed predicate `x < 1` holds 1 relational comparisons".to_string()
+            ]),
+            None
+        );
+        assert_eq!(multi_comparison_predicate(&[]), None);
     }
 
     #[test]
