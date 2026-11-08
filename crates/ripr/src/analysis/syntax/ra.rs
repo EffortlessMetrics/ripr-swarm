@@ -137,27 +137,114 @@ pub(crate) struct RustEmbedResourceDirective {
     pub(crate) expression: String,
     pub(crate) literal_path: Option<PathBuf>,
     pub(crate) macro_kind: RustEmbedResourceMacro,
+    /// An unqualified spelling that a visible `macro_rules!`, macro 2.0
+    /// definition or `use` import may shadow; it is not the std embed macro.
+    pub(crate) shadowed: bool,
 }
 
-/// Crate-wide `macro_rules!` shadow facts for the embed-resource macros,
-/// computed by the resource-dependency producer from the indexed workspace
-/// sources (#13046): `true` when any indexed Rust source defines a
-/// `macro_rules!` of that name, wherever in the crate it lives.
+/// Which std embed macros some definition or import in a scope may shadow.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(crate) struct EmbedResourceMacroShadowFacts {
-    /// Some indexed Rust source defines `macro_rules! include_str`.
-    pub(crate) include_str: bool,
-    /// Some indexed Rust source defines `macro_rules! include_bytes`.
-    pub(crate) include_bytes: bool,
+pub(crate) struct EmbedMacroShadows {
+    include_str: bool,
+    include_bytes: bool,
 }
 
-impl EmbedResourceMacroShadowFacts {
-    pub(crate) fn has(&self, kind: RustEmbedResourceMacro) -> bool {
+impl EmbedMacroShadows {
+    pub(crate) fn merge(&mut self, other: Self) {
+        self.include_str |= other.include_str;
+        self.include_bytes |= other.include_bytes;
+    }
+
+    fn shadows(self, kind: RustEmbedResourceMacro) -> bool {
         match kind {
             RustEmbedResourceMacro::IncludeStr => self.include_str,
             RustEmbedResourceMacro::IncludeBytes => self.include_bytes,
         }
     }
+
+    fn mark(&mut self, name: &str) {
+        match name {
+            "include_str" => self.include_str = true,
+            "include_bytes" => self.include_bytes = true,
+            _ => {}
+        }
+    }
+}
+
+/// Shadowing definitions and imports of `include_str` / `include_bytes` in one
+/// file: `macro_rules!`, `macro` (2.0) items and `use` imports or renames that
+/// bind the name (std/core/alloc re-imports bind the same macro and are
+/// ignored). A file that does not parse fails closed: a name it mentions at
+/// all counts as shadowed.
+pub(crate) fn rust_embed_macro_shadows(text: &str) -> EmbedMacroShadows {
+    let mut shadows = EmbedMacroShadows::default();
+    let Some(parse) = parse_clean_source_file(text) else {
+        for name in ["include_str", "include_bytes"] {
+            if text.contains(name) {
+                shadows.mark(name);
+            }
+        }
+        return shadows;
+    };
+    for node in parse.tree().syntax().descendants() {
+        if let Some(definition) = ast::MacroRules::cast(node.clone()) {
+            if let Some(name) = definition.name() {
+                shadows.mark(name.text().trim_start_matches("r#"));
+            }
+        } else if let Some(definition) = ast::MacroDef::cast(node.clone()) {
+            if let Some(name) = definition.name() {
+                shadows.mark(name.text().trim_start_matches("r#"));
+            }
+        } else if let Some(tree) = ast::UseTree::cast(node)
+            && tree.use_tree_list().is_none()
+            && tree.star_token().is_none()
+            && !use_tree_is_std_rooted(&tree)
+            && let Some(bound) = use_tree_bound_name(&tree)
+        {
+            shadows.mark(&bound);
+        }
+    }
+    shadows
+}
+
+/// The name a leaf `use` tree binds: its `as` rename, or the last path
+/// segment. `as _` binds nothing.
+fn use_tree_bound_name(tree: &ast::UseTree) -> Option<String> {
+    if let Some(rename) = tree.rename() {
+        return rename
+            .name()
+            .map(|name| name.text().trim_start_matches("r#").to_string());
+    }
+    let segment = tree.path()?.segment()?;
+    Some(
+        segment
+            .name_ref()?
+            .text()
+            .trim_start_matches("r#")
+            .to_string(),
+    )
+}
+
+/// Whether the full path of a leaf `use` tree starts at `std`, `core` or
+/// `alloc`, joining the paths of enclosing nested trees.
+fn use_tree_is_std_rooted(tree: &ast::UseTree) -> bool {
+    let root = tree
+        .syntax()
+        .ancestors()
+        .filter_map(ast::UseTree::cast)
+        .filter_map(|ancestor| ancestor.path())
+        .last()
+        .and_then(|path| {
+            let mut first = path.clone();
+            while let Some(qualifier) = first.qualifier() {
+                first = qualifier;
+            }
+            first
+                .segment()?
+                .name_ref()
+                .map(|name| name.text().to_string())
+        });
+    matches!(root.as_deref(), Some("std" | "core" | "alloc"))
 }
 
 /// Extract `include_str!` / `include_bytes!` macro nodes from parser-backed
@@ -166,12 +253,14 @@ pub(crate) fn rust_embed_resource_directives(
     _path: &Path,
     text: &str,
     max_directives: usize,
-    crate_shadows: &EmbedResourceMacroShadowFacts,
+    scope_shadows: EmbedMacroShadows,
 ) -> Result<Vec<RustEmbedResourceDirective>, String> {
     let Some(parse) = parse_clean_source_file(text) else {
         return Err("rust_embed_resource_parent_parse_unavailable".to_string());
     };
     let line_index = LineIndex::new(text);
+    let mut shadows = rust_embed_macro_shadows(text);
+    shadows.merge(scope_shadows);
     let mut directives = Vec::new();
     for macro_call in parse
         .tree()
@@ -190,15 +279,14 @@ pub(crate) fn rust_embed_resource_directives(
         let Some(macro_kind) = embed_resource_macro_callee(&path) else {
             continue;
         };
-        if embed_resource_call_may_be_shadowed(parse.tree().syntax(), &path, crate_shadows) {
-            continue;
-        }
+        let shadowed = path.segments().count() == 1 && shadows.shadows(macro_kind);
         let expression = slice_text(text, call_start, call_range.end());
         directives.push(RustEmbedResourceDirective {
             line: line_index.line(call_start),
             literal_path: include_literal_path_from_macro_call(&macro_call),
             macro_kind,
             expression,
+            shadowed,
         });
         if directives.len() > max_directives {
             break;
@@ -614,55 +702,6 @@ fn embed_resource_macro_callee(path: &ast::Path) -> Option<RustEmbedResourceMacr
         "include_bytes" => Some(RustEmbedResourceMacro::IncludeBytes),
         _ => None,
     }
-}
-
-/// Whether an unqualified `include_str!` / `include_bytes!` call may resolve
-/// to a same-crate `macro_rules!` of that name instead of the builtin, in
-/// which case the call is skipped rather than given a false exact resource
-/// edge.
-///
-/// Detection is parser-backed for the file being scanned and crate-wide
-/// through `crate_shadows`: the resource producer sets a flag when any
-/// indexed Rust source in the crate defines `macro_rules! include_str` (or
-/// `include_bytes`), so a shadowing macro defined in another module or
-/// brought in by `#[macro_use]` is now seen. The crate-wide scan is lexical
-/// and deliberately conservative: a `macro_rules!` mention inside a comment
-/// or string of another file can only over-skip (fail closed), never
-/// under-skip.
-///
-/// Known limits: a shadowing macro imported with `use` when no crate source
-/// defines a local `macro_rules!` of that name, a `#[macro_use] extern
-/// crate` macro without a local `macro_rules!`, and macros injected by
-/// build scripts are not detected. `std::`/`core::`/`::`-qualified paths
-/// are always trusted.
-fn embed_resource_call_may_be_shadowed(
-    root: &SyntaxNode,
-    path: &ast::Path,
-    crate_shadows: &EmbedResourceMacroShadowFacts,
-) -> bool {
-    if path.segments().count() > 1 {
-        return false;
-    }
-    let Some(kind) = embed_resource_macro_callee(path) else {
-        return false;
-    };
-    if crate_shadows.has(kind) {
-        return true;
-    }
-    let name = match kind {
-        RustEmbedResourceMacro::IncludeStr => "include_str",
-        RustEmbedResourceMacro::IncludeBytes => "include_bytes",
-    };
-    root.descendants()
-        .any(|node| macro_definition_name(&node).is_some_and(|def| def == name))
-}
-
-/// Name of a `macro_rules!` / `macro` definition item, if `node` is one.
-fn macro_definition_name(node: &SyntaxNode) -> Option<String> {
-    ast::MacroRules::cast(node.clone())
-        .and_then(|item| item.name())
-        .or_else(|| ast::MacroDef::cast(node.clone()).and_then(|item| item.name()))
-        .map(|name| name.text().to_string())
 }
 
 pub(super) fn include_literal_path_from_macro_call(call: &ast::MacroCall) -> Option<PathBuf> {
@@ -4856,7 +4895,9 @@ mod guard_pipeline_debug_tests {
 
 #[cfg(test)]
 mod embed_resource_directive_tests {
+    use super::EmbedMacroShadows;
     use super::RustEmbedResourceMacro;
+    use super::rust_embed_macro_shadows;
     use super::rust_embed_resource_directives;
     use std::path::Path;
 
@@ -4874,7 +4915,7 @@ fn read() {
             Path::new("src/lib.rs"),
             source,
             16,
-            &super::EmbedResourceMacroShadowFacts::default(),
+            EmbedMacroShadows::default(),
         )?;
         assert_eq!(directives.len(), 2);
         assert_eq!(
@@ -4890,8 +4931,15 @@ fn read() {
         Ok(())
     }
 
+    fn directives(
+        source: &str,
+        scope: EmbedMacroShadows,
+    ) -> Result<Vec<super::RustEmbedResourceDirective>, String> {
+        rust_embed_resource_directives(Path::new("src/lib.rs"), source, 16, scope)
+    }
+
     #[test]
-    fn shadowed_include_str_macro_is_not_a_resource_directive() -> Result<(), String> {
+    fn same_file_macro_rules_flags_only_the_unqualified_call() -> Result<(), String> {
         let source = r#"
 macro_rules! include_str {
     ($path:literal) => { "fixed" };
@@ -4899,36 +4947,69 @@ macro_rules! include_str {
 const DATA: &str = include_str!("data.json");
 const TRUSTED: &str = std::include_str!("data.json");
 "#;
-        let directives = rust_embed_resource_directives(
-            Path::new("src/lib.rs"),
-            source,
-            16,
-            &super::EmbedResourceMacroShadowFacts::default(),
-        )?;
-        assert_eq!(directives.len(), 1);
-        assert_eq!(
-            directives[0].literal_path.as_deref(),
-            Some(Path::new("data.json"))
-        );
+        let found = directives(source, EmbedMacroShadows::default())?;
+        assert_eq!(found.len(), 2);
+        assert!(found[0].shadowed, "unqualified call is shadowed");
+        assert!(!found[1].shadowed, "std-qualified call is the real macro");
         Ok(())
     }
 
     #[test]
-    fn crate_wide_shadow_fact_skips_unqualified_call() -> Result<(), String> {
-        let source = r#"const DATA: &str = include_str!("data.json");"#;
-        let directives = rust_embed_resource_directives(
-            Path::new("src/lib.rs"),
-            source,
-            16,
-            &super::EmbedResourceMacroShadowFacts {
-                include_str: true,
-                include_bytes: false,
-            },
-        )?;
-        assert!(
-            directives.is_empty(),
-            "crate-wide macro_rules! include_str must suppress the unqualified call: {directives:?}"
+    fn shadow_scan_sees_definitions_and_imports_in_any_position() {
+        let flags = |source: &str| {
+            let shadows = rust_embed_macro_shadows(source);
+            (
+                shadows.shadows(RustEmbedResourceMacro::IncludeStr),
+                shadows.shadows(RustEmbedResourceMacro::IncludeBytes),
+            )
+        };
+        // Module-scoped macro_rules!, #[macro_use] module, macro 2.0.
+        assert_eq!(
+            flags("mod m { macro_rules! include_str { () => {}; } }"),
+            (true, false)
         );
+        assert_eq!(
+            flags("#[macro_use] mod macros { macro_rules! include_bytes { () => {}; } }"),
+            (false, true)
+        );
+        assert_eq!(flags("pub macro include_str() {}"), (true, false));
+        // Imports and renames that bind the name, flat or nested.
+        assert_eq!(flags("use crate::macros::include_str;"), (true, false));
+        assert_eq!(
+            flags("use crate::macros::{include_bytes, other};"),
+            (false, true)
+        );
+        assert_eq!(
+            flags("use crate::macros::mine as include_str;"),
+            (true, false)
+        );
+        // Controls: std re-imports, unrelated names, `as _`, mentions in strings and comments.
+        assert_eq!(flags("use std::include_str;"), (false, false));
+        assert_eq!(
+            flags("use std::{include_bytes, include_str};"),
+            (false, false)
+        );
+        assert_eq!(
+            flags("use crate::macros::include_str as _;"),
+            (false, false)
+        );
+        assert_eq!(flags("use crate::macros::include_string;"), (false, false));
+        assert_eq!(
+            flags("// macro_rules! include_str\nconst S: &str = \"macro_rules! include_str\";"),
+            (false, false)
+        );
+    }
+
+    #[test]
+    fn scope_shadows_from_another_file_flag_the_call() -> Result<(), String> {
+        let source = r#"const DATA: &str = include_str!("data.json");"#;
+        assert!(!directives(source, EmbedMacroShadows::default())?[0].shadowed);
+        let other = rust_embed_macro_shadows("macro_rules! include_str { () => {}; }");
+        let flagged = directives(source, other)?;
+        assert!(flagged[0].shadowed);
+        // A shadowed include_bytes does not flag include_str.
+        let bytes_only = rust_embed_macro_shadows("macro_rules! include_bytes { () => {}; }");
+        assert!(!directives(source, bytes_only)?[0].shadowed);
         Ok(())
     }
 }
