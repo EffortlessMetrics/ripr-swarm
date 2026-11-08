@@ -1372,7 +1372,9 @@ pub(crate) const COUNT_CACHE_SCHEMA_VERSION: &str = "0.2";
 /// warm entries deserialize with an empty guard vector.
 /// `1.58`: the positive Err-enclosing allowlist refuses wrapper and receiver
 /// shapes that still read as `ExactErrorVariant` under the denylist (#12474).
-pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.58";
+/// `1.59`: file-fact keys carry the normalized path spelling (#13887); `1.58`
+/// entries may name the same file under another spelling.
+pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.59";
 
 /// Keep the best-effort classified-seam cache from turning a successful live
 /// analysis into an unbounded post-analysis stall on large repos. Larger live
@@ -1691,6 +1693,49 @@ pub(crate) struct RepoSeamCacheKey {
 
 const CARGO_INPUT_IDENTITY_UNAVAILABLE: &str = "cargo_configuration_identity_unavailable";
 
+/// Canonical spelling of a file-fact cache identity (#13887). Callers reach
+/// the same file through native separators (discovery), forward slashes
+/// (git/LSP), `./` prefixes, and on Windows through case variants and the
+/// `\\?\` verbatim prefix; each spelling used to mint its own cache entry.
+/// Mirrors the TypeScript fact store's `normalized_path`: forward slashes,
+/// no leading `./`, no verbatim prefix, and case folding only where the
+/// filesystem is case-insensitive.
+fn normalize_file_fact_path(path: &Path) -> String {
+    let mut normalized = path.to_string_lossy().replace('\\', "/");
+    while let Some(stripped) = normalized.strip_prefix("./") {
+        normalized = stripped.to_string();
+    }
+    if let Some(stripped) = normalized.strip_prefix("//?/UNC/") {
+        normalized = format!("//{stripped}");
+    } else if let Some(stripped) = normalized.strip_prefix("//?/") {
+        normalized = stripped.to_string();
+    }
+    #[cfg(windows)]
+    {
+        normalized = normalized.to_lowercase();
+    }
+    normalized
+}
+
+/// Identity of `path` as stored in a file-fact key. Non-UTF-8 paths keep
+/// their verbatim spelling: the lossy form could merge two distinct files.
+fn file_fact_identity_path(path: &Path) -> PathBuf {
+    if path.to_str().is_some() {
+        PathBuf::from(normalize_file_fact_path(path))
+    } else {
+        path.to_path_buf()
+    }
+}
+
+/// Whether two spellings name the same file-fact identity.
+fn file_fact_paths_equal(left: &Path, right: &Path) -> bool {
+    if left.to_str().is_some() && right.to_str().is_some() {
+        normalize_file_fact_path(left) == normalize_file_fact_path(right)
+    } else {
+        left == right
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct RepoFileFactCacheKey {
     schema_version: String,
@@ -1704,7 +1749,7 @@ impl RepoFileFactCacheKey {
         Self {
             schema_version: FILE_FACT_CACHE_SCHEMA_VERSION.to_string(),
             analyzer_version: crate::build_identity::cache_identity().to_string(),
-            file_path: file_path.to_path_buf(),
+            file_path: file_fact_identity_path(file_path),
             content_hash: hash_bytes(content),
         }
     }
@@ -1730,11 +1775,11 @@ impl RepoFileFactCacheKey {
     }
 
     fn filename(&self) -> String {
-        let file_path = self.file_path.to_string_lossy();
+        let file_path = normalize_file_fact_path(&self.file_path);
         let parts = [
             self.schema_version.as_str(),
             self.analyzer_version.as_str(),
-            file_path.as_ref(),
+            file_path.as_str(),
             self.content_hash.as_str(),
         ];
         let mut buf = String::new();
@@ -3504,7 +3549,10 @@ impl RepoFileFactCache {
             if header.file_fact_cache_schema_version == FILE_FACT_CACHE_SCHEMA_VERSION
                 && header.analyzer_version == identity
             {
-                candidates.entry(header.file_path).or_default().push(path);
+                candidates
+                    .entry(file_fact_identity_path(&header.file_path))
+                    .or_default()
+                    .push(path);
             }
         }
         KnownFilePaths { candidates }
@@ -4127,13 +4175,14 @@ impl KnownFilePaths {
     /// full-decode inventory applied to every entry.
     pub(crate) fn contains(&self, file: &Path) -> bool {
         let identity = crate::build_identity::cache_identity();
-        self.candidates.get(file).is_some_and(|entries| {
+        let identity_path = file_fact_identity_path(file);
+        self.candidates.get(&identity_path).is_some_and(|entries| {
             entries.iter().any(|entry| {
                 std::fs::read(entry).ok().is_some_and(|bytes| {
                     codec::decode_file_facts(&bytes).is_ok_and(|envelope| {
                         envelope.file_fact_cache_schema_version == FILE_FACT_CACHE_SCHEMA_VERSION
                             && envelope.analyzer_version == identity
-                            && envelope.file_path == file
+                            && file_fact_paths_equal(&envelope.file_path, file)
                             && envelope.validate_integrity().is_ok()
                     })
                 })
@@ -4168,7 +4217,7 @@ impl FileFactCacheEnvelope {
     fn matches_key(&self, key: &RepoFileFactCacheKey) -> bool {
         self.file_fact_cache_schema_version == key.schema_version
             && self.analyzer_version == key.analyzer_version
-            && self.file_path == key.file_path
+            && file_fact_paths_equal(&self.file_path, &key.file_path)
             && self.content_hash == key.content_hash
     }
 }
@@ -5128,6 +5177,74 @@ mod tests {
             edited.push_digest(path, RepoFileFactCacheKey::new(path, bytes).content_hash());
         }
         assert_ne!(edited.finish(), expected);
+    }
+
+    #[test]
+    fn file_fact_key_unifies_path_spellings_of_one_file() -> Result<(), String> {
+        use crate::analysis::syntax::{RaRustSyntaxAdapter, RustSyntaxAdapter};
+        // #13887: one file must keep one cache identity across the path
+        // spellings different callers produce (native separator, forward
+        // slash, `./` prefix; on Windows also case and verbatim prefix).
+        let scratch = integrity_scratch("key-path-spelling")?;
+        let cache = RepoFileFactCache::at_dir(scratch.0.clone());
+        let source = "pub fn f(x: u32) -> u32 { x + 1 }\n";
+        let facts = RaRustSyntaxAdapter.summarize_file(Path::new("src/lib.rs"), source)?;
+        let stored = RepoFileFactCacheKey::new(Path::new(r"src\lib.rs"), source.as_bytes());
+        cache.store_file_facts(&stored, &facts)?;
+        for spelling in ["src/lib.rs", "./src/lib.rs", r"src\lib.rs"] {
+            let key = RepoFileFactCacheKey::new(Path::new(spelling), source.as_bytes());
+            assert!(
+                matches!(cache.load_file_facts(&key), CacheLoad::Hit(_)),
+                "spelling {spelling} must hit the stored entry"
+            );
+            assert!(
+                cache.known_file_paths().contains(Path::new(spelling)),
+                "known paths must recognize spelling {spelling}"
+            );
+        }
+        // Windows filesystems are case-insensitive and canonicalized forms
+        // carry a verbatim prefix; both spellings name the same file.
+        #[cfg(windows)]
+        for spelling in [r"Src\Lib.rs", "SRC/LIB.RS"] {
+            let key = RepoFileFactCacheKey::new(Path::new(spelling), source.as_bytes());
+            assert!(
+                matches!(cache.load_file_facts(&key), CacheLoad::Hit(_)),
+                "windows spelling {spelling} must hit the stored entry"
+            );
+        }
+        #[cfg(windows)]
+        {
+            let abs =
+                RepoFileFactCacheKey::new(Path::new(r"C:\repo\src\lib.rs"), source.as_bytes());
+            cache.store_file_facts(&abs, &facts)?;
+            let verbatim =
+                RepoFileFactCacheKey::new(Path::new(r"\\?\C:\repo\src\lib.rs"), source.as_bytes());
+            assert!(
+                matches!(cache.load_file_facts(&verbatim), CacheLoad::Hit(_)),
+                "verbatim spelling must hit the plain absolute entry"
+            );
+        }
+        // Distinct files and distinct content keep distinct identities.
+        #[cfg(not(windows))]
+        {
+            let case_variant =
+                RepoFileFactCacheKey::new(Path::new("Src/Lib.rs"), source.as_bytes());
+            assert!(
+                matches!(cache.load_file_facts(&case_variant), CacheLoad::Miss),
+                "case-sensitive filesystems keep case-distinct files apart"
+            );
+        }
+        let other_path = RepoFileFactCacheKey::new(Path::new("src/other.rs"), source.as_bytes());
+        assert!(matches!(
+            cache.load_file_facts(&other_path),
+            CacheLoad::Miss
+        ));
+        let other_content = RepoFileFactCacheKey::new(Path::new("src/lib.rs"), b"pub fn f() {}\n");
+        assert!(matches!(
+            cache.load_file_facts(&other_content),
+            CacheLoad::Miss
+        ));
+        Ok(())
     }
 
     #[test]
