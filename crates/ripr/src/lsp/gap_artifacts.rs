@@ -2263,6 +2263,7 @@ fn known_static_limit_kind(kind: &str) -> bool {
         StaticLimitKind::ProofHarnessNotEvaluated,
         StaticLimitKind::RustInherentReceiverUnestablished,
         StaticLimitKind::TypescriptWorkspaceDiscoveryTruncated,
+        StaticLimitKind::TypescriptWorkspaceReadLimited,
     ]
     .iter()
     .any(|known| known.as_str() == kind)
@@ -3825,6 +3826,20 @@ mod tests {
 
         validate_gap_artifact(&artifact, &context(&[LanguageId::Rust]))
             .map_err(|err| format!("{err:?}"))?;
+        Ok(())
+    }
+
+    #[test]
+    #[cfg(feature = "lang-typescript")]
+    fn validation_accepts_typescript_workspace_read_limit() -> Result<(), String> {
+        let mut artifact = preview_gap_ledger();
+        artifact["records"][0]["language"] = json!("typescript");
+        artifact["records"][0]["language_status"] = json!("preview");
+        artifact["records"][0]["static_limit_kind"] = json!("typescript_workspace_read_limited");
+
+        let validated = validate_gap_artifact(&artifact, &context(&[LanguageId::TypeScript]))
+            .map_err(|err| format!("{err:?}"))?;
+        assert!(validated.has_static_limit());
         Ok(())
     }
 

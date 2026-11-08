@@ -1,11 +1,17 @@
 //! Execution-boundary controls (#4510) via the shared exact-candidate harness.
 
 use std::path::Path;
+#[cfg(unix)]
 use std::time::Duration;
 
-use super::corpus::{Case, Expect, Route};
+use super::corpus::Case;
+#[cfg(unix)]
+use super::corpus::{Expect, Route};
+#[cfg(unix)]
 use super::exec::{self, Binary};
-use super::model::{Control, ControlKind, RowResult};
+#[cfg(unix)]
+use super::model::RowResult;
+use super::model::{Control, ControlKind};
 use crate::exact_candidate_harness::execution_boundary_controls;
 
 fn map_control(control: crate::exact_candidate_harness::model::CandidateProofControl) -> Control {
@@ -21,10 +27,14 @@ fn map_control(control: crate::exact_candidate_harness::model::CandidateProofCon
 }
 
 pub(crate) fn execution_controls(work_root: &Path, cases: &[Case]) -> Vec<Control> {
-    let mut out: Vec<Control> = execution_boundary_controls(work_root)
+    #[cfg(not(unix))]
+    let _ = cases;
+    let out: Vec<Control> = execution_boundary_controls(work_root)
         .into_iter()
         .map(map_control)
         .collect();
+    #[cfg(unix)]
+    let mut out = out;
 
     #[cfg(unix)]
     {

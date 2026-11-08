@@ -9,10 +9,10 @@ use crate::app::receipt::{
     check_receipt, receipt_out_path, validate_current_head, write_receipt,
 };
 use crate::cli::help;
-use crate::cli::parse::expect_value;
+use crate::cli::parse::{expect_value, reconcile_root};
 use crate::cli::suggest::{unknown_argument, unknown_value};
 use crate::output;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 // ── top-level receipt command ─────────────────────────────────────────────────
 
@@ -189,7 +189,14 @@ pub(in crate::cli) fn parse_receipt_write_options(
             "--json" => json = true,
             "--root" => {
                 i += 1;
-                root = Some(PathBuf::from(expect_value(args, i, "--root")?));
+                let value = expect_value(args, i, "--root")?;
+                let reconciled = reconcile_root(
+                    root.as_deref().unwrap_or(Path::new(".")),
+                    root.is_some(),
+                    value,
+                    "receipt write",
+                )?;
+                root = Some(reconciled);
             }
             other => return Err(unknown_argument("receipt write", other)),
         }

@@ -169,22 +169,12 @@ fn items(scope: &SyntaxNode) -> Vec<ast::Item> {
 
 /// The shared macro authority supplies scoped imports/definitions, opaque
 /// macro preludes and expansion bindings; derive spelling alone proves nothing.
-fn standard_derive_binding_holds(attr: &ast::Attr) -> bool {
-    let Some(names) = standard_derive_names(attr) else {
-        return false;
-    };
-    // The macro scan deliberately leaves crate/self/super globs to its caller.
-    // This bounded type proof does not resolve names imported by those globs.
-    if enclosing_scopes(attr.syntax())
-        .iter()
-        .any(|scope| !name_scope_for_items(&items(scope)).globs.is_empty())
-    {
-        return false;
-    }
-    let Some(file) = attr.syntax().ancestors().last() else {
-        return false;
-    };
-    let source = file.text().to_string();
+fn standard_derive_binding_holds(
+    attr: &ast::Attr,
+    names: &[String],
+    source: &std::sync::Arc<str>,
+    index: Option<&RustIndex>,
+) -> bool {
     let Some(prefix) = source.get(..usize::from(attr.syntax().text_range().start())) else {
         return false;
     };
@@ -195,15 +185,39 @@ fn standard_derive_binding_holds(attr: &ast::Attr) -> bool {
         .chain(["derive"])
         .chain(names.iter().map(String::as_str))
         .collect::<Vec<_>>();
-    !trusted_macro_binding_sites(&source, &BTreeSet::new(), &trusted, &|_, _| false, &|_| {
-        false
-    })
-    .iter()
-    .any(|(name, site)| {
+    let key = (
+        std::sync::Arc::clone(source),
+        trusted.iter().map(|name| (*name).to_string()).collect(),
+    );
+    let cached = index.and_then(|index| {
+        index
+            .call_identity_memos
+            .standard_derive_bindings
+            .lock()
+            .ok()
+            .and_then(|memo| memo.get(&key).cloned())
+    });
+    let sites = cached.unwrap_or_else(|| {
+        let sites =
+            trusted_macro_binding_sites(source, &BTreeSet::new(), &trusted, &|_, _| false, &|_| {
+                false
+            });
+        let sites = std::sync::Arc::new(
+            sites
+                .into_iter()
+                .map(|(name, site)| (name, site.scope))
+                .collect::<Vec<_>>(),
+        );
+        if let Some(index) = index
+            && let Ok(mut memo) = index.call_identity_memos.standard_derive_bindings.lock()
+        {
+            memo.insert(key, std::sync::Arc::clone(&sites));
+        }
+        sites
+    });
+    !sites.iter().any(|(name, scope)| {
         (name == "derive" || names.contains(name))
-            && site
-                .scope
-                .is_none_or(|(start, end)| start <= line && line <= end)
+            && scope.is_none_or(|(start, end)| start <= line && line <= end)
     })
 }
 
@@ -219,12 +233,36 @@ fn derives_have_root_context(owner: &FunctionSummary, index: &RustIndex) -> bool
         })
 }
 
-fn closed_scope(scope: &SyntaxNode, derives: bool) -> bool {
+fn closed_scope_with(scope: &SyntaxNode, derives: bool, index: Option<&RustIndex>) -> bool {
+    // Every attribute inspected below belongs to this scope or to one of its
+    // direct items. Their enclosing item/statement scopes and complete source
+    // are identical. Read those once per scope, instead of rebuilding the
+    // same file-wide name inventory for every derived item in the file.
+    let derive_context = std::cell::OnceCell::new();
     let preserves = |attr: ast::Attr| {
         let text = attr.syntax().text().to_string();
         crate::analysis::facts::cfg_predicates::attribute_preserves_source_items(&text)
             || crate::analysis::facts::cfg_predicates::attribute_is_plain_test_gate(&text)
-            || derives && standard_derive_binding_holds(&attr)
+            || derives
+                && standard_derive_names(&attr).is_some_and(|names| {
+                    derive_context
+                        .get_or_init(|| {
+                            // The shared macro reader leaves crate/self/super
+                            // globs to its caller. Preserve that refusal.
+                            if enclosing_scopes(scope)
+                                .iter()
+                                .any(|scope| !name_scope_for_items(&items(scope)).globs.is_empty())
+                            {
+                                return None;
+                            }
+                            let file = scope.ancestors().last()?;
+                            Some(std::sync::Arc::<str>::from(file.text().to_string()))
+                        })
+                        .as_ref()
+                        .is_some_and(|source| {
+                            standard_derive_binding_holds(&attr, &names, source, index)
+                        })
+                })
     };
     scope.children().all(|node| {
         if let Some(attr) = ast::Attr::cast(node.clone()) {
@@ -247,6 +285,126 @@ fn closed_scope(scope: &SyntaxNode, derives: bool) -> bool {
     })
 }
 
+/// A call-less source body proves no callable absence if an unread attribute
+/// or expansion can replace its function or enclosing impl. Reuse the same
+/// exact-owner scopes and closed-binding authority as primitive operand pins.
+pub(in crate::analysis::classify) fn callable_context_is_closed(
+    owner: &FunctionSummary,
+    index: &RustIndex,
+) -> bool {
+    let derives = derives_have_root_context(owner, index);
+    function(owner, index).is_some_and(|function| {
+        // Associated functions live in ASSOC_ITEM_LIST, outside the older
+        // primitive field reader's scope inventory. Check the actual function
+        // and enclosing impl attributes before reasoning from its source body.
+        function.syntax().ancestors().all(|ancestor| {
+            ancestor.children().filter_map(ast::Attr::cast).all(|attr| {
+                let text = attr.syntax().text().to_string();
+                crate::analysis::facts::cfg_predicates::attribute_preserves_source_items(&text)
+                    || crate::analysis::facts::cfg_predicates::attribute_is_plain_test_gate(&text)
+            })
+        }) && context_scopes(&function)
+            .iter()
+            .all(|scope| closed_scope_with(scope, derives, Some(index)))
+            && function
+                .syntax()
+                .ancestors()
+                .filter(|scope| scope.kind() == SyntaxKind::ASSOC_ITEM_LIST)
+                .all(|scope| closed_scope_with(&scope, derives, Some(index)))
+    })
+}
+
+/// Only declared primitive parameters can supply value reads in the narrow
+/// opposite-kind body check. Locals, globals, fields and generic inputs have
+/// no value-flow proof here. A borrowed receiver is permitted but never read.
+pub(in crate::analysis::classify) fn closed_primitive_parameters(
+    owner: &FunctionSummary,
+    index: &RustIndex,
+) -> Option<BTreeSet<String>> {
+    let function = function(owner, index)?;
+    let list = function.param_list()?;
+    if list.self_param().is_some_and(|parameter| {
+        let text: String = parameter
+            .syntax()
+            .text()
+            .to_string()
+            .split_whitespace()
+            .collect();
+        !matches!(text.as_str(), "&self" | "&mutself")
+    }) {
+        return None;
+    }
+    let mut names = BTreeSet::new();
+    for parameter in list.params() {
+        let ast::Pat::IdentPat(pattern) = parameter.pat()? else {
+            return None;
+        };
+        let name = pattern.name()?.text().to_string();
+        let ty = parameter.ty()?.syntax().text().to_string();
+        if pattern.pat().is_some()
+            || pattern.ref_token().is_some()
+            || !name.is_ascii()
+            || !type_is_primitive_with(&ty, owner, index, TypeSite::Signature, Some(index))
+            || !names.insert(name.trim_start_matches("r#").to_string())
+        {
+            return None;
+        }
+    }
+    Some(names)
+}
+
+pub(in crate::analysis::classify) fn declared_return_is_primitive(
+    owner: &FunctionSummary,
+    index: &RustIndex,
+) -> bool {
+    function(owner, index)
+        .and_then(|function| function.ret_type())
+        .and_then(|returned| returned.ty())
+        .is_some_and(|ty| {
+            type_is_primitive_with(
+                &ty.syntax().text().to_string(),
+                owner,
+                index,
+                TypeSite::Signature,
+                Some(index),
+            )
+        })
+}
+
+/// Constructor-only admission for a directly declared file-root enum. Reuse
+/// the existing closed-scope and standard-derive binding authority; the broader
+/// entry-type guard intentionally keeps rejecting derives. Generic contexts
+/// can shadow the enum name outside the indexed function fragment.
+pub(in crate::analysis::classify) fn enum_constructor_context_is_closed(
+    item: &ast::Enum,
+    owner: &FunctionSummary,
+    index: &RustIndex,
+) -> bool {
+    let Some(scope) = item.syntax().parent() else {
+        return false;
+    };
+    if !ast::SourceFile::can_cast(scope.kind())
+        || item
+            .syntax()
+            .children()
+            .filter_map(ast::Attr::cast)
+            .any(|attr| matches!(attr.simple_name().as_deref(), Some("cfg" | "cfg_attr")))
+    {
+        return false;
+    }
+    let Some(function) = function(owner, index) else {
+        return false;
+    };
+    if function.syntax().ancestors().any(|ancestor| {
+        ancestor
+            .children()
+            .any(|node| ast::GenericParamList::can_cast(node.kind()))
+    }) {
+        return false;
+    }
+    closed_scope_with(&scope, derives_have_root_context(owner, index), Some(index))
+}
+
 pub(super) fn context_is_closed(
     owner: &FunctionSummary,
     index: &RustIndex,
@@ -257,7 +415,7 @@ pub(super) fn context_is_closed(
         value_scope::owner_field(&function, expression).is_some()
             && context_scopes(&function)
                 .iter()
-                .all(|scope| closed_scope(scope, derives))
+                .all(|scope| closed_scope_with(scope, derives, Some(index)))
     })
 }
 
@@ -268,6 +426,16 @@ pub(super) fn type_is_primitive(
     owner: &FunctionSummary,
     index: &RustIndex,
     site: TypeSite,
+) -> bool {
+    type_is_primitive_with(ty, owner, index, site, Some(index))
+}
+
+fn type_is_primitive_with(
+    ty: &str,
+    owner: &FunctionSummary,
+    index: &RustIndex,
+    site: TypeSite,
+    memo_index: Option<&RustIndex>,
 ) -> bool {
     if !primitive_type_token(ty) {
         return false;
@@ -302,7 +470,10 @@ pub(super) fn type_is_primitive(
     }
     let scopes = enclosing_scopes(&site);
     let derives = derives_have_root_context(owner, index);
-    if scopes.iter().any(|scope| !closed_scope(scope, derives)) {
+    if scopes
+        .iter()
+        .any(|scope| !closed_scope_with(scope, derives, memo_index))
+    {
         return false;
     }
     let scope_items = scopes.iter().map(items).collect::<Vec<_>>();

@@ -933,7 +933,8 @@ mod tests {
         assert!(CHECK_HELP.contains("percentage or ETA"));
         assert!(CHECK_HELP.contains("processed_<n>_of_<total>"));
         assert!(CHECK_HELP.contains("does not mean analysis is faster"));
-        assert!(CHECK_HELP.contains("json, sarif, github"));
+        assert!(CHECK_HELP.contains("json, json-compact, sarif,"));
+        assert!(CHECK_HELP.contains("github) keep stdout byte-clean"));
         assert!(!CHECK_HELP.contains("json, sarif, markdown"));
         assert!(DIFF_HELP.contains("Usage: ripr diff"));
         assert!(DIFF_HELP.contains("full-repo-limited"));
@@ -1469,7 +1470,7 @@ mod tests {
     const PR_EVIDENCE_PARSER_RS: &str = include_str!("../app/pr_evidence.rs");
     const IMPACTED_EVIDENCE_PARSER_RS: &str = include_str!("../app/impacted_evidence.rs");
     const RIPR_PLUS_PARSER_RS: &str = include_str!("../app/ripr_plus.rs");
-    const FIRST_PR_PARSER_RS: &str = include_str!("../output/first_pr/options.rs");
+    const FIRST_PR_PARSER_RS: &str = include_str!("commands/first_pr.rs");
     const ASSISTANT_LOOP_PARSER_RS: &str = include_str!("commands/assistant_loop.rs");
     const FIRST_ACTION_PARSER_RS: &str = include_str!("commands/first_action.rs");
     const REPORTS_NAV_PARSER_RS: &str = include_str!("commands/reports.rs");

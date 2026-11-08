@@ -792,6 +792,181 @@ screen reads the same gate as a not-ready route and keeps its own wording
 ("not complete enough to name a safe test target"); it does not print this
 reason.
 
+## Amendment (#13203 A0): a producer-owned proposal may start a repair
+
+The #12867 refusal existed because no producer-owned path could name the
+workspace for a seam whose only target is a proposed new test. The producer now
+does: a complete `Proposed` target (InlineUnit or Integration) from the
+`new_test_target` authority carries the portable workspace identity minted from
+the same workspace authority that names an existing test target's identity. The
+shared admission gate (`repair_refusal`, through `workspace_identity_for`) starts
+such a seam only when all of these hold: the readiness selection is the very
+proposal the seam's admitted evidence holds, that proposal carries a non-empty
+identity, and the packet's allowed edit surface is the proposal's file (a new
+test surface, or the one governed inline module), so the attempt can enforce an
+edit cage on it. Anything the producer does not admit (missing, ambiguous,
+generated or vendored, wrong package, private owner, colliding file, stale
+source, cross-language, path escape) still has no proposal and refuses as
+before; a proposal without an identity or one the evidence does not hold keeps
+the no-target text. `ripr check` and `ripr repair` read the same gate; a
+`no path` (static-limited) finding keeps the F3 rule (#12888) and prints no
+runnable repair line even where bare `ripr repair <id>` starts the
+proposal-only seam, so the F3 silence is unchanged. Starting does not create the
+proposed file, generate a test body or grant production-source permission.
+
+## Amendment (#13203 A): an attempt binds the proposal it follows
+
+When the repair packet's `recommended_test.target_kind` names a producer-owned
+new-test proposal (`new_inline_test_module` or `new_integration_test`), the
+attempt records it in the retained edit-cage baseline policy as
+`new_test_proposal` (`kind`, `file`). The proposal's file must be the selected
+edit target, and its kind must agree with the cage's inline-module confinement;
+otherwise the policy is invalid and fails closed. An integration proposal is
+realized only by a file the attempt created at exactly that path: creating any
+other file, even a test file, is an out-of-cage edit, and a baseline whose
+proposed file already exists, or a proposed file later seen as modified, is a
+stale proposal and is refused rather than credited. An inline proposal is
+realized only by editing the existing file's governed module. An existing-test
+repair carries no `new_test_proposal`, so its policy and packet bytes are
+unchanged. "Already exists" at bind time means any non-missing identity at the integration
+path, a symlink or special file included, so such a path is stale and fails
+closed. Staleness at bind time and at verdict time is covered by the
+edit-cage unit tests; the real-binary tests cover the bound, created-file
+credit and the out-of-cage refusal.
+
+## Amendment (#13205): a proposed new-test target is preflighted read-only
+
+Before an attempt follows a new-test proposal, one shared preflight
+(`preflight_new_test_target`) looks at the proposed target without running or
+writing anything. It requires a plain path inside the repository with no
+symlinked directory on the way, the same stale-premise rule the bind uses (an
+integration proposal's path must hold nothing, an inline proposal's production
+file must exist), a `tests/<name>.rs` shape for an integration test, and an
+owning Cargo package. A target that fails is refused with a next step and no
+attempt starts. A target that passes is reported as its own state, not yet
+existing: the attempt's `limitations` carry a `target preflight:` line naming the
+proposed file and its package and saying there is no test result for it yet, so
+a missing result never reads as an empty one. Attempts that follow an existing
+test target carry no such line and are unchanged. Nothing is executed and no
+test body is generated.
+The preflight runs at manifest publication; the edit-cage bind remains the
+early stale guard, and both use the same stale rule. A virtual workspace
+manifest (no `[package]`) does not own a proposed test, and a manifest that
+exists but cannot be read or parsed refuses rather than falling through to an
+ancestor.
+
+## Amendment (#13204): one projection of the selected new-test proposal
+
+The selected producer-owned new-test proposal is read through one projection,
+`SelectedProposal {kind, file, module}`, owned beside the proposal in
+`analysis/new_test_target.rs`. The repair card's proposed target and the agent
+packet's recommended test take their kind and file from it unchanged, and MCP
+discloses it as `proposed_new_test {kind, file, module, summary}` on a gap item
+whose shared-gate target is the proposal (a `SeamVerdict::AdmittedProposed`),
+including a proposal-only item whose finding has no existing fix site
+(`fix_site_not_established`). An item held by any other gate names none.
+Amendment (#13538): the verdict is also the readiness authority. A finding that
+passed the finding-level actionability and discriminator gates but holds only
+for lack of an existing fix site (`fix_site_not_established`, or an existing
+test off a test surface) is ready exactly when the shared gate admits the
+proposal as the seam's target, with the proposal as its fix site: the
+integration file (which must be a shared test-surface path) or the production
+file with its one governed inline module. `ripr_prepare_repair` then names that
+file as its allowed edit surface, the file `ripr agent repair --phase before`
+confines the edit cage to (`selected_target.path`), with `fix_site.new_test_kind`
+set and `test_name`, `line` and `oracle` empty because no test exists yet. A
+proposal that cannot take that shape stays held, and a seam the producer admits
+no proposal for stays not ready on both surfaces. No MCP-side gate decides this.
+The proposal fix site additionally requires the filesystem-free part of the CLI
+preflight (`is_plain_relative_path`, `is_integration_test_file_shape`: no `..`,
+no absolute path, exactly `<dir>/tests/<name>.rs`); a ready item whose proposal
+cannot take that shape is held as `fix_site_not_established` rather than keeping
+a stale existing-test fix site. An inline proposal is read from the shared
+verdict before the plain inline-module verdict, so it is distinguished from an
+existing inline test and stays confined to its governed module
+(`inline_test_module`). The file-exists, symlink and owning-manifest checks stay
+at the CLI start preflight (`ripr agent repair --phase before`), not at MCP
+prepare. Prepare packets now carry `fix_site.new_test_kind` (`null` for an
+existing-test fix site).
+No renderer picks its own file or kind, no target is
+selected here and no test is generated. No insertion anchor exists yet; the only
+anchor-like fact is the governed inline module name, carried as `module` where
+the surface holds the admission's region (MCP does, and an InlineUnit proposal's
+module appears there; the card and packet hold only the proposal, so they show
+none). A seam whose recommended file is its own production file with an owner
+inline region keeps the existing `AdmittedInline` verdict, which already names
+the module, so it is not repeated as a proposal. A not-ready item held by any gate
+other than `fix_site_not_established`, or a refused verdict, discloses no
+proposal. The
+LSP and VS Code surfaces already read `recommended_test.file` from the packet;
+asserting their parity is slice 2 of #13204.
+
+## Amendment (#13203 B): a caller-supplied focused test result is validated and recorded
+
+ripr does not run `cargo test` (ADR 0022 keeps execution authority outside
+ripr). `ripr agent repair --phase after --attempt <id> --test-result <file>`
+takes a result the caller produced and only validates and records it. The file
+is a JSON document with `schema_version` `0.1`, `kind` `focused_test_result`,
+`attempt_id`, `head`, `test_file` and `libtest_events` (libtest JSON event
+objects). The shared after-phase authority checks, before anything is
+finished, that the document is well formed, that `attempt_id` is this attempt,
+that `head` is the repository HEAD the phase evaluates, that `test_file` is the
+attempt's selected test file (the proposal's file for a proposal), and that at
+least one test **ran** (`ok` or `failed`; `started`, `ignored` and libtest's slow-test `timeout` notice do not count)
+and is an executable test defined in that file, or, for an inline module,
+reached through the governed module's path. Duplicates do not add to the count.
+Any failure, including zero counted tests, is a refusal that leaves the attempt
+awaiting its edit and records nothing. When the cage then finishes compliant,
+the normalized record (`ran_tests`, `passed`, `failed`, `uncounted_ran`, the
+bound attempt id and HEAD) is retained as the `focused_test_result` terminal
+artifact. The record states that ripr checked shape, binding, file membership
+and per-test outcomes and did not observe the run: the caller's claim that
+those events came from that file stays the caller's. This change validates
+binding and per-test outcomes only; it does not yet refuse the same test
+reporting both `ok` and `failed`, a `started` test with no terminal event, or a
+missing terminal suite event. Stream completeness is checked by the later
+custody change. The retained artifact is the normalized record, not the
+caller's bytes. `--test-result` is optional and does not gate finish: it validates and records a
+caller-reported result, and ripr never runs or observes the tests. Requiring a
+result to finish is a later, separate change.
+
+A refusal is an after-phase refusal like any other: it counts against the
+attempt's after-phase retry budget, so "retryable" holds only up to that
+budget. When a validated result is not recorded because the cage verdict is not
+compliant, stderr says so in one line instead of dropping it silently.
+
+Attribution is the caller's claim. For an integration file the match is
+name-only: a test counts when its function name is an executable test defined
+in the selected file. For an inline module the libtest path must start with the
+file's own module path (`src/foo.rs` is `foo`, `src/a/b.rs` is `a::b`,
+`src/a/mod.rs` is `a`, `lib.rs` and `main.rs` are the crate root, `tests/x.rs`
+is its own root) followed by the governed module, so `bar::tests::adds` does not
+count for `src/foo.rs`. When that module path cannot be derived (a `src/bin`
+target, a non-`src` file, a nested `tests/` file) nothing counts; a `#[path]`
+module is not detectable from the file and stays the caller's claim. A failed
+test counts as having **ran**: `ran_tests` includes it and `failed` reports it,
+so a later finish gate must require `failed == 0` for a pass.
+
+A `failed` event for a test the selected file does not define is refused (the
+failure cannot be attributed outside the file), and so is a suite that reports
+`failed` when no failed test in the file explains it; an unattributed `ok` is
+simply not counted. The result stays a caller-reported claim.
+
+A focused test result is accepted for Rust test files only: a Python or
+TypeScript attempt that passes `--test-result` is refused up front with that
+scope and the next step of finishing without the flag. A result file must be
+saved outside the checkout; one inside it would be an untracked edit the cage
+judges, so it is refused with that next step.
+
+## Amendment (#12959): a refused changed-field seam names its next step
+
+A refusal for a field-construction seam whose only missing fact is the changed
+field value names the working stub (`ripr agent stub ... --kind
+field_construction`) or, when the stub refuses (for example a by-value `self`
+setter), says why it cannot write one and that the test is written by hand.
+Refusal text only: eligibility is unchanged, and starting a repair from a weak
+read of a written field stays #11870.
+
 ## Test Mapping
 
 - `crates/ripr/tests/cli_help_hierarchy.rs::agent_help_and_missing_seam_refusal_agree_that_finding_ids_resolve` (agent group help, the missing-`--seam-id` refusal and the workflow catalog agree that `--phase before` resolves `ripr check` finding IDs)
@@ -801,6 +976,50 @@ reason.
 - `crates/ripr/tests/repair_check_recommended_start.rs::an_unscoped_change_keeps_the_selection` (#12831)
 - `crates/ripr/tests/repair_check_recommended_start.rs::open_spots_on_the_change_close_on_the_per_spot_reasons` (#12861)
 - `crates/ripr/tests/repair_check_recommended_start.rs::a_start_whose_card_cannot_be_produced_creates_no_attempt` (#12867)
+- `crates/ripr/tests/repair_check_recommended_start.rs::a_refused_field_seam_names_the_stub_or_why_there_is_none` (#12959)
+- `crates/ripr/tests/proposal_only_repair_start.rs::integration_proposal_only_seam_starts_with_the_proposed_file_as_its_cage` (#13203)
+- `crates/ripr/tests/proposal_only_repair_start.rs::inline_proposal_only_seam_starts_confined_to_its_governed_module` (#13203)
+- `crates/ripr/tests/proposal_only_repair_start.rs::seam_without_any_proposal_still_refuses` (#13203)
+- `crates/ripr/tests/proposal_only_repair_start.rs::ambiguous_inline_modules_still_refuse` (#13203)
+- `crates/ripr/tests/proposal_only_repair_start.rs::colliding_integration_files_still_refuse` (#13203)
+- `crates/ripr/src/app/repair_card_handoff.rs::tests::a_proposal_names_the_workspace_only_when_the_evidence_admitted_it` (#13203)
+- `crates/ripr/tests/new_test_proposal_attempt.rs::created_proposed_file_binds_the_attempt_to_its_proposal` (#13203)
+- `crates/ripr/tests/new_test_proposal_attempt.rs::edit_outside_the_proposals_cage_is_refused` (#13203)
+- `crates/ripr/src/output/agent_seam_packets.rs::tests::selected_proposal_reads_the_same_in_card_packet_and_mcp` (#13204)
+- `crates/ripr/tests/new_test_proposal_attempt.rs::a_proposal_attempt_says_no_test_exists_yet` (#13205)
+- `crates/ripr/tests/new_test_proposal_attempt.rs::an_existing_test_target_attempt_has_no_not_yet_disclosure` (#13205)
+- `crates/ripr/src/analysis/new_test_target/preflight_tests.rs::a_plain_integration_path_with_no_file_has_no_test_yet` (#13205)
+- `crates/ripr/src/analysis/new_test_target/preflight_tests.rs::a_member_package_is_named_for_its_own_tests_directory` (#13205)
+- `crates/ripr/src/analysis/new_test_target/preflight_tests.rs::paths_that_escape_or_are_not_plain_are_refused` (#13205)
+- `crates/ripr/src/analysis/new_test_target/preflight_tests.rs::a_stale_premise_is_refused_by_the_shared_rule` (#13205)
+- `crates/ripr/src/analysis/new_test_target/preflight_tests.rs::a_target_with_no_owning_package_is_refused` (#13205)
+- `crates/ripr/src/analysis/new_test_target/preflight_tests.rs::a_symlinked_parent_directory_is_refused` (#13205)
+- `crates/ripr/tests/new_test_proposal_attempt.rs::a_symlinked_tests_directory_fails_the_preflight_and_leaves_no_attempt` (#13205)
+- `crates/ripr/src/analysis/new_test_target/preflight_tests.rs::a_virtual_workspace_root_does_not_own_tests` (#13205)
+- `crates/ripr/src/analysis/new_test_target/preflight_tests.rs::an_empty_test_file_name_is_refused` (#13205)
+- `crates/ripr/src/analysis/new_test_target/preflight_tests.rs::a_symlinked_production_file_is_refused_for_an_inline_module` (#13205)
+- `crates/ripr/src/analysis/new_test_target/preflight_tests.rs::a_broken_member_manifest_refuses_instead_of_falling_to_the_parent` (#13205)
+- `crates/ripr/src/edit_cage/mod.rs::tests::integration_proposal_is_bound_only_by_the_created_proposed_file` (#13203)
+- `crates/ripr/src/edit_cage/mod.rs::tests::integration_proposal_for_an_existing_file_is_stale` (#13203)
+- `crates/ripr/src/edit_cage/mod.rs::tests::proposal_kind_must_agree_with_the_cage_shape` (#13203)
+- `crates/ripr/src/edit_cage/mod.rs::tests::inline_proposal_for_a_missing_file_is_stale` (#13203)
+- `crates/ripr/src/edit_cage/mod.rs::tests::integration_proposal_over_a_symlink_is_stale` (#13203)
+- `crates/ripr/src/output/agent_seam_packets.rs::tests::recommended_test_matches_only_the_exact_proposed_file` (#13203)
+- `crates/ripr/tests/focused_test_result.rs::a_bound_result_with_a_ran_test_is_validated_and_recorded` (#13203)
+- `crates/ripr/tests/focused_test_result.rs::a_result_where_no_test_ran_in_the_changed_file_is_not_counted` (#13203)
+- `crates/ripr/tests/focused_test_result.rs::a_result_bound_to_another_attempt_or_head_is_refused` (#13203)
+- `crates/ripr/tests/focused_test_result.rs::a_result_for_another_file_or_a_malformed_result_is_refused` (#13203)
+- `crates/ripr/tests/focused_test_result.rs::an_inline_result_counts_only_tests_in_the_governed_module` (#13203)
+- `crates/ripr/tests/focused_test_result.rs::test_result_is_only_valid_with_the_after_phase` (#13203)
+- `crates/ripr/tests/focused_test_result.rs::a_failure_outside_the_file_is_refused_not_passed_over` (#13203)
+- `crates/ripr/src/app/focused_run.rs::tests::a_failure_the_file_does_not_explain_is_refused` (#13203)
+- `crates/ripr/tests/focused_test_result.rs::a_result_saved_inside_the_checkout_is_refused_up_front` (#13203)
+- `crates/ripr/src/app/focused_run.rs::tests::a_non_rust_selected_file_is_refused_up_front` (#13203)
+- `crates/ripr/tests/focused_test_result.rs::a_failed_only_result_is_recorded_as_ran_with_the_failure_visible` (#13203)
+- `crates/ripr/src/app/focused_run.rs::tests::an_inline_module_is_attributed_through_the_files_own_module_path` (#13203)
+- `crates/ripr/src/app/focused_run.rs::tests::an_inline_module_whose_path_cannot_be_derived_counts_nothing` (#13203)
+- `crates/ripr/src/app/focused_run.rs::tests::a_timeout_event_is_not_terminal_and_never_counts_by_itself` (#13203)
+- `crates/ripr/src/app/focused_run.rs::tests::zero_in_scope_tests_are_not_counted` (#13203)
 - `crates/ripr/src/app/task_first.rs::tests::closure_outcome_says_nothing_to_do_when_everything_was_noticed` (#12861)
 - `crates/ripr/src/cli/commands/task_first.rs::tests::open_on_change_closes_on_the_reasons_not_the_repository_tour` (#12861)
 - `crates/ripr/src/app/task_first.rs::tests::both_check_consumers_share_one_check_run` (#12831)
@@ -919,6 +1138,17 @@ reason.
   Agent Receipt, and Agent Review Summary output contracts.
 - `.ripr/traceability.toml` maps this spec to tests, code, outputs, and
   metrics.
+
+### Repair-loop state projection (#13382)
+
+Recorded after-phase refusals preserve narration line boundaries and source/path
+case; joining a path or colon-ended heading must not invent punctuation or a
+different path. When the shared start gate withholds a new attempt, status
+removes both fully spelled before-phase recipes and the bare compatibility
+repair-start hint from its projected refusal and history. Retained manifests
+are not rewritten by inspection. Finished attempt state, gap closure and actual
+project-test execution remain separate observations.
+
 
 ## Metrics
 
