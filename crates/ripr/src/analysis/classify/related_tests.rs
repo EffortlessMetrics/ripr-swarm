@@ -6922,6 +6922,38 @@ pub(in crate::analysis) fn inherent_owner_call_resolves_inside_unreadable_macro(
         && relation(true) == RelationReason::DirectOwnerCall
 }
 
+/// Whether `owner`'s inherent call resolves in `caller` once `body` stands in
+/// for the test's body: the relation the direct-call path applies, over a body
+/// where a cross-file forwarding macro call (#12886) was replaced by the
+/// operands it evaluates. The index is untouched and nothing is credited; the
+/// answer only lets the caller name a limit. Binding, shadow and receiver rules
+/// are the ones the direct relation applies.
+pub(in crate::analysis) fn inherent_owner_call_resolves_in_forwarded_body(
+    caller: &TestSummary,
+    body: String,
+    owner: &FunctionSummary,
+    index: &RustIndex,
+) -> bool {
+    if !requires_inherent_receiver_identity(owner) {
+        return false;
+    }
+    let mut rewritten = caller.clone();
+    rewritten.body = crate::analysis::facts::SourceText::owned(body);
+    owner_call_relation_reason_gated(
+        &rewritten,
+        Some(owner),
+        &owner.name,
+        &[],
+        index
+            .files()
+            .get(&caller.file)
+            .map(|facts| facts.data().source.as_ref()),
+        index,
+        false,
+        false,
+    ) == RelationReason::DirectOwnerCall
+}
+
 /// Whether the last call of `method` in `prefix` (masked test source cut at
 /// the end of one statement, with earlier calls of the same name blanked by
 /// the caller) has a receiver bound to `impl_type`, under the same receiver
@@ -9067,12 +9099,12 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
                 end_line: 4,
                 body: "let mut ledger = Ledger::new(100);\nledger.apply(5);".into(),
                 // Body-only: the receiver form is what must be credited.
-                calls: Vec::new(),
+                calls: crate::analysis::facts::SharedFactSlice::empty(),
                 assertions: Vec::new(),
-                literals: Vec::new(),
-                attrs: Vec::new(),
-                nested_fn_names: Vec::new(),
-                let_bindings: Vec::new(),
+                literals: crate::analysis::facts::SharedFactSlice::empty(),
+                attrs: crate::analysis::facts::SharedFactSlice::empty(),
+                nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+                let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
                 generated: None,
             }],
             ..Default::default()
@@ -9415,7 +9447,8 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
                 line: 1,
                 name: "render".to_string(),
                 text: line.to_string().into(),
-            }];
+            }]
+            .into();
             assert!(
                 !method_call_resolves_to_impl(&summary, "render", "f64", Some("Render")),
                 "{line}"
@@ -9532,7 +9565,7 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
     fn free_kb_relation_from_extracted_calls(body: &str) -> Vec<RelationReason> {
         let owner = free_function("src/lib.rs", "kb");
         let mut test = test_with_call("tests/units.rs", "test_comparison", body, "kb");
-        test.calls = crate::analysis::extract::extract_call_facts(body, 1);
+        test.calls = crate::analysis::extract::extract_call_facts(body, 1).into();
         let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             functions: vec![owner.clone()],
             tests: vec![test],
@@ -11128,7 +11161,7 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
             "let config = Config { strict: true };\nassert_eq!(config.parse(\"hey\").1, Some(3));",
             "parse",
         );
-        test.calls = Vec::new();
+        test.calls = Vec::new().into();
         let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             functions: vec![owner.clone()],
             tests: vec![test],
@@ -13249,12 +13282,13 @@ fn crate_c_score_test() {
                 line: 1,
                 name: "call_inner".to_string(),
                 text: "call_inner!(10, 3)".to_string().into(),
-            }],
+            }]
+            .into(),
             assertions: Vec::new(),
-            literals: Vec::new(),
-            attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             generated: None,
         };
         let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
@@ -13280,12 +13314,12 @@ fn crate_c_score_test() {
             start_line: 1,
             end_line: 5,
             body: "let result = crate_under_test::internal::inner(10, 3);".into(),
-            calls: Vec::new(),
+            calls: crate::analysis::facts::SharedFactSlice::empty(),
             assertions: Vec::new(),
-            literals: Vec::new(),
-            attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             generated: None,
         };
         let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
@@ -13938,14 +13972,14 @@ fn crate_c_score_test() {
             start_line: 1,
             end_line: 3,
             body: String::new().into(),
-            calls: Vec::new(),
+            calls: crate::analysis::facts::SharedFactSlice::empty(),
             returns: Vec::new(),
-            literals: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
             source_role: FunctionSourceRole::Production,
-            attrs: Vec::new(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
             impl_attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             item: Default::default(),
             impl_context: Default::default(),
         }
@@ -13962,12 +13996,13 @@ fn crate_c_score_test() {
                 line: 1,
                 name: "score".to_string(),
                 text: body.to_string().into(),
-            }],
+            }]
+            .into(),
             assertions: Vec::new(),
-            literals: Vec::new(),
-            attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             generated: None,
         }
     }
@@ -14248,8 +14283,8 @@ let r = try_parse_summary(\"x\");",
         let (index, probe) = shadow_flag_law_index(SHADOWING_TEST_SOURCE, |facts| {
             facts.used_lexical_fallback = true;
             for test in &mut facts.tests {
-                test.nested_fn_names = Vec::new();
-                test.let_bindings = Vec::new();
+                test.nested_fn_names = Vec::new().into();
+                test.let_bindings = Vec::new().into();
             }
         })?;
         let owner = index.functions()[0].clone();
@@ -14677,12 +14712,12 @@ let r = try_parse_summary(\"x\");",
             start_line: 5,
             end_line: 5,
             body: "let _ = fixture();".into(),
-            calls: Vec::new(),
+            calls: crate::analysis::facts::SharedFactSlice::empty(),
             assertions: Vec::new(),
-            literals: Vec::new(),
-            attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             generated: None,
         };
         let mut first = second.clone();
@@ -14976,7 +15011,8 @@ let r = try_parse_summary(\"x\");",
                 line: 1,
                 name: "render".to_string(),
                 text: line.to_string().into(),
-            }];
+            }]
+            .into();
             assert!(
                 !method_call_resolves_to_impl_type(&summary, "render", "u8"),
                 "{line}"
@@ -15095,7 +15131,8 @@ let r = try_parse_summary(\"x\");",
                 line: 1,
                 name: "build".to_string(),
                 text: line.to_string().into(),
-            }];
+            }]
+            .into();
             assert!(
                 !method_call_resolves_to_impl_type(&summary, "build", "Site"),
                 "{body}"
@@ -15365,12 +15402,13 @@ try_parse_summary(raw).map_err(Into::into)"
                 line: 1,
                 name: call_name.to_string(),
                 text: body.to_string().into(),
-            }],
+            }]
+            .into(),
             assertions: Vec::new(),
-            literals: Vec::new(),
-            attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             generated: None,
         }
     }
@@ -15429,12 +15467,12 @@ try_parse_summary(raw).map_err(Into::into)"
             start_line: 1,
             end_line: 10,
             body: body.into(),
-            calls: Vec::new(),
+            calls: crate::analysis::facts::SharedFactSlice::empty(),
             assertions,
-            literals: Vec::new(),
-            attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             generated: None,
         }
     }
@@ -16546,7 +16584,8 @@ quickcheck! {
                     line: 1,
                     name: owner,
                     text: body.into(),
-                }];
+                }]
+                .into();
                 summaries.push(summary);
             }
         }
