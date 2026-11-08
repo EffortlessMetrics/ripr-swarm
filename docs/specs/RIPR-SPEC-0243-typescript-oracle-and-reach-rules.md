@@ -911,6 +911,21 @@ Candidates come from the first non-empty tier:
    a prototype, `defineProperty`; the gate does not track which object a
    receiver names, so an assignment on an unrelated object withholds too) is not related through the chain; a bare
    call-through spy is. The relation stays weak and never reads `exposed`.
+   A module-level non-function `const` (regex, string, symbol, lookup object
+   or array; #13592) is a node of the same graph: an exported function, or a
+   same-module helper it calls within 3 hops, reaches it when every mention of
+   the name in the reading function is a read-only use (`X.test(`, `X.exec(`,
+   `X.source`, `X[key]`, `obj[X]`, or the first argument of `replace`,
+   `replaceAll`, `match`, `matchAll`, `split`, `search`, `includes` and kin).
+   A parameter, local, destructured or callback binding of the name, an
+   alias, a spread, a shorthand property, a returned or passed-along value,
+   an assignment, update or mutating method call (`X.lastIndex = 0`,
+   `X.push(`) in the reader, `let`/`var`, or any assignment, update, `delete`
+   or mutating-call shape of the name anywhere in the module leaves no edge.
+   The relation is the same `ModuleEntryCall` and keeps all its limits: no
+   direct test of the value, never `exposed`, and a test that never calls a
+   reading function stays `no_static_path`. Reach through a factory const's
+   bare-call edges does not extend to its own `ModuleFunction` owner.
 3. **Heuristic relations** when tiers 1 and 2 are empty, package-filtered,
    for function, arrow and component owners, when the test body
    references the owner name and does not import that name from an
@@ -2230,6 +2245,11 @@ keys); do not take the next number.
   (rule 23).
 
 ## Test Mapping
+
+- #13592 (module-level `const` reached through a reader): `tests/module_value_read_tests.rs`
+  pins the read-only allowlist, the shadowed, aliased, passed-along, `let`/`var`,
+  assigned and module-mutated refusals, the unused and uncalled-reader controls
+  (`no_static_path`), and the called-reader `static_unknown` reading.
 
 - #10314 (decorated-method reach, constructor spellings): `crates/ripr/src/analysis/language/typescript/tests/decorated_reach_tests.rs`
   pins `aliased_constructor_import_credits_the_return_edit` (a named-import alias

@@ -23,6 +23,7 @@
 //! admitted only when no test calls the owner itself, and the classifier never
 //! promotes it to `exposed`.
 
+use super::module_value_reads::{never_mutated_in_module, reads_unshadowed_value};
 use super::*;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
@@ -96,21 +97,32 @@ struct CallText<'s> {
 }
 
 /// Exported entries per top-level owner name.
+///
+/// Also returns the module-level non-function `const` names that are followable
+/// value nodes (#13592 B2); only those may carry entries for a
+/// `ModuleFunction` owner.
 pub(crate) fn module_entries_by_owner<'a>(
     statements: &'a [Statement<'a>],
     source: &'a str,
-) -> BTreeMap<String, Vec<TypeScriptModuleEntry>> {
+) -> (
+    BTreeMap<String, Vec<TypeScriptModuleEntry>>,
+    BTreeSet<String>,
+) {
     // Node keys and factories are AST atoms or string literals, so the graph
     // borrows them instead of owning a String per node (#10087 follow-up).
     let mut nodes: BTreeMap<&'a str, ModuleNode<'a>> = BTreeMap::new();
     let mut exports: BTreeMap<String, BTreeSet<TypeScriptModuleEntry>> = BTreeMap::new();
+    let mut values: BTreeSet<&'a str> = BTreeSet::new();
     for statement in statements {
-        collect_statement(statement, source, &mut nodes, &mut exports);
+        collect_statement(statement, source, &mut nodes, &mut exports, &mut values);
     }
+    // A value is followable only while nothing in the file writes it; a name
+    // that is also a function/factory node keeps its bare-call edges only.
+    values.retain(|name| !nodes.contains_key(name) && never_mutated_in_module(source, name));
     let names: std::collections::HashSet<&'a str> = nodes.keys().copied().collect();
     let callees: BTreeMap<&'a str, BTreeSet<&'a str>> = nodes
         .iter()
-        .map(|(name, node)| (*name, node_callees(node, &nodes, &names)))
+        .map(|(name, node)| (*name, node_callees(node, &nodes, &names, &values)))
         .collect();
     let mut entries: BTreeMap<String, Vec<TypeScriptModuleEntry>> = BTreeMap::new();
     for (local, exported) in &exports {
@@ -129,7 +141,7 @@ pub(crate) fn module_entries_by_owner<'a>(
     for owner_entries in entries.values_mut() {
         owner_entries.sort();
     }
-    entries
+    (entries, values.into_iter().map(str::to_string).collect())
 }
 
 fn collect_statement<'a>(
@@ -137,13 +149,14 @@ fn collect_statement<'a>(
     source: &'a str,
     nodes: &mut BTreeMap<&'a str, ModuleNode<'a>>,
     exports: &mut BTreeMap<String, BTreeSet<TypeScriptModuleEntry>>,
+    values: &mut BTreeSet<&'a str>,
 ) {
     match statement {
         Statement::FunctionDeclaration(func) => {
             collect_function(func, source, nodes);
         }
         Statement::VariableDeclaration(decl) => {
-            collect_variables(decl, source, nodes);
+            collect_variables(decl, source, nodes, values);
         }
         Statement::ExportNamedDeclaration(export) => {
             if export.export_kind == ImportOrExportKind::Type {
@@ -156,7 +169,7 @@ fn collect_statement<'a>(
                     }
                 }
                 Some(Declaration::VariableDeclaration(decl)) => {
-                    for name in collect_variables(decl, source, nodes) {
+                    for name in collect_variables(decl, source, nodes, values) {
                         record_export(exports, name, name);
                     }
                 }
@@ -331,8 +344,10 @@ fn collect_variables<'a>(
     decl: &'a VariableDeclaration<'a>,
     source: &'a str,
     nodes: &mut BTreeMap<&'a str, ModuleNode<'a>>,
+    values: &mut BTreeSet<&'a str>,
 ) -> Vec<&'a str> {
     let mut names = Vec::new();
+    let is_const = decl.kind == oxc_ast::ast::VariableDeclarationKind::Const;
     for declarator in &decl.declarations {
         let Some(name) = binding_identifier_name(&declarator.id) else {
             continue;
@@ -350,12 +365,21 @@ fn collect_variables<'a>(
             }
             Expression::CallExpression(call) => {
                 let Expression::Identifier(callee) = unwrap_type_wrappers(&call.callee) else {
+                    values.extend(is_const.then_some(name));
                     continue;
                 };
+                // `Symbol("x")` builds a value, not a factory product.
+                if callee.name == "Symbol" {
+                    values.extend(is_const.then_some(name));
+                    continue;
+                }
                 nodes.entry(name).or_default().factory = Some(callee.name.as_str());
                 names.push(name);
             }
-            _ => {}
+            // A non-function `const` value (regex, string, object, array,
+            // symbol, `new X()`): never an export entry itself, but a node a
+            // reading function can reach (#13592 B2).
+            _ => values.extend(is_const.then_some(name)),
         }
     }
     names
@@ -413,6 +437,7 @@ fn node_callees<'a>(
     node: &ModuleNode<'a>,
     nodes: &BTreeMap<&'a str, ModuleNode<'a>>,
     names: &std::collections::HashSet<&'a str>,
+    values: &BTreeSet<&'a str>,
 ) -> BTreeSet<&'a str> {
     let texts: Vec<&CallText<'_>> = match node.factory {
         Some(factory) => nodes
@@ -433,6 +458,22 @@ fn node_callees<'a>(
             .calls
             .split(|ch: char| !is_javascript_identifier_char(ch))
         {
+            if let Some(&value) = values.get(token) {
+                // Read-only use of a module-level `const` value (#13592 B2).
+                // Comments and literals are masked only for the read-presence
+                // check; the shadow check stays on the raw scope, so a
+                // mis-masked declaration can only remove an edge.
+                if checked.insert(value)
+                    && reads_unshadowed_value(
+                        &ts_mask_literals_and_comments(&text.calls),
+                        text.scope,
+                        value,
+                    )
+                {
+                    callees.insert(value);
+                }
+                continue;
+            }
             // Membership first: `checked` then only ever holds top-level
             // binding names, not every distinct keyword/identifier (#10096
             // review).

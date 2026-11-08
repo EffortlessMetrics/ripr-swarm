@@ -61,10 +61,13 @@ pub(crate) fn owners_from_program(
     // #7812: keep the original owner when `export default ident`
     // snapshots the binding before that reassignment.
     owners = without_reassigned_esm_bindings(&program.body, owners);
-    let entries = module_entries_by_owner(&program.body, source);
+    let (entries, value_names) = module_entries_by_owner(&program.body, source);
     for owner in &mut owners {
+        // A `ModuleFunction` owner is a non-callable `const` initializer; it
+        // carries entries only when it is a followable read-only value node
+        // (#13592 B2), never through the bare-call edges of a factory const.
         if owner.class_name.is_none()
-            && owner.owner_kind != OwnerKind::ModuleFunction
+            && (owner.owner_kind != OwnerKind::ModuleFunction || value_names.contains(&owner.name))
             && let Some(owner_entries) = entries.get(&owner.name)
         {
             owner.module_entries = owner_entries.clone();
