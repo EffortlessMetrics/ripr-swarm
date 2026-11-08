@@ -46,7 +46,7 @@
         {"kind":"error_variant","text":"Result::Err(QueueError::Closed)","line":11}
       ],
       "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches error variant: Result::Err(QueueError::Closed)", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach next: single"],
-      "missing": ["Missing discriminator value: QueueError::Closed", "No exact error variant discriminator was detected"],
+      "missing": ["Missing check value: QueueError::Closed", "No exact error variant discriminator was detected"],
       "assertion_texts": {
         "18": "assert_eq!(s.next().unwrap().name, \"a\");"
       },

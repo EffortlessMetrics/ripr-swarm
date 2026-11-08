@@ -30,6 +30,10 @@ pub(crate) enum Product {
     LocalTestMacros,
     FunctionOracles,
     ForeignEntryImport,
+    SourceNamings,
+    CallMakingClosure,
+    ClosureArgumentPositions,
+    InvokedCallbackParams,
 }
 
 impl Product {
@@ -39,6 +43,10 @@ impl Product {
             Self::LocalTestMacros => "local_test_macros",
             Self::FunctionOracles => "function_oracles",
             Self::ForeignEntryImport => "foreign_entry_import",
+            Self::SourceNamings => "source_namings",
+            Self::CallMakingClosure => "call_making_closure",
+            Self::ClosureArgumentPositions => "closure_argument_positions",
+            Self::InvokedCallbackParams => "invoked_callback_params",
         }
     }
 }

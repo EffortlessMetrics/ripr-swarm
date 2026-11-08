@@ -2090,9 +2090,16 @@ fn missing_discriminator_facts(
         probe.family,
         ProbeFamily::SideEffect | ProbeFamily::CallDeletion | ProbeFamily::ErrorPath
     ) || (matches!(probe.family, ProbeFamily::ReturnValue)
-        && flow_sinks
+        // RIPR-SPEC-0263 (#11147): an error-variant return under an
+        // unentered `if` reads the guard on any diff shape.
+        && (flow_sinks
             .iter()
-            .any(|sink| sink.kind == FlowSinkKind::ErrorVariant)))
+            .any(|sink| sink.kind == FlowSinkKind::ErrorVariant)
+            // #12414: an inserted return value reads the same guard. Its
+            // line is new, so the #8659 baseline fold has no before-text to
+            // substitute and cannot refuse it; the SPEC-0263 refusals below
+            // still hold.
+            || probe.before.is_none())))
         && let Some(fact) = missing_guard_entry_discriminator(
             probe,
             owner_fn,
@@ -2573,6 +2580,27 @@ fn missing_boundary_discriminator(
     unresolved: &mut Option<String>,
 ) -> Option<MissingDiscriminatorFact> {
     let owner = owner_fn?;
+    // #12414: a pure insertion whose changed line is itself a predicate
+    // names the inserted guard's activating domain, not the changed
+    // comparison's equality boundary: the equality point passes on both
+    // sides of the insertion (`amount == 0` under `if amount < 0` returns
+    // the same value before and after), so it discriminates nothing. Only
+    // the narrow readable shape speaks: one comparison between an immutable
+    // integer owner parameter and an integer bound, with every related
+    // test's input provably leaving the guard false. A readable test input
+    // that enters the guard already activates the change. Every other shape
+    // keeps the boundary reading below (fail-closed).
+    if probe.before.is_none() && matches!(probe.family, ProbeFamily::Predicate) {
+        match inserted_guard_reading(probe, owner, related_tests, index) {
+            InsertedGuardReading::Unentered(guard, inputs) => {
+                return Some(guard_unentered_fact(&guard, inputs, flow_sinks));
+            }
+            InsertedGuardReading::Entered => {
+                return None;
+            }
+            InsertedGuardReading::Unread => {}
+        }
+    }
     let parameters = function_parameters(owner);
     let owner_source = index
         .files()
@@ -3101,7 +3129,90 @@ fn missing_boundary_discriminator(
         value: format!("{left} == {right}"),
         reason,
         flow_sink: first_visible_flow_sink(flow_sinks).cloned(),
+        shape: DiscriminatorShape::Boundary,
+        drafted_boundary: None,
     })
+}
+
+/// What the related tests prove about a pure insertion whose changed line
+/// is itself a predicate (#12414).
+enum InsertedGuardReading {
+    /// Every related test's input provably leaves the inserted guard false,
+    /// with the shown input values that stay outside it.
+    Unentered(super::arm_selection::GuardEntry, Vec<String>),
+    /// A readable related test input enters the guard: it activates the
+    /// changed line, so this seam has no missing input.
+    Entered,
+    /// The inserted line is not a readable parameter-vs-integer-bound
+    /// guard, or some test's owner calls cannot be read: the boundary
+    /// reading keeps its previous path.
+    Unread,
+}
+
+/// The inserted-guard reading of a predicate probe on a pure insertion
+/// (#12414): the probe's own expression is the inserted condition, read by
+/// the RIPR-SPEC-0263 machinery, and every related test's input must
+/// provably leave the guard false for the domain to be named.
+fn inserted_guard_reading(
+    probe: &Probe,
+    owner: &FunctionSummary,
+    related_tests: &[&TestSummary],
+    index: &crate::analysis::rust_index::RustIndex,
+) -> InsertedGuardReading {
+    if related_tests.is_empty() {
+        return InsertedGuardReading::Unread;
+    }
+    let Some(guard) =
+        super::arm_selection::GuardEntry::establish_inserted_predicate(probe, owner, |name| {
+            super::arm_selection::named_integer_bound(index, owner, name)
+        })
+    else {
+        return InsertedGuardReading::Unread;
+    };
+    let mut inputs = Vec::new();
+    for test in related_tests {
+        match guard.evidence_for(test) {
+            super::arm_selection::GuardEntryEvidence::Unentered(test_inputs) => {
+                inputs.extend(test_inputs);
+            }
+            super::arm_selection::GuardEntryEvidence::Enters => {
+                return InsertedGuardReading::Entered;
+            }
+            super::arm_selection::GuardEntryEvidence::Unreadable => {
+                return InsertedGuardReading::Unread;
+            }
+        }
+    }
+    InsertedGuardReading::Unentered(guard, inputs)
+}
+
+/// The RIPR-SPEC-0263 fact: the guard no related test's input enters, with
+/// the observed values that stay outside it. Shared by
+/// [`missing_guard_entry_discriminator`] and the inserted-guard predicate
+/// reading (#12414) so both name the same value, reason and shape.
+fn guard_unentered_fact(
+    guard: &super::arm_selection::GuardEntry,
+    mut inputs: Vec<String>,
+    flow_sinks: &[FlowSinkFact],
+) -> MissingDiscriminatorFact {
+    inputs.sort();
+    inputs.dedup();
+    let condition = format!("if {}", guard.condition());
+    MissingDiscriminatorFact {
+        reason: format!(
+            "{GUARD_UNENTERED_REASON_PREFIX} `{condition}`; observed `{}` values: {}",
+            guard.parameter(),
+            inputs
+                .iter()
+                .map(|input| format!("`{input}`"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        value: condition,
+        flow_sink: first_visible_flow_sink(flow_sinks).cloned(),
+        shape: DiscriminatorShape::GuardDomain,
+        drafted_boundary: None,
+    }
 }
 
 /// RIPR-SPEC-0265 rule 1: a changed comparison that is the whole closure
@@ -3345,6 +3456,8 @@ fn element_boundary_discriminator(
             "No related test call passes `{parameter}` an element {element} equal to {boundary}{short_circuit}; observed {element} values: {observed}; target {boundary} value: {target}"
         ),
         flow_sink: first_visible_flow_sink(flow_sinks).cloned(),
+        shape: DiscriminatorShape::Boundary,
+        drafted_boundary: None,
     })
 }
 
@@ -3577,6 +3690,8 @@ fn missing_error_variant_discriminator(
             .find(|sink| sink.kind == FlowSinkKind::ErrorVariant)
             .or_else(|| first_visible_flow_sink(flow_sinks))
             .cloned(),
+        shape: DiscriminatorShape::Other,
+        drafted_boundary: None,
     })
 }
 
@@ -3649,6 +3764,8 @@ fn missing_match_arm_discriminator(
             .find(|sink| sink.kind == FlowSinkKind::MatchArm)
             .or_else(|| first_visible_flow_sink(flow_sinks))
             .cloned(),
+        shape: DiscriminatorShape::Other,
+        drafted_boundary: None,
     })
 }
 
@@ -3719,22 +3836,7 @@ fn missing_guard_entry_discriminator(
         }
         inputs.extend(guard.unentered_inputs(test)?);
     }
-    inputs.sort();
-    inputs.dedup();
-    let condition = format!("if {}", guard.condition());
-    Some(MissingDiscriminatorFact {
-        reason: format!(
-            "{GUARD_UNENTERED_REASON_PREFIX} `{condition}`; observed `{}` values: {}",
-            guard.parameter(),
-            inputs
-                .iter()
-                .map(|input| format!("`{input}`"))
-                .collect::<Vec<_>>()
-                .join(", ")
-        ),
-        value: condition,
-        flow_sink: first_visible_flow_sink(flow_sinks).cloned(),
-    })
+    Some(guard_unentered_fact(&guard, inputs, flow_sinks))
 }
 
 /// Whether a function the owner reaches through its calls names the owner
@@ -4212,6 +4314,8 @@ fn missing_field_value_discriminator(
             .iter()
             .find(|sink| sink.kind == FlowSinkKind::StructField)
             .cloned(),
+        shape: DiscriminatorShape::Other,
+        drafted_boundary: None,
     })
 }
 
@@ -4263,6 +4367,327 @@ pub(in crate::analysis) fn assigned_field_read_confirms(
     owner_borrows_receiver(&owner.body)
         && !super::propagation_witness::assertion_expects_default_like(&assertion.text)
         && pushed_collection_compared_whole(owner, path, test, assertion, index)
+}
+
+/// #11870: the one start policy for a changed field write that a related test
+/// reads but does not check exactly. True only when, over `tests` (the
+/// owner's related tests):
+/// - the owner borrows its receiver (a by-value `self` writes a moved copy,
+///   so no read of the test's binding can see the write);
+/// - the owner and the changed `expression` name no type with a non-plain
+///   `Drop` impl (a failed assertion may exit while unwinding, so an exact
+///   assertion would not be a repair);
+/// - no test is `#[ignore]`d or `#[should_panic]` (a strengthened one would
+///   not run, or would pass by panicking before its read);
+/// - no assertion confirms the write ([`assigned_field_read_confirms`]); a
+///   confirmed write is already checked and has nothing to repair;
+/// - a test that calls the owner directly has an assertion that reads the
+///   written field from the binding it ran the owner on, as one side of a
+///   relational check (`>`, `<`, `>=`, `<=`, `!=`) or `assert_ne!`, under
+///   the confirming rule's binding guards ([`weak_assigned_field_read`]); and
+/// - nothing else in any related test body can be the exact check these rules
+///   do not place ([`test_body_may_check_field_elsewhere`]): any statement,
+///   not only an assertion, that names the field or uses a weakly read
+///   binding other than as the owner call or its declaration (a `let` alias,
+///   a destructure, a helper call, a move, an `if`/`panic!` check).
+///
+/// `check` (the finding's class) and the seam's missing-discriminator fact
+/// both ask this, so `ripr check` and `ripr repair` start the same gap. A
+/// read the policy cannot place (a sibling field, another binding, a later
+/// write, a getter, an equality or a bare boolean) starts nothing.
+pub(in crate::analysis) fn assigned_field_weak_read_start(
+    owner: &FunctionSummary,
+    expression: &str,
+    path: &str,
+    tests: &[&TestSummary],
+    index: &crate::analysis::rust_index::RustIndex,
+) -> bool {
+    if !owner_borrows_receiver(&owner.body)
+        || path.is_empty()
+        || tests.iter().any(|test| {
+            super::gap_admission::is_ignored(test)
+                || test.attrs.iter().any(|attr| attr.contains("should_panic"))
+        })
+        || macro_names_rebound(index, &["assert", "assert_ne"])
+    {
+        return false;
+    }
+    let Some(call) = super::builder_override::OwnerCall::from_symbol(&owner.id.0) else {
+        return false;
+    };
+    // #11870: a non-public field is read only by a test that can name it.
+    let mut reach = None;
+    let mut weak = false;
+    for test in tests {
+        // Every test that runs the owner must itself be a placed weak read:
+        // a test that reaches the owner another way (a helper, a loop, an
+        // alias), or that reads the write through a getter, `Display`, a
+        // helper-held assertion or an `if`/`panic!` check, may be the exact
+        // check these rules do not place.
+        if !super::related_tests::owner_call_is_direct(test, owner, index) {
+            return false;
+        }
+        // Pass one: the weak reads, as (assertion index, binding).
+        let mut weak_reads: Vec<(usize, String)> = Vec::new();
+        for (at, assertion) in test.assertions.iter().enumerate() {
+            if assigned_field_read_confirms(owner, path, test, assertion, index) {
+                return false;
+            }
+            if let Some(binding) = weak_assigned_field_read(owner, path, test, assertion) {
+                weak_reads.push((at, binding));
+            }
+        }
+        if weak_reads.is_empty() {
+            return false;
+        }
+        if reach
+            .get_or_insert_with(|| super::field_reach::declared_field_reach(owner, path, index))
+            .is_some_and(|reach| {
+                !super::field_reach::test_can_name_field(
+                    reach,
+                    owner.file.as_path(),
+                    test.file.as_path(),
+                )
+            })
+        {
+            return false;
+        }
+        // Pass two: any other assertion that reads the written field or names
+        // a binding it was weakly read from may be the exact check the rules
+        // above do not place (`assert_eq!(c.count, 2)` after a relational
+        // read, a getter, a compound condition), so it withholds the start.
+        for (at, assertion) in test.assertions.iter().enumerate() {
+            if weak_reads.iter().any(|(weak_at, _)| *weak_at == at) {
+                continue;
+            }
+            let masked = crate::analysis::extract::mask_comments_and_strings(&assertion.text);
+            if names_field_access(&masked, path)
+                || weak_reads.iter().any(|(_, binding)| {
+                    names_whole_ident(&masked, binding)
+                        || names_format_capture(&assertion.text, binding)
+                })
+            {
+                return false;
+            }
+        }
+        // Pass three: the rest of the body, assertions or not.
+        if test_body_may_check_field_elsewhere(test, &weak_reads, call.name(), path) {
+            return false;
+        }
+        weak = true;
+    }
+    // No other mention of the owner's name anywhere in the index (another
+    // test, a helper, a `macro_rules!` body, a doctest, production code, an
+    // alias path, a method value, a turbofish call) than in the placed weak
+    // reads: such a mention may be a runner that observes the write exactly,
+    // which no relation or per-test rule places. A name shared with another
+    // type only over-withholds.
+    let mut placed: Vec<(&std::path::Path, usize)> = Vec::new();
+    let mut in_placed = 0;
+    for test in tests {
+        if !placed.contains(&(test.file.as_path(), test.start_line)) {
+            placed.push((test.file.as_path(), test.start_line));
+            in_placed += super::field_reach::mentions_in(test.body.as_ref(), &owner.name);
+        }
+    }
+    if weak && super::field_reach::owner_name_mentions(index, &owner.name) != in_placed {
+        return false;
+    }
+    // The type walk is the costly check, so it runs last, only for a start
+    // every cheaper rule allowed. The test's binding is the impl's `Self`
+    // type, which a `&mut self` signature never names: ask about it
+    // explicitly (an owner with no established impl type withholds).
+    weak && !crate::analysis::test_grip_evidence::names_non_plain_drop_type(
+        owner,
+        &format!("{expression} Self"),
+        index,
+    )
+}
+
+/// Whether `test`'s body, with the weak-read assertions (`weak_reads`) cut
+/// out, still names the written field `path` or uses a weakly read binding
+/// anywhere but as the owner call `<binding>.<owner>(` or its declaration
+/// `let [mut] <binding>`. Such a statement may check the field exactly
+/// without being an assertion fact (`let n = c.count; assert_eq!(n, 2)`,
+/// `verify(&c)`, `let Counter { count, .. } = c`, `let r = &c.count`,
+/// `if c.count != 2 { panic!() }`). A weak assertion whose text cannot be
+/// found in the body withholds (fail closed).
+fn test_body_may_check_field_elsewhere(
+    test: &TestSummary,
+    weak_reads: &[(usize, String)],
+    owner_name: &str,
+    path: &str,
+) -> bool {
+    let mut rest = crate::analysis::extract::mask_comments_and_strings(test.body.as_ref());
+    for (at, _) in weak_reads {
+        let Some(assertion) = test.assertions.get(*at) else {
+            return true;
+        };
+        let masked = crate::analysis::extract::mask_comments_and_strings(&assertion.text);
+        let text = masked.trim();
+        let text = text.strip_suffix(';').unwrap_or(text).trim_end();
+        if text.is_empty() || !rest.contains(text) {
+            return true;
+        }
+        rest = rest.replacen(text, " ", 1);
+    }
+    if names_field_access(&rest, path) {
+        return true;
+    }
+    let mut bindings: Vec<&str> = weak_reads.iter().map(|(_, b)| b.as_str()).collect();
+    bindings.sort_unstable();
+    bindings.dedup();
+    bindings.into_iter().any(|binding| {
+        let mut rest = rest.replace(&format!("{binding}.{owner_name}("), " (");
+        for head in [format!("let mut {binding}"), format!("let {binding}")] {
+            while let Some(at) = rest.find(&head) {
+                let end = at + head.len();
+                let boundary = rest[end..]
+                    .chars()
+                    .next()
+                    .is_none_or(|ch| !(ch.is_alphanumeric() || ch == '_'));
+                if boundary {
+                    rest.replace_range(at..end, " ");
+                } else {
+                    break;
+                }
+            }
+        }
+        names_whole_ident(&rest, binding) || names_format_capture(test.body.as_ref(), binding)
+    })
+}
+
+/// Whether `masked` names `ident` as a whole identifier.
+fn names_whole_ident(masked: &str, ident: &str) -> bool {
+    let is_ident = |ch: char| ch.is_alphanumeric() || ch == '_';
+    masked.match_indices(ident).any(|(at, name)| {
+        !masked[..at].chars().next_back().is_some_and(is_ident)
+            && !masked[at + name.len()..]
+                .chars()
+                .next()
+                .is_some_and(is_ident)
+    })
+}
+
+/// Whether `masked` accesses a field named `path` (`<expr>.path`, not a
+/// longer name); whitespace after the dot (`c. count`, a line break) counts.
+fn names_field_access(masked: &str, path: &str) -> bool {
+    let is_ident = |ch: char| ch.is_alphanumeric() || ch == '_';
+    masked.match_indices('.').any(|(at, _)| {
+        let after = masked[at + 1..].trim_start();
+        after
+            .strip_prefix(path)
+            .is_some_and(|tail| !tail.chars().next().is_some_and(is_ident))
+    })
+}
+
+/// Whether the unmasked `raw` text may capture `ident` inline in a format
+/// string (`{c}`, `{c:?}`, `{c :?}`, `{c }`, `{c:>10}`, `{c.field}`, or a
+/// `\`-newline continuation inside the string), which masking removes. Fails
+/// closed: `{` + `ident` followed by anything but an identifier character
+/// counts, comments included.
+fn names_format_capture(raw: &str, ident: &str) -> bool {
+    let needle = format!("{{{ident}");
+    raw.match_indices(&needle).any(|(at, name)| {
+        raw[at + name.len()..]
+            .chars()
+            .next()
+            .is_none_or(|ch| !(ch.is_alphanumeric() || ch == '_'))
+    })
+}
+
+/// The binding `assertion` reads `<binding>.<path>` from as one whole side of a
+/// relational check or an `assert_ne!`, against a side that does not name the
+/// binding, after the test ran the owner on that binding and under the same
+/// binding guards the confirming read uses.
+fn weak_assigned_field_read(
+    owner: &FunctionSummary,
+    path: &str,
+    test: &TestSummary,
+    assertion: &OracleFact,
+) -> Option<String> {
+    let call = super::builder_override::OwnerCall::from_symbol(&owner.id.0)?;
+    let masked = crate::analysis::extract::mask_comments_and_strings(&assertion.text);
+    let (binding, other) = weak_read_sides(masked.trim(), path)?;
+    (!names_whole_ident(other, &binding)
+        && !super::reveal::owner_called_on_other_receiver(&test.body, &binding, call.name())
+        && super::reveal::owner_call_precedes_read(
+            &test.body,
+            test.start_line,
+            &binding,
+            call.name(),
+            assertion.line,
+            call.impl_type(),
+        )
+        && super::reveal::binding_untouched_after_owner_call(
+            &test.body,
+            test.start_line,
+            &binding,
+            call.name(),
+            assertion.line,
+        ))
+    .then_some(binding)
+}
+
+/// The binding whose field `path` the masked assertion reads as one whole
+/// side of a relational check, and the other side's text.
+fn weak_read_sides<'a>(masked: &'a str, path: &str) -> Option<(String, &'a str)> {
+    let side_binding = |side: &str| -> Option<String> {
+        let (binding, field) = side.trim().split_once('.')?;
+        let bare = !binding.is_empty()
+            && binding
+                .chars()
+                .all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
+            && !binding.starts_with(|ch: char| ch.is_ascii_digit());
+        (bare && field == path).then(|| binding.to_string())
+    };
+    let (name, rest) = masked.split_once('!')?;
+    let call = rest.trim();
+    let call = call.strip_suffix(';').unwrap_or(call);
+    let args = super::reveal::macro_arguments(call);
+    match name.trim() {
+        "assert_ne" => {
+            let [left, right, ..] = args.as_slice() else {
+                return None;
+            };
+            side_binding(left)
+                .map(|binding| (binding, *right))
+                .or_else(|| side_binding(right).map(|binding| (binding, *left)))
+        }
+        "assert" => {
+            let subject = *args.first()?;
+            if ["&&", "||", "==", "=>", "->", "::<", "|", "?", "{", "["]
+                .iter()
+                .any(|token| subject.contains(token))
+            {
+                return None;
+            }
+            let mut operator = None;
+            let bytes = subject.as_bytes();
+            let mut at = 0;
+            while at < bytes.len() {
+                let two = subject.get(at..at + 2);
+                let (len, found) = match (two, bytes[at]) {
+                    (Some(">=" | "<=" | "!="), _) => (2, true),
+                    (_, b'>' | b'<') => (1, true),
+                    _ => (1, false),
+                };
+                if found {
+                    if operator.is_some() {
+                        return None;
+                    }
+                    operator = Some((at, len));
+                }
+                at += len;
+            }
+            let (at, len) = operator?;
+            let (left, right) = (&subject[..at], &subject[at + len..]);
+            side_binding(left)
+                .map(|binding| (binding, right))
+                .or_else(|| side_binding(right).map(|binding| (binding, left)))
+        }
+        _ => None,
+    }
 }
 
 /// Whether the method whose source starts `body` takes its receiver by
@@ -4394,6 +4819,7 @@ pub(in crate::analysis) fn pushed_collection_compared_whole(
                     &read.binding,
                     call.name(),
                     assertion.line,
+                    call.impl_type(),
                 )
                 && super::reveal::binding_untouched_after_owner_call(
                     &test.body,
@@ -5616,7 +6042,10 @@ fn bind_hop_step(
         // The owner (step 0) has no lower hop to read it, so no `self`
         // cell ever lands in an owner row.
         if include_receiver
-            && let Some(receiver) = &hop.receiver
+            && let Some(receiver) = hop
+                .receiver
+                .as_ref()
+                .and_then(super::helper_transfer::HopReceiver::parameter)
             && let Some(cell) = row.iter().find(|cell| cell.parameter == *receiver)
             && super::helper_transfer::is_receiver_cell(&cell.value)
         {
@@ -5760,7 +6189,13 @@ fn chain_entry_rows(
         })
     };
     let receivers = ReceiverParameters {
-        names: entry.receiver.iter().cloned().collect(),
+        names: entry
+            .receiver
+            .as_ref()
+            .and_then(super::helper_transfer::HopReceiver::parameter)
+            .map(str::to_string)
+            .into_iter()
+            .collect(),
         value: Some(&receiver_reader),
         text_cells: false,
         index: Some(index),
@@ -6371,15 +6806,20 @@ pub(in crate::analysis) fn returned_comparison_view(probe: &Probe) -> Option<Pro
     if !matches!(probe.family, ProbeFamily::ReturnValue) {
         return None;
     }
-    let (expression, explicit) = strip_explicit_return(&probe.expression);
-    if explicit && !is_top_level_comparison(&expression) {
+    let (expression, _) = strip_explicit_return(&probe.expression);
+    // A genuine returned comparison only: the operator must sit at the top
+    // level of both texts, explicit `return` or implicit tail alike. A
+    // turbofish `sum::<u64>() + 25 * 2`, a call/index-nested comparison or
+    // any other arithmetic rewrite contains comparison-shaped tokens
+    // without being one, and keeps the return-value reading.
+    if !is_top_level_comparison(&expression) {
         return None;
     }
     let before = probe.before.as_deref().map(|before| {
         let (before, before_explicit) = strip_explicit_return(before);
         (before, before_explicit)
     });
-    if let Some((before, true)) = &before
+    if let Some((before, _)) = &before
         && !is_top_level_comparison(before)
     {
         return None;
@@ -8626,14 +9066,14 @@ mod tests {
             start_line: 1,
             end_line: 9,
             body: "pub fn split_after(input: &str, delim: char) -> &str {\n    let end = input.rfind(delim).map_or(1, |idx| idx);\n    let start = delim.len_utf8();\n    if end == start {\n        &input[..end]\n    } else {\n        input\n    }\n}".into(),
-            calls: Vec::new(),
+            calls: crate::analysis::facts::SharedFactSlice::empty(),
             returns: Vec::new(),
-            literals: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
             source_role: FunctionSourceRole::Production,
-            attrs: Vec::new(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
             impl_attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             item: Default::default(),
             impl_context: Default::default(),
         };
@@ -8647,12 +9087,14 @@ mod tests {
                 name: "split_after".to_string(),
                 line: 5,
                 text: "split_after(\"ab\", 'x');".to_string().into(),
-            }],
+            }]
+            .into(),
             assertions: Vec::new(),
-            literals: Vec::new(),
-            attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
+            generated: None,
         };
         let probe = Probe {
             id: ProbeId("probe:src_lib.rs:predicate:eval".to_string()),
@@ -9024,12 +9466,14 @@ mod tests {
                 name: "score".to_string(),
                 line: call_line,
                 text: call.to_string().into(),
-            }],
+            }]
+            .into(),
             assertions: Vec::new(),
-            literals: Vec::new(),
-            attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
+            generated: None,
         }
     }
 
@@ -9092,7 +9536,8 @@ mod tests {
             "#[rstest]".to_string(),
             "#[case(10, false)]".to_string(),
             "#[case(11, true)]".to_string(),
-        ];
+        ]
+        .into();
         let activation = boundary_activation(&test);
 
         assert_eq!(owner_input_values(&activation), vec!["10", "11"]);
@@ -9111,9 +9556,9 @@ mod tests {
             "fn score_boundary(#[case] amount: i32) {\n    fn far(amount: i32) -> bool { score(amount) }\n    assert!(far(amount + 100));\n}",
         ] {
             let mut test = test_with_body_call(body, 12, "assert!(score(amount));");
-            test.attrs = vec!["#[rstest]".to_string(), "#[case(10)]".to_string()];
+            test.attrs = vec!["#[rstest]".to_string(), "#[case(10)]".to_string()].into();
             if body.contains("fn far") {
-                test.nested_fn_names = vec!["far".to_string()];
+                test.nested_fn_names = vec!["far".to_string()].into();
             }
             let activation = boundary_activation(&test);
 
@@ -9534,7 +9979,10 @@ mod tests {
     fn activation_evidence_reports_missing_boundary_discriminator() {
         let owner = function("pub fn score(amount: i32) -> bool {\n    amount > 10\n}");
         let test = test_with_call("score_uses_adjacent_value", "score(9);");
-        let probe = probe(ProbeFamily::Predicate, "amount > 10");
+        // A changed comparison (`>= 10` to `> 10`), not a pure insertion:
+        // an inserted guard names its domain instead (#12414).
+        let mut probe = probe(ProbeFamily::Predicate, "amount > 10");
+        probe.before = Some("amount >= 10".to_string());
         let flow_sinks = vec![FlowSinkFact {
             kind: FlowSinkKind::ReturnValue,
             text: "amount > 10".to_string(),
@@ -9566,6 +10014,190 @@ mod tests {
                 .map(|sink| &sink.kind),
             Some(&FlowSinkKind::ReturnValue)
         );
+    }
+
+    /// #12414: a pure insertion whose changed line is itself a predicate
+    /// names the inserted guard's activating domain, not the equality point
+    /// that passes on both sides of the insertion.
+    #[test]
+    fn inserted_guard_predicate_names_the_guard_domain() {
+        let owner = function(
+            "pub fn score(amount: i32, discount_threshold: i32) -> i32 {
+    if amount < 0 {
+        return 0;
+    }
+    if amount >= discount_threshold {
+        amount - 10
+    } else {
+        amount
+    }
+}",
+        );
+        let below = test_with_call("below_threshold", "score(50, 100);");
+        let above = test_with_call("far_above", "score(10_000, 100);");
+        let probe = probe(ProbeFamily::Predicate, "amount < 0");
+
+        let activation = activation_evidence(
+            &probe,
+            Some(&owner),
+            &[&below, &above],
+            &[],
+            None,
+            &crate::analysis::rust_index::RustIndex::default(),
+            false,
+        );
+
+        assert_eq!(activation.missing_discriminators.len(), 1);
+        let fact = &activation.missing_discriminators[0];
+        assert_eq!(fact.value, "if amount < 0");
+        assert_eq!(fact.shape, DiscriminatorShape::GuardDomain);
+        assert!(
+            fact.reason
+                .starts_with(crate::domain::GUARD_UNENTERED_REASON_PREFIX)
+        );
+        assert!(
+            fact.reason
+                .contains("observed `amount` values: `10_000`, `50`")
+        );
+        assert!(!fact.reason.contains("amount == 0"));
+    }
+
+    /// #12414: the non-strict insertion is read the same way; the equality
+    /// point alone never names the region that runs the changed line.
+    #[test]
+    fn inserted_non_strict_guard_predicate_names_the_guard_domain() {
+        let owner = function(
+            "pub fn score(amount: i32, discount_threshold: i32) -> i32 {
+    if amount <= 0 {
+        return 0;
+    }
+    if amount >= discount_threshold {
+        amount - 10
+    } else {
+        amount
+    }
+}",
+        );
+        let below = test_with_call("below_threshold", "score(50, 100);");
+        let probe = probe(ProbeFamily::Predicate, "amount <= 0");
+
+        let activation = activation_evidence(
+            &probe,
+            Some(&owner),
+            &[&below],
+            &[],
+            None,
+            &crate::analysis::rust_index::RustIndex::default(),
+            false,
+        );
+
+        assert_eq!(activation.missing_discriminators.len(), 1);
+        let fact = &activation.missing_discriminators[0];
+        assert_eq!(fact.value, "if amount <= 0");
+        assert_eq!(fact.shape, DiscriminatorShape::GuardDomain);
+    }
+
+    /// #12414: a flipped-operator diff (`before` present) is not an
+    /// insertion, so the flipped-comparison equality convention and its
+    /// goldens stay.
+    #[test]
+    fn a_flipped_operator_diff_keeps_the_equality_boundary() {
+        let owner = function(
+            "pub fn score(amount: i32, threshold: i32) -> i32 {
+    if amount >= threshold {
+        amount - 10
+    } else {
+        amount
+    }
+}",
+        );
+        let below = test_with_call("below_threshold", "score(50, 100);");
+        let above = test_with_call("far_above", "score(10_000, 100);");
+        let mut probe = probe(ProbeFamily::Predicate, "amount > threshold");
+        probe.before = Some("amount < threshold".to_string());
+
+        let activation = activation_evidence(
+            &probe,
+            Some(&owner),
+            &[&below, &above],
+            &[],
+            None,
+            &crate::analysis::rust_index::RustIndex::default(),
+            false,
+        );
+
+        assert_eq!(activation.missing_discriminators.len(), 1);
+        let fact = &activation.missing_discriminators[0];
+        assert_eq!(fact.value, "amount == threshold");
+        assert_eq!(fact.shape, DiscriminatorShape::Boundary);
+    }
+
+    /// #12414: a bound outside the parsed shape (a parameter bound, a call)
+    /// declines the guard reading and keeps the boundary reading below.
+    #[test]
+    fn an_inserted_predicate_with_an_unread_bound_keeps_the_boundary_reading() {
+        let owner = function(
+            "pub fn score(amount: i32, discount_threshold: i32) -> i32 {
+    if amount < discount_threshold {
+        return 0;
+    }
+    if amount >= discount_threshold {
+        amount - 10
+    } else {
+        amount
+    }
+}",
+        );
+        let below = test_with_call("below_threshold", "score(50, 100);");
+        let above = test_with_call("far_above", "score(10_000, 100);");
+        let probe = probe(ProbeFamily::Predicate, "amount < discount_threshold");
+
+        let activation = activation_evidence(
+            &probe,
+            Some(&owner),
+            &[&below, &above],
+            &[],
+            None,
+            &crate::analysis::rust_index::RustIndex::default(),
+            false,
+        );
+
+        assert_eq!(activation.missing_discriminators.len(), 1);
+        let fact = &activation.missing_discriminators[0];
+        assert_eq!(fact.value, "amount == discount_threshold");
+        assert_eq!(fact.shape, DiscriminatorShape::Boundary);
+    }
+
+    /// #12414: a readable test input that enters the inserted guard already
+    /// activates the change, so no missing input is named for the seam.
+    #[test]
+    fn a_test_input_entering_the_inserted_guard_suppresses_the_fact() {
+        let owner = function(
+            "pub fn score(amount: i32, discount_threshold: i32) -> i32 {
+    if amount < 0 {
+        return 0;
+    }
+    if amount >= discount_threshold {
+        amount - 10
+    } else {
+        amount
+    }
+}",
+        );
+        let negative = test_with_call("enters_the_guard", "score(-1, 100);");
+        let probe = probe(ProbeFamily::Predicate, "amount < 0");
+
+        let activation = activation_evidence(
+            &probe,
+            Some(&owner),
+            &[&negative],
+            &[],
+            None,
+            &crate::analysis::rust_index::RustIndex::default(),
+            false,
+        );
+
+        assert!(activation.missing_discriminators.is_empty());
     }
 
     #[test]
@@ -9605,7 +10237,10 @@ mod tests {
             "pub fn score(amount: i32) -> Result<bool, AuthError> {\n    if amount > 10 { return Err(AuthError::Bad); }\n    Ok(true)\n}",
         );
         let test = test_with_call("score_uses_adjacent_value", "score(9);");
-        let probe = probe(ProbeFamily::Predicate, "amount > 10");
+        // A changed comparison (`>= 10` to `> 10`), not a pure insertion:
+        // an inserted guard names its domain instead (#12414).
+        let mut probe = probe(ProbeFamily::Predicate, "amount > 10");
+        probe.before = Some("amount >= 10".to_string());
         let flow_sinks = vec![FlowSinkFact {
             kind: FlowSinkKind::ErrorVariant,
             text: "Result::Err(AuthError::Bad)".to_string(),
@@ -9642,15 +10277,16 @@ mod tests {
 let input = Request::builder().amount(100).token("abc").build();
 assert_eq!(input.amount, 100);"#
                 .into(),
-            calls: Vec::new(),
+            calls: crate::analysis::facts::SharedFactSlice::empty(),
             assertions: vec![oracle_fact(
                 "assert_eq!(input.amount, 100);",
                 OracleKind::ExactValue,
             )],
-            literals: Vec::new(),
-            attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
+            generated: None,
         };
 
         let facts = value_facts_for_test(
@@ -9693,12 +10329,13 @@ assert_eq!(input.amount, 100);"#
             start_line: 10,
             end_line: 12,
             body: assertion.to_string().into(),
-            calls: Vec::new(),
+            calls: crate::analysis::facts::SharedFactSlice::empty(),
             assertions: vec![oracle_fact(assertion, OracleKind::ExactValue)],
-            literals: Vec::new(),
-            attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
+            generated: None,
         };
 
         let facts = value_facts_for_test(
@@ -9730,12 +10367,13 @@ assert_eq!(input.amount, 100);"#
             start_line: 1,
             end_line: 3,
             body: body.into(),
-            calls: crate::analysis::extract::extract_call_facts(body, 1),
+            calls: crate::analysis::extract::extract_call_facts(body, 1).into(),
             assertions: Vec::new(),
-            literals: Vec::new(),
-            attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
+            generated: None,
         };
 
         let facts = value_facts_for_test(
@@ -9782,12 +10420,14 @@ assert_eq!(input.amount, 100);"#
                     name: "score".to_string(),
                     text: "score;".to_string().into(),
                 },
-            ],
+            ]
+            .into(),
             assertions: Vec::new(),
-            literals: Vec::new(),
-            attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
+            generated: None,
         };
 
         let facts = value_facts_for_test(
@@ -9822,15 +10462,16 @@ assert_eq!(input.amount, 100);"#
             start_line: 10,
             end_line: 14,
             body: body.into(),
-            calls,
+            calls: calls.into(),
             assertions: vec![oracle_fact(
                 "assert_eq!(total, 100);",
                 OracleKind::ExactValue,
             )],
-            literals: Vec::new(),
-            attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
+            generated: None,
         };
         let index = crate::analysis::rust_index::RustIndex::from_owned(
             crate::analysis::facts::OwnedRustIndex {
@@ -10244,12 +10885,14 @@ assert_eq!(input.amount, 100);"#
                     name: "score".to_string(),
                     text: "score;".to_string().into(),
                 },
-            ],
+            ]
+            .into(),
             assertions: Vec::new(),
-            literals: Vec::new(),
-            attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
+            generated: None,
         };
 
         assert!(
@@ -10602,6 +11245,19 @@ assert_eq!(input.amount, 100);"#
         );
         assert_eq!(view("return x > 1 && y", "return x > 2 && y"), None);
         assert_eq!(view("return x == 100", "return x > 101"), None);
+        // Implicit tails need the same top-level operator: a turbofish
+        // arithmetic rewrite (`sum::<u64>() + 50` -> `.. + 25 * 2`) or a
+        // nested comparison is not a returned bare comparison.
+        assert_eq!(
+            view(
+                "lines.iter().map(|l| l.cents).sum::<u64>() + 50",
+                "lines.iter().map(|l| l.cents).sum::<u64>() + 25 * 2"
+            ),
+            None
+        );
+        assert_eq!(view("f(x > 100)", "f(x > 101)"), None);
+        assert_eq!(view("v[x > 1]", "v[x > 2]"), None);
+        assert_eq!(view("x.parse::<i32>() > 5", "x.parse::<i32>() > 6"), None);
     }
 
     /// #9145 keyword boundary: `return` is stripped before any whitespace, never
@@ -10706,14 +11362,14 @@ assert_eq!(input.amount, 100);"#
             start_line: 1,
             end_line: 3,
             body: body.into(),
-            calls: Vec::new(),
+            calls: crate::analysis::facts::SharedFactSlice::empty(),
             returns: Vec::new(),
-            literals: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
             source_role: FunctionSourceRole::Production,
-            attrs: Vec::new(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
             impl_attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             item: Default::default(),
             impl_context: Default::default(),
         }
@@ -10825,12 +11481,14 @@ assert_eq!(input.amount, 100);"#
                 name: "score".to_string(),
                 line: 11,
                 text: call.to_string().into(),
-            }],
+            }]
+            .into(),
             assertions: Vec::new(),
-            literals: Vec::new(),
-            attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
+            generated: None,
         }
     }
 
@@ -10841,12 +11499,13 @@ assert_eq!(input.amount, 100);"#
             start_line: 10,
             end_line: 12,
             body: assertion.into(),
-            calls: Vec::new(),
+            calls: crate::analysis::facts::SharedFactSlice::empty(),
             assertions: vec![oracle_fact(assertion, kind)],
-            literals: Vec::new(),
-            attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
+            generated: None,
         }
     }
 
@@ -10904,10 +11563,11 @@ assert_eq!(input.amount, 100);"#
                 })
                 .collect(),
             assertions: Vec::new(),
-            literals: Vec::new(),
-            attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
+            generated: None,
         }
     }
 
@@ -10981,7 +11641,8 @@ assert_eq!(input.amount, 100);"#
             "#[rstest]".to_string(),
             "#[case(100, 7, true)]".to_string(),
             "#[case(LOW, 100, false)]".to_string(),
-        ];
+        ]
+        .into();
         assert_eq!(owner_argument_values(&cases, "amount"), vec!["100"]);
         assert_eq!(owner_argument_values(&cases, "limit"), vec!["7", "100"]);
         let rows = owner_call_parameter_values(
@@ -11016,7 +11677,8 @@ assert_eq!(input.amount, 100);"#
             "#[rstest]".to_string(),
             "#[case(100)]".to_string(),
             "#[case(99)]".to_string(),
-        ];
+        ]
+        .into();
         let rows = owner_call_parameter_values(
             &[&test],
             "eq",
@@ -11056,7 +11718,8 @@ assert_eq!(input.amount, 100);"#
             "#[rstest]".to_string(),
             "#[case(1, 2, true)]".to_string(),
             "#[case(2, 1, false)]".to_string(),
-        ];
+        ]
+        .into();
         let rows = owner_call_parameter_values(
             &[&test],
             "less",
@@ -11094,7 +11757,8 @@ assert_eq!(input.amount, 100);"#
             "#[case(UNKNOWN, 4)]".to_string(),
             "#[case(4, UNKNOWN)]".to_string(),
             "#[case(5, 6)]".to_string(),
-        ];
+        ]
+        .into();
         let rows = owner_call_parameter_values(
             &[&test],
             "eq",
@@ -11406,7 +12070,10 @@ assert_eq!(input.amount, 100);"#
         let owner = function(
             "pub fn score(amount: u64) -> u64 {\n    if amount > 999 { 25 } else { 0 }\n}",
         );
-        let predicate = probe(ProbeFamily::Predicate, "amount > 999");
+        // A changed comparison (`>= 999` to `> 999`), not a pure insertion:
+        // an inserted guard names its domain instead (#12414).
+        let mut predicate = probe(ProbeFamily::Predicate, "amount > 999");
+        predicate.before = Some("amount >= 999".to_string());
         let gap = |body: &str, lines: &[(usize, &str)]| {
             let test = test_with_body_calls(body, lines);
             let gathered = boundary_input(&owner, &predicate, &[&test]);
@@ -11715,7 +12382,8 @@ assert_eq!(input.amount, 100);"#
         test.literals = vec![LiteralFact {
             line: 11,
             value: "10".to_string(),
-        }];
+        }]
+        .into();
         let probe = probe(ProbeFamily::Predicate, "amount > 10");
         let gathered = boundary_input(&owner, &probe, &[&test]);
         assert!(owner_input_values(&gathered.activation).is_empty());
@@ -12752,7 +13420,8 @@ assert_eq!(input.amount, 100);"#
         test.literals = vec![LiteralFact {
             line: 10,
             value: "16".to_string(),
-        }];
+        }]
+        .into();
         let gathered = boundary_input(&owner, &predicate, &[&test]);
         assert!(gathered.activation.missing_discriminators.is_empty());
         assert!(
@@ -12798,7 +13467,8 @@ assert_eq!(input.amount, 100);"#
         test.literals = vec![LiteralFact {
             line: 11,
             value: "10".to_string(),
-        }];
+        }]
+        .into();
         let probe = probe(ProbeFamily::Predicate, "amount > 10");
         let gathered = boundary_input(&owner, &probe, &[&test]);
         assert!(owner_input_values(&gathered.activation).is_empty());

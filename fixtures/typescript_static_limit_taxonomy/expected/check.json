@@ -515,5 +515,5 @@
       "why": "preview adapter; advisory; may be incomplete; empty result is not Rust-grade clean"
     }
   ],
-  "source_subject": {"digest_algorithm":"sha256","files":[{"path":"src/dispatch.ts","digest":"sha256:8cdd08df8164f1f33b5dfd8de740f759537b7ba6a4fb6675e562f29cb350f013"}]}
+  "source_subject": {"digest_algorithm":"sha256","files":[{"path":"src/dispatch.ts","digest":"sha256:8cdd08df8164f1f33b5dfd8de740f759537b7ba6a4fb6675e562f29cb350f013"},{"path":"src/label.jsx","digest":"sha256:3657d8b7f6f6f1676c38ec993c8fbb09bfcca370a4155b4f5eb0e5a1a460fe9c"},{"path":"src/proxy.js","digest":"sha256:2a648c217c0e088ee6acb2ece3dde338daca189c0d1f5c7631f68aa83818528d"}]}
 }

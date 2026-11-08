@@ -551,12 +551,13 @@ fn apply_libtest_mimic_target(
                 start_line,
                 end_line,
                 body: SourceText::from(body),
-                calls,
+                calls: calls.into(),
                 assertions,
-                literals,
-                attrs: Vec::new(),
-                nested_fn_names,
-                let_bindings,
+                literals: literals.into(),
+                attrs: crate::analysis::facts::SharedFactSlice::empty(),
+                nested_fn_names: nested_fn_names.into(),
+                let_bindings: let_bindings.into(),
+                generated: None,
             },
             span_start: position,
             span_end: close_index,
@@ -1746,9 +1747,9 @@ fn apply_registered_attribute(
                 start_line: function.start_line,
                 end_line: function.end_line,
                 body: function.body.to_string(),
-                calls: function.calls.clone(),
+                calls: function.calls.to_vec(),
                 assertions: test.assertions.clone(),
-                literals: function.literals.clone(),
+                literals: function.literals.to_vec(),
                 selector: HarnessSelectorCapability::NamedUnexecuted,
                 claim: HarnessSubjectClaim::NamedFunction,
                 provenance: TestHarnessRegistration::provenance().to_string(),
@@ -1808,6 +1809,7 @@ fn registered_attribute_test_fact(function: &FunctionFact) -> TestFact {
         // parser-produced shadow facts — same body, same decisions.
         nested_fn_names: function.nested_fn_names.clone(),
         let_bindings: function.let_bindings.clone(),
+        generated: None,
     }
 }
 

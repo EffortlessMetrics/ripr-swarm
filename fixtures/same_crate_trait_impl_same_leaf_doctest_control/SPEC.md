@@ -19,6 +19,14 @@ The finding is `no_static_path`, the same class as the cross-crate fixture, so
 the sibling-crate trait is judged exactly like the same-crate one (#9169,
 #10061).
 
+The expected static class per finding (machine-checked against
+`expected/check.json` by `check-fixture-contracts`, #12928):
+
+```expected-classes
+probe:util_src_stream_take.rs:predicate:7b453838 -> no_static_path
+probe:util_src_stream_take.rs:return_value:2263b7d6 -> no_static_path
+```
+
 ## Must Not
 
 - Differ in class from the cross-crate fixture.
