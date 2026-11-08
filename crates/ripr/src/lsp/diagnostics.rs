@@ -1832,6 +1832,11 @@ fn append_withheld_preview_diagnostics(
             .or_default()
             .push(finding);
     }
+    // One shared bound (#13442): markers are reserved first (one per file, at
+    // most the cap), rows only spend what remains, so markers plus rows never
+    // exceed `MAX_WITHHELD_PREVIEW_MARKERS`.
+    let marked_files = by_file.len().min(MAX_WITHHELD_PREVIEW_MARKERS);
+    let mut rows_left = MAX_WITHHELD_PREVIEW_MARKERS - marked_files;
     for (file, mut members) in by_file.into_iter().take(MAX_WITHHELD_PREVIEW_MARKERS) {
         members.sort_by(|a, b| {
             (a.probe.location.line, a.probe.location.column, &a.id).cmp(&(
@@ -1869,7 +1874,122 @@ fn append_withheld_preview_diagnostics(
             classes.dedup();
             withheld_static_gap_diagnostic(anchor.range, count, &classes, recovery, &path)
         };
-        grouped.entry(uri).or_default().push(marker);
+        let entry = grouped.entry(uri).or_default();
+        entry.push(marker);
+        // Name WHICH preview changes lack a visible gap (#13442): one passive
+        // row per distinct changed line, bounded per snapshot by the same cap.
+        // Findings on one line aggregate into a single row (count + classes).
+        let mut by_line = BTreeMap::<usize, Vec<&Finding>>::new();
+        for member in members
+            .iter()
+            .filter(|member| finding_is_withheld_preview_profile_finding(member))
+        {
+            by_line
+                .entry(member.probe.location.line)
+                .or_default()
+                .push(member);
+        }
+        for line_members in by_line.into_values() {
+            if rows_left == 0 {
+                break;
+            }
+            let Some(representative) = line_members.first() else {
+                continue;
+            };
+            let range = diagnostic_for_finding_with_causal(
+                root,
+                representative,
+                config.repo_config().severity(),
+                None,
+                &config.position_encoding,
+                origins,
+            )
+            .range;
+            entry.push(withheld_preview_row_diagnostic(range, &line_members, &path));
+            rows_left -= 1;
+        }
+    }
+}
+
+/// A passive per-line disclosure for one withheld preview finding (#13442).
+/// Static vocabulary only; it is deliberately not a gap: no finding id,
+/// repair, witness, or `preview_actionability` data, and never Warning.
+pub(super) fn withheld_preview_row_diagnostic(
+    range: Range,
+    line_findings: &[&Finding],
+    path: &str,
+) -> Diagnostic {
+    let Some(finding) = line_findings.first().copied() else {
+        return Diagnostic::default();
+    };
+    let mut classes = line_findings
+        .iter()
+        .map(|member| member.class.as_str())
+        .collect::<Vec<_>>();
+    classes.sort_unstable();
+    classes.dedup();
+    let count = line_findings.len();
+    let language = finding.language.map_or("preview-language", |l| l.as_str());
+    // Distinct subjects on the line, in finding order, bounded (#13442).
+    let mut subjects = Vec::<String>::new();
+    for member in line_findings {
+        let subject = member.probe.owner.as_ref().map_or_else(
+            || {
+                let line = member
+                    .probe
+                    .expression
+                    .trim_start()
+                    .lines()
+                    .next()
+                    .unwrap_or("")
+                    .trim();
+                let clipped: String = line.chars().take(60).collect();
+                if clipped.is_empty() {
+                    "this changed line".to_string()
+                } else {
+                    format!("`{clipped}`")
+                }
+            },
+            |owner| format!("`{owner}`"),
+        );
+        if !subjects.contains(&subject) {
+            subjects.push(subject);
+        }
+    }
+    let extra = subjects.len().saturating_sub(3);
+    subjects.truncate(3);
+    let mut subject = subjects.join(", ");
+    if extra > 0 {
+        subject.push_str(&format!(", +{extra} more"));
+    }
+    Diagnostic {
+        range,
+        severity: Some(DiagnosticSeverity::HINT),
+        code: Some(NumberOrString::String(
+            super::diagnostic_catalog::DIAGNOSTIC_PREVIEW_WITHHELD_CODE.to_string(),
+        )),
+        source: Some("ripr".to_string()),
+        message: if count == 1 {
+            format!(
+                "preview {language}: {} for {subject}, not an actionable gap",
+                finding.class.as_str()
+            )
+        } else {
+            format!(
+                "preview {language}: {} for {subject} ({count} changes on this line), not an actionable gap",
+                classes.join(", ")
+            )
+        },
+        data: Some(serde_json::json!({
+            "kind": "preview_finding_withheld",
+            "limitation": "actionable_profile_withheld_preview",
+            "language": language,
+            "class": finding.class.as_str(),
+            "classes": classes,
+            "count": count,
+            "path": path,
+        })),
+        ..Default::default()
     }
 }
 
@@ -6228,6 +6348,7 @@ mod diagnostic_policy_tests {
         AnalysisOutcomeCounts, AnalysisOutcomeKind, AnalysisRecovery, AnalysisRecoveryKind,
         AnalysisStage,
     };
+    use crate::domain::DiscriminatorShape;
     use crate::domain::{
         ActivationEvidence, Confidence, DeltaKind, ExposureClass, LanguageStatus,
         MissingDiscriminatorFact, OracleKind, OracleStrength, Probe, ProbeFamily, ProbeId,
@@ -6467,6 +6588,8 @@ mod diagnostic_policy_tests {
                 crate::domain::GUARD_UNENTERED_REASON_PREFIX
             ),
             flow_sink: None,
+            shape: DiscriminatorShape::GuardDomain,
+            drafted_boundary: None,
         }];
         let message = lsp_message(&finding);
         assert!(
@@ -6487,6 +6610,8 @@ mod diagnostic_policy_tests {
             value: "age == 18".to_string(),
             reason: "no test uses 18".to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Boundary,
+            drafted_boundary: None,
         }];
         let message = lsp_message(&finding);
         assert_eq!(
@@ -6508,6 +6633,8 @@ mod diagnostic_policy_tests {
                 value,
                 reason: "no test uses it".to_string(),
                 flow_sink: None,
+                shape: DiscriminatorShape::Other,
+                drafted_boundary: None,
             }];
             lsp_message(finding)
         };
@@ -6556,13 +6683,21 @@ mod diagnostic_policy_tests {
             matches!(finding.probe.family, ProbeFamily::Predicate),
             "fixture must be a predicate probe"
         );
-        let fact = |value: &str| MissingDiscriminatorFact {
-            value: value.to_string(),
-            reason: "no test uses it".to_string(),
-            flow_sink: None,
-        };
-        finding.activation.missing_discriminators =
-            vec![fact("PriceError::Negative"), fact("n == 0")];
+        let fact =
+            |value: &str, shape: crate::domain::DiscriminatorShape| MissingDiscriminatorFact {
+                value: value.to_string(),
+                reason: "no test uses it".to_string(),
+                flow_sink: None,
+                shape,
+                drafted_boundary: None,
+            };
+        finding.activation.missing_discriminators = vec![
+            fact(
+                "PriceError::Negative",
+                crate::domain::DiscriminatorShape::Other,
+            ),
+            fact("n == 0", crate::domain::DiscriminatorShape::Boundary),
+        ];
         assert_eq!(
             lsp_message(&finding),
             "Add boundary tests for below, equal, and above the changed threshold. \
@@ -6570,7 +6705,10 @@ mod diagnostic_policy_tests {
         );
 
         // Without a boundary input the first check is still named.
-        finding.activation.missing_discriminators = vec![fact("PriceError::Negative")];
+        finding.activation.missing_discriminators = vec![fact(
+            "PriceError::Negative",
+            crate::domain::DiscriminatorShape::Other,
+        )];
         assert!(
             lsp_message(&finding).ends_with("Missing check: `PriceError::Negative`."),
             "{}",
@@ -6580,8 +6718,13 @@ mod diagnostic_policy_tests {
         // A non-predicate probe keeps its first check even when a later one
         // is spelled as an equality.
         finding.probe.family = ProbeFamily::ErrorPath;
-        finding.activation.missing_discriminators =
-            vec![fact("PriceError::Negative"), fact("n == 0")];
+        finding.activation.missing_discriminators = vec![
+            fact(
+                "PriceError::Negative",
+                crate::domain::DiscriminatorShape::Other,
+            ),
+            fact("n == 0", crate::domain::DiscriminatorShape::Boundary),
+        ];
         assert!(
             lsp_message(&finding).ends_with("Missing check: `PriceError::Negative`."),
             "{}",
@@ -6599,6 +6742,8 @@ mod diagnostic_policy_tests {
             value: "Price::Boundary".to_string(),
             reason: "exact boundary is not observed".to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Other,
+            drafted_boundary: None,
         }];
         finding.related_tests.push(RelatedTest {
             name: "checks_boundary".to_string(),
@@ -6632,6 +6777,8 @@ mod diagnostic_policy_tests {
             value: "Price::Boundary".to_string(),
             reason: "exact boundary is not observed".to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Other,
+            drafted_boundary: None,
         }];
         finding.related_tests.push(RelatedTest {
             name: "checks_boundary".to_string(),
@@ -6711,6 +6858,8 @@ mod diagnostic_policy_tests {
                         value: "amount == threshold".to_string(),
                         reason: "exact boundary is not observed".to_string(),
                         flow_sink: None,
+                        shape: DiscriminatorShape::Boundary,
+                        drafted_boundary: None,
                     }];
                     if with_fix_site {
                         finding.related_tests.push(weak_test());
@@ -6755,6 +6904,8 @@ mod diagnostic_policy_tests {
                 value: "amount == threshold".to_string(),
                 reason: "exact boundary is not observed".to_string(),
                 flow_sink: None,
+                shape: DiscriminatorShape::Boundary,
+                drafted_boundary: None,
             }];
             finding.evidence = vec![
                 "suggested_test_file: tests/other_test".to_string(),
@@ -6797,6 +6948,8 @@ mod diagnostic_policy_tests {
                 value: "Price::Boundary".to_string(),
                 reason: "exact boundary is not observed".to_string(),
                 flow_sink: None,
+                shape: DiscriminatorShape::Other,
+                drafted_boundary: None,
             }];
             finding.related_tests.push(RelatedTest {
                 name: "checks_boundary".to_string(),
@@ -6965,7 +7118,18 @@ mod diagnostic_policy_tests {
                 }
             }
             let grouped = withheld_markers(LspDiagnosticProfile::Actionable, &[late, first]);
-            let all = grouped.values().flatten().collect::<Vec<_>>();
+            let all = grouped
+                .values()
+                .flatten()
+                .filter(|diagnostic| {
+                    diagnostic
+                        .data
+                        .as_ref()
+                        .and_then(|data| data.get("kind"))
+                        .and_then(|kind| kind.as_str())
+                        == Some("preview_findings_withheld")
+                })
+                .collect::<Vec<_>>();
             let [marker] = all.as_slice() else {
                 return Err(format!("{file}: exactly one marker expected: {all:?}"));
             };
@@ -7024,7 +7188,7 @@ mod diagnostic_policy_tests {
                 .values()
                 .flatten()
                 .count(),
-            1,
+            2,
             "*_unknown preview findings must disclose on the pull channel"
         );
 
@@ -7035,7 +7199,7 @@ mod diagnostic_policy_tests {
                 .values()
                 .flatten()
                 .count(),
-            1,
+            2,
             "static-limited preview findings must disclose on the pull channel"
         );
 
@@ -7049,7 +7213,8 @@ mod diagnostic_policy_tests {
             .values()
             .flatten()
             .count(),
-            1
+            2,
+            "one file marker plus one passive line row"
         );
 
         let mut stale = preview;
@@ -7101,6 +7266,294 @@ mod diagnostic_policy_tests {
                 "below the cap every file keeps a marker: {}",
                 few.len()
             ));
+        }
+        Ok(())
+    }
+
+    fn row_diagnostics(grouped: &BTreeMap<Uri, Vec<Diagnostic>>) -> Vec<&Diagnostic> {
+        grouped
+            .values()
+            .flatten()
+            .filter(|diagnostic| {
+                diagnostic
+                    .data
+                    .as_ref()
+                    .and_then(|data| data.get("kind"))
+                    .and_then(|kind| kind.as_str())
+                    == Some("preview_finding_withheld")
+            })
+            .collect()
+    }
+
+    /// #13442: each withheld Python/TypeScript preview change gets a passive
+    /// per-line row naming the changed line, never a gap.
+    #[test]
+    fn withheld_preview_findings_publish_passive_rows_at_changed_lines() -> Result<(), String> {
+        for (language, file) in [
+            (LanguageId::Python, "src/click/core.py"),
+            (LanguageId::TypeScript, "src/v4/core/util.ts"),
+        ] {
+            let mut late = preview_policy_finding(language, file, 40, "probe:late");
+            late.class = ExposureClass::NoStaticPath;
+            let first = preview_policy_finding(language, file, 7, "probe:first");
+            let duplicate_line = preview_policy_finding(language, file, 7, "probe:dup");
+            let grouped = withheld_markers(
+                LspDiagnosticProfile::Actionable,
+                &[late, first, duplicate_line],
+            );
+            let rows = row_diagnostics(&grouped);
+            let lines = rows
+                .iter()
+                .map(|row| row.range.start.line)
+                .collect::<Vec<_>>();
+            if lines != vec![6, 39] {
+                return Err(format!("{file}: one row per distinct line: {lines:?}"));
+            }
+            for row in rows {
+                if row.severity != Some(DiagnosticSeverity::HINT)
+                    || !row.message.starts_with("preview ")
+                    || !row.message.ends_with("not an actionable gap")
+                    || !row.message.contains("`")
+                {
+                    return Err(format!("{file}: row shape wrong: {row:?}"));
+                }
+                let data = row.data.as_ref().ok_or("row must carry data")?;
+                for forbidden in [
+                    "delivery_eligible",
+                    "finding_id",
+                    "canonical_gap_id",
+                    "headline_eligible",
+                    "preview_actionability",
+                    "witness",
+                    "repair",
+                    "verification_commands",
+                    "receipt_command",
+                    "id",
+                ] {
+                    if data.get(forbidden).is_some() {
+                        return Err(format!("{file}: row must not carry {forbidden}: {data}"));
+                    }
+                }
+            }
+            let late_row = row_diagnostics(&grouped)
+                .into_iter()
+                .find(|row| row.range.start.line == 39)
+                .ok_or("late row")?;
+            if !late_row.message.contains("no_static_path") {
+                return Err(format!("{file}: class must be named: {late_row:?}"));
+            }
+        }
+        Ok(())
+    }
+
+    /// #13442: a leading-newline expression still names its first code line.
+    #[test]
+    fn withheld_preview_row_subject_skips_leading_whitespace() -> Result<(), String> {
+        let mut finding = preview_policy_finding(LanguageId::Python, "a.py", 3, "probe:ws");
+        finding.probe.owner = None;
+        finding.probe.expression = "\n   if x > 1:\n    pass".to_string();
+        let row = withheld_preview_row_diagnostic(Range::default(), &[&finding], "a.py");
+        if !row.message.contains("`if x > 1:`") {
+            return Err(format!("subject must be first code line: {row:?}"));
+        }
+        Ok(())
+    }
+
+    /// #13442 negatives: the full profile publishes no rows, a non-preview
+    /// withheld gap gets none, and rows respect the snapshot cap.
+    #[test]
+    fn withheld_preview_rows_stay_silent_and_bounded() -> Result<(), String> {
+        let preview = preview_policy_finding(LanguageId::Python, "a.py", 3, "probe:p");
+        if !row_diagnostics(&withheld_markers(
+            LspDiagnosticProfile::Full,
+            std::slice::from_ref(&preview),
+        ))
+        .is_empty()
+        {
+            return Err("full profile must not duplicate rows".to_string());
+        }
+        let rust = static_policy_finding("src/a.rs", 3, "probe:r", ExposureClass::NoStaticPath);
+        let rust_grouped = withheld_markers(LspDiagnosticProfile::Actionable, &[rust]);
+        if rust_grouped.values().flatten().count() != 1
+            || !row_diagnostics(&rust_grouped).is_empty()
+        {
+            return Err("Rust withheld gap keeps its single marker, no rows".to_string());
+        }
+        let findings = (0..MAX_WITHHELD_PREVIEW_MARKERS + 20)
+            .map(|index| {
+                preview_policy_finding(
+                    LanguageId::TypeScript,
+                    "src/many.ts",
+                    index + 1,
+                    &format!("probe:{index:03}"),
+                )
+            })
+            .collect::<Vec<_>>();
+        let grouped = withheld_markers(LspDiagnosticProfile::Actionable, &findings);
+        let total = grouped.values().flatten().count();
+        if total != MAX_WITHHELD_PREVIEW_MARKERS {
+            return Err(format!("single file markers+rows must be capped: {total}"));
+        }
+        let many_files = (0..MAX_WITHHELD_PREVIEW_MARKERS + 20)
+            .map(|index| {
+                preview_policy_finding(
+                    LanguageId::TypeScript,
+                    &format!("src/f{index:03}.ts"),
+                    1,
+                    &format!("probe:f{index:03}"),
+                )
+            })
+            .collect::<Vec<_>>();
+        let grouped = withheld_markers(LspDiagnosticProfile::Actionable, &many_files);
+        let total = grouped.values().flatten().count();
+        if total != MAX_WITHHELD_PREVIEW_MARKERS {
+            return Err(format!("mixed-file markers+rows must be capped: {total}"));
+        }
+        let mut mixed = (0..10)
+            .map(|index| {
+                preview_policy_finding(
+                    LanguageId::TypeScript,
+                    &format!("src/m{index:03}.ts"),
+                    1,
+                    &format!("probe:m{index:03}"),
+                )
+            })
+            .collect::<Vec<_>>();
+        mixed.extend((0..80).map(|index| {
+            preview_policy_finding(
+                LanguageId::TypeScript,
+                "src/z.ts",
+                index + 1,
+                &format!("probe:z{index:03}"),
+            )
+        }));
+        let grouped = withheld_markers(LspDiagnosticProfile::Actionable, &mixed);
+        let total = grouped.values().flatten().count();
+        if total != MAX_WITHHELD_PREVIEW_MARKERS || grouped.len() != 11 {
+            return Err(format!("mixed markers+rows bound: {total}"));
+        }
+        Ok(())
+    }
+
+    fn row_message_for(findings: &[Finding]) -> String {
+        let refs = findings.iter().collect::<Vec<_>>();
+        withheld_preview_row_diagnostic(Range::default(), &refs, "a.py").message
+    }
+
+    /// #13442: more than three distinct subjects on a line name three and
+    /// count the rest.
+    #[test]
+    fn withheld_preview_row_truncates_beyond_three_subjects() -> Result<(), String> {
+        let findings = (0..5)
+            .map(|index| {
+                let mut finding = preview_policy_finding(
+                    LanguageId::Python,
+                    "a.py",
+                    5,
+                    &format!("probe:{index}"),
+                );
+                finding.probe.owner = Some(crate::domain::SymbolId(format!("fn_{index}")));
+                finding
+            })
+            .collect::<Vec<_>>();
+        let message = row_message_for(&findings);
+        if !message.contains("`fn_0`, `fn_1`, `fn_2`, +2 more")
+            || message.contains("fn_3")
+            || !message.contains("(5 changes on this line)")
+        {
+            return Err(format!("truncation wrong: {message}"));
+        }
+        Ok(())
+    }
+
+    /// #13442: an unowned expression is clipped to 60 characters (counted as
+    /// chars, so multibyte text never splits) and an empty one falls back.
+    #[test]
+    fn withheld_preview_row_clips_expression_and_falls_back_when_empty() -> Result<(), String> {
+        let mut long = preview_policy_finding(LanguageId::Python, "a.py", 3, "probe:long");
+        long.probe.owner = None;
+        long.probe.expression = "x".repeat(100);
+        let message = row_message_for(&[long]);
+        if !message.contains(&format!("`{}`", "x".repeat(60))) || message.contains(&"x".repeat(61))
+        {
+            return Err(format!("60-char clip wrong: {message}"));
+        }
+        let mut multibyte = preview_policy_finding(LanguageId::Python, "a.py", 3, "probe:mb");
+        multibyte.probe.owner = None;
+        multibyte.probe.expression = "é".repeat(100);
+        let message = row_message_for(&[multibyte]);
+        if !message.contains(&format!("`{}`", "é".repeat(60))) || message.contains(&"é".repeat(61))
+        {
+            return Err(format!("multibyte clip wrong: {message}"));
+        }
+        for blank in ["", "   \n  "] {
+            let mut empty = preview_policy_finding(LanguageId::Python, "a.py", 3, "probe:empty");
+            empty.probe.owner = None;
+            empty.probe.expression = blank.to_string();
+            let message = row_message_for(&[empty]);
+            if !message.contains("for this changed line,") || message.contains("``") {
+                return Err(format!("empty fallback wrong: {message}"));
+            }
+        }
+        Ok(())
+    }
+
+    /// #13442: a Rust withheld file reserves a marker slot even though it
+    /// gets no rows, so a preview file's rows only spend the remainder.
+    #[test]
+    fn withheld_preview_rust_file_reserves_a_marker_slot() -> Result<(), String> {
+        let mut findings = vec![static_policy_finding(
+            "src/a.rs",
+            3,
+            "probe:r",
+            ExposureClass::NoStaticPath,
+        )];
+        findings.extend((0..80).map(|index| {
+            preview_policy_finding(
+                LanguageId::Python,
+                "src/z.py",
+                index + 1,
+                &format!("probe:z{index:03}"),
+            )
+        }));
+        let grouped = withheld_markers(LspDiagnosticProfile::Actionable, &findings);
+        let total = grouped.values().flatten().count();
+        let rows = row_diagnostics(&grouped).len();
+        if grouped.len() != 2
+            || total != MAX_WITHHELD_PREVIEW_MARKERS
+            || rows != MAX_WITHHELD_PREVIEW_MARKERS - 2
+        {
+            return Err(format!(
+                "Rust marker must reserve a slot: files={} total={total} rows={rows}",
+                grouped.len()
+            ));
+        }
+        Ok(())
+    }
+
+    /// #13442: distinct findings on one line are aggregated, not dropped.
+    #[test]
+    fn withheld_preview_same_line_findings_aggregate_into_one_row() -> Result<(), String> {
+        let mut a = preview_policy_finding(LanguageId::Python, "a.py", 5, "probe:a");
+        a.class = ExposureClass::NoStaticPath;
+        a.probe.location.column = 2;
+        let mut b = preview_policy_finding(LanguageId::Python, "a.py", 5, "probe:b");
+        b.class = ExposureClass::WeaklyExposed;
+        b.probe.location.column = 20;
+        a.probe.owner = Some(crate::domain::SymbolId("alpha_fn".to_string()));
+        b.probe.owner = Some(crate::domain::SymbolId("beta_fn".to_string()));
+        let grouped = withheld_markers(LspDiagnosticProfile::Actionable, &[a, b]);
+        let rows = row_diagnostics(&grouped);
+        let [row] = rows.as_slice() else {
+            return Err(format!("one aggregated row expected: {rows:?}"));
+        };
+        if !row.message.contains("2 changes on this line")
+            || !row.message.contains("no_static_path")
+            || !row.message.contains("weakly_exposed")
+            || !row.message.contains("`alpha_fn`")
+            || !row.message.contains("`beta_fn`")
+        {
+            return Err(format!("row must name count and classes: {row:?}"));
         }
         Ok(())
     }
@@ -7195,6 +7648,8 @@ mod diagnostic_policy_tests {
             value: "Price::Boundary".to_string(),
             reason: "exact boundary is not observed".to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Other,
+            drafted_boundary: None,
         }];
         published.related_tests.push(RelatedTest {
             name: "checks_boundary".to_string(),
@@ -8064,10 +8519,10 @@ mod diagnostic_policy_tests {
 mod lsp_next_step_parity_tests {
     use super::lsp_message;
     use crate::domain::{
-        ActivationEvidence, Confidence, DeltaKind, ExposureClass, Finding, LanguageId,
-        LanguageStatus, MissingDiscriminatorFact, OracleKind, OracleStrength, OwnerKind, Probe,
-        ProbeFamily, ProbeId, RelatedTest, RevealEvidence, RiprEvidence, SourceLocation,
-        StageEvidence, StageState, SymbolId,
+        ActivationEvidence, Confidence, DeltaKind, DiscriminatorShape, ExposureClass, Finding,
+        LanguageId, LanguageStatus, MissingDiscriminatorFact, OracleKind, OracleStrength,
+        OwnerKind, Probe, ProbeFamily, ProbeId, RelatedTest, RevealEvidence, RiprEvidence,
+        SourceLocation, StageEvidence, StageState, SymbolId,
     };
     use std::path::PathBuf;
 
@@ -8143,7 +8598,9 @@ mod lsp_next_step_parity_tests {
                     value: "amount == threshold".to_string(),
                     reason: "changed TypeScript equality-boundary at line 2 lacks a concrete preview discriminator".to_string(),
                     flow_sink: None,
-                }],
+                                    shape: DiscriminatorShape::Boundary,
+                                    drafted_boundary: None,
+}],
             },
             stop_reasons: Vec::new(),
             related_tests_matched_total: None,
@@ -8301,6 +8758,7 @@ mod lsp_next_step_parity_tests {
 #[cfg(test)]
 mod canonical_group_member_tests {
     use super::*;
+    use crate::domain::DiscriminatorShape;
     use crate::domain::{
         ActivationEvidence, Confidence, DeltaKind, ExposureClass, FindingCanonicalGap,
         MissingDiscriminatorFact, Probe, ProbeFamily, ProbeId, RevealEvidence, RiprEvidence,
@@ -8375,11 +8833,12 @@ mod canonical_group_member_tests {
         finding.class = ExposureClass::WeaklyExposed;
         finding.recommended_next_step =
             Some("Add boundary tests for below, equal, and above the changed threshold with exact assertions.".to_string());
-        finding.activation.missing_discriminators = vec![MissingDiscriminatorFact {
-            value: missing.to_string(),
-            reason: "no test uses the boundary".to_string(),
-            flow_sink: None,
-        }];
+        finding.activation.missing_discriminators =
+            vec![MissingDiscriminatorFact::equality_spelled(
+                missing.to_string(),
+                "no test uses the boundary".to_string(),
+                None,
+            )];
         finding.canonical_gap = Some(FindingCanonicalGap {
             id: gap_id.to_string(),
             language: "rust".to_string(),
@@ -8499,6 +8958,8 @@ mod canonical_group_member_tests {
             value: "age >= 18".to_string(),
             reason: "missing return pin".to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Other,
+            drafted_boundary: None,
         }];
 
         let findings = [first, second];

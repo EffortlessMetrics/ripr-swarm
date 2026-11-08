@@ -216,17 +216,26 @@ fn test_binding(
     owner: &str,
     receiver: usize,
     value: usize,
-    require_plain_registration: bool,
+    require_jest_registration: bool,
 ) -> Option<PushTestWitness> {
     let owner = owner.to_owned();
+    let only_replaced = test
+        .member_replacements_in_file
+        .iter()
+        .any(|name| name == "only");
     super::parse::parse_on_worker(&test.file, &test.body_text, move |_, source, allocator| {
         let parsed = Parser::new(allocator, source, SourceType::ts()).parse();
         if !parsed.errors.is_empty() || parsed.program.body.len() != 1 { return None }
         let registration = statement_call(&parsed.program.body[0])?;
-        // The Jest extension is bounded to the imported test itself. An unused
-        // import cannot authenticate an aliased or mixed-framework registration.
+        // An unused import cannot authenticate a mixed-runner registration.
+        // Admit only the imported Jest binding or its unmodified `only` member.
         // Preserve the existing Vitest registration readings.
-        if require_plain_registration && identifier(&registration.callee) != Some("test") { return None }
+        if require_jest_registration && identifier(&registration.callee) != Some("test") {
+            let Expression::StaticMemberExpression(member) = &registration.callee else { return None };
+            if member.optional || member.property.name != "only" || identifier(&member.object) != Some("test")
+                || only_replaced || registration.arguments.len() != 2
+                || !matches!(registration.arguments.first(), Some(Argument::StringLiteral(_))) { return None }
+        }
         let Some(Argument::ArrowFunctionExpression(callback)) = registration.arguments.get(1) else { return None };
         if callback.r#async || callback.expression || !callback.params.items.is_empty() || callback.params.rest.is_some() { return None }
         let statements = callback.body.statements.as_slice();
