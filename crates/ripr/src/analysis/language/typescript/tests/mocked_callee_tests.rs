@@ -347,6 +347,7 @@ fn mock_names_import_module_resolves_each_specifier_from_its_own_file() {
         imported: Some("fee".to_string()),
         local: "fee".to_string(),
         namespace: false,
+        via_reexport: false,
     };
     let test = Path::new("tests/lib.test.ts");
     let owner = Path::new("src/lib.ts");

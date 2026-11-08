@@ -89,10 +89,33 @@ fn class_of(json: &str) -> Result<String, String> {
         .ok_or_else(|| format!("no finding class in {json}"))
 }
 
+fn relation_of(json: &str) -> Result<(String, String), String> {
+    let value: serde_json::Value = serde_json::from_str(json).map_err(|e| e.to_string())?;
+    let related = &value["findings"][0]["related_tests"][0];
+    match (
+        related["relation_reason"].as_str(),
+        related["relation_confidence"].as_str(),
+    ) {
+        (Some(reason), Some(confidence)) => Ok((reason.to_string(), confidence.to_string())),
+        _ => Err(format!("no related-test relation in {json}")),
+    }
+}
+
 #[test]
 fn barrel_import_of_a_class_matches_the_direct_import() -> Result<(), String> {
-    let direct = class_of(&Subject::create("../src/u", "")?.json()?)?;
-    let barrel = class_of(&Subject::create("../src", "")?.json()?)?;
+    let direct_json = Subject::create("../src/u", "")?.json()?;
+    let barrel_json = Subject::create("../src", "")?.json()?;
+    let direct = class_of(&direct_json)?;
+    let barrel = class_of(&barrel_json)?;
+    // RIPR-SPEC-0095 disclosure: the barrel keeps its re-export provenance.
+    let direct_relation = relation_of(&direct_json)?;
+    if direct_relation != ("direct_owner_call".to_string(), "high".to_string()) {
+        return Err(format!("direct import relation: {direct_relation:?}"));
+    }
+    let barrel_relation = relation_of(&barrel_json)?;
+    if barrel_relation != ("re_export_chain_followed".to_string(), "medium".to_string()) {
+        return Err(format!("barrel import relation: {barrel_relation:?}"));
+    }
     if direct == "no_static_path" {
         return Err("the direct import must reach the getter".to_string());
     }

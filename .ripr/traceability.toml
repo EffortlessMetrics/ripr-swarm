@@ -8907,6 +8907,7 @@ spec = "docs/specs/RIPR-SPEC-0095-typescript-reexport-test-discovery.md"
 tests = [
   "crates/ripr/src/analysis/language/typescript/tests.rs",
   "crates/ripr/src/analysis/language/typescript/tests/reexport_chain_tests.rs",
+  "crates/ripr/tests/typescript_class_barrel_import.rs",
   "crates/ripr-contract/src/domain/evidence.rs"
 ]
 fixtures = [

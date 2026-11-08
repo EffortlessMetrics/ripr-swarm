@@ -1042,6 +1042,7 @@ impl ReExportIndex {
                             imported: Some(NAMESPACE_REEXPORT_IMPORTED.to_string()),
                             local: import.local.clone(),
                             namespace: true,
+                            via_reexport: false,
                         }
                     }
                     _ => import.clone(),
@@ -1139,6 +1140,7 @@ impl ReExportIndex {
                                 imported: Some(target_name),
                                 local: import.local.clone(),
                                 namespace: false,
+                                via_reexport: true,
                             }
                         }
                         None => import.clone(),
@@ -1726,12 +1728,24 @@ pub(crate) fn owner_call_relation(
             .then_some(TypeScriptRelationKind::ModuleValueReference);
     }
     if owner.owner_kind == OwnerKind::Method {
-        return receiver_owner_call_relation(test, owner, alias_map, workspace_root)
-            .then_some(TypeScriptRelationKind::ReceiverOwnerCall);
+        return receiver_owner_call_relation(test, owner, alias_map, workspace_root).then(|| {
+            if class_bound_only_through_reexport(test, owner, alias_map, workspace_root) {
+                TypeScriptRelationKind::ReExportChainFollowed
+            } else {
+                TypeScriptRelationKind::ReceiverOwnerCall
+            }
+        });
     }
     if owner.owner_kind == OwnerKind::ClassMethod {
-        return class_method_owner_call_relation(test, owner, alias_map, workspace_root)
-            .then_some(TypeScriptRelationKind::ClassMethodCall);
+        return class_method_owner_call_relation(test, owner, alias_map, workspace_root).then(
+            || {
+                if class_bound_only_through_reexport(test, owner, alias_map, workspace_root) {
+                    TypeScriptRelationKind::ReExportChainFollowed
+                } else {
+                    TypeScriptRelationKind::ClassMethodCall
+                }
+            },
+        );
     }
     // Owner-module mock guard (issue #2269): when the test mocks the changed
     // owner's own module, every owner call below executes the mock, not the
@@ -2078,6 +2092,33 @@ fn module_value_use_relation(
         }) && !local_identifier_declared_in_test_body(body, &import.local)
             && contains_identifier_reference(body, &import.local)
     })
+}
+
+/// Whether every binding the test names the owner's class by comes from an
+/// import the re-export index rewrote from a barrel (#13592 B3). Such a
+/// relation discloses as `re_export_chain_followed` with medium confidence
+/// (RIPR-SPEC-0095); a same-file class or any direct import keeps the direct
+/// receiver reading.
+fn class_bound_only_through_reexport(
+    test: &TypeScriptTest,
+    owner: &TypeScriptOwner,
+    alias_map: Option<&TsAliasMap>,
+    workspace_root: Option<&Path>,
+) -> bool {
+    if normalized_module_path(&test.file) == normalized_module_path(&owner.file) {
+        return false;
+    }
+    let mut via_reexport = false;
+    for import in test.imports_in_file.iter() {
+        if !import_source_matches_owner(import, &test.file, owner, alias_map, workspace_root) {
+            continue;
+        }
+        if !import.via_reexport {
+            return false;
+        }
+        via_reexport = true;
+    }
+    via_reexport
 }
 
 pub(crate) fn receiver_owner_call_relation(

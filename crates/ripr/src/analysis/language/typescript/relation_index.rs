@@ -262,6 +262,7 @@ mod tests {
             imported: imported.map(str::to_string),
             local: local.to_string(),
             namespace: false,
+            via_reexport: false,
         }
     }
 
@@ -322,6 +323,7 @@ mod tests {
                     imported: None,
                     local: "ns".to_string(),
                     namespace: true,
+                    via_reexport: false,
                 }],
             ),
             test_with_body("z.test.ts", "unrelated", vec![]),

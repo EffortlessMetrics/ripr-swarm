@@ -148,6 +148,7 @@ pub(super) fn weak_direct_test_for(owner_name: &str) -> TypeScriptTest {
             imported: Some(owner_name.to_string()),
             local: owner_name.to_string(),
             namespace: false,
+            via_reexport: false,
         }]
         .into(),
     }
@@ -220,6 +221,7 @@ fn mock_interaction_test_for(owner_name: &str) -> TypeScriptTest {
             imported: Some(owner_name.to_string()),
             local: owner_name.to_string(),
             namespace: false,
+            via_reexport: false,
         }]
         .into(),
     }
@@ -278,6 +280,7 @@ pub(super) fn direct_test_with_assertion(
             imported: Some(owner_name.to_string()),
             local: owner_name.to_string(),
             namespace: false,
+            via_reexport: false,
         }]
         .into(),
     }
@@ -5394,6 +5397,7 @@ fn classify_change_returns_exposed_when_related_test_has_strong_oracle() -> Resu
             imported: Some("applyDiscount".to_string()),
             local: "applyDiscount".to_string(),
             namespace: false,
+            via_reexport: false,
         }]
         .into(),
     };
@@ -5492,6 +5496,7 @@ fn classify_change_exposed_t_assertion_uses_execution_context_label() -> Result<
             imported: Some("applyDiscount".to_string()),
             local: "applyDiscount".to_string(),
             namespace: false,
+            via_reexport: false,
         }]
         .into(),
     };
@@ -7642,6 +7647,7 @@ fn collect_related_mock_paths_dedups_across_tests_in_same_file() {
                 imported: Some("applyDiscount".to_string()),
                 local: "applyDiscount".to_string(),
                 namespace: false,
+                via_reexport: false,
             }]
             .into(),
         },
@@ -7672,6 +7678,7 @@ fn collect_related_mock_paths_dedups_across_tests_in_same_file() {
                 imported: Some("applyDiscount".to_string()),
                 local: "applyDiscount".to_string(),
                 namespace: false,
+                via_reexport: false,
             }]
             .into(),
         },
@@ -7878,6 +7885,7 @@ fn mock_paths_projection_matches_reference_loop_in_order() {
             imported: Some("applyDiscount".to_string()),
             local: "applyDiscount".to_string(),
             namespace: false,
+            via_reexport: false,
         }]
         .into(),
     };
@@ -8423,6 +8431,7 @@ fn named_limitation_import_graph_unresolved_emitted_for_missing_import_graph() -
             imported: Some("normalizeLabel".to_string()),
             local: "normalizeLabel".to_string(),
             namespace: false,
+            via_reexport: false,
         }]
         .into(),
         method_kind: TypeScriptMethodKind::Ordinary,
@@ -9386,6 +9395,7 @@ fn named_limitation_dynamic_assertion_emitted_for_dynamic_matcher_arg() -> Resul
             imported: Some("clamp".to_string()),
             local: "clamp".to_string(),
             namespace: false,
+            via_reexport: false,
         }].into(),
     };
     let finding = classify_change(
@@ -9475,6 +9485,7 @@ fn named_limitation_dynamic_assertion_not_emitted_for_other_family_assertion() -
             imported: Some("clamp".to_string()),
             local: "clamp".to_string(),
             namespace: false,
+            via_reexport: false,
         }].into(),
     };
     let finding = classify_change(
@@ -9548,6 +9559,7 @@ fn named_limitation_dynamic_assertion_emitted_for_error_family_assertion_on_erro
             imported: Some("clamp".to_string()),
             local: "clamp".to_string(),
             namespace: false,
+            via_reexport: false,
         }].into(),
     };
     let finding = classify_change(
@@ -9618,6 +9630,7 @@ fn named_limitation_table_case_emitted_for_table_dynamic_matcher_arg() -> Result
             imported: Some("clamp".to_string()),
             local: "clamp".to_string(),
             namespace: false,
+            via_reexport: false,
         }].into(),
     };
     let finding = classify_change(
@@ -9894,6 +9907,7 @@ fn package_local_filter_selects_same_package_test() {
             imported: Some("doWork".to_string()),
             local: "doWork".to_string(),
             namespace: false,
+            via_reexport: false,
         }]
         .into(),
     };
@@ -10044,6 +10058,7 @@ fn package_local_filter_admits_cross_package_test_importing_owner_file() -> Resu
             imported: Some("toArray".into()),
             local: "toArray".into(),
             namespace: false,
+            via_reexport: false,
         }]
         .into(),
     };
@@ -10118,6 +10133,7 @@ fn cross_package_constructor_requires_owner_class_import() -> Result<(), String>
             imported: Some("Cart".into()),
             local: "Cart".into(),
             namespace: false,
+            via_reexport: false,
         }]
         .into(),
     };
@@ -10377,6 +10393,7 @@ fn named_limitation_target_unresolved_emitted_for_cross_package_reference() -> R
             imported: Some("applyDiscount".to_string()),
             local: "applyDiscount".to_string(),
             namespace: false,
+            via_reexport: false,
         }]
         .into(),
     };
@@ -10432,6 +10449,7 @@ fn unresolved_ownership_import_branch_with_relative_paths() -> Result<(), String
         imported: Some("cart".into()),
         local: "renamed".into(),
         namespace: false,
+        via_reexport: false,
     };
     let test = TypeScriptTest {
         name: "cart through alias".into(),
@@ -10717,6 +10735,7 @@ fn ts_swallowed_console_log_exposed_downgrade() -> Result<(), String> {
             imported: Some("applyDiscount".to_string()),
             local: "applyDiscount".to_string(),
             namespace: false,
+            via_reexport: false,
         }].into(),
     };
     // Changed line: SideEffect (console.log call) — the `amount` and `audit`
@@ -10830,6 +10849,7 @@ fn ts_returnvalue_genuinely_observed_control() -> Result<(), String> {
             imported: Some("applyDiscount".to_string()),
             local: "applyDiscount".to_string(),
             namespace: false,
+            via_reexport: false,
         }]
         .into(),
     };
@@ -10936,6 +10956,7 @@ fn ts_returnvalue_unrelated_strong_assertion_downgrades() -> Result<(), String> 
             imported: Some("applyDiscount".to_string()),
             local: "applyDiscount".to_string(),
             namespace: false,
+            via_reexport: false,
         }]
         .into(),
     };
@@ -11042,6 +11063,7 @@ fn ts_returnvalue_owner_call_observation_stays_exposed() -> Result<(), String> {
             imported: Some("applyDiscount".to_string()),
             local: "applyDiscount".to_string(),
             namespace: false,
+            via_reexport: false,
         }]
         .into(),
     };
@@ -11146,6 +11168,7 @@ fn ts_returnvalue_owner_aliased_local_observation_stays_exposed() -> Result<(), 
             imported: Some("applyDiscount".to_string()),
             local: "applyDiscount".to_string(),
             namespace: false,
+            via_reexport: false,
         }]
         .into(),
     };
@@ -11250,6 +11273,7 @@ fn ts_returnvalue_unrelated_aliased_local_observation_downgrades() -> Result<(),
             imported: Some("applyDiscount".to_string()),
             local: "applyDiscount".to_string(),
             namespace: false,
+            via_reexport: false,
         }].into(),
     };
     let finding = classify_change(
@@ -11375,6 +11399,7 @@ fn ts_sibling_assertion_non_owner_prevents_downgrade() -> Result<(), String> {
             imported: Some("applyDiscount".to_string()),
             local: "applyDiscount".to_string(),
             namespace: false,
+            via_reexport: false,
         }].into(),
     };
     // Changed line: SideEffect (console.log call)
@@ -11481,12 +11506,14 @@ fn ts_sideeffect_imported_callee_observation_stays_exposed() -> Result<(), Strin
                 imported: Some("emitReceipt".to_string()),
                 local: "emitReceipt".to_string(),
                 namespace: false,
+                via_reexport: false,
             },
             TypeScriptImport {
                 source: "../src/support".to_string(),
                 imported: Some("emitReceipt".to_string()),
                 local: "discount".to_string(),
                 namespace: false,
+                via_reexport: false,
             },
         ]
         .into(),
@@ -11593,6 +11620,7 @@ fn ts_sideeffect_compound_foreign_and_channel_observation_stays_exposed() -> Res
             imported: Some("applyDiscount".to_string()),
             local: "applyDiscount".to_string(),
             namespace: false,
+            via_reexport: false,
         }]
         .into(),
     };
@@ -11700,6 +11728,7 @@ fn ts_sideeffect_unrelated_strong_assertion_downgrades() -> Result<(), String> {
             imported: Some("applyDiscount".to_string()),
             local: "applyDiscount".to_string(),
             namespace: false,
+            via_reexport: false,
         }]
         .into(),
     };
@@ -11807,6 +11836,7 @@ fn ts_field_construction_observed_control() -> Result<(), String> {
             imported: Some("buildConfig".to_string()),
             local: "buildConfig".to_string(),
             namespace: false,
+            via_reexport: false,
         }]
         .into(),
     };
@@ -11912,6 +11942,7 @@ fn ts_fieldconstruction_unrelated_strong_assertion_downgrades() -> Result<(), St
             imported: Some("buildConfig".to_string()),
             local: "buildConfig".to_string(),
             namespace: false,
+            via_reexport: false,
         }]
         .into(),
     };
@@ -12087,6 +12118,7 @@ fn ts_side_effect_observed_by_mock_expectation_stays_exposed() -> Result<(), Str
             imported: Some("applyDiscount".to_string()),
             local: "applyDiscount".to_string(),
             namespace: false,
+            via_reexport: false,
         }]
         .into(),
     };
@@ -12193,6 +12225,7 @@ fn ts_side_effect_includes_template_word_does_not_confirm() -> Result<(), String
             imported: Some("trackLogin".to_string()),
             local: "trackLogin".to_string(),
             namespace: false,
+            via_reexport: false,
         }]
         .into(),
     };
@@ -12330,6 +12363,7 @@ fn tsconfig_alias_resolution_flag_on_credits_test_as_exposed() -> Result<(), Str
             imported: Some("applyDiscount".to_string()),
             local: "applyDiscount".to_string(),
             namespace: false,
+            via_reexport: false,
         }]
         .into(),
     };
@@ -12420,6 +12454,7 @@ fn tsconfig_alias_resolution_flag_off_stays_no_static_path_with_disclosure() -> 
             imported: Some("applyDiscount".to_string()),
             local: "applyDiscount".to_string(),
             namespace: false,
+            via_reexport: false,
         }]
         .into(),
     };
@@ -12512,6 +12547,7 @@ fn unresolved_alias_import_names_the_import_in_no_reach_text() -> Result<(), Str
             imported: Some(imported.to_string()),
             local: imported.to_string(),
             namespace: false,
+            via_reexport: false,
         }]
         .into(),
     };
@@ -12824,6 +12860,7 @@ fn tsconfig_alias_resolution_multi_entry_value_fails_closed() -> Result<(), Stri
             imported: Some("applyDiscount".to_string()),
             local: "applyDiscount".to_string(),
             namespace: false,
+            via_reexport: false,
         }]
         .into(),
     };
@@ -12910,6 +12947,7 @@ fn tsconfig_alias_non_owner_import_emits_no_limitation() -> Result<(), String> {
             imported: Some("cloneDeep".to_string()),
             local: "cloneDeep".to_string(),
             namespace: false,
+            via_reexport: false,
         }]
         .into(),
     };
@@ -12989,6 +13027,7 @@ fn tsconfig_alias_default_import_local_name_mismatch_emits_no_limitation() -> Re
             imported: Some("default".to_string()),
             local: "React".to_string(),
             namespace: false,
+            via_reexport: false,
         }]
         .into(),
     };
@@ -13065,6 +13104,7 @@ fn tsconfig_alias_default_import_local_name_match_emits_limitation() -> Result<(
             imported: Some("default".to_string()),
             local: "applyDiscount".to_string(),
             namespace: false,
+            via_reexport: false,
         }]
         .into(),
     };
@@ -13142,6 +13182,7 @@ fn tsconfig_alias_advice_names_map_unavailable_cause() -> Result<(), String> {
             imported: Some("applyDiscount".to_string()),
             local: "applyDiscount".to_string(),
             namespace: false,
+            via_reexport: false,
         }]
         .into(),
     };
@@ -13235,6 +13276,7 @@ fn tsconfig_alias_advice_names_unmatched_pattern_cause() -> Result<(), String> {
             imported: Some("applyDiscount".to_string()),
             local: "applyDiscount".to_string(),
             namespace: false,
+            via_reexport: false,
         }]
         .into(),
     };
@@ -13329,6 +13371,7 @@ fn tsconfig_alias_advice_names_unresolved_candidate_cause() -> Result<(), String
             imported: Some("applyDiscount".to_string()),
             local: "applyDiscount".to_string(),
             namespace: false,
+            via_reexport: false,
         }]
         .into(),
     };
@@ -13432,6 +13475,7 @@ fn tsconfig_alias_advice_names_absolute_base_url_cause() -> Result<(), String> {
             imported: Some("applyDiscount".to_string()),
             local: "applyDiscount".to_string(),
             namespace: false,
+            via_reexport: false,
         }]
         .into(),
     };
@@ -13540,6 +13584,7 @@ fn spec_0104_repro_cross_family_error_oracle_does_not_promote_return_value_seam(
             imported: Some("applyDiscount".to_string()),
             local: "applyDiscount".to_string(),
             namespace: false,
+            via_reexport: false,
         }]
         .into(),
     };
@@ -13589,6 +13634,7 @@ fn spec_0104_repro_cross_family_error_oracle_does_not_promote_return_value_seam(
             imported: Some("applyDiscount".to_string()),
             local: "applyDiscount".to_string(),
             namespace: false,
+            via_reexport: false,
         }]
         .into(),
     };
@@ -13696,6 +13742,7 @@ fn spec_0104_no_over_correct_return_value_with_exact_value_stays_exposed() -> Re
             imported: Some("applyDiscount".to_string()),
             local: "applyDiscount".to_string(),
             namespace: false,
+            via_reexport: false,
         }]
         .into(),
     };
@@ -13798,6 +13845,7 @@ fn spec_0104_no_over_correct_error_path_with_exact_error_variant_stays_exposed()
             imported: Some("applyDiscount".to_string()),
             local: "applyDiscount".to_string(),
             namespace: false,
+            via_reexport: false,
         }]
         .into(),
     };
@@ -13933,6 +13981,7 @@ fn spec_0104_single_test_both_assertions_retains_matching_family_assertion_stays
             imported: Some("applyDiscount".to_string()),
             local: "applyDiscount".to_string(),
             namespace: false,
+            via_reexport: false,
         }]
         .into(),
     };
@@ -14830,6 +14879,7 @@ fn parse_limit_owner_and_exact_value_test() -> (TypeScriptOwner, TypeScriptTest)
             imported: Some("parseLimit".to_string()),
             local: "parseLimit".to_string(),
             namespace: false,
+            via_reexport: false,
         }]
         .into(),
     };
@@ -14946,6 +14996,7 @@ pub(super) fn exact_value_test(owner_name: &str, observed: &str, expected: &str)
             imported: Some(owner_name.to_string()),
             local: owner_name.to_string(),
             namespace: false,
+            via_reexport: false,
         }]
         .into(),
     }
@@ -15088,6 +15139,7 @@ fn spec_0027_same_named_method_on_other_receiver_does_not_witness() -> Result<()
         imported: None,
         local: "other".to_string(),
         namespace: true,
+        via_reexport: false,
     }]
     .into();
     let tests = [exact_value_test("total", "total(60)", "120"), foreign];
@@ -15145,6 +15197,7 @@ fn spec_0027_namespace_import_member_call_witnesses_boundary() -> Result<(), Str
         imported: None,
         local: "pricing".to_string(),
         namespace: true,
+        via_reexport: false,
     }]
     .into();
     let finding = classify_change(
@@ -15375,6 +15428,7 @@ fn priced_test(owner_name: &str, observed: &str, expected: &str) -> TypeScriptTe
         imported: Some(owner_name.to_string()),
         local: owner_name.to_string(),
         namespace: false,
+        via_reexport: false,
     }]
     .into();
     test
@@ -16028,6 +16082,7 @@ fn spec_0027_namespace_receiver_owner_call_stays_exposed() -> Result<(), String>
         imported: None,
         local: "pricing".to_string(),
         namespace: true,
+        via_reexport: false,
     }]
     .into();
     let finding = classify_boundary_line_for_owner(&owner, "  if (total >= 100) {", &[test])?;
@@ -16331,6 +16386,7 @@ fn e4104_named_constant_owner_module_argument_witnesses_boundary() -> Result<(),
         imported: Some("DISCOUNT_THRESHOLD".to_string()),
         local: "DISCOUNT_THRESHOLD".to_string(),
         namespace: false,
+        via_reexport: false,
     });
     let finding = classify_boundary_line_for_owner(
         &owner,
@@ -16612,6 +16668,7 @@ fn e4104_named_constant_non_owner_import_stays_closed() -> Result<(), String> {
         imported: Some("DISCOUNT_THRESHOLD".to_string()),
         local: "DISCOUNT_THRESHOLD".to_string(),
         namespace: false,
+        via_reexport: false,
     });
     let finding = classify_boundary_line_for_owner(&owner, "  if (total >= 100) {", &[test])?;
     assert_eq!(
@@ -17584,6 +17641,7 @@ fn retarget_to_clamp(test: &mut TypeScriptTest) {
         imported: Some("clamp".to_string()),
         local: "clamp".to_string(),
         namespace: false,
+        via_reexport: false,
     }]
     .into();
 }
@@ -21012,6 +21070,7 @@ fn unresolved_workspace_package_import_names_the_manifest() -> Result<(), String
             imported: Some("build".into()),
             local: "build".into(),
             namespace: false,
+            via_reexport: false,
         }]
         .into(),
     };

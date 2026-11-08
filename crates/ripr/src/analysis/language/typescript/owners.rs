@@ -1472,6 +1472,7 @@ fn extract_imports_from_statements_inner(
                                 imported: Some(imported),
                                 local: specifier.local.name.as_str().to_string(),
                                 namespace: false,
+                                via_reexport: false,
                             },
                         );
                     }
@@ -1483,6 +1484,7 @@ fn extract_imports_from_statements_inner(
                                 imported: Some("default".to_string()),
                                 local: specifier.local.name.as_str().to_string(),
                                 namespace: false,
+                                via_reexport: false,
                             },
                         );
                     }
@@ -1494,6 +1496,7 @@ fn extract_imports_from_statements_inner(
                                 imported: None,
                                 local: specifier.local.name.as_str().to_string(),
                                 namespace: true,
+                                via_reexport: false,
                             },
                         );
                     }
@@ -1532,6 +1535,7 @@ fn extract_imports_from_statements_inner(
                             imported: Some(local_name),
                             local: exported_name,
                             namespace: false,
+                            via_reexport: false,
                         },
                     );
                 }
@@ -1581,6 +1585,7 @@ fn extract_imports_from_statements_inner(
                             imported: Some(member),
                             local: name.to_string(),
                             namespace: false,
+                            via_reexport: false,
                         },
                     );
                     continue;
@@ -1615,7 +1620,8 @@ fn extract_imports_from_statements_inner(
                             source: source_str.clone(),
                             imported: Some("default".to_string()),
                             local: name.to_string(),
-                            namespace: true, // namespace-like: callers access via x.method
+                            namespace: true, // namespace-like: callers access via x.method,
+                            via_reexport: false,
                         },
                     );
                     continue;
@@ -1650,6 +1656,7 @@ fn extract_imports_from_statements_inner(
                                 imported: Some(key_name.to_string()),
                                 local: local_name,
                                 namespace: false,
+                                via_reexport: false,
                             },
                         );
                     }

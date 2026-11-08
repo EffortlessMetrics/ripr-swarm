@@ -1,0 +1,1 @@
+crates/ripr/tests/typescript_class_barrel_import.rs|Command::new|1|typescript-class-barrel-13695|Runs the built ripr binary (CARGO_BIN_EXE_ripr) once per case on a temp TypeScript workspace with --diff; no shell, network or third-party code.

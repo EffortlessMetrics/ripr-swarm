@@ -109,6 +109,17 @@ scope that rebinds it, and `export type * as` bind no namespace value.
   a namespace (see above): it never forwards named exports.
 - Default imports and `import * as ns from './barrel'` namespace imports of
   the barrel itself are NOT followed through re-export chains.
+- Class receivers (#13592 B3): a named import of a class through a barrel
+  (`import { Url } from './src'` with `export * from './u'`, or
+  `export { default as Url } from './u'` for a default-exported class) is
+  read as an import of the class's declaring module, so the method receiver,
+  constructor and static-method rules apply to it. Only an import whose
+  bounded chain lands on a class that owns a method is followed; a mocked
+  module on the chain, an unresolvable mock, or an ambiguous, cyclic or
+  over-deep chain leaves it unfollowed. A relation whose only class binding
+  comes through such a chain discloses as `re_export_chain_followed` with
+  `medium` confidence; a same-file class or any direct import of the
+  declaring module keeps the direct receiver reading.
 - A test body that redeclares the imported local name (`const N = ...`) calls
   the shadow, not the owner, and is not credited.
 

@@ -4881,6 +4881,7 @@ pub(crate) fn owner_namespace_receivers(
             imported: None,
             local: name.binding,
             namespace: true,
+            via_reexport: false,
         };
         if !receivers.contains(&import.local)
             && import_source_matches_owner(&import, &test.file, owner, alias_map, workspace_root)
@@ -4915,6 +4916,7 @@ pub(crate) fn unshadowed_owner_namespace_receivers(
                 imported: None,
                 local: name.binding.clone(),
                 namespace: true,
+                via_reexport: false,
             };
             import_source_matches_owner(&import, &test.file, owner, alias_map, workspace_root)
         })
