@@ -82,22 +82,13 @@ fn assertion_spans(masked: &str) -> Vec<(usize, usize)> {
     spans
 }
 
-/// An attribute line directly above the item mentions `cfg`: the assertion may
-/// not be built, so it is not credited as a guard.
+/// The attributes between the previous item and this one mention `cfg`
+/// (single-line, multi-line or on the item's own line): the assertion may not
+/// be built, so it is not credited as a guard.
 fn cfg_gated(masked: &str, at: usize) -> bool {
-    let line_start = masked[..at].rfind('\n').map_or(0, |n| n + 1);
-    let mut rest = &masked[..line_start];
-    loop {
-        let trimmed = rest.trim_end();
-        let line = trimmed.rsplit('\n').next().unwrap_or("").trim_start();
-        if !line.starts_with("#[") && !line.starts_with("#![") {
-            return false;
-        }
-        if line.contains("cfg") {
-            return true;
-        }
-        rest = &trimmed[..trimmed.len() - line.len()];
-    }
+    let head = &masked[..at];
+    let start = head.rfind([';', '{', '}']).map_or(0, |n| n + 1);
+    head[start..].contains("cfg")
 }
 
 /// `_: ..` after `const`, not `_NAME`.
@@ -202,6 +193,10 @@ mod tests {
             "pub const N: usize = 1;\n#[cfg(feature = \"x\")]\nconst _: () = assert!(N <= 4);\n";
         assert!(!guard(gated, 1, Some("N")));
         assert!(!guard(gated, 3, None));
+        let multi = "pub const N: usize = 1;\n#[cfg(\n    feature = \"x\"\n)]\nconst _: () = assert!(N <= 4);\n";
+        assert!(!guard(multi, 1, Some("N")));
+        let same_line = "pub const N: usize = 1;\n#[cfg(x)] const _: () = assert!(N <= 4);\n";
+        assert!(!guard(same_line, 1, Some("N")));
         let other_attr = "pub const N: usize = 1;\n#[inline]\nconst _: () = assert!(N <= 4);\n";
         assert!(guard(other_attr, 1, Some("N")));
         let template = "pub const N: usize = 1;\nmacro_rules! m { () => { const _: () = assert!(N <= 4); }; }\n";
