@@ -264,6 +264,7 @@ pub(crate) fn render_check_with_config_and_progress(
                     ts_guidance.as_ref(),
                     python_guidance.as_ref(),
                     generated_skip.as_ref(),
+                    &report.evidence_limitations,
                 ))
             },
         ),
@@ -2535,6 +2536,49 @@ fn happy_path_passes() {
             assert_eq!(
                 notifications[0]["properties"]["category"],
                 "producer_failure"
+            );
+            remove_temp_root(&output.root)?;
+        }
+        Ok(())
+    }
+
+    /// #13340: the repo-exposure Markdown discloses a failed seam-evidence
+    /// warm in its Limitations section; the healthy control has no note.
+    #[test]
+    fn repo_exposure_md_discloses_a_failed_evidence_warm() -> Result<(), String> {
+        use crate::analysis::test_grip_evidence::WarmPanicGuard;
+        let render = |output: &CheckOutput| -> Result<String, String> {
+            render_check_with_config(
+                output,
+                &OutputFormat::RepoExposureMd,
+                &RiprConfig::default(),
+            )
+        };
+
+        // Unarmed control on its own root: its cached healthy walk cannot
+        // answer the armed runs.
+        let control_output = check_output_with_temp_seam_workspace(Vec::new())?;
+        let control = render(&control_output)?;
+        assert!(control.contains("| seams_total |"), "{control}");
+        assert!(!control.contains("Seam evidence unavailable"), "{control}");
+        assert!(!control.contains("producer_failure"), "{control}");
+        remove_temp_root(&control_output.root)?;
+
+        for point in [1u8, 2u8] {
+            let output = check_output_with_temp_seam_workspace(Vec::new())?;
+            let md = {
+                let _armed = WarmPanicGuard::arm(point);
+                render(&output)?
+            };
+            assert!(md.contains("## Limitations"), "point {point}: {md}");
+            assert!(
+                md.contains("> Seam evidence unavailable (producer_failure;"),
+                "point {point}: {md}"
+            );
+            assert!(md.contains("scope: pass_wide"), "point {point}: {md}");
+            assert!(
+                md.contains("not a complete inventory result"),
+                "point {point}: {md}"
             );
             remove_temp_root(&output.root)?;
         }

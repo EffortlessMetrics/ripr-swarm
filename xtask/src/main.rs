@@ -72,6 +72,7 @@ mod policy;
 #[cfg(test)]
 mod portable_consumer;
 mod product_gate_plan;
+mod product_route_parity;
 mod provider_review_observations;
 mod public_api_surface;
 mod python_judged_panel;
@@ -116,6 +117,7 @@ mod verify_test_shards;
 mod version;
 mod windows_advisory;
 mod windows_advisory_acl_evidence;
+mod windows_advisory_file_policy_evidence;
 mod windows_advisory_run;
 
 use command::{
