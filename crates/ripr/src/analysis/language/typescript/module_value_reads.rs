@@ -118,22 +118,21 @@ pub(super) fn reads_unshadowed_value(masked_text: &str, scope: &str, name: &str)
 /// function, a re-export (`export { NAME }`) or any other non-read mention
 /// anywhere in the module disables the binding, since the value may then be
 /// mutated through a path this text scan cannot follow.
-pub(super) fn never_mutated_in_module(source: &str, masked: &str, name: &str) -> bool {
-    let only_reads = masked.match_indices(name).all(|(idx, _)| {
-        classify(masked, idx, name) != Mention::Other || is_own_declaration(masked, idx, name)
-    });
-    only_reads && no_write_shape(source, name)
+pub(super) fn never_mutated_in_module(
+    source: &str,
+    masked: &str,
+    name: &str,
+    declaration: Option<usize>,
+) -> bool {
+    // Masking must preserve offsets for the parsed declaration offset to apply.
+    let declaration = declaration.filter(|_| masked.len() == source.len());
+    let only_reads = masked
+        .match_indices(name)
+        .all(|(idx, _)| classify(masked, idx, name) != Mention::Other || declaration == Some(idx));
+    only_reads && no_write_shape(source, name, declaration)
 }
 
-fn is_own_declaration(text: &str, idx: usize, name: &str) -> bool {
-    bounded(text, idx, name)
-        && text[..idx]
-            .trim_end()
-            .strip_suffix("const")
-            .is_some_and(|rest| !rest.ends_with(is_javascript_identifier_char))
-}
-
-fn no_write_shape(source: &str, name: &str) -> bool {
+fn no_write_shape(source: &str, name: &str, declaration: Option<usize>) -> bool {
     source.match_indices(name).all(|(idx, _)| {
         if !bounded(source, idx, name) {
             return true;
@@ -144,7 +143,7 @@ fn no_write_shape(source: &str, name: &str) -> bool {
             // `other.NAME` is another binding.
             return true;
         }
-        if is_own_declaration(source, idx, name) {
+        if declaration == Some(idx) {
             return true;
         }
         let before_op = before.ends_with("++")
@@ -321,6 +320,12 @@ const NON_INDEX_KEYWORDS: &[&str] = &[
 
 /// Walk a `.member` / `?.member` / `[index]` chain starting at `after`.
 /// Returns the text following the chain and the member names that were called.
+/// `(` or `?.(` directly after a member: a call.
+fn starts_call(after: &str) -> bool {
+    let trimmed = after.trim_start();
+    trimmed.starts_with('(') || trimmed.starts_with("?.(")
+}
+
 fn walk_chain(after: &str) -> (&str, Vec<(&str, bool)>) {
     let mut rest = after;
     let mut members = Vec::new();
@@ -339,7 +344,7 @@ fn walk_chain(after: &str) -> (&str, Vec<(&str, bool)>) {
             }
             let ident = &step[..end];
             let after_ident = &step[end..];
-            let called = after_ident.trim_start().starts_with('(');
+            let called = starts_call(after_ident);
             members.push((ident, called));
             if called {
                 return (after_ident, members);
@@ -367,6 +372,12 @@ fn walk_chain(after: &str) -> (&str, Vec<(&str, bool)>) {
                 return (trimmed, members);
             };
             rest = &inner[close + 1..];
+            // A call on a computed member (`X["push"](1)`) names no method:
+            // unknown, so never a read.
+            if starts_call(rest) {
+                members.push(("[computed]", true));
+                return (rest, members);
+            }
             continue;
         }
         return (trimmed, members);
@@ -406,7 +417,11 @@ const FRESH_RESULT_METHODS: &[&str] = &[
 /// `rest` starts at the `(` of the last call in a chain; true when the text
 /// after the matching `)` continues with `.`, `?.`, `[` or an assignment.
 fn call_result_is_navigated(rest: &str) -> bool {
-    let Some(inner) = rest.trim_start().strip_prefix('(') else {
+    let trimmed_rest = rest.trim_start();
+    let Some(inner) = trimmed_rest
+        .strip_prefix("?.(")
+        .or_else(|| trimmed_rest.strip_prefix('('))
+    else {
         return false;
     };
     let mut depth = 1usize;

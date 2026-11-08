@@ -114,6 +114,7 @@ pub(crate) fn module_entries_by_owner<'a>(
     let mut exports: BTreeMap<String, BTreeSet<TypeScriptModuleEntry>> = BTreeMap::new();
     let mut values: BTreeSet<&'a str> = BTreeSet::new();
     let mut exported_values: BTreeSet<&'a str> = BTreeSet::new();
+    let mut decl_starts: BTreeMap<&'a str, usize> = BTreeMap::new();
     for statement in statements {
         collect_statement(
             statement,
@@ -122,6 +123,7 @@ pub(crate) fn module_entries_by_owner<'a>(
             &mut exports,
             &mut values,
             &mut exported_values,
+            &mut decl_starts,
         );
     }
     // A value is followable only while nothing in the file writes it; a name
@@ -143,7 +145,9 @@ pub(crate) fn module_entries_by_owner<'a>(
     });
     if !values.is_empty() {
         let masked_source = ts_mask_literals_and_comments(source);
-        values.retain(|name| never_mutated_in_module(source, &masked_source, name));
+        values.retain(|name| {
+            never_mutated_in_module(source, &masked_source, name, decl_starts.get(name).copied())
+        });
     }
     let names: std::collections::HashSet<&'a str> = nodes.keys().copied().collect();
     let callees: BTreeMap<&'a str, BTreeSet<&'a str>> = nodes
@@ -177,13 +181,14 @@ fn collect_statement<'a>(
     exports: &mut BTreeMap<String, BTreeSet<TypeScriptModuleEntry>>,
     values: &mut BTreeSet<&'a str>,
     exported_values: &mut BTreeSet<&'a str>,
+    decl_starts: &mut BTreeMap<&'a str, usize>,
 ) {
     match statement {
         Statement::FunctionDeclaration(func) => {
             collect_function(func, source, nodes);
         }
         Statement::VariableDeclaration(decl) => {
-            collect_variables(decl, source, nodes, values);
+            collect_variables(decl, source, nodes, values, decl_starts);
         }
         Statement::ExportNamedDeclaration(export) => {
             if export.export_kind == ImportOrExportKind::Type {
@@ -196,7 +201,7 @@ fn collect_statement<'a>(
                     }
                 }
                 Some(Declaration::VariableDeclaration(decl)) => {
-                    for name in collect_variables(decl, source, nodes, values) {
+                    for name in collect_variables(decl, source, nodes, values, decl_starts) {
                         record_export(exports, name, name);
                     }
                     // An exported value may be imported and mutated by another
@@ -379,6 +384,7 @@ fn collect_variables<'a>(
     source: &'a str,
     nodes: &mut BTreeMap<&'a str, ModuleNode<'a>>,
     values: &mut BTreeSet<&'a str>,
+    decl_starts: &mut BTreeMap<&'a str, usize>,
 ) -> Vec<&'a str> {
     let mut names = Vec::new();
     let is_const = decl.kind == oxc_ast::ast::VariableDeclarationKind::Const;
@@ -388,6 +394,18 @@ fn collect_variables<'a>(
         };
         let Some(init) = declarator.init.as_ref() else {
             continue;
+        };
+        // The parsed binding offset: the declaration is recognised from the
+        // AST, not from the text before it (`const A = 0, TABLE = {}`).
+        let start = match &declarator.id {
+            BindingPattern::BindingIdentifier(identifier) => identifier.span.start as usize,
+            _ => continue,
+        };
+        let mut add_value = |values: &mut BTreeSet<&'a str>| {
+            if is_const {
+                values.insert(name);
+                decl_starts.insert(name, start);
+            }
         };
         match unwrap_type_wrappers(init) {
             Expression::ArrowFunctionExpression(arrow) => {
@@ -399,12 +417,12 @@ fn collect_variables<'a>(
             }
             Expression::CallExpression(call) => {
                 let Expression::Identifier(callee) = unwrap_type_wrappers(&call.callee) else {
-                    values.extend(is_const.then_some(name));
+                    add_value(values);
                     continue;
                 };
                 // `Symbol("x")` builds a value, not a factory product.
                 if callee.name == "Symbol" {
-                    values.extend(is_const.then_some(name));
+                    add_value(values);
                     continue;
                 }
                 nodes.entry(name).or_default().factory = Some(callee.name.as_str());
@@ -413,7 +431,7 @@ fn collect_variables<'a>(
             // A non-function `const` value (regex, string, object, array,
             // symbol, `new X()`): never an export entry itself, but a node a
             // reading function can reach (#13592 B2).
-            _ => values.extend(is_const.then_some(name)),
+            _ => add_value(values),
         }
     }
     names

@@ -273,3 +273,30 @@ fn weak_oracle_through_same_module_caller_names_the_caller_not_an_exported_value
     assert!(!step.contains("exported value"), "{step}");
     Ok(())
 }
+
+#[test]
+fn optional_and_computed_calls_are_not_reads() {
+    for (label, tail) in [
+        ("optional known mutator", "LIST.push?.(2);"),
+        ("optional unknown method", "LIST.custom?.(2);"),
+        ("computed-name call", "LIST[\"push\"](2);"),
+        ("computed optional call", "LIST[\"push\"]?.(2);"),
+    ] {
+        let source = format!(
+            "const LIST = [1];\nexport function f() {{\n  return LIST.includes(1);\n}}\nexport function g() {{\n  {tail}\n}}\n"
+        );
+        assert!(entry_names(&source, "LIST").is_empty(), "{label}");
+    }
+    // The same reader without the mutation keeps its edge.
+    let clean = "const LIST = [1];\nexport function f() {\n  return LIST.includes(1);\n}\n";
+    assert_eq!(entry_names(clean, "LIST"), ["f"]);
+}
+
+#[test]
+fn later_declarator_in_a_multi_declarator_const_is_followed() {
+    let source = "const OTHER = 0, TABLE = { a: 1 };\nexport function f(k: string) {\n  return TABLE[k] + OTHER;\n}\n";
+    assert_eq!(entry_names(source, "TABLE"), ["f"]);
+    // A write elsewhere still disables it.
+    let mutated = "const OTHER = 0, TABLE = { a: 1 };\nexport function f(k: string) {\n  return TABLE[k];\n}\nexport function g() {\n  TABLE.a = 2;\n}\n";
+    assert!(entry_names(mutated, "TABLE").is_empty());
+}
