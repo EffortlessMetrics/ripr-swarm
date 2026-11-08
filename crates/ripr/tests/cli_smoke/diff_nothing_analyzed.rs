@@ -39,3 +39,58 @@ fn unparseable_diff_routes_to_incomplete_analysis_not_a_clean_result() -> TestRe
     );
     Ok(())
 }
+
+/// A real docs-only git-style diff parses to one changed file and no analyzable
+/// source, so the producer reports a complete-but-empty outcome. The agent and
+/// github formats must say nothing was analyzed instead of reporting a clean
+/// result (#13658).
+#[test]
+fn docs_only_diff_is_not_reported_clean_on_stdout() -> TestResult {
+    let root = unique_external_workspace("diff-docs-only")?;
+    fs::create_dir_all(&root)?;
+    let diff = root.join("docs.diff");
+    fs::write(
+        &diff,
+        "diff --git a/README.md b/README.md\n--- a/README.md\n+++ b/README.md\n@@ -1 +1,2 @@\n # Title\n+More words.\n",
+    )?;
+    let diff = diff.to_string_lossy().into_owned();
+    let run = |format: &str| -> TestResult<String> {
+        let output = run_command(
+            env!("CARGO_BIN_EXE_ripr"),
+            Some(&root),
+            &["check", "--diff", &diff, "--format", format, "--quiet"],
+        )?;
+        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+    };
+
+    // Pin the stimulus first: one parsed changed file, no analyzable source.
+    let json: serde_json::Value = serde_json::from_str(&run("json")?)?;
+    let outcome = &json["analysis_outcome"]["outcome"];
+    assert!(
+        matches!(
+            outcome["kind"].as_str(),
+            Some("no_changed_lines" | "no_behavioral_candidates")
+        ),
+        "{outcome}"
+    );
+    assert_eq!(outcome["counts"]["changed_file_count"], 1, "{outcome}");
+    assert_eq!(json["summary"]["changed_rust_files"], 0, "{json}");
+
+    let agent = run("agent")?;
+    assert!(
+        agent.contains("\nstop=nothing was analyzed (no changed source in scope)"),
+        "{agent}"
+    );
+    assert!(!agent.contains("done="), "{agent}");
+    assert!(!agent.contains("verify=complete"), "{agent}");
+    let github = run("github")?;
+    assert!(
+        github.contains("::warning title=ripr nothing analyzed::"),
+        "{github}"
+    );
+    assert!(
+        !github.contains("No static exposure findings found"),
+        "{github}"
+    );
+    Ok(())
+}
