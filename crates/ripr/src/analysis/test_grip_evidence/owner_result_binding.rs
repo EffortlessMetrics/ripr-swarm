@@ -225,6 +225,14 @@ fn owner_result_field_observation(
         && let [binding] = bindings.as_slice()
         && binding_never_reads_field(&function, binding, owner_name, field_name)
         && !file_renames_owner(&parsed.parse, owner_name)
+        // The owner result must reach an oracle: some assertion after the
+        // binding reads it (through another field). A binding no assertion
+        // mentions (`let _c = owner(); assert!(1 > 0);`) observes nothing,
+        // so it stays non-ready.
+        && indexed.test.assertions.iter().any(|oracle| {
+            oracle.line > binding.line
+                && crate::analysis::classify::mentions_in(&oracle.text, &binding.name) > 0
+        })
     {
         return Some(OwnerResultObservation::Unread);
     }

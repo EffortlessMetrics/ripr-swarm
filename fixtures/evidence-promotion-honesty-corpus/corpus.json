@@ -90,16 +90,6 @@
       "reason": "the typed missing-discriminator shape (#12414) adds a field the regeneration guard does not judge; this capture's judged seams are unchanged and are held at its recorded generation until the next corpus recapture"
     },
     {
-      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-panic-marker-collision.json",
-      "cache_schema_version": "1.167",
-      "reason": "the typed missing-discriminator shape (#12414) adds a field the regeneration guard does not judge; this capture's judged seams are unchanged and are held at its recorded generation until the next corpus recapture"
-    },
-    {
-      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-panic-marker-neutral.json",
-      "cache_schema_version": "1.167",
-      "reason": "the typed missing-discriminator shape (#12414) adds a field the regeneration guard does not judge; this capture's judged seams are unchanged and are held at its recorded generation until the next corpus recapture"
-    },
-    {
       "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-same-named-call-kinds.json",
       "cache_schema_version": "1.167",
       "reason": "the typed missing-discriminator shape (#12414) adds a field the regeneration guard does not judge; this capture's judged seams are unchanged and are held at its recorded generation until the next corpus recapture"

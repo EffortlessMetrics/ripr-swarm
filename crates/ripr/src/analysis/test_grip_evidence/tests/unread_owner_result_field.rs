@@ -549,3 +549,26 @@ fn default_config_is_quiet() {
     setup_must_reach_gate(&case, "default_config_is_quiet")?;
     no_unread_fact(&case, "a declared return type alias")
 }
+
+#[test]
+fn binding_no_assertion_reads_is_not_unread() -> Result<(), String> {
+    for (label, body) in [
+        (
+            "discarded binding",
+            "let _c = default_config();\n    assert!(1 > 0);",
+        ),
+        (
+            "read outside any assertion",
+            "let c = default_config();\n    let _quiet = c.verbose;\n    assert!(1 > 0);",
+        ),
+    ] {
+        let case = integration_case(
+            PUBLIC_CONFIG,
+            &format!("\n#[test]\nfn default_config_is_quiet() {{\n    {body}\n}}\n"),
+        )?;
+        setup_must_reach_gate(&case, "default_config_is_quiet")
+            .map_err(|error| format!("{label}: {error}"))?;
+        no_unread_fact(&case, label)?;
+    }
+    Ok(())
+}

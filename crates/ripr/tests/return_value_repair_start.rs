@@ -486,7 +486,10 @@ fn repair_agrees_with_check_on_a_statically_limited_struct_field_finding() -> Re
         "field-construction",
         CONFIG_OLD,
         CONFIG_NEW,
-        "use ar::default_config;\n\n#[test]\nfn config_exists() {\n    let cfg = default_config();\n    assert!(cfg.timeout_secs > 0);\n}\n",
+        // Unbound sibling read: a bound `let cfg = default_config();` with
+        // only `cfg.timeout_secs` read is the #13700 unread-field shape for
+        // `retries`, which now starts the field route.
+        "use ar::default_config;\n\n#[test]\nfn config_exists() {\n    assert!(default_config().timeout_secs > 0);\n}\n",
     )?;
     {
         let item = "src/lib.rs:8";
@@ -1095,12 +1098,15 @@ fn exact_field_or_arm_assertion_and_sibling_field_are_not_repair_starts() -> Res
         "src/lib.rs:4",
     )?;
     // A weak assertion on a sibling field does not tie the test to the
-    // changed field (the field route's own rule), so it is not a start.
+    // changed field (the field route's own rule), so it is not a start. The
+    // read stays unbound: binding the owner result and never reading the
+    // changed field is the #13700 unread-field start
+    // (`tests/unread_owner_result_field_repair_start.rs`).
     assert_no_start_at(
         "field-sibling",
         FIELD_OLD,
         FIELD_NEW,
-        "use ar::default_config;\n\n#[test]\nfn quiet() {\n    let c = default_config();\n    assert!(!c.verbose);\n}\n",
+        "use ar::default_config;\n\n#[test]\nfn quiet() {\n    assert!(!default_config().verbose);\n}\n",
         "src/lib.rs:8",
     )
 }
