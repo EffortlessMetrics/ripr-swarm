@@ -2350,36 +2350,20 @@ fn receiver_matcher_key_getter_read(
         if !receiver_names.iter().any(|receiver| receiver == subject) {
             return false;
         }
-        let Some(expected) = assertion.expected_value_or_variant.as_deref() else {
-            return false;
-        };
-        let names_getter = match assertion.matcher.as_str() {
-            "toMatchObject" => {
-                assertion.argument_count == 1
-                    && direct_matcher_call_args(&test.body_text, subject, "toMatchObject")
-                        .iter()
-                        .any(|args| args.len() == 1)
-                    && !assertion.has_dynamic_matcher_arg
-                    && flat_object_keys(expected)
-                        .is_some_and(|keys| keys.iter().any(|key| key == getter))
-            }
-            "toHaveProperty" => {
-                assertion.argument_count == 2
-                    && direct_matcher_call_args(&test.body_text, subject, "toHaveProperty")
-                        .iter()
-                        .any(|args| args.len() == 2 && is_plain_literal_value(&args[1]))
-                    && expected
-                        .strip_prefix('"')
-                        .and_then(|rest| rest.strip_suffix('"'))
-                        .or_else(|| {
-                            expected
-                                .strip_prefix('\'')
-                                .and_then(|rest| rest.strip_suffix('\''))
-                        })
-                        == Some(getter)
-            }
-            _ => false,
-        };
+        // Key, argument count and value literalness all come from the same
+        // direct call text, never from the parsed assertion or another call
+        // on the same subject.
+        let names_getter = direct_matcher_call_args(&test.body_text, subject, &assertion.matcher)
+            .iter()
+            .any(|args| match assertion.matcher.as_str() {
+                "toMatchObject" => args.len() == 1 && literal_object_has_key(&args[0], getter),
+                "toHaveProperty" => {
+                    args.len() == 2
+                        && quoted_literal_text(&args[0]) == Some(getter)
+                        && is_plain_literal_value(&args[1])
+                }
+                _ => false,
+            });
         // The body scans run last: a `catch (url)`, parameter or loop binding
         // of the subject name is a different object at the assertion, and a
         // receiver the body writes again (`url = {...}`) may no longer be the
@@ -2460,6 +2444,32 @@ fn split_top_level_arguments(args: &str) -> Vec<String> {
         pieces.push(last.to_string());
     }
     pieces
+}
+
+/// The inside of a single- or double-quoted string literal with no escape.
+fn quoted_literal_text(text: &str) -> Option<&str> {
+    let text = text.trim();
+    ['"', '\''].iter().find_map(|quote| {
+        text.strip_prefix(*quote)
+            .and_then(|rest| rest.strip_suffix(*quote))
+            .filter(|inner| !inner.contains([*quote, '\\']))
+    })
+}
+
+/// `true` when `text` is a flat object whose every value is a scalar literal
+/// and whose top-level keys include `key`.
+fn literal_object_has_key(text: &str, key: &str) -> bool {
+    let text = text.trim();
+    let Some(inner) = text
+        .strip_prefix('{')
+        .and_then(|rest| rest.strip_suffix('}'))
+    else {
+        return false;
+    };
+    split_top_level_arguments(inner).iter().all(|part| {
+        part.split_once(':')
+            .is_some_and(|(_, value)| is_plain_literal_value(value))
+    }) && flat_object_keys(text).is_some_and(|keys| keys.iter().any(|name| name == key))
 }
 
 /// `true` for a scalar literal argument: one quoted string without

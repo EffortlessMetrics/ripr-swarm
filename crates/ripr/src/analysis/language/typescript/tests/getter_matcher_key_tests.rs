@@ -306,3 +306,31 @@ fn a_non_literal_or_negated_has_property_value_earns_no_credit() -> Result<(), S
         "    const url = new Url('https://x');\n    expect(url).toHaveProperty('origin', 'https://host');",
     )
 }
+
+#[test]
+fn a_key_and_a_value_must_come_from_the_same_call() -> Result<(), String> {
+    for (label, assertions) in [
+        (
+            "has-property",
+            "expect(url).toHaveProperty('hasProtocol', 5);\n    expect(url).toHaveProperty('origin', expected);",
+        ),
+        (
+            "has-property-key-elsewhere",
+            "expect(url).toHaveProperty('origin', expected);\n    expect(url).toHaveProperty('hasProtocol', 5);",
+        ),
+        (
+            "match-object",
+            "expect(url).toMatchObject({ hasProtocol: 5 });\n    expect(url).toMatchObject({ origin: expected });",
+        ),
+        (
+            "match-object-two-args",
+            "expect(url).toMatchObject({ origin: expected });\n    expect(url).toMatchObject({ protocol: 'https' });",
+        ),
+    ] {
+        let body = format!(
+            "    const expected = 'https://host';\n    const url = new Url('https://x');\n    {assertions}"
+        );
+        assert_body_uncredited(&format!("getter-mixed-{label}"), &body)?;
+    }
+    Ok(())
+}
