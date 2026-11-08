@@ -2950,10 +2950,12 @@ default and re-validates the checked-in receipt offline. It is not part of
 
 After a publication, dispatch `published-install-matrix.yml` with
 `release_version` set to the exact release (for example `0.11.0`). That pins
-cargo, PyPI and npm to it and fails any cell whose `ripr --version` is not
-`ripr <release_version>`, so one run answers "does every channel serve the
-version we announced". Record it with `install-receipt --cells <dir> --run-id
-<id> --write`. A scheduled run leaves it empty and checks whatever is latest.
+cargo, PyPI and npm to it and fails any non-gap cell whose `ripr --version` is
+not `ripr <release_version>` (a gap cell that installs the wrong version is
+reported with a warning), so one run answers "does every channel serve the
+version we announced". Record it with `cargo xtask install-receipt --cells <dir>
+--run-id <id> --write`. Set it instead of `cargo_version`; if both are set, `cargo_version`
+wins for the install and the version check then fails the cargo cells. A scheduled run leaves it empty and checks whatever is latest.
 
 ## Capability Registry Docs Block
 
