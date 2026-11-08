@@ -353,13 +353,17 @@ a gitlink (#10648).
   shows NO guidance; (e) bare `ripr check` that analyzed changed files with 0
   probes shows NO guidance in any form (#4012).
 
-- (f) bare human `ripr check` on a clean checkout of the resolved base branch,
-  where HEAD has a parent, analyzes the last commit (`--base HEAD~1`) and
-  labels that on stderr (#13644). Decision (Steven, 2026-11-08, delegated):
-  agents otherwise spend a dead-end call on "nothing in scope" before
-  `--base HEAD~1`. Human format only; machine and gate formats keep the
-  empty-range contract so CI runs on `main` are unchanged. An explicit scope,
-  a dirty tree or an untracked source file keeps the existing disclosure.
+- (f) bare `ripr check --format human` (the default; `human-full` excluded)
+  on a clean checkout of the resolved base branch analyzes the last commit
+  (`--base HEAD~1`) and labels that on stderr (#13644). It applies only when
+  HEAD is that branch (or `origin/<branch>` is the base) at the same commit,
+  `HEAD~1` exists, no tracked source edit or untracked source file is
+  pending, and no scope, output directory or artifact was requested. Drill-in
+  commands then name `--base 'HEAD~1'`. Rationale (#13644): agents otherwise
+  spend a dead-end call on "nothing in scope" before `--base HEAD~1`. Machine
+  formats (JSON, SARIF, GitHub) keep the empty-range contract so CI runs on
+  `main` are unchanged. When the retry fails or finds no changed file, the
+  original empty result and its `--base HEAD~1` next action are kept.
 
 ## Metrics
 

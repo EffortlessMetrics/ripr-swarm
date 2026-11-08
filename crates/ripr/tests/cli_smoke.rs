@@ -27949,6 +27949,11 @@ fn check_clean_base_branch_with_parent_analyzes_last_commit_in_human_only() -> R
             "bare check on a clean base branch must analyze the last commit; got:\n{stdout}"
         ));
     }
+    if stdout.contains("ripr explain") && !stdout.contains("--base 'HEAD~1'") {
+        return Err(format!(
+            "drill-in commands must stay on the analyzed last-commit range; got:\n{stdout}"
+        ));
+    }
     if !stderr.contains("analyzed the last commit (--base HEAD~1)") {
         return Err(format!(
             "the auto-scope must be labeled on stderr; got:\n{stderr}"
@@ -27959,7 +27964,7 @@ fn check_clean_base_branch_with_parent_analyzes_last_commit_in_human_only() -> R
     assert_success(&json);
     let value: serde_json::Value =
         serde_json::from_slice(&json.stdout).map_err(|err| format!("parse check JSON: {err}"))?;
-    if value["base"] != "main" {
+    if value["base"] != "main" || value["findings"].as_array().is_none_or(|f| !f.is_empty()) {
         return Err(format!(
             "JSON must keep the resolved base unchanged: {value}"
         ));
@@ -27970,6 +27975,21 @@ fn check_clean_base_branch_with_parent_analyzes_last_commit_in_human_only() -> R
     if String::from_utf8_lossy(&explicit.stderr).contains("analyzed the last commit") {
         return Err("an explicit --base must not be rescoped".to_string());
     }
+
+    // A clone resolves the default base to `origin/main` while HEAD is `main`.
+    let clone = unique_temp_workspace("last-commit-fallback-clone");
+    let clone_str = clone.to_string_lossy().into_owned();
+    run_git(&root, &["clone", "--quiet", &root_str, &clone_str])?;
+    let cloned = run_ripr(&["check", "--root", &clone_str]);
+    assert_success(&cloned);
+    if !String::from_utf8_lossy(&cloned.stderr).contains("analyzed the last commit") {
+        return Err(format!(
+            "a clean clone on its default branch must analyze the last commit; got:\n{}\n{}",
+            String::from_utf8_lossy(&cloned.stdout),
+            String::from_utf8_lossy(&cloned.stderr)
+        ));
+    }
+    ignore_remove_dir_all(&clone);
 
     ignore_remove_dir_all(&root);
     Ok(())

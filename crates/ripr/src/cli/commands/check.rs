@@ -1780,7 +1780,7 @@ fn check_inner(
     // RIPR-SPEC-0112 disclosure gate after the analysis needs it.
     let input_diff_file_is_some = input.diff_file.is_some();
     let diff_from_stdin = input.diff_file.as_deref() == Some(Path::new("-"));
-    let limited_check_input = input.clone();
+    let mut limited_check_input = input.clone();
     // Analysis-phase snapshot: identical to the scope-guard input, so guard
     // envelopes and refusal envelopes echo the same invocation context.
     envelope_input = limited_check_input.clone();
@@ -1938,6 +1938,9 @@ fn check_inner(
                 "ripr: no diff against the comparison base (you are on it); analyzed the last commit (--base HEAD~1). Pass --base to choose another range."
             );
             output = retried;
+            // Drill-in, stub and repair routes rebuild their commands from
+            // this input; keep them on the range that was actually shown.
+            limited_check_input.base = Some("HEAD~1".to_string());
         }
     }
     // The findings formats apply suppression only through the explicit flag.
@@ -2310,19 +2313,6 @@ fn record_human_legend_seen(root: &Path, marker: &Path) {
     let _ = crate::atomic_file::write(marker, b"1\n", "legend marker");
 }
 
-/// The stderr warning for an empty default-base result when the default base
-/// and HEAD each resolve to the same commit after analysis. It states those
-/// two later observations only; it does not attribute the analyzed range.
-/// `None` unless both commits resolved and are equal, and the probed
-/// `candidate` could actually serve as the advised `--base` (#7644): in a
-/// single-branch repository the Start-here action (commit a change, or
-/// `--worktree`) is the only actionable remediation, so the `--base`
-/// advice stays silent. The candidate is the ref
-/// `analysis::another_base_candidate` actually probed — never a hardcoded
-/// example and never the current `base`, which would loop to the same
-/// empty result. Its `--base {candidate}` remediation is the same one
-/// the human Start-here line names for this state, so stderr and stdout
-/// do not diverge.
 /// #13644: true when an unscoped check produced an empty range because HEAD
 /// is the checked-out comparison-base branch itself, the tree is clean and
 /// HEAD has a parent, so `--base HEAD~1` names the last commit.
@@ -2349,11 +2339,41 @@ fn last_commit_fallback_applies(output: &crate::CheckOutput, root: &Path) -> boo
         .ok()
         .filter(|out| out.status.success())
     };
-    git(&["symbolic-ref", "--quiet", "--short", "HEAD"])
-        .is_some_and(|out| String::from_utf8_lossy(&out.stdout).trim() == base)
-        && git(&["rev-parse", "--verify", "--quiet", "HEAD~1"]).is_some()
+    // A clone resolves the default base to `origin/main` while HEAD is
+    // `main`: accept the remote-tracking spelling of the checked-out branch,
+    // but only when it names HEAD's own commit (an empty range by
+    // construction, not a branch that is merely behind).
+    let on_base_branch = git(&["symbolic-ref", "--quiet", "--short", "HEAD"]).is_some_and(|out| {
+        let branch = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        base == branch || base.strip_prefix("origin/") == Some(branch.as_str())
+    });
+    let commit = |rev: &str| {
+        git(&[
+            "rev-parse",
+            "--verify",
+            "--quiet",
+            &format!("{rev}^{{commit}}"),
+        ])
+        .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_string())
+    };
+    on_base_branch
+        && commit(base).is_some_and(|base_commit| commit("HEAD") == Some(base_commit))
+        && commit("HEAD~1").is_some()
 }
 
+/// The stderr warning for an empty default-base result when the default base
+/// and HEAD each resolve to the same commit after analysis. It states those
+/// two later observations only; it does not attribute the analyzed range.
+/// `None` unless both commits resolved and are equal, and the probed
+/// `candidate` could actually serve as the advised `--base` (#7644): in a
+/// single-branch repository the Start-here action (commit a change, or
+/// `--worktree`) is the only actionable remediation, so the `--base`
+/// advice stays silent. The candidate is the ref
+/// `analysis::another_base_candidate` actually probed — never a hardcoded
+/// example and never the current `base`, which would loop to the same
+/// empty result. Its `--base {candidate}` remediation is the same one
+/// the human Start-here line names for this state, so stderr and stdout
+/// do not diverge.
 fn default_base_is_head_hedge(
     base: &str,
     base_commit: Option<&str>,
