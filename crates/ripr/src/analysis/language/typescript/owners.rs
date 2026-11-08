@@ -1012,6 +1012,15 @@ fn unsafe_top_level_names(
             }
             oxc_ast_visit::walk::walk_simple_assignment_target(self, target);
         }
+        // `({ extend } = ...)` reaches the identifier without passing
+        // through a simple assignment target (#13694 review).
+        fn visit_assignment_target_property_identifier(
+            &mut self,
+            property: &oxc_ast::ast::AssignmentTargetPropertyIdentifier<'a>,
+        ) {
+            self.names.insert(property.binding.name.to_string());
+            oxc_ast_visit::walk::walk_assignment_target_property_identifier(self, property);
+        }
     }
     let mut assigned = Assigned::default();
     for stmt in body {

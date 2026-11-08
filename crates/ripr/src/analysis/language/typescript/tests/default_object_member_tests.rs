@@ -416,6 +416,20 @@ fn a_sibling_that_can_reach_the_object_without_this_credits_nothing() -> Result<
         ),
         // A top-level reassignment the declaration scan does not see.
         (
+            "destructured-reassignment",
+            "",
+            format!(
+                "function extend(): void {{}}\nfunction bad(this: any): void {{\n  this.merge = {stub};\n}}\n({{ extend }} = {{ extend: bad }});"
+            ),
+        ),
+        (
+            "destructured-reassignment-in-init",
+            "",
+            format!(
+                "function extend(): void {{}}\nfunction bad(this: any): void {{\n  this.merge = {stub};\n}}\nfunction init(): void {{\n  ({{ extend }} = {{ extend: bad }});\n}}\ninit();"
+            ),
+        ),
+        (
             "reassigned-member",
             "",
             format!(
