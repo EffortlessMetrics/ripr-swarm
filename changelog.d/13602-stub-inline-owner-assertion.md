@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- `ripr agent stub` now writes return-value tests that assert on the owner call inline (`assert_eq!(find_sku(skus, name), expected);`) instead of binding it to `let actual` first, so once the placeholders are filled the next `ripr check` credits the stub's own assertion instead of reporting `miss=observation_unconfirmed`; error-variant and non-`PartialEq` shapes keep the `let actual` form (#13602).

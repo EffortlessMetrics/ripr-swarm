@@ -20933,6 +20933,7 @@ tests = [
   "crates/ripr/tests/agent_stub_at_disclosure.rs::second_write_reports_already_written_instead_of_a_duplicate",
   "crates/ripr/tests/agent_stub_compiles.rs::at_kind_stub_discloses_strongly_gripped_classification",
   "crates/ripr/tests/agent_stub_at_disclosure.rs::off_line_predicate_note_precedes_the_grip_class_warning",
+  "crates/ripr/tests/cli_smoke/stub_closes_own_gap.rs::a_filled_return_value_stub_is_credited_with_observing_the_value",
 ]
 fixtures = []
 code = [
