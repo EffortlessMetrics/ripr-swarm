@@ -1871,11 +1871,17 @@ mod tests {
         let error = confined_existing_file(&root.path, Path::new("out"), "before")
             .err()
             .ok_or("a directory is not a file")?;
+        assert_eq!(error.disposition, DISPOSITION_WRONG_ROOT);
         assert_eq!(error.reason, "before must be a file under root");
         let error = confined_existing_file(&root.path, Path::new("missing.json"), "before")
             .err()
             .ok_or("a missing file must be refused")?;
         assert_eq!(error.disposition, DISPOSITION_WRONG_ROOT);
+        assert!(
+            error.reason.starts_with("canonicalize before failed: "),
+            "{}",
+            error.reason
+        );
 
         assert_eq!(
             confined_output_path(&root.path, Path::new("out/result.json"), "result")?,
@@ -1895,10 +1901,18 @@ mod tests {
             .err()
             .ok_or("a missing parent directory must be refused")?;
         assert_eq!(error.disposition, DISPOSITION_WRONG_ROOT);
+        assert!(
+            error
+                .reason
+                .starts_with("canonicalize result parent failed: "),
+            "{}",
+            error.reason
+        );
 
         let error = canonical_directory(&root.path.join("before.json"), "root")
             .err()
             .ok_or("a file is not a directory root")?;
+        assert_eq!(error.disposition, DISPOSITION_WRONG_ROOT);
         assert_eq!(error.reason, "root is not a directory");
         assert_eq!(canonical_directory(&root.path, "root")?, root.path);
         Ok(())
