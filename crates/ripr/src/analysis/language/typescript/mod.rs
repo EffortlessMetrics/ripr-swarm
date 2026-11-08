@@ -150,6 +150,7 @@ mod assertion_form_tests;
 mod asymmetric_matcher_tests;
 #[cfg(test)]
 mod conditional_assertion_tests;
+mod loop_count_credit;
 mod loop_count_guard;
 mod loop_rows;
 mod parse;
@@ -702,6 +703,27 @@ impl TypeScriptAdapter {
                 Some(map) => map.with_workspace_packages(workspace_packages),
                 None => TsAliasMap::workspace_packages_only(&options.root, workspace_packages),
             })
+        };
+        // Per-package `paths` configs (#12754): a nested `paths`-declaring
+        // config is resolved for its own importers, so its content joins the
+        // cache digest, and a map must exist even with no root config.
+        let nested_configs = if options.resolve_tsconfig_paths {
+            tsconfig::nested_configs_fingerprint(&options.root, &workspace_files)
+        } else {
+            None
+        };
+        let alias_map = match nested_configs {
+            Some(fingerprint) => Some(
+                alias_map
+                    .unwrap_or_else(|| {
+                        TsAliasMap::workspace_packages_only(
+                            &options.root,
+                            workspace_packages::WorkspacePackages::default(),
+                        )
+                    })
+                    .with_nested_configs(fingerprint),
+            ),
+            None => alias_map,
         };
         let alias_map_ref: Option<&TsAliasMap> = alias_map.as_ref();
 
