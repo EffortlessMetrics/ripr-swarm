@@ -68,7 +68,7 @@ pub(crate) use name_scope::{
     use_item_bindings,
 };
 pub(crate) use nesting::{
-    SharedParseScope, block_comment_only_lines, non_code_token_end, parse_clean_source_file,
+    block_comment_only_lines, non_code_token_end, parse_clean_source_file,
     parse_clean_source_file_memoized, rust_nesting_refusal, string_literal_continuation_lines,
 };
 pub(crate) use parent_module_cfg_gate::owner_gated_by_parent_mod_declarations;

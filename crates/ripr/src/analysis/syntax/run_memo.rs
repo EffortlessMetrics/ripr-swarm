@@ -32,6 +32,7 @@ pub(crate) enum Product {
     ForeignEntryImport,
     SourceNamings,
     CallMakingClosure,
+    StrippedFileImports,
 }
 
 impl Product {
@@ -43,6 +44,7 @@ impl Product {
             Self::ForeignEntryImport => "foreign_entry_import",
             Self::SourceNamings => "source_namings",
             Self::CallMakingClosure => "call_making_closure",
+            Self::StrippedFileImports => "stripped_file_imports",
         }
     }
 }

@@ -114,8 +114,6 @@ pub fn build_index_with_test_harnesses(
     files: &[PathBuf],
     registrations: &[TestHarnessRegistration],
 ) -> Result<model::RustIndex, String> {
-    // Every post-parse pass re-reads the same files; share their parses.
-    let _shared_parses = crate::analysis::syntax::SharedParseScope::enter();
     let mut index = index_phase("index_parse", || build::build_index(root, files))?;
     index_phase("index_parameterized_tests", || {
         parameterized_tests::promote_explicit_test_case_functions(&mut index);
@@ -439,9 +437,6 @@ fn post_process_cached_index(
     root: &Path,
     registrations: &[TestHarnessRegistration],
 ) -> Result<build::CachedRustIndex, String> {
-    // Each pass below re-reads the same files on different workers; share
-    // their parses for the duration of the passes only (#13738 profile).
-    let _shared_parses = crate::analysis::syntax::SharedParseScope::enter();
     index_phase("index_parameterized_tests", || {
         parameterized_tests::promote_explicit_test_case_functions(&mut cached.index);
         cached.index.refresh_memberships()

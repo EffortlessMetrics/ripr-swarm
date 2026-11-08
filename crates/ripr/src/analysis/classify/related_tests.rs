@@ -1892,13 +1892,14 @@ fn dependency_edge_admits_owner_call(
     // seen (#3619 review). Only file-level imports count — a `use` inside a
     // nested module is invisible to tests outside it, so it must not
     // credit them (#3619 review, second round).
-    let stripped_file = context
-        .index
-        .files()
-        .get(&test.file)
-        .map(|facts| strip_comments_and_strings(&facts.source))
-        .unwrap_or_else(|| stripped_body.clone());
-    let file_level_imports = file_level_use_text(&stripped_file);
+    let file_text = match context.index.files().get(&test.file) {
+        Some(facts) => stripped_file_and_imports(&facts.source),
+        None => {
+            let imports = file_level_use_text(&stripped_body);
+            std::rc::Rc::new((stripped_body.clone(), imports))
+        }
+    };
+    let (stripped_file, file_level_imports) = (&file_text.0, &file_text.1);
     // A `let` binding of the owner name cannot shadow `T::name(`, so the
     // type-path rule runs before the bare-call binding guard (#4558 review).
     if (workspace_complete || type_path_index_covers_competitors(context, &owner_manifest, owner))
@@ -1908,7 +1909,8 @@ fn dependency_edge_admits_owner_call(
             owner,
             test,
             &callable_dependency_names,
-            &stripped_file,
+            stripped_file,
+            file_level_imports,
             same_name.definitions,
         )
     {
@@ -2013,10 +2015,9 @@ fn type_path_call_admits_owner(
     test: &TestSummary,
     callable_dependency_names: &BTreeSet<String>,
     stripped_file: &str,
+    file_level_imports: &str,
     same_name_definitions: &[&FunctionSummary],
 ) -> bool {
-    let file_level_imports = file_level_use_text(stripped_file);
-    let file_level_imports = file_level_imports.as_str();
     let FunctionImplContext::Impl { self_type } = &owner.impl_context else {
         return false;
     };
@@ -2915,6 +2916,24 @@ fn has_callable_forward_dependency(
                 )
             })
         })
+}
+
+/// The comment-and-string-stripped `source` and its file-level `use` text.
+/// The dependency-edge rule asks for this pair once per candidate test per
+/// probe, so a check that classifies many probes against one test file
+/// rescanned the whole file each time; the run memo keeps one pair per
+/// source text for the scope.
+fn stripped_file_and_imports(source: &str) -> std::rc::Rc<(String, String)> {
+    crate::analysis::syntax::run_memo::memoize(
+        crate::analysis::syntax::run_memo::Product::StrippedFileImports,
+        0,
+        source,
+        || {
+            let stripped = strip_comments_and_strings(source);
+            let imports = file_level_use_text(&stripped);
+            std::rc::Rc::new((stripped, imports))
+        },
+    )
 }
 
 /// Whether the stripped body imports the owner name from the declaring
@@ -8068,6 +8087,46 @@ mod tests {
     };
     use std::path::{Path, PathBuf};
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn stripped_file_and_imports_is_computed_once_per_source_in_a_run_scope() {
+        let source = "// use hidden::x;\nuse dep::Owner;\nmod inner {\n    use dep::Nested;\n}\nfn f() { let s = \"use quoted::y;\"; }\n";
+        let other = "use dep::Other;\n";
+        let expected_stripped = strip_comments_and_strings(source);
+        let expected_imports = file_level_use_text(&expected_stripped);
+        // Fixture construction: only the file-level import survives.
+        assert!(
+            expected_imports.contains("dep::Owner"),
+            "{expected_imports}"
+        );
+        assert!(!expected_imports.contains("Nested"), "{expected_imports}");
+        assert!(!expected_imports.contains("hidden"), "{expected_imports}");
+        assert!(!expected_imports.contains("quoted"), "{expected_imports}");
+
+        // Outside a scope every call recomputes, with the same answer.
+        let unscoped = stripped_file_and_imports(source);
+        assert_eq!(
+            *unscoped,
+            (expected_stripped.clone(), expected_imports.clone())
+        );
+        assert!(!std::rc::Rc::ptr_eq(
+            &unscoped,
+            &stripped_file_and_imports(source)
+        ));
+
+        let _scope = crate::analysis::syntax::run_memo::enter();
+        let first = stripped_file_and_imports(source);
+        let second = stripped_file_and_imports(source);
+        assert!(
+            std::rc::Rc::ptr_eq(&first, &second),
+            "the scope must reuse the pair"
+        );
+        assert_eq!(*first, (expected_stripped, expected_imports));
+        // A different source text never shares the entry.
+        let other_pair = stripped_file_and_imports(other);
+        assert!(!std::rc::Rc::ptr_eq(&first, &other_pair));
+        assert!(other_pair.1.contains("dep::Other"), "{}", other_pair.1);
+    }
 
     #[test]
     fn a_test_import_of_a_same_name_twin_does_not_reach_the_owner() {
