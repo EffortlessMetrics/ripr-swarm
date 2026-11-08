@@ -3326,6 +3326,35 @@ pub(crate) fn preview_only_scope_languages(
     languages
 }
 
+/// The disabled-Python sibling of [`preview_only_scope_languages`]
+/// (#13571): `["Python"]` when a scope has at least one routed file, every
+/// routed file routes to Python, and Python is not in `enabled` — the
+/// flat-layout repo with no root marker and no `ripr.toml`, where `ripr
+/// check` analyzes none of the change. Unrouted files are ignored; any
+/// Rust, TypeScript, Perl or other routed file, an enabled Python adapter,
+/// or no routed file at all returns empty, so callers keep their generic
+/// or preview wording. Routing is the shared language router's.
+pub(crate) fn disabled_python_scope_languages(
+    files: &[std::path::PathBuf],
+    enabled: &[crate::domain::LanguageId],
+) -> Vec<&'static str> {
+    use crate::domain::LanguageId;
+    if enabled.contains(&LanguageId::Python) {
+        return Vec::new();
+    }
+    let mut routed = false;
+    for file in files {
+        let Some(id) = crate::analysis::route(file) else {
+            continue;
+        };
+        if id != LanguageId::Python {
+            return Vec::new();
+        }
+        routed = true;
+    }
+    if routed { vec!["Python"] } else { Vec::new() }
+}
+
 /// The TypeScript/Python subset of [`non_rust_item_language`] (#13791): the
 /// preview languages whose finding and gap ids the seam surfaces route to
 /// `ripr check --format agent`. Other non-Rust ids keep their terminal
@@ -6287,6 +6316,38 @@ pub(crate) mod tests {
             assert!(
                 preview_only_scope_languages(&scope, enabled).is_empty(),
                 "{scope:?} under {enabled:?} must not read as preview-only"
+            );
+        }
+    }
+
+    /// #13571: only a scope whose routed files are all Python, with Python
+    /// not enabled, reads as disabled-Python; enabled Python, any other
+    /// routed language, or no routed file stays empty.
+    #[test]
+    fn disabled_python_scope_languages_requires_all_routed_python_and_disabled() {
+        use crate::domain::LanguageId::{Python, Rust, TypeScript};
+        use std::path::PathBuf;
+        let files = |paths: &[&str]| paths.iter().map(PathBuf::from).collect::<Vec<_>>();
+        assert_eq!(
+            disabled_python_scope_languages(
+                &files(&["lib/pricing.py", "README.md", "t/test_pricing.py"]),
+                &[Rust]
+            ),
+            vec!["Python"]
+        );
+        for (scope, enabled) in [
+            (files(&["lib/pricing.py"]), &[Rust, Python][..]),
+            (files(&["lib/pricing.py", "src/lib.rs"]), &[Rust][..]),
+            (files(&["lib/pricing.py", "src/a.ts"]), &[Rust][..]),
+            (files(&["lib/pricing.py", "lib/Pricing.pm"]), &[Rust][..]),
+            (files(&["web/app.js"]), &[Rust][..]),
+            (files(&["README.md"]), &[Rust][..]),
+            (Vec::new(), &[Rust][..]),
+            (files(&["src/a.ts"]), &[Rust, TypeScript][..]),
+        ] {
+            assert!(
+                disabled_python_scope_languages(&scope, enabled).is_empty(),
+                "{scope:?} under {enabled:?} must not read as disabled-Python"
             );
         }
     }

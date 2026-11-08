@@ -471,3 +471,71 @@ fn rust_deletions_keep_a_mixed_brief_generic() -> TestResult {
     ignore_remove_dir_all(&root);
     Ok(())
 }
+
+/// #13571 residual: a flat-layout Python repo (`lib/*.py` changed, no root
+/// marker, no `ripr.toml`) has Python disabled, so the empty brief must not
+/// say only "visible under the current config": it names Python, says ripr
+/// did not analyze it, and gives the enabling `[languages]` line before the
+/// `check` route. Python-enabled and Rust-only scopes keep their wording.
+#[cfg(feature = "lang-python")]
+#[test]
+fn python_disabled_flat_layout_brief_names_the_enable_step() -> TestResult {
+    let pricing = "def discounted_total(amount, limit):\n    if amount > limit:\n        return amount - 10\n    return amount\n";
+    let test = "from lib.pricing import discounted_total\n\ndef test_boundary():\n    assert discounted_total(100, 100) == 100\n";
+    let flat: &[(&str, &str)] = &[
+        ("lib/pricing.py", pricing),
+        ("t/test_pricing.py", test),
+        (".gitignore", ".ripr/\n__pycache__/\n/target/\n"),
+    ];
+    let root = branch_fixture(
+        "agent-brief-python-disabled-flat",
+        &[("README.md", "# fixture\n")],
+        flat,
+    )?;
+    let scope = brief_scope_warning(&root, &["--base", "main"])?;
+    assert!(
+        scope.contains("the changed code is Python")
+            && scope.contains("Python is not enabled in ripr.toml [languages]")
+            && scope.contains("ripr did not analyze it")
+            && scope.contains("add \"python\" to `[languages] enabled` in ripr.toml")
+            && scope.contains("--base main --format agent")
+            && !scope.contains("under the current config")
+            && !scope.contains("no config change adds one")
+            && !scope.contains('\n'),
+        "disabled flat Python brief must name the enable step in one line: {scope}"
+    );
+    ignore_remove_dir_all(&root);
+
+    // Negative control: the same flat layout with Python enabled keeps the
+    // #13791 preview route and never claims Python is not enabled.
+    let root = branch_fixture(
+        "agent-brief-python-enabled-flat",
+        &[
+            ("README.md", "# fixture\n"),
+            ("ripr.toml", "[languages]\nenabled = [\"python\"]\n"),
+        ],
+        flat,
+    )?;
+    let scope = brief_scope_warning(&root, &["--base", "main"])?;
+    assert!(
+        scope.contains("Python preview code") && !scope.contains("not enabled in ripr.toml"),
+        "enabled Python must keep the preview route: {scope}"
+    );
+    ignore_remove_dir_all(&root);
+
+    // Negative control: a Rust-only change emits no language warning.
+    let root = branch_fixture(
+        "agent-brief-rust-only-no-language-warning",
+        &[("src/lib.rs", "//! Notes.\n\n// Removed.\n")],
+        &[("src/lib.rs", "//! Notes.\n")],
+    )?;
+    let scope = brief_scope_warning(&root, &["--base", "main"])?;
+    assert!(
+        scope.contains("under the current config")
+            && !scope.contains("not enabled in ripr.toml")
+            && !scope.contains("Python"),
+        "Rust-only brief must stay generic: {scope}"
+    );
+    ignore_remove_dir_all(&root);
+    Ok(())
+}

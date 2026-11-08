@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- `ripr agent brief` on a flat-layout Python repo whose adapter is not enabled (no root marker, no `ripr.toml`) now names Python in its empty-scope warning, says ripr did not analyze the change, and gives the enabling step — add `"python"` to `[languages] enabled` in `ripr.toml` — before naming the `ripr check --format agent` route, instead of only saying no seam is "visible under the current config" (#13571).

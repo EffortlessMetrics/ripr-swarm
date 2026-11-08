@@ -1,0 +1,59 @@
+schema_version = "2.0"
+id = "ripr.slice.agent-brief-disabled-python.v1"
+generation = 1
+
+source_issue = "issue:13571"
+design_reference = "RIPR-SPEC-0311#disabled-python-disclosure-on-an-empty-brief"
+change_class = "behavior_change"
+
+claim_boundary = """
+An empty `ripr agent brief` over a scope whose routed changed files are all
+Python, with Python not enabled (a flat-layout repo with no root marker and
+no `ripr.toml`), replaces the generic "visible under the current config"
+warning with one line naming Python, stating Python is not enabled in
+`ripr.toml [languages]` and ripr did not analyze the change, giving the
+enabling step (add `"python"` to `[languages] enabled` in `ripr.toml`), and
+only then naming the `ripr check --format agent` route for the brief's own
+input. This is wording only: no verdict, exit code, language detection, or
+diff-driven auto-enable behavior changes, and enabled-Python, Rust-only and
+mixed-language scopes keep their existing wording.
+"""
+
+non_goals = [
+  "diff-driven auto-enable of the Python adapter",
+  "changing `ripr check` or `ripr repair` wording (#13576 owns that disclosure)",
+  "changing the enabled-preview route from #13791 / #13808",
+  "changing brief seam selection, verdicts, or exit codes",
+  "naming any disabled language other than Python in the brief warning",
+]
+
+return_conditions = [
+  "Return to root if the disabled-Python warning appears for an enabled-Python, Rust-only, or mixed-language scope.",
+  "Return to root if the warning routes to `ripr check` before naming the enabling `[languages]` step, or claims no config change adds a seam.",
+]
+
+owned_seams = [
+  "seam:ripr:agent:command-runner",
+]
+
+shared_seams = [
+  "seam:ripr:docs:output-schema",
+]
+
+forbidden_seams = [
+  "seam:ripr:agent:receipt-issuer",
+  "seam:ripr:analysis:runtime-mutation",
+]
+
+[[requirement_delta]]
+requirement_id = "RIPR-SPEC-0311#disabled-python-disclosure-on-an-empty-brief"
+requirement_generation = 1
+
+[implementation_claim]
+status = "implemented"
+
+[evidence]
+state = "outstanding"
+
+[support_claim]
+state = "unchanged"
