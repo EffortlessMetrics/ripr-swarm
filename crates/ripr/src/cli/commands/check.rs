@@ -698,6 +698,9 @@ pub(super) fn machine_refusal_document(
         // GitHub: one workflow-command error annotation, escaped like every
         // other line of the format.
         OutputFormat::Github => Some(Ok(output::github::render_refusal(&notice))),
+        // missed-txt: one `# ` comment line, never zero bytes (an empty
+        // gap list would read as clean) and never a parseable gap line.
+        OutputFormat::MissedTxt => Some(Ok(output::missed_txt::render_refusal(&notice))),
         // Badge JSON: the degraded-state convention (warn + lightgrey,
         // zeroed counts, named message) applied to a refused run.
         OutputFormat::BadgeJson => Some(Ok(output::badge::render_native_json(
@@ -1194,13 +1197,14 @@ fn check_inner(
                 | OutputFormat::Json
                 | OutputFormat::JsonCompact
                 | OutputFormat::Github
+                | OutputFormat::MissedTxt
         )
     {
         return Err(super::check_fanout::refuse(
             super::check_fanout::refusal_destination(fanout_custody.as_ref(), output_dir.as_deref()),
             &envelope_input,
             effective_format,
-            "--suppression-policy applies to the findings-based check formats (human, human-full, json, json-compact, github); \
+            "--suppression-policy applies to the findings-based check formats (human, human-full, json, json-compact, github, missed-txt); \
              it is not yet supported for SARIF, badge, or repo formats"
                 .to_string(),
         ));
@@ -1975,6 +1979,7 @@ fn check_inner(
                 | OutputFormat::Json
                 | OutputFormat::JsonCompact
                 | OutputFormat::Github
+                | OutputFormat::MissedTxt
         )
         && output
             .root
