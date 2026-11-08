@@ -1,2 +1,3 @@
 tools/repo-policy/tests/queue_intake.rs|Command::new|1|ci/qualification-proof|#4838: timeout-bounded local tests of the shipped read-only intake evaluator; fake API responses, no hosted or protected mutation.
 tools/repo-policy/tests/queue_intake.rs|use std::process::Command|1|ci/qualification-proof|#4838: import for the same timeout-bounded native test helper; no production process authority.
+tools/repo-policy/tests/queue_intake.rs|subprocess.run|1|ci/qualification-proof|#4838: five-second read-only git ls-tree in the committed producer-root regression; the enclosing test has a thirty-second timeout.
