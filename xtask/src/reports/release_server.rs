@@ -2,6 +2,7 @@ mod npm_native;
 mod payload;
 mod producer;
 mod qualification;
+mod wheel_native;
 
 use std::fs;
 use std::io::Read;
@@ -19,6 +20,21 @@ pub(crate) fn release_server_archive(args: &[String]) -> Result<(), String> {
         let archive = required_release_arg(args, "qualified-archive", "QUALIFIED_ARCHIVE")?;
         let out_dir = required_release_arg(args, "out-dir", "NPM_NATIVE_OUT_DIR")?;
         return npm_native::produce(
+            Path::new(&payload_dir),
+            Path::new(&identity),
+            Path::new(&producer),
+            Path::new(&build_identity),
+            Path::new(&archive),
+            Path::new(&out_dir),
+        );
+    }
+    if let Some(payload_dir) = optional_release_arg(args, "wheel-payload-dir") {
+        let identity = required_release_arg(args, "payload-identity", "PAYLOAD_IDENTITY")?;
+        let producer = required_release_arg(args, "producer-receipt", "PRODUCER_RECEIPT")?;
+        let build_identity = required_release_arg(args, "build-identity", "BUILD_IDENTITY")?;
+        let archive = required_release_arg(args, "qualified-archive", "QUALIFIED_ARCHIVE")?;
+        let out_dir = required_release_arg(args, "out-dir", "WHEEL_NATIVE_OUT_DIR")?;
+        return wheel_native::produce(
             Path::new(&payload_dir),
             Path::new(&identity),
             Path::new(&producer),

@@ -41,7 +41,7 @@ fn package_path(identity: &payload::FinalNativePayloadIdentity, path: &str) -> S
     }
 }
 
-fn verify_notices(
+pub(super) fn verify_notices(
     identity: &payload::FinalNativePayloadIdentity,
     source_root: &Path,
 ) -> Result<(), String> {
@@ -309,7 +309,7 @@ fn ensure_archive_unchanged(path: &Path, verified_hash: &str) -> Result<(), Stri
     Ok(())
 }
 
-fn verify_qualification(bytes: &[u8], expected: &Value) -> Result<(), String> {
+pub(super) fn verify_qualification(bytes: &[u8], expected: &Value) -> Result<(), String> {
     let bytes = bytes.strip_prefix(&[0xef, 0xbb, 0xbf]).unwrap_or(bytes);
     let actual: Value = serde_json::from_slice(bytes)
         .map_err(|e| format!("parse selected-target build identity: {e}"))?;
@@ -324,7 +324,7 @@ fn verify_qualification(bytes: &[u8], expected: &Value) -> Result<(), String> {
     Ok(())
 }
 
-fn promote_pair(
+pub(super) fn promote_pair(
     package_bytes: &[u8],
     verified_hash: &str,
     receipt: &Path,
