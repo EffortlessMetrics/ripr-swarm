@@ -30,7 +30,9 @@
 //! the importer's exports as entries of the imported module's owners, under
 //! the same three-hop total bound and the same weaker-than-direct contract.
 
-use super::module_value_reads::{never_mutated_in_module, reads_unshadowed_value};
+use super::module_value_reads::{
+    byte_preserving_mask, never_mutated_in_module, reads_unshadowed_value,
+};
 use super::*;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
@@ -192,7 +194,7 @@ pub(crate) fn module_entries_and_outbound<'a>(
         !nodes.contains_key(name) && !exported_values.contains(name) && mentioned.contains(name)
     });
     if !values.is_empty() {
-        let masked_source = ts_mask_literals_and_comments(source);
+        let masked_source = byte_preserving_mask(source, &ts_mask_literals_and_comments(source));
         values.retain(|name| {
             never_mutated_in_module(source, &masked_source, name, decl_starts.get(name).copied())
         });

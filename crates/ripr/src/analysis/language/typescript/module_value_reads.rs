@@ -111,6 +111,25 @@ pub(super) fn reads_unshadowed_value(masked_text: &str, scope: &str, name: &str)
         && mentions(scope, name).all(|mention| mention != Mention::Other)
 }
 
+/// `masked` (one character per source character, as the shared masker emits)
+/// re-expressed in source byte coordinates: a masked multi-byte character
+/// becomes one space per byte, so offsets from the parser index it directly.
+/// Falls back to `masked` unchanged when the character counts differ.
+pub(super) fn byte_preserving_mask(source: &str, masked: &str) -> String {
+    if source.chars().count() != masked.chars().count() {
+        return masked.to_string();
+    }
+    let mut out = String::with_capacity(source.len());
+    for (original, kept) in source.chars().zip(masked.chars()) {
+        if kept == original || original.len_utf8() == kept.len_utf8() {
+            out.push(kept);
+        } else {
+            out.extend(std::iter::repeat_n(' ', original.len_utf8()));
+        }
+    }
+    out
+}
+
 /// `true` when nothing in the file can write `name` through a shape this
 /// module can see, and every mention of `name` outside its own declaration is
 /// an allowlisted read. `masked` is `source` with comments and literals
@@ -239,6 +258,10 @@ fn classify(text: &str, idx: usize, name: &str) -> Mention {
 fn is_read_receiver(after: &str) -> bool {
     let rest = after.trim_start();
     if !(rest.starts_with('.') || rest.starts_with("?.") || rest.starts_with('[')) {
+        return false;
+    }
+    // `NAME?.(x)` calls the value itself.
+    if rest.starts_with("?.(") {
         return false;
     }
     !chain_ends_in_write(after) && !chain_calls_mutating_or_unknown(after)

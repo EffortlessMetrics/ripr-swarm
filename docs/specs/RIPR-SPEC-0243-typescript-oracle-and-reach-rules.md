@@ -945,6 +945,8 @@ Candidates come from the first non-empty tier:
    direct test of the value, never `exposed`, and a test that never calls a
    reading function stays `no_static_path`. Reach through a factory const's
    bare-call edges does not extend to its own `ModuleFunction` owner.
+   Module-const (`ModuleFunction` value) reach stays same-module only: it
+   does not continue across an import, and an exported value is not followed.
    **Cross-module continuation (#13592).** The same chain continues across an
    import: an exported function of module X that bare-calls a binding it
    imported from module Y reaches the owner Y declares (or the owner Y's own

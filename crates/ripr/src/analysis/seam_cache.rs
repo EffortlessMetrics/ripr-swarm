@@ -723,6 +723,9 @@ pub(crate) struct CachedSeamLimitInfo {
 /// `1.175`: an equality whose compared error is replaced by an adapter such as
 /// `map_err` classifies as a weak relational check, not an exact value; cached
 /// grips decided before the refusal would keep crediting it (#12610).
+/// `1.176`: a module-level `const` read only by a same-module function gains a
+/// reader entry, so cached verdicts for such a value would stay `no_static_path`
+/// (#13592).
 pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.176";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
@@ -940,6 +943,7 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.176";
 /// `0.175`: same `#[async_std::test]` admission as full `1.173` (#5040).
 /// `0.176`: same local-bound proximity pin as full `1.174` (#12264).
 /// `0.177`: same adapter-replaced error-read refusal as full `1.175` (#12610).
+/// `0.178`: same module-const reader entry as full `1.176` (#13592).
 const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.178";
 
 /// Compact-classified seam cache schema. This cache stores the same
@@ -1159,6 +1163,7 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.178";
 /// `0.175`: same `#[async_std::test]` admission as full `1.173` (#5040).
 /// `0.176`: same local-bound proximity pin as full `1.174` (#12264).
 /// `0.177`: same adapter-replaced error-read refusal as full `1.175` (#12610).
+/// `0.178`: same module-const reader entry as full `1.176` (#13592).
 pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.178";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
@@ -5698,6 +5703,7 @@ mod tests {
         // 0.174 -> 0.175: same async_std test admission as full 1.173 (#5040).
         // 0.175 -> 0.176: same local-bound proximity pin as full 1.174 (#12264).
         // 0.176 -> 0.177: same adapter-replaced refusal as full 1.175 (#12610).
+        // 0.177 -> 0.178: same module-const reader entry as full 1.176 (#13592).
         assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.178");
         assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.178");
         // 0.170 -> 0.171: same plain `assert_eq!` literal withhold as full 1.169 (#13005).

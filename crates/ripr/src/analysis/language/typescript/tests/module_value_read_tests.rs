@@ -300,3 +300,26 @@ fn later_declarator_in_a_multi_declarator_const_is_followed() {
     let mutated = "const OTHER = 0, TABLE = { a: 1 };\nexport function f(k: string) {\n  return TABLE[k];\n}\nexport function g() {\n  TABLE.a = 2;\n}\n";
     assert!(entry_names(mutated, "TABLE").is_empty());
 }
+
+#[test]
+fn non_ascii_text_does_not_disable_value_edges() {
+    let comment =
+        "// caf\u{e9}\nconst RE = /x/g;\nexport function f(s: string) { return RE.test(s); }\n";
+    assert_eq!(entry_names(comment, "RE"), ["f"], "comment");
+    let string = "const GREETING = \"\u{597d}\u{4e16}\u{754c}\";\nconst RE = /x/g;\nexport function f(s: string) { return RE.test(s) && GREETING.length > 0; }\n";
+    assert_eq!(entry_names(string, "RE"), ["f"], "string literal");
+    // ufo-shaped: several consts, a CJK comment between them, helpers reading them.
+    let ufo = "const PROTOCOL_REGEX = /^[\\s\\w\\0+.-]{2,}:([/\\\\]{1,2})/;\nconst TRAILING_SLASH_RE = /\\/$|\\/\\?|\\/#/;\n// \u{597d} comment\nconst JOIN_LEADING_SLASH_RE = /^\\.?\\//;\nexport function hasProtocol(input: string) {\n  return PROTOCOL_REGEX.test(input);\n}\nexport function hasTrailingSlash(input: string) {\n  return TRAILING_SLASH_RE.test(input);\n}\nexport function joinURL(a: string, b: string) {\n  return a.replace(JOIN_LEADING_SLASH_RE, \"\") + b;\n}\n";
+    assert_eq!(entry_names(ufo, "PROTOCOL_REGEX"), ["hasProtocol"]);
+    assert_eq!(entry_names(ufo, "TRAILING_SLASH_RE"), ["hasTrailingSlash"]);
+    assert_eq!(entry_names(ufo, "JOIN_LEADING_SLASH_RE"), ["joinURL"]);
+    // The multi-byte text must not hide a real write.
+    let mutated = "// \u{597d}\nconst TABLE = { a: 1 };\nexport function f(k: string) { return TABLE[k]; }\nexport function g() { TABLE.a = 2; }\n";
+    assert!(entry_names(mutated, "TABLE").is_empty());
+}
+
+#[test]
+fn calling_the_value_itself_is_not_a_read() {
+    let source = "const RE = /x/g;\nexport function f(s: string) { return RE?.(s); }\n";
+    assert!(entry_names(source, "RE").is_empty());
+}
