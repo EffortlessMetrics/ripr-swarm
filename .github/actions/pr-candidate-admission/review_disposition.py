@@ -285,6 +285,7 @@ def fetch_reviews(repository: str, pr_number: str) -> list[dict[str, Any]]:
         check=True,
         capture_output=True,
         text=True,
+        encoding="utf-8",
         timeout=120,
     ).stdout
     return parse_paginated(out)
@@ -518,7 +519,9 @@ def self_test() -> None:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--self-test", action="store_true")
-    parser.add_argument("--check-reviews", type=argparse.FileType("r", encoding="utf-8"))
+    # FileType returns the existing sys.stdin for '-', ignoring its encoding
+    # argument. Read bytes so piped GitHub JSON also has an explicit UTF-8 boundary.
+    parser.add_argument("--check-reviews", type=argparse.FileType("rb"))
     parser.add_argument("--repository", help="owner/name; read reviews with gh instead of a file")
     parser.add_argument("--pr", help="Pull request number for --repository")
     parser.add_argument("--head", help="Exact candidate head SHA")
@@ -543,7 +546,7 @@ def main() -> int:
             return 1
     else:
         try:
-            reviews = parse_paginated(args.check_reviews.read())
+            reviews = parse_paginated(args.check_reviews.read().decode("utf-8"))
         except ValueError as exc:
             print(
                 f"::error::source review attestation refused: malformed review data: {exc}",

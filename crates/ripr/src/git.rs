@@ -19,7 +19,8 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
-use std::sync::mpsc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant};
 
 use crate::core_error::CoreError;
@@ -659,10 +660,10 @@ pub(crate) fn run_git_output_with_deadline_and_env(
 /// Run Git through the shared deadline/process-tree authority while retaining
 /// at most `max_output_bytes` from each output stream.
 ///
-/// The reader continues draining after the cap so the child cannot deadlock,
-/// but excess bytes are discarded and the invocation fails closed after the
-/// child exits. This is intended for repository-inventory consumers where an
-/// attacker-controlled path set must not cause unbounded allocation.
+/// On a stdout breach the child is terminated and reaped; reader threads
+/// continue draining while termination proceeds. Excess bytes are discarded.
+/// This is intended for consumers where attacker-controlled output must not
+/// cause unbounded allocation.
 pub(crate) fn run_git_output_with_deadline_and_limit(
     root: &Path,
     args: &[&str],
@@ -790,17 +791,26 @@ fn collect_output_with_optional_deadline_and_limit(
         OwnedProcess::spawn(command).map_err(|err| spawn_site.failure_message(describe, &err))?;
     #[cfg(test)]
     TEST_PROCESS_SPAWNS.with(|count| count.set(count.get() + 1));
-    let stdout_reader = child
-        .stdout_pipe()
-        .take()
-        .map(|pipe| spawn_bounded_pipe_reader(pipe, max_output_bytes));
+    let stdout_exceeded = Arc::new(AtomicBool::new(false));
+    let stdout_reader = child.stdout_pipe().take().map(|pipe| {
+        spawn_bounded_pipe_reader_with_signal(
+            pipe,
+            max_output_bytes,
+            Some(Arc::clone(&stdout_exceeded)),
+        )
+    });
     let stderr_reader = child
         .stderr_pipe()
         .take()
         .map(|pipe| spawn_bounded_pipe_reader(pipe, max_output_bytes));
 
-    let wait = poll_child(&mut child, timeout, describe);
-    let timed_out = !matches!(&wait, ChildWait::Exited(_));
+    let wait = poll_child_with_limit(
+        &mut child,
+        timeout,
+        describe,
+        Some((&stdout_exceeded, max_output_bytes)),
+    );
+    let timed_out = !matches!(&wait, Ok(ChildWait::Exited(_)));
     let drain_deadline = timed_out.then(|| Instant::now() + POST_KILL_DRAIN_GRACE);
     let stdout_result =
         drain_bounded_pipe_reader(stdout_reader, timed_out, drain_deadline, "stdout", describe);
@@ -809,10 +819,18 @@ fn collect_output_with_optional_deadline_and_limit(
     let stdout = stdout_result?;
     let stderr = stderr_result?;
 
-    match wait {
-        ChildWait::Exited(_) if stdout.exceeded || stderr.exceeded => {
+    match wait? {
+        ChildWait::Exited(_) if stdout.exceeded => Err(CoreError::message(format!(
+            "git_output_limit_exceeded: {describe} exceeded the {max_output_bytes}-byte per-stream capture limit"
+        ))),
+        ChildWait::Exited(status) if stderr.exceeded => {
+            // Bound the input before lossy decoding and terminal escaping:
+            // the stderr capture itself can be as large as the caller's limit.
+            let preview_bytes =
+                &stderr.bytes[..stderr.bytes.len().min(GIT_OUTPUT_DISPLAY_MAX_CHARS)];
+            let preview = bounded_git_output(preview_bytes, GIT_OUTPUT_DISPLAY_MAX_CHARS);
             Err(CoreError::message(format!(
-                "git_output_limit_exceeded: {describe} exceeded the {max_output_bytes}-byte per-stream capture limit"
+                "git_stderr_limit_exceeded: {describe} exceeded the {max_output_bytes}-byte stderr capture limit; status: {status}; stderr prefix: {preview}…"
             )))
         }
         ChildWait::Exited(status) => Ok(Output {
@@ -840,8 +858,16 @@ type BoundedPipeReader = (
 );
 
 fn spawn_bounded_pipe_reader(
+    pipe: impl std::io::Read + Send + 'static,
+    max_bytes: usize,
+) -> BoundedPipeReader {
+    spawn_bounded_pipe_reader_with_signal(pipe, max_bytes, None)
+}
+
+fn spawn_bounded_pipe_reader_with_signal(
     mut pipe: impl std::io::Read + Send + 'static,
     max_bytes: usize,
+    signal: Option<Arc<AtomicBool>>,
 ) -> BoundedPipeReader {
     let (sender, receiver) = mpsc::channel();
     let handle = std::thread::spawn(move || {
@@ -856,6 +882,9 @@ fn spawn_bounded_pipe_reader(
                     let keep = read.min(remaining);
                     retained.extend_from_slice(&chunk[..keep]);
                     exceeded |= keep < read;
+                    if exceeded && let Some(signal) = &signal {
+                        signal.store(true, Ordering::Release);
+                    }
                 }
                 Err(err) if err.kind() == std::io::ErrorKind::Interrupted => continue,
                 Err(err) => {
@@ -1459,40 +1488,65 @@ pub(crate) fn poll_child(
     timeout: Option<Duration>,
     describe: &str,
 ) -> ChildWait {
+    match poll_child_with_limit(child, timeout, describe, None) {
+        Ok(wait) => wait,
+        Err(error) => ChildWait::CleanupFailed(error.to_string()),
+    }
+}
+
+fn poll_child_with_limit(
+    child: &mut OwnedProcess,
+    timeout: Option<Duration>,
+    describe: &str,
+    stdout_limit: Option<(&AtomicBool, usize)>,
+) -> Result<ChildWait, CoreError> {
     let deadline = timeout.map(|limit| Instant::now() + limit);
     let mut backoff = crate::process_owner::PollBackoff::new();
     loop {
         match child.try_wait() {
-            Ok(Some(status)) => return ChildWait::Exited(status),
+            Ok(Some(status)) => return Ok(ChildWait::Exited(status)),
             Ok(None) => {
                 if let Err(cancelled) = crate::analysis::cancellation::checkpoint_typed() {
-                    return terminate_then_classify(
+                    return Ok(terminate_then_classify(
                         describe,
                         "cancellation",
                         ChildWait::Cancelled(cancelled.into()),
                         || child.terminate_tree(),
-                    );
+                    ));
                 }
                 if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
                     let timeout_ms = timeout.map_or(0, |limit| limit.as_millis());
-                    return terminate_then_classify(
+                    return Ok(terminate_then_classify(
                         describe,
                         "timeout",
                         ChildWait::TimedOut(CoreError::git_invocation_timeout(
                             describe, timeout_ms, true,
                         )),
                         || child.terminate_tree(),
+                    ));
+                }
+                if let Some((exceeded, limit)) = stdout_limit
+                    && exceeded.load(Ordering::Acquire)
+                {
+                    let error = format!(
+                        "git_output_limit_exceeded: {describe} exceeded the {limit}-byte stdout capture limit"
                     );
+                    return match child.terminate_tree() {
+                        Ok(()) => Err(CoreError::message(error)),
+                        Err(cleanup) => Err(CoreError::message(format!(
+                            "output limit of {describe} did not complete tree cleanup; the child may still be running: {cleanup}"
+                        ))),
+                    };
                 }
                 backoff.sleep(deadline);
             }
             Err(err) => {
-                return terminate_then_classify(
+                return Ok(terminate_then_classify(
                     describe,
                     "wait failure",
                     ChildWait::WaitFailed(err.to_string()),
                     || child.terminate_tree(),
-                );
+                ));
             }
         }
     }
@@ -2471,11 +2525,18 @@ To add an exception for this directory, call:\n\n\tgit config --global --add saf
     /// Env flag that makes the re-executed test binary write more than one
     /// OS pipe buffer of stdout before exiting, exercising the drain path.
     const FLOOD_ENV: &str = "RIPR_GIT_TIMEOUT_TEST_FLOOD";
+    const FLOOD_HANG_ENV: &str = "RIPR_GIT_LIMIT_TEST_FLOOD_HANG";
 
     fn reexec_harness() -> bool {
         if std::env::var_os(HANG_ENV).is_some() {
             std::thread::sleep(Duration::from_mins(2));
             std::process::exit(0);
+        }
+        if std::env::var_os(FLOOD_HANG_ENV).is_some() {
+            use std::io::Write as _;
+            let _ = std::io::stdout().write_all(&[b'x'; 8192]);
+            std::thread::sleep(Duration::from_secs(30));
+            return true;
         }
         if std::env::var_os(FLOOD_ENV).is_some() {
             // Write to fd 1 directly: `println!` inside a test binary is
@@ -2502,6 +2563,7 @@ To add an exception for this directory, call:\n\n\tgit config --global --add saf
         let test_name = match env_key {
             HANG_ENV => "git::tests::deadline_kills_and_reaps_a_hung_invocation",
             FLOOD_ENV => "git::tests::output_larger_than_the_pipe_buffer_does_not_deadlock",
+            FLOOD_HANG_ENV => "git::tests::bounded_capture_stops_live_overlimit_child",
             _ => return Err(format!("unknown git test harness mode: {env_key}")),
         };
         command.args([test_name, "--exact"]);
@@ -3147,6 +3209,52 @@ To add an exception for this directory, call:\n\n\tgit config --global --add saf
         if output.bytes != b"ok" {
             return Err(format!("interrupted read lost bytes: {:?}", output.bytes));
         }
+        Ok(())
+    }
+
+    #[test]
+    fn bounded_capture_stops_live_overlimit_child() -> Result<(), String> {
+        if reexec_harness() {
+            return Ok(());
+        }
+        let command = self_reexec_command(FLOOD_HANG_ENV)?;
+        let error = collect_output_with_deadline_and_limit(
+            command,
+            Duration::from_secs(3),
+            1024,
+            "overlimit-child",
+        )
+        .err()
+        .ok_or("overlimit child unexpectedly succeeded")?;
+        if !error.to_string().starts_with("git_output_limit_exceeded:") {
+            return Err(format!("expected output limit, got {error}"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn stdout_limit_termination_reaps_live_child() -> Result<(), String> {
+        if reexec_harness() {
+            return Ok(());
+        }
+        let mut guard = HungChildGuard(Some(spawn_hung_child()?));
+        let child = guard.0.as_mut().ok_or("missing child")?;
+        if !matches!(child.try_wait(), Ok(None)) {
+            return Err("fixture must be alive before the limit signal".into());
+        }
+        let exceeded = AtomicBool::new(true);
+        let error = match poll_child_with_limit(child, None, "reap-proof", Some((&exceeded, 1024)))
+        {
+            Err(error) => error,
+            Ok(_) => return Err("limit signal did not stop child".into()),
+        };
+        if !error.to_string().starts_with("git_output_limit_exceeded:") {
+            return Err(format!("unexpected limit error: {error}"));
+        }
+        if !matches!(child.try_wait(), Ok(Some(_))) {
+            return Err("limit return did not reap the child".into());
+        }
+        guard.disarm();
         Ok(())
     }
 

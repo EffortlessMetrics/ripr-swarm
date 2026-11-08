@@ -513,6 +513,14 @@ and single-platform CI was the root cause enabling both.
   reported spawn status 127, or an expected test is missing, duplicated or
   ignored in the log: a status file alone cannot tell these four tests from a
   renamed filter that matched nothing (#10621).
+- **Retained file-policy evidence.** After the two-run verdict, an isolated
+  `policy_checker_facade_runs_current_repo_checks` run writes the report and
+  subject sidecar, then `cargo xtask windows-advisory-file-policy-evidence`
+  admits `target/ripr/reports/file-policy.md` only when the facade log, cargo
+  status, checkout head, sidecar report-byte SHA-256, and packet oracle agree
+  (#5044). A sidecar from another report cannot qualify changed bytes even when
+  both reports have valid coverage rows. Uploading
+  the path with `if-no-files-found: ignore` is not admission.
 - **`Rust Test Shards`** (`rust-test-shards.yml`, called by `routed-rust.yml`) is the GitHub-hosted route's required test phase (#10507, hash layout #12777): four `cargo nextest run --workspace --profile ci --partition hash:N/4` jobs that start only after the hosted `rust-gates.yml` job (called with `test-shards: 4`) passed every other gate, plus `rust-test-shards-verify`, which runs `cargo xtask verify-test-shards` and fails unless every shard has status 0, a current run context (repository, checkout, run, attempt, profile, partition, exit) and a complete JUnit report whose testcases are exactly its partition list, and the partition lists are a disjoint cover of the workspace list. The verifier parses XML before retaining complete suite elements and anchors each receipt’s four ordered input blobs to `Cargo.lock`, `.config/nextest.toml`, `.github/workflows/rust-gates.yml` and `.github/workflows/rust-test-shards.yml` at the expected checkout commit; malformed or unsupported namespaced XML, unresolved inputs, shared incorrect hashes, duplicate or reserved run-context keys (`shards` and `verified_attempts` are reserved for the combined receipt) and noncanonical artifact attempt suffixes fail closed. It then retains the combined `junit.xml` and `run-context.txt` under the unsharded artifact name. `Ripr Rust Small Result` fails unless it passed; the self-hosted routes keep the single-command step. The shards restore their own `ripr-swarm-rust-shards` cache, written by shard 1 on `main` pushes, so the first run after a cold cache pays the full test build. Shard 1 also uploads the `xtask` binary its warm build produced (debug sections stripped), and the verify job runs that binary instead of installing a toolchain and compiling xtask again, which took about 2.4 minutes after the last shard finished.
   The existing shard artifact also retains `nextest/ci/build-metrics/` (#12767):
   five-second system-memory samples, sampled minimum available memory and maximum
@@ -852,6 +860,32 @@ and should usually be split.
 
 ## Current Workflows
 
+### Workflow correctness
+
+`workflow-lint.yml` runs jactionlint 2.5.0 on PRs changing `.github/**` and on
+manual dispatch. It downloads the fixed release archive, verifies its pinned
+SHA-256, and checks the repository with `--profile correctness --no-online`,
+explicitly loading `.github/jactionlint.yaml` so user-global suppressions cannot
+change the local or hosted rule set.
+It does not allocate Rust CI, call the GitHub API, upload artifacts, or become
+a new required check. Findings and operational failures fail the lint job;
+there is no baseline or continue-on-error escape.
+
+This initial semantic check explicitly excludes external ShellCheck and
+Pyflakes. The `github-script-syntax` check needs Node 20 or newer on `PATH`;
+local runs without it must record that JavaScript syntax coverage as omitted.
+It does not claim ShellCheck/Pyflakes coverage or replace repository policy,
+security checks, release qualification, or hosted cache measurements. The
+existing qualification and release workflows are unchanged. Only this cheap
+lint lane cancels an obsolete run for the same PR; its concurrency group is
+separate from all qualification/release jobs, and manual runs use their unique
+run IDs so one dispatch cannot replace another pending dispatch. Rollback removes
+this optional workflow, its linter configuration and policy entries without
+changing protected checks.
+
+Use the pinned [local command](agent-context/validation.md#workflow-policy)
+before publishing workflow changes; a successful YAML parse is not equivalent.
+
 ### Swarm Routed Rust
 
 `ripr-swarm` adds `.github/workflows/routed-rust.yml` as the development-trunk
@@ -951,6 +985,15 @@ failed, or skipped provider remains missing review evidence after Ready; no
 synthetic success replaces it. Runner-minute savings remain unmeasured until a
 natural lifecycle is observed. `xtask/tests/pr_readiness_workflow_contract.rs`
 checks parsed event/config contracts, not hosted provider execution.
+
+UB's receipt reporter stays in `xtask`, with its explicit example tests. Its
+workflow test and run commands use `--no-default-features` to build the JSON
+reader without xtask's product/parser dependencies. The default `automation`
+feature retains the ordinary xtask commands, examples and workspace test graph;
+`perl-identity` also retains it. Reporter source, receipt interpretation, native
+failure reporting and advisory posture are unchanged. This reduces reporter
+build work; it does not establish a full UB run within 20 minutes or repair
+timed-out or refused sensors.
 
 The reusable required Rust gates prepare both locked owner-return fixtures,
 `owner_return_pin_fallible_literal/input` and

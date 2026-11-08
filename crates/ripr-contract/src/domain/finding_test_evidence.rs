@@ -141,10 +141,12 @@ mod tests {
                 observed_values: Vec::new(),
                 missing_discriminators: missing_discriminators
                     .iter()
-                    .map(|value| MissingDiscriminatorFact {
-                        value: (*value).to_string(),
-                        reason: "fixture".to_string(),
-                        flow_sink: None,
+                    .map(|value| {
+                        MissingDiscriminatorFact::equality_spelled(
+                            (*value).to_string(),
+                            "fixture".to_string(),
+                            None,
+                        )
                     })
                     .collect(),
             },
