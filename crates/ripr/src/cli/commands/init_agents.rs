@@ -142,7 +142,7 @@ impl AgentLanguages {
         }
         if self.rust {
             return format!(
-                "{AGENT_BLOCK}\nPython/TypeScript files here are a preview: steps 1, 2 and 5 are the same, but\n`ripr repair` and `ripr agent stub` are Rust only. Write the test by hand next to the\nrelated test with exact values, and verify it with {}.\n",
+                "{AGENT_BLOCK}\nPython/TypeScript files here are a preview: steps 1, 2 and 5 are the same, but\n`ripr repair` and `ripr agent stub` are Rust only, and their results are advisory. Step 5\nstill needs `summary.findings` = `summary.exposed` for those files too. Write the test by\nhand next to the related test with exact values, and verify it with {}.\n",
                 self.verify_command()
             );
         }
@@ -165,18 +165,25 @@ Loop (max 3 rounds per gap):
 3. WRITE   One focused test next to the related test. Assert exact changed values: every
            changed field, branch and boundary (below, equal, above). {advice}
 4. VERIFY  Run {verify}; it must pass.
-           Then run `ripr check --quiet --format agent` again with the same root and base.
-5. DONE    Exit 0 and the header shows `gaps=0` with no `weakly_exposed`. If gaps remain,
-           return to FIND. Report the tests and the static result; this does not establish
-           runtime bug detection.
+           Then run `ripr check --quiet --format json-compact` once on the same root, base and
+           saved source (new files need `git add -N PATH`). Check its exit status before
+           reading the JSON; do not change inputs before DONE.
+5. DONE    Use that same report; require exit 0 and these fields:
+           `analysis_outcome.outcome.kind`: `complete_no_findings` or `complete_with_findings`;
+           `analysis_outcome.analysis_complete`: true; `summary.findings` = `summary.exposed`.
+           Missing required fields or `analysis_outcome.document_complete: false` mean STOP.
+           `gaps=0` in the agent header is not enough: `no_static_path`, `reachable_unrevealed`
+           and `*_unknown` findings are not exposed. If findings remain, return to FIND.
+           Report tests and static result; this does not establish runtime bug detection.
 
 STOP and report instead of looping when:
+- the outcome names empty scope, no changed behavior, partial analysis, unsupported input or failed analysis;
+- the top finding says "Analyzer limit" / "Tests cannot close this static-analysis limitation";
 - the same gap remains after 3 exact-assert tests (it may be an equivalent change, e.g. `>` vs
   `>=` where both branches return the same value); or `ripr check` exits 2 or 3.
 
-`ripr repair` and `ripr agent repair --seam-id` cover Rust only, so do not run them here; the
-manual loop above is the route. Run `ripr agent repair --gap-id <gap> --base <base> --phase before`
-only if `ripr check` prints that exact command.
+`ripr repair` and `--seam-id` are Rust only. If `ripr check` prints a
+`ripr agent repair --gap-id ...` start, run that exact command; otherwise use the manual loop.
 
 Do not read target/ripr/pilot/*.json (2-4 MB) or docs/OUTPUT_SCHEMA.md (1 MB).
 MCP is optional and read-only; the CLI above is cheaper. Setup: ripr init --mcp
@@ -601,8 +608,27 @@ mod tests {
         ] {
             assert!(!block.contains(banned), "python block mentions {banned:?}");
         }
-        assert!(block.contains("cover Rust only, so do not run them"));
-        assert!(block.contains("ripr agent repair --gap-id"));
+        assert!(block.contains("`ripr repair` and `--seam-id` are Rust only"));
+        assert!(block.contains("run that exact command"));
+        assert!(
+            !block.contains("gaps=0` with no"),
+            "weak DONE rule came back"
+        );
+        for needle in [
+            "`summary.findings` = `summary.exposed`",
+            "analysis_outcome.analysis_complete",
+            "complete_no_findings",
+            "empty scope, no changed behavior, partial analysis",
+            "Analyzer limit",
+            "after 3 exact-assert tests",
+            "exits 2 or 3",
+        ] {
+            assert!(block.contains(needle), "python block lost {needle:?}");
+            assert!(
+                TYPESCRIPT.block().contains(needle),
+                "typescript block lost {needle:?}"
+            );
+        }
         let front = PYTHON.cursor_frontmatter();
         assert!(front.contains("changing Python behavior"), "{front}");
         assert!(front.contains("globs: [\"**/*.py\"]"), "{front}");
@@ -649,6 +675,8 @@ mod tests {
         assert!(block.starts_with(AGENT_BLOCK));
         assert!(block.contains("`ripr repair` and `ripr agent stub` are Rust only"));
         assert!(block.contains("pytest -k"));
+        assert!(block.contains("advisory"));
+        assert!(block.contains("`summary.findings` = `summary.exposed`"));
         let front = mixed.cursor_frontmatter();
         assert!(front.contains("Rust/Python behavior"), "{front}");
         assert!(front.contains("\"**/*.rs\", \"**/*.py\""), "{front}");

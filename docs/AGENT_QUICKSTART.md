@@ -28,7 +28,8 @@ test command (`pytest` or `unittest`, `jest` or `vitest`) and assertion advice
 that fit, and no promise of guided `ripr repair`, which covers Rust only; the
 route is `ripr check --format agent`, then a hand-written test. A repo with
 Rust plus another language keeps the Rust block and adds a short note. The
-Cursor rule's `globs` and description follow the detected languages.
+Cursor rule's `globs` and description follow the detected languages. Detection
+looks at the root and its immediate children only.
 
 ## What `--agents` does to your files
 

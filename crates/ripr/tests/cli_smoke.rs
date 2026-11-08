@@ -17264,7 +17264,7 @@ fn init_agents_writes_language_appropriate_instructions() -> Result<(), String> 
             "pyproject.toml",
             "[project]\nname = \"x\"\n",
             &["pytest -k", "(Python, preview)", "**/*.py"],
-            &["cargo test", "assert_eq!", "**/*.rs"],
+            &["cargo test", "assert_eq!", "**/*.rs", "ripr repair <"],
         ),
         (
             "package.json",
