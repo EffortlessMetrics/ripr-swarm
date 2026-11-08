@@ -982,6 +982,21 @@ fn unsafe_top_level_names(
         }
     }
     #[derive(Default)]
+    struct HoistedVar {
+        found: bool,
+    }
+    impl<'a> Visit<'a> for HoistedVar {
+        fn visit_variable_declaration(
+            &mut self,
+            declaration: &oxc_ast::ast::VariableDeclaration<'a>,
+        ) {
+            if declaration.kind == oxc_ast::ast::VariableDeclarationKind::Var {
+                self.found = true;
+            }
+            oxc_ast_visit::walk::walk_variable_declaration(self, declaration);
+        }
+    }
+    #[derive(Default)]
     struct Assigned {
         names: HashSet<String>,
     }
@@ -1020,15 +1035,41 @@ fn unsafe_top_level_names(
                 }
                 continue;
             }
+            // `import x = require(...)` and namespaces bind names this scan
+            // does not model, so fail closed (#13694 review).
+            Statement::TSImportEqualsDeclaration(_) | Statement::TSModuleDeclaration(_) => {
+                return None;
+            }
             Statement::FunctionDeclaration(_)
             | Statement::ClassDeclaration(_)
             | Statement::VariableDeclaration(_) => stmt.as_declaration(),
             Statement::ExportNamedDeclaration(export) => export.declaration.as_ref(),
-            _ => None,
+            _ => {
+                // Any other top-level statement runs at load time: one that
+                // escapes, or hoists a `var` out of a block, could hand a
+                // sibling a route to the object the scan cannot follow.
+                let mut scan = Scan::default();
+                scan.visit_statement(stmt);
+                let mut hoisted = HoistedVar::default();
+                hoisted.visit_statement(stmt);
+                if scan.escapes || hoisted.found {
+                    return None;
+                }
+                continue;
+            }
         };
         let Some(declaration) = declaration else {
             continue;
         };
+        match declaration {
+            Declaration::TSImportEqualsDeclaration(_) | Declaration::TSModuleDeclaration(_) => {
+                return None;
+            }
+            // A bodiless overload or ambient signature is not a binding of
+            // its own; the implementation declaration carries the name.
+            Declaration::FunctionDeclaration(func) if func.body.is_none() => continue,
+            _ => {}
+        }
         let names: Vec<String> = match declaration {
             Declaration::FunctionDeclaration(func) => func
                 .id

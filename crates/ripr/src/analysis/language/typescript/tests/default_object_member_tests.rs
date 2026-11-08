@@ -394,6 +394,26 @@ fn a_sibling_that_can_reach_the_object_without_this_credits_nothing() -> Result<
             "import { extend } from 'lodash';\n",
             String::new(),
         ),
+        // Bindings outside the modeled top-level declarations.
+        (
+            "import-equals-self",
+            "import me = require('./utils');\n",
+            format!("function extend(): void {{\n  me.default.merge = {stub};\n}}"),
+        ),
+        (
+            "namespace-helper",
+            "",
+            format!(
+                "namespace N {{\n  export function go(): void {{\n    require('./utils').default.merge = {stub};\n  }}\n}}\n\nfunction extend(): void {{\n  N.go();\n}}"
+            ),
+        ),
+        (
+            "block-hoisted-var",
+            "",
+            format!(
+                "try {{\n  var h = require('./utils');\n}} catch {{}}\n\nfunction extend(): void {{\n  h.default.merge = {stub};\n}}"
+            ),
+        ),
         // A top-level reassignment the declaration scan does not see.
         (
             "reassigned-member",
@@ -485,6 +505,17 @@ fn a_second_binding_of_the_module_withholds_when_a_sibling_is_unsafe() -> Result
     );
     assert_eq!(
         class_of("named-import-safe-sibling", &safe_owner, &test)?,
+        ExposureClass::Exposed
+    );
+    Ok(())
+}
+
+#[test]
+fn overload_signatures_do_not_count_as_a_second_declaration() -> Result<(), String> {
+    // Bodiless overloads share the implementation's name (#13694 review).
+    let owner = format!("function merge(base: object, extra: object): object;\n{OWNER}");
+    assert_eq!(
+        class_of("overloads", &owner, &test_with(CALL))?,
         ExposureClass::Exposed
     );
     Ok(())
