@@ -523,13 +523,142 @@ fn stale_exception_type_with_match_does_not_close_the_gap() -> Check {
         "{current:?}"
     );
     // Unrelated classes fail open to the existing rules.
-    let other = classify_message("Exception")?;
-    assert!(
-        other
-            .missing
-            .iter()
-            .all(|text| !text.contains("old exception type")),
-        "{other:?}"
+    let other = classify_message("ValueError")?;
+    assert!(!refused(&other), "{other:?}");
+    Ok(())
+}
+
+/// The stale-type gate refused credit (old type, or a non-discriminating
+/// builtin superclass), as opposed to any other missing-evidence reason.
+fn refused(finding: &Finding) -> bool {
+    finding
+        .missing
+        .iter()
+        .any(|text| text.contains("does not observe the"))
+}
+
+fn classify_shape(source: &str, old: &str, new: &str, expected: &str) -> Result<Finding, String> {
+    let tests = format!(
+        "{IMPORTS}import errs\n\ndef test_variant():\n    with pytest.raises({expected}, match=\"too long\"):\n        parse('abcdefghijklmnop')\n"
     );
+    classify(source, &tests, old, new)
+}
+
+fn assert_stale_then_current(
+    source: &str,
+    old: &str,
+    new: &str,
+    stale: &str,
+    current: &str,
+) -> Check {
+    let finding = classify_shape(source, old, new, stale)?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{finding:?}");
+    assert!(refused(&finding), "{stale}: {finding:?}");
+    // Discriminating negative control: the same shape asserting the new type.
+    let control = classify_shape(source, old, new, current)?;
+    assert!(!refused(&control), "{current}: {control:?}");
+    Ok(())
+}
+
+const DOTTED_SOURCE: &str = "import errs\n\ndef parse(s):\n    if len(s) > 10:\n        raise errs.TooLongError(\"too long\")\n    return len(s)\n";
+const DOTTED_OLD: &str = "        raise errs.EmptyError(\"too long\")";
+const DOTTED_NEW: &str = "        raise errs.TooLongError(\"too long\")";
+const BARE_SOURCE: &str = "class EmptyError(Exception): pass\nclass TooLongError(Exception): pass\n\ndef parse(s):\n    if len(s) > 10:\n        raise TooLongError\n    return len(s)\n";
+const BARE_OLD: &str = "        raise EmptyError";
+const BARE_NEW: &str = "        raise TooLongError";
+
+#[test]
+fn stale_gate_reads_a_dotted_raised_type() -> Check {
+    // `mod.Exc(...)` raise with a dotted expected class of the same spelling.
+    assert_stale_then_current(
+        DOTTED_SOURCE,
+        DOTTED_OLD,
+        DOTTED_NEW,
+        "errs.EmptyError",
+        "errs.TooLongError",
+    )?;
+    // A different spelling of the class (alias, other module) is unproven.
+    let aliased = classify_shape(DOTTED_SOURCE, DOTTED_OLD, DOTTED_NEW, "other.EmptyError")?;
+    assert!(!refused(&aliased), "{aliased:?}");
+    // A call in the receiver is not a dotted name and is never read as one.
+    let call = classify_shape(DOTTED_SOURCE, DOTTED_OLD, DOTTED_NEW, "errs().EmptyError")?;
+    assert!(!refused(&call), "{call:?}");
+    Ok(())
+}
+
+#[test]
+fn stale_gate_reads_a_bare_raise() -> Check {
+    assert_stale_then_current(
+        BARE_SOURCE,
+        BARE_OLD,
+        BARE_NEW,
+        "EmptyError",
+        "TooLongError",
+    )
+}
+
+#[test]
+fn stale_gate_reads_a_tuple_of_expected_classes() -> Check {
+    assert_stale_then_current(
+        MSG_SOURCE,
+        MSG_OLD,
+        MSG_NEW,
+        "(EmptyError, EmptyError)",
+        "(EmptyError, TooLongError)",
+    )?;
+    // A tuple naming the old type with a builtin superclass is still stale.
+    let broad = classify_message("(EmptyError, Exception)")?;
+    assert!(refused(&broad), "{broad:?}");
+    // An unrelated member could be the new type's base: fail open.
+    let unknown = classify_message("(EmptyError, ValueError)")?;
+    assert!(!refused(&unknown), "{unknown:?}");
+    // An empty or non-name member is unreadable.
+    for expected in ["()", "(EmptyError, make())"] {
+        let finding = classify_message(expected)?;
+        assert!(!refused(&finding), "{expected}: {finding:?}");
+    }
+    Ok(())
+}
+
+#[test]
+fn stale_gate_reads_the_expected_exception_keyword() -> Check {
+    assert_stale_then_current(
+        MSG_SOURCE,
+        MSG_OLD,
+        MSG_NEW,
+        "expected_exception=EmptyError",
+        "expected_exception=TooLongError",
+    )?;
+    // The class given both ways is a call error: unreadable.
+    let both = classify_message("EmptyError, expected_exception=EmptyError")?;
+    assert!(!refused(&both), "{both:?}");
+    Ok(())
+}
+
+#[test]
+fn builtin_superclass_does_not_discriminate_a_type_change() -> Check {
+    for expected in ["Exception", "BaseException"] {
+        let finding = classify_message(expected)?;
+        assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{finding:?}");
+        assert!(
+            finding
+                .missing
+                .iter()
+                .any(|text| text.contains("builtin superclass")),
+            "{expected}: {finding:?}"
+        );
+    }
+    // Negative control: a superclass beside the new type is not refused.
+    let beside = classify_message("(Exception, TooLongError)")?;
+    assert!(!refused(&beside), "{beside:?}");
+    // A superclass assertion cannot refuse a change that also changes the
+    // message (the gate stays off when the arguments differ).
+    let changed = classify_shape(
+        MSG_SOURCE,
+        "        raise EmptyError(\"empty\")",
+        MSG_NEW,
+        "Exception",
+    )?;
+    assert!(!refused(&changed), "{changed:?}");
     Ok(())
 }

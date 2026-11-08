@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- A raised-type replacement is now also recognised as stale when the raise is a dotted `mod.Exc(...)` or a bare `raise Exc`, and when the `pytest.raises` expectation is a dotted class, a tuple of old/builtin classes, the `expected_exception=` keyword, or only the builtin `Exception`/`BaseException`, which cannot notice a type-only change. The gate only withholds credit; it grants none (#13753).
