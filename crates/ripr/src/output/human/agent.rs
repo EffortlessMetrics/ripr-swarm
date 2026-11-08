@@ -148,6 +148,7 @@ fn render_report(
         },
     );
     out.push_str(&incomplete_lines);
+    let unanalyzed = render_unanalyzed_changes(&mut out, output);
     let next = next_line(&triage, output, &gaps, drill_in, provenance);
     if output.findings.is_empty() && !output.no_scope_provided {
         // #13658: a `no_scope` outcome (empty or unparseable --diff) read
@@ -156,7 +157,9 @@ fn render_report(
             out.push_str("stop=nothing was in scope; zero findings is not a clean result (nothing was parsed or analyzed)\n");
             return out;
         }
-        out.push_str(if incomplete {
+        out.push_str(if unanalyzed {
+            "stop=changes were not analyzed, so zero findings is not a clean result; see `unanalyzed=`\n"
+        } else if incomplete {
             "stop=analysis incomplete; zero findings is not a clean result\n"
         } else if super::no_source_examined(output) {
             // #13658: an empty diff (or one with no analyzable
@@ -277,6 +280,47 @@ fn render_incomplete_analysis(out: &mut String, output: &CheckOutput) -> bool {
         }
     }
     true
+}
+
+/// Name saved edits this run did not read, before any terminal claim. The
+/// human and GitHub surfaces already disclose them; without this line an agent
+/// reading only `--format agent` sees `done=` over files ripr never analyzed.
+/// Paths are escaped like every other agent field. Returns whether a line was
+/// written.
+fn render_unanalyzed_changes(out: &mut String, output: &CheckOutput) -> bool {
+    // Same gate as the human render: untracked files matter on a working-tree
+    // read or an unanalyzed-edits run; gitignored files matter on any read.
+    let untracked_relevant = output.unanalyzed_working_tree
+        || crate::output::analyzed_revisions::is_working_tree_read(output);
+    let no_paths: &[String] = &[];
+    let untracked = if untracked_relevant {
+        output.untracked_working_tree_source_paths.as_slice()
+    } else {
+        no_paths
+    };
+    let ignored = &output.ignored_working_tree_source_paths;
+    let mut wrote = false;
+    if output.unanalyzed_working_tree {
+        out.push_str(
+            "unanalyzed=uncommitted_edits|fix=rerun with --worktree to include staged and unstaged tracked edits\n",
+        );
+        wrote = true;
+    }
+    if !untracked.is_empty() {
+        out.push_str(&format!(
+            "unanalyzed=untracked|files={}|fix=git add -N PATH (or stage it), then rerun `ripr check --worktree`\n",
+            field(&crate::output::analyzed_revisions::name_paths(untracked, |path| path.to_string()))
+        ));
+        wrote = true;
+    }
+    if !ignored.is_empty() {
+        out.push_str(&format!(
+            "unanalyzed=gitignored|files={}|fix=git add -f -N PATH (or stage it with -f), then rerun `ripr check --worktree`\n",
+            field(&crate::output::analyzed_revisions::name_paths(ignored, |path| path.to_string()))
+        ));
+        wrote = true;
+    }
+    wrote
 }
 
 /// A weakly exposed preview finding whose producer recorded both a missing

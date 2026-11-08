@@ -884,6 +884,41 @@ fn nothing_analyzed_stops_and_refuses_verify_while_a_valid_diff_stays_done() -> 
 }
 
 #[test]
+fn empty_report_over_unanalyzed_files_stops_instead_of_done() {
+    let mut untracked = output(Vec::new());
+    untracked.unanalyzed_working_tree = true;
+    untracked.untracked_working_tree_source_paths = vec!["src/new.rs".to_string()];
+    let text = rendered(&untracked);
+    assert!(
+        text.contains("\nunanalyzed=uncommitted_edits|fix="),
+        "{text}"
+    );
+    assert!(
+        text.contains("\nunanalyzed=untracked|files=src/new.rs|fix=git add -N PATH"),
+        "{text}"
+    );
+    assert!(text.contains("\nstop=changes were not analyzed"), "{text}");
+    assert!(!text.contains("done="), "{text}");
+
+    let mut ignored = output(Vec::new());
+    ignored.ignored_working_tree_source_paths = vec!["gen/a.rs".to_string()];
+    let text = rendered(&ignored);
+    assert!(
+        text.contains("\nunanalyzed=gitignored|files=gen/a.rs|fix=git add -f -N PATH"),
+        "{text}"
+    );
+    assert!(!text.contains("done="), "{text}");
+
+    // Negative: untracked paths without an unanalyzed or working-tree read
+    // are not this run's concern, so a clean report stays `done=`.
+    let mut quiet = output(Vec::new());
+    quiet.untracked_working_tree_source_paths = vec!["src/new.rs".to_string()];
+    let text = rendered(&quiet);
+    assert!(!text.contains("unanalyzed="), "{text}");
+    assert!(text.contains("\ndone=no changed behavior"), "{text}");
+}
+
+#[test]
 fn non_current_findings_are_never_listed_as_gaps() {
     let mut base_side = weak_gap("probe:old", 3);
     base_side.source_currentness = SourceCurrentness::BaseDeleted;
