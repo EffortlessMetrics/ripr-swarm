@@ -69,11 +69,11 @@ pub(super) const INSTRUCTIONS: &str = "Flow: call `ripr_workspace_status` for ro
 
 const STATUS_TOOL_DESCRIPTION: &str = "Call this first. Reports repository-root discovery (ready or unavailable, with why), authority facts (source edit, verification, mutation and model provider are all none) and session state: attempt (no_snapshot, in_flight, completed, failed), last completed snapshot, last-known-good, freshness and config profile. `workspace_state: ready` means only that a root was found, not that analysis ran or found nothing. No gap evidence: call ripr_refresh to analyze. It never edits source, runs tests or mutation, or executes verification commands.";
 
-const REFRESH_TOOL_DESCRIPTION: &str = "Analyze the diff against the default branch (or `base`) through shared check authority and store the completed snapshot. By default: committed input only; `source: \"worktree\"` adds saved tracked edits; unsaved buffers and untracked files remain outside (see INSTRUCTIONS). Cards require established producer custody; otherwise withheld with the cause. Readiness depends on per-item gates. Call before reading evidence and again after edits. Blocks until completed (snapshot identity), failed (isError with code and recovery; last-known-good kept; analysis_failed names candidate branches, so retry with `base`), in_flight (retry later), workspace_unavailable (restart with `--root <repository>`) or unsupported_profile. Omitting `base` returns to the default branch. A cancelled attempt still commits as a completed snapshot when it finishes; a superseded attempt is never committed. It never edits source, executes verification or mutation commands, or prepares a repair.";
+const REFRESH_TOOL_DESCRIPTION: &str = "Analyze the diff against the default branch (or `base`) through shared check authority and store the completed snapshot. By default: committed input only; `source: \"worktree\"` adds saved tracked edits; unsaved buffers and untracked files remain outside (see INSTRUCTIONS). Cards require established producer custody; otherwise withheld with the cause. Readiness depends on per-item gates. Call before reading evidence and again after edits. Blocks until completed (snapshot identity), failed (isError with code and recovery; last-known-good kept), in_flight (retry later), workspace_unavailable (restart with `--root <repository>`) or unsupported_profile. An unresolvable default branch fails with analysis_failed naming candidate branches: retry with `base`. A `base` starting with `-` or naming no commit fails closed; omitting `base` returns to the default branch. A cancelled attempt still commits as a completed snapshot when it finishes; a superseded attempt is never committed. It never edits source, executes verification or mutation commands, or prepares a repair.";
 
 const LIST_GAPS_TOOL_DESCRIPTION: &str = "After ripr_refresh, return the deterministic bounded working set of items for the snapshot: counts, omitted identities with reasons, and one summary per item. Same selection as the CLI and editor; it never truncates silently and infers no business risk. Filters (file, class, language, repair_ready) narrow before offset/limit paging; follow page.next_offset. Failures: no_snapshot, stale_snapshot, workspace_unavailable, invalid_argument, result_too_large. Detail: ripr_get_gap, or ripr_get_repair_card to repair.";
 
-const GET_GAP_TOOL_DESCRIPTION: &str = "Return one item's complete bounded analysis evidence from the snapshot. Prefer ripr_get_repair_card when the intent is to repair; this evidence never authorizes an edit. result_too_large means the item exceeds the response bound: follow the failure's CLI recovery, because retrying ripr_get_gap cannot shrink the item. Failures: item_not_found, stale_snapshot, no_snapshot, workspace_unavailable. Same document: ripr://gap/{canonical_id}.";
+const GET_GAP_TOOL_DESCRIPTION: &str = "Return one item's complete bounded analysis evidence from the snapshot. Prefer ripr_get_repair_card when the intent is to repair; this evidence never authorizes an edit. result_too_large means the item exceeds the response bound: follow the failure's CLI recovery (a bounded summary, not snapshot replay), because retrying ripr_get_gap cannot shrink the item. Failures: item_not_found, stale_snapshot, no_snapshot, workspace_unavailable. Same document: ripr://gap/{canonical_id}.";
 
 const GET_TOP_LIMITATION_TOOL_DESCRIPTION: &str = "Return the earliest committed producer limitation blocking a safe repair route for one item: kind, stage, reason, recovery, retryable and the stronger claim that stays prohibited. An item with none returns kind no_limitation_established, never null. Reads stored facts, with no analysis rerun. Failures: item_not_found, stale_snapshot, no_snapshot, workspace_unavailable. Same document: ripr://gap/{canonical_id}/limitation.";
 
@@ -81,7 +81,7 @@ const PREPARE_REPAIR_TOOL_DESCRIPTION: &str = "When the agent intends to repair 
 
 const GET_REPAIR_ATTEMPT_TOOL_DESCRIPTION: &str = "Read one repair attempt by its attempt identity (from ripr_prepare_repair or the durable store) before acting on it: state, snapshot and seam binding, artifact digests, and typed command routes when the retained packet carries valid ones. A display string is never execution authority. Failures: attempt_not_found (also for superseded entries past the 64-entry session bound), attempt_invalid, and the superseded state with the current snapshot identity for a stale binding. It never edits source, launches a process, or executes verification or mutation commands. Same document: ripr://repair-attempt/{attempt_id}.";
 
-const GET_RECEIPT_STATUS_TOOL_DESCRIPTION: &str = "After external verification, read one attempt's receipt state (receipt ids are attempt-bound): awaiting_edit, after_pending, verification_pending, improved, closed, unchanged, regressed, limited, stale, or invalid, mapped by the same reading as CLI status. For a session transaction RIPR performs no verification and issues no receipt; receipt presence alone never reports closed. Status binds exact before/after/verify bytes and is re-validated on every read. Static receipt state only, not runtime proof. This read edits nothing and executes nothing. Same document: ripr://receipt/{receipt_id}.";
+const GET_RECEIPT_STATUS_TOOL_DESCRIPTION: &str = "After external verification, read one attempt's receipt state (receipt ids are attempt-bound): awaiting_edit, after_pending, verification_pending, improved, closed, unchanged, regressed, limited, stale, or invalid, mapped by the same reading as CLI status. For a session transaction RIPR performs no verification and issues no receipt; receipt presence alone never reports closed. Status binds exact before/after/verify bytes and is re-validated on every read. Static receipt state only, not runtime proof. Failures: attempt_not_found, attempt_invalid, superseded. This read edits nothing and executes nothing. Same document: ripr://receipt/{receipt_id}.";
 
 const LIMITATION_RESOURCE_TEMPLATE_DESCRIPTION: &str = "One canonical item's earliest producer limitation, the same document ripr_get_top_limitation returns: typed kind, stage, reason, recovery, retryable, restart identity, and the prohibited stronger claim. The item must exist in the current completed snapshot (else item_not_found).";
 
@@ -97,7 +97,7 @@ const RECEIPT_TEMPLATE_DESCRIPTION: &str = "The receipt status document for one 
 
 const REPAIR_CARD_TEMPLATE_DESCRIPTION: &str = "One canonical item's bounded repair card, the same document ripr_get_repair_card returns: the repair_card.v1 document `ripr agent card` and the language server project assemble from a completed session snapshot by shared authority. The card names the seam, witness, fix instruction, edit cage, attempt state, and typed next action. The item must exist in the current snapshot with an owner-discriminated seam binding (else item_not_found, seam_not_found, or policy_omitted).";
 
-const GET_REPAIR_CARD_TOOL_DESCRIPTION: &str = "When the agent intends to repair, read one item's repair card (prefer it over ripr_get_gap): the same repair_card.v1 document as `ripr agent card` and the editor, naming seam, witness, fix instruction, edit cage, attempt state and next action. The attempt block is re-read from the durable store at read time. Never a repair authorization: the external client's approval and sandbox policy remains authoritative. Failures: seam_not_found, item_not_found, stale_snapshot, no_snapshot. Same document: ripr://repair-card/{canonical_id}.";
+const GET_REPAIR_CARD_TOOL_DESCRIPTION: &str = "When the agent intends to repair, read one item's repair card (prefer it over ripr_get_gap, the lighter read when only analysis evidence is wanted): the same repair_card.v1 document as `ripr agent card` and the editor, naming seam, witness, fix instruction, edit cage, attempt state and next action. The attempt block is re-read from the durable store at read time; in-memory session transactions never ride a card. Never a repair authorization: the external client's approval and sandbox policy remains authoritative. Failures include seam_not_found, policy_omitted, item_not_found, stale_snapshot, no_snapshot, workspace_unavailable, and incomplete_inventory (refresh again once edits settle). Same document: ripr://repair-card/{canonical_id}.";
 
 /// Environment variable that selects [`ToolsListMode`] for one server process.
 pub(super) const TOOLS_LIST_ENV: &str = "RIPR_MCP_TOOLS_LIST";
@@ -2647,18 +2647,18 @@ mod tests {
         // outputSchema (`RIPR_MCP_TOOLS_LIST=full`) and docs/interop/mcp.md.
         // Ceilings sit just above the tightened surfaces (the exact total
         // below is the real pin); the complete ceiling adds only the
-        // inventory's 540 bytes.
+        // inventory's 580 bytes.
         let mut budgets = std::collections::BTreeMap::from([
             ("tool ripr_workspace_status", 555),
-            ("tool ripr_refresh", 985),
+            ("tool ripr_refresh", 1085),
             ("tool ripr_list_gaps", 530),
-            ("tool ripr_get_gap", 450),
+            ("tool ripr_get_gap", 490),
             ("tool ripr_get_top_limitation", 440),
             ("tool ripr_prepare_repair", 625),
             ("tool ripr_get_repair_attempt", 630),
-            ("tool ripr_get_receipt_status", 610),
-            ("tool ripr_get_repair_card", 545),
-            ("tool ripr_list_repair_attempts", 540),
+            ("tool ripr_get_receipt_status", 665),
+            ("tool ripr_get_repair_card", 760),
+            ("tool ripr_list_repair_attempts", 580),
             ("resource ripr-workspace-status", 650),
             ("template ripr-snapshot-evidence", 475),
             ("template ripr-gap-evidence", 486),
@@ -2710,14 +2710,14 @@ mod tests {
         if let Some(surface) = budgets.keys().next() {
             return Err(format!("{surface} is missing from its published catalog"));
         }
-        if previous_surfaces > 10350 {
+        if previous_surfaces > 10730 {
             return Err(format!(
-                "previously guarded descriptions total {previous_surfaces} UTF-8 bytes, over 10350"
+                "previously guarded descriptions total {previous_surfaces} UTF-8 bytes, over 10730"
             ));
         }
-        if total > 10880 {
+        if total > 11300 {
             return Err(format!(
-                "complete descriptions/instructions total {total} UTF-8 bytes, over 10880"
+                "complete descriptions/instructions total {total} UTF-8 bytes, over 11300"
             ));
         }
         Ok(total)
@@ -2737,7 +2737,7 @@ mod tests {
         // status field.
         // Intentional metadata changes need to reconcile this byte count as
         // well as the ceilings.
-        assert_eq!(total, 10826);
+        assert_eq!(total, 11286);
         Ok(())
     }
 
@@ -2754,15 +2754,15 @@ mod tests {
         let original = inventory["description"]
             .as_str()
             .ok_or("inventory description")?;
-        // Pad to one byte under the 540-byte budget, then add a two-byte
-        // char: 541 UTF-8 bytes in 540 chars, so only a byte count catches it.
+        // Pad to one byte under the 580-byte budget, then add a two-byte
+        // char: 581 UTF-8 bytes in 580 chars, so only a byte count catches it.
         let mut grown = original.to_string();
-        while grown.len() < 539 {
+        while grown.len() < 579 {
             grown.push('a');
         }
         grown.push('é');
-        assert_eq!(grown.len(), 541);
-        assert!(grown.chars().count() <= 540);
+        assert_eq!(grown.len(), 581);
+        assert!(grown.chars().count() <= 580);
         inventory["description"] = json!(grown);
         let error = match check_description_byte_budgets(
             &tools,
@@ -2773,7 +2773,7 @@ mod tests {
             Err(error) => error,
             Ok(total) => return Err(format!("inventory growth escaped its budget: {total}")),
         };
-        if !error.contains("tool ripr_list_repair_attempts") || !error.contains("541 UTF-8 bytes") {
+        if !error.contains("tool ripr_list_repair_attempts") || !error.contains("581 UTF-8 bytes") {
             return Err(format!(
                 "inventory growth lost its surface/byte diagnosis: {error}"
             ));
@@ -2919,7 +2919,8 @@ mod tests {
                 REFRESH_TOOL_NAME,
                 &[
                     "shared check authority",
-                    "Omitting `base` returns to the default branch",
+                    "omitting `base` returns to the default branch",
+                    "A `base` starting with `-` or naming no commit fails closed",
                     "never edits source, executes verification or mutation commands",
                     "cancelled attempt still commits as a completed snapshot when it finishes",
                     "a superseded attempt is never committed",
@@ -3006,7 +3007,8 @@ mod tests {
                 GET_REPAIR_CARD_TOOL_NAME,
                 &[
                     "When the agent intends to repair",
-                    "prefer it over ripr_get_gap",
+                    "prefer it over ripr_get_gap, the lighter read",
+                    "in-memory session transactions never ride a card",
                     "same repair_card.v1 document as `ripr agent card` and the editor",
                     "re-read from the durable store at read time",
                     "Never a repair authorization",
@@ -3168,7 +3170,7 @@ mod tests {
         // #13803 made the slim listing the default and cut the descriptions:
         // the default budget is what every session pays; the full budget is
         // the opt-in a validating host pays.
-        for (mode, budget) in [(ToolsListMode::Slim, 11_800), (ToolsListMode::Full, 41_000)] {
+        for (mode, budget) in [(ToolsListMode::Slim, 12_300), (ToolsListMode::Full, 41_000)] {
             let payload = tools_list_result_for(mode);
             let bytes = serde_json::to_vec(&payload)
                 .map_err(|error| format!("measure tools/list payload: {error}"))?

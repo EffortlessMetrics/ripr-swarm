@@ -340,13 +340,23 @@ fn assert_refusal_code(output: &Output, code: &str, disposition: &str, label: &s
 fn printed_before_next_command(output: &Output) -> Result<String, String> {
     let stdout = stdout_text(output);
     let stderr = stderr_text(output);
-    stdout
+    let from_stdout = stdout
         .lines()
-        .find_map(|line| line.strip_prefix("Next, after the test edit: "))
+        .find_map(|line| line.strip_prefix("Next, after the test edit: "));
+    // A rendered human summary owns the next command: it may not move back
+    // to stderr. Only `--json` or an ambiguous-baseline start, which keep
+    // the stderr protocol line, read it there.
+    let human_summary = stdout.contains("Repair prepared for seam")
+        && !stdout.contains("baseline records `ambiguous: true`");
+    from_stdout
         .or_else(|| {
-            stderr
-                .lines()
-                .find_map(|line| line.strip_prefix("ripr: attempt next command: "))
+            (!human_summary)
+                .then(|| {
+                    stderr
+                        .lines()
+                        .find_map(|line| line.strip_prefix("ripr: attempt next command: "))
+                })
+                .flatten()
         })
         .map(str::to_string)
         .ok_or_else(|| {
