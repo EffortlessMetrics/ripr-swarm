@@ -235,10 +235,16 @@ pub(super) fn static_limit_for_focused_change(
     // An independent active relation can still supply its own oracle. The
     // shared matcher withholds assertions and boundary inputs from controlled
     // tests, so those tests cannot lend credit to a weaker active relation.
+    // A test that provably never runs (`never_runs`) is no evidence either
+    // way, so it does not raise the limit: with no other relation the
+    // finding is a gap, like an `#[ignore]`d Rust test.
     if !related_candidates
         .iter()
         .any(|candidate| candidate.relation.uses_oracle())
         && let Some((test, decorator)) = related_candidates.iter().find_map(|candidate| {
+            if super::test_activation::never_runs(candidate.test).is_some() {
+                return None;
+            }
             super::test_activation::activation_control(candidate.test)
                 .map(|decorator| (candidate.test, decorator))
         })
