@@ -148,14 +148,24 @@ mod review_comments;
 mod review_guidance_index_handoff;
 pub(super) use review_comments::review_comments;
 
+#[path = "commands/annotations.rs"]
+mod annotations_command;
 #[path = "commands/assistant_loop.rs"]
 mod assistant_loop;
 #[path = "commands/first_action.rs"]
 mod first_action;
 #[path = "commands/first_pr.rs"]
 pub(crate) mod first_pr;
+#[path = "commands/impacted_evidence.rs"]
+pub(crate) mod impacted_evidence_command;
+#[path = "commands/pr_evidence.rs"]
+pub(crate) mod pr_evidence_command;
+#[path = "commands/pr_summary.rs"]
+pub(crate) mod pr_summary_command;
 #[path = "commands/reports.rs"]
 mod reports;
+#[path = "commands/ripr_plus.rs"]
+pub(crate) mod ripr_plus_command;
 pub(super) use assistant_loop::assistant_loop;
 pub(super) use first_action::first_action;
 pub(super) use first_pr::first_pr;
@@ -2398,16 +2408,19 @@ pub(super) fn explain(args: &[String]) -> Result<(), String> {
     // looked like a hang. The same stderr-only stage lines `ripr check`
     // projects disclose the work without touching machine stdout. The
     // `--from` artifact path runs no pipeline and wires no sink.
-    // `explain` has no machine output format (its stdout is the human or
-    // markdown explanation), so only `--quiet` / `RIPR_QUIET` silence it; the
-    // machine-format default that `check` and `pilot` adopt has nothing to key on.
+    // `--quiet` / `RIPR_QUIET` always silence it. `--format agent` is the
+    // compact report a coding agent reads, so it takes the same machine-format
+    // default as `ripr check --format agent`: silent on a non-terminal stderr
+    // unless `RIPR_PROGRESS` asks for the stream. The agent loop follows the
+    // `next=ripr explain ...` line check prints, which carries no `--quiet`.
     if from_artifact.is_some()
         && input.suppression_policy.is_some()
         && format == app::ExplainFormat::Agent
     {
         return Err("`ripr explain --format agent` cannot apply `--suppression-policy` to a `--from` replay, so a suppressed finding could print as open; drop `--from` or `--suppression-policy`".to_string());
     }
-    let progress = (!crate::cli::progress::progress_silenced(quiet, false)).then(|| {
+    let machine_format = format == app::ExplainFormat::Agent;
+    let progress = (!crate::cli::progress::progress_silenced(quiet, machine_format)).then(|| {
         crate::cli::progress::CliProgressSink::for_stderr(
             std::io::IsTerminal::is_terminal(&std::io::stderr()),
             crate::cli::progress::ProgressPolicy::STANDARD,
@@ -2460,11 +2473,22 @@ fn parse_explain_format(value: &str) -> Result<app::ExplainFormat, String> {
     match value {
         "human" | "text" => Ok(app::ExplainFormat::Human),
         "agent" => Ok(app::ExplainFormat::Agent),
-        "json" => Err(
-            "`ripr explain --format json` is not offered; use `ripr context --at <finding-id>` for the JSON packet, or `--format agent` for compact lines"
-                .to_string(),
-        ),
-        other => Err(unknown_value("explain format", other, &["human", "text", "agent"])),
+        "json" => {
+            let message = "`ripr explain --format json` is not offered; use `ripr context --at <finding-id>` for the JSON packet, or `--format agent` for compact lines"
+                .to_string();
+            // #11584: a JSON-requesting caller gets the typed refusal too.
+            crate::cli::usage_refusal::note_unknown_value(
+                "json",
+                &message,
+                Some("ripr explain --help"),
+            );
+            Err(message)
+        }
+        other => Err(unknown_value(
+            "explain format",
+            other,
+            &["human", "text", "agent"],
+        )),
     }
 }
 
@@ -2593,40 +2617,30 @@ pub(super) fn drill_in_scope_conflict(
 /// Composes existing RIPR artifacts into a PR evidence summary. Does NOT run
 /// analysis or invoke Cargo. The canonical downstream replacement for
 /// `cargo xtask ripr-pr-summary`.
-pub(super) fn pr_summary(args: &[String]) -> Result<(), String> {
-    crate::app::pr_summary::run_pr_summary(args)
-}
+pub(super) use pr_summary_command::pr_summary;
 
 /// `ripr annotations` — binary-first GitHub Actions annotations (item 8b).
 /// Reads comments.json and emits `::warning` annotation lines. The canonical
 /// downstream replacement for `cargo xtask ripr-annotations`.
-pub(super) fn annotations(args: &[String]) -> Result<(), String> {
-    crate::app::annotations::run_annotations(args)
-}
+pub(super) use annotations_command::annotations;
 
 /// `ripr pr-evidence` — binary-first PR evidence packet (Campaign 31 item 8c).
 /// Writes the PR diff, runs an in-process RIPR check, and composes the result
 /// into a PR evidence packet. The canonical downstream replacement for
 /// `cargo xtask ripr-pr`. Unlike the xtask, it calls `check_workspace`
 /// directly instead of shelling out to `cargo run -p ripr -- check`.
-pub(super) fn pr_evidence(args: &[String]) -> Result<(), String> {
-    crate::app::pr_evidence::run_pr_evidence(args)
-}
+pub(super) use pr_evidence_command::pr_evidence;
 
 /// `ripr impacted-evidence` — binary-first mutation-routing evidence (item 8e).
 /// Reads PR evidence + labels and emits routing decision JSON + Markdown.
-pub(super) fn impacted_evidence(args: &[String]) -> Result<(), String> {
-    crate::app::impacted_evidence::run_impacted_evidence(args)
-}
+pub(super) use impacted_evidence_command::impacted_evidence;
 
 /// `ripr plus` — binary-first RIPR+ repo receipt (composition-only).
 /// Composes the repo-wide RIPR+ quality-gate receipt from a pre-computed
 /// `repo-exposure-summary-json` or `--gap-ledger` artifact. The canonical
 /// downstream replacement for `cargo xtask ripr-plus`. Unlike the xtask, it
 /// is artifact-composition-only and does not run an in-process full-repo scan.
-pub(super) fn ripr_plus(args: &[String]) -> Result<(), String> {
-    crate::app::ripr_plus::run_ripr_plus(args)
-}
+pub(super) use ripr_plus_command::ripr_plus;
 
 #[cfg(test)]
 mod tests {

@@ -313,11 +313,11 @@ description = "Coverage artifact and Codecov upload."
 id = "test-analytics"
 posture = "advisory"
 workflow = ".github/workflows/test-analytics.yml"
-jobs = ["rust-tests-junit"]
-commands = ["cargo nextest run --workspace --all-features --profile ci", "cargo test --workspace --doc"]
+jobs = ["rust-tests-junit", "rust-tests-combine"]
+commands = ["cargo nextest run --workspace --all-features --profile ci --partition hash:N/4", "cargo test --workspace --doc", "cargo xtask verify-test-shards --all-features", "cargo xtask slow-test-report"]
 estimated_lem = 12
 artifact_families = ["ripr-evidence"]
-description = "Advisory all-feature JUnit telemetry plus a duplicate doctest receipt; neither substitutes for the routed required gates."
+description = "Advisory all-feature JUnit telemetry as four hash partitions mirroring the required shards, combined only after a verified disjoint green cover, plus a duplicate doctest receipt on shard 1 and the advisory slow-test report; neither substitutes for the routed required gates."
 
 [[lane]]
 id = "ripr-self-dogfood"
@@ -483,11 +483,11 @@ description = "Marketplace and release-asset publish proof."
 id = "server-archive"
 posture = "on_demand_release"
 workflow = ".github/workflows/release-server-binaries.yml"
-jobs = ["build", "manifest"]
-commands = []
-estimated_lem = 60
+jobs = ["build", "manifest", "packages", "package-smoke"]
+commands = ["cargo xtask release-server-archive --packages-from <dir> --out-dir <dir>"]
+estimated_lem = 75
 artifact_families = ["release-readiness"]
-description = "Cross-platform server archive and manifest proof. Actual build commands come from the workflow matrix."
+description = "Cross-platform server archive and manifest proof, then the PyPI wheel and npm package family wrapped from those payloads and installed offline on each native runner (#5378). The entrypoint only delegates: the archive jobs run in server-archive-qualification.yml and the package build, package-smoke jobs and the listed command run in package-family-qualification.yml. Actual build commands come from the workflow matrices; no registry write."
 
 [[lane]]
 id = "python-wheelhouse"

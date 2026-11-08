@@ -59,6 +59,8 @@ mod bolero_tests;
 pub(crate) mod member_crates;
 mod model;
 mod parameterized_tests;
+mod process_memo;
+pub(crate) use process_memo::enable_process_fact_memo;
 mod proptest;
 #[cfg(test)]
 mod proptest_tests;
@@ -532,6 +534,7 @@ pub(crate) fn build_index_from_paths_with_cache_and_test_harnesses_and_consumed(
 // misdeclared registration degrades identically everywhere.
 pub(crate) use harness_registry::validated_file_wide_harness_targets;
 pub(crate) use test_helpers::{expanded_assertion_view, imported_forwarding_calls};
+pub(crate) use test_styles::attributes_define_mutants_skip;
 pub(crate) use test_styles::attributes_define_proof_harness;
 pub(crate) use test_styles::attributes_define_test;
 

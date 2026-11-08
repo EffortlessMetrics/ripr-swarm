@@ -39,7 +39,9 @@ Options:
                    `repair_attempt.attempt_id`, instead of the summary and
                    card. A repeated start prints the existing attempt's
                    status JSON. Refusals keep stderr prose, empty stdout
-                   and their exit codes.
+                   and their exit codes. An unknown flag prints the
+                   `cli_refusal` JSON document on stdout beside its exit 2
+                   stderr prose.
   --quiet          Drop the start's progress narration and `wrote <path>`
                    lines from stderr. Refusal prose, the attempt id and the
                    next command stay. `RIPR_QUIET` (any value except empty,
@@ -73,48 +75,65 @@ This is the ordinary route into the repair transaction. The advanced
 spelling `ripr agent repair --seam-id ID --phase before` runs the same
 before phase with explicit phase vocabulary."#;
 
-pub(in crate::cli) const CONTINUE_HELP: &str = r#"Continue the current repair attempt through its after phase.
+pub(in crate::cli) const CONTINUE_HELP: &str = r#"After the test edit, check whether it closed the gap.
+
+Run this after `ripr repair` has named a gap (changed behavior no current test
+appears to check) and you have edited the focused test it pointed at. ripr
+re-reads your tests, compares the evidence with what it recorded when the
+repair started, and writes a receipt: a JSON record of the before and after
+result. ripr does not run your tests and never edits your source or test files.
 
 Usage: ripr continue [--attempt ID] [--root PATH] [--json] [--quiet]
 
 Options:
-  --attempt ID     Select one repair attempt by ID.
+  --attempt ID     Continue this repair attempt. Without it, continue runs
+                   only when exactly one current attempt exists under the
+                   root; with several it lists them with a retry command
+                   and picks none.
   --root PATH      Workspace root. Defaults to the current directory, then
                    walks up to the enclosing workspace or package, or the git
                    top level; `--root .` pins this directory.
-  --json           Print the after-phase JSON document, or the attempt's
-                   status JSON when it is already complete. A typed after-phase
-                   refusal or failure prints its JSON document on stdout
+  --json           Print the result as JSON, or the attempt's status JSON
+                   when it is already complete. A refusal or failure inside
+                   the check also prints its JSON document on stdout
                    (`repair_after_refusal`, `repair_after_failure`, or the
                    verify document) beside the stderr prose and the same
-                   exit code. Selection refusals (no current attempt,
-                   several attempts, an ended attempt, a blocked baseline,
-                   an unanchored root) and operational errors before
-                   the verify step keep stdout empty.
-  --quiet          Drop the after phase's progress narration and `wrote
-                   <path>` lines from stderr. Refusal prose and the result
-                   stay. `RIPR_QUIET` does the same.
+                   exit code. Refusals that stop before the check (no
+                   current attempt, several attempts, an ended attempt, a
+                   blocked baseline, an unanchored root) and operational
+                   errors before the verify step keep stdout empty. An
+                   unknown flag or stray argument prints the `cli_refusal`
+                   JSON document on stdout beside its exit 2 stderr prose.
+  --quiet          Drop progress lines and `wrote <path>` lines from stderr.
+                   Refusals and the result stay. `RIPR_QUIET` does the same.
 
-Without an ID, continue runs only when exactly one current attempt is
-eligible under the selected root. Several current attempts print a bounded
-selection list with a retry command instead of selecting one implicitly;
-no current attempt reports that honestly. An explicitly selected attempt
-whose status confirms a compliant receipt reports its already-complete
-status instead of running again; one that ended without a receipt (stale,
-failed, or incomparable), and one whose finished state no compliant
-receipt confirms (unissued, unavailable, or compatibility-only), reports
-its state and refuses with exit 3 instead of claiming completion.
+What it checks, in order:
+  1. Nothing moved underneath: HEAD and the analysis inputs still match the
+     start of the attempt.
+  2. Only the test file (or inline test module) the repair allowed changed.
+  3. Whether the static evidence now shows a test that would notice the
+     changed behavior being wrong. The receipt records the answer.
+A moved HEAD, changed analysis input, or refused verification stops with a
+named refusal and the command to restart or recover.
 
-Continue runs the accepted after path: currentness admission, the edit
-cage, verification composition, and the receipt. A stale head, drifted
-analysis input, or refused verification ends in the canonical typed
-refusal with its restart or recovery route.
+An attempt that is already confirmed complete prints its status and exits 0
+without running again. One that ended without a receipt (stale, failed, or
+incomparable), or finished without a receipt that confirms it (unissued,
+unavailable, or compatibility-only), prints its state and exits 3; no
+completion is claimed.
 
-This is the ordinary route through the repair transaction. The advanced
-spelling `ripr agent repair --attempt ID --phase after` runs the same
-after phase with explicit phase vocabulary."#;
+Exit status:
+  0  the check ran and wrote its result, or the attempt was already complete
+  2  usage or operational error, or the edit check rejected the attempt:
+     files outside the allowed test changed, HEAD moved, or the files could
+     not be compared (that attempt is over; start again with `ripr repair`)
+  3  a named refusal, such as no edit yet (make it and rerun); for a coded
+     refusal, stderr ends with `ripr: refusal code=<code> disposition=<disposition>`
 
-pub(in crate::cli) const STATUS_HELP: &str = r#"Report the current repair state and the one next action.
+The advanced spelling `ripr agent repair --attempt ID --phase after` runs the
+same step."#;
+
+pub(in crate::cli) const STATUS_HELP: &str = r#"Show where the current repair stands and what to run next.
 
 Usage: ripr status [--attempt ID] [--root PATH] [--json] [--quiet]
 
@@ -875,6 +894,26 @@ fn start_with_repair_clause(root: &std::path::Path, root_arg: &str) -> String {
     }
 }
 
+/// The selected root as a shell-quoted `--root` argument relative to the
+/// working directory (`.` for the working directory itself), or `None` when
+/// the root lies outside it or the working directory cannot be read, so the
+/// caller keeps the absolute spelling (#13790).
+fn cwd_relative_root_arg(root: &std::path::Path) -> Option<String> {
+    let cwd = std::env::current_dir().ok()?;
+    cwd_relative_root_arg_from(root, &cwd)
+}
+
+fn cwd_relative_root_arg_from(root: &std::path::Path, cwd: &std::path::Path) -> Option<String> {
+    use crate::agent::loop_commands::{bound_root_path, root_path_display, shell_arg};
+    let root = bound_root_path(root);
+    let cwd = bound_root_path(cwd);
+    let rest = root.strip_prefix(&cwd).ok()?;
+    if rest.as_os_str().is_empty() {
+        return Some(".".to_string());
+    }
+    Some(shell_arg(&root_path_display(rest)))
+}
+
 fn no_eligible_seam_message(
     root: &std::path::Path,
     base: Option<&str>,
@@ -907,9 +946,13 @@ fn no_eligible_seam_message(
     );
     if total_seams == 0 {
         if !changed_non_rust.is_empty() {
+            // #13790: the reader runs the printed `ripr check` from here, so
+            // name the root relative to the working directory when it is
+            // inside it.
+            let relative = cwd_relative_root_arg(root_path).unwrap_or_else(|| root.clone());
             return crate::app::task_first::non_rust_repair_guidance(
                 root_path,
-                &root,
+                &relative,
                 &changed_non_rust,
             );
         }
@@ -1099,6 +1142,35 @@ mod tests {
 
     fn args(words: &[&str]) -> Vec<String> {
         words.iter().map(|word| word.to_string()).collect()
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn cwd_relative_root_arg_is_relative_inside_and_absent_outside() {
+        // #13790: the working directory itself is `.`, a child is its
+        // relative path, and a root outside the working directory keeps the
+        // caller's absolute spelling.
+        let cwd = Path::new("/work/repo");
+        assert_eq!(
+            cwd_relative_root_arg_from(Path::new("/work/repo"), cwd),
+            Some(".".to_string())
+        );
+        assert_eq!(
+            cwd_relative_root_arg_from(Path::new("/work/repo/svc/shop"), cwd),
+            Some("svc/shop".to_string())
+        );
+        assert_eq!(
+            cwd_relative_root_arg_from(Path::new("/work/repo/my shop"), cwd),
+            Some("'my shop'".to_string())
+        );
+        assert_eq!(
+            cwd_relative_root_arg_from(Path::new("/elsewhere"), cwd),
+            None
+        );
+        assert_eq!(
+            cwd_relative_root_arg_from(Path::new("/work/repository"), cwd),
+            None
+        );
     }
 
     fn parsed_repair(words: &[&str]) -> Result<RepairFacadeOptions, String> {
