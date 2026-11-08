@@ -5175,6 +5175,7 @@ mod tests {
                 sample_paths: vec!["zpy/pricing_%.py".to_string()],
                 javascript_file_count: 0,
                 enabled: false,
+                nested_packages: Vec::new(),
             }]);
         let outcome = python_unavailable_outcome()?;
         if coverage.not_enabled_language(Path::new("zpy/pricing_%.py"), Some(&outcome))
@@ -5224,6 +5225,7 @@ mod tests {
                 sample_paths: vec!["zpy/pricing.py".to_string()],
                 javascript_file_count: 0,
                 enabled: false,
+                nested_packages: Vec::new(),
             },
             PreviewLanguageAdvisory {
                 language: "typescript".to_string(),
@@ -5231,6 +5233,7 @@ mod tests {
                 sample_paths: vec!["web/discount.ts".to_string()],
                 javascript_file_count: 0,
                 enabled: true,
+                nested_packages: Vec::new(),
             },
         ]);
         assert_eq!(coverage.named_paths, vec!["zpy/pricing.py".to_string()]);
@@ -5242,6 +5245,7 @@ mod tests {
                 sample_paths: vec!["a.py".to_string(), "b.py".to_string(), "c.py".to_string()],
                 javascript_file_count: 0,
                 enabled: false,
+                nested_packages: Vec::new(),
             }]);
         assert_eq!(incomplete.incomplete_languages, vec!["python".to_string()]);
     }

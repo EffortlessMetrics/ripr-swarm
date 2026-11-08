@@ -160,6 +160,18 @@ pub(crate) struct CallIdentityMemos {
     /// from a crate outside the workspace. The answer depends on the file's
     /// syntax alone, so the per-(probe, test) receiver check reads it once.
     external_imports: Mutex<BTreeMap<(std::path::PathBuf, String), bool>>,
+    /// Per (trait name, receiver head), whether some indexed source may
+    /// implement the trait for a std-headed type. The answer reads every
+    /// indexed file's syntax and depends on the index alone, so the
+    /// per-related-test receiver check pays one workspace pass per pair
+    /// instead of one per test (and does not cycle the bounded file-snapshot
+    /// memo once per test).
+    std_impl_sources: Mutex<BTreeMap<(String, String), bool>>,
+    /// Per type name, the one indexed file that declares it (`None` when no
+    /// file or several files do). The answer depends only on the indexed
+    /// sources, so the per-(seam, test) enum-variant check reads it once
+    /// instead of masking every file that mentions the name each time.
+    sole_type_declarers: Mutex<BTreeMap<String, Option<std::path::PathBuf>>>,
     /// #12886: the cross-file resolver for assertion-forwarding workspace
     /// macros, built on first use by a gap that needs it.
     assertion_wrapper_visibility:
@@ -184,6 +196,47 @@ impl CallIdentityMemos {
         let answer = compute();
         if let Ok(mut cache) = self.external_imports.lock() {
             cache.insert(key, answer);
+        }
+        answer
+    }
+
+    /// The memoized std-impl source answer for (`trait_name`, `head`),
+    /// computed by `compute` on first use (recomputed, not cached, if the
+    /// lock is poisoned).
+    pub(in crate::analysis) fn std_impl_source(
+        &self,
+        trait_name: &str,
+        head: &str,
+        compute: impl FnOnce() -> bool,
+    ) -> bool {
+        let key = (trait_name.to_string(), head.to_string());
+        if let Ok(cache) = self.std_impl_sources.lock()
+            && let Some(found) = cache.get(&key)
+        {
+            return *found;
+        }
+        let answer = compute();
+        if let Ok(mut cache) = self.std_impl_sources.lock() {
+            cache.insert(key, answer);
+        }
+        answer
+    }
+
+    /// The memoized sole declaring file for `name`, computed by `compute` on
+    /// first use (recomputed, not cached, if the lock is poisoned).
+    pub(super) fn sole_type_declarer(
+        &self,
+        name: &str,
+        compute: impl FnOnce() -> Option<std::path::PathBuf>,
+    ) -> Option<std::path::PathBuf> {
+        if let Ok(cache) = self.sole_type_declarers.lock()
+            && let Some(found) = cache.get(name)
+        {
+            return found.clone();
+        }
+        let answer = compute();
+        if let Ok(mut cache) = self.sole_type_declarers.lock() {
+            cache.insert(name.to_string(), answer.clone());
         }
         answer
     }
@@ -3532,6 +3585,27 @@ fn qualifier_before(head: &str) -> Option<Vec<String>> {
 mod tests {
     use super::*;
     use crate::analysis::rust_index::summarize_file;
+
+    #[test]
+    fn std_impl_source_computes_each_trait_and_head_once() {
+        let memos = CallIdentityMemos::default();
+        let calls = std::cell::Cell::new(0);
+        let ask = |trait_name: &str, head: &str, answer: bool| {
+            memos.std_impl_source(trait_name, head, || {
+                calls.set(calls.get() + 1);
+                answer
+            })
+        };
+        assert!(ask("Display", "Widget", true));
+        // A repeat returns the stored answer without computing again, even
+        // when the new closure would answer differently.
+        assert!(ask("Display", "Widget", false));
+        assert_eq!(calls.get(), 1);
+        // Either half of the key changing is a separate question.
+        assert!(!ask("Display", "Gadget", false));
+        assert!(!ask("Debug", "Widget", false));
+        assert_eq!(calls.get(), 3);
+    }
 
     #[test]
     fn a_non_ascii_qualifier_is_read_whole_without_slicing_inside_a_char() {

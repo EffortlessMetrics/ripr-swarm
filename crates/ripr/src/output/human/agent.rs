@@ -18,6 +18,10 @@
 //! next=ripr explain --root /repo probe:...
 //! ```
 //!
+//! The last line is always `verify=complete|...` or `verify=refused|...|reason=`
+//! (#13516): the post-edit completion record, projected from the producer's
+//! outcome and full summary counts, never from the displayed subset.
+//!
 //! Terminal states are one explicit line: `done=` when nothing is left to fix
 //! from the test side, `stop=` when ripr cannot offer a test-side fix.
 //! Explain drill-ins keep this format unless an explicit suppression policy
@@ -27,7 +31,9 @@
 use super::triage::{self, HumanTriage};
 use crate::app::{CheckDiffProvenance, CheckOutput, FindingDrillIn};
 use crate::config::RiprConfig;
-use crate::domain::{ExposureClass, Finding, NextActionCheckCase, OracleStrength, RelatedTest};
+use crate::domain::{
+    ExposureClass, Finding, NextActionCheckCase, OracleStrength, RelatedTest, RelationConfidence,
+};
 use crate::output::next_action::render_next_action_plain_at_root;
 use crate::output::path::repository_display_path;
 use std::collections::BTreeMap;
@@ -51,6 +57,47 @@ pub(super) fn gap_line_budget(total: usize) -> usize {
 const FIELD_BUDGET: usize = 80;
 
 pub(super) fn render(
+    output: &CheckOutput,
+    config: &RiprConfig,
+    drill_in: Option<&FindingDrillIn>,
+    provenance: CheckDiffProvenance,
+) -> String {
+    let mut out = render_report(output, config, drill_in, provenance);
+    // #13516: the verification record is the last line, after every bounded
+    // section, so external truncation can never leave a leading success marker.
+    out.push_str(&verification_line(output));
+    out.push('\n');
+    out
+}
+
+/// The post-edit completion record for `ripr check --format agent` (#13516).
+///
+/// Formats [`CheckOutput::verification`], the app-owned completion verdict;
+/// this renderer adds no completeness decision of its own. It is independent
+/// of the triage `done=` terminal, which keeps its own meaning. Its counts are
+/// the full `summary`, which the producer derives from the same finding set
+/// as the header; they differ from the header only under a suppression
+/// policy, where the header omits suppressed findings.
+fn verification_line(output: &CheckOutput) -> String {
+    let verdict = output.verification();
+    let facts = format!(
+        "outcome={}|findings={}|exposed={}",
+        verdict.outcome.map_or("missing", |kind| kind.as_str()),
+        verdict.findings,
+        verdict.exposed
+    );
+    if verdict.is_complete() {
+        return format!("verify=complete|{facts}");
+    }
+    let reasons: Vec<&str> = verdict
+        .refusals
+        .iter()
+        .map(|refusal| refusal.as_str())
+        .collect();
+    format!("verify=refused|{facts}|reason={}", reasons.join(","))
+}
+
+fn render_report(
     output: &CheckOutput,
     config: &RiprConfig,
     drill_in: Option<&FindingDrillIn>,
@@ -94,8 +141,19 @@ pub(super) fn render(
     out.push_str(&incomplete_lines);
     let next = next_line(&triage, output, &gaps, drill_in, provenance);
     if output.findings.is_empty() && !output.no_scope_provided {
+        // #13658: a `no_scope` outcome (empty or unparseable --diff) read
+        // nothing, so it must not claim `done`.
+        if !incomplete && has_no_scope_outcome(output) {
+            out.push_str("stop=nothing was in scope; zero findings is not a clean result (nothing was parsed or analyzed)\n");
+            return out;
+        }
         out.push_str(if incomplete {
             "stop=analysis incomplete; zero findings is not a clean result\n"
+        } else if super::no_source_examined(output) {
+            // #13658: an empty diff (or one with no analyzable
+            // source) examined no behavior; the human format's "Nothing to
+            // check" state must not read as `done` here.
+            "stop=nothing was analyzed (no changed source in scope); not a clean result\n"
         } else {
             "done=no changed behavior found in scope; static advisory, not runtime proof\n"
         });
@@ -107,9 +165,9 @@ pub(super) fn render(
             return render_open_limited(out, output, &considered, &open, drill_in);
         }
         // #13238: an all-limited run still owes an agent the bounded route to
-        // the evidence — one record per counted `limits=` finding (location,
-        // id) plus the `ripr explain` drill-in — instead of a bare terminal
-        // line that leaves navigation to the full JSON document.
+        // the evidence — the `ripr explain` drill-in, plus a record for each
+        // finding with a concrete discriminator (#13594) — instead of a bare
+        // terminal line that leaves navigation to the full JSON document.
         let limited = limited_record_findings(&triage);
         if !limited.is_empty() && !incomplete {
             return render_limited_records(
@@ -167,6 +225,12 @@ pub(super) fn render(
 /// Project the producer's closed completeness decision, before any terminal
 /// claim. Retained gaps may still be useful, but do not complete this run.
 /// The pipeline already projects partial-scope budgets into this outcome.
+fn has_no_scope_outcome(output: &CheckOutput) -> bool {
+    output.analysis_outcome.as_ref().is_some_and(|outcome| {
+        outcome.kind == crate::analysis_outcome::AnalysisOutcomeKind::NoScope
+    })
+}
+
 fn render_incomplete_analysis(out: &mut String, output: &CheckOutput) -> bool {
     let Some(outcome) = output
         .analysis_outcome
@@ -278,14 +342,17 @@ pub(super) fn render_finding(
             "open=preview-language evidence is advisory and offers no guided repair, but a related test asserts too weakly to notice this change; tests may still help; static advisory, not runtime proof",
             weak_row,
         )
-    } else if finding.class == ExposureClass::Exposed
-        && !triage::is_static_limited(finding)
-        && !triage::is_preview_limited(finding)
-    {
-        (
-            "done=a related test appears to notice this change; static advisory, not runtime proof",
-            strongest_test(finding),
-        )
+    } else if finding.class == ExposureClass::Exposed && !triage::is_static_limited(finding) {
+        // An exposed preview finding has no test-side gap either; it keeps
+        // the advisory qualifier instead of falling through to the
+        // "documented route is a co-located test" stop, which told agents to
+        // write another test after theirs closed the gap.
+        let terminal = if triage::is_preview_limited(finding) {
+            "done=preview-language evidence is advisory only; a related test appears to notice this change; verify the assertion independently; static advisory, not runtime proof"
+        } else {
+            "done=a related test appears to notice this change; static advisory, not runtime proof"
+        };
+        (terminal, noticing_test(finding))
     } else {
         (
             // #13238: same vocabulary as the check surface's terminal line —
@@ -433,10 +500,12 @@ fn limited_record_projects_missing(finding: &Finding) -> bool {
 }
 
 /// The fail-closed terminal state for a run whose remaining findings are all
-/// static- or preview-limited. Bounded records name each counted `limits=`
-/// finding (location, id, strongest related test) and drill in with
-/// `ripr explain`, so an agent has a route to what ripr could not judge
-/// without reading the 57-110 KB JSON document (#13238). The terminal line
+/// static- or preview-limited. Bounded records name each limited finding that
+/// carries a concrete discriminator (location, id, strongest related test),
+/// and `next=` drills in with `ripr explain` on the first printed record (or
+/// the first limited finding when none prints), so an agent has a route to
+/// what ripr could not judge without reading the 57-110 KB JSON document
+/// (#13238, #13594). The terminal line
 /// stays `stop=`: no test-side gap is offered, and the text must not claim
 /// nothing more is fixable when the human surface names the co-located-test
 /// route for the same finding.
@@ -449,33 +518,38 @@ fn render_limited_records(
     terminal: &str,
     repair_command: Option<&str>,
 ) -> String {
+    // #13594: a record with `missing=-` names nothing to fix, so only a
+    // finding carrying a concrete producer discriminator earns one. The rest
+    // stay counted in `limits=` and reachable through the `next=` explain
+    // drill-in, which still names the first limited finding.
+    let records: Vec<&Finding> = limited
+        .iter()
+        .copied()
+        .filter(|finding| limited_record_projects_missing(finding))
+        .collect();
     let mut tests: Vec<TestRef> = Vec::new();
-    for finding in limited.iter().take(MIN_GAP_LINES) {
+    for finding in records.iter().take(MIN_GAP_LINES) {
         let test_ref =
             strongest_test(finding).map(|test| intern_test(&mut tests, &output.root, test));
-        out.push_str(&gap_line(
-            &output.root,
-            finding,
-            test_ref,
-            limited_record_projects_missing(finding),
-        ));
+        out.push_str(&gap_line(&output.root, finding, test_ref, true));
         out.push('\n');
     }
     for (index, test) in tests.iter().enumerate() {
         out.push_str(&format!("t{}={}\n", index + 1, test.line));
     }
-    if limited.len() > MIN_GAP_LINES {
+    if records.len() > MIN_GAP_LINES {
         out.push_str(&format!(
             "+{} more limited findings not shown; `--format json` lists all\n",
-            limited.len() - MIN_GAP_LINES
+            records.len() - MIN_GAP_LINES
         ));
     }
     out.push_str(terminal);
     push_limits(&mut out, considered, &[]);
     if let Some(command) = repair_command {
         out.push_str(&format!("next={command}\n"));
-    } else if let Some(line) = limited
+    } else if let Some(line) = records
         .first()
+        .or(limited.first())
         .and_then(|first| explain_next_line(&first.id, output, drill_in))
     {
         out.push_str(&line);
@@ -550,7 +624,19 @@ fn terminal_line(
                 .to_string()
         }
         NextActionCheckCase::SuppressedByPolicy => {
-            "stop=all findings are suppressed by policy\n".to_string()
+            // #13819: name the owner opt-out when it, not a policy, withheld
+            // findings.
+            match (output.suppression.is_some(), output.owner_opt_outs.is_empty()) {
+                (false, false) => {
+                    "stop=all findings are withheld by owner opt-out (owner_mutants_skip)\n"
+                        .to_string()
+                }
+                (true, false) => {
+                    "stop=all findings are suppressed by policy or withheld by owner opt-out (owner_mutants_skip)\n"
+                        .to_string()
+                }
+                _ => "stop=all findings are suppressed by policy\n".to_string(),
+            }
         }
         NextActionCheckCase::StaticLimited => {
             // #13238: the human surface's own Next step for this finding
@@ -572,6 +658,18 @@ fn terminal_line(
                 }
                 Some(_) => {
                     "open=preview-language evidence is advisory only, not a confirmed gap; ripr agent repair can start the repair for this gap once your uncommitted production change is committed; static advisory, not runtime proof\n"
+                        .to_string()
+                }
+                // The selected preview finding already reads exposed: there
+                // is no test-side gap to repair, matching the human `Safe next
+                // action` ("there is no repair to make"). A `stop=` saying an
+                // improvement "may still be possible" sent agents looking for
+                // work after their test closed the gap.
+                None if triage.selected.is_some_and(|finding| {
+                    finding.class == ExposureClass::Exposed && !triage::is_static_limited(finding)
+                }) =>
+                {
+                    "done=preview-language evidence is advisory only; a related test appears to observe this change, so there is no test-side gap to fix; verify the assertion independently; static advisory, not runtime proof\n"
                         .to_string()
                 }
                 None => {
@@ -671,12 +769,41 @@ struct TestRef {
     line: String,
 }
 
+/// The related test an agent should open first (#13603): the relation
+/// confidence the producer already ranks rows by (`ripr context`, the human
+/// headline) leads, so a test that calls the changed function outranks one
+/// linked only by file location; oracle strength breaks ties within a
+/// confidence tier. A row without a recorded relation ranks with `Opaque`.
 fn strongest_test(finding: &Finding) -> Option<&RelatedTest> {
     finding
         .related_tests
         .iter()
         .filter(|test| test.is_contributing())
-        .min_by_key(|test| strength_rank(&test.oracle_strength))
+        .min_by_key(|test| {
+            (
+                test.relation_confidence
+                    .map_or(RelationConfidence::Opaque.rank(), RelationConfidence::rank),
+                strength_rank(&test.oracle_strength),
+            )
+        })
+}
+
+/// The related test a `done=` line names as the one that appears to notice
+/// the change: the strongest oracle leads, so a direct caller holding only a
+/// smoke check is never named as the noticer over a test that pins the value;
+/// relation confidence breaks ties (#13603 review).
+fn noticing_test(finding: &Finding) -> Option<&RelatedTest> {
+    finding
+        .related_tests
+        .iter()
+        .filter(|test| test.is_contributing())
+        .min_by_key(|test| {
+            (
+                strength_rank(&test.oracle_strength),
+                test.relation_confidence
+                    .map_or(RelationConfidence::Opaque.rank(), RelationConfidence::rank),
+            )
+        })
 }
 
 fn strength_rank(strength: &OracleStrength) -> u8 {

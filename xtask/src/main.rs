@@ -85,6 +85,7 @@ mod readiness_snapshot;
 mod repo_readiness;
 mod repository_orientation;
 mod ripr_agent_disposition;
+mod schema_compat;
 mod schema_pattern;
 mod size_scaling;
 mod termination_qualification;
@@ -19621,6 +19622,7 @@ const PROOF_PACK_RELEASE_REQUIRED_PATHS: &[&str] = &[
     "editors/vscode/package-lock.json",
     ".github/workflows/publish-extension.yml",
     ".github/workflows/release-server-binaries.yml",
+    ".github/workflows/package-family-qualification.yml",
 ];
 
 /// The full release proof the `release-package` pack MUST require: workspace

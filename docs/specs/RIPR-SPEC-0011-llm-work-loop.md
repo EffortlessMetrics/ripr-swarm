@@ -968,6 +968,12 @@ manifest (no `[package]`) does not own a proposed test, and a manifest that
 exists but cannot be read or parsed refuses rather than falling through to an
 ancestor.
 
+The limitation records the before-phase observation in historical language, so
+it remains accurate after the proposed test is created and the attempt finishes.
+Package-name syntax follows stable Cargo 1.95 (Unicode XID start or underscore,
+then XID continuation or hyphen), rather than cargo-new or registry restrictions.
+This check establishes name identity, not complete Cargo manifest validity.
+
 ## Amendment (#13204): one projection of the selected new-test proposal
 
 The selected producer-owned new-test proposal is read through one projection,
@@ -1023,6 +1029,37 @@ setter), says why it cannot write one and that the test is written by hand.
 Refusal text only: eligibility is unchanged, and starting a repair from a weak
 read of a written field stays #11870.
 
+## Amendment (#11584): task-first repair and continue print JSON on request
+
+`ripr repair --json` prints the repair packet with its `repair_attempt`
+block (the attempt id and after-phase command) on stdout instead of the
+summary and card; a repeated start that resumes an awaiting attempt prints
+that attempt's status document. `ripr continue --json` prints the after-phase
+document, or the attempt's status document when it is already complete; a
+typed after-phase refusal or failure prints its `repair_after_refusal`,
+`repair_after_failure` or verify document beside the same exit code and
+stderr prose. Repair refusals, continue selection refusals and operational
+errors before verify keep empty stdout. An unknown flag (or, for `continue`,
+a stray positional argument) under `--json` keeps exit 2 and its stderr prose
+and writes the standalone `cli_refusal` document to stdout (#6834 decision);
+other argv usage errors keep empty stdout.
+
+## Amendment (#13833): line-ending-only files are named, not silently dropped
+
+A path whose before and after states differ only in line endings, on a path
+Git itself normalizes (`core.autocrlf` or a `text` attribute), stays out of the
+attempt delta (#7377). The after phase records each such path in
+`after.line_ending_only_paths`, beside the verdict and omitted when empty, and
+narrates one bounded stderr line that starts `not counted as edits:`. Path
+names in that line are shown with control characters escaped. The bound delta
+digest, the stored verdict and the receipt binding do not include the list. A
+flip on a path Git does not normalize, a real content change, and a path a
+committed change also touches are not listed.
+
+- `crates/ripr/src/edit_cage/mod.rs::tests::eol_only_flip_of_a_forbidden_file_is_not_an_edit` (the flipped file is reported exactly; its real-edit control is not)
+- `crates/ripr/src/edit_cage/mod.rs::tests::eol_flip_without_git_normalization_remains_an_edit` (a git-visible flip is not reported)
+- `crates/ripr/src/cli/commands/agent.rs::tests::line_ending_only_note_names_skipped_files_and_stays_silent_without_them` (narration, bound, escaping, manifest round-trip)
+
 ## Test Mapping
 
 - `crates/ripr/tests/cli_help_hierarchy.rs::agent_help_and_missing_seam_refusal_agree_that_finding_ids_resolve` (agent group help, the missing-`--seam-id` refusal and the workflow catalog agree that `--phase before` resolves `ripr check` finding IDs)
@@ -1041,6 +1078,8 @@ read of a written field stays #11870.
 - `crates/ripr/src/app/repair_card_handoff.rs::tests::a_proposal_names_the_workspace_only_when_the_evidence_admitted_it` (#13203)
 - `crates/ripr/tests/new_test_proposal_attempt.rs::created_proposed_file_binds_the_attempt_to_its_proposal` (#13203)
 - `crates/ripr/tests/new_test_proposal_attempt.rs::edit_outside_the_proposals_cage_is_refused` (#13203)
+- `crates/ripr/tests/proposal_only_repair_start.rs::inline_proposal_with_an_invalid_package_identity_leaves_no_attempt` (#13205)
+- `crates/ripr/tests/proposal_only_repair_start.rs::package_name_preflight_agrees_with_cargo_metadata` (#13205)
 - `crates/ripr/src/output/agent_seam_packets.rs::tests::selected_proposal_reads_the_same_in_card_packet_and_mcp` (#13204)
 - `crates/ripr/tests/new_test_proposal_attempt.rs::a_proposal_attempt_says_no_test_exists_yet` (#13205)
 - `crates/ripr/tests/new_test_proposal_attempt.rs::an_existing_test_target_attempt_has_no_not_yet_disclosure` (#13205)
@@ -1167,6 +1206,10 @@ read of a written field stays #11870.
 - `crates/ripr/tests/cli_smoke.rs::agent_packet_rejects_configured_off_seam`
 - `crates/ripr/src/lsp/tests.rs::agent_loop_command_payloads_stay_workspace_relative_for_platform_roots`
 - `xtask/src/reports/operator.rs::tests::operator_cockpit_matches_editor_agent_loop_fixture`
+- `crates/ripr/tests/task_first_facade.rs::repair_json_prints_the_packet_with_the_attempt_id` (#11584)
+- `crates/ripr/tests/task_first_facade.rs::continue_json_prints_its_after_phase_document` (#11584)
+- `crates/ripr/tests/task_first_facade.rs::continue_json_prints_the_typed_after_refusal_document` (#11584)
+- `crates/ripr/tests/task_first_facade.rs::repair_and_continue_json_keep_refusals_prose_and_usage_errors_cli_refusal` (#11584)
 
 ## Implementation Mapping
 

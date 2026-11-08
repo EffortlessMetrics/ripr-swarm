@@ -104,6 +104,7 @@ pub(in crate::analysis) fn activation_and_boundary_input(
                 test,
                 owner_fn,
                 super::argument_fold::FoldScope::of_test(test, index),
+                Some(index),
             ),
         })
         .collect::<Vec<_>>();
@@ -195,12 +196,12 @@ impl TestValueFacts {
     ) -> Vec<ValueFact> {
         let scope = super::argument_fold::FoldScope::of_test(test, index);
         let Some(key) = self.slot_key(index, test, owner_fn) else {
-            return value_facts_for_test(test, owner_fn, scope);
+            return value_facts_for_test(test, owner_fn, scope, Some(index));
         };
         if let Some(facts) = self.by_slot.borrow().get(&key) {
             return facts.clone();
         }
-        let facts = value_facts_for_test(test, owner_fn, scope);
+        let facts = value_facts_for_test(test, owner_fn, scope, Some(index));
         self.by_slot.borrow_mut().insert(key, facts.clone());
         facts
     }
@@ -248,6 +249,39 @@ fn owner_name_call_text<'text>(
     }
 }
 
+/// Read each direct free-owner occurrence in a captured line (#13373).
+/// Facts intentionally share the full line. Mask before locating occurrences
+/// so quoted or commented calls cannot contribute arguments; retain raw bytes
+/// for the existing argument reader. Nested calls are separate rows, not an
+/// evaluation of the outer argument. Identity remains the caller's authority.
+/// Associated owners keep their existing single-site reading: a repeated name
+/// alone does not establish that two receivers have the same type.
+fn owner_call_argument_rows(text: &str, name: &str, free_owner: bool) -> Vec<Vec<String>> {
+    if !free_owner {
+        return call_arguments(text, name).into_iter().collect();
+    }
+    if name.is_empty() {
+        return Vec::new();
+    }
+    let masked = crate::analysis::extract::mask_comments_and_strings(text);
+    masked
+        .match_indices(name)
+        .filter(|(at, _)| super::related_tests::is_free_function_call_at(&masked, *at, name))
+        .filter_map(|(at, _)| {
+            // Whitespace or a comment may separate the name from `(`; the
+            // mask turns a comment into blanks, so the paren is the first
+            // non-blank byte after the name. Rebuild an adjacent spelling
+            // for the argument reader.
+            let after = at + name.len();
+            let open = after + (masked[after..].len() - masked[after..].trim_start().len());
+            if !masked[open..].starts_with('(') {
+                return None;
+            }
+            call_arguments(&format!("{name}{}", &text[open..]), name)
+        })
+        .collect()
+}
+
 /// The value context of a qualified path token found in a test (#5357):
 /// `Constant` when the path's spelling establishes a constant, otherwise the
 /// historical `EnumVariant`.
@@ -263,6 +297,7 @@ fn value_facts_for_test(
     test: &TestSummary,
     owner_fn: Option<&FunctionSummary>,
     scope: super::argument_fold::FoldScope<'_>,
+    index: Option<&crate::analysis::rust_index::RustIndex>,
 ) -> Vec<ValueFact> {
     let owner_name = owner_fn.map(|owner| owner.name.as_str()).unwrap_or("");
     let parameters = owner_fn.map(function_parameters).unwrap_or_default();
@@ -273,33 +308,41 @@ fn value_facts_for_test(
         if !owner_name.is_empty() && call.name != owner_name {
             continue;
         }
-        let Some(arguments) = owner_name_call_text(&call.text, owner_name, free_owner)
-            .and_then(|text| call_arguments(text, &call.name))
-        else {
+        let argument_rows = owner_call_argument_rows(&call.text, &call.name, free_owner);
+        // The expansion must not newly label a rival or shadowed call's
+        // arguments as owner inputs. Preserve the existing whole-line refusal.
+        if argument_rows.len() > 1
+            && let (Some(index), Some(owner)) = (index, owner_fn)
+            && !super::call_identity::qualified_owner_calls_resolve(
+                index, owner, test, &call.text, call.line,
+            )
+        {
             continue;
-        };
-        for (idx, argument) in arguments.iter().enumerate() {
-            for value in owner_row_argument_values(test, argument, false, scope) {
-                let value = parameters
-                    .get(idx)
-                    .map(|parameter| format!("{parameter} = {value}"))
-                    .unwrap_or(value);
-                facts.push(ValueFact {
-                    file: None,
-                    line: call.line,
-                    text: call.text.to_string(),
-                    value,
-                    context: ValueContext::FunctionArgument,
-                });
-            }
-            for value in enum_variant_values(argument) {
-                facts.push(ValueFact {
-                    file: None,
-                    line: call.line,
-                    text: call.text.to_string(),
-                    context: path_value_context(&value),
-                    value,
-                });
+        }
+        for arguments in argument_rows {
+            for (idx, argument) in arguments.iter().enumerate() {
+                for value in owner_row_argument_values(test, argument, false, scope) {
+                    let value = parameters
+                        .get(idx)
+                        .map(|parameter| format!("{parameter} = {value}"))
+                        .unwrap_or(value);
+                    facts.push(ValueFact {
+                        file: None,
+                        line: call.line,
+                        text: call.text.to_string(),
+                        value,
+                        context: ValueContext::FunctionArgument,
+                    });
+                }
+                for value in enum_variant_values(argument) {
+                    facts.push(ValueFact {
+                        file: None,
+                        line: call.line,
+                        text: call.text.to_string(),
+                        context: path_value_context(&value),
+                        value,
+                    });
+                }
             }
         }
     }
@@ -5561,15 +5604,15 @@ fn owner_call_parameter_values_where(
         return rows;
     }
     for test in related_tests {
-        for call in test.body_calls() {
-            if call.name != owner_name || !keep(test, call) {
-                continue;
-            }
-            let Some(arguments) = owner_name_call_text(&call.text, owner_name, free_owner)
-                .and_then(|text| call_arguments(text, &call.name))
-            else {
-                continue;
-            };
+        for (call, arguments) in test
+            .body_calls()
+            .filter(|call| call.name == owner_name && keep(test, call))
+            .flat_map(|call| {
+                owner_call_argument_rows(&call.text, owner_name, free_owner)
+                    .into_iter()
+                    .map(move |arguments| (call, arguments))
+            })
+        {
             // A constant-row `for` table (#5328) yields one value per row,
             // and cells of the same row belong together: the call runs once
             // per row, so it contributes one input row per table row. A
@@ -5989,20 +6032,17 @@ pub(in crate::analysis) fn computed_input_parameters(
                 {
                     continue;
                 }
-                let Some(arguments) =
-                    owner_name_call_text(&call.text, &target.name, is_free(target))
-                        .and_then(|text| call_arguments(text, &call.name))
-                else {
-                    continue;
-                };
-                called = true;
-                for (idx, argument) in arguments.iter().enumerate() {
-                    if deterministic_computed_argument(argument, |name| {
-                        !owner_argument_values(test, name).is_empty()
-                    }) && let Some(parameter) = names.get(idx)
-                        && !computed.contains(parameter)
-                    {
-                        computed.push(parameter.clone());
+                for arguments in owner_call_argument_rows(&call.text, &target.name, is_free(target))
+                {
+                    called = true;
+                    for (idx, argument) in arguments.iter().enumerate() {
+                        if deterministic_computed_argument(argument, |name| {
+                            !owner_argument_values(test, name).is_empty()
+                        }) && let Some(parameter) = names.get(idx)
+                            && !computed.contains(parameter)
+                        {
+                            computed.push(parameter.clone());
+                        }
                     }
                 }
             }
@@ -9441,14 +9481,14 @@ mod tests {
             start_line: 1,
             end_line: 9,
             body: "pub fn split_after(input: &str, delim: char) -> &str {\n    let end = input.rfind(delim).map_or(1, |idx| idx);\n    let start = delim.len_utf8();\n    if end == start {\n        &input[..end]\n    } else {\n        input\n    }\n}".into(),
-            calls: Vec::new(),
+            calls: crate::analysis::facts::SharedFactSlice::empty(),
             returns: Vec::new(),
-            literals: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
             source_role: FunctionSourceRole::Production,
-            attrs: Vec::new(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
             impl_attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             item: Default::default(),
             impl_context: Default::default(),
         };
@@ -9462,12 +9502,13 @@ mod tests {
                 name: "split_after".to_string(),
                 line: 5,
                 text: "split_after(\"ab\", 'x');".to_string().into(),
-            }],
+            }]
+            .into(),
             assertions: Vec::new(),
-            literals: Vec::new(),
-            attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             generated: None,
         };
         let probe = Probe {
@@ -9840,12 +9881,13 @@ mod tests {
                 name: "score".to_string(),
                 line: call_line,
                 text: call.to_string().into(),
-            }],
+            }]
+            .into(),
             assertions: Vec::new(),
-            literals: Vec::new(),
-            attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             generated: None,
         }
     }
@@ -9909,7 +9951,8 @@ mod tests {
             "#[rstest]".to_string(),
             "#[case(10, false)]".to_string(),
             "#[case(11, true)]".to_string(),
-        ];
+        ]
+        .into();
         let activation = boundary_activation(&test);
 
         assert_eq!(owner_input_values(&activation), vec!["10", "11"]);
@@ -9928,9 +9971,9 @@ mod tests {
             "fn score_boundary(#[case] amount: i32) {\n    fn far(amount: i32) -> bool { score(amount) }\n    assert!(far(amount + 100));\n}",
         ] {
             let mut test = test_with_body_call(body, 12, "assert!(score(amount));");
-            test.attrs = vec!["#[rstest]".to_string(), "#[case(10)]".to_string()];
+            test.attrs = vec!["#[rstest]".to_string(), "#[case(10)]".to_string()].into();
             if body.contains("fn far") {
-                test.nested_fn_names = vec!["far".to_string()];
+                test.nested_fn_names = vec!["far".to_string()].into();
             }
             let activation = boundary_activation(&test);
 
@@ -10966,15 +11009,15 @@ mod tests {
 let input = Request::builder().amount(100).token("abc").build();
 assert_eq!(input.amount, 100);"#
                 .into(),
-            calls: Vec::new(),
+            calls: crate::analysis::facts::SharedFactSlice::empty(),
             assertions: vec![oracle_fact(
                 "assert_eq!(input.amount, 100);",
                 OracleKind::ExactValue,
             )],
-            literals: Vec::new(),
-            attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             generated: None,
         };
 
@@ -10982,6 +11025,7 @@ assert_eq!(input.amount, 100);"#
             &test,
             None,
             crate::analysis::classify::argument_fold::FoldScope::default(),
+            None,
         );
 
         assert!(
@@ -11018,12 +11062,12 @@ assert_eq!(input.amount, 100);"#
             start_line: 10,
             end_line: 12,
             body: assertion.to_string().into(),
-            calls: Vec::new(),
+            calls: crate::analysis::facts::SharedFactSlice::empty(),
             assertions: vec![oracle_fact(assertion, OracleKind::ExactValue)],
-            literals: Vec::new(),
-            attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             generated: None,
         };
 
@@ -11031,6 +11075,7 @@ assert_eq!(input.amount, 100);"#
             &test,
             None,
             crate::analysis::classify::argument_fold::FoldScope::default(),
+            None,
         );
         let context_of = |value: &str| {
             facts
@@ -11056,12 +11101,12 @@ assert_eq!(input.amount, 100);"#
             start_line: 1,
             end_line: 3,
             body: body.into(),
-            calls: crate::analysis::extract::extract_call_facts(body, 1),
+            calls: crate::analysis::extract::extract_call_facts(body, 1).into(),
             assertions: Vec::new(),
-            literals: Vec::new(),
-            attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             generated: None,
         };
 
@@ -11069,6 +11114,7 @@ assert_eq!(input.amount, 100);"#
             &test,
             Some(&owner),
             crate::analysis::classify::argument_fold::FoldScope::default(),
+            None,
         );
         let values: Vec<&str> = facts.iter().map(|fact| fact.value.as_str()).collect();
 
@@ -11109,12 +11155,13 @@ assert_eq!(input.amount, 100);"#
                     name: "score".to_string(),
                     text: "score;".to_string().into(),
                 },
-            ],
+            ]
+            .into(),
             assertions: Vec::new(),
-            literals: Vec::new(),
-            attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             generated: None,
         };
 
@@ -11122,6 +11169,7 @@ assert_eq!(input.amount, 100);"#
             &test,
             Some(&owner),
             crate::analysis::classify::argument_fold::FoldScope::default(),
+            None,
         );
 
         assert!(
@@ -11150,15 +11198,15 @@ assert_eq!(input.amount, 100);"#
             start_line: 10,
             end_line: 14,
             body: body.into(),
-            calls,
+            calls: calls.into(),
             assertions: vec![oracle_fact(
                 "assert_eq!(total, 100);",
                 OracleKind::ExactValue,
             )],
-            literals: Vec::new(),
-            attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             generated: None,
         };
         let index = crate::analysis::rust_index::RustIndex::from_owned(
@@ -11196,7 +11244,8 @@ assert_eq!(input.amount, 100);"#
                         value_facts_for_test(
                             test,
                             owner,
-                            crate::analysis::classify::argument_fold::FoldScope::default()
+                            crate::analysis::classify::argument_fold::FoldScope::default(),
+                            Some(&index)
                         ),
                         "round {round}: {} / {:?}",
                         test.name,
@@ -11219,7 +11268,8 @@ assert_eq!(input.amount, 100);"#
             value_facts_for_test(
                 &detached,
                 owners[1],
-                crate::analysis::classify::argument_fold::FoldScope::default()
+                crate::analysis::classify::argument_fold::FoldScope::default(),
+                Some(&index)
             )
         );
         let other_index = index.clone();
@@ -11228,7 +11278,8 @@ assert_eq!(input.amount, 100);"#
             value_facts_for_test(
                 other_index.tests().at(0),
                 None,
-                crate::analysis::classify::argument_fold::FoldScope::default()
+                crate::analysis::classify::argument_fold::FoldScope::default(),
+                Some(&other_index)
             )
         );
         assert_eq!(memo.by_slot.borrow().len(), cached);
@@ -11249,7 +11300,8 @@ assert_eq!(input.amount, 100);"#
                     value_facts_for_test(
                         test,
                         Some(owner),
-                        crate::analysis::classify::argument_fold::FoldScope::default()
+                        crate::analysis::classify::argument_fold::FoldScope::default(),
+                        Some(&reordered)
                     )
                 );
             }
@@ -11573,12 +11625,13 @@ assert_eq!(input.amount, 100);"#
                     name: "score".to_string(),
                     text: "score;".to_string().into(),
                 },
-            ],
+            ]
+            .into(),
             assertions: Vec::new(),
-            literals: Vec::new(),
-            attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             generated: None,
         };
 
@@ -12049,14 +12102,14 @@ assert_eq!(input.amount, 100);"#
             start_line: 1,
             end_line: 3,
             body: body.into(),
-            calls: Vec::new(),
+            calls: crate::analysis::facts::SharedFactSlice::empty(),
             returns: Vec::new(),
-            literals: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
             source_role: FunctionSourceRole::Production,
-            attrs: Vec::new(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
             impl_attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             item: Default::default(),
             impl_context: Default::default(),
         }
@@ -12168,12 +12221,13 @@ assert_eq!(input.amount, 100);"#
                 name: "score".to_string(),
                 line: 11,
                 text: call.to_string().into(),
-            }],
+            }]
+            .into(),
             assertions: Vec::new(),
-            literals: Vec::new(),
-            attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             generated: None,
         }
     }
@@ -12185,12 +12239,12 @@ assert_eq!(input.amount, 100);"#
             start_line: 10,
             end_line: 12,
             body: assertion.into(),
-            calls: Vec::new(),
+            calls: crate::analysis::facts::SharedFactSlice::empty(),
             assertions: vec![oracle_fact(assertion, kind)],
-            literals: Vec::new(),
-            attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             generated: None,
         }
     }
@@ -12249,10 +12303,10 @@ assert_eq!(input.amount, 100);"#
                 })
                 .collect(),
             assertions: Vec::new(),
-            literals: Vec::new(),
-            attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             generated: None,
         }
     }
@@ -12327,7 +12381,8 @@ assert_eq!(input.amount, 100);"#
             "#[rstest]".to_string(),
             "#[case(100, 7, true)]".to_string(),
             "#[case(LOW, 100, false)]".to_string(),
-        ];
+        ]
+        .into();
         assert_eq!(owner_argument_values(&cases, "amount"), vec!["100"]);
         assert_eq!(owner_argument_values(&cases, "limit"), vec!["7", "100"]);
         let rows = owner_call_parameter_values(
@@ -12362,7 +12417,8 @@ assert_eq!(input.amount, 100);"#
             "#[rstest]".to_string(),
             "#[case(100)]".to_string(),
             "#[case(99)]".to_string(),
-        ];
+        ]
+        .into();
         let rows = owner_call_parameter_values(
             &[&test],
             "eq",
@@ -12402,7 +12458,8 @@ assert_eq!(input.amount, 100);"#
             "#[rstest]".to_string(),
             "#[case(1, 2, true)]".to_string(),
             "#[case(2, 1, false)]".to_string(),
-        ];
+        ]
+        .into();
         let rows = owner_call_parameter_values(
             &[&test],
             "less",
@@ -12440,7 +12497,8 @@ assert_eq!(input.amount, 100);"#
             "#[case(UNKNOWN, 4)]".to_string(),
             "#[case(4, UNKNOWN)]".to_string(),
             "#[case(5, 6)]".to_string(),
-        ];
+        ]
+        .into();
         let rows = owner_call_parameter_values(
             &[&test],
             "eq",
@@ -13064,7 +13122,8 @@ assert_eq!(input.amount, 100);"#
         test.literals = vec![LiteralFact {
             line: 11,
             value: "10".to_string(),
-        }];
+        }]
+        .into();
         let probe = probe(ProbeFamily::Predicate, "amount > 10");
         let gathered = boundary_input(&owner, &probe, &[&test]);
         assert!(owner_input_values(&gathered.activation).is_empty());
@@ -14101,7 +14160,8 @@ assert_eq!(input.amount, 100);"#
         test.literals = vec![LiteralFact {
             line: 10,
             value: "16".to_string(),
-        }];
+        }]
+        .into();
         let gathered = boundary_input(&owner, &predicate, &[&test]);
         assert!(gathered.activation.missing_discriminators.is_empty());
         assert!(
@@ -14147,7 +14207,8 @@ assert_eq!(input.amount, 100);"#
         test.literals = vec![LiteralFact {
             line: 11,
             value: "10".to_string(),
-        }];
+        }]
+        .into();
         let probe = probe(ProbeFamily::Predicate, "amount > 10");
         let gathered = boundary_input(&owner, &probe, &[&test]);
         assert!(owner_input_values(&gathered.activation).is_empty());

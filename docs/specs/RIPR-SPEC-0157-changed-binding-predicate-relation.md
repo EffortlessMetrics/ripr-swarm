@@ -61,7 +61,8 @@ generic syntax reason.
   initializer and fails closed to the generic per-line probes.
 - The finding keeps its normal predicate-shaped classification and
   gains evidence: `binding_predicate_relation` names the binding, both
-  causal initializers, and the use line; when the initializer contains
+  causal initializers, the use line, and the changed `let` declaration
+  line (#12118); when the initializer contains
   an operation and the actual infection authority has not established its
   boundary input, `binding_predicate_value_unresolved` (a neutral
   disclosure prefix, deliberately outside the structured `limitation_*`
