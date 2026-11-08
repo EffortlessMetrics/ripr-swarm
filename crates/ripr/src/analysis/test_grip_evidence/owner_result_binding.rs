@@ -223,7 +223,7 @@ fn owner_result_field_observation(
     }
     if kind.is_none()
         && let [binding] = bindings.as_slice()
-        && binding_never_reads_field(&function, binding, field_name)
+        && binding_never_reads_field(&function, binding, owner_name, field_name)
     {
         return Some(OwnerResultObservation::Unread);
     }
@@ -231,15 +231,22 @@ fn owner_result_field_observation(
 }
 
 /// #13700: whether the test never reads `field` through `binding` or any other
-/// way the token stream can spell. Fail-closed token reading over the whole
-/// test function, macro bodies included: `binding` is declared once (never
-/// shadowed); every other mention of it is `binding.<other_field>` with no
-/// call or turbofish after it (never passed, matched, compared whole or
-/// method-called); `field` is never named as an identifier; and no string
-/// literal names `field` or captures `binding` in a format argument.
+/// way the token stream can spell. Fail-closed token reading over the test
+/// function's own tokens, macro bodies included: `binding` is declared once
+/// (never shadowed); every other mention of it is `binding.<other_field>` with
+/// no call or turbofish after it (never passed, matched, compared whole or
+/// method-called); the owner's name appears nowhere outside the one binding
+/// initializer (a second call, path or reference could observe the field
+/// through whole-value equality or a snapshot); `field` is never named as an
+/// identifier; and no string literal names `field` or captures `binding` in a
+/// format argument. Only the test body is scanned: a helper or `const`
+/// defined outside it is not read, and a call to one is outside this fact's
+/// reach (the binding must not be passed to it, and it cannot name the owner
+/// result otherwise without calling the owner itself).
 fn binding_never_reads_field(
     function: &ast::Fn,
     binding: &OwnerResultBinding,
+    owner_name: &str,
     field: &str,
 ) -> bool {
     use ra_ap_syntax::SyntaxKind;
@@ -276,6 +283,13 @@ fn binding_never_reads_field(
             SyntaxKind::IDENT => {
                 let text = token.text();
                 if text.trim_start_matches("r#") == field {
+                    return false;
+                }
+                if text.trim_start_matches("r#") == owner_name
+                    && !binding.initializer_range.contains_range(token.text_range())
+                {
+                    // A second owner call, path or reference may observe the
+                    // field through the whole value.
                     return false;
                 }
                 if text != binding.name || token.text_range() == binding.name_range {
@@ -379,6 +393,8 @@ struct OwnerResultBinding {
     name_range: ra_ap_syntax::TextRange,
     line: usize,
     range_end: ra_ap_syntax::TextSize,
+    /// The direct owner call this binding is initialized from.
+    initializer_range: ra_ap_syntax::TextRange,
 }
 
 /// One parsed test file: its tree, line index, and test-function lookup.
@@ -808,6 +824,7 @@ fn direct_owner_result_bindings(
             name_range,
             line,
             range_end: binding.syntax().text_range().end(),
+            initializer_range: initializer.syntax().text_range(),
         });
     }
     found

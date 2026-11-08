@@ -2778,18 +2778,6 @@ fn closure_param_shadowed(
     })
 }
 
-/// Whether a bare call of the owner's name may supply a boundary input.
-/// With same-named rivals the call must settle on the owner; without rivals
-/// only a settled-away (`Other`) reading declines, while an unsettled
-/// reading keeps the name-only admission — an absolute import, a crate-name
-/// prefix from another target of the same package, or any other spelling the
-/// resolver cannot place still names the owner when no rival claims it. That
-/// admission stops at a foreign-bound import (a sibling, dependency or
-/// otherwise unplaceable first segment never lends owner rows, #9218) and
-/// at a shadowing `let` the scope scan cannot see (which declines exactly as
-/// its hand-written twin does, so the two read alike). Shadowed calls never
-/// reach this check otherwise: the caller withholds them first.
-/// [`bare_call_shadowed_by_local`].
 /// Whether a bare call of the owner's name in `test` settles on the owner
 /// through the shared identity authority, imports included (an integration
 /// test's `use package::owner`). Only a settled `Owner` answers yes; an
@@ -2808,6 +2796,18 @@ pub(in crate::analysis) fn bare_owner_call_settles_on_owner(
     })
 }
 
+/// Whether a bare call of the owner's name may supply a boundary input.
+/// With same-named rivals the call must settle on the owner; without rivals
+/// only a settled-away (`Other`) reading declines, while an unsettled
+/// reading keeps the name-only admission — an absolute import, a crate-name
+/// prefix from another target of the same package, or any other spelling the
+/// resolver cannot place still names the owner when no rival claims it. That
+/// admission stops at a foreign-bound import (a sibling, dependency or
+/// otherwise unplaceable first segment never lends owner rows, #9218) and
+/// at a shadowing `let` the scope scan cannot see (which declines exactly as
+/// its hand-written twin does, so the two read alike). Shadowed calls never
+/// reach this check otherwise: the caller withholds them first.
+/// [`bare_call_shadowed_by_local`].
 fn bare_owner_call_names_owner(
     index: &RustIndex,
     owner: &FunctionSummary,

@@ -2,7 +2,8 @@
 //! reads the changed field starts the field-value repair route
 //! (`benchmarks/repair_start/cases.json` case `rust/field-change`). Every
 //! other shape stays fail-closed: a strong read, a second candidate test, a
-//! binding passed elsewhere or shadowed, and a field the test cannot name.
+//! binding passed elsewhere or shadowed, a second owner call that may observe
+//! the whole value, and a field the test cannot name.
 //! Integration fixtures spell the owner bare: the in-memory index has no
 //! package-name authority, so a `use <package>::owner` import is settled
 //! only end to end (`tests/unread_owner_result_field_repair_start.rs`).
@@ -320,4 +321,55 @@ fn default_config_is_quiet() {
 "#,
     )?;
     no_unread_fact(&case, "an owner name imported from another crate")
+}
+
+const EQ_CONFIG: &str = r#"
+#[derive(Debug, PartialEq)]
+pub struct Config {
+    pub retries: u32,
+    pub verbose: bool,
+}
+
+pub fn default_config() -> Config {
+    Config {
+        retries: 5,
+        verbose: false,
+    }
+}
+"#;
+
+#[test]
+fn second_owner_call_compared_whole_is_not_unread() -> Result<(), String> {
+    let case = integration_case(
+        EQ_CONFIG,
+        r#"
+fn expected_config() -> Config {
+    Config { retries: 5, verbose: false }
+}
+
+#[test]
+fn default_config_is_quiet() {
+    let c = default_config();
+    assert!(!c.verbose);
+    assert_eq!(default_config(), expected_config());
+}
+"#,
+    )?;
+    no_unread_fact(&case, "a second owner call compared as a whole value")
+}
+
+#[test]
+fn second_owner_call_snapshotted_is_not_unread() -> Result<(), String> {
+    let case = integration_case(
+        EQ_CONFIG,
+        r#"
+#[test]
+fn default_config_is_quiet() {
+    let c = default_config();
+    assert!(!c.verbose);
+    insta::assert_debug_snapshot!(default_config());
+}
+"#,
+    )?;
+    no_unread_fact(&case, "a second owner call captured by a snapshot")
 }
