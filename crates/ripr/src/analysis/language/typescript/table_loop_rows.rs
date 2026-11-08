@@ -32,7 +32,8 @@ fn loop_block_has_disallowed_control_flow(body: &str) -> bool {
 }
 
 fn loop_block_disallowed_on_parse(body: &str) -> Option<bool> {
-    let wrapped = format!("function __ripr_loop_body() {body}");
+    // `async` so a loop that awaits inside an async test still parses (#12572).
+    let wrapped = format!("async function __ripr_loop_body() {body}");
     let allocator = oxc_allocator::Allocator::default();
     let parsed = oxc_parser::Parser::new(&allocator, &wrapped, oxc_span::SourceType::ts()).parse();
     if parsed.panicked || !parsed.errors.is_empty() {
@@ -121,10 +122,19 @@ impl<'a> oxc_ast_visit::Visit<'a> for LoopBodyControlFlowFinder {
     fn visit_conditional_expression(&mut self, _it: &oxc_ast::ast::ConditionalExpression) {
         self.0 = true;
     }
+    /// Optional chaining (`a?.b`) can skip the rest of the chain, as the raw
+    /// fallback's `?` check already assumes.
+    fn visit_chain_expression(&mut self, _it: &oxc_ast::ast::ChainExpression<'a>) {
+        self.0 = true;
+    }
     fn visit_logical_expression(&mut self, it: &oxc_ast::ast::LogicalExpression) {
+        // `??` short-circuits like `&&`/`||`; the raw fallback refuses all
+        // three through its `?`, `&&` and `||` checks.
         if matches!(
             it.operator,
-            oxc_ast::ast::LogicalOperator::And | oxc_ast::ast::LogicalOperator::Or
+            oxc_ast::ast::LogicalOperator::And
+                | oxc_ast::ast::LogicalOperator::Or
+                | oxc_ast::ast::LogicalOperator::Coalesce
         ) {
             self.0 = true;
         }

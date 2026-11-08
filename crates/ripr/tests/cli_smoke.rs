@@ -9611,23 +9611,13 @@ fn disable_ambient_git_excludes(root: &Path) -> Result<(), Box<dyn std::error::E
     Ok(())
 }
 
-/// #13452: a Git-ignore answer that flips between the early admission and the
-/// first shared workflow write must refuse before anything shared is written,
-/// not at the later attempt-publication recheck after the files were replaced.
-/// The shim passes the first `git check-ignore` through and answers "not
-/// ignored" afterwards, so the first call is the early admission and the
-/// second is the pre-write recheck.
+/// A `git` shim on a private PATH directory: it passes the first `allowed`
+/// `check-ignore` calls through and answers "not ignored" afterwards, so a
+/// test can place an ignore-rule change at an exact admission boundary.
+/// Returns the shim directory (remove it when done) and the PATH to use.
 #[cfg(unix)]
-#[test]
-fn agent_repair_before_rechecks_build_ignore_before_the_first_shared_write()
--> Result<(), Box<dyn std::error::Error>> {
+fn check_ignore_flip_shim(allowed: u32) -> Result<(PathBuf, String), Box<dyn std::error::Error>> {
     use std::os::unix::fs::PermissionsExt;
-    let fixture = RepairBuildIgnoreFixture::new(unique_temp_workspace("agent-repair-late-ignore"))?;
-    let root = fixture.0.as_path();
-    init_producer_fixture_repo(root)?;
-    std::fs::write(root.join(".git/info/exclude"), "/target/\n")?;
-    disable_ambient_git_excludes(root)?;
-
     let real_git = String::from_utf8(run_command("sh", None, &["-c", "command -v git"])?.stdout)?
         .trim()
         .to_string();
@@ -9638,7 +9628,7 @@ fn agent_repair_before_rechecks_build_ignore_before_the_first_shared_write()
     std::fs::write(
         &shim,
         format!(
-            "#!/bin/sh\nfor a in \"$@\"; do\n  if [ \"$a\" = check-ignore ]; then\n    n=$(cat '{count}' 2>/dev/null || echo 0)\n    n=$((n+1))\n    echo $n > '{count}'\n    if [ $n -gt 1 ]; then exit 1; fi\n  fi\ndone\nexec '{real_git}' \"$@\"\n",
+            "#!/bin/sh\nfor a in \"$@\"; do\n  if [ \"$a\" = check-ignore ]; then\n    n=$(cat '{count}' 2>/dev/null || echo 0)\n    n=$((n+1))\n    echo $n > '{count}'\n    if [ $n -gt {allowed} ]; then exit 1; fi\n  fi\ndone\nexec '{real_git}' \"$@\"\n",
             count = count.display(),
             real_git = real_git
         ),
@@ -9649,7 +9639,25 @@ fn agent_repair_before_rechecks_build_ignore_before_the_first_shared_write()
         shim_dir.display(),
         std::env::var("PATH").unwrap_or_default()
     );
+    Ok((shim_dir, path))
+}
 
+/// #13452: a Git-ignore answer that flips between the early admission and the
+/// first shared workflow write must refuse before anything shared is written,
+/// not at the later attempt-publication recheck after the files were replaced.
+/// The shim passes the first `git check-ignore` through and answers "not
+/// ignored" afterwards, so the first call is the early admission and the
+/// second is the pre-write recheck.
+#[cfg(unix)]
+#[test]
+fn agent_repair_before_rechecks_build_ignore_before_the_first_shared_write()
+-> Result<(), Box<dyn std::error::Error>> {
+    let fixture = RepairBuildIgnoreFixture::new(unique_temp_workspace("agent-repair-late-ignore"))?;
+    let root = fixture.0.as_path();
+    init_producer_fixture_repo(root)?;
+    std::fs::write(root.join(".git/info/exclude"), "/target/\n")?;
+    disable_ambient_git_excludes(root)?;
+    let (shim_dir, path) = check_ignore_flip_shim(1)?;
     let root_arg = root.display().to_string();
     let output = run_command_with_env(
         env!("CARGO_BIN_EXE_ripr"),
@@ -9686,6 +9694,54 @@ fn agent_repair_before_rechecks_build_ignore_before_the_first_shared_write()
         if root.join(artifact).exists() {
             return Err(format!("pre-write recheck refused after writing {artifact}").into());
         }
+    }
+    Ok(())
+}
+
+/// #13452: the attempt-publication recheck runs after the shared workflow
+/// files were written, so a flip at that boundary is an operational failure
+/// that says the shared files may have changed, not a clean `not_started`
+/// refusal. The shim lets the early admission and the pre-write recheck pass
+/// and flips the third `check-ignore`.
+#[cfg(unix)]
+#[test]
+fn agent_repair_late_ignore_flip_after_shared_writes_is_an_operational_failure()
+-> Result<(), Box<dyn std::error::Error>> {
+    let fixture = RepairBuildIgnoreFixture::new(unique_temp_workspace("agent-repair-late-op"))?;
+    let root = fixture.0.as_path();
+    init_producer_fixture_repo(root)?;
+    std::fs::write(root.join(".git/info/exclude"), "/target/\n")?;
+    disable_ambient_git_excludes(root)?;
+    let (shim_dir, path) = check_ignore_flip_shim(2)?;
+    let root_arg = root.display().to_string();
+    let output = run_command_with_env(
+        env!("CARGO_BIN_EXE_ripr"),
+        root,
+        &["repair", BOUNDARY_GAP_SEAM_ID, "--root", root_arg.as_str()],
+        &[("PATH", path.as_str())],
+    )?;
+    let _ = std::fs::remove_dir_all(&shim_dir);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if output.status.code() != Some(2) {
+        return Err(
+            format!("late flip must be an operational failure (exit 2): {output:?}").into(),
+        );
+    }
+    if stderr.contains("disposition=not_started")
+        || !stderr.contains("may already have been rewritten")
+    {
+        return Err(
+            format!("late flip must not claim a clean not-started refusal: {stderr}").into(),
+        );
+    }
+    let attempts = root.join("target/ripr/repair-attempts");
+    let published = attempts.exists()
+        && std::fs::read_dir(attempts)?
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            .any(|entry| entry.path().join("attempt.json").exists());
+    if published {
+        return Err("late flip published a durable repair attempt".into());
     }
     Ok(())
 }
@@ -27459,7 +27515,7 @@ fn check_untracked_files_keep_committed_default_and_working_tree_reads_name_them
     }
     let untracked_only_human = human(&["check", "--root", &root_str]);
     if !untracked_only_human
-        .contains("Untracked files (src/new.rs) are invisible to both; stage them first")
+        .contains("Untracked files (src/new.rs) are not in either diff yet; stage them first")
     {
         return Err(format!(
             "the untracked-only default must print the #5258 note; got:\n{untracked_only_human}"

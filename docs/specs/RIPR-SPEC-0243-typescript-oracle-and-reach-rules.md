@@ -2259,7 +2259,7 @@ keys); do not take the next number.
   the same whole-word backstop when it does not (#12572). Unit
   `row_text_guard_refuses_hidden_mutation_routes_outside_quotes`,
   `statement_list_guard_ignores_quoted_with_and_refuses_real_routes`, and
-  `table_loop_tests::loop_body_quoting_with_resolves_rows`; fixtures
+  `table_loop_tests::loop_title_quoting_with_resolves_rows`; fixtures
   `ts_table_row_quoted_words_credited` and
   `ts_table_loop_quoted_words_credited` pin credited quoted words and refused
   real routes.
