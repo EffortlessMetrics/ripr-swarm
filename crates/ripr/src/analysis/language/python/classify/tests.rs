@@ -3352,6 +3352,27 @@ fn local_message_change_under_a_pattern_that_fits_both_messages_is_weakly_expose
 }
 
 #[test]
+fn local_message_change_keeps_its_analysis_shape_and_card_wording() -> Result<(), String> {
+    // #13587: a finding that carries a missing discriminator feeds the repair
+    // card, whose wording keys on the family, so it keeps the analysis family
+    // and gap id; a message pin must never read as an "exact return-value
+    // assertion". The #9185 verdict and credit do not move either.
+    let finding = classify_local_message_change(LOCAL_SOURCE, MATCH_NEGATIVE_TEST)?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{finding:?}");
+    assert!(
+        missing_boundary(&finding, "message \"negative value: must be at most zero\"").is_some(),
+        "{finding:?}"
+    );
+    assert_eq!(finding.probe.family, crate::domain::ProbeFamily::Predicate);
+    let gap = finding
+        .canonical_gap
+        .as_ref()
+        .ok_or_else(|| "canonical gap".to_string())?;
+    assert_eq!(gap.behavior_kind, "predicate_boundary");
+    Ok(())
+}
+
+#[test]
 fn local_message_change_stays_exposed_when_a_pattern_rejects_the_old_message() -> Result<(), String>
 {
     for tests in [

@@ -42,6 +42,7 @@ mod evidence_promotion;
 mod evidence_quality;
 mod first_run;
 mod fixture_contracts;
+mod fixture_expected_classes;
 mod generation_pins;
 mod kani_lane;
 mod public_proof;
@@ -71,6 +72,7 @@ mod packaged_repair_receipt;
 mod policy;
 #[cfg(test)]
 mod portable_consumer;
+mod precommit_formatting;
 mod product_gate_plan;
 mod product_route_parity;
 mod provider_review_observations;
@@ -83,6 +85,7 @@ mod readiness_snapshot;
 mod repo_readiness;
 mod repository_orientation;
 mod ripr_agent_disposition;
+mod schema_compat;
 mod schema_pattern;
 mod size_scaling;
 mod termination_qualification;
@@ -670,7 +673,9 @@ fn precommit_policy(collect_all: bool) -> Result<(), String> {
     if collect_all && let Some(path) = &preflight_receipt {
         repo_policy::verify_preflight(Path::new(path))?;
     }
-    run("cargo", &["fmt", "--check"])?;
+    precommit_formatting::run(collect_all, || {
+        run("cargo", &["fmt", "--check"]).map(|_| ())
+    })?;
     if collect_all {
         policy::check_policy_all()?;
     } else {

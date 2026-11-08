@@ -14,6 +14,9 @@ tests = [
   "crates/ripr/src/provider_contract/adapter_substrate/tests.rs::generated_parser_allows_checked_in_tables_without_build_script",
   "crates/ripr/src/provider_contract/adapter_substrate/tests.rs::unknown_fields_are_rejected_at_deserialize",
   "crates/ripr/src/provider_contract/adapter_substrate/tests.rs::semantic_digest_is_order_and_relocation_invariant",
+  "crates/ripr/src/provider_contract/adapter_substrate/tests.rs::digest_sorted_lists_reject_duplicate_keys",
+  "crates/ripr/src/provider_contract/adapter_substrate/tests.rs::dependency_order_does_not_change_substrate_compatibility",
+  "crates/ripr/src/provider_contract/adapter_substrate/tests.rs::external_helper_fallback_must_name_a_syntax_only_variant",
 ]
 fixtures = [
   "fixtures/adapter-substrate-qualification-corpus/corpus.json",
