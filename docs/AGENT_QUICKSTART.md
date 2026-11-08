@@ -126,10 +126,16 @@ Cursor and Claude Code share one entry shape:
 ```json
 {
   "mcpServers": {
-    "ripr": { "command": "ripr", "args": ["mcp", "--stdio"] }
+    "ripr": {
+      "command": "ripr",
+      "args": ["mcp", "--stdio"],
+      "env": { "RIPR_MCP_TOOLS_LIST": "slim" }
+    }
   }
 }
 ```
+
+The `env` line asks for the slim `tools/list` (about 29 KB smaller at every session start; results are unchanged). Delete it if your host validates results against `outputSchema`.
 
 `ripr init --mcp` and the Cursor file were exercised against the real
 `ripr` binary. The `claude`, `codex` and Cursor clients' own registration and
