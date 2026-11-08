@@ -3851,7 +3851,6 @@ mod tests {
         assert_eq!(*calls.borrow(), ["python -m pytest"]);
         // Negative control: venv without pytest gives no activation advice.
         let without = make("without", &["pip"])?;
-        let mut calls = Vec::new();
         let (status, evidence) = python_pytest_runtime_probe(&without, &mut path_fail);
         assert_eq!(status, output::doctor::DoctorStatus::Fail);
         assert!(!evidence.contains("activate"), "{evidence}");
