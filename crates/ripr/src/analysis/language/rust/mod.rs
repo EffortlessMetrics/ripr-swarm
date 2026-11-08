@@ -1403,9 +1403,10 @@ fn nothing_fits_error(files: &[OverLimitFile]) -> String {
     )
 }
 
-/// Selection under the default language configuration (tests and direct
-/// adapter calls); production callers pass the run's configuration through
+/// Selection under the default language configuration (tests only);
+/// production callers pass the run's configuration through
 /// [`select_admitted_partial_diff_partition`].
+#[cfg(test)]
 fn select_partial_diff_partition_with_identity(
     changed_files: &[ChangedFile],
     identity_files: &[ChangedFile],
