@@ -609,6 +609,7 @@ fn spot_check_repo(
         })?;
         // The same population as the span join, keyed apart from it.
         run.language = RUST_DIFF_MODE.to_string();
+        run.diffs_checked = diffs_checked;
         run.mutant_set_sha256 = mutant_set.clone();
         run.cargo_mutants_version = cargo_mutants_version.clone();
         if let Some(extra) = run.synthetic.as_mut().and_then(Value::as_object_mut) {

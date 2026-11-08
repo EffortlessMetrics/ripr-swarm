@@ -330,6 +330,16 @@ pub(crate) fn read_verdict(check: &Value, file: &str, first_line: u64, last_line
     if !complete {
         return Verdict::Incomplete;
     }
+    // TypeScript and Python name the owner on the probe; the Rust adapter names
+    // it on the canonical gap. Two findings on the line with no owner at all
+    // cannot be told apart, so they fail closed as ambiguous.
+    if matched.len() > 1
+        && matched
+            .iter()
+            .any(|finding| finding_owner(finding).is_empty())
+    {
+        return Verdict::Ambiguous;
+    }
     let verdicts: BTreeSet<(&str, &str)> = matched
         .iter()
         .map(|finding| {
@@ -338,10 +348,7 @@ pub(crate) fn read_verdict(check: &Value, file: &str, first_line: u64, last_line
                     .get("classification")
                     .and_then(Value::as_str)
                     .unwrap_or(""),
-                finding
-                    .pointer("/probe/owner")
-                    .and_then(Value::as_str)
-                    .unwrap_or(""),
+                finding_owner(finding),
             )
         })
         .collect();
@@ -358,6 +365,16 @@ pub(crate) fn read_verdict(check: &Value, file: &str, first_line: u64, last_line
         },
         _ => Verdict::Ambiguous,
     }
+}
+
+/// The owner a finding names: on the probe for TypeScript and Python, on the
+/// canonical gap for Rust; empty when neither names one.
+fn finding_owner(finding: &Value) -> &str {
+    finding
+        .pointer("/probe/owner")
+        .or_else(|| finding.pointer("/canonical_gap/owner"))
+        .and_then(Value::as_str)
+        .unwrap_or("")
 }
 
 /// The receipt grip class a ripr classification token is tallied under, so
@@ -718,8 +735,14 @@ pub(crate) fn spot_check_synthetic_repo(repo: &SyntheticRepo<'_>) -> Result<Repo
         fs::remove_dir_all(&tree).map_err(|err| format!("clear {}: {err}", tree.display()))?;
     }
     copy_tree(checkout, &tree, profile.skip_dirs)?;
-    fs::write(tree.join("ripr.toml"), scratch_ripr_toml(profile))
-        .map_err(|err| format!("write scratch ripr.toml: {err}"))?;
+    // Rust is enabled by default, so a Rust run keeps the checkout's own
+    // ripr.toml (and its oracle overrides) and matches the developer's check.
+    let keep_checkout_config =
+        profile.language == RUST.language && tree.join("ripr.toml").is_file();
+    if !keep_checkout_config {
+        fs::write(tree.join("ripr.toml"), scratch_ripr_toml(profile))
+            .map_err(|err| format!("write scratch ripr.toml: {err}"))?;
+    }
     let diff_path = scratch.join(format!("{name}.synthetic.diff"));
 
     let read_checkout = |path: &str| {
@@ -1044,6 +1067,37 @@ mod tests {
             Verdict::Class { ref token, .. } if token == "weakly_exposed"
         ));
         assert_eq!(read_verdict(&check, "lib.rs", 2, 2), Verdict::NoFinding);
+    }
+
+    fn rust_check_json(findings: &[(&str, u64, Option<&str>)]) -> Value {
+        // The Rust adapter names the owner on `canonical_gap`, not on `probe`.
+        json!({
+            "analysis_outcome": {"analysis_complete": true, "outcome": {"limitations": []}},
+            "findings": findings.iter().map(|(class, line, owner)| json!({
+                "classification": class,
+                "probe": {"file": "./src/lib.rs", "line": line, "expression": "a > 1"},
+                "canonical_gap": owner.map_or(json!({}), |owner| json!({"owner": owner})),
+            })).collect::<Vec<_>>(),
+        })
+    }
+
+    #[test]
+    fn rust_owner_comes_from_the_canonical_gap_and_unowned_pairs_fail_closed() {
+        let distinct = rust_check_json(&[("exposed", 2, Some("f")), ("exposed", 3, Some("g"))]);
+        assert_eq!(
+            read_verdict(&distinct, "src/lib.rs", 2, 3),
+            Verdict::Ambiguous
+        );
+        let one = rust_check_json(&[("exposed", 2, Some("f"))]);
+        assert!(matches!(
+            read_verdict(&one, "src/lib.rs", 2, 2),
+            Verdict::Class { ref owner, .. } if owner == "f"
+        ));
+        let unowned = rust_check_json(&[("exposed", 2, None), ("exposed", 3, None)]);
+        assert_eq!(
+            read_verdict(&unowned, "src/lib.rs", 2, 3),
+            Verdict::Ambiguous
+        );
     }
 
     #[test]

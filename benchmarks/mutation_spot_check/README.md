@@ -130,7 +130,9 @@ cargo-mutants mutant is also applied from its own recorded diff to a scratch
 copy of the checkout and run through `ripr check --diff`, using the same
 verdict join as TypeScript and Python (`agreement_method:
 synthetic_diff_verdict`, capped by `--max-mutants`). A recorded diff that no
-longer matches the checkout is the `recorded_diff_mismatch` exclusion; a
+longer matches the checkout is refused by the same `mutants.out` preflight as
+the span join; `recorded_diff_mismatch` is the per-mutant guard if a diff still
+fails to apply. A Rust run keeps the checkout's own `ripr.toml`. A
 mutant with no recorded diff (cargo-mutants before 27) is
 `recorded_diff_missing`; a hunk that only deletes lines is
 `deletion_only_mutant`, because it has no new line to read a verdict from. The
