@@ -362,7 +362,12 @@ fn runtime_log(log: &str) -> String {
             } else if message == "##[endgroup]" {
                 preview_depth -= 1;
             }
-        } else if message.starts_with("##[group]Run ") {
+        } else if message == "##[group]Run"
+            || message.starts_with("##[group]Run ")
+            || message.starts_with("##[group]Run\t")
+        {
+            // A script whose first line is blank opens as `##[group]Run `
+            // with nothing after the space; trimming yields the bare marker.
             preview_depth = 1;
         } else {
             output.push_str(line);
@@ -902,6 +907,18 @@ mod tests {
             || extract_disk_guard_gb_free(&actual_guard) != Some(8.0)
         {
             return Err("actual disk-guard output was lost after a command preview".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn blank_first_line_command_preview_is_not_failure_evidence() -> Result<(), String> {
+        // A script whose first line is blank opens as `##[group]Run ` with
+        // nothing after the space; trimming must not lose the opener.
+        let log =
+            "##[group]Run \nci-disk-guard /mnt/ci-scratch 35\n##[endgroup]\ntest result: FAILED\n";
+        if classify_failure(log) != "product" || extract_disk_guard_gb_free(log).is_some() {
+            return Err("blank-first-line preview was credited as runtime evidence".to_string());
         }
         Ok(())
     }
