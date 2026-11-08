@@ -319,6 +319,34 @@ pub(crate) fn enum_member_finding(
     }
 }
 
+/// Parses nested inline on one parse worker before the next one spawns a
+/// fresh worker. Each accepted parse is bounded by [`PARSE_NESTING_BUDGET`],
+/// and the worker stack holds tens of thousands of levels, so a few budgeted
+/// parses stacked on one worker stay far inside it.
+const MAX_INLINE_PARSE_DEPTH: usize = 4;
+
+thread_local! {
+    /// Parses active on this thread: 0 off a parse worker, 1 on a fresh
+    /// worker, more for parses run inline on it.
+    static PARSE_WORKER_DEPTH: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// `Some(previous depth)` when this thread is a parse worker with room for
+/// one more inline parse, which is now counted.
+fn enter_inline_parse() -> Option<usize> {
+    PARSE_WORKER_DEPTH.with(|depth| {
+        let current = depth.get();
+        (1..MAX_INLINE_PARSE_DEPTH).contains(&current).then(|| {
+            depth.set(current + 1);
+            current
+        })
+    })
+}
+
+fn leave_inline_parse(previous: usize) {
+    PARSE_WORKER_DEPTH.with(|depth| depth.set(previous));
+}
+
 /// Parse `source` for `file` behind the nesting budget and the large-stack
 /// worker thread, then run `analyze` over the parsed program inside the
 /// worker. Returns `Err` with a typed static-limit reason when the budget
@@ -331,14 +359,29 @@ where
     if let Some(estimated) = nesting_over_budget(source, source_may_contain_jsx(file)) {
         return Err(nesting_budget_refusal_reason(estimated));
     }
-    let owned_file = file.to_path_buf();
-    let owned_source = source.to_string();
     #[cfg(test)]
     let injection_owner = std::thread::current().id();
+    // #13908: a parse requested from inside a parse worker (a literal mask or
+    // a re-parse of a rewritten source while facts are derived) already runs
+    // on a large worker stack. It runs inline there instead of starting one
+    // more 256 MiB thread; a panic still becomes the same typed failure.
+    if let Some(depth) = enter_inline_parse() {
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            #[cfg(test)]
+            injected_worker_panic::fire(injection_owner, file);
+            let allocator = Allocator::default();
+            analyze(file, source, &allocator)
+        }));
+        leave_inline_parse(depth);
+        return result.map_err(|_panic| PARSE_WORKER_FAILED.to_string());
+    }
+    let owned_file = file.to_path_buf();
+    let owned_source = source.to_string();
     let spawn = std::thread::Builder::new()
         .name("ripr-ts-oxc-parse".to_string())
         .stack_size(PARSE_WORKER_STACK_BYTES)
         .spawn(move || {
+            PARSE_WORKER_DEPTH.with(|depth| depth.set(1));
             #[cfg(test)]
             injected_worker_panic::fire(injection_owner, &owned_file);
             let allocator = Allocator::default();
@@ -1086,5 +1129,88 @@ mod parse_depth_tests {
                 .iter()
                 .any(|line| line.contains(reason.as_str()))
         );
+    }
+}
+
+/// #13908: a parse requested from inside a parse worker runs inline on it,
+/// up to [`MAX_INLINE_PARSE_DEPTH`], with the same results and failure
+/// mapping as a spawned worker.
+#[cfg(test)]
+mod inline_parse_tests {
+    use super::*;
+
+    fn thread_id_of_parse() -> Result<std::thread::ThreadId, String> {
+        parse_on_worker(Path::new("a.ts"), "const a = 1;", |_, _, _| {
+            std::thread::current().id()
+        })
+    }
+
+    #[test]
+    fn a_parse_off_a_worker_spawns_and_a_nested_one_runs_inline() -> Result<(), String> {
+        let caller = std::thread::current().id();
+        let (outer, inner) = parse_on_worker(Path::new("a.ts"), "const a = 1;", |_, _, _| {
+            (std::thread::current().id(), thread_id_of_parse())
+        })?;
+        assert_ne!(outer, caller, "a test thread is no parse worker");
+        assert_eq!(inner?, outer, "a nested parse reuses the worker's stack");
+        assert_eq!(PARSE_WORKER_DEPTH.with(std::cell::Cell::get), 0);
+        Ok(())
+    }
+
+    #[test]
+    fn nesting_past_the_inline_bound_spawns_a_fresh_worker() -> Result<(), String> {
+        fn chain(left: usize) -> Result<Vec<std::thread::ThreadId>, String> {
+            parse_on_worker(Path::new("a.ts"), "const a = 1;", move |_, _, _| {
+                let mut ids = vec![std::thread::current().id()];
+                if left > 1 {
+                    ids.extend(chain(left - 1)?);
+                }
+                Ok::<_, String>(ids)
+            })?
+        }
+        let ids = chain(MAX_INLINE_PARSE_DEPTH + 1)?;
+        assert_eq!(ids.len(), MAX_INLINE_PARSE_DEPTH + 1);
+        let first_worker = ids[0];
+        assert!(
+            ids[..MAX_INLINE_PARSE_DEPTH]
+                .iter()
+                .all(|id| *id == first_worker),
+            "parses up to the bound share one worker"
+        );
+        assert_ne!(
+            ids[MAX_INLINE_PARSE_DEPTH], first_worker,
+            "the parse past the bound gets a fresh worker"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn an_inline_panic_is_the_typed_worker_failure_and_restores_the_depth() -> Result<(), String> {
+        let (failure, depth_after) =
+            parse_on_worker(Path::new("a.ts"), "const a = 1;", |_, _, _| {
+                let before = PARSE_WORKER_DEPTH.with(std::cell::Cell::get);
+                let failure = parse_on_worker(Path::new("b.ts"), "const b = 2;", |_, _, _| {
+                    std::panic::panic_any("injected inline parse failure")
+                });
+                let after = PARSE_WORKER_DEPTH.with(std::cell::Cell::get);
+                (failure.map(|()| ()), (before, after))
+            })?;
+        assert_eq!(failure, Err(PARSE_WORKER_FAILED.to_string()));
+        assert_eq!(depth_after.0, depth_after.1);
+        Ok(())
+    }
+
+    #[test]
+    fn a_nested_parse_still_honors_the_nesting_budget() -> Result<(), String> {
+        let deep = format!(
+            "x = {}1{};",
+            "(".repeat(PARSE_NESTING_BUDGET + 1),
+            ")".repeat(PARSE_NESTING_BUDGET + 1)
+        );
+        let refused = parse_on_worker(Path::new("a.ts"), "const a = 1;", move |_, _, _| {
+            parse_on_worker(Path::new("b.ts"), &deep, |_, _, _| ())
+        })?;
+        assert!(refused.is_err_and(|reason| reason.contains("expression_nesting_budget")));
+        Ok(())
     }
 }
