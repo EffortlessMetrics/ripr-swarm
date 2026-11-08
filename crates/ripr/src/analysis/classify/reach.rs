@@ -2430,7 +2430,7 @@ mod tests {
 
         // Inert attributes and doc comments keep the marker.
         let mut inline = owner.clone();
-        inline.attrs = vec!["#[inline(always)]".into(), "/// Returns exabytes.".into()];
+        inline.attrs = vec!["#[inline(always)]".into(), "/// Returns exabytes.".into()].into();
         assert!(unreferenced_fixture(lone, &inline, false), "inline + doc");
 
         // Attributes that export the owner to an unseen caller drop it.
@@ -2442,7 +2442,7 @@ mod tests {
             "#[proc_macro]",
         ] {
             let mut exported = owner.clone();
-            exported.attrs = vec![attr.into()];
+            exported.attrs = vec![attr.into()].into();
             assert!(!unreferenced_fixture(lone, &exported, false), "{attr}");
         }
         let mut impl_exported = owner.clone();
