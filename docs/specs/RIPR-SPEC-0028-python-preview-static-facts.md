@@ -291,7 +291,19 @@ mock expectations, and custom `assert_*` helpers.
   elements are not evaluated by this bounded path. An unproved list-equality
   change retains the finding and limitation without inventing a missing exact
   assertion, typed repair placement or repair card.
-- `self.assertTrue(...)` / `assertFalse(...)` â†’ smoke oracle
+- `self.assertTrue(...)` / `assertFalse(...)` → smoke oracle, except the bounded bool-owner exception below
+  Bool-owner exception (#13620): `assert f(lit, ..) is True` / `is False`
+  (either operand order), `self.assertTrue(f(lit, ..))`,
+  `self.assertFalse(f(lit, ..))` and `self.assertIs(f(lit, ..), True|False)`
+  are re-read as `f(lit, ..) == True|False` exact pins only when `f` is a
+  unique function owner that provably returns a `bool` (annotated `-> bool`,
+  or a single `return <comparison>`), every argument is a literal, the test
+  file does not patch or rebind `f`, and, for the unittest forms, the file
+  defines none of `assertTrue`/`assertFalse`/`assertIs`/`assertEqual` and every
+  class base is `unittest.TestCase` or `TestCase` imported from `unittest`.
+  `is not`, `is None`, `isinstance`, `assertIsNot`, `assertIsNotNone`, bare
+  truthiness on a non-bool owner and non-literal arguments stay uncredited.
+  `assertIs(x, True|False)` is recorded as a weak assertion otherwise.
 - `mock.assert_called*` family (`assert_called_once_with`,
   `assert_called_with`, `assert_called`, `assert_not_called`) â†’
   side-effect/call oracle
