@@ -878,3 +878,47 @@ fn given_unittest_bool_forms_pinning_the_boundary_then_the_changed_predicate_is_
     }
     Ok(())
 }
+
+#[test]
+fn negative_control_given_a_testcase_that_may_override_the_assertion_then_the_finding_is_not_exposed()
+-> Result<(), String> {
+    let body = "        self.assertTrue(is_adult(18))\n        self.assertFalse(is_adult(17))\n";
+    let header = "from src.rules import is_adult\n";
+    for source in [
+        // Overrides in the class itself, in another class of the file, or
+        // assigned at class level.
+        format!(
+            "import unittest\n{header}\n\nclass T(unittest.TestCase):\n    def assertTrue(self, value):\n        return None\n\n    def test_adult(self):\n{body}"
+        ),
+        format!(
+            "import unittest\n{header}\n\nclass Base(unittest.TestCase):\n    def assertFalse(self, value):\n        return None\n\n\nclass T(unittest.TestCase):\n    def test_adult(self):\n{body}"
+        ),
+        format!(
+            "import unittest\n{header}\n\nclass T(unittest.TestCase):\n    assertFalse = lambda self, value: None\n\n    def test_adult(self):\n{body}"
+        ),
+        // A base that is not visibly `unittest.TestCase` may define them.
+        format!(
+            "import unittest\nfrom helpers import LooseCase\n{header}\n\nclass T(LooseCase):\n    def test_adult(self):\n{body}"
+        ),
+        format!(
+            "{header}from somewhere import TestCase\n\n\nclass T(TestCase):\n    def test_adult(self):\n{body}"
+        ),
+    ] {
+        let finding = is_adult_finding(&source)?;
+        assert_ne!(finding.class, ExposureClass::Exposed, "{source}");
+        // A class with an unseen base may not even be read as a test class,
+        // so extraction is not asserted here; credit never is.
+        assert!(
+            credited_strengths(BOOL_OWNER, &source)
+                .iter()
+                .all(|strength| *strength != OracleStrength::Strong),
+            "{source}"
+        );
+    }
+    // Positive control: the stock `from unittest import TestCase` spelling.
+    let stock = format!(
+        "from unittest import TestCase\n{header}\n\nclass T(TestCase):\n    def test_adult(self):\n{body}"
+    );
+    assert_eq!(is_adult_finding(&stock)?.class, ExposureClass::Exposed);
+    Ok(())
+}

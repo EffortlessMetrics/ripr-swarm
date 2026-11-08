@@ -684,6 +684,11 @@ fn unittest_bool_call(
     source: &SourceText<'_>,
 ) -> Option<super::PythonBareBoolCall> {
     let name = expr_full_name(call.func.as_ref())?;
+    // The receiver spelling alone proves nothing: a `TestCase` subclass may
+    // define its own `assertTrue`, so the file must visibly use stock ones.
+    if !source.standard_unittest_receivers(stock_unittest_receivers) {
+        return None;
+    }
     let (inner, expected) = if is_unittest_receiver(&name, "assertTrue") {
         (call.args.first()?, true)
     } else if is_unittest_receiver(&name, "assertFalse") {
@@ -713,6 +718,51 @@ fn unittest_bool_call(
         return None;
     };
     literal_bool_call(inner, !expected, source)
+}
+
+/// Whether every `self.assertTrue/assertFalse/assertIs` in this file can only
+/// reach `unittest.TestCase`'s own methods, judged on the text alone and
+/// conservatively (#13620): the file defines or assigns none of the guarded
+/// method names, and every class base is `unittest.TestCase`, or `TestCase`
+/// imported from `unittest`. Any other base may define them out of sight.
+fn stock_unittest_receivers(text: &str) -> bool {
+    const GUARDED: [&str; 4] = ["assertTrue", "assertFalse", "assertIs", "assertEqual"];
+    let imports_test_case = text.lines().any(|line| {
+        let line = line.trim();
+        line.starts_with("from unittest import")
+            && line
+                .split(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
+                .any(|word| word == "TestCase")
+    });
+    text.lines().all(|line| {
+        let line = line.trim_start();
+        let line = line.strip_prefix("async ").unwrap_or(line);
+        let defines = |rest: &str| {
+            GUARDED.iter().any(|name| {
+                rest.strip_prefix(name).is_some_and(|after| {
+                    !after.starts_with(|ch: char| ch.is_alphanumeric() || ch == '_')
+                })
+            })
+        };
+        if let Some(rest) = line.strip_prefix("def ") {
+            return !defines(rest.trim_start());
+        }
+        if defines(line) && line.contains('=') {
+            return false;
+        }
+        let Some(header) = line.strip_prefix("class ") else {
+            return true;
+        };
+        let Some((_, bases)) = header.split_once('(') else {
+            return true;
+        };
+        let bases = bases.split(')').next().unwrap_or_default();
+        bases.split(',').map(str::trim).all(|base| {
+            base.is_empty()
+                || base == "unittest.TestCase"
+                || (base == "TestCase" && imports_test_case)
+        })
+    })
 }
 
 fn literal_bool_call(
