@@ -97,8 +97,8 @@ cargo install --locked --git https://github.com/EffortlessMetrics/ripr-swarm rip
 ```
 
 From a `ripr-swarm` checkout, `cargo install --path crates/ripr` does the same.
-Either route compiles from source: expect about 6 minutes cold on a 4-core
-machine (October 2026 measurement). The prebuilt 0.10.0 archive downloads in
+Every source route (these two and `cargo install ripr`) compiles: expect about
+5 to 6 minutes cold on a 4-core machine (October 2026 measurement). The prebuilt 0.10.0 archive downloads in
 about a second; there is no prebuilt 0.11 archive until 0.11.0 is published.
 `cargo xtask first-run --install-archive 0.10.0` replays and times the archive
 route; the [first-run scoreboard](../benchmarks/dx_scoreboard/README.md) tracks it.
