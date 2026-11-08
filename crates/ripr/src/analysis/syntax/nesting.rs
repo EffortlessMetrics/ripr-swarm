@@ -40,8 +40,17 @@ pub(crate) fn parse_clean_source_file(text: &str) -> Option<Parse<SourceFile>> {
     if rust_nesting_refusal(text).is_some() {
         return None;
     }
+    #[cfg(test)]
+    CLEAN_PARSE_CALLS.with(|calls| calls.set(calls.get() + 1));
     let (parse, error_count) = parse_source_file_checked(text);
     (error_count == 0).then_some(parse)
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Parses that reached the parser on this thread, so a test can prove a
+    /// producer parses each file once.
+    pub(crate) static CLEAN_PARSE_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// [`parse_clean_source_file`] memoized per thread for small texts.
