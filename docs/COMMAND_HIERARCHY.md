@@ -78,8 +78,11 @@ verify document) with the same exit code and stderr prose. Every other
 refusal is unchanged by `--json`: `repair` refusals, `continue` selection
 refusals (no current attempt, several attempts, an ended attempt, a blocked
 baseline, an unanchored root), operational errors before the verify step
-and usage errors keep the same exit code, prose
-on stderr and empty stdout.
+and argv usage errors outside the `cli_refusal` classes keep the same exit
+code, prose on stderr and empty stdout. An unknown flag (or, for `continue`,
+a stray positional argument) under `--json` keeps exit `2` and its stderr
+prose and also writes the standalone `cli_refusal` document to stdout
+(`docs/OUTPUT_SCHEMA.md`, #6834 decision).
 
 Keep the printed continuation command when changing sessions, or rerun
 `ripr continue --attempt ATTEMPT_ID --root .`. The seam ID selects the

@@ -341,6 +341,34 @@ fn source_type_for_extension(path: &Path) -> SourceType {
     }
 }
 
+/// Owners whose cross-module callers were not followed because more than
+/// `MAX_CROSS_MODULE_ENTRIES` of them call it, keyed by owner identity (#13592).
+type FanInLimitedOwners = std::collections::HashSet<(PathBuf, String, usize)>;
+
+/// The per-owner line context every changed-line pass (added and deleted)
+/// shares, carrying the owner's fan-in limit so no pass can drop it (#13592).
+fn changed_owner_line_context<'a>(
+    owner: &TypeScriptOwner,
+    all_tests: &'a [TypeScriptTest],
+    workspace_root: &Path,
+    reexport_index: &related_tests::ReExportIndex,
+    relation_index: &relation_index::RelationIndex,
+    alias_map: Option<&TsAliasMap>,
+    fan_in_limited: &FanInLimitedOwners,
+) -> OwnerLineContext<'a> {
+    let mut context = owner_line_context(
+        owner,
+        all_tests,
+        Some(workspace_root),
+        reexport_index,
+        relation_index,
+        alias_map,
+    );
+    context.cross_module_fan_in_limited =
+        fan_in_limited.contains(&(owner.file.clone(), owner.name.clone(), owner.start_line));
+    context
+}
+
 /// First owner in source order whose span contains `line`, over a
 /// start-line-sorted slice and its prefix-max of end lines (#10021).
 /// `file_owners` must be sorted by `start_line` (stable, so equal start
@@ -1046,6 +1074,34 @@ impl TypeScriptAdapter {
             Some(&options.root),
         );
 
+        // #13592: an owner of a changed file that no test calls directly is
+        // also reached through exports of OTHER modules that call it by an
+        // imported binding. Resolved only for changed files, through the
+        // re-export index's import identity, and bounded like the
+        // same-module caller chain. An owner past the fan-in limit gets none
+        // and its finding discloses the limit.
+        let mut cross_module_fan_in_limited = FanInLimitedOwners::new();
+        for owner in &mut all_owners {
+            if owner.class_name.is_none()
+                && changed_paths.contains(&normalized_path(&owner.file))
+                && !reexport_index.is_empty_outbound()
+            {
+                let cross =
+                    reexport_index.cross_module_entries(owner, alias_map_ref, Some(&options.root));
+                if cross.over_fan_in_limit {
+                    cross_module_fan_in_limited.insert((
+                        owner.file.clone(),
+                        owner.name.clone(),
+                        owner.start_line,
+                    ));
+                }
+                if !cross.entries.is_empty() {
+                    owner.module_entries.extend(cross.entries);
+                    owner.module_entries.sort();
+                }
+            }
+        }
+
         // #10028: invert the test corpus once so each owner's relation scans
         // (pass-1 candidates, module-entry union, the two named-limitation
         // passes) pre-filter by body-name / import-shape / re-export-exposure
@@ -1379,13 +1435,14 @@ impl TypeScriptAdapter {
                         // index: unique within this changed file, so the key
                         // needs no cloned Strings.
                         let context = owner_contexts.entry(owner_idx).or_insert_with(|| {
-                            let mut context = owner_line_context(
+                            let mut context = changed_owner_line_context(
                                 owner,
                                 &all_tests,
-                                Some(&options.root),
+                                &options.root,
                                 &reexport_index,
                                 &relation_index,
                                 alias_map_ref,
+                                &cross_module_fan_in_limited,
                             );
                             context.single_line_replacement = matches!(
                                 (changed.added_lines.as_slice(), changed.removed_lines.as_slice()),
@@ -1510,13 +1567,14 @@ impl TypeScriptAdapter {
                         owner.end_line,
                     )?;
                     let context = owner_contexts.entry(owner_idx).or_insert_with(|| {
-                        owner_line_context(
+                        changed_owner_line_context(
                             owner,
                             &all_tests,
-                            Some(&options.root),
+                            &options.root,
                             &reexport_index,
                             &relation_index,
                             alias_map_ref,
+                            &cross_module_fan_in_limited,
                         )
                     });
                     classify_resolved_owner(
