@@ -18,6 +18,10 @@
 //! next=ripr explain --root /repo probe:...
 //! ```
 //!
+//! The last line is always `verify=complete|...` or `verify=refused|...|reason=`
+//! (#13516): the post-edit completion record, projected from the producer's
+//! outcome and full summary counts, never from the displayed subset.
+//!
 //! Terminal states are one explicit line: `done=` when nothing is left to fix
 //! from the test side, `stop=` when ripr cannot offer a test-side fix.
 //! Explain drill-ins keep this format unless an explicit suppression policy
@@ -27,7 +31,9 @@
 use super::triage::{self, HumanTriage};
 use crate::app::{CheckDiffProvenance, CheckOutput, FindingDrillIn};
 use crate::config::RiprConfig;
-use crate::domain::{ExposureClass, Finding, NextActionCheckCase, OracleStrength, RelatedTest};
+use crate::domain::{
+    ExposureClass, Finding, NextActionCheckCase, OracleStrength, RelatedTest, RelationConfidence,
+};
 use crate::output::next_action::render_next_action_plain_at_root;
 use crate::output::path::repository_display_path;
 use std::collections::BTreeMap;
@@ -51,6 +57,47 @@ pub(super) fn gap_line_budget(total: usize) -> usize {
 const FIELD_BUDGET: usize = 80;
 
 pub(super) fn render(
+    output: &CheckOutput,
+    config: &RiprConfig,
+    drill_in: Option<&FindingDrillIn>,
+    provenance: CheckDiffProvenance,
+) -> String {
+    let mut out = render_report(output, config, drill_in, provenance);
+    // #13516: the verification record is the last line, after every bounded
+    // section, so external truncation can never leave a leading success marker.
+    out.push_str(&verification_line(output));
+    out.push('\n');
+    out
+}
+
+/// The post-edit completion record for `ripr check --format agent` (#13516).
+///
+/// Formats [`CheckOutput::verification`], the app-owned completion verdict;
+/// this renderer adds no completeness decision of its own. It is independent
+/// of the triage `done=` terminal, which keeps its own meaning. Its counts are
+/// the full `summary`, which the producer derives from the same finding set
+/// as the header; they differ from the header only under a suppression
+/// policy, where the header omits suppressed findings.
+fn verification_line(output: &CheckOutput) -> String {
+    let verdict = output.verification();
+    let facts = format!(
+        "outcome={}|findings={}|exposed={}",
+        verdict.outcome.map_or("missing", |kind| kind.as_str()),
+        verdict.findings,
+        verdict.exposed
+    );
+    if verdict.is_complete() {
+        return format!("verify=complete|{facts}");
+    }
+    let reasons: Vec<&str> = verdict
+        .refusals
+        .iter()
+        .map(|refusal| refusal.as_str())
+        .collect();
+    format!("verify=refused|{facts}|reason={}", reasons.join(","))
+}
+
+fn render_report(
     output: &CheckOutput,
     config: &RiprConfig,
     drill_in: Option<&FindingDrillIn>,
@@ -94,6 +141,12 @@ pub(super) fn render(
     out.push_str(&incomplete_lines);
     let next = next_line(&triage, output, &gaps, drill_in, provenance);
     if output.findings.is_empty() && !output.no_scope_provided {
+        // #13658: a `no_scope` outcome (empty or unparseable --diff) read
+        // nothing, so it must not claim `done`.
+        if !incomplete && has_no_scope_outcome(output) {
+            out.push_str("stop=nothing was in scope; zero findings is not a clean result (nothing was parsed or analyzed)\n");
+            return out;
+        }
         out.push_str(if incomplete {
             "stop=analysis incomplete; zero findings is not a clean result\n"
         } else {
@@ -167,6 +220,12 @@ pub(super) fn render(
 /// Project the producer's closed completeness decision, before any terminal
 /// claim. Retained gaps may still be useful, but do not complete this run.
 /// The pipeline already projects partial-scope budgets into this outcome.
+fn has_no_scope_outcome(output: &CheckOutput) -> bool {
+    output.analysis_outcome.as_ref().is_some_and(|outcome| {
+        outcome.kind == crate::analysis_outcome::AnalysisOutcomeKind::NoScope
+    })
+}
+
 fn render_incomplete_analysis(out: &mut String, output: &CheckOutput) -> bool {
     let Some(outcome) = output
         .analysis_outcome
@@ -284,7 +343,7 @@ pub(super) fn render_finding(
     {
         (
             "done=a related test appears to notice this change; static advisory, not runtime proof",
-            strongest_test(finding),
+            noticing_test(finding),
         )
     } else {
         (
@@ -671,12 +730,41 @@ struct TestRef {
     line: String,
 }
 
+/// The related test an agent should open first (#13603): the relation
+/// confidence the producer already ranks rows by (`ripr context`, the human
+/// headline) leads, so a test that calls the changed function outranks one
+/// linked only by file location; oracle strength breaks ties within a
+/// confidence tier. A row without a recorded relation ranks with `Opaque`.
 fn strongest_test(finding: &Finding) -> Option<&RelatedTest> {
     finding
         .related_tests
         .iter()
         .filter(|test| test.is_contributing())
-        .min_by_key(|test| strength_rank(&test.oracle_strength))
+        .min_by_key(|test| {
+            (
+                test.relation_confidence
+                    .map_or(RelationConfidence::Opaque.rank(), RelationConfidence::rank),
+                strength_rank(&test.oracle_strength),
+            )
+        })
+}
+
+/// The related test a `done=` line names as the one that appears to notice
+/// the change: the strongest oracle leads, so a direct caller holding only a
+/// smoke check is never named as the noticer over a test that pins the value;
+/// relation confidence breaks ties (#13603 review).
+fn noticing_test(finding: &Finding) -> Option<&RelatedTest> {
+    finding
+        .related_tests
+        .iter()
+        .filter(|test| test.is_contributing())
+        .min_by_key(|test| {
+            (
+                strength_rank(&test.oracle_strength),
+                test.relation_confidence
+                    .map_or(RelationConfidence::Opaque.rank(), RelationConfidence::rank),
+            )
+        })
 }
 
 fn strength_rank(strength: &OracleStrength) -> u8 {

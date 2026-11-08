@@ -69,9 +69,16 @@ fn explain_format_aliases_and_json_recovery_keep_their_contracts() {
             "missing value for --root; pass a value right after it",
         );
     }
-    assert_usage_error(
-        run_ripr(&["explain", "--format", "json"]),
-        "`ripr explain --format json` is not offered; use `ripr context --at <finding-id>` for the JSON packet, or `--format agent` for compact lines",
+    // #11584: an explicit JSON format request also gets the cli_refusal document.
+    let refused = run_ripr(&["explain", "--format", "json"]);
+    assert_eq!(refused.status.code(), Some(2), "{refused:?}");
+    assert!(
+        String::from_utf8_lossy(&refused.stdout).contains("\"status\": \"refused\""),
+        "{refused:?}"
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&refused.stderr),
+        "ripr: `ripr explain --format json` is not offered; use `ripr context --at <finding-id>` for the JSON packet, or `--format agent` for compact lines\n"
     );
     assert_usage_error(
         run_ripr(&["explain", "--format"]),

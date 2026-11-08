@@ -50,6 +50,118 @@ pub(super) struct PythonHelperModule {
     /// `try` whose every handler re-raises (RIPR-SPEC-0238 rule 27).
     reraisers: BTreeSet<String>,
     bound: BTreeSet<String>,
+    /// How many import statements bind each name anywhere in the module,
+    /// nested and conditional ones included (`bound` skips imports).
+    #[serde(default)]
+    import_bindings: BTreeMap<String, usize>,
+    /// Names (and attribute names) a `del` removes anywhere in the module.
+    #[serde(default)]
+    deleted: BTreeSet<String>,
+    /// Attribute names assigned anywhere in the module (`x.attr = ...`).
+    #[serde(default)]
+    assigned_attributes: BTreeSet<String>,
+    /// True only when the module has no star import, no walrus, and nowhere
+    /// names a patcher or dynamic namespace writer (`patch`, `setattr`,
+    /// `globals`, `sys.modules`, ...). A module-level or autouse-fixture
+    /// patch of an imported module's attribute is otherwise invisible to the
+    /// module-attribute helper read; both the test module and the helper's
+    /// module must be patch-free. Defaults to false so a stale cached module
+    /// fails closed.
+    #[serde(default)]
+    patch_free: bool,
+}
+
+/// Counts every import binding and `del` target in `statements`, descending
+/// into every nested block, def and class.
+fn scan_import_rebinding(
+    statements: &[Stmt],
+    imports: &mut BTreeMap<String, usize>,
+    deleted: &mut BTreeSet<String>,
+) {
+    fn deleted_targets(target: &Expr, deleted: &mut BTreeSet<String>) {
+        match target {
+            Expr::Name(name) => {
+                deleted.insert(name.id.to_string());
+            }
+            Expr::Attribute(attribute) => {
+                deleted.insert(attribute.attr.to_string());
+            }
+            Expr::Tuple(tuple) => tuple.elts.iter().for_each(|e| deleted_targets(e, deleted)),
+            Expr::List(list) => list.elts.iter().for_each(|e| deleted_targets(e, deleted)),
+            _ => {}
+        }
+    }
+    fn handlers(
+        handlers: &[ast::ExceptHandler],
+        imports: &mut BTreeMap<String, usize>,
+        deleted: &mut BTreeSet<String>,
+    ) {
+        for handler in handlers {
+            let ast::ExceptHandler::ExceptHandler(handler) = handler;
+            scan_import_rebinding(&handler.body, imports, deleted);
+        }
+    }
+    for stmt in statements {
+        match stmt {
+            Stmt::Import(import) => {
+                for alias in &import.names {
+                    let name = match &alias.asname {
+                        Some(asname) => asname.to_string(),
+                        None => alias.name.split('.').next().unwrap_or_default().to_string(),
+                    };
+                    *imports.entry(name).or_default() += 1;
+                }
+            }
+            Stmt::ImportFrom(import) => {
+                for alias in &import.names {
+                    let name = alias.asname.as_ref().unwrap_or(&alias.name).to_string();
+                    *imports.entry(name).or_default() += 1;
+                }
+            }
+            Stmt::Delete(delete) => delete
+                .targets
+                .iter()
+                .for_each(|target| deleted_targets(target, deleted)),
+            Stmt::FunctionDef(f) => scan_import_rebinding(&f.body, imports, deleted),
+            Stmt::AsyncFunctionDef(f) => scan_import_rebinding(&f.body, imports, deleted),
+            Stmt::ClassDef(c) => scan_import_rebinding(&c.body, imports, deleted),
+            Stmt::For(f) => {
+                scan_import_rebinding(&f.body, imports, deleted);
+                scan_import_rebinding(&f.orelse, imports, deleted);
+            }
+            Stmt::AsyncFor(f) => {
+                scan_import_rebinding(&f.body, imports, deleted);
+                scan_import_rebinding(&f.orelse, imports, deleted);
+            }
+            Stmt::While(w) => {
+                scan_import_rebinding(&w.body, imports, deleted);
+                scan_import_rebinding(&w.orelse, imports, deleted);
+            }
+            Stmt::If(i) => {
+                scan_import_rebinding(&i.body, imports, deleted);
+                scan_import_rebinding(&i.orelse, imports, deleted);
+            }
+            Stmt::With(w) => scan_import_rebinding(&w.body, imports, deleted),
+            Stmt::AsyncWith(w) => scan_import_rebinding(&w.body, imports, deleted),
+            Stmt::Try(t) => {
+                scan_import_rebinding(&t.body, imports, deleted);
+                handlers(&t.handlers, imports, deleted);
+                scan_import_rebinding(&t.orelse, imports, deleted);
+                scan_import_rebinding(&t.finalbody, imports, deleted);
+            }
+            Stmt::TryStar(t) => {
+                scan_import_rebinding(&t.body, imports, deleted);
+                handlers(&t.handlers, imports, deleted);
+                scan_import_rebinding(&t.orelse, imports, deleted);
+                scan_import_rebinding(&t.finalbody, imports, deleted);
+            }
+            Stmt::Match(m) => m
+                .cases
+                .iter()
+                .for_each(|case| scan_import_rebinding(&case.body, imports, deleted)),
+            _ => {}
+        }
+    }
 }
 
 pub(super) fn collect_helper_module(
@@ -59,9 +171,19 @@ pub(super) fn collect_helper_module(
 ) -> PythonHelperModule {
     let mut module = PythonHelperModule::default();
     bound_names(statements, &mut module.bound);
+    scan_import_rebinding(statements, &mut module.import_bindings, &mut module.deleted);
+    module.assigned_attributes = super::module_constants::assigned_attribute_names(statements)
+        .into_iter()
+        .collect();
     let imports = collect_imports_from_statements(file, statements);
     // A star import may rebind any name, wrapper included.
     let star_import = imports.iter().any(|import| import.imported == "*");
+    // A walrus (`conftest := other`) rebinds a name that `bound_names` and
+    // the import scan do not see.
+    module.patch_free = !star_import
+        && !source.contains(":=")
+        && !source.contains("patch")
+        && !super::module_constants::writes_namespace_in_text(source);
     let imported: BTreeSet<String> = imports.into_iter().map(|import| import.alias).collect();
     let bindings = super::module_constants::ModuleBindingFacts::of(source, statements);
     let attributes = Arc::new(super::module_constants::assigned_attribute_names(
@@ -380,17 +502,27 @@ fn resolve_test(test: &mut PythonTest, modules: &BTreeMap<PathBuf, PythonHelperM
             continue;
         };
         let call = unwrapped_call(test, call, &local, modules).unwrap_or(call);
-        let Expr::Name(callee) = call.func.as_ref() else {
-            continue;
+        // `helper(...)` or `module.helper(...)` where `module` is an imported
+        // workspace module (`from . import conftest`).
+        let (name, module_attr) = match call.func.as_ref() {
+            Expr::Name(callee) => (callee.id.as_str(), None),
+            Expr::Attribute(attribute) => match attribute.value.as_ref() {
+                Expr::Name(base) => (base.id.as_str(), Some(attribute.attr.as_str())),
+                _ => continue,
+            },
+            _ => continue,
         };
-        let name = callee.id.as_str();
         if local.contains(name)
             || !call.keywords.is_empty()
             || call.args.iter().any(|arg| matches!(arg, Expr::Starred(_)))
         {
             continue;
         }
-        let Some(helper) = resolve_helper(test, name, modules) else {
+        let helper = match module_attr {
+            None => resolve_helper(test, name, modules),
+            Some(attr) => resolve_module_helper(test, name, attr, modules),
+        };
+        let Some(helper) = helper else {
             continue;
         };
         if helper.params.len() != call.args.len() {
@@ -497,7 +629,7 @@ fn resolve_helper<'a>(
             if own.is_some_and(|module| module.bound.contains(name)) {
                 return None;
             }
-            if import.source_module.is_empty() || import.imported == "*" {
+            if import.source_module.is_empty() {
                 return None;
             }
             (
@@ -511,6 +643,85 @@ fn resolve_helper<'a>(
         .helpers
         .iter()
         .find(|helper| helper.name == helper_name)
+}
+
+/// The helper `module_name.helper_name` names when `module_name` is bound by
+/// exactly one import of a workspace module: `from . import conftest` /
+/// `from pkg import helpers` (a submodule file, with no same-named binding in
+/// the package `__init__`) or `import pkg.helpers as helpers`. The test must
+/// not rebind the module name or assign the attribute (#13629).
+fn resolve_module_helper<'a>(
+    test: &PythonTest,
+    module_name: &str,
+    helper_name: &str,
+    modules: &'a BTreeMap<PathBuf, PythonHelperModule>,
+) -> Option<&'a PythonAssertionHelper> {
+    let mut matching = test
+        .imports
+        .iter()
+        .filter(|import| import.alias == module_name);
+    let import = matching.next()?;
+    let own = modules.get(&test.file)?;
+    if matching.next().is_some()
+        // Any other import of the alias (nested, conditional, in the test
+        // body), or a `del` of it, makes the bound module order-dependent.
+        || own.import_bindings.get(module_name).copied() != Some(1)
+        || own.deleted.contains(module_name)
+        || own.deleted.contains(helper_name)
+        || own.bound.contains(module_name)
+        // The helper attribute replaced anywhere in the test file.
+        || own.assigned_attributes.contains(helper_name)
+        // A star import, or a patcher anywhere in the test file (module
+        // level, an autouse fixture, a decorator), may replace the attribute.
+        || !own.patch_free
+        || test.body_text.contains("setattr")
+        || test.body_text.contains("patch")
+        || assigns_module_attribute(&test.body_text, module_name, helper_name)
+    {
+        return None;
+    }
+    let dotted = if import.source_module.is_empty() {
+        // `import pkg.helpers as helpers`. An undotted module (`import
+        // helpers`, `import helpers as h`) resolves through `sys.path`, and
+        // an empty source from `from ... import x` is a relative import that
+        // escaped the package; neither names a workspace module.
+        if !import.imported.contains('.') {
+            return None;
+        }
+        import.imported.clone()
+    } else {
+        // `from pkg import helpers` names a submodule only when the package
+        // `__init__` does not bind the same name itself, by assignment, def,
+        // import or star import.
+        let package = format!("{}/__init__.py", import.source_module.replace('.', "/"));
+        if modules.get(Path::new(&package)).is_some_and(|init| {
+            init.bound.contains(&import.imported)
+                || init.import_bindings.contains_key(&import.imported)
+                || init.import_bindings.contains_key("*")
+        }) {
+            return None;
+        }
+        format!("{}.{}", import.source_module, import.imported)
+    };
+    let target = module_for(&dotted, modules)?;
+    // The helper's own module may replace its helper (an autouse fixture
+    // patching `sys.modules[__name__]`, a module-level `setattr`).
+    if !target.patch_free {
+        return None;
+    }
+    target
+        .helpers
+        .iter()
+        .find(|helper| helper.name == helper_name)
+}
+
+/// Whether the text assigns `module.attr` (`module.attr = ...`, not `==`).
+fn assigns_module_attribute(text: &str, module: &str, attr: &str) -> bool {
+    let target = format!("{module}.{attr}");
+    text.match_indices(&target).any(|(index, _)| {
+        let rest = text[index + target.len()..].trim_start();
+        rest.starts_with('=') && !rest.starts_with("==")
+    })
 }
 
 /// The workspace module a dotted `from` source names, as a plain module file
