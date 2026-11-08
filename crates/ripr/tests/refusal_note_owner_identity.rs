@@ -6,6 +6,9 @@
 //! conditional path and calls `Other::parse`, an associated function that only
 //! shares the name. Ranking prefers a non-limit owner-calling refusal, so the
 //! name-only call used to front for the gap and the note named `other`.
+//!
+//! The fixtures are parsed, never compiled or run: the async test is a
+//! deliberate analyzer-limit refusal and `helper` is never resolved.
 
 use ripr::{CheckInput, ExposureClass, Mode, OutputFormat, check_workspace, render_check};
 use std::path::PathBuf;
