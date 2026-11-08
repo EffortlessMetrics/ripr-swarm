@@ -209,7 +209,10 @@ pub(crate) fn render_finding_digest_with_config(
         }
     }
     if let Some(gap) = &finding.canonical_gap {
-        out.push_str(&format!("  Gap ID (for scripts): {}\n", gap.id));
+        out.push_str(&format!(
+            "  Gap ID (for scripts): {}\n",
+            crate::output::human::cap_rendered_identity(&gap.id)
+        ));
     }
     let changed = finding
         .probe
@@ -693,7 +696,10 @@ pub(super) fn render_finding_with_shared_sections(
         out.push_str(&format!("  owner:  {owner}\n"));
     }
     if let Some(gap) = &finding.canonical_gap {
-        out.push_str(&format!("  gap id (for scripts): {}\n", gap.id));
+        out.push_str(&format!(
+            "  gap id (for scripts): {}\n",
+            crate::output::human::cap_rendered_identity(&gap.id)
+        ));
     }
 
     if should_render_language_metadata(finding) {

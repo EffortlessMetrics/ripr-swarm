@@ -263,7 +263,7 @@ fn empty_scope_note(output: &CheckOutput) -> Option<String> {
 /// nothing was in scope, or files changed and none routed to a language adapter
 /// (docs/config-only diffs). The same predicate the pipeline uses for its
 /// non-source disclosure: no Rust files and no per-language changed files.
-fn no_source_examined(output: &CheckOutput) -> bool {
+pub(crate) fn no_source_examined(output: &CheckOutput) -> bool {
     use crate::analysis_outcome::AnalysisOutcomeKind::{
         NoBehavioralCandidates, NoChangedLines, NoScope,
     };
@@ -1460,6 +1460,26 @@ pub(crate) const FINDING_ID_COMMAND_LABEL: &str = "(finding id, for explain/cont
 /// exempt data.
 pub(crate) const SPOT_ID_COMMAND_LABEL: &str = "(spot id, for repair)";
 
+/// Longest rendered gap identity (characters) on the human and GitHub
+/// surfaces. A gap id embeds a slug of the changed expression, so one huge
+/// generated line would otherwise echo ~100 KB into a report or a GitHub
+/// annotation (#13660). JSON and agent output keep the full id.
+pub(crate) const MAX_RENDERED_IDENTITY_CHARS: usize = 240;
+
+/// Cap an echoed identity/source snippet at [`MAX_RENDERED_IDENTITY_CHARS`],
+/// ending a cut value with an explicit ellipsis marker.
+pub(crate) fn cap_rendered_identity(value: &str) -> String {
+    if value.chars().count() <= MAX_RENDERED_IDENTITY_CHARS {
+        return value.to_string();
+    }
+    let mut capped = value
+        .chars()
+        .take(MAX_RENDERED_IDENTITY_CHARS)
+        .collect::<String>();
+    capped.push_str("… (truncated; full id in --format json)");
+    capped
+}
+
 /// Print the consumer label naming the id domain of a drill-in command group
 /// (#12431), then each runnable command line byte-identical, then the
 /// PowerShell twin when it needs a different form. The label sits on its own
@@ -2531,6 +2551,59 @@ mod tests {
             "human-full must retain the glossed tokens:\n{full}"
         );
         Ok(())
+    }
+
+    #[test]
+    fn long_gap_id_is_capped_in_the_default_view_and_short_ids_are_whole() {
+        // #13660: a gap id embeds the changed expression; one huge generated
+        // line must not echo ~100 KB into the report.
+        let mut finding = sample_finding();
+        let long = format!(
+            "gap:rust:src/lib.rs:f:static_unknown:{}",
+            "x+".repeat(50_000)
+        );
+        finding.canonical_gap = Some(crate::domain::FindingCanonicalGap {
+            id: long.clone(),
+            language: "rust".to_string(),
+            file: "src/lib.rs".to_string(),
+            owner: "f".to_string(),
+            behavior_kind: "static_unknown".to_string(),
+            probe_kind: "predicate".to_string(),
+            normalized_discriminator: "x".to_string(),
+        });
+        let rendered = render(&bounded_output_with_findings(vec![finding]));
+        let line = rendered
+            .lines()
+            .find(|line| line.contains("Gap ID (for scripts):"))
+            .unwrap_or_default();
+        assert!(
+            line.contains("… (truncated; full id in --format json)"),
+            "{line}"
+        );
+        assert!(line.chars().count() < 400, "{}", line.chars().count());
+        assert!(!rendered.contains(&long));
+        // The exhaustive per-finding card caps the same id.
+        let full = super::render_full_with_config(
+            &bounded_output_with_findings(vec![{
+                let mut f = sample_finding();
+                f.canonical_gap = Some(crate::domain::FindingCanonicalGap {
+                    id: long.clone(),
+                    language: "rust".to_string(),
+                    file: "src/lib.rs".to_string(),
+                    owner: "f".to_string(),
+                    behavior_kind: "static_unknown".to_string(),
+                    probe_kind: "predicate".to_string(),
+                    normalized_discriminator: "x".to_string(),
+                });
+                f
+            }]),
+            &RiprConfig::default(),
+        );
+        assert!(full.contains("gap id (for scripts): "), "{}", full.len());
+        assert!(!full.contains(&long));
+        assert!(full.len() < 20_000, "{}", full.len());
+        let short = "gap:rust:src/lib.rs:f:predicate_boundary:predicate:a==1";
+        assert_eq!(super::cap_rendered_identity(short), short);
     }
 
     /// #10691: the default view carries no internal noun from the issue's
