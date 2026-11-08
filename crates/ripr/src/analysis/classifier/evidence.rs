@@ -2657,8 +2657,6 @@ fn preferred_refusal_note(notes: Vec<AssertionRefusalNote>) -> Option<AssertionR
     notes.into_iter().min_by_key(rank)
 }
 
-/// True when `name` occurs as a whole identifier in the code of `text`,
-/// ignoring comments and string contents.
 #[cfg(test)]
 thread_local! {
     /// Test witness: related-test membership checks that
@@ -2690,6 +2688,8 @@ fn other_function_holds_owner(
     })
 }
 
+/// True when `name` occurs as a whole identifier in the code of `text`,
+/// ignoring comments and string contents.
 fn mentions_identifier(text: &str, name: &str) -> bool {
     if name.is_empty() || !text.contains(name) {
         return false;
