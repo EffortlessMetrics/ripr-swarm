@@ -862,7 +862,10 @@ The selected producer-owned new-test proposal is read through one projection,
 `analysis/new_test_target.rs`. The repair card's proposed target and the agent
 packet's recommended test take their kind and file from it unchanged, and MCP
 discloses it as `proposed_new_test {kind, file, module, summary}` on a gap item
-whose shared-gate target is the proposal (a `SeamVerdict::AdmittedProposed`).
+whose shared-gate target is the proposal (a `SeamVerdict::AdmittedProposed`),
+including a proposal-only item whose finding has no existing fix site
+(`fix_site_not_established`): that item stays not ready and names the proposal
+the CLI card names. An item held by any other gate names none.
 The MCP disclosure is only a disclosure: readiness, the refusal code and the
 admit-or-refuse decision are exactly those of a plain `Admitted` verdict, and a
 refusal stays a refusal. No renderer picks its own file or kind, no target is
@@ -872,8 +875,9 @@ the surface holds the admission's region (MCP does, and an InlineUnit proposal's
 module appears there; the card and packet hold only the proposal, so they show
 none). A seam whose recommended file is its own production file with an owner
 inline region keeps the existing `AdmittedInline` verdict, which already names
-the module, so it is not repeated as a proposal. A not-ready item or a refused
-verdict discloses no proposal. The
+the module, so it is not repeated as a proposal. A not-ready item held by any gate
+other than `fix_site_not_established`, or a refused verdict, discloses no
+proposal. The
 LSP and VS Code surfaces already read `recommended_test.file` from the packet;
 asserting their parity is slice 2 of #13204.
 
