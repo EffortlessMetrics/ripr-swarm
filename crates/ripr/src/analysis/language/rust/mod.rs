@@ -35,7 +35,9 @@ use super::super::{
 use super::{LanguageAdapter, LanguageDiffResult, LanguageId, LanguageRepoResult, route};
 use crate::analysis::cancellation;
 use crate::analysis::committed_source::{self, CommittedSourceRead};
-use crate::analysis::diagnostic_origin::{OriginBuildContext, origins_for_rust_findings};
+use crate::analysis::diagnostic_origin::{
+    OriginBuildContext, origin_sources, origins_for_rust_findings,
+};
 use crate::analysis::facts::RustIndex;
 use crate::analysis::path_glob::{path_glob_matches, segment_glob_matches};
 use crate::analysis::resource_cost::trace_latency_phase;
@@ -2507,6 +2509,9 @@ impl RustAdapter {
             eprintln!("{disclosure}");
         }
         rust_index::apply_oracle_policy(&mut index, oracle_policy);
+        // #13703: keep raw bytes only for files whose indexed text differs;
+        // origin capture borrows the rest from the index.
+        let loaded_files = origin_sources(loaded_files, &index);
         let property_macro_mentions =
             oracles::PropertyMacroMentionIndex::new(&index, &options.root);
         // #8387: tests this diff adds or changes lead their relation tier.
