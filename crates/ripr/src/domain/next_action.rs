@@ -22,7 +22,9 @@
 //!
 //! [`CommandSpec`]: super::CommandSpec
 
-use super::command_spec::{CommandExecutionMode, CommandPlatform, CommandRole, CommandSpec};
+use ripr_contract::domain::command_spec::{
+    CommandExecutionMode, CommandPlatform, CommandRole, CommandSpec,
+};
 
 /// Versioned canonical-action schema. Additive changes keep this version and
 /// add `#[serde(default)]` fields; breaking shape changes mint a new version.
@@ -1165,11 +1167,11 @@ fn bound_item(input: &NextActionInput<'_>, action_class: NextActionClass) -> Opt
 
 #[cfg(test)]
 mod tests {
-    use super::super::command_spec::{
+    use super::*;
+    use ripr_contract::domain::command_spec::{
         CancellationPolicy, CommandAuthorityBoundary, CommandCostClass, EnvironmentPolicy,
         ExpectedResultParser, NetworkPolicy, StdinPolicy,
     };
-    use super::*;
 
     fn test_spec() -> CommandSpec {
         CommandSpec {

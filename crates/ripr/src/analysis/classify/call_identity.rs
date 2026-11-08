@@ -77,6 +77,8 @@ type SharedOwnerScopes = BTreeMap<PathBuf, (Arc<str>, Option<Arc<super::owner_pi
 
 type SharedIdentities = BTreeMap<(bool, String), Option<std::sync::Arc<OwnerCallIdentity>>>;
 type SoloIdentities = BTreeMap<String, Option<std::sync::Arc<OwnerCallIdentity>>>;
+type DeriveBindingSites = Arc<Vec<(String, Option<(usize, usize)>)>>;
+type DeriveBindingMemo = BTreeMap<(Arc<str>, Vec<String>), DeriveBindingSites>;
 
 /// Per-index memos for the call-identity family (#7716 residual).
 ///
@@ -129,6 +131,10 @@ pub(crate) struct CallIdentityMemos {
     /// #10701: every indexed source with comments and strings masked, built
     /// once per index for the repair-start Drop-type gate.
     masked_sources: std::sync::OnceLock<Vec<String>>,
+    /// #11870: how many times each identifier appears in the raw text of every
+    /// indexed source, a `fn <name>` definition not counted. Built once per
+    /// index for the weak-read start's "no other mention of the owner" gate.
+    identifier_mentions: std::sync::OnceLock<BTreeMap<String, usize>>,
     /// #10701: per type name, whether a `type` alias declares it and which
     /// further type names its renames and definitions mention, so each name is
     /// read from the corpus once per run instead of once per seam.
@@ -146,9 +152,38 @@ pub(crate) struct CallIdentityMemos {
     rebound_scans: std::sync::atomic::AtomicUsize,
     /// #8917: whether a type name carries a unique workspace `Default` derive.
     pub(in crate::analysis) type_derives_default: Mutex<BTreeMap<String, bool>>,
+    /// Exact-source, requested-name binding scans used by the closed assertion
+    /// value check. Different source bytes or trusted names never share a result;
+    /// the whole memo expires with this analysis index, including on clone.
+    pub(super) standard_derive_bindings: Mutex<DeriveBindingMemo>,
+    /// #13525: per (test file, type name), whether the file imports that name
+    /// from a crate outside the workspace. The answer depends on the file's
+    /// syntax alone, so the per-(probe, test) receiver check reads it once.
+    external_imports: Mutex<BTreeMap<(std::path::PathBuf, String), bool>>,
 }
 
 impl CallIdentityMemos {
+    /// The memoized answer for (`file`, `name`), computed by `compute` on
+    /// first use (recomputed, not cached, if the lock is poisoned).
+    pub(super) fn external_import(
+        &self,
+        file: &std::path::Path,
+        name: &str,
+        compute: impl FnOnce() -> bool,
+    ) -> bool {
+        let key = (file.to_path_buf(), name.to_string());
+        if let Ok(cache) = self.external_imports.lock()
+            && let Some(found) = cache.get(&key)
+        {
+            return *found;
+        }
+        let answer = compute();
+        if let Ok(mut cache) = self.external_imports.lock() {
+            cache.insert(key, answer);
+        }
+        answer
+    }
+
     pub(super) fn hidden_impls(&self, index: &RustIndex) -> &super::implicit_call::HiddenImpls {
         self.hidden_impls
             .get_or_init(|| super::implicit_call::HiddenImpls::build(index))
@@ -159,6 +194,14 @@ impl CallIdentityMemos {
     #[cfg(test)]
     pub(in crate::analysis) fn receiver_scan_passes(&self) -> u32 {
         self.receiver_pin_syntax.workspace_scan_passes()
+    }
+
+    /// The memoized identifier mention counts, built by `build` on first use.
+    pub(in crate::analysis) fn identifier_mentions(
+        &self,
+        build: impl FnOnce() -> BTreeMap<String, usize>,
+    ) -> &BTreeMap<String, usize> {
+        self.identifier_mentions.get_or_init(build)
     }
 
     /// The memoized masked sources, built by `build` on first use.
@@ -1479,7 +1522,7 @@ fn entry_attributes_preserve_items(source: &ra_ap_syntax::SyntaxNode) -> bool {
 /// A syntactic data declaration cannot establish an import's kind if a cfg,
 /// rewriting attribute or another declaration/import can select a trait there.
 fn entry_data_declaration_is_unambiguous(node: &ra_ap_syntax::SyntaxNode) -> bool {
-    use ra_ap_syntax::{AstNode, ast, ast::HasName};
+    use ra_ap_syntax::{AstNode, ast};
     if !crate::analysis::syntax::supported_targeted_item_context(node)
         || node.ancestors().any(|ancestor| {
             ancestor
@@ -1490,6 +1533,13 @@ fn entry_data_declaration_is_unambiguous(node: &ra_ap_syntax::SyntaxNode) -> boo
     {
         return false;
     }
+    data_declaration_name_is_unambiguous(node)
+}
+
+/// Same-scope declaration/import authority only. Callers separately establish
+/// whether this item's attributes and enclosing context preserve its kind.
+pub(super) fn data_declaration_name_is_unambiguous(node: &ra_ap_syntax::SyntaxNode) -> bool {
+    use ra_ap_syntax::{AstNode, ast, ast::HasName};
     let Some(name) = ast::AnyHasName::cast(node.clone()).and_then(|item| item.name()) else {
         return false;
     };
@@ -2349,7 +2399,7 @@ fn call_sites(body: &str, name: &str, with_methods: bool) -> Vec<(Option<Vec<Str
             continue;
         }
         let head = masked[..start].trim_end();
-        if head.ends_with('.') {
+        if head.ends_with('.') && !head.ends_with("..") {
             if with_methods {
                 calls.push((Some(Vec::new()), true));
             }
@@ -2361,6 +2411,25 @@ fn call_sites(body: &str, name: &str, with_methods: bool) -> Vec<(Option<Vec<Str
         calls.push((qualifier_before(head), false));
     }
     calls
+}
+
+/// Whether a call of this name may have the function's container kind (#12234).
+/// This only separates bare calls from receiver calls. A qualified or unread
+/// path may be a free call or UFCS, and an unknown container stays uncertain.
+/// Matching shape does not resolve the receiver or grant owner-call credit.
+pub(super) fn text_may_call_function_kind(text: &str, function: &FunctionSummary) -> bool {
+    call_sites(text, &function.name, true)
+        .into_iter()
+        .any(|(qualifier, is_method)| match qualifier {
+            Some(segments) if segments.is_empty() => match function.item.container {
+                FunctionContainer::Free | FunctionContainer::Local => !is_method,
+                FunctionContainer::Inherent { .. }
+                | FunctionContainer::TraitImpl { .. }
+                | FunctionContainer::Trait { .. } => is_method,
+                FunctionContainer::Unknown => true,
+            },
+            _ => true,
+        })
 }
 
 /// `module` without its leading crate segment when that segment names the
@@ -2482,6 +2551,7 @@ pub(in crate::analysis) fn production_text_calls_owner(
         attrs: caller.attrs.clone(),
         nested_fn_names: caller.nested_fn_names.clone(),
         let_bindings: caller.let_bindings.clone(),
+        generated: None,
     };
     let text = caller.body.as_ref();
     if let Some(identity) = shared_owner_call_identity(index, owner) {
@@ -5046,5 +5116,90 @@ mod tests {
         assert!(!resolves(&root, "assert!(rival::root(1));"));
         assert!(!resolves(&root, "assert!(crate::pricing::root(1));"));
         assert!(!resolves(&thr, "assert!(super::thr(1));"));
+    }
+
+    /// #12320: a macro-generated test borrows the module scopes at its
+    /// invocation, except when its expansion declares its own import, which
+    /// could rebind the callee. End to end through the production index and
+    /// the call-identity consumer, with a rival owner.
+    #[test]
+    fn macro_generated_test_credit_follows_invocation_scopes_and_fails_closed()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = std::env::temp_dir().join(format!(
+            "ripr-macro-identity-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(root.join("src"))?;
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"modules\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )?;
+        std::fs::create_dir_all(root.join("tests"))?;
+        std::fs::write(root.join("src/lib.rs"), "pub mod a;\npub mod b;\n")?;
+        std::fs::write(
+            root.join("src/a.rs"),
+            "pub fn render(x: i32) -> i32 {\n    x + 1\n}\n",
+        )?;
+        std::fs::write(
+            root.join("src/b.rs"),
+            "pub fn render(x: i32) -> i32 {\n    x + 2\n}\n",
+        )?;
+        std::fs::write(
+            root.join("tests/gen.rs"),
+            "macro_rules! plain {\n    ($name:ident) => {\n        #[test]\n        fn $name() {\n            assert_eq!(render(1), 2);\n        }\n    };\n}\n\nmacro_rules! closure_rebinding {\n    ($name:ident) => {\n        #[test]\n        fn $name() {\n            let apply = |render: fn(i32) -> i32| render(1);\n            assert_eq!(apply(modules::b::render), 3);\n        }\n    };\n}\n\nmacro_rules! rebinding {\n    ($name:ident) => {\n        #[test]\n        fn $name() {\n            use modules::b::render;\n            assert_eq!(render(1), 3);\n        }\n    };\n}\n\nmacro_rules! external_binding {\n    ($name:ident) => {\n        #[test]\n        fn $name() {\n            helpers::bind!();\n            assert_eq!(render(1), 3);\n        }\n    };\n}\n\nmod cases {\n    use modules::a::render;\n    external_binding!(external_case);\n    plain!(plain_case);\n    rebinding!(rebinding_case);\n    closure_rebinding!(closure_case);\n}\n",
+        )?;
+        let index = crate::analysis::facts::build_index(
+            &root,
+            &[
+                PathBuf::from("src/lib.rs"),
+                PathBuf::from("src/a.rs"),
+                PathBuf::from("src/b.rs"),
+                PathBuf::from("tests/gen.rs"),
+            ],
+        );
+        let _ = std::fs::remove_dir_all(&root);
+        let index = index?;
+        // Positive control: the invocation-site `use crate::a::render` credits
+        // `a::render` and rules out the rival.
+        assert_eq!(
+            settle(&index, "/a.rs::render", "plain_case"),
+            Some(CallTarget::Owner)
+        );
+        assert_eq!(
+            settle(&index, "/b.rs::render", "plain_case"),
+            Some(CallTarget::Other)
+        );
+        // Rival control: the expansion imports `b::render` locally. No owner
+        // may be credited from the invocation-site import of `a::render`.
+        assert_ne!(
+            settle(&index, "/a.rs::render", "rebinding_case"),
+            Some(CallTarget::Owner)
+        );
+        // An external macro in the body may expand to `use modules::b::render;`
+        // invisibly; the expansion must not borrow the invocation-site scopes.
+        assert!(
+            index
+                .tests()
+                .iter()
+                .any(|test| test.name == "external_case"),
+            "the external-macro case must be indexed, or the assertion below is vacuous"
+        );
+        assert_ne!(
+            settle(&index, "/a.rs::render", "external_case"),
+            Some(CallTarget::Owner)
+        );
+        // A closure parameter named `render` shadows the import without a
+        // `let`; the expansion must not borrow the invocation-site scopes.
+        assert!(
+            index.tests().iter().any(|test| test.name == "closure_case"),
+            "the closure case must be indexed, or the assertion below is vacuous"
+        );
+        assert_ne!(
+            settle(&index, "/a.rs::render", "closure_case"),
+            Some(CallTarget::Owner)
+        );
+        Ok(())
     }
 }

@@ -1,6 +1,7 @@
 mod evidence;
 mod finding;
 mod owner;
+mod test_input_generator;
 
 pub(in crate::analysis) use evidence::OwnerCallerNames;
 pub(in crate::analysis) use finding::oracle_binds_sink_identity;
@@ -87,6 +88,7 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index_and_origins(
         transitive_reach,
         propagation_origin,
         value_origins,
+        None,
     )
     .0
 }
@@ -104,9 +106,23 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index_and_origins_with_
     transitive_reach: &TransitiveReachIndex<'_>,
     propagation_origin: Option<&crate::analysis::diff::ChangedLine>,
     value_origins: Option<&std::sync::Mutex<crate::value_origins::ValueOrigins>>,
+    changed_file: Option<&crate::analysis::diff::ChangedFile>,
 ) -> (Finding, Option<bool>) {
     let read_trace = super::probe_read_trace::Scope::begin(probe);
     let owner_fn = resolve_owner_function(probe, index);
+    if probe.after.is_some()
+        && owner_fn.is_some_and(|owner| {
+            owner.source_role == crate::analysis::facts::FunctionSourceRole::TestInputGenerator
+                && crate::analysis::facts::is_generator_subject(
+                    index,
+                    &owner.file,
+                    probe.location.line,
+                )
+        })
+    {
+        read_trace.finish();
+        return (test_input_generator::finding(probe), None);
+    }
     // #3296: one chain resolution per probe, shared by the relation
     // stage and the activation rows (single authority, single scan).
     // Empty-hop chains stay off the relation/activation path (fail closed)
@@ -306,6 +322,39 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index_and_origins_with_
     .unwrap_or(&probe.expression);
     let mut evidence =
         ClassifiedProbeEvidence::gather(&context, reveal_expression, transitive_reach);
+    #[cfg(feature = "lang-rust")]
+    {
+        context.tier_flow = changed_file
+            .and_then(|changed| {
+                let owner = owner_fn?;
+                let tests: Vec<&TestSummary> = context
+                    .related_tests
+                    .iter()
+                    .map(|(test, _)| *test)
+                    .collect();
+                super::classify::evaluate_tier_flow(
+                    probe,
+                    owner,
+                    changed,
+                    &tests,
+                    index,
+                    candidate_index.owner_pin_syntax(),
+                    workspace_complete,
+                )
+            })
+            .filter(|flow| {
+                let matching = |row: &RelatedTest| {
+                    row.name == flow.test && row.file == flow.file && row.line == flow.line
+                };
+                evidence.related_tests.iter().any(|row| {
+                    matching(row) && row.oracle.as_deref() == Some(flow.assertion.as_str())
+                }) || (evidence.related_tests_matched_total == evidence.related_tests.len()
+                    && evidence.related_tests.len() < super::classify::RELATED_TESTS_RENDER_CAP
+                    && evidence.related_tests.iter().any(matching))
+            });
+    }
+    #[cfg(not(feature = "lang-rust"))]
+    let _ = changed_file;
     // RIPR-SPEC-0048: a changed constant decided by evaluation takes its class
     // from the evaluation; every other probe is classified as before.
     let class = match (
@@ -316,6 +365,11 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index_and_origins_with_
         (None, Some(flow)) => evidence.apply_binding_return_flow(flow),
         (None, None) => evidence.classify(context.probe),
     };
+    #[cfg(feature = "lang-rust")]
+    let class = context
+        .tier_flow
+        .as_ref()
+        .map_or(class, |flow| evidence.apply_tier_flow(flow));
     // #7532: `build_finding` rewrites a `no_static_path` finding's misses;
     // keep reveal's so a withheld finding can report them again.
     let reveal_misses: Vec<Option<RelatedTestMiss>> = evidence
@@ -327,6 +381,11 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index_and_origins_with_
     let complete_proximity_oracles_only = evidence.complete_proximity_oracles_only;
     let direct_rows = std::mem::take(&mut evidence.direct_rows);
     let mut finding = build_finding_with_origins(&context, class, evidence, value_origins);
+    #[cfg(feature = "lang-rust")]
+    if context.tier_flow.is_some() {
+        finding.probe.expected_sinks = vec!["return value".to_string()];
+        finding.probe.required_oracles = vec!["exact assertion on returned value".to_string()];
+    }
     if let Some(chain) = resolved_chain.as_ref() {
         withhold_helper_uniqueness_as_unknown(&mut finding, chain, index, &reveal_misses);
     }
@@ -814,6 +873,7 @@ pub(super) mod tests {
                 attrs: vec![],
                 nested_fn_names: Vec::new(),
                 let_bindings: Vec::new(),
+                generated: None,
             }],
             ..Default::default()
         });
@@ -867,6 +927,7 @@ pub(super) mod tests {
             attrs: vec![],
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            generated: None,
         }
     }
 
@@ -1729,6 +1790,7 @@ pub(super) mod tests {
                 attrs: vec![],
                 nested_fn_names: Vec::new(),
                 let_bindings: Vec::new(),
+                generated: None,
             }],
             ..Default::default()
         });
@@ -1871,6 +1933,75 @@ pub(super) mod tests {
                 .iter()
                 .any(|reason| { reason.as_str() == StopReason::StaticProbeUnknown.as_str() })
         );
+    }
+
+    /// A changed `Display::fmt` body no test names runs through `format!`,
+    /// `to_string()` and generic helpers, so reach stays undecided; the same
+    /// body under a trait the workspace declares, and a plain function no
+    /// source names, keep `no_static_path`.
+    #[test]
+    fn given_foreign_trait_impl_with_no_related_test_when_classified_then_reach_is_undecided() {
+        let classify_owner = |trait_path: &str, id: &str, name: &str, declared: Option<&str>| {
+            let mut owner = function("src/lib.rs", name);
+            owner.id = SymbolId(id.to_string());
+            if !trait_path.is_empty() {
+                owner.item.container = crate::analysis::facts::FunctionContainer::TraitImpl {
+                    trait_path: trait_path.to_string(),
+                    self_ty: "Money".to_string(),
+                };
+            }
+            let mut functions = vec![owner.clone()];
+            if let Some(trait_name) = declared {
+                // A trait the workspace declares: its methods are called only
+                // by spelling their name, so they get no dispatch allowance.
+                let mut decl = function("src/lib.rs", name);
+                decl.id = SymbolId(format!("src/lib.rs::trait {trait_name}::{name}"));
+                decl.item.container = crate::analysis::facts::FunctionContainer::Trait {
+                    trait_name: trait_name.to_string(),
+                };
+                functions.push(decl);
+            }
+            let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+                functions,
+                ..Default::default()
+            });
+            let probe = Probe {
+                id: ProbeId("probe:src_lib_rs:2:return_value".to_string()),
+                location: SourceLocation::new("src/lib.rs", 2, 1),
+                owner: Some(owner.id.clone()),
+                family: ProbeFamily::ReturnValue,
+                delta: DeltaKind::Value,
+                before: None,
+                after: Some("self.0 + 1".to_string()),
+                expression: "self.0 + 1".to_string(),
+                expected_sinks: vec![],
+                required_oracles: vec![],
+            };
+            classify_probe(&probe, &index, true, None)
+        };
+
+        let display = classify_owner(
+            "Display",
+            "src/lib.rs::impl Display for Money::fmt",
+            "fmt",
+            None,
+        );
+        assert!(display.related_tests.is_empty());
+        assert_eq!(display.ripr.reach.state, StageState::Weak);
+        assert_eq!(display.class, ExposureClass::InfectionUnknown);
+
+        let workspace = classify_owner(
+            "Step",
+            "src/lib.rs::impl Step for Money::process",
+            "process",
+            Some("Step"),
+        );
+        assert_eq!(workspace.ripr.reach.state, StageState::No);
+        assert_eq!(workspace.class, ExposureClass::NoStaticPath);
+
+        let plain = classify_owner("", "src/lib.rs::fmt_money", "fmt_money", None);
+        assert_eq!(plain.ripr.reach.state, StageState::No);
+        assert_eq!(plain.class, ExposureClass::NoStaticPath);
     }
 
     /// #9871: a changed `const` with a same-file reader that a test calls.
@@ -4393,6 +4524,7 @@ fn far_above_threshold_discounts() {
             attrs: vec![],
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            generated: None,
         }
     }
 

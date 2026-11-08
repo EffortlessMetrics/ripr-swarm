@@ -140,7 +140,7 @@
         {"kind":"struct_field","text":"n: x * 3","line":13}
       ],
       "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches constructed field: n: x * 3", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach parse: parses"],
-      "missing": ["Missing discriminator value: n: x * 3", "No strong discriminator was detected"],
+      "missing": ["Missing check value: n: x * 3", "No strong discriminator was detected"],
       "assertion_texts": {
         "22": "assert_eq!(parse(4), Err(Cfg { n: 12 }));"
       },

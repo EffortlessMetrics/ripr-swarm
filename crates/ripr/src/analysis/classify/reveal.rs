@@ -5362,7 +5362,9 @@ pub(in crate::analysis) fn only_proximity_oracles(related: &[RelatedTest]) -> bo
         });
         if related.relation_reason.is_none() || direct {
             if related.oracle.is_some()
-                || related.miss == Some(RelatedTestMiss::AssertionNotCredited)
+                || related
+                    .miss
+                    .is_some_and(RelatedTestMiss::is_assertion_refusal_miss)
             {
                 return false;
             }
@@ -5633,7 +5635,7 @@ fn finalize_related_tests_with_direct_rows(
     (oracle_rows, matched_total, direct_rows)
 }
 
-const RELATED_TESTS_RENDER_CAP: usize = 8;
+pub(in crate::analysis) const RELATED_TESTS_RENDER_CAP: usize = 8;
 
 /// True for an extracted smoke row whose text is a bare `x.unwrap()` or
 /// `x.expect("..")` statement rather than an assertion macro. Such a row is
@@ -7180,6 +7182,7 @@ mod tests {
             attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            generated: None,
         }];
         let touched =
             crate::analysis::classify::DiffTouchedTests::from_changed_files(&files, &tests);
@@ -7731,6 +7734,7 @@ mod tests {
             attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            generated: None,
         };
         let calling = test("calls_owner", 1, vec![call("truncate")]);
         let other_call = test("calls_other", 5, vec![call("clear")]);
@@ -10304,6 +10308,7 @@ return Err(\"typed pin\".into());
             attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            generated: None,
         }
     }
 

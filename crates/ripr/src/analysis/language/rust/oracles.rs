@@ -538,7 +538,9 @@ fn only_credited_local_macros_supply_an_oracle(finding: &Finding) -> bool {
         let Some(oracle) = related.oracle.as_deref() else {
             // A refused assertion on a directly related test is still an
             // assertion ripr judged (#7089).
-            if related.miss == Some(crate::domain::RelatedTestMiss::AssertionNotCredited)
+            if related
+                .miss
+                .is_some_and(crate::domain::RelatedTestMiss::is_assertion_refusal_miss)
                 && (related.relation_reason.is_none()
                     || is_direct_relation(related.relation_reason))
             {
@@ -1392,6 +1394,7 @@ mod tests {
             attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            generated: None,
         }
     }
 

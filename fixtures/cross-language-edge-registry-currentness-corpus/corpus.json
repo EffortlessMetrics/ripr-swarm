@@ -1,0 +1,1363 @@
+{
+  "schema_version": "0.1",
+  "kind": "cross_language_edge_registry_currentness_corpus",
+  "spec": "RIPR-SPEC-0421-cross-language-edge-registry-currentness-v1.md",
+  "description": "Loading/currentness/base-head fixtures for #6484.",
+  "cases": [
+    {
+      "id": "load_valid_minimal",
+      "expect": "load_accept",
+      "registry": {
+        "schema_version": "ripr_cross_language_edge_registry.v1",
+        "proof_generation": "proof.v1",
+        "currentness_generation": "currentness.v1",
+        "supported_boundary_families": [
+          "ffi_binding",
+          "generated_binding",
+          "native_addon",
+          "wasm_boundary",
+          "subprocess_cli",
+          "schema_protocol",
+          "serialization_contract",
+          "generated_client",
+          "shared_resource",
+          "manual_registered_bridge",
+          "unknown_dynamic_boundary"
+        ],
+        "registered_producers": [
+          {
+            "producer_id": "producer.test",
+            "producer_version": "1",
+            "supported_families": [
+              "ffi_binding",
+              "generated_binding",
+              "native_addon",
+              "wasm_boundary",
+              "subprocess_cli",
+              "schema_protocol",
+              "serialization_contract",
+              "generated_client",
+              "shared_resource",
+              "manual_registered_bridge",
+              "unknown_dynamic_boundary"
+            ]
+          }
+        ],
+        "edges": [
+          {
+            "edge_id": "connect",
+            "source": {
+              "language": "rust",
+              "subject_id": "connect.source",
+              "subject_body_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "display_name": "connect.source",
+              "project": {
+                "project_id": "project.alpha",
+                "package_id": "pkg",
+                "config_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+              }
+            },
+            "target": {
+              "language": "typescript",
+              "subject_id": "connect.target",
+              "subject_body_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "display_name": "connect.target",
+              "project": {
+                "project_id": "project.beta",
+                "package_id": "pkg",
+                "config_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+              }
+            },
+            "direction": "source_to_target",
+            "boundary_family": "ffi_binding",
+            "producer_id": "producer.test",
+            "producer_basis": "registered_producer_fact",
+            "exactness": "exact",
+            "declared_strength": "registered_binding",
+            "effective_strength": "registered_binding",
+            "propagation_ceiling": "registered_binding",
+            "generated_artifacts": [
+              {
+                "artifact_id": "connect.artifact",
+                "generator_id": "generator.test",
+                "input_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "output_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+              }
+            ],
+            "obligations": [
+              {
+                "obligation_id": "connect.obligation",
+                "description": "verify external oracle alignment",
+                "required_strength": "registered_binding"
+              }
+            ],
+            "first_unresolved_leg": null,
+            "currentness": "current",
+            "disposition": "positive_registered",
+            "limitations": [],
+            "non_claims": [
+              {
+                "claim": "runtime_success",
+                "reason": "static registry only"
+              }
+            ]
+          }
+        ],
+        "semantic_digest": null
+      }
+    },
+    {
+      "id": "load_reject_unsupported_schema",
+      "expect": "load_reject",
+      "registry": {
+        "schema_version": "ripr_cross_language_edge_registry.v0",
+        "proof_generation": "proof.v1",
+        "currentness_generation": "currentness.v1",
+        "supported_boundary_families": [
+          "ffi_binding",
+          "generated_binding",
+          "native_addon",
+          "wasm_boundary",
+          "subprocess_cli",
+          "schema_protocol",
+          "serialization_contract",
+          "generated_client",
+          "shared_resource",
+          "manual_registered_bridge",
+          "unknown_dynamic_boundary"
+        ],
+        "registered_producers": [
+          {
+            "producer_id": "producer.test",
+            "producer_version": "1",
+            "supported_families": [
+              "ffi_binding",
+              "generated_binding",
+              "native_addon",
+              "wasm_boundary",
+              "subprocess_cli",
+              "schema_protocol",
+              "serialization_contract",
+              "generated_client",
+              "shared_resource",
+              "manual_registered_bridge",
+              "unknown_dynamic_boundary"
+            ]
+          }
+        ],
+        "edges": [
+          {
+            "edge_id": "connect",
+            "source": {
+              "language": "rust",
+              "subject_id": "connect.source",
+              "subject_body_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "display_name": "connect.source",
+              "project": {
+                "project_id": "project.alpha",
+                "package_id": "pkg",
+                "config_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+              }
+            },
+            "target": {
+              "language": "typescript",
+              "subject_id": "connect.target",
+              "subject_body_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "display_name": "connect.target",
+              "project": {
+                "project_id": "project.beta",
+                "package_id": "pkg",
+                "config_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+              }
+            },
+            "direction": "source_to_target",
+            "boundary_family": "ffi_binding",
+            "producer_id": "producer.test",
+            "producer_basis": "registered_producer_fact",
+            "exactness": "exact",
+            "declared_strength": "registered_binding",
+            "effective_strength": "registered_binding",
+            "propagation_ceiling": "registered_binding",
+            "generated_artifacts": [
+              {
+                "artifact_id": "connect.artifact",
+                "generator_id": "generator.test",
+                "input_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "output_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+              }
+            ],
+            "obligations": [
+              {
+                "obligation_id": "connect.obligation",
+                "description": "verify external oracle alignment",
+                "required_strength": "registered_binding"
+              }
+            ],
+            "first_unresolved_leg": null,
+            "currentness": "current",
+            "disposition": "positive_registered",
+            "limitations": [],
+            "non_claims": [
+              {
+                "claim": "runtime_success",
+                "reason": "static registry only"
+              }
+            ]
+          }
+        ],
+        "semantic_digest": null
+      }
+    },
+    {
+      "id": "effective_stale_not_positive",
+      "expect": "effective_not_positive",
+      "movement_kind": "stale.edge",
+      "registry": {
+        "schema_version": "ripr_cross_language_edge_registry.v1",
+        "proof_generation": "proof.v1",
+        "currentness_generation": "currentness.v1",
+        "supported_boundary_families": [
+          "ffi_binding",
+          "generated_binding",
+          "native_addon",
+          "wasm_boundary",
+          "subprocess_cli",
+          "schema_protocol",
+          "serialization_contract",
+          "generated_client",
+          "shared_resource",
+          "manual_registered_bridge",
+          "unknown_dynamic_boundary"
+        ],
+        "registered_producers": [
+          {
+            "producer_id": "producer.test",
+            "producer_version": "1",
+            "supported_families": [
+              "ffi_binding",
+              "generated_binding",
+              "native_addon",
+              "wasm_boundary",
+              "subprocess_cli",
+              "schema_protocol",
+              "serialization_contract",
+              "generated_client",
+              "shared_resource",
+              "manual_registered_bridge",
+              "unknown_dynamic_boundary"
+            ]
+          }
+        ],
+        "edges": [
+          {
+            "edge_id": "stale.edge",
+            "source": {
+              "language": "rust",
+              "subject_id": "stale.source",
+              "subject_body_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "display_name": "stale.source",
+              "project": {
+                "project_id": "project.alpha",
+                "package_id": "pkg",
+                "config_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+              }
+            },
+            "target": {
+              "language": "typescript",
+              "subject_id": "stale.target",
+              "subject_body_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "display_name": "stale.target",
+              "project": {
+                "project_id": "project.beta",
+                "package_id": "pkg",
+                "config_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+              }
+            },
+            "direction": "source_to_target",
+            "boundary_family": "ffi_binding",
+            "producer_id": "producer.test",
+            "producer_basis": "stale_producer_fact",
+            "exactness": "partial",
+            "declared_strength": "unsupported",
+            "effective_strength": "unsupported",
+            "propagation_ceiling": "unsupported",
+            "generated_artifacts": [
+              {
+                "artifact_id": "stale.edge.artifact",
+                "generator_id": "generator.test",
+                "input_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "output_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+              }
+            ],
+            "obligations": [
+              {
+                "obligation_id": "stale.edge.obligation",
+                "description": "verify external oracle alignment",
+                "required_strength": "unsupported"
+              }
+            ],
+            "first_unresolved_leg": null,
+            "currentness": "stale",
+            "disposition": "stale",
+            "limitations": [],
+            "non_claims": [
+              {
+                "claim": "runtime_success",
+                "reason": "static registry only"
+              }
+            ]
+          }
+        ],
+        "semantic_digest": null
+      }
+    },
+    {
+      "id": "movement_head_only_added",
+      "expect": "movement",
+      "movement_kind": "head_only_added",
+      "base": {
+        "schema_version": "ripr_cross_language_edge_registry.v1",
+        "proof_generation": "proof.v1",
+        "currentness_generation": "currentness.v1",
+        "supported_boundary_families": [
+          "ffi_binding",
+          "generated_binding",
+          "native_addon",
+          "wasm_boundary",
+          "subprocess_cli",
+          "schema_protocol",
+          "serialization_contract",
+          "generated_client",
+          "shared_resource",
+          "manual_registered_bridge",
+          "unknown_dynamic_boundary"
+        ],
+        "registered_producers": [
+          {
+            "producer_id": "producer.test",
+            "producer_version": "1",
+            "supported_families": [
+              "ffi_binding",
+              "generated_binding",
+              "native_addon",
+              "wasm_boundary",
+              "subprocess_cli",
+              "schema_protocol",
+              "serialization_contract",
+              "generated_client",
+              "shared_resource",
+              "manual_registered_bridge",
+              "unknown_dynamic_boundary"
+            ]
+          }
+        ],
+        "edges": [],
+        "semantic_digest": null
+      },
+      "head": {
+        "schema_version": "ripr_cross_language_edge_registry.v1",
+        "proof_generation": "proof.v1",
+        "currentness_generation": "currentness.v1",
+        "supported_boundary_families": [
+          "ffi_binding",
+          "generated_binding",
+          "native_addon",
+          "wasm_boundary",
+          "subprocess_cli",
+          "schema_protocol",
+          "serialization_contract",
+          "generated_client",
+          "shared_resource",
+          "manual_registered_bridge",
+          "unknown_dynamic_boundary"
+        ],
+        "registered_producers": [
+          {
+            "producer_id": "producer.test",
+            "producer_version": "1",
+            "supported_families": [
+              "ffi_binding",
+              "generated_binding",
+              "native_addon",
+              "wasm_boundary",
+              "subprocess_cli",
+              "schema_protocol",
+              "serialization_contract",
+              "generated_client",
+              "shared_resource",
+              "manual_registered_bridge",
+              "unknown_dynamic_boundary"
+            ]
+          }
+        ],
+        "edges": [
+          {
+            "edge_id": "connect",
+            "source": {
+              "language": "rust",
+              "subject_id": "connect.source",
+              "subject_body_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "display_name": "connect.source",
+              "project": {
+                "project_id": "project.alpha",
+                "package_id": "pkg",
+                "config_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+              }
+            },
+            "target": {
+              "language": "typescript",
+              "subject_id": "connect.target",
+              "subject_body_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "display_name": "connect.target",
+              "project": {
+                "project_id": "project.beta",
+                "package_id": "pkg",
+                "config_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+              }
+            },
+            "direction": "source_to_target",
+            "boundary_family": "ffi_binding",
+            "producer_id": "producer.test",
+            "producer_basis": "registered_producer_fact",
+            "exactness": "exact",
+            "declared_strength": "registered_binding",
+            "effective_strength": "registered_binding",
+            "propagation_ceiling": "registered_binding",
+            "generated_artifacts": [
+              {
+                "artifact_id": "connect.artifact",
+                "generator_id": "generator.test",
+                "input_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "output_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+              }
+            ],
+            "obligations": [
+              {
+                "obligation_id": "connect.obligation",
+                "description": "verify external oracle alignment",
+                "required_strength": "registered_binding"
+              }
+            ],
+            "first_unresolved_leg": null,
+            "currentness": "current",
+            "disposition": "positive_registered",
+            "limitations": [],
+            "non_claims": [
+              {
+                "claim": "runtime_success",
+                "reason": "static registry only"
+              }
+            ]
+          }
+        ],
+        "semantic_digest": null
+      }
+    },
+    {
+      "id": "movement_base_only_deleted",
+      "expect": "movement",
+      "movement_kind": "base_only_deleted",
+      "base": {
+        "schema_version": "ripr_cross_language_edge_registry.v1",
+        "proof_generation": "proof.v1",
+        "currentness_generation": "currentness.v1",
+        "supported_boundary_families": [
+          "ffi_binding",
+          "generated_binding",
+          "native_addon",
+          "wasm_boundary",
+          "subprocess_cli",
+          "schema_protocol",
+          "serialization_contract",
+          "generated_client",
+          "shared_resource",
+          "manual_registered_bridge",
+          "unknown_dynamic_boundary"
+        ],
+        "registered_producers": [
+          {
+            "producer_id": "producer.test",
+            "producer_version": "1",
+            "supported_families": [
+              "ffi_binding",
+              "generated_binding",
+              "native_addon",
+              "wasm_boundary",
+              "subprocess_cli",
+              "schema_protocol",
+              "serialization_contract",
+              "generated_client",
+              "shared_resource",
+              "manual_registered_bridge",
+              "unknown_dynamic_boundary"
+            ]
+          }
+        ],
+        "edges": [
+          {
+            "edge_id": "connect",
+            "source": {
+              "language": "rust",
+              "subject_id": "connect.source",
+              "subject_body_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "display_name": "connect.source",
+              "project": {
+                "project_id": "project.alpha",
+                "package_id": "pkg",
+                "config_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+              }
+            },
+            "target": {
+              "language": "typescript",
+              "subject_id": "connect.target",
+              "subject_body_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "display_name": "connect.target",
+              "project": {
+                "project_id": "project.beta",
+                "package_id": "pkg",
+                "config_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+              }
+            },
+            "direction": "source_to_target",
+            "boundary_family": "ffi_binding",
+            "producer_id": "producer.test",
+            "producer_basis": "registered_producer_fact",
+            "exactness": "exact",
+            "declared_strength": "registered_binding",
+            "effective_strength": "registered_binding",
+            "propagation_ceiling": "registered_binding",
+            "generated_artifacts": [
+              {
+                "artifact_id": "connect.artifact",
+                "generator_id": "generator.test",
+                "input_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "output_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+              }
+            ],
+            "obligations": [
+              {
+                "obligation_id": "connect.obligation",
+                "description": "verify external oracle alignment",
+                "required_strength": "registered_binding"
+              }
+            ],
+            "first_unresolved_leg": null,
+            "currentness": "current",
+            "disposition": "positive_registered",
+            "limitations": [],
+            "non_claims": [
+              {
+                "claim": "runtime_success",
+                "reason": "static registry only"
+              }
+            ]
+          }
+        ],
+        "semantic_digest": null
+      },
+      "head": {
+        "schema_version": "ripr_cross_language_edge_registry.v1",
+        "proof_generation": "proof.v1",
+        "currentness_generation": "currentness.v1",
+        "supported_boundary_families": [
+          "ffi_binding",
+          "generated_binding",
+          "native_addon",
+          "wasm_boundary",
+          "subprocess_cli",
+          "schema_protocol",
+          "serialization_contract",
+          "generated_client",
+          "shared_resource",
+          "manual_registered_bridge",
+          "unknown_dynamic_boundary"
+        ],
+        "registered_producers": [
+          {
+            "producer_id": "producer.test",
+            "producer_version": "1",
+            "supported_families": [
+              "ffi_binding",
+              "generated_binding",
+              "native_addon",
+              "wasm_boundary",
+              "subprocess_cli",
+              "schema_protocol",
+              "serialization_contract",
+              "generated_client",
+              "shared_resource",
+              "manual_registered_bridge",
+              "unknown_dynamic_boundary"
+            ]
+          }
+        ],
+        "edges": [],
+        "semantic_digest": null
+      }
+    },
+    {
+      "id": "movement_unchanged",
+      "expect": "movement",
+      "movement_kind": "unchanged",
+      "base": {
+        "schema_version": "ripr_cross_language_edge_registry.v1",
+        "proof_generation": "proof.v1",
+        "currentness_generation": "currentness.v1",
+        "supported_boundary_families": [
+          "ffi_binding",
+          "generated_binding",
+          "native_addon",
+          "wasm_boundary",
+          "subprocess_cli",
+          "schema_protocol",
+          "serialization_contract",
+          "generated_client",
+          "shared_resource",
+          "manual_registered_bridge",
+          "unknown_dynamic_boundary"
+        ],
+        "registered_producers": [
+          {
+            "producer_id": "producer.test",
+            "producer_version": "1",
+            "supported_families": [
+              "ffi_binding",
+              "generated_binding",
+              "native_addon",
+              "wasm_boundary",
+              "subprocess_cli",
+              "schema_protocol",
+              "serialization_contract",
+              "generated_client",
+              "shared_resource",
+              "manual_registered_bridge",
+              "unknown_dynamic_boundary"
+            ]
+          }
+        ],
+        "edges": [
+          {
+            "edge_id": "connect",
+            "source": {
+              "language": "rust",
+              "subject_id": "connect.source",
+              "subject_body_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "display_name": "connect.source",
+              "project": {
+                "project_id": "project.alpha",
+                "package_id": "pkg",
+                "config_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+              }
+            },
+            "target": {
+              "language": "typescript",
+              "subject_id": "connect.target",
+              "subject_body_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "display_name": "connect.target",
+              "project": {
+                "project_id": "project.beta",
+                "package_id": "pkg",
+                "config_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+              }
+            },
+            "direction": "source_to_target",
+            "boundary_family": "ffi_binding",
+            "producer_id": "producer.test",
+            "producer_basis": "registered_producer_fact",
+            "exactness": "exact",
+            "declared_strength": "registered_binding",
+            "effective_strength": "registered_binding",
+            "propagation_ceiling": "registered_binding",
+            "generated_artifacts": [
+              {
+                "artifact_id": "connect.artifact",
+                "generator_id": "generator.test",
+                "input_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "output_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+              }
+            ],
+            "obligations": [
+              {
+                "obligation_id": "connect.obligation",
+                "description": "verify external oracle alignment",
+                "required_strength": "registered_binding"
+              }
+            ],
+            "first_unresolved_leg": null,
+            "currentness": "current",
+            "disposition": "positive_registered",
+            "limitations": [],
+            "non_claims": [
+              {
+                "claim": "runtime_success",
+                "reason": "static registry only"
+              }
+            ]
+          }
+        ],
+        "semantic_digest": null
+      },
+      "head": {
+        "schema_version": "ripr_cross_language_edge_registry.v1",
+        "proof_generation": "proof.v1",
+        "currentness_generation": "currentness.v1",
+        "supported_boundary_families": [
+          "ffi_binding",
+          "generated_binding",
+          "native_addon",
+          "wasm_boundary",
+          "subprocess_cli",
+          "schema_protocol",
+          "serialization_contract",
+          "generated_client",
+          "shared_resource",
+          "manual_registered_bridge",
+          "unknown_dynamic_boundary"
+        ],
+        "registered_producers": [
+          {
+            "producer_id": "producer.test",
+            "producer_version": "1",
+            "supported_families": [
+              "ffi_binding",
+              "generated_binding",
+              "native_addon",
+              "wasm_boundary",
+              "subprocess_cli",
+              "schema_protocol",
+              "serialization_contract",
+              "generated_client",
+              "shared_resource",
+              "manual_registered_bridge",
+              "unknown_dynamic_boundary"
+            ]
+          }
+        ],
+        "edges": [
+          {
+            "edge_id": "connect",
+            "source": {
+              "language": "rust",
+              "subject_id": "connect.source",
+              "subject_body_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "display_name": "connect.source",
+              "project": {
+                "project_id": "project.alpha",
+                "package_id": "pkg",
+                "config_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+              }
+            },
+            "target": {
+              "language": "typescript",
+              "subject_id": "connect.target",
+              "subject_body_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "display_name": "connect.target",
+              "project": {
+                "project_id": "project.beta",
+                "package_id": "pkg",
+                "config_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+              }
+            },
+            "direction": "source_to_target",
+            "boundary_family": "ffi_binding",
+            "producer_id": "producer.test",
+            "producer_basis": "registered_producer_fact",
+            "exactness": "exact",
+            "declared_strength": "registered_binding",
+            "effective_strength": "registered_binding",
+            "propagation_ceiling": "registered_binding",
+            "generated_artifacts": [
+              {
+                "artifact_id": "connect.artifact",
+                "generator_id": "generator.test",
+                "input_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "output_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+              }
+            ],
+            "obligations": [
+              {
+                "obligation_id": "connect.obligation",
+                "description": "verify external oracle alignment",
+                "required_strength": "registered_binding"
+              }
+            ],
+            "first_unresolved_leg": null,
+            "currentness": "current",
+            "disposition": "positive_registered",
+            "limitations": [],
+            "non_claims": [
+              {
+                "claim": "runtime_success",
+                "reason": "static registry only"
+              }
+            ]
+          }
+        ],
+        "semantic_digest": null
+      }
+    },
+    {
+      "id": "movement_replaced",
+      "expect": "movement",
+      "movement_kind": "replaced",
+      "base": {
+        "schema_version": "ripr_cross_language_edge_registry.v1",
+        "proof_generation": "proof.v1",
+        "currentness_generation": "currentness.v1",
+        "supported_boundary_families": [
+          "ffi_binding",
+          "generated_binding",
+          "native_addon",
+          "wasm_boundary",
+          "subprocess_cli",
+          "schema_protocol",
+          "serialization_contract",
+          "generated_client",
+          "shared_resource",
+          "manual_registered_bridge",
+          "unknown_dynamic_boundary"
+        ],
+        "registered_producers": [
+          {
+            "producer_id": "producer.test",
+            "producer_version": "1",
+            "supported_families": [
+              "ffi_binding",
+              "generated_binding",
+              "native_addon",
+              "wasm_boundary",
+              "subprocess_cli",
+              "schema_protocol",
+              "serialization_contract",
+              "generated_client",
+              "shared_resource",
+              "manual_registered_bridge",
+              "unknown_dynamic_boundary"
+            ]
+          }
+        ],
+        "edges": [
+          {
+            "edge_id": "connect",
+            "source": {
+              "language": "rust",
+              "subject_id": "connect.source",
+              "subject_body_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "display_name": "connect.source",
+              "project": {
+                "project_id": "project.alpha",
+                "package_id": "pkg",
+                "config_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+              }
+            },
+            "target": {
+              "language": "typescript",
+              "subject_id": "connect.target",
+              "subject_body_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "display_name": "connect.target",
+              "project": {
+                "project_id": "project.beta",
+                "package_id": "pkg",
+                "config_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+              }
+            },
+            "direction": "source_to_target",
+            "boundary_family": "ffi_binding",
+            "producer_id": "producer.test",
+            "producer_basis": "registered_producer_fact",
+            "exactness": "exact",
+            "declared_strength": "registered_binding",
+            "effective_strength": "registered_binding",
+            "propagation_ceiling": "registered_binding",
+            "generated_artifacts": [
+              {
+                "artifact_id": "connect.artifact",
+                "generator_id": "generator.test",
+                "input_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "output_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+              }
+            ],
+            "obligations": [
+              {
+                "obligation_id": "connect.obligation",
+                "description": "verify external oracle alignment",
+                "required_strength": "registered_binding"
+              }
+            ],
+            "first_unresolved_leg": null,
+            "currentness": "current",
+            "disposition": "positive_registered",
+            "limitations": [],
+            "non_claims": [
+              {
+                "claim": "runtime_success",
+                "reason": "static registry only"
+              }
+            ]
+          }
+        ],
+        "semantic_digest": null
+      },
+      "head": {
+        "schema_version": "ripr_cross_language_edge_registry.v1",
+        "proof_generation": "proof.v1",
+        "currentness_generation": "currentness.v1",
+        "supported_boundary_families": [
+          "ffi_binding",
+          "generated_binding",
+          "native_addon",
+          "wasm_boundary",
+          "subprocess_cli",
+          "schema_protocol",
+          "serialization_contract",
+          "generated_client",
+          "shared_resource",
+          "manual_registered_bridge",
+          "unknown_dynamic_boundary"
+        ],
+        "registered_producers": [
+          {
+            "producer_id": "producer.test",
+            "producer_version": "1",
+            "supported_families": [
+              "ffi_binding",
+              "generated_binding",
+              "native_addon",
+              "wasm_boundary",
+              "subprocess_cli",
+              "schema_protocol",
+              "serialization_contract",
+              "generated_client",
+              "shared_resource",
+              "manual_registered_bridge",
+              "unknown_dynamic_boundary"
+            ]
+          }
+        ],
+        "edges": [
+          {
+            "edge_id": "connect",
+            "source": {
+              "language": "rust",
+              "subject_id": "connect.source",
+              "subject_body_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "display_name": "connect.source",
+              "project": {
+                "project_id": "project.alpha",
+                "package_id": "pkg",
+                "config_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+              }
+            },
+            "target": {
+              "language": "typescript",
+              "subject_id": "connect.target",
+              "subject_body_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "display_name": "connect.target",
+              "project": {
+                "project_id": "project.beta",
+                "package_id": "pkg",
+                "config_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+              }
+            },
+            "direction": "source_to_target",
+            "boundary_family": "ffi_binding",
+            "producer_id": "producer.test",
+            "producer_basis": "registered_producer_fact",
+            "exactness": "exact",
+            "declared_strength": "verification_obligation",
+            "effective_strength": "verification_obligation",
+            "propagation_ceiling": "verification_obligation",
+            "generated_artifacts": [
+              {
+                "artifact_id": "connect.artifact",
+                "generator_id": "generator.test",
+                "input_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "output_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+              }
+            ],
+            "obligations": [
+              {
+                "obligation_id": "connect.obligation",
+                "description": "verify external oracle alignment",
+                "required_strength": "verification_obligation"
+              }
+            ],
+            "first_unresolved_leg": null,
+            "currentness": "current",
+            "disposition": "positive_registered",
+            "limitations": [],
+            "non_claims": [
+              {
+                "claim": "runtime_success",
+                "reason": "static registry only"
+              }
+            ]
+          }
+        ],
+        "semantic_digest": null
+      }
+    },
+    {
+      "id": "movement_moved",
+      "expect": "movement",
+      "movement_kind": "moved",
+      "base": {
+        "schema_version": "ripr_cross_language_edge_registry.v1",
+        "proof_generation": "proof.v1",
+        "currentness_generation": "currentness.v1",
+        "supported_boundary_families": [
+          "ffi_binding",
+          "generated_binding",
+          "native_addon",
+          "wasm_boundary",
+          "subprocess_cli",
+          "schema_protocol",
+          "serialization_contract",
+          "generated_client",
+          "shared_resource",
+          "manual_registered_bridge",
+          "unknown_dynamic_boundary"
+        ],
+        "registered_producers": [
+          {
+            "producer_id": "producer.test",
+            "producer_version": "1",
+            "supported_families": [
+              "ffi_binding",
+              "generated_binding",
+              "native_addon",
+              "wasm_boundary",
+              "subprocess_cli",
+              "schema_protocol",
+              "serialization_contract",
+              "generated_client",
+              "shared_resource",
+              "manual_registered_bridge",
+              "unknown_dynamic_boundary"
+            ]
+          }
+        ],
+        "edges": [
+          {
+            "edge_id": "connect",
+            "source": {
+              "language": "rust",
+              "subject_id": "connect.source",
+              "subject_body_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "display_name": "connect.source",
+              "project": {
+                "project_id": "project.alpha",
+                "package_id": "pkg",
+                "config_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+              }
+            },
+            "target": {
+              "language": "typescript",
+              "subject_id": "connect.target",
+              "subject_body_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "display_name": "connect.target",
+              "project": {
+                "project_id": "project.beta",
+                "package_id": "pkg",
+                "config_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+              }
+            },
+            "direction": "source_to_target",
+            "boundary_family": "ffi_binding",
+            "producer_id": "producer.test",
+            "producer_basis": "registered_producer_fact",
+            "exactness": "exact",
+            "declared_strength": "registered_binding",
+            "effective_strength": "registered_binding",
+            "propagation_ceiling": "registered_binding",
+            "generated_artifacts": [
+              {
+                "artifact_id": "connect.artifact",
+                "generator_id": "generator.test",
+                "input_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "output_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+              }
+            ],
+            "obligations": [
+              {
+                "obligation_id": "connect.obligation",
+                "description": "verify external oracle alignment",
+                "required_strength": "registered_binding"
+              }
+            ],
+            "first_unresolved_leg": null,
+            "currentness": "current",
+            "disposition": "positive_registered",
+            "limitations": [],
+            "non_claims": [
+              {
+                "claim": "runtime_success",
+                "reason": "static registry only"
+              }
+            ]
+          }
+        ],
+        "semantic_digest": null
+      },
+      "head": {
+        "schema_version": "ripr_cross_language_edge_registry.v1",
+        "proof_generation": "proof.v1",
+        "currentness_generation": "currentness.v1",
+        "supported_boundary_families": [
+          "ffi_binding",
+          "generated_binding",
+          "native_addon",
+          "wasm_boundary",
+          "subprocess_cli",
+          "schema_protocol",
+          "serialization_contract",
+          "generated_client",
+          "shared_resource",
+          "manual_registered_bridge",
+          "unknown_dynamic_boundary"
+        ],
+        "registered_producers": [
+          {
+            "producer_id": "producer.test",
+            "producer_version": "1",
+            "supported_families": [
+              "ffi_binding",
+              "generated_binding",
+              "native_addon",
+              "wasm_boundary",
+              "subprocess_cli",
+              "schema_protocol",
+              "serialization_contract",
+              "generated_client",
+              "shared_resource",
+              "manual_registered_bridge",
+              "unknown_dynamic_boundary"
+            ]
+          }
+        ],
+        "edges": [
+          {
+            "edge_id": "connect",
+            "source": {
+              "language": "rust",
+              "subject_id": "connect.moved",
+              "subject_body_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "display_name": "connect.moved",
+              "project": {
+                "project_id": "project.alpha",
+                "package_id": "pkg",
+                "config_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+              }
+            },
+            "target": {
+              "language": "typescript",
+              "subject_id": "connect.target",
+              "subject_body_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "display_name": "connect.target",
+              "project": {
+                "project_id": "project.beta",
+                "package_id": "pkg",
+                "config_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+              }
+            },
+            "direction": "source_to_target",
+            "boundary_family": "ffi_binding",
+            "producer_id": "producer.test",
+            "producer_basis": "registered_producer_fact",
+            "exactness": "exact",
+            "declared_strength": "registered_binding",
+            "effective_strength": "registered_binding",
+            "propagation_ceiling": "registered_binding",
+            "generated_artifacts": [
+              {
+                "artifact_id": "connect.artifact",
+                "generator_id": "generator.test",
+                "input_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "output_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+              }
+            ],
+            "obligations": [
+              {
+                "obligation_id": "connect.obligation",
+                "description": "verify external oracle alignment",
+                "required_strength": "registered_binding"
+              }
+            ],
+            "first_unresolved_leg": null,
+            "currentness": "current",
+            "disposition": "positive_registered",
+            "limitations": [],
+            "non_claims": [
+              {
+                "claim": "runtime_success",
+                "reason": "static registry only"
+              }
+            ]
+          }
+        ],
+        "semantic_digest": null
+      }
+    },
+    {
+      "id": "anomaly_artifact_cross_bind",
+      "expect": "anomaly",
+      "movement_kind": "ArtifactCrossBind",
+      "registry": {
+        "schema_version": "ripr_cross_language_edge_registry.v1",
+        "proof_generation": "proof.v1",
+        "currentness_generation": "currentness.v1",
+        "supported_boundary_families": [
+          "ffi_binding",
+          "generated_binding",
+          "native_addon",
+          "wasm_boundary",
+          "subprocess_cli",
+          "schema_protocol",
+          "serialization_contract",
+          "generated_client",
+          "shared_resource",
+          "manual_registered_bridge",
+          "unknown_dynamic_boundary"
+        ],
+        "registered_producers": [
+          {
+            "producer_id": "producer.test",
+            "producer_version": "1",
+            "supported_families": [
+              "ffi_binding",
+              "generated_binding",
+              "native_addon",
+              "wasm_boundary",
+              "subprocess_cli",
+              "schema_protocol",
+              "serialization_contract",
+              "generated_client",
+              "shared_resource",
+              "manual_registered_bridge",
+              "unknown_dynamic_boundary"
+            ]
+          }
+        ],
+        "edges": [
+          {
+            "edge_id": "left",
+            "source": {
+              "language": "rust",
+              "subject_id": "left.source",
+              "subject_body_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "display_name": "left.source",
+              "project": {
+                "project_id": "project.alpha",
+                "package_id": "pkg",
+                "config_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+              }
+            },
+            "target": {
+              "language": "typescript",
+              "subject_id": "left.target",
+              "subject_body_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "display_name": "left.target",
+              "project": {
+                "project_id": "project.beta",
+                "package_id": "pkg",
+                "config_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+              }
+            },
+            "direction": "source_to_target",
+            "boundary_family": "generated_binding",
+            "producer_id": "producer.test",
+            "producer_basis": "registered_producer_fact",
+            "exactness": "exact",
+            "declared_strength": "registered_binding",
+            "effective_strength": "registered_binding",
+            "propagation_ceiling": "registered_binding",
+            "generated_artifacts": [
+              {
+                "artifact_id": "shared.ts",
+                "generator_id": "generator.test",
+                "input_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "output_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+              }
+            ],
+            "obligations": [
+              {
+                "obligation_id": "left.obligation",
+                "description": "verify external oracle alignment",
+                "required_strength": "registered_binding"
+              }
+            ],
+            "first_unresolved_leg": null,
+            "currentness": "current",
+            "disposition": "positive_registered",
+            "limitations": [],
+            "non_claims": [
+              {
+                "claim": "runtime_success",
+                "reason": "static registry only"
+              }
+            ]
+          },
+          {
+            "edge_id": "right",
+            "source": {
+              "language": "rust",
+              "subject_id": "right.source",
+              "subject_body_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "display_name": "right.source",
+              "project": {
+                "project_id": "project.gamma",
+                "package_id": "pkg",
+                "config_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+              }
+            },
+            "target": {
+              "language": "typescript",
+              "subject_id": "right.target",
+              "subject_body_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "display_name": "right.target",
+              "project": {
+                "project_id": "project.delta",
+                "package_id": "pkg",
+                "config_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+              }
+            },
+            "direction": "source_to_target",
+            "boundary_family": "generated_binding",
+            "producer_id": "producer.test",
+            "producer_basis": "registered_producer_fact",
+            "exactness": "exact",
+            "declared_strength": "registered_binding",
+            "effective_strength": "registered_binding",
+            "propagation_ceiling": "registered_binding",
+            "generated_artifacts": [
+              {
+                "artifact_id": "shared.ts",
+                "generator_id": "generator.test",
+                "input_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "output_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+              }
+            ],
+            "obligations": [
+              {
+                "obligation_id": "right.obligation",
+                "description": "verify external oracle alignment",
+                "required_strength": "registered_binding"
+              }
+            ],
+            "first_unresolved_leg": null,
+            "currentness": "current",
+            "disposition": "positive_registered",
+            "limitations": [],
+            "non_claims": [
+              {
+                "claim": "runtime_success",
+                "reason": "static registry only"
+              }
+            ]
+          }
+        ],
+        "semantic_digest": null
+      }
+    }
+  ]
+}

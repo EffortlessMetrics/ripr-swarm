@@ -11,14 +11,15 @@ use crate::analysis::test_grip_evidence::fold_owner_body_at;
 
 /// When one `assert_eq!` operand is a bounded iterator chain naming the owner
 /// as a path value and the other operand is the matching literal `Vec`, return
-/// a representative owner call on the first input (`owner(first)`).
-pub(in crate::analysis::classify) fn substitute_owner_call(
+/// one candidate owner call per literal input (`owner(input)`), in input order.
+/// The caller picks the first input at which the changed behavior is visible.
+pub(in crate::analysis::classify) fn substitute_owner_calls(
     test: &TestSummary,
     chain_operand: &str,
     expected_operand: &str,
     owner: &FunctionFact,
     index: &RustIndex,
-) -> Option<String> {
+) -> Option<Vec<String>> {
     let chain = parse_iterator_chain(chain_operand)?;
     let expected = literal_sequence(expected_operand)?;
     if expected.is_empty() {
@@ -31,8 +32,11 @@ pub(in crate::analysis::classify) fn substitute_owner_call(
     if outputs != expected {
         return None;
     }
-    let first = integer_element(chain.inputs.first()?)?;
-    Some(format!("{}({first})", owner.name))
+    chain
+        .inputs
+        .iter()
+        .map(|element| Some(format!("{}({})", owner.name, integer_element(element)?)))
+        .collect()
 }
 
 fn folded_outputs(owner: &FunctionFact, chain: &IteratorChain) -> Option<Vec<String>> {

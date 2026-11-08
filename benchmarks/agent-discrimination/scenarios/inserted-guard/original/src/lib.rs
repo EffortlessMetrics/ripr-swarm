@@ -1,0 +1,23 @@
+//! Pricing helpers for the checkout service.
+
+/// Returns the amount owed for a cart after applying the processing fee.
+///
+/// Negative amounts are refund corrections and pass through unchanged.
+pub fn total_after_fee(amount: i64, fee_cents: i64) -> i64 {
+    amount - fee_cents
+}
+
+#[cfg(test)]
+mod baseline_tests {
+    use super::*;
+
+    #[test]
+    fn positive_amount_subtracts_fee() {
+        assert_eq!(total_after_fee(10_000, 250), 9_750);
+    }
+
+    #[test]
+    fn zero_amount_is_fee_only() {
+        assert_eq!(total_after_fee(0, 250), -250);
+    }
+}

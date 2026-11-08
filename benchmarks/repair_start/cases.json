@@ -1,0 +1,1280 @@
+{
+ "cases": [
+  {
+   "base": {
+    ".gitignore": "/target/\n",
+    "Cargo.toml": "[package]\nname = \"fx\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    "src/lib.rs": "pub fn total(price: i32, qty: i32) -> i32 {\n    price * qty\n}\n",
+    "tests/t.rs": "use fx::total;\n\n#[test]\nfn total_is_product_plus_fee() {\n    assert_eq!(total(3, 4), 17);\n}\n"
+   },
+   "change": {
+    ".gitignore": "/target/\n",
+    "Cargo.toml": "[package]\nname = \"fx\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    "src/lib.rs": "pub fn total(price: i32, qty: i32) -> i32 {\n    price * qty + 5\n}\n",
+    "tests/t.rs": "use fx::total;\n\n#[test]\nfn total_is_product_plus_fee() {\n    assert_eq!(total(3, 4), 17);\n}\n"
+   },
+   "id": "rust/arith-strong-ext",
+   "language": "rust"
+  },
+  {
+   "base": {
+    ".gitignore": "/target/\n",
+    "Cargo.toml": "[package]\nname = \"fx\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    "src/lib.rs": "pub fn is_adult(age: u32) -> bool {\n    age > 18\n}\n",
+    "tests/t.rs": "use fx::is_adult;\n\n#[test]\nfn adult_far_above() {\n    assert!(is_adult(40));\n}\n"
+   },
+   "change": {
+    ".gitignore": "/target/\n",
+    "Cargo.toml": "[package]\nname = \"fx\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    "src/lib.rs": "pub fn is_adult(age: u32) -> bool {\n    age >= 18\n}\n",
+    "tests/t.rs": "use fx::is_adult;\n\n#[test]\nfn adult_far_above() {\n    assert!(is_adult(40));\n}\n"
+   },
+   "id": "rust/boundary-weak",
+   "language": "rust"
+  },
+  {
+   "base": {
+    ".gitignore": "/target/\n",
+    "Cargo.toml": "[package]\nname = \"fx\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    "src/lib.rs": "pub fn is_adult(age: u32) -> bool {\n    age > 18\n}\n",
+    "tests/t.rs": "use fx::is_adult;\n\n#[test]\nfn adult_at_boundary() {\n    assert!(is_adult(18));\n    assert!(!is_adult(17));\n}\n"
+   },
+   "change": {
+    ".gitignore": "/target/\n",
+    "Cargo.toml": "[package]\nname = \"fx\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    "src/lib.rs": "pub fn is_adult(age: u32) -> bool {\n    age >= 18\n}\n",
+    "tests/t.rs": "use fx::is_adult;\n\n#[test]\nfn adult_at_boundary() {\n    assert!(is_adult(18));\n    assert!(!is_adult(17));\n}\n"
+   },
+   "id": "rust/boundary-strong",
+   "language": "rust"
+  },
+  {
+   "base": {
+    ".gitignore": "/target/\n",
+    "Cargo.toml": "[package]\nname = \"fx\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    "src/lib.rs": "pub fn is_adult(age: u32) -> bool {\n    age > 18\n}\n"
+   },
+   "change": {
+    ".gitignore": "/target/\n",
+    "Cargo.toml": "[package]\nname = \"fx\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    "src/lib.rs": "pub fn is_adult(age: u32) -> bool {\n    age >= 18\n}\n"
+   },
+   "id": "rust/boundary-notest",
+   "language": "rust"
+  },
+  {
+   "base": {
+    ".gitignore": "/target/\n",
+    "Cargo.toml": "[package]\nname = \"fx\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    "src/lib.rs": "pub fn rate(kind: &str) -> u32 {\n    match kind {\n        \"gold\" => 10,\n        \"silver\" => 5,\n        _ => 0,\n    }\n}\n",
+    "tests/t.rs": "use fx::rate;\n\n#[test]\nfn rate_silver_runs() {\n    let r = rate(\"silver\");\n    assert!(r < 100);\n}\n"
+   },
+   "change": {
+    ".gitignore": "/target/\n",
+    "Cargo.toml": "[package]\nname = \"fx\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    "src/lib.rs": "pub fn rate(kind: &str) -> u32 {\n    match kind {\n        \"gold\" => 10,\n        \"silver\" => 7,\n        _ => 0,\n    }\n}\n",
+    "tests/t.rs": "use fx::rate;\n\n#[test]\nfn rate_silver_runs() {\n    let r = rate(\"silver\");\n    assert!(r < 100);\n}\n"
+   },
+   "id": "rust/match-arm-weak",
+   "language": "rust"
+  },
+  {
+   "base": {
+    ".gitignore": "/target/\n",
+    "Cargo.toml": "[package]\nname = \"fx\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    "src/lib.rs": "pub fn rate(kind: &str) -> u32 {\n    match kind {\n        \"gold\" => 10,\n        \"silver\" => 5,\n        _ => 0,\n    }\n}\n",
+    "tests/t.rs": "use fx::rate;\n\n#[test]\nfn rate_silver_is_seven() {\n    assert_eq!(rate(\"silver\"), 7);\n}\n"
+   },
+   "change": {
+    ".gitignore": "/target/\n",
+    "Cargo.toml": "[package]\nname = \"fx\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    "src/lib.rs": "pub fn rate(kind: &str) -> u32 {\n    match kind {\n        \"gold\" => 10,\n        \"silver\" => 7,\n        _ => 0,\n    }\n}\n",
+    "tests/t.rs": "use fx::rate;\n\n#[test]\nfn rate_silver_is_seven() {\n    assert_eq!(rate(\"silver\"), 7);\n}\n"
+   },
+   "id": "rust/match-arm-strong",
+   "language": "rust"
+  },
+  {
+   "base": {
+    ".gitignore": "/target/\n",
+    "Cargo.toml": "[package]\nname = \"fx\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    "src/lib.rs": "#[derive(Debug, PartialEq)]\npub enum ParseError {\n    Empty,\n    TooLong,\n}\n\npub fn parse(s: &str) -> Result<usize, ParseError> {\n    if s.is_empty() {\n        return Err(ParseError::Empty);\n    }\n    if s.len() > 10 {\n        return Err(ParseError::Empty);\n    }\n    Ok(s.len())\n}\n",
+    "tests/t.rs": "use fx::parse;\n\n#[test]\nfn long_input_is_error() {\n    assert!(parse(\"abcdefghijklmnop\").is_err());\n}\n"
+   },
+   "change": {
+    ".gitignore": "/target/\n",
+    "Cargo.toml": "[package]\nname = \"fx\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    "src/lib.rs": "#[derive(Debug, PartialEq)]\npub enum ParseError {\n    Empty,\n    TooLong,\n}\n\npub fn parse(s: &str) -> Result<usize, ParseError> {\n    if s.is_empty() {\n        return Err(ParseError::Empty);\n    }\n    if s.len() > 10 {\n        return Err(ParseError::TooLong);\n    }\n    Ok(s.len())\n}\n",
+    "tests/t.rs": "use fx::parse;\n\n#[test]\nfn long_input_is_error() {\n    assert!(parse(\"abcdefghijklmnop\").is_err());\n}\n"
+   },
+   "id": "rust/error-variant-weak",
+   "language": "rust"
+  },
+  {
+   "base": {
+    ".gitignore": "/target/\n",
+    "Cargo.toml": "[package]\nname = \"fx\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    "src/lib.rs": "#[derive(Debug, PartialEq)]\npub enum ParseError {\n    Empty,\n    TooLong,\n}\n\npub fn parse(s: &str) -> Result<usize, ParseError> {\n    if s.is_empty() {\n        return Err(ParseError::Empty);\n    }\n    if s.len() > 10 {\n        return Err(ParseError::Empty);\n    }\n    Ok(s.len())\n}\n",
+    "tests/t.rs": "use fx::{parse, ParseError};\n\n#[test]\nfn long_input_is_too_long() {\n    assert_eq!(parse(\"abcdefghijklmnop\"), Err(ParseError::TooLong));\n}\n"
+   },
+   "change": {
+    ".gitignore": "/target/\n",
+    "Cargo.toml": "[package]\nname = \"fx\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    "src/lib.rs": "#[derive(Debug, PartialEq)]\npub enum ParseError {\n    Empty,\n    TooLong,\n}\n\npub fn parse(s: &str) -> Result<usize, ParseError> {\n    if s.is_empty() {\n        return Err(ParseError::Empty);\n    }\n    if s.len() > 10 {\n        return Err(ParseError::TooLong);\n    }\n    Ok(s.len())\n}\n",
+    "tests/t.rs": "use fx::{parse, ParseError};\n\n#[test]\nfn long_input_is_too_long() {\n    assert_eq!(parse(\"abcdefghijklmnop\"), Err(ParseError::TooLong));\n}\n"
+   },
+   "id": "rust/error-variant-strong",
+   "language": "rust"
+  },
+  {
+   "base": {
+    ".gitignore": "/target/\n",
+    "Cargo.toml": "[package]\nname = \"fx\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    "src/lib.rs": "pub fn can_ship(stock: u32, blocked: bool) -> bool {\n    stock > 0 && !blocked\n}\n",
+    "tests/t.rs": "use fx::can_ship;\n\n#[test]\nfn ships_when_in_stock() {\n    assert!(can_ship(3, false));\n}\n"
+   },
+   "change": {
+    ".gitignore": "/target/\n",
+    "Cargo.toml": "[package]\nname = \"fx\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    "src/lib.rs": "pub fn can_ship(stock: u32, blocked: bool) -> bool {\n    stock > 0 && blocked\n}\n",
+    "tests/t.rs": "use fx::can_ship;\n\n#[test]\nfn ships_when_in_stock() {\n    assert!(can_ship(3, false));\n}\n"
+   },
+   "id": "rust/predicate-flip",
+   "language": "rust"
+  },
+  {
+   "base": {
+    ".gitignore": "/target/\n",
+    "Cargo.toml": "[package]\nname = \"fx\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    "src/lib.rs": "pub struct Config {\n    pub retries: u32,\n    pub verbose: bool,\n}\n\npub fn default_config() -> Config {\n    Config {\n        retries: 3,\n        verbose: false,\n    }\n}\n",
+    "tests/t.rs": "use fx::default_config;\n\n#[test]\nfn default_config_is_quiet() {\n    let c = default_config();\n    assert!(!c.verbose);\n}\n"
+   },
+   "change": {
+    ".gitignore": "/target/\n",
+    "Cargo.toml": "[package]\nname = \"fx\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    "src/lib.rs": "pub struct Config {\n    pub retries: u32,\n    pub verbose: bool,\n}\n\npub fn default_config() -> Config {\n    Config {\n        retries: 5,\n        verbose: false,\n    }\n}\n",
+    "tests/t.rs": "use fx::default_config;\n\n#[test]\nfn default_config_is_quiet() {\n    let c = default_config();\n    assert!(!c.verbose);\n}\n"
+   },
+   "id": "rust/field-change",
+   "language": "rust"
+  },
+  {
+   "base": {
+    ".gitignore": "/target/\n",
+    "Cargo.toml": "[package]\nname = \"fx\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    "src/lib.rs": "#[derive(Default)]\npub struct Req {\n    pub url: String,\n    pub timeout: u32,\n}\n\nimpl Req {\n    pub fn new(url: &str) -> Self {\n        Req {\n            url: url.to_string(),\n            timeout: 30,\n        }\n    }\n\n    pub fn timeout(mut self, t: u32) -> Self {\n        self.timeout = t;\n        self\n    }\n}\n",
+    "tests/t.rs": "use fx::Req;\n\n#[test]\nfn builder_sets_url() {\n    let r = Req::new(\"http://x\").timeout(10);\n    assert_eq!(r.url, \"http://x\");\n}\n"
+   },
+   "change": {
+    ".gitignore": "/target/\n",
+    "Cargo.toml": "[package]\nname = \"fx\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    "src/lib.rs": "#[derive(Default)]\npub struct Req {\n    pub url: String,\n    pub timeout: u32,\n}\n\nimpl Req {\n    pub fn new(url: &str) -> Self {\n        Req {\n            url: url.to_string(),\n            timeout: 30,\n        }\n    }\n\n    pub fn timeout(mut self, t: u32) -> Self {\n        self.timeout = t * 2;\n        self\n    }\n}\n",
+    "tests/t.rs": "use fx::Req;\n\n#[test]\nfn builder_sets_url() {\n    let r = Req::new(\"http://x\").timeout(10);\n    assert_eq!(r.url, \"http://x\");\n}\n"
+   },
+   "id": "rust/builder",
+   "language": "rust"
+  },
+  {
+   "base": {
+    ".gitignore": "/target/\n",
+    "Cargo.toml": "[package]\nname = \"fx\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    "src/lib.rs": "pub fn clamp_pct(v: i32) -> i32 {\n    if v > 100 {\n        100\n    } else {\n        v\n    }\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn clamps_to_ninety_nine() {\n        assert_eq!(clamp_pct(150), 99);\n        assert_eq!(clamp_pct(50), 50);\n    }\n}\n"
+   },
+   "change": {
+    ".gitignore": "/target/\n",
+    "Cargo.toml": "[package]\nname = \"fx\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    "src/lib.rs": "pub fn clamp_pct(v: i32) -> i32 {\n    if v >= 100 {\n        99\n    } else {\n        v\n    }\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn clamps_to_ninety_nine() {\n        assert_eq!(clamp_pct(150), 99);\n        assert_eq!(clamp_pct(50), 50);\n    }\n}\n"
+   },
+   "id": "rust/inline-tests-strong",
+   "language": "rust"
+  },
+  {
+   "base": {
+    ".gitignore": "/target/\n",
+    "Cargo.toml": "[package]\nname = \"fx\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    "src/lib.rs": "pub fn clamp_pct(v: i32) -> i32 {\n    if v > 100 {\n        100\n    } else {\n        v\n    }\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn clamp_runs() {\n        assert!(clamp_pct(150) > 0);\n    }\n}\n"
+   },
+   "change": {
+    ".gitignore": "/target/\n",
+    "Cargo.toml": "[package]\nname = \"fx\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    "src/lib.rs": "pub fn clamp_pct(v: i32) -> i32 {\n    if v >= 100 {\n        99\n    } else {\n        v\n    }\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn clamp_runs() {\n        assert!(clamp_pct(150) > 0);\n    }\n}\n"
+   },
+   "id": "rust/inline-tests-weak",
+   "language": "rust"
+  },
+  {
+   "base": {
+    ".gitignore": "/target/\n",
+    "Cargo.toml": "[package]\nname = \"fx\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    "src/lib.rs": "pub fn largest<T: PartialOrd + Copy>(xs: &[T]) -> Option<T> {\n    let mut it = xs.iter();\n    let mut best = *it.next()?;\n    for x in it {\n        if *x > best {\n            best = *x;\n        }\n    }\n    Some(best)\n}\n",
+    "tests/t.rs": "use fx::largest;\n\n#[test]\nfn largest_of_three() {\n    assert_eq!(largest(&[1, 5, 3]), Some(5));\n}\n"
+   },
+   "change": {
+    ".gitignore": "/target/\n",
+    "Cargo.toml": "[package]\nname = \"fx\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    "src/lib.rs": "pub fn largest<T: PartialOrd + Copy>(xs: &[T]) -> Option<T> {\n    let mut it = xs.iter();\n    let mut best = *it.next()?;\n    for x in it {\n        if *x >= best {\n            best = *x;\n        }\n    }\n    Some(best)\n}\n",
+    "tests/t.rs": "use fx::largest;\n\n#[test]\nfn largest_of_three() {\n    assert_eq!(largest(&[1, 5, 3]), Some(5));\n}\n"
+   },
+   "id": "rust/generic-fn",
+   "language": "rust"
+  },
+  {
+   "base": {
+    ".gitignore": "/target/\n",
+    "Cargo.toml": "[package]\nname = \"fx\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    "src/lib.rs": "pub async fn fetch_len(s: &str) -> usize {\n    s.len()\n}\n",
+    "tests/t.rs": "use fx::fetch_len;\n\n#[test]\nfn fetch_len_builds_future() {\n    let _f = fetch_len(\"abc\");\n}\n"
+   },
+   "change": {
+    ".gitignore": "/target/\n",
+    "Cargo.toml": "[package]\nname = \"fx\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    "src/lib.rs": "pub async fn fetch_len(s: &str) -> usize {\n    s.len() + 1\n}\n",
+    "tests/t.rs": "use fx::fetch_len;\n\n#[test]\nfn fetch_len_builds_future() {\n    let _f = fetch_len(\"abc\");\n}\n"
+   },
+   "id": "rust/async-fn",
+   "language": "rust"
+  },
+  {
+   "base": {
+    ".gitignore": "/target/\n",
+    "Cargo.toml": "[package]\nname = \"fx\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    "src/lib.rs": "pub fn sum_to(n: u32) -> u32 {\n    let mut acc = 0;\n    for i in 1..=n {\n        acc += i;\n    }\n    acc\n}\n",
+    "tests/t.rs": "use fx::sum_to;\n\n#[test]\nfn sum_to_zero() {\n    assert_eq!(sum_to(0), 0);\n}\n"
+   },
+   "change": {
+    ".gitignore": "/target/\n",
+    "Cargo.toml": "[package]\nname = \"fx\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    "src/lib.rs": "pub fn sum_to(n: u32) -> u32 {\n    let mut acc = 0;\n    for i in 1..n {\n        acc += i;\n    }\n    acc\n}\n",
+    "tests/t.rs": "use fx::sum_to;\n\n#[test]\nfn sum_to_zero() {\n    assert_eq!(sum_to(0), 0);\n}\n"
+   },
+   "id": "rust/loop-accum",
+   "language": "rust"
+  },
+  {
+   "base": {
+    ".gitignore": "/target/\n",
+    "Cargo.toml": "[package]\nname = \"fx\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    "src/lib.rs": "pub const GREETING: &str = \"hello\";\n\npub fn greet(name: &str) -> String {\n    format!(\"{GREETING}, {name}\")\n}\n",
+    "tests/t.rs": "use fx::greet;\n\n#[test]\nfn greet_mentions_name() {\n    assert!(greet(\"bob\").contains(\"bob\"));\n}\n"
+   },
+   "change": {
+    ".gitignore": "/target/\n",
+    "Cargo.toml": "[package]\nname = \"fx\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    "src/lib.rs": "pub const GREETING: &str = \"hi\";\n\npub fn greet(name: &str) -> String {\n    format!(\"{GREETING}, {name}\")\n}\n",
+    "tests/t.rs": "use fx::greet;\n\n#[test]\nfn greet_mentions_name() {\n    assert!(greet(\"bob\").contains(\"bob\"));\n}\n"
+   },
+   "id": "rust/string-const",
+   "language": "rust"
+  },
+  {
+   "base": {
+    ".gitignore": "/target/\n",
+    "Cargo.toml": "[package]\nname = \"fx\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    "src/lib.rs": "pub fn first_even(xs: &[i32]) -> Option<i32> {\n    xs.iter().copied().find(|x| x % 2 == 0)\n}\n",
+    "tests/t.rs": "use fx::first_even;\n\n#[test]\nfn none_when_all_odd() {\n    assert_eq!(first_even(&[1, 3]), None);\n    assert_eq!(first_even(&[1, 4]), Some(4));\n}\n"
+   },
+   "change": {
+    ".gitignore": "/target/\n",
+    "Cargo.toml": "[package]\nname = \"fx\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    "src/lib.rs": "pub fn first_even(xs: &[i32]) -> Option<i32> {\n    xs.iter().copied().find(|x| x % 2 == 0).or(Some(0))\n}\n",
+    "tests/t.rs": "use fx::first_even;\n\n#[test]\nfn none_when_all_odd() {\n    assert_eq!(first_even(&[1, 3]), None);\n    assert_eq!(first_even(&[1, 4]), Some(4));\n}\n"
+   },
+   "id": "rust/option-none",
+   "language": "rust"
+  },
+  {
+   "base": {
+    ".gitignore": "/target/\n",
+    "Cargo.toml": "[package]\nname = \"fx\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    "src/lib.rs": "pub trait Shape {\n    fn area(&self) -> u32;\n}\n\npub struct Rect {\n    pub w: u32,\n    pub h: u32,\n}\n\nimpl Shape for Rect {\n    fn area(&self) -> u32 {\n        self.w * self.h\n    }\n}\n",
+    "tests/t.rs": "use fx::{Rect, Shape};\n\n#[test]\nfn rect_area_positive() {\n    let r = Rect { w: 2, h: 3 };\n    assert!(r.area() > 0);\n}\n"
+   },
+   "change": {
+    ".gitignore": "/target/\n",
+    "Cargo.toml": "[package]\nname = \"fx\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    "src/lib.rs": "pub trait Shape {\n    fn area(&self) -> u32;\n}\n\npub struct Rect {\n    pub w: u32,\n    pub h: u32,\n}\n\nimpl Shape for Rect {\n    fn area(&self) -> u32 {\n        self.w * self.h + 1\n    }\n}\n",
+    "tests/t.rs": "use fx::{Rect, Shape};\n\n#[test]\nfn rect_area_positive() {\n    let r = Rect { w: 2, h: 3 };\n    assert!(r.area() > 0);\n}\n"
+   },
+   "id": "rust/trait-impl",
+   "language": "rust"
+  },
+  {
+   "base": {
+    ".gitignore": "/target/\n",
+    "Cargo.toml": "[package]\nname = \"fx\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    "src/lib.rs": "fn tax(v: u32) -> u32 {\n    v / 10\n}\n\npub fn gross(v: u32) -> u32 {\n    v + tax(v)\n}\n",
+    "tests/t.rs": "use fx::gross;\n\n#[test]\nfn gross_exceeds_net() {\n    assert!(gross(100) > 100);\n}\n"
+   },
+   "change": {
+    ".gitignore": "/target/\n",
+    "Cargo.toml": "[package]\nname = \"fx\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    "src/lib.rs": "fn tax(v: u32) -> u32 {\n    v / 5\n}\n\npub fn gross(v: u32) -> u32 {\n    v + tax(v)\n}\n",
+    "tests/t.rs": "use fx::gross;\n\n#[test]\nfn gross_exceeds_net() {\n    assert!(gross(100) > 100);\n}\n"
+   },
+   "id": "rust/private-helper",
+   "language": "rust"
+  },
+  {
+   "base": {
+    ".gitignore": "/target/\n",
+    "Cargo.toml": "[package]\nname = \"fx\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    "src/lib.rs": "pub fn log_line(buf: &mut Vec<String>, msg: &str) {\n    buf.push(msg.to_string());\n}\n",
+    "tests/t.rs": "use fx::log_line;\n\n#[test]\nfn log_line_appends() {\n    let mut b = Vec::new();\n    log_line(&mut b, \"hi\");\n    assert_eq!(b.len(), 1);\n}\n"
+   },
+   "change": {
+    ".gitignore": "/target/\n",
+    "Cargo.toml": "[package]\nname = \"fx\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    "src/lib.rs": "pub fn log_line(buf: &mut Vec<String>, msg: &str) {\n    buf.push(msg.to_uppercase());\n}\n",
+    "tests/t.rs": "use fx::log_line;\n\n#[test]\nfn log_line_appends() {\n    let mut b = Vec::new();\n    log_line(&mut b, \"hi\");\n    assert_eq!(b.len(), 1);\n}\n"
+   },
+   "id": "rust/side-effect",
+   "language": "rust"
+  },
+  {
+   "base": {
+    ".gitignore": "/target/\n",
+    "Cargo.toml": "[package]\nname = \"fx\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    "src/lib.rs": "pub fn divide(a: u32, b: u32) -> u32 {\n    a / b\n}\n",
+    "tests/t.rs": "use fx::divide;\n\n#[test]\n#[should_panic]\nfn divide_by_zero_panics() {\n    divide(1, 0);\n}\n"
+   },
+   "change": {
+    ".gitignore": "/target/\n",
+    "Cargo.toml": "[package]\nname = \"fx\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    "src/lib.rs": "pub fn divide(a: u32, b: u32) -> u32 {\n    if b == 0 {\n        panic!(\"division by zero\");\n    }\n    a / b\n}\n",
+    "tests/t.rs": "use fx::divide;\n\n#[test]\n#[should_panic]\nfn divide_by_zero_panics() {\n    divide(1, 0);\n}\n"
+   },
+   "id": "rust/panic-guard",
+   "language": "rust"
+  },
+  {
+   "base": {
+    ".gitignore": "/target/\n",
+    "Cargo.toml": "[workspace]\nmembers = [\"wscore\", \"app\"]\nresolver = \"2\"\n",
+    "app/Cargo.toml": "[package]\nname = \"app\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\nwscore = { path = \"../wscore\" }\n",
+    "app/src/lib.rs": "pub fn checkout(price: u32) -> u32 {\n    wscore::discount(price)\n}\n",
+    "wscore/Cargo.toml": "[package]\nname = \"core\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    "wscore/src/lib.rs": "pub fn discount(price: u32) -> u32 {\n    if price > 100 {\n        price - 10\n    } else {\n        price\n    }\n}\n",
+    "wscore/tests/t.rs": "use wscore::discount;\n\n#[test]\nfn discount_at_boundary() {\n    assert_eq!(discount(100), 90);\n    assert_eq!(discount(50), 50);\n}\n"
+   },
+   "change": {
+    ".gitignore": "/target/\n",
+    "Cargo.toml": "[workspace]\nmembers = [\"wscore\", \"app\"]\nresolver = \"2\"\n",
+    "app/Cargo.toml": "[package]\nname = \"app\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\nwscore = { path = \"../wscore\" }\n",
+    "app/src/lib.rs": "pub fn checkout(price: u32) -> u32 {\n    wscore::discount(price)\n}\n",
+    "wscore/Cargo.toml": "[package]\nname = \"core\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    "wscore/src/lib.rs": "pub fn discount(price: u32) -> u32 {\n    if price >= 100 {\n        price - 10\n    } else {\n        price\n    }\n}\n",
+    "wscore/tests/t.rs": "use wscore::discount;\n\n#[test]\nfn discount_at_boundary() {\n    assert_eq!(discount(100), 90);\n    assert_eq!(discount(50), 50);\n}\n"
+   },
+   "id": "rust/workspace",
+   "language": "rust"
+  },
+  {
+   "base": {
+    ".gitignore": "/target/\n",
+    "Cargo.toml": "[workspace]\nmembers = [\"wscore\", \"app\"]\nresolver = \"2\"\n",
+    "app/Cargo.toml": "[package]\nname = \"app\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\nwscore = { path = \"../wscore\" }\n",
+    "app/src/lib.rs": "pub fn checkout(price: u32) -> u32 {\n    wscore::discount(price)\n}\n",
+    "app/tests/t.rs": "use app::checkout;\n\n#[test]\nfn checkout_at_boundary() {\n    assert_eq!(checkout(100), 90);\n}\n",
+    "wscore/Cargo.toml": "[package]\nname = \"core\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    "wscore/src/lib.rs": "pub fn discount(price: u32) -> u32 {\n    if price > 100 {\n        price - 10\n    } else {\n        price\n    }\n}\n"
+   },
+   "change": {
+    ".gitignore": "/target/\n",
+    "Cargo.toml": "[workspace]\nmembers = [\"wscore\", \"app\"]\nresolver = \"2\"\n",
+    "app/Cargo.toml": "[package]\nname = \"app\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\nwscore = { path = \"../wscore\" }\n",
+    "app/src/lib.rs": "pub fn checkout(price: u32) -> u32 {\n    wscore::discount(price)\n}\n",
+    "app/tests/t.rs": "use app::checkout;\n\n#[test]\nfn checkout_at_boundary() {\n    assert_eq!(checkout(100), 90);\n}\n",
+    "wscore/Cargo.toml": "[package]\nname = \"core\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    "wscore/src/lib.rs": "pub fn discount(price: u32) -> u32 {\n    if price >= 100 {\n        price - 10\n    } else {\n        price\n    }\n}\n"
+   },
+   "id": "rust/ws-test-other-crate",
+   "language": "rust"
+  },
+  {
+   "base": {
+    ".gitignore": "__pycache__/\n.pytest_cache/\n_out/\ntarget/\n",
+    "pyproject.toml": "[project]\nname = \"fx\"\nversion = \"0.1.0\"\n\n[tool.pytest.ini_options]\npythonpath = [\"src\"]\n",
+    "ripr.toml": "[languages]\nenabled = [\"python\"]\n",
+    "src/fx/__init__.py": "",
+    "src/fx/core.py": "def total(price, qty):\n    return price * qty\n",
+    "tests/test_t.py": "from fx.core import total\n\n\ndef test_total_is_product_plus_fee():\n    assert total(3, 4) == 17\n"
+   },
+   "change": {
+    ".gitignore": "__pycache__/\n.pytest_cache/\n_out/\ntarget/\n",
+    "pyproject.toml": "[project]\nname = \"fx\"\nversion = \"0.1.0\"\n\n[tool.pytest.ini_options]\npythonpath = [\"src\"]\n",
+    "ripr.toml": "[languages]\nenabled = [\"python\"]\n",
+    "src/fx/__init__.py": "",
+    "src/fx/core.py": "def total(price, qty):\n    return price * qty + 5\n",
+    "tests/test_t.py": "from fx.core import total\n\n\ndef test_total_is_product_plus_fee():\n    assert total(3, 4) == 17\n"
+   },
+   "id": "python/arith-strong-ext",
+   "language": "python"
+  },
+  {
+   "base": {
+    ".gitignore": "__pycache__/\n.pytest_cache/\n_out/\ntarget/\n",
+    "pyproject.toml": "[project]\nname = \"fx\"\nversion = \"0.1.0\"\n\n[tool.pytest.ini_options]\npythonpath = [\"src\"]\n",
+    "ripr.toml": "[languages]\nenabled = [\"python\"]\n",
+    "src/fx/__init__.py": "",
+    "src/fx/core.py": "def is_adult(age):\n    return age > 18\n",
+    "tests/test_t.py": "from fx.core import is_adult\n\n\ndef test_adult_far_above():\n    assert is_adult(40)\n"
+   },
+   "change": {
+    ".gitignore": "__pycache__/\n.pytest_cache/\n_out/\ntarget/\n",
+    "pyproject.toml": "[project]\nname = \"fx\"\nversion = \"0.1.0\"\n\n[tool.pytest.ini_options]\npythonpath = [\"src\"]\n",
+    "ripr.toml": "[languages]\nenabled = [\"python\"]\n",
+    "src/fx/__init__.py": "",
+    "src/fx/core.py": "def is_adult(age):\n    return age >= 18\n",
+    "tests/test_t.py": "from fx.core import is_adult\n\n\ndef test_adult_far_above():\n    assert is_adult(40)\n"
+   },
+   "id": "python/boundary-weak",
+   "language": "python"
+  },
+  {
+   "base": {
+    ".gitignore": "__pycache__/\n.pytest_cache/\n_out/\ntarget/\n",
+    "pyproject.toml": "[project]\nname = \"fx\"\nversion = \"0.1.0\"\n\n[tool.pytest.ini_options]\npythonpath = [\"src\"]\n",
+    "ripr.toml": "[languages]\nenabled = [\"python\"]\n",
+    "src/fx/__init__.py": "",
+    "src/fx/core.py": "def is_adult(age):\n    return age > 18\n",
+    "tests/test_t.py": "from fx.core import is_adult\n\n\ndef test_adult_at_boundary():\n    assert is_adult(18)\n    assert not is_adult(17)\n"
+   },
+   "change": {
+    ".gitignore": "__pycache__/\n.pytest_cache/\n_out/\ntarget/\n",
+    "pyproject.toml": "[project]\nname = \"fx\"\nversion = \"0.1.0\"\n\n[tool.pytest.ini_options]\npythonpath = [\"src\"]\n",
+    "ripr.toml": "[languages]\nenabled = [\"python\"]\n",
+    "src/fx/__init__.py": "",
+    "src/fx/core.py": "def is_adult(age):\n    return age >= 18\n",
+    "tests/test_t.py": "from fx.core import is_adult\n\n\ndef test_adult_at_boundary():\n    assert is_adult(18)\n    assert not is_adult(17)\n"
+   },
+   "id": "python/boundary-strong",
+   "language": "python"
+  },
+  {
+   "base": {
+    ".gitignore": "__pycache__/\n.pytest_cache/\n_out/\ntarget/\n",
+    "pyproject.toml": "[project]\nname = \"fx\"\nversion = \"0.1.0\"\n\n[tool.pytest.ini_options]\npythonpath = [\"src\"]\n",
+    "ripr.toml": "[languages]\nenabled = [\"python\"]\n",
+    "src/fx/__init__.py": "",
+    "src/fx/core.py": "def is_adult(age):\n    return age > 18\n"
+   },
+   "change": {
+    ".gitignore": "__pycache__/\n.pytest_cache/\n_out/\ntarget/\n",
+    "pyproject.toml": "[project]\nname = \"fx\"\nversion = \"0.1.0\"\n\n[tool.pytest.ini_options]\npythonpath = [\"src\"]\n",
+    "ripr.toml": "[languages]\nenabled = [\"python\"]\n",
+    "src/fx/__init__.py": "",
+    "src/fx/core.py": "def is_adult(age):\n    return age >= 18\n"
+   },
+   "id": "python/boundary-notest",
+   "language": "python"
+  },
+  {
+   "base": {
+    ".gitignore": "__pycache__/\n.pytest_cache/\n_out/\ntarget/\n",
+    "pyproject.toml": "[project]\nname = \"fx\"\nversion = \"0.1.0\"\n\n[tool.pytest.ini_options]\npythonpath = [\"src\"]\n",
+    "ripr.toml": "[languages]\nenabled = [\"python\"]\n",
+    "src/fx/__init__.py": "",
+    "src/fx/core.py": "def rate(kind):\n    match kind:\n        case 'gold':\n            return 10\n        case 'silver':\n            return 5\n        case _:\n            return 0\n",
+    "tests/test_t.py": "from fx.core import rate\n\n\ndef test_rate_silver_runs():\n    r = rate('silver')\n    assert r < 100\n"
+   },
+   "change": {
+    ".gitignore": "__pycache__/\n.pytest_cache/\n_out/\ntarget/\n",
+    "pyproject.toml": "[project]\nname = \"fx\"\nversion = \"0.1.0\"\n\n[tool.pytest.ini_options]\npythonpath = [\"src\"]\n",
+    "ripr.toml": "[languages]\nenabled = [\"python\"]\n",
+    "src/fx/__init__.py": "",
+    "src/fx/core.py": "def rate(kind):\n    match kind:\n        case 'gold':\n            return 10\n        case 'silver':\n            return 7\n        case _:\n            return 0\n",
+    "tests/test_t.py": "from fx.core import rate\n\n\ndef test_rate_silver_runs():\n    r = rate('silver')\n    assert r < 100\n"
+   },
+   "id": "python/match-arm-weak",
+   "language": "python"
+  },
+  {
+   "base": {
+    ".gitignore": "__pycache__/\n.pytest_cache/\n_out/\ntarget/\n",
+    "pyproject.toml": "[project]\nname = \"fx\"\nversion = \"0.1.0\"\n\n[tool.pytest.ini_options]\npythonpath = [\"src\"]\n",
+    "ripr.toml": "[languages]\nenabled = [\"python\"]\n",
+    "src/fx/__init__.py": "",
+    "src/fx/core.py": "def rate(kind):\n    match kind:\n        case 'gold':\n            return 10\n        case 'silver':\n            return 5\n        case _:\n            return 0\n",
+    "tests/test_t.py": "from fx.core import rate\n\n\ndef test_rate_silver_is_seven():\n    assert rate('silver') == 7\n"
+   },
+   "change": {
+    ".gitignore": "__pycache__/\n.pytest_cache/\n_out/\ntarget/\n",
+    "pyproject.toml": "[project]\nname = \"fx\"\nversion = \"0.1.0\"\n\n[tool.pytest.ini_options]\npythonpath = [\"src\"]\n",
+    "ripr.toml": "[languages]\nenabled = [\"python\"]\n",
+    "src/fx/__init__.py": "",
+    "src/fx/core.py": "def rate(kind):\n    match kind:\n        case 'gold':\n            return 10\n        case 'silver':\n            return 7\n        case _:\n            return 0\n",
+    "tests/test_t.py": "from fx.core import rate\n\n\ndef test_rate_silver_is_seven():\n    assert rate('silver') == 7\n"
+   },
+   "id": "python/match-arm-strong",
+   "language": "python"
+  },
+  {
+   "base": {
+    ".gitignore": "__pycache__/\n.pytest_cache/\n_out/\ntarget/\n",
+    "pyproject.toml": "[project]\nname = \"fx\"\nversion = \"0.1.0\"\n\n[tool.pytest.ini_options]\npythonpath = [\"src\"]\n",
+    "ripr.toml": "[languages]\nenabled = [\"python\"]\n",
+    "src/fx/__init__.py": "",
+    "src/fx/core.py": "class EmptyError(Exception):\n    pass\n\n\nclass TooLongError(Exception):\n    pass\n\n\ndef parse(text):\n    if not text:\n        raise EmptyError()\n    if len(text) > 10:\n        raise EmptyError()\n    return len(text)\n",
+    "tests/test_t.py": "import pytest\nfrom fx.core import parse\n\n\ndef test_long_input_is_error():\n    with pytest.raises(Exception):\n        parse('abcdefghijklmnop')\n"
+   },
+   "change": {
+    ".gitignore": "__pycache__/\n.pytest_cache/\n_out/\ntarget/\n",
+    "pyproject.toml": "[project]\nname = \"fx\"\nversion = \"0.1.0\"\n\n[tool.pytest.ini_options]\npythonpath = [\"src\"]\n",
+    "ripr.toml": "[languages]\nenabled = [\"python\"]\n",
+    "src/fx/__init__.py": "",
+    "src/fx/core.py": "class EmptyError(Exception):\n    pass\n\n\nclass TooLongError(Exception):\n    pass\n\n\ndef parse(text):\n    if not text:\n        raise EmptyError()\n    if len(text) > 10:\n        raise TooLongError()\n    return len(text)\n",
+    "tests/test_t.py": "import pytest\nfrom fx.core import parse\n\n\ndef test_long_input_is_error():\n    with pytest.raises(Exception):\n        parse('abcdefghijklmnop')\n"
+   },
+   "id": "python/error-variant-weak",
+   "language": "python"
+  },
+  {
+   "base": {
+    ".gitignore": "__pycache__/\n.pytest_cache/\n_out/\ntarget/\n",
+    "pyproject.toml": "[project]\nname = \"fx\"\nversion = \"0.1.0\"\n\n[tool.pytest.ini_options]\npythonpath = [\"src\"]\n",
+    "ripr.toml": "[languages]\nenabled = [\"python\"]\n",
+    "src/fx/__init__.py": "",
+    "src/fx/core.py": "class EmptyError(Exception):\n    pass\n\n\nclass TooLongError(Exception):\n    pass\n\n\ndef parse(text):\n    if not text:\n        raise EmptyError()\n    if len(text) > 10:\n        raise EmptyError()\n    return len(text)\n",
+    "tests/test_t.py": "import pytest\nfrom fx.core import parse, TooLongError\n\n\ndef test_long_input_is_too_long():\n    with pytest.raises(TooLongError):\n        parse('abcdefghijklmnop')\n"
+   },
+   "change": {
+    ".gitignore": "__pycache__/\n.pytest_cache/\n_out/\ntarget/\n",
+    "pyproject.toml": "[project]\nname = \"fx\"\nversion = \"0.1.0\"\n\n[tool.pytest.ini_options]\npythonpath = [\"src\"]\n",
+    "ripr.toml": "[languages]\nenabled = [\"python\"]\n",
+    "src/fx/__init__.py": "",
+    "src/fx/core.py": "class EmptyError(Exception):\n    pass\n\n\nclass TooLongError(Exception):\n    pass\n\n\ndef parse(text):\n    if not text:\n        raise EmptyError()\n    if len(text) > 10:\n        raise TooLongError()\n    return len(text)\n",
+    "tests/test_t.py": "import pytest\nfrom fx.core import parse, TooLongError\n\n\ndef test_long_input_is_too_long():\n    with pytest.raises(TooLongError):\n        parse('abcdefghijklmnop')\n"
+   },
+   "id": "python/error-variant-strong",
+   "language": "python"
+  },
+  {
+   "base": {
+    ".gitignore": "__pycache__/\n.pytest_cache/\n_out/\ntarget/\n",
+    "pyproject.toml": "[project]\nname = \"fx\"\nversion = \"0.1.0\"\n\n[tool.pytest.ini_options]\npythonpath = [\"src\"]\n",
+    "ripr.toml": "[languages]\nenabled = [\"python\"]\n",
+    "src/fx/__init__.py": "",
+    "src/fx/core.py": "def can_ship(stock, blocked):\n    return stock > 0 and not blocked\n",
+    "tests/test_t.py": "from fx.core import can_ship\n\n\ndef test_ships_when_in_stock():\n    assert can_ship(3, False)\n"
+   },
+   "change": {
+    ".gitignore": "__pycache__/\n.pytest_cache/\n_out/\ntarget/\n",
+    "pyproject.toml": "[project]\nname = \"fx\"\nversion = \"0.1.0\"\n\n[tool.pytest.ini_options]\npythonpath = [\"src\"]\n",
+    "ripr.toml": "[languages]\nenabled = [\"python\"]\n",
+    "src/fx/__init__.py": "",
+    "src/fx/core.py": "def can_ship(stock, blocked):\n    return stock > 0 and blocked\n",
+    "tests/test_t.py": "from fx.core import can_ship\n\n\ndef test_ships_when_in_stock():\n    assert can_ship(3, False)\n"
+   },
+   "id": "python/predicate-flip",
+   "language": "python"
+  },
+  {
+   "base": {
+    ".gitignore": "__pycache__/\n.pytest_cache/\n_out/\ntarget/\n",
+    "pyproject.toml": "[project]\nname = \"fx\"\nversion = \"0.1.0\"\n\n[tool.pytest.ini_options]\npythonpath = [\"src\"]\n",
+    "ripr.toml": "[languages]\nenabled = [\"python\"]\n",
+    "src/fx/__init__.py": "",
+    "src/fx/core.py": "class Config:\n    def __init__(self, retries, verbose):\n        self.retries = retries\n        self.verbose = verbose\n\n\ndef default_config():\n    return Config(retries=3, verbose=False)\n",
+    "tests/test_t.py": "from fx.core import default_config\n\n\ndef test_default_config_is_quiet():\n    c = default_config()\n    assert not c.verbose\n"
+   },
+   "change": {
+    ".gitignore": "__pycache__/\n.pytest_cache/\n_out/\ntarget/\n",
+    "pyproject.toml": "[project]\nname = \"fx\"\nversion = \"0.1.0\"\n\n[tool.pytest.ini_options]\npythonpath = [\"src\"]\n",
+    "ripr.toml": "[languages]\nenabled = [\"python\"]\n",
+    "src/fx/__init__.py": "",
+    "src/fx/core.py": "class Config:\n    def __init__(self, retries, verbose):\n        self.retries = retries\n        self.verbose = verbose\n\n\ndef default_config():\n    return Config(retries=5, verbose=False)\n",
+    "tests/test_t.py": "from fx.core import default_config\n\n\ndef test_default_config_is_quiet():\n    c = default_config()\n    assert not c.verbose\n"
+   },
+   "id": "python/field-change",
+   "language": "python"
+  },
+  {
+   "base": {
+    ".gitignore": "__pycache__/\n.pytest_cache/\n_out/\ntarget/\n",
+    "pyproject.toml": "[project]\nname = \"fx\"\nversion = \"0.1.0\"\n\n[tool.pytest.ini_options]\npythonpath = [\"src\"]\n",
+    "ripr.toml": "[languages]\nenabled = [\"python\"]\n",
+    "src/fx/__init__.py": "",
+    "src/fx/core.py": "class Req:\n    def __init__(self, url):\n        self.url = url\n        self.timeout_value = 30\n\n    def timeout(self, t):\n        self.timeout_value = t\n        return self\n",
+    "tests/test_t.py": "from fx.core import Req\n\n\ndef test_builder_sets_url():\n    r = Req('http://x').timeout(10)\n    assert r.url == 'http://x'\n"
+   },
+   "change": {
+    ".gitignore": "__pycache__/\n.pytest_cache/\n_out/\ntarget/\n",
+    "pyproject.toml": "[project]\nname = \"fx\"\nversion = \"0.1.0\"\n\n[tool.pytest.ini_options]\npythonpath = [\"src\"]\n",
+    "ripr.toml": "[languages]\nenabled = [\"python\"]\n",
+    "src/fx/__init__.py": "",
+    "src/fx/core.py": "class Req:\n    def __init__(self, url):\n        self.url = url\n        self.timeout_value = 30\n\n    def timeout(self, t):\n        self.timeout_value = t * 2\n        return self\n",
+    "tests/test_t.py": "from fx.core import Req\n\n\ndef test_builder_sets_url():\n    r = Req('http://x').timeout(10)\n    assert r.url == 'http://x'\n"
+   },
+   "id": "python/builder",
+   "language": "python"
+  },
+  {
+   "base": {
+    ".gitignore": "__pycache__/\n.pytest_cache/\n_out/\ntarget/\n",
+    "pyproject.toml": "[project]\nname = \"fx\"\nversion = \"0.1.0\"\n\n[tool.pytest.ini_options]\npythonpath = [\"src\"]\n",
+    "ripr.toml": "[languages]\nenabled = [\"python\"]\n",
+    "src/fx/__init__.py": "",
+    "src/fx/core.py": "from typing import TypeVar\n\nT = TypeVar('T')\n\n\ndef largest(xs: list[T]) -> T | None:\n    it = iter(xs)\n    try:\n        best = next(it)\n    except StopIteration:\n        return None\n    for x in it:\n        if x > best:\n            best = x\n    return best\n",
+    "tests/test_t.py": "from fx.core import largest\n\n\ndef test_largest_of_three():\n    assert largest([1, 5, 3]) == 5\n"
+   },
+   "change": {
+    ".gitignore": "__pycache__/\n.pytest_cache/\n_out/\ntarget/\n",
+    "pyproject.toml": "[project]\nname = \"fx\"\nversion = \"0.1.0\"\n\n[tool.pytest.ini_options]\npythonpath = [\"src\"]\n",
+    "ripr.toml": "[languages]\nenabled = [\"python\"]\n",
+    "src/fx/__init__.py": "",
+    "src/fx/core.py": "from typing import TypeVar\n\nT = TypeVar('T')\n\n\ndef largest(xs: list[T]) -> T | None:\n    it = iter(xs)\n    try:\n        best = next(it)\n    except StopIteration:\n        return None\n    for x in it:\n        if x >= best:\n            best = x\n    return best\n",
+    "tests/test_t.py": "from fx.core import largest\n\n\ndef test_largest_of_three():\n    assert largest([1, 5, 3]) == 5\n"
+   },
+   "id": "python/generic-fn",
+   "language": "python"
+  },
+  {
+   "base": {
+    ".gitignore": "__pycache__/\n.pytest_cache/\n_out/\ntarget/\n",
+    "pyproject.toml": "[project]\nname = \"fx\"\nversion = \"0.1.0\"\n\n[tool.pytest.ini_options]\npythonpath = [\"src\"]\n",
+    "ripr.toml": "[languages]\nenabled = [\"python\"]\n",
+    "src/fx/__init__.py": "",
+    "src/fx/core.py": "async def fetch_len(s):\n    return len(s)\n",
+    "tests/test_t.py": "from fx.core import fetch_len\n\n\ndef test_fetch_len_builds_coroutine():\n    coro = fetch_len('abc')\n    coro.close()\n"
+   },
+   "change": {
+    ".gitignore": "__pycache__/\n.pytest_cache/\n_out/\ntarget/\n",
+    "pyproject.toml": "[project]\nname = \"fx\"\nversion = \"0.1.0\"\n\n[tool.pytest.ini_options]\npythonpath = [\"src\"]\n",
+    "ripr.toml": "[languages]\nenabled = [\"python\"]\n",
+    "src/fx/__init__.py": "",
+    "src/fx/core.py": "async def fetch_len(s):\n    return len(s) + 1\n",
+    "tests/test_t.py": "from fx.core import fetch_len\n\n\ndef test_fetch_len_builds_coroutine():\n    coro = fetch_len('abc')\n    coro.close()\n"
+   },
+   "id": "python/async-fn",
+   "language": "python"
+  },
+  {
+   "base": {
+    ".gitignore": "__pycache__/\n.pytest_cache/\n_out/\ntarget/\n",
+    "pyproject.toml": "[project]\nname = \"fx\"\nversion = \"0.1.0\"\n\n[tool.pytest.ini_options]\npythonpath = [\"src\"]\n",
+    "ripr.toml": "[languages]\nenabled = [\"python\"]\n",
+    "src/fx/__init__.py": "",
+    "src/fx/core.py": "def sum_to(n):\n    acc = 0\n    for i in range(1, n + 1):\n        acc += i\n    return acc\n",
+    "tests/test_t.py": "from fx.core import sum_to\n\n\ndef test_sum_to_zero():\n    assert sum_to(0) == 0\n"
+   },
+   "change": {
+    ".gitignore": "__pycache__/\n.pytest_cache/\n_out/\ntarget/\n",
+    "pyproject.toml": "[project]\nname = \"fx\"\nversion = \"0.1.0\"\n\n[tool.pytest.ini_options]\npythonpath = [\"src\"]\n",
+    "ripr.toml": "[languages]\nenabled = [\"python\"]\n",
+    "src/fx/__init__.py": "",
+    "src/fx/core.py": "def sum_to(n):\n    acc = 0\n    for i in range(1, n):\n        acc += i\n    return acc\n",
+    "tests/test_t.py": "from fx.core import sum_to\n\n\ndef test_sum_to_zero():\n    assert sum_to(0) == 0\n"
+   },
+   "id": "python/loop-accum",
+   "language": "python"
+  },
+  {
+   "base": {
+    ".gitignore": "__pycache__/\n.pytest_cache/\n_out/\ntarget/\n",
+    "pyproject.toml": "[project]\nname = \"fx\"\nversion = \"0.1.0\"\n\n[tool.pytest.ini_options]\npythonpath = [\"src\"]\n",
+    "ripr.toml": "[languages]\nenabled = [\"python\"]\n",
+    "src/fx/__init__.py": "",
+    "src/fx/core.py": "GREETING = 'hello'\n\n\ndef greet(name):\n    return f'{GREETING}, {name}'\n",
+    "tests/test_t.py": "from fx.core import greet\n\n\ndef test_greet_mentions_name():\n    assert 'bob' in greet('bob')\n"
+   },
+   "change": {
+    ".gitignore": "__pycache__/\n.pytest_cache/\n_out/\ntarget/\n",
+    "pyproject.toml": "[project]\nname = \"fx\"\nversion = \"0.1.0\"\n\n[tool.pytest.ini_options]\npythonpath = [\"src\"]\n",
+    "ripr.toml": "[languages]\nenabled = [\"python\"]\n",
+    "src/fx/__init__.py": "",
+    "src/fx/core.py": "GREETING = 'hi'\n\n\ndef greet(name):\n    return f'{GREETING}, {name}'\n",
+    "tests/test_t.py": "from fx.core import greet\n\n\ndef test_greet_mentions_name():\n    assert 'bob' in greet('bob')\n"
+   },
+   "id": "python/string-const",
+   "language": "python"
+  },
+  {
+   "base": {
+    ".gitignore": "__pycache__/\n.pytest_cache/\n_out/\ntarget/\n",
+    "pyproject.toml": "[project]\nname = \"fx\"\nversion = \"0.1.0\"\n\n[tool.pytest.ini_options]\npythonpath = [\"src\"]\n",
+    "ripr.toml": "[languages]\nenabled = [\"python\"]\n",
+    "src/fx/__init__.py": "",
+    "src/fx/core.py": "def first_even(xs):\n    return next((x for x in xs if x % 2 == 0), None)\n",
+    "tests/test_t.py": "from fx.core import first_even\n\n\ndef test_none_when_all_odd():\n    assert first_even([1, 3]) is None\n    assert first_even([1, 4]) == 4\n"
+   },
+   "change": {
+    ".gitignore": "__pycache__/\n.pytest_cache/\n_out/\ntarget/\n",
+    "pyproject.toml": "[project]\nname = \"fx\"\nversion = \"0.1.0\"\n\n[tool.pytest.ini_options]\npythonpath = [\"src\"]\n",
+    "ripr.toml": "[languages]\nenabled = [\"python\"]\n",
+    "src/fx/__init__.py": "",
+    "src/fx/core.py": "def first_even(xs):\n    return next((x for x in xs if x % 2 == 0), 0)\n",
+    "tests/test_t.py": "from fx.core import first_even\n\n\ndef test_none_when_all_odd():\n    assert first_even([1, 3]) is None\n    assert first_even([1, 4]) == 4\n"
+   },
+   "id": "python/option-none",
+   "language": "python"
+  },
+  {
+   "base": {
+    ".gitignore": "__pycache__/\n.pytest_cache/\n_out/\ntarget/\n",
+    "pyproject.toml": "[project]\nname = \"fx\"\nversion = \"0.1.0\"\n\n[tool.pytest.ini_options]\npythonpath = [\"src\"]\n",
+    "ripr.toml": "[languages]\nenabled = [\"python\"]\n",
+    "src/fx/__init__.py": "",
+    "src/fx/core.py": "from abc import ABC, abstractmethod\n\n\nclass Shape(ABC):\n    @abstractmethod\n    def area(self):\n        ...\n\n\nclass Rect(Shape):\n    def __init__(self, w, h):\n        self.w = w\n        self.h = h\n\n    def area(self):\n        return self.w * self.h\n",
+    "tests/test_t.py": "from fx.core import Rect\n\n\ndef test_rect_area_positive():\n    r = Rect(2, 3)\n    assert r.area() > 0\n"
+   },
+   "change": {
+    ".gitignore": "__pycache__/\n.pytest_cache/\n_out/\ntarget/\n",
+    "pyproject.toml": "[project]\nname = \"fx\"\nversion = \"0.1.0\"\n\n[tool.pytest.ini_options]\npythonpath = [\"src\"]\n",
+    "ripr.toml": "[languages]\nenabled = [\"python\"]\n",
+    "src/fx/__init__.py": "",
+    "src/fx/core.py": "from abc import ABC, abstractmethod\n\n\nclass Shape(ABC):\n    @abstractmethod\n    def area(self):\n        ...\n\n\nclass Rect(Shape):\n    def __init__(self, w, h):\n        self.w = w\n        self.h = h\n\n    def area(self):\n        return self.w * self.h + 1\n",
+    "tests/test_t.py": "from fx.core import Rect\n\n\ndef test_rect_area_positive():\n    r = Rect(2, 3)\n    assert r.area() > 0\n"
+   },
+   "id": "python/trait-impl",
+   "language": "python"
+  },
+  {
+   "base": {
+    ".gitignore": "__pycache__/\n.pytest_cache/\n_out/\ntarget/\n",
+    "pyproject.toml": "[project]\nname = \"fx\"\nversion = \"0.1.0\"\n\n[tool.pytest.ini_options]\npythonpath = [\"src\"]\n",
+    "ripr.toml": "[languages]\nenabled = [\"python\"]\n",
+    "src/fx/__init__.py": "",
+    "src/fx/core.py": "def _tax(v):\n    return v // 10\n\n\ndef gross(v):\n    return v + _tax(v)\n",
+    "tests/test_t.py": "from fx.core import gross\n\n\ndef test_gross_exceeds_net():\n    assert gross(100) > 100\n"
+   },
+   "change": {
+    ".gitignore": "__pycache__/\n.pytest_cache/\n_out/\ntarget/\n",
+    "pyproject.toml": "[project]\nname = \"fx\"\nversion = \"0.1.0\"\n\n[tool.pytest.ini_options]\npythonpath = [\"src\"]\n",
+    "ripr.toml": "[languages]\nenabled = [\"python\"]\n",
+    "src/fx/__init__.py": "",
+    "src/fx/core.py": "def _tax(v):\n    return v // 5\n\n\ndef gross(v):\n    return v + _tax(v)\n",
+    "tests/test_t.py": "from fx.core import gross\n\n\ndef test_gross_exceeds_net():\n    assert gross(100) > 100\n"
+   },
+   "id": "python/private-helper",
+   "language": "python"
+  },
+  {
+   "base": {
+    ".gitignore": "__pycache__/\n.pytest_cache/\n_out/\ntarget/\n",
+    "pyproject.toml": "[project]\nname = \"fx\"\nversion = \"0.1.0\"\n\n[tool.pytest.ini_options]\npythonpath = [\"src\"]\n",
+    "ripr.toml": "[languages]\nenabled = [\"python\"]\n",
+    "src/fx/__init__.py": "",
+    "src/fx/core.py": "def log_line(buf, msg):\n    buf.append(msg)\n",
+    "tests/test_t.py": "from fx.core import log_line\n\n\ndef test_log_line_appends():\n    b = []\n    log_line(b, 'hi')\n    assert len(b) == 1\n"
+   },
+   "change": {
+    ".gitignore": "__pycache__/\n.pytest_cache/\n_out/\ntarget/\n",
+    "pyproject.toml": "[project]\nname = \"fx\"\nversion = \"0.1.0\"\n\n[tool.pytest.ini_options]\npythonpath = [\"src\"]\n",
+    "ripr.toml": "[languages]\nenabled = [\"python\"]\n",
+    "src/fx/__init__.py": "",
+    "src/fx/core.py": "def log_line(buf, msg):\n    buf.append(msg.upper())\n",
+    "tests/test_t.py": "from fx.core import log_line\n\n\ndef test_log_line_appends():\n    b = []\n    log_line(b, 'hi')\n    assert len(b) == 1\n"
+   },
+   "id": "python/side-effect",
+   "language": "python"
+  },
+  {
+   "base": {
+    ".gitignore": "__pycache__/\n.pytest_cache/\n_out/\ntarget/\n",
+    "pyproject.toml": "[project]\nname = \"fx\"\nversion = \"0.1.0\"\n\n[tool.pytest.ini_options]\npythonpath = [\"src\"]\n",
+    "ripr.toml": "[languages]\nenabled = [\"python\"]\n",
+    "src/fx/__init__.py": "",
+    "src/fx/core.py": "def divide(a, b):\n    return a // b\n",
+    "tests/test_t.py": "import pytest\nfrom fx.core import divide\n\n\ndef test_divide_by_zero_raises():\n    with pytest.raises(Exception):\n        divide(1, 0)\n"
+   },
+   "change": {
+    ".gitignore": "__pycache__/\n.pytest_cache/\n_out/\ntarget/\n",
+    "pyproject.toml": "[project]\nname = \"fx\"\nversion = \"0.1.0\"\n\n[tool.pytest.ini_options]\npythonpath = [\"src\"]\n",
+    "ripr.toml": "[languages]\nenabled = [\"python\"]\n",
+    "src/fx/__init__.py": "",
+    "src/fx/core.py": "def divide(a, b):\n    if b == 0:\n        raise ValueError('division by zero')\n    return a // b\n",
+    "tests/test_t.py": "import pytest\nfrom fx.core import divide\n\n\ndef test_divide_by_zero_raises():\n    with pytest.raises(Exception):\n        divide(1, 0)\n"
+   },
+   "id": "python/panic-guard",
+   "language": "python"
+  },
+  {
+   "base": {
+    ".gitignore": "__pycache__/\n.pytest_cache/\n_out/\ntarget/\n",
+    "app/app.py": "from wscore.core import discount\n\n\ndef checkout(price):\n    return discount(price)\n",
+    "pyproject.toml": "[project]\nname = \"fx\"\nversion = \"0.1.0\"\n\n[tool.pytest.ini_options]\npythonpath = [\"src\"]\n",
+    "ripr.toml": "[languages]\nenabled = [\"python\"]\n",
+    "src/fx/__init__.py": "",
+    "wscore/core.py": "def discount(price):\n    if price > 100:\n        return price - 10\n    return price\n",
+    "wscore/tests/test_t.py": "from wscore.core import discount\n\n\ndef test_discount_at_boundary():\n    assert discount(100) == 90\n    assert discount(50) == 50\n"
+   },
+   "change": {
+    ".gitignore": "__pycache__/\n.pytest_cache/\n_out/\ntarget/\n",
+    "app/app.py": "from wscore.core import discount\n\n\ndef checkout(price):\n    return discount(price)\n",
+    "pyproject.toml": "[project]\nname = \"fx\"\nversion = \"0.1.0\"\n\n[tool.pytest.ini_options]\npythonpath = [\"src\"]\n",
+    "ripr.toml": "[languages]\nenabled = [\"python\"]\n",
+    "src/fx/__init__.py": "",
+    "wscore/core.py": "def discount(price):\n    if price >= 100:\n        return price - 10\n    return price\n",
+    "wscore/tests/test_t.py": "from wscore.core import discount\n\n\ndef test_discount_at_boundary():\n    assert discount(100) == 90\n    assert discount(50) == 50\n"
+   },
+   "id": "python/workspace",
+   "language": "python"
+  },
+  {
+   "base": {
+    ".gitignore": "__pycache__/\n.pytest_cache/\n_out/\ntarget/\n",
+    "app/app.py": "from wscore.core import discount\n\n\ndef checkout(price):\n    return discount(price)\n",
+    "app/tests/test_t.py": "from app.app import checkout\n\n\ndef test_checkout_at_boundary():\n    assert checkout(100) == 90\n",
+    "pyproject.toml": "[project]\nname = \"fx\"\nversion = \"0.1.0\"\n\n[tool.pytest.ini_options]\npythonpath = [\"src\"]\n",
+    "ripr.toml": "[languages]\nenabled = [\"python\"]\n",
+    "src/fx/__init__.py": "",
+    "wscore/core.py": "def discount(price):\n    if price > 100:\n        return price - 10\n    return price\n"
+   },
+   "change": {
+    ".gitignore": "__pycache__/\n.pytest_cache/\n_out/\ntarget/\n",
+    "app/app.py": "from wscore.core import discount\n\n\ndef checkout(price):\n    return discount(price)\n",
+    "app/tests/test_t.py": "from app.app import checkout\n\n\ndef test_checkout_at_boundary():\n    assert checkout(100) == 90\n",
+    "pyproject.toml": "[project]\nname = \"fx\"\nversion = \"0.1.0\"\n\n[tool.pytest.ini_options]\npythonpath = [\"src\"]\n",
+    "ripr.toml": "[languages]\nenabled = [\"python\"]\n",
+    "src/fx/__init__.py": "",
+    "wscore/core.py": "def discount(price):\n    if price >= 100:\n        return price - 10\n    return price\n"
+   },
+   "id": "python/ws-test-other-crate",
+   "language": "python"
+  },
+  {
+   "base": {
+    ".gitignore": "node_modules/\n_out/\ntarget/\n",
+    "package.json": "{\n  \"name\": \"fx\",\n  \"version\": \"0.1.0\",\n  \"type\": \"module\",\n  \"devDependencies\": { \"vitest\": \"^2.0.0\" },\n  \"scripts\": { \"test\": \"vitest run\" }\n}\n",
+    "ripr.toml": "[languages]\nenabled = [\"typescript\"]\n",
+    "src/index.ts": "export function total(price: number, qty: number): number {\n  return price * qty;\n}\n",
+    "test/t.test.ts": "import { test, expect } from 'vitest';\nimport { total } from '../src/index';\n\ntest('total is product plus fee', () => {\n  expect(total(3, 4)).toBe(17);\n});\n",
+    "tsconfig.json": "{\n  \"compilerOptions\": { \"target\": \"ES2022\", \"module\": \"ESNext\", \"moduleResolution\": \"Bundler\", \"strict\": true }\n}\n"
+   },
+   "change": {
+    ".gitignore": "node_modules/\n_out/\ntarget/\n",
+    "package.json": "{\n  \"name\": \"fx\",\n  \"version\": \"0.1.0\",\n  \"type\": \"module\",\n  \"devDependencies\": { \"vitest\": \"^2.0.0\" },\n  \"scripts\": { \"test\": \"vitest run\" }\n}\n",
+    "ripr.toml": "[languages]\nenabled = [\"typescript\"]\n",
+    "src/index.ts": "export function total(price: number, qty: number): number {\n  return price * qty + 5;\n}\n",
+    "test/t.test.ts": "import { test, expect } from 'vitest';\nimport { total } from '../src/index';\n\ntest('total is product plus fee', () => {\n  expect(total(3, 4)).toBe(17);\n});\n",
+    "tsconfig.json": "{\n  \"compilerOptions\": { \"target\": \"ES2022\", \"module\": \"ESNext\", \"moduleResolution\": \"Bundler\", \"strict\": true }\n}\n"
+   },
+   "id": "typescript/arith-strong-ext",
+   "language": "typescript"
+  },
+  {
+   "base": {
+    ".gitignore": "node_modules/\n_out/\ntarget/\n",
+    "package.json": "{\n  \"name\": \"fx\",\n  \"version\": \"0.1.0\",\n  \"type\": \"module\",\n  \"devDependencies\": { \"vitest\": \"^2.0.0\" },\n  \"scripts\": { \"test\": \"vitest run\" }\n}\n",
+    "ripr.toml": "[languages]\nenabled = [\"typescript\"]\n",
+    "src/index.ts": "export function isAdult(age: number): boolean {\n  return age > 18;\n}\n",
+    "test/t.test.ts": "import { test, expect } from 'vitest';\nimport { isAdult } from '../src/index';\n\ntest('adult far above', () => {\n  expect(isAdult(40)).toBe(true);\n});\n",
+    "tsconfig.json": "{\n  \"compilerOptions\": { \"target\": \"ES2022\", \"module\": \"ESNext\", \"moduleResolution\": \"Bundler\", \"strict\": true }\n}\n"
+   },
+   "change": {
+    ".gitignore": "node_modules/\n_out/\ntarget/\n",
+    "package.json": "{\n  \"name\": \"fx\",\n  \"version\": \"0.1.0\",\n  \"type\": \"module\",\n  \"devDependencies\": { \"vitest\": \"^2.0.0\" },\n  \"scripts\": { \"test\": \"vitest run\" }\n}\n",
+    "ripr.toml": "[languages]\nenabled = [\"typescript\"]\n",
+    "src/index.ts": "export function isAdult(age: number): boolean {\n  return age >= 18;\n}\n",
+    "test/t.test.ts": "import { test, expect } from 'vitest';\nimport { isAdult } from '../src/index';\n\ntest('adult far above', () => {\n  expect(isAdult(40)).toBe(true);\n});\n",
+    "tsconfig.json": "{\n  \"compilerOptions\": { \"target\": \"ES2022\", \"module\": \"ESNext\", \"moduleResolution\": \"Bundler\", \"strict\": true }\n}\n"
+   },
+   "id": "typescript/boundary-weak",
+   "language": "typescript"
+  },
+  {
+   "base": {
+    ".gitignore": "node_modules/\n_out/\ntarget/\n",
+    "package.json": "{\n  \"name\": \"fx\",\n  \"version\": \"0.1.0\",\n  \"type\": \"module\",\n  \"devDependencies\": { \"vitest\": \"^2.0.0\" },\n  \"scripts\": { \"test\": \"vitest run\" }\n}\n",
+    "ripr.toml": "[languages]\nenabled = [\"typescript\"]\n",
+    "src/index.ts": "export function isAdult(age: number): boolean {\n  return age > 18;\n}\n",
+    "test/t.test.ts": "import { test, expect } from 'vitest';\nimport { isAdult } from '../src/index';\n\ntest('adult at boundary', () => {\n  expect(isAdult(18)).toBe(true);\n  expect(isAdult(17)).toBe(false);\n});\n",
+    "tsconfig.json": "{\n  \"compilerOptions\": { \"target\": \"ES2022\", \"module\": \"ESNext\", \"moduleResolution\": \"Bundler\", \"strict\": true }\n}\n"
+   },
+   "change": {
+    ".gitignore": "node_modules/\n_out/\ntarget/\n",
+    "package.json": "{\n  \"name\": \"fx\",\n  \"version\": \"0.1.0\",\n  \"type\": \"module\",\n  \"devDependencies\": { \"vitest\": \"^2.0.0\" },\n  \"scripts\": { \"test\": \"vitest run\" }\n}\n",
+    "ripr.toml": "[languages]\nenabled = [\"typescript\"]\n",
+    "src/index.ts": "export function isAdult(age: number): boolean {\n  return age >= 18;\n}\n",
+    "test/t.test.ts": "import { test, expect } from 'vitest';\nimport { isAdult } from '../src/index';\n\ntest('adult at boundary', () => {\n  expect(isAdult(18)).toBe(true);\n  expect(isAdult(17)).toBe(false);\n});\n",
+    "tsconfig.json": "{\n  \"compilerOptions\": { \"target\": \"ES2022\", \"module\": \"ESNext\", \"moduleResolution\": \"Bundler\", \"strict\": true }\n}\n"
+   },
+   "id": "typescript/boundary-strong",
+   "language": "typescript"
+  },
+  {
+   "base": {
+    ".gitignore": "node_modules/\n_out/\ntarget/\n",
+    "package.json": "{\n  \"name\": \"fx\",\n  \"version\": \"0.1.0\",\n  \"type\": \"module\",\n  \"devDependencies\": { \"vitest\": \"^2.0.0\" },\n  \"scripts\": { \"test\": \"vitest run\" }\n}\n",
+    "ripr.toml": "[languages]\nenabled = [\"typescript\"]\n",
+    "src/index.ts": "export function isAdult(age: number): boolean {\n  return age > 18;\n}\n",
+    "tsconfig.json": "{\n  \"compilerOptions\": { \"target\": \"ES2022\", \"module\": \"ESNext\", \"moduleResolution\": \"Bundler\", \"strict\": true }\n}\n"
+   },
+   "change": {
+    ".gitignore": "node_modules/\n_out/\ntarget/\n",
+    "package.json": "{\n  \"name\": \"fx\",\n  \"version\": \"0.1.0\",\n  \"type\": \"module\",\n  \"devDependencies\": { \"vitest\": \"^2.0.0\" },\n  \"scripts\": { \"test\": \"vitest run\" }\n}\n",
+    "ripr.toml": "[languages]\nenabled = [\"typescript\"]\n",
+    "src/index.ts": "export function isAdult(age: number): boolean {\n  return age >= 18;\n}\n",
+    "tsconfig.json": "{\n  \"compilerOptions\": { \"target\": \"ES2022\", \"module\": \"ESNext\", \"moduleResolution\": \"Bundler\", \"strict\": true }\n}\n"
+   },
+   "id": "typescript/boundary-notest",
+   "language": "typescript"
+  },
+  {
+   "base": {
+    ".gitignore": "node_modules/\n_out/\ntarget/\n",
+    "package.json": "{\n  \"name\": \"fx\",\n  \"version\": \"0.1.0\",\n  \"type\": \"module\",\n  \"devDependencies\": { \"vitest\": \"^2.0.0\" },\n  \"scripts\": { \"test\": \"vitest run\" }\n}\n",
+    "ripr.toml": "[languages]\nenabled = [\"typescript\"]\n",
+    "src/index.ts": "export function rate(kind: string): number {\n  switch (kind) {\n    case 'gold':\n      return 10;\n    case 'silver':\n      return 5;\n    default:\n      return 0;\n  }\n}\n",
+    "test/t.test.ts": "import { test, expect } from 'vitest';\nimport { rate } from '../src/index';\n\ntest('rate silver runs', () => {\n  const r = rate('silver');\n  expect(r).toBeLessThan(100);\n});\n",
+    "tsconfig.json": "{\n  \"compilerOptions\": { \"target\": \"ES2022\", \"module\": \"ESNext\", \"moduleResolution\": \"Bundler\", \"strict\": true }\n}\n"
+   },
+   "change": {
+    ".gitignore": "node_modules/\n_out/\ntarget/\n",
+    "package.json": "{\n  \"name\": \"fx\",\n  \"version\": \"0.1.0\",\n  \"type\": \"module\",\n  \"devDependencies\": { \"vitest\": \"^2.0.0\" },\n  \"scripts\": { \"test\": \"vitest run\" }\n}\n",
+    "ripr.toml": "[languages]\nenabled = [\"typescript\"]\n",
+    "src/index.ts": "export function rate(kind: string): number {\n  switch (kind) {\n    case 'gold':\n      return 10;\n    case 'silver':\n      return 7;\n    default:\n      return 0;\n  }\n}\n",
+    "test/t.test.ts": "import { test, expect } from 'vitest';\nimport { rate } from '../src/index';\n\ntest('rate silver runs', () => {\n  const r = rate('silver');\n  expect(r).toBeLessThan(100);\n});\n",
+    "tsconfig.json": "{\n  \"compilerOptions\": { \"target\": \"ES2022\", \"module\": \"ESNext\", \"moduleResolution\": \"Bundler\", \"strict\": true }\n}\n"
+   },
+   "id": "typescript/match-arm-weak",
+   "language": "typescript"
+  },
+  {
+   "base": {
+    ".gitignore": "node_modules/\n_out/\ntarget/\n",
+    "package.json": "{\n  \"name\": \"fx\",\n  \"version\": \"0.1.0\",\n  \"type\": \"module\",\n  \"devDependencies\": { \"vitest\": \"^2.0.0\" },\n  \"scripts\": { \"test\": \"vitest run\" }\n}\n",
+    "ripr.toml": "[languages]\nenabled = [\"typescript\"]\n",
+    "src/index.ts": "export function rate(kind: string): number {\n  switch (kind) {\n    case 'gold':\n      return 10;\n    case 'silver':\n      return 5;\n    default:\n      return 0;\n  }\n}\n",
+    "test/t.test.ts": "import { test, expect } from 'vitest';\nimport { rate } from '../src/index';\n\ntest('rate silver is seven', () => {\n  expect(rate('silver')).toBe(7);\n});\n",
+    "tsconfig.json": "{\n  \"compilerOptions\": { \"target\": \"ES2022\", \"module\": \"ESNext\", \"moduleResolution\": \"Bundler\", \"strict\": true }\n}\n"
+   },
+   "change": {
+    ".gitignore": "node_modules/\n_out/\ntarget/\n",
+    "package.json": "{\n  \"name\": \"fx\",\n  \"version\": \"0.1.0\",\n  \"type\": \"module\",\n  \"devDependencies\": { \"vitest\": \"^2.0.0\" },\n  \"scripts\": { \"test\": \"vitest run\" }\n}\n",
+    "ripr.toml": "[languages]\nenabled = [\"typescript\"]\n",
+    "src/index.ts": "export function rate(kind: string): number {\n  switch (kind) {\n    case 'gold':\n      return 10;\n    case 'silver':\n      return 7;\n    default:\n      return 0;\n  }\n}\n",
+    "test/t.test.ts": "import { test, expect } from 'vitest';\nimport { rate } from '../src/index';\n\ntest('rate silver is seven', () => {\n  expect(rate('silver')).toBe(7);\n});\n",
+    "tsconfig.json": "{\n  \"compilerOptions\": { \"target\": \"ES2022\", \"module\": \"ESNext\", \"moduleResolution\": \"Bundler\", \"strict\": true }\n}\n"
+   },
+   "id": "typescript/match-arm-strong",
+   "language": "typescript"
+  },
+  {
+   "base": {
+    ".gitignore": "node_modules/\n_out/\ntarget/\n",
+    "package.json": "{\n  \"name\": \"fx\",\n  \"version\": \"0.1.0\",\n  \"type\": \"module\",\n  \"devDependencies\": { \"vitest\": \"^2.0.0\" },\n  \"scripts\": { \"test\": \"vitest run\" }\n}\n",
+    "ripr.toml": "[languages]\nenabled = [\"typescript\"]\n",
+    "src/index.ts": "export class EmptyError extends Error {}\nexport class TooLongError extends Error {}\n\nexport function parse(s: string): number {\n  if (s.length === 0) {\n    throw new EmptyError();\n  }\n  if (s.length > 10) {\n    throw new EmptyError();\n  }\n  return s.length;\n}\n",
+    "test/t.test.ts": "import { test, expect } from 'vitest';\nimport { parse } from '../src/index';\n\ntest('long input is error', () => {\n  expect(() => parse('abcdefghijklmnop')).toThrow();\n});\n",
+    "tsconfig.json": "{\n  \"compilerOptions\": { \"target\": \"ES2022\", \"module\": \"ESNext\", \"moduleResolution\": \"Bundler\", \"strict\": true }\n}\n"
+   },
+   "change": {
+    ".gitignore": "node_modules/\n_out/\ntarget/\n",
+    "package.json": "{\n  \"name\": \"fx\",\n  \"version\": \"0.1.0\",\n  \"type\": \"module\",\n  \"devDependencies\": { \"vitest\": \"^2.0.0\" },\n  \"scripts\": { \"test\": \"vitest run\" }\n}\n",
+    "ripr.toml": "[languages]\nenabled = [\"typescript\"]\n",
+    "src/index.ts": "export class EmptyError extends Error {}\nexport class TooLongError extends Error {}\n\nexport function parse(s: string): number {\n  if (s.length === 0) {\n    throw new EmptyError();\n  }\n  if (s.length > 10) {\n    throw new TooLongError();\n  }\n  return s.length;\n}\n",
+    "test/t.test.ts": "import { test, expect } from 'vitest';\nimport { parse } from '../src/index';\n\ntest('long input is error', () => {\n  expect(() => parse('abcdefghijklmnop')).toThrow();\n});\n",
+    "tsconfig.json": "{\n  \"compilerOptions\": { \"target\": \"ES2022\", \"module\": \"ESNext\", \"moduleResolution\": \"Bundler\", \"strict\": true }\n}\n"
+   },
+   "id": "typescript/error-variant-weak",
+   "language": "typescript"
+  },
+  {
+   "base": {
+    ".gitignore": "node_modules/\n_out/\ntarget/\n",
+    "package.json": "{\n  \"name\": \"fx\",\n  \"version\": \"0.1.0\",\n  \"type\": \"module\",\n  \"devDependencies\": { \"vitest\": \"^2.0.0\" },\n  \"scripts\": { \"test\": \"vitest run\" }\n}\n",
+    "ripr.toml": "[languages]\nenabled = [\"typescript\"]\n",
+    "src/index.ts": "export class EmptyError extends Error {}\nexport class TooLongError extends Error {}\n\nexport function parse(s: string): number {\n  if (s.length === 0) {\n    throw new EmptyError();\n  }\n  if (s.length > 10) {\n    throw new EmptyError();\n  }\n  return s.length;\n}\n",
+    "test/t.test.ts": "import { test, expect } from 'vitest';\nimport { parse, TooLongError } from '../src/index';\n\ntest('long input is too long', () => {\n  expect(() => parse('abcdefghijklmnop')).toThrow(TooLongError);\n});\n",
+    "tsconfig.json": "{\n  \"compilerOptions\": { \"target\": \"ES2022\", \"module\": \"ESNext\", \"moduleResolution\": \"Bundler\", \"strict\": true }\n}\n"
+   },
+   "change": {
+    ".gitignore": "node_modules/\n_out/\ntarget/\n",
+    "package.json": "{\n  \"name\": \"fx\",\n  \"version\": \"0.1.0\",\n  \"type\": \"module\",\n  \"devDependencies\": { \"vitest\": \"^2.0.0\" },\n  \"scripts\": { \"test\": \"vitest run\" }\n}\n",
+    "ripr.toml": "[languages]\nenabled = [\"typescript\"]\n",
+    "src/index.ts": "export class EmptyError extends Error {}\nexport class TooLongError extends Error {}\n\nexport function parse(s: string): number {\n  if (s.length === 0) {\n    throw new EmptyError();\n  }\n  if (s.length > 10) {\n    throw new TooLongError();\n  }\n  return s.length;\n}\n",
+    "test/t.test.ts": "import { test, expect } from 'vitest';\nimport { parse, TooLongError } from '../src/index';\n\ntest('long input is too long', () => {\n  expect(() => parse('abcdefghijklmnop')).toThrow(TooLongError);\n});\n",
+    "tsconfig.json": "{\n  \"compilerOptions\": { \"target\": \"ES2022\", \"module\": \"ESNext\", \"moduleResolution\": \"Bundler\", \"strict\": true }\n}\n"
+   },
+   "id": "typescript/error-variant-strong",
+   "language": "typescript"
+  },
+  {
+   "base": {
+    ".gitignore": "node_modules/\n_out/\ntarget/\n",
+    "package.json": "{\n  \"name\": \"fx\",\n  \"version\": \"0.1.0\",\n  \"type\": \"module\",\n  \"devDependencies\": { \"vitest\": \"^2.0.0\" },\n  \"scripts\": { \"test\": \"vitest run\" }\n}\n",
+    "ripr.toml": "[languages]\nenabled = [\"typescript\"]\n",
+    "src/index.ts": "export function canShip(stock: number, blocked: boolean): boolean {\n  return stock > 0 && !blocked;\n}\n",
+    "test/t.test.ts": "import { test, expect } from 'vitest';\nimport { canShip } from '../src/index';\n\ntest('ships when in stock', () => {\n  expect(canShip(3, false)).toBe(true);\n});\n",
+    "tsconfig.json": "{\n  \"compilerOptions\": { \"target\": \"ES2022\", \"module\": \"ESNext\", \"moduleResolution\": \"Bundler\", \"strict\": true }\n}\n"
+   },
+   "change": {
+    ".gitignore": "node_modules/\n_out/\ntarget/\n",
+    "package.json": "{\n  \"name\": \"fx\",\n  \"version\": \"0.1.0\",\n  \"type\": \"module\",\n  \"devDependencies\": { \"vitest\": \"^2.0.0\" },\n  \"scripts\": { \"test\": \"vitest run\" }\n}\n",
+    "ripr.toml": "[languages]\nenabled = [\"typescript\"]\n",
+    "src/index.ts": "export function canShip(stock: number, blocked: boolean): boolean {\n  return stock > 0 && blocked;\n}\n",
+    "test/t.test.ts": "import { test, expect } from 'vitest';\nimport { canShip } from '../src/index';\n\ntest('ships when in stock', () => {\n  expect(canShip(3, false)).toBe(true);\n});\n",
+    "tsconfig.json": "{\n  \"compilerOptions\": { \"target\": \"ES2022\", \"module\": \"ESNext\", \"moduleResolution\": \"Bundler\", \"strict\": true }\n}\n"
+   },
+   "id": "typescript/predicate-flip",
+   "language": "typescript"
+  },
+  {
+   "base": {
+    ".gitignore": "node_modules/\n_out/\ntarget/\n",
+    "package.json": "{\n  \"name\": \"fx\",\n  \"version\": \"0.1.0\",\n  \"type\": \"module\",\n  \"devDependencies\": { \"vitest\": \"^2.0.0\" },\n  \"scripts\": { \"test\": \"vitest run\" }\n}\n",
+    "ripr.toml": "[languages]\nenabled = [\"typescript\"]\n",
+    "src/index.ts": "export interface Config {\n  retries: number;\n  verbose: boolean;\n}\n\nexport function defaultConfig(): Config {\n  return { retries: 3, verbose: false };\n}\n",
+    "test/t.test.ts": "import { test, expect } from 'vitest';\nimport { defaultConfig } from '../src/index';\n\ntest('default config is quiet', () => {\n  const c = defaultConfig();\n  expect(c.verbose).toBe(false);\n});\n",
+    "tsconfig.json": "{\n  \"compilerOptions\": { \"target\": \"ES2022\", \"module\": \"ESNext\", \"moduleResolution\": \"Bundler\", \"strict\": true }\n}\n"
+   },
+   "change": {
+    ".gitignore": "node_modules/\n_out/\ntarget/\n",
+    "package.json": "{\n  \"name\": \"fx\",\n  \"version\": \"0.1.0\",\n  \"type\": \"module\",\n  \"devDependencies\": { \"vitest\": \"^2.0.0\" },\n  \"scripts\": { \"test\": \"vitest run\" }\n}\n",
+    "ripr.toml": "[languages]\nenabled = [\"typescript\"]\n",
+    "src/index.ts": "export interface Config {\n  retries: number;\n  verbose: boolean;\n}\n\nexport function defaultConfig(): Config {\n  return { retries: 5, verbose: false };\n}\n",
+    "test/t.test.ts": "import { test, expect } from 'vitest';\nimport { defaultConfig } from '../src/index';\n\ntest('default config is quiet', () => {\n  const c = defaultConfig();\n  expect(c.verbose).toBe(false);\n});\n",
+    "tsconfig.json": "{\n  \"compilerOptions\": { \"target\": \"ES2022\", \"module\": \"ESNext\", \"moduleResolution\": \"Bundler\", \"strict\": true }\n}\n"
+   },
+   "id": "typescript/field-change",
+   "language": "typescript"
+  },
+  {
+   "base": {
+    ".gitignore": "node_modules/\n_out/\ntarget/\n",
+    "package.json": "{\n  \"name\": \"fx\",\n  \"version\": \"0.1.0\",\n  \"type\": \"module\",\n  \"devDependencies\": { \"vitest\": \"^2.0.0\" },\n  \"scripts\": { \"test\": \"vitest run\" }\n}\n",
+    "ripr.toml": "[languages]\nenabled = [\"typescript\"]\n",
+    "src/index.ts": "export class Req {\n  url: string;\n  timeoutValue = 30;\n  constructor(url: string) {\n    this.url = url;\n  }\n  timeout(t: number): this {\n    this.timeoutValue = t;\n    return this;\n  }\n}\n",
+    "test/t.test.ts": "import { test, expect } from 'vitest';\nimport { Req } from '../src/index';\n\ntest('builder sets url', () => {\n  const r = new Req('http://x').timeout(10);\n  expect(r.url).toBe('http://x');\n});\n",
+    "tsconfig.json": "{\n  \"compilerOptions\": { \"target\": \"ES2022\", \"module\": \"ESNext\", \"moduleResolution\": \"Bundler\", \"strict\": true }\n}\n"
+   },
+   "change": {
+    ".gitignore": "node_modules/\n_out/\ntarget/\n",
+    "package.json": "{\n  \"name\": \"fx\",\n  \"version\": \"0.1.0\",\n  \"type\": \"module\",\n  \"devDependencies\": { \"vitest\": \"^2.0.0\" },\n  \"scripts\": { \"test\": \"vitest run\" }\n}\n",
+    "ripr.toml": "[languages]\nenabled = [\"typescript\"]\n",
+    "src/index.ts": "export class Req {\n  url: string;\n  timeoutValue = 30;\n  constructor(url: string) {\n    this.url = url;\n  }\n  timeout(t: number): this {\n    this.timeoutValue = t * 2;\n    return this;\n  }\n}\n",
+    "test/t.test.ts": "import { test, expect } from 'vitest';\nimport { Req } from '../src/index';\n\ntest('builder sets url', () => {\n  const r = new Req('http://x').timeout(10);\n  expect(r.url).toBe('http://x');\n});\n",
+    "tsconfig.json": "{\n  \"compilerOptions\": { \"target\": \"ES2022\", \"module\": \"ESNext\", \"moduleResolution\": \"Bundler\", \"strict\": true }\n}\n"
+   },
+   "id": "typescript/builder",
+   "language": "typescript"
+  },
+  {
+   "base": {
+    ".gitignore": "node_modules/\n_out/\ntarget/\n",
+    "package.json": "{\n  \"name\": \"fx\",\n  \"version\": \"0.1.0\",\n  \"type\": \"module\",\n  \"devDependencies\": { \"vitest\": \"^2.0.0\" },\n  \"scripts\": { \"test\": \"vitest run\" }\n}\n",
+    "ripr.toml": "[languages]\nenabled = [\"typescript\"]\n",
+    "src/index.ts": "export function largest<T extends number | string>(xs: T[]): T | undefined {\n  let best: T | undefined = xs[0];\n  for (const x of xs.slice(1)) {\n    if (x > best!) {\n      best = x;\n    }\n  }\n  return best;\n}\n",
+    "test/t.test.ts": "import { test, expect } from 'vitest';\nimport { largest } from '../src/index';\n\ntest('largest of three', () => {\n  expect(largest([1, 5, 3])).toBe(5);\n});\n",
+    "tsconfig.json": "{\n  \"compilerOptions\": { \"target\": \"ES2022\", \"module\": \"ESNext\", \"moduleResolution\": \"Bundler\", \"strict\": true }\n}\n"
+   },
+   "change": {
+    ".gitignore": "node_modules/\n_out/\ntarget/\n",
+    "package.json": "{\n  \"name\": \"fx\",\n  \"version\": \"0.1.0\",\n  \"type\": \"module\",\n  \"devDependencies\": { \"vitest\": \"^2.0.0\" },\n  \"scripts\": { \"test\": \"vitest run\" }\n}\n",
+    "ripr.toml": "[languages]\nenabled = [\"typescript\"]\n",
+    "src/index.ts": "export function largest<T extends number | string>(xs: T[]): T | undefined {\n  let best: T | undefined = xs[0];\n  for (const x of xs.slice(1)) {\n    if (x >= best!) {\n      best = x;\n    }\n  }\n  return best;\n}\n",
+    "test/t.test.ts": "import { test, expect } from 'vitest';\nimport { largest } from '../src/index';\n\ntest('largest of three', () => {\n  expect(largest([1, 5, 3])).toBe(5);\n});\n",
+    "tsconfig.json": "{\n  \"compilerOptions\": { \"target\": \"ES2022\", \"module\": \"ESNext\", \"moduleResolution\": \"Bundler\", \"strict\": true }\n}\n"
+   },
+   "id": "typescript/generic-fn",
+   "language": "typescript"
+  },
+  {
+   "base": {
+    ".gitignore": "node_modules/\n_out/\ntarget/\n",
+    "package.json": "{\n  \"name\": \"fx\",\n  \"version\": \"0.1.0\",\n  \"type\": \"module\",\n  \"devDependencies\": { \"vitest\": \"^2.0.0\" },\n  \"scripts\": { \"test\": \"vitest run\" }\n}\n",
+    "ripr.toml": "[languages]\nenabled = [\"typescript\"]\n",
+    "src/index.ts": "export async function fetchLen(s: string): Promise<number> {\n  return s.length;\n}\n",
+    "test/t.test.ts": "import { test, expect } from 'vitest';\nimport { fetchLen } from '../src/index';\n\ntest('fetchLen builds promise', () => {\n  const p = fetchLen('abc');\n  expect(p).toBeInstanceOf(Promise);\n});\n",
+    "tsconfig.json": "{\n  \"compilerOptions\": { \"target\": \"ES2022\", \"module\": \"ESNext\", \"moduleResolution\": \"Bundler\", \"strict\": true }\n}\n"
+   },
+   "change": {
+    ".gitignore": "node_modules/\n_out/\ntarget/\n",
+    "package.json": "{\n  \"name\": \"fx\",\n  \"version\": \"0.1.0\",\n  \"type\": \"module\",\n  \"devDependencies\": { \"vitest\": \"^2.0.0\" },\n  \"scripts\": { \"test\": \"vitest run\" }\n}\n",
+    "ripr.toml": "[languages]\nenabled = [\"typescript\"]\n",
+    "src/index.ts": "export async function fetchLen(s: string): Promise<number> {\n  return s.length + 1;\n}\n",
+    "test/t.test.ts": "import { test, expect } from 'vitest';\nimport { fetchLen } from '../src/index';\n\ntest('fetchLen builds promise', () => {\n  const p = fetchLen('abc');\n  expect(p).toBeInstanceOf(Promise);\n});\n",
+    "tsconfig.json": "{\n  \"compilerOptions\": { \"target\": \"ES2022\", \"module\": \"ESNext\", \"moduleResolution\": \"Bundler\", \"strict\": true }\n}\n"
+   },
+   "id": "typescript/async-fn",
+   "language": "typescript"
+  },
+  {
+   "base": {
+    ".gitignore": "node_modules/\n_out/\ntarget/\n",
+    "package.json": "{\n  \"name\": \"fx\",\n  \"version\": \"0.1.0\",\n  \"type\": \"module\",\n  \"devDependencies\": { \"vitest\": \"^2.0.0\" },\n  \"scripts\": { \"test\": \"vitest run\" }\n}\n",
+    "ripr.toml": "[languages]\nenabled = [\"typescript\"]\n",
+    "src/index.ts": "export function sumTo(n: number): number {\n  let acc = 0;\n  for (let i = 1; i <= n; i++) {\n    acc += i;\n  }\n  return acc;\n}\n",
+    "test/t.test.ts": "import { test, expect } from 'vitest';\nimport { sumTo } from '../src/index';\n\ntest('sumTo zero', () => {\n  expect(sumTo(0)).toBe(0);\n});\n",
+    "tsconfig.json": "{\n  \"compilerOptions\": { \"target\": \"ES2022\", \"module\": \"ESNext\", \"moduleResolution\": \"Bundler\", \"strict\": true }\n}\n"
+   },
+   "change": {
+    ".gitignore": "node_modules/\n_out/\ntarget/\n",
+    "package.json": "{\n  \"name\": \"fx\",\n  \"version\": \"0.1.0\",\n  \"type\": \"module\",\n  \"devDependencies\": { \"vitest\": \"^2.0.0\" },\n  \"scripts\": { \"test\": \"vitest run\" }\n}\n",
+    "ripr.toml": "[languages]\nenabled = [\"typescript\"]\n",
+    "src/index.ts": "export function sumTo(n: number): number {\n  let acc = 0;\n  for (let i = 1; i < n; i++) {\n    acc += i;\n  }\n  return acc;\n}\n",
+    "test/t.test.ts": "import { test, expect } from 'vitest';\nimport { sumTo } from '../src/index';\n\ntest('sumTo zero', () => {\n  expect(sumTo(0)).toBe(0);\n});\n",
+    "tsconfig.json": "{\n  \"compilerOptions\": { \"target\": \"ES2022\", \"module\": \"ESNext\", \"moduleResolution\": \"Bundler\", \"strict\": true }\n}\n"
+   },
+   "id": "typescript/loop-accum",
+   "language": "typescript"
+  },
+  {
+   "base": {
+    ".gitignore": "node_modules/\n_out/\ntarget/\n",
+    "package.json": "{\n  \"name\": \"fx\",\n  \"version\": \"0.1.0\",\n  \"type\": \"module\",\n  \"devDependencies\": { \"vitest\": \"^2.0.0\" },\n  \"scripts\": { \"test\": \"vitest run\" }\n}\n",
+    "ripr.toml": "[languages]\nenabled = [\"typescript\"]\n",
+    "src/index.ts": "export const GREETING = 'hello';\n\nexport function greet(name: string): string {\n  return `${GREETING}, ${name}`;\n}\n",
+    "test/t.test.ts": "import { test, expect } from 'vitest';\nimport { greet } from '../src/index';\n\ntest('greet mentions name', () => {\n  expect(greet('bob')).toContain('bob');\n});\n",
+    "tsconfig.json": "{\n  \"compilerOptions\": { \"target\": \"ES2022\", \"module\": \"ESNext\", \"moduleResolution\": \"Bundler\", \"strict\": true }\n}\n"
+   },
+   "change": {
+    ".gitignore": "node_modules/\n_out/\ntarget/\n",
+    "package.json": "{\n  \"name\": \"fx\",\n  \"version\": \"0.1.0\",\n  \"type\": \"module\",\n  \"devDependencies\": { \"vitest\": \"^2.0.0\" },\n  \"scripts\": { \"test\": \"vitest run\" }\n}\n",
+    "ripr.toml": "[languages]\nenabled = [\"typescript\"]\n",
+    "src/index.ts": "export const GREETING = 'hi';\n\nexport function greet(name: string): string {\n  return `${GREETING}, ${name}`;\n}\n",
+    "test/t.test.ts": "import { test, expect } from 'vitest';\nimport { greet } from '../src/index';\n\ntest('greet mentions name', () => {\n  expect(greet('bob')).toContain('bob');\n});\n",
+    "tsconfig.json": "{\n  \"compilerOptions\": { \"target\": \"ES2022\", \"module\": \"ESNext\", \"moduleResolution\": \"Bundler\", \"strict\": true }\n}\n"
+   },
+   "id": "typescript/string-const",
+   "language": "typescript"
+  },
+  {
+   "base": {
+    ".gitignore": "node_modules/\n_out/\ntarget/\n",
+    "package.json": "{\n  \"name\": \"fx\",\n  \"version\": \"0.1.0\",\n  \"type\": \"module\",\n  \"devDependencies\": { \"vitest\": \"^2.0.0\" },\n  \"scripts\": { \"test\": \"vitest run\" }\n}\n",
+    "ripr.toml": "[languages]\nenabled = [\"typescript\"]\n",
+    "src/index.ts": "export function firstEven(xs: number[]): number | undefined {\n  return xs.find((x) => x % 2 === 0);\n}\n",
+    "test/t.test.ts": "import { test, expect } from 'vitest';\nimport { firstEven } from '../src/index';\n\ntest('undefined when all odd', () => {\n  expect(firstEven([1, 3])).toBeUndefined();\n  expect(firstEven([1, 4])).toBe(4);\n});\n",
+    "tsconfig.json": "{\n  \"compilerOptions\": { \"target\": \"ES2022\", \"module\": \"ESNext\", \"moduleResolution\": \"Bundler\", \"strict\": true }\n}\n"
+   },
+   "change": {
+    ".gitignore": "node_modules/\n_out/\ntarget/\n",
+    "package.json": "{\n  \"name\": \"fx\",\n  \"version\": \"0.1.0\",\n  \"type\": \"module\",\n  \"devDependencies\": { \"vitest\": \"^2.0.0\" },\n  \"scripts\": { \"test\": \"vitest run\" }\n}\n",
+    "ripr.toml": "[languages]\nenabled = [\"typescript\"]\n",
+    "src/index.ts": "export function firstEven(xs: number[]): number | undefined {\n  return xs.find((x) => x % 2 === 0) ?? 0;\n}\n",
+    "test/t.test.ts": "import { test, expect } from 'vitest';\nimport { firstEven } from '../src/index';\n\ntest('undefined when all odd', () => {\n  expect(firstEven([1, 3])).toBeUndefined();\n  expect(firstEven([1, 4])).toBe(4);\n});\n",
+    "tsconfig.json": "{\n  \"compilerOptions\": { \"target\": \"ES2022\", \"module\": \"ESNext\", \"moduleResolution\": \"Bundler\", \"strict\": true }\n}\n"
+   },
+   "id": "typescript/option-none",
+   "language": "typescript"
+  },
+  {
+   "base": {
+    ".gitignore": "node_modules/\n_out/\ntarget/\n",
+    "package.json": "{\n  \"name\": \"fx\",\n  \"version\": \"0.1.0\",\n  \"type\": \"module\",\n  \"devDependencies\": { \"vitest\": \"^2.0.0\" },\n  \"scripts\": { \"test\": \"vitest run\" }\n}\n",
+    "ripr.toml": "[languages]\nenabled = [\"typescript\"]\n",
+    "src/index.ts": "export interface Shape {\n  area(): number;\n}\n\nexport class Rect implements Shape {\n  constructor(public w: number, public h: number) {}\n  area(): number {\n    return this.w * this.h;\n  }\n}\n",
+    "test/t.test.ts": "import { test, expect } from 'vitest';\nimport { Rect } from '../src/index';\n\ntest('rect area positive', () => {\n  const r = new Rect(2, 3);\n  expect(r.area()).toBeGreaterThan(0);\n});\n",
+    "tsconfig.json": "{\n  \"compilerOptions\": { \"target\": \"ES2022\", \"module\": \"ESNext\", \"moduleResolution\": \"Bundler\", \"strict\": true }\n}\n"
+   },
+   "change": {
+    ".gitignore": "node_modules/\n_out/\ntarget/\n",
+    "package.json": "{\n  \"name\": \"fx\",\n  \"version\": \"0.1.0\",\n  \"type\": \"module\",\n  \"devDependencies\": { \"vitest\": \"^2.0.0\" },\n  \"scripts\": { \"test\": \"vitest run\" }\n}\n",
+    "ripr.toml": "[languages]\nenabled = [\"typescript\"]\n",
+    "src/index.ts": "export interface Shape {\n  area(): number;\n}\n\nexport class Rect implements Shape {\n  constructor(public w: number, public h: number) {}\n  area(): number {\n    return this.w * this.h + 1;\n  }\n}\n",
+    "test/t.test.ts": "import { test, expect } from 'vitest';\nimport { Rect } from '../src/index';\n\ntest('rect area positive', () => {\n  const r = new Rect(2, 3);\n  expect(r.area()).toBeGreaterThan(0);\n});\n",
+    "tsconfig.json": "{\n  \"compilerOptions\": { \"target\": \"ES2022\", \"module\": \"ESNext\", \"moduleResolution\": \"Bundler\", \"strict\": true }\n}\n"
+   },
+   "id": "typescript/trait-impl",
+   "language": "typescript"
+  },
+  {
+   "base": {
+    ".gitignore": "node_modules/\n_out/\ntarget/\n",
+    "package.json": "{\n  \"name\": \"fx\",\n  \"version\": \"0.1.0\",\n  \"type\": \"module\",\n  \"devDependencies\": { \"vitest\": \"^2.0.0\" },\n  \"scripts\": { \"test\": \"vitest run\" }\n}\n",
+    "ripr.toml": "[languages]\nenabled = [\"typescript\"]\n",
+    "src/index.ts": "function tax(v: number): number {\n  return Math.floor(v / 10);\n}\n\nexport function gross(v: number): number {\n  return v + tax(v);\n}\n",
+    "test/t.test.ts": "import { test, expect } from 'vitest';\nimport { gross } from '../src/index';\n\ntest('gross exceeds net', () => {\n  expect(gross(100)).toBeGreaterThan(100);\n});\n",
+    "tsconfig.json": "{\n  \"compilerOptions\": { \"target\": \"ES2022\", \"module\": \"ESNext\", \"moduleResolution\": \"Bundler\", \"strict\": true }\n}\n"
+   },
+   "change": {
+    ".gitignore": "node_modules/\n_out/\ntarget/\n",
+    "package.json": "{\n  \"name\": \"fx\",\n  \"version\": \"0.1.0\",\n  \"type\": \"module\",\n  \"devDependencies\": { \"vitest\": \"^2.0.0\" },\n  \"scripts\": { \"test\": \"vitest run\" }\n}\n",
+    "ripr.toml": "[languages]\nenabled = [\"typescript\"]\n",
+    "src/index.ts": "function tax(v: number): number {\n  return Math.floor(v / 5);\n}\n\nexport function gross(v: number): number {\n  return v + tax(v);\n}\n",
+    "test/t.test.ts": "import { test, expect } from 'vitest';\nimport { gross } from '../src/index';\n\ntest('gross exceeds net', () => {\n  expect(gross(100)).toBeGreaterThan(100);\n});\n",
+    "tsconfig.json": "{\n  \"compilerOptions\": { \"target\": \"ES2022\", \"module\": \"ESNext\", \"moduleResolution\": \"Bundler\", \"strict\": true }\n}\n"
+   },
+   "id": "typescript/private-helper",
+   "language": "typescript"
+  },
+  {
+   "base": {
+    ".gitignore": "node_modules/\n_out/\ntarget/\n",
+    "package.json": "{\n  \"name\": \"fx\",\n  \"version\": \"0.1.0\",\n  \"type\": \"module\",\n  \"devDependencies\": { \"vitest\": \"^2.0.0\" },\n  \"scripts\": { \"test\": \"vitest run\" }\n}\n",
+    "ripr.toml": "[languages]\nenabled = [\"typescript\"]\n",
+    "src/index.ts": "export function logLine(buf: string[], msg: string): void {\n  buf.push(msg);\n}\n",
+    "test/t.test.ts": "import { test, expect } from 'vitest';\nimport { logLine } from '../src/index';\n\ntest('logLine appends', () => {\n  const b: string[] = [];\n  logLine(b, 'hi');\n  expect(b.length).toBe(1);\n});\n",
+    "tsconfig.json": "{\n  \"compilerOptions\": { \"target\": \"ES2022\", \"module\": \"ESNext\", \"moduleResolution\": \"Bundler\", \"strict\": true }\n}\n"
+   },
+   "change": {
+    ".gitignore": "node_modules/\n_out/\ntarget/\n",
+    "package.json": "{\n  \"name\": \"fx\",\n  \"version\": \"0.1.0\",\n  \"type\": \"module\",\n  \"devDependencies\": { \"vitest\": \"^2.0.0\" },\n  \"scripts\": { \"test\": \"vitest run\" }\n}\n",
+    "ripr.toml": "[languages]\nenabled = [\"typescript\"]\n",
+    "src/index.ts": "export function logLine(buf: string[], msg: string): void {\n  buf.push(msg.toUpperCase());\n}\n",
+    "test/t.test.ts": "import { test, expect } from 'vitest';\nimport { logLine } from '../src/index';\n\ntest('logLine appends', () => {\n  const b: string[] = [];\n  logLine(b, 'hi');\n  expect(b.length).toBe(1);\n});\n",
+    "tsconfig.json": "{\n  \"compilerOptions\": { \"target\": \"ES2022\", \"module\": \"ESNext\", \"moduleResolution\": \"Bundler\", \"strict\": true }\n}\n"
+   },
+   "id": "typescript/side-effect",
+   "language": "typescript"
+  },
+  {
+   "base": {
+    ".gitignore": "node_modules/\n_out/\ntarget/\n",
+    "package.json": "{\n  \"name\": \"fx\",\n  \"version\": \"0.1.0\",\n  \"type\": \"module\",\n  \"devDependencies\": { \"vitest\": \"^2.0.0\" },\n  \"scripts\": { \"test\": \"vitest run\" }\n}\n",
+    "ripr.toml": "[languages]\nenabled = [\"typescript\"]\n",
+    "src/index.ts": "export function divide(a: number, b: number): number {\n  return Math.floor(a / b);\n}\n",
+    "test/t.test.ts": "import { test, expect } from 'vitest';\nimport { divide } from '../src/index';\n\ntest('divide by zero throws', () => {\n  expect(() => divide(1, 0)).toThrow();\n});\n",
+    "tsconfig.json": "{\n  \"compilerOptions\": { \"target\": \"ES2022\", \"module\": \"ESNext\", \"moduleResolution\": \"Bundler\", \"strict\": true }\n}\n"
+   },
+   "change": {
+    ".gitignore": "node_modules/\n_out/\ntarget/\n",
+    "package.json": "{\n  \"name\": \"fx\",\n  \"version\": \"0.1.0\",\n  \"type\": \"module\",\n  \"devDependencies\": { \"vitest\": \"^2.0.0\" },\n  \"scripts\": { \"test\": \"vitest run\" }\n}\n",
+    "ripr.toml": "[languages]\nenabled = [\"typescript\"]\n",
+    "src/index.ts": "export function divide(a: number, b: number): number {\n  if (b === 0) {\n    throw new Error('division by zero');\n  }\n  return Math.floor(a / b);\n}\n",
+    "test/t.test.ts": "import { test, expect } from 'vitest';\nimport { divide } from '../src/index';\n\ntest('divide by zero throws', () => {\n  expect(() => divide(1, 0)).toThrow();\n});\n",
+    "tsconfig.json": "{\n  \"compilerOptions\": { \"target\": \"ES2022\", \"module\": \"ESNext\", \"moduleResolution\": \"Bundler\", \"strict\": true }\n}\n"
+   },
+   "id": "typescript/panic-guard",
+   "language": "typescript"
+  },
+  {
+   "base": {
+    ".gitignore": "node_modules/\n_out/\ntarget/\n",
+    "app/src/index.ts": "import { discount } from '../../wscore/src/index';\n\nexport function checkout(price: number): number {\n  return discount(price);\n}\n",
+    "package.json": "{\n  \"name\": \"fx\",\n  \"version\": \"0.1.0\",\n  \"type\": \"module\",\n  \"devDependencies\": { \"vitest\": \"^2.0.0\" },\n  \"scripts\": { \"test\": \"vitest run\" }\n}\n",
+    "ripr.toml": "[languages]\nenabled = [\"typescript\"]\n",
+    "tsconfig.json": "{\n  \"compilerOptions\": { \"target\": \"ES2022\", \"module\": \"ESNext\", \"moduleResolution\": \"Bundler\", \"strict\": true }\n}\n",
+    "wscore/src/index.ts": "export function discount(price: number): number {\n  if (price > 100) {\n    return price - 10;\n  }\n  return price;\n}\n",
+    "wscore/test/t.test.ts": "import { test, expect } from 'vitest';\nimport { discount } from '../src/index';\n\ntest('discount at boundary', () => {\n  expect(discount(100)).toBe(90);\n  expect(discount(50)).toBe(50);\n});\n"
+   },
+   "change": {
+    ".gitignore": "node_modules/\n_out/\ntarget/\n",
+    "app/src/index.ts": "import { discount } from '../../wscore/src/index';\n\nexport function checkout(price: number): number {\n  return discount(price);\n}\n",
+    "package.json": "{\n  \"name\": \"fx\",\n  \"version\": \"0.1.0\",\n  \"type\": \"module\",\n  \"devDependencies\": { \"vitest\": \"^2.0.0\" },\n  \"scripts\": { \"test\": \"vitest run\" }\n}\n",
+    "ripr.toml": "[languages]\nenabled = [\"typescript\"]\n",
+    "tsconfig.json": "{\n  \"compilerOptions\": { \"target\": \"ES2022\", \"module\": \"ESNext\", \"moduleResolution\": \"Bundler\", \"strict\": true }\n}\n",
+    "wscore/src/index.ts": "export function discount(price: number): number {\n  if (price >= 100) {\n    return price - 10;\n  }\n  return price;\n}\n",
+    "wscore/test/t.test.ts": "import { test, expect } from 'vitest';\nimport { discount } from '../src/index';\n\ntest('discount at boundary', () => {\n  expect(discount(100)).toBe(90);\n  expect(discount(50)).toBe(50);\n});\n"
+   },
+   "id": "typescript/workspace",
+   "language": "typescript"
+  },
+  {
+   "base": {
+    ".gitignore": "node_modules/\n_out/\ntarget/\n",
+    "app/src/index.ts": "import { discount } from '../../wscore/src/index';\n\nexport function checkout(price: number): number {\n  return discount(price);\n}\n",
+    "app/test/t.test.ts": "import { test, expect } from 'vitest';\nimport { checkout } from '../src/index';\n\ntest('checkout at boundary', () => {\n  expect(checkout(100)).toBe(90);\n});\n",
+    "package.json": "{\n  \"name\": \"fx\",\n  \"version\": \"0.1.0\",\n  \"type\": \"module\",\n  \"devDependencies\": { \"vitest\": \"^2.0.0\" },\n  \"scripts\": { \"test\": \"vitest run\" }\n}\n",
+    "ripr.toml": "[languages]\nenabled = [\"typescript\"]\n",
+    "tsconfig.json": "{\n  \"compilerOptions\": { \"target\": \"ES2022\", \"module\": \"ESNext\", \"moduleResolution\": \"Bundler\", \"strict\": true }\n}\n",
+    "wscore/src/index.ts": "export function discount(price: number): number {\n  if (price > 100) {\n    return price - 10;\n  }\n  return price;\n}\n"
+   },
+   "change": {
+    ".gitignore": "node_modules/\n_out/\ntarget/\n",
+    "app/src/index.ts": "import { discount } from '../../wscore/src/index';\n\nexport function checkout(price: number): number {\n  return discount(price);\n}\n",
+    "app/test/t.test.ts": "import { test, expect } from 'vitest';\nimport { checkout } from '../src/index';\n\ntest('checkout at boundary', () => {\n  expect(checkout(100)).toBe(90);\n});\n",
+    "package.json": "{\n  \"name\": \"fx\",\n  \"version\": \"0.1.0\",\n  \"type\": \"module\",\n  \"devDependencies\": { \"vitest\": \"^2.0.0\" },\n  \"scripts\": { \"test\": \"vitest run\" }\n}\n",
+    "ripr.toml": "[languages]\nenabled = [\"typescript\"]\n",
+    "tsconfig.json": "{\n  \"compilerOptions\": { \"target\": \"ES2022\", \"module\": \"ESNext\", \"moduleResolution\": \"Bundler\", \"strict\": true }\n}\n",
+    "wscore/src/index.ts": "export function discount(price: number): number {\n  if (price >= 100) {\n    return price - 10;\n  }\n  return price;\n}\n"
+   },
+   "id": "typescript/ws-test-other-crate",
+   "language": "typescript"
+  }
+ ],
+ "note": "Pinned small-diff set: 24 Rust, 22 Python and 22 TypeScript cases. Each case is a base commit and one behavior-changing commit. Rust is re-created from the 2026-10 audit table; Python and TypeScript are the parity-harness cases. None are byte-identical to earlier runs.",
+ "schema_version": "ripr-repair-start-cases-v1"
+}

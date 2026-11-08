@@ -1,0 +1,12 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -54,7 +54,7 @@
+         return 0;
+     }
+     let base = if weight <= 10 {
+-        9
++        6
+     } else {
+         20
+     };

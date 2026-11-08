@@ -1,7 +1,7 @@
 use super::init_agents;
 use crate::cli::commands_options::{InitCi, InitOptions};
 use crate::cli::help;
-use crate::cli::parse::expect_value;
+use crate::cli::parse::{expect_value, reconcile_root};
 use crate::cli::suggest::{unknown_argument, unknown_value};
 use crate::config::{CONFIG_FILE_NAME, generated_init_config_for_root};
 use crate::output;
@@ -817,12 +817,20 @@ pub(super) fn parse_init_options(args: &[String]) -> Result<InitOptions, String>
         mcp: false,
         agents: Vec::new(),
     };
+    let mut root_explicit = false;
     let mut i = 0usize;
     while i < args.len() {
         match args[i].as_str() {
             "--root" => {
                 i += 1;
-                options.root = PathBuf::from(expect_value(args, i, "--root")?);
+                let reconciled = reconcile_root(
+                    &options.root,
+                    root_explicit,
+                    expect_value(args, i, "--root")?,
+                    "init",
+                )?;
+                options.root = reconciled;
+                root_explicit = true;
             }
             "--ci" => {
                 i += 1;
