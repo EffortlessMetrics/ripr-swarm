@@ -1036,6 +1036,47 @@ fn a_placed_assert_matches_keeps_the_receiver_and_binding_boundaries() -> Result
     Ok(())
 }
 
+/// The placed widening also keeps the remaining boundaries the unplaced withhold
+/// already pins: an ignored test, a local macro spelled with whitespace around
+/// the bang, and both qualified spellings (which are not a bare binding) keep
+/// their gap and never read the named limit (#12885).
+#[test]
+fn a_placed_assert_matches_keeps_the_ignored_spacing_and_qualified_boundaries() -> Result<(), String>
+{
+    let spaced = "macro_rules ! assert_matches { ($($t:tt)*) => {}; }\n";
+    let ignored = Shape {
+        attrs: "#[ignore]\n    ",
+        ..Shape::default()
+    };
+    let rows: [(&str, Shape<'_>, &str); 4] = [
+        (
+            "ignored test",
+            ignored,
+            "assert_matches!(Widget::new().read(), Ok(Ready));",
+        ),
+        (
+            "local macro spelled with whitespace around the bang",
+            Shape::prelude(spaced),
+            "assert_matches!(Widget::new().read(), Ok(Ready));",
+        ),
+        (
+            "qualified spelling is not a bare binding",
+            Shape::default(),
+            "std::assert_matches::assert_matches!(Widget::new().read(), Ok(Ready));",
+        ),
+        (
+            "crate-qualified spelling is not a bare binding",
+            Shape::default(),
+            "assert_matches::assert_matches!(Widget::new().read(), Ok(Ready));",
+        ),
+    ];
+    for (label, shape, statement) in rows {
+        let finding = Workspace::create_shaped(Placement::PlainStd, shape, statement)?.finding()?;
+        assert_keeps_gap(label, &finding)?;
+    }
+    Ok(())
+}
+
 /// Every other boundary of the withhold still holds for the new macro: the
 /// wrong receiver, a broad pattern, a call outside the operand and a local
 /// `assert_matches!` all keep their gap.
@@ -1085,6 +1126,90 @@ fn assert_matches_keeps_every_boundary_of_the_withhold() -> Result<(), String> {
     ];
     for (label, shape, statement) in rows {
         keeps_gap(label, shape, statement)?;
+    }
+    Ok(())
+}
+
+/// `a`'s manifest with `dependencies` under `[dependencies]`.
+fn with_dependencies(workspace: &Workspace, dependencies: &str) -> Result<(), String> {
+    workspace.write_file(
+        "a/Cargo.toml",
+        &format!(
+            "[package]\nname = \"a\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[lib]\ntest = false\ndoctest = false\n\n[dependencies]\n{dependencies}\n"
+        ),
+    )
+}
+
+const DROP_IN_IMPORT: &str = "use pretty_assertions::assert_eq;\n";
+const DROP_IN_STATEMENT: &str = "assert_eq!(Widget::new().read(), 4);";
+
+fn drop_in_finding(
+    shape: Shape<'_>,
+    statement: &str,
+    dependencies: Option<&str>,
+) -> Result<Value, String> {
+    let workspace = Workspace::create_shaped(Placement::Generated, shape, statement)?;
+    if let Some(dependencies) = dependencies {
+        with_dependencies(&workspace, dependencies)?;
+    }
+    workspace.finding()
+}
+
+/// A drop-in assertion import (`pretty_assertions`) whose own manifest resolves
+/// the registry crate evaluates its operands, so with placement unavailable the
+/// owner call inside it is the same unverifiable-macro doubt as a bare
+/// `assert_eq!`: a named limitation, never a credit (#12886).
+#[test]
+fn an_unplaced_drop_in_assertion_import_is_a_named_limitation() -> Result<(), String> {
+    let finding = drop_in_finding(
+        Shape::prelude(DROP_IN_IMPORT),
+        DROP_IN_STATEMENT,
+        Some("pretty_assertions = \"1\""),
+    )?;
+    assert_eq!(limit(&finding), Some(LIMIT), "{finding}");
+    assert_eq!(text(&finding, "/classification")?, "static_unknown");
+    // Nothing is credited: the relation stays the token match.
+    assert_eq!(relations(&finding), ["weak_token_substring"], "{finding}");
+    Ok(())
+}
+
+/// The widening reads only a manifest-verified drop-in import. An undeclared
+/// crate, a dependency key renamed onto another package, a local macro of the
+/// same name, and the wrong receiver all keep their gap.
+#[test]
+fn an_unplaced_drop_in_import_keeps_every_boundary_of_the_withhold() -> Result<(), String> {
+    let local =
+        "use pretty_assertions::assert_eq;\nmacro_rules! assert_eq { ($($t:tt)*) => {}; }\n";
+    let renamed = "pretty_assertions = { package = \"fakestd\", path = \"../fakestd\" }";
+    let rows: [(&str, Shape<'_>, &str, Option<&str>); 4] = [
+        (
+            "no manifest dependency",
+            Shape::prelude(DROP_IN_IMPORT),
+            DROP_IN_STATEMENT,
+            None,
+        ),
+        (
+            "dependency renamed onto another package",
+            Shape::prelude(DROP_IN_IMPORT),
+            DROP_IN_STATEMENT,
+            Some(renamed),
+        ),
+        (
+            "local macro of the same name",
+            Shape::prelude(local),
+            DROP_IN_STATEMENT,
+            Some("pretty_assertions = \"1\""),
+        ),
+        (
+            "wrong receiver type",
+            Shape::prelude(DROP_IN_IMPORT),
+            "assert_eq!(Other::new().read(), 4);",
+            Some("pretty_assertions = \"1\""),
+        ),
+    ];
+    for (label, shape, statement, dependencies) in rows {
+        let finding = drop_in_finding(shape, statement, dependencies)?;
+        assert_keeps_gap(label, &finding)?;
     }
     Ok(())
 }

@@ -229,6 +229,20 @@ impl AttemptBaseline {
         &self.policy
     }
 
+    /// The new-test proposal the attempt follows, when its policy records one
+    /// (#13205: the manifest discloses the target's preflight state).
+    pub(crate) fn followed_new_test_proposal(&self) -> Option<&FollowedNewTestProposal> {
+        self.policy.new_test_proposal.as_ref()
+    }
+
+    /// The governed inline test module's name when the policy confines the
+    /// target to one (the focused-run binding reads it, #13203).
+    pub(crate) fn inline_test_module_name(&self) -> Option<&str> {
+        self.inline_test_region
+            .as_ref()
+            .map(|region| region.module_name.as_str())
+    }
+
     /// The baseline index entry metadata (`git ls-files --stage` shape) for
     /// one path, for consumers that must verify the index copy a checkout
     /// would restore is still the baseline's index copy.
@@ -343,20 +357,12 @@ pub(crate) fn capture_attempt_baseline(
                 baseline.worktree_digest(&proposal.file).is_some()
             }
         };
-        match (proposal.kind, exists) {
-            (crate::analysis::new_test_target::NewTestKind::Integration, true) => {
-                return Err(format!(
-                    "the new-test proposal is stale: it names `{}` as a new integration test file, but that path already exists; re-run the before phase to get a current proposal",
-                    proposal.file
-                ));
-            }
-            (crate::analysis::new_test_target::NewTestKind::InlineUnit, false) => {
-                return Err(format!(
-                    "the new-test proposal is stale: it names the existing file `{}` for an inline test module, but that file does not exist; re-run the before phase to get a current proposal",
-                    proposal.file
-                ));
-            }
-            _ => {}
+        if let Some(reason) = crate::analysis::new_test_target::proposal_premise_error(
+            proposal.kind,
+            &proposal.file,
+            exists,
+        ) {
+            return Err(reason);
         }
     }
     if let Some(region) = &inline_test_region

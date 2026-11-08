@@ -363,8 +363,11 @@ fn render_open_limited(
         ));
     }
     push_limits(&mut out, considered, &[]);
-    if let Some(first) = open.first() {
-        out.push_str(&explain_next_line(&first.id, output, drill_in));
+    if let Some(line) = open
+        .first()
+        .and_then(|first| explain_next_line(&first.id, output, drill_in))
+    {
+        out.push_str(&line);
         out.push('\n');
     }
     out
@@ -442,8 +445,11 @@ fn render_limited_records(
     }
     out.push_str(terminal);
     push_limits(&mut out, considered, &[]);
-    if let Some(first) = limited.first() {
-        out.push_str(&explain_next_line(&first.id, output, drill_in));
+    if let Some(line) = limited
+        .first()
+        .and_then(|first| explain_next_line(&first.id, output, drill_in))
+    {
+        out.push_str(&line);
         out.push('\n');
     }
     out
@@ -578,7 +584,7 @@ fn next_line(
     provenance: CheckDiffProvenance,
 ) -> Option<String> {
     if let Some(gap) = gaps.first() {
-        return Some(explain_next_line(&gap.id, output, drill_in));
+        return explain_next_line(&gap.id, output, drill_in);
     }
     let action =
         triage::canonical_next_action_for_triage(triage, output, drill_in, provenance).ok()?;
@@ -593,11 +599,19 @@ fn next_line(
 /// `--suppression-policy`, and this projection does not carry the artifact/live
 /// distinction. Even an empty policy has that constraint, so use the producer's
 /// presence marker. Context and other commands must not inherit this option.
-fn explain_next_line(
+pub(super) fn explain_next_line(
     finding_id: &str,
     output: &CheckOutput,
     drill_in: Option<&FindingDrillIn>,
-) -> String {
+) -> Option<String> {
+    // #13502: a candidate-tree subject cannot be replayed by `explain`; name
+    // no command rather than one that analyzes the live checkout.
+    if matches!(
+        drill_in,
+        Some(FindingDrillIn::Commands(navigation)) if navigation.finding_routes_withheld()
+    ) {
+        return None;
+    }
     let command = match (drill_in, output.suppression.is_some()) {
         (Some(FindingDrillIn::Commands(navigation)), false) => {
             navigation.explain_command_compact(finding_id)
@@ -608,7 +622,7 @@ fn explain_next_line(
         (None, false) => format!("ripr explain --format agent {finding_id}"),
         (None, true) => format!("ripr explain {finding_id}"),
     };
-    format!("next={command}")
+    Some(format!("next={command}"))
 }
 
 struct TestRef {

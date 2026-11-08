@@ -1285,6 +1285,7 @@ pub(super) mod tests {
     use super::super::workspace::CODE_STALE_SNAPSHOT;
     use super::*;
     use crate::analysis_outcome::{AnalysisOutcome, AnalysisOutcomeCounts, AnalysisOutcomeKind};
+    use crate::domain::DiscriminatorShape;
     use std::path::PathBuf;
     use std::sync::Arc;
 
@@ -1775,6 +1776,8 @@ pub(super) mod tests {
                 value: "total == 10000".to_string(),
                 reason: "boundary not asserted".to_string(),
                 flow_sink: None,
+                shape: crate::domain::DiscriminatorShape::Boundary,
+                drafted_boundary: None,
             });
         weak.related_tests[0].oracle_strength = crate::domain::OracleStrength::Weak;
         let mut session = session_with(&[weak], "root:sha256:a")?;
@@ -1818,6 +1821,8 @@ pub(super) mod tests {
                 value: "total == 10000".to_string(),
                 reason: "boundary not asserted".to_string(),
                 flow_sink: None,
+                shape: DiscriminatorShape::Boundary,
+                drafted_boundary: None,
             },
         );
         let mut session = session_with(&[named_missing], "root:sha256:a")?;

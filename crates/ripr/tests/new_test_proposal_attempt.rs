@@ -327,3 +327,126 @@ fn edit_outside_the_proposals_cage_is_refused() -> Result<(), String> {
     );
     Ok(())
 }
+
+fn limitations(manifest: &Value) -> Vec<String> {
+    manifest
+        .pointer("/limitations")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_owned)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// #13205: a followed new-test proposal is preflighted read-only and the
+/// attempt says plainly that no test exists yet, naming the owning package;
+/// it never reads as an empty test result.
+#[test]
+fn a_proposal_attempt_says_no_test_exists_yet() -> Result<(), String> {
+    let fixture = fixture("proposal-preflight")?;
+    let root = &fixture.root;
+    let attempt = begin(root)?;
+    let before = manifest(root, &attempt)?;
+    let notes: Vec<String> = limitations(&before)
+        .into_iter()
+        .filter(|note| note.starts_with("target preflight:"))
+        .collect();
+    assert_eq!(notes.len(), 1, "{before}");
+    assert!(
+        notes[0].contains(PROPOSED_FILE)
+            && notes[0].contains("does not exist yet")
+            && notes[0].contains("package `.`")
+            && notes[0].contains("no test result"),
+        "{}",
+        notes[0]
+    );
+    assert!(
+        !root.join(PROPOSED_FILE).exists(),
+        "the preflight must not create the file"
+    );
+    Ok(())
+}
+
+/// The negative: when the seam already has a related test, the target is an
+/// existing one and the attempt carries no not-yet disclosure.
+#[test]
+fn an_existing_test_target_attempt_has_no_not_yet_disclosure() -> Result<(), String> {
+    let fixture = fixture("existing-preflight")?;
+    let root = &fixture.root;
+    write(
+        root,
+        "tests/existing.rs",
+        "use proposal_fixture::discounted_total;\n\n#[test]\nfn below_threshold_keeps_amount() {\n    assert_eq!(discounted_total(5, 100), 5);\n}\n",
+    )?;
+    commit_all(root, "existing test")?;
+    let attempt = begin(root)?;
+    let before = manifest(root, &attempt)?;
+    assert!(
+        limitations(&before)
+            .iter()
+            .all(|note| !note.starts_with("target preflight:")),
+        "{before}"
+    );
+    Ok(())
+}
+
+/// The preflight refuses a defective target at start: a symlinked `tests`
+/// directory (the proposal's parent) leaves no attempt behind, and the same
+/// fixture without the defect starts.
+#[cfg(unix)]
+#[test]
+fn a_symlinked_tests_directory_fails_the_preflight_and_leaves_no_attempt() -> Result<(), String> {
+    let fixture = fixture("preflight-symlink")?;
+    let root = &fixture.root;
+    // The fixture's tests/ directory is replaced by a link to a real one.
+    let real = root.join("real-tests");
+    fs::rename(root.join("tests"), &real).map_err(|error| error.to_string())?;
+    std::os::unix::fs::symlink(&real, root.join("tests")).map_err(|error| error.to_string())?;
+    commit_all(root, "symlinked tests")?;
+    let root_arg = root.display().to_string();
+    let seam = seam_id(root, &root_arg)?;
+    let args = [
+        "agent",
+        "repair",
+        "--json",
+        "--root",
+        &root_arg,
+        "--seam-id",
+        &seam,
+        "--phase",
+        "before",
+    ];
+    let output = run_ripr(root, &args)?;
+    let text = combined(&output);
+    assert!(!output.status.success(), "{text}");
+    assert!(text.contains("symlinked directory"), "{text}");
+    let attempts = root.join("target/ripr/repair-attempts");
+    let left: Vec<_> = fs::read_dir(&attempts)
+        .map(|entries| {
+            entries
+                .filter_map(Result::ok)
+                .filter(|entry| {
+                    entry
+                        .file_name()
+                        .to_string_lossy()
+                        .starts_with("repair-attempt-")
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    assert!(
+        left.is_empty(),
+        "a refused preflight left attempts behind: {left:?}"
+    );
+    // Without the defect the same fixture starts.
+    fs::remove_file(root.join("tests")).map_err(|error| error.to_string())?;
+    fs::rename(&real, root.join("tests")).map_err(|error| error.to_string())?;
+    commit_all(root, "real tests")?;
+    let started = begin(root)?;
+    assert!(!started.id.is_empty());
+    Ok(())
+}

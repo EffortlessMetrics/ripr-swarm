@@ -2457,9 +2457,7 @@ fn parse_explain_format(value: &str) -> Result<app::ExplainFormat, String> {
             "`ripr explain --format json` is not offered; use `ripr context --at <finding-id>` for the JSON packet, or `--format agent` for compact lines"
                 .to_string(),
         ),
-        other => Err(format!(
-            "unknown explain format `{other}`; expected `human` or `agent`"
-        )),
+        other => Err(unknown_value("explain format", other, &["human", "text", "agent"])),
     }
 }
 

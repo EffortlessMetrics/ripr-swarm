@@ -18,6 +18,8 @@ use std::sync::{Arc, Mutex};
 mod integration;
 #[cfg(test)]
 mod integration_tests;
+#[cfg(test)]
+mod preflight_tests;
 mod region;
 #[cfg(test)]
 mod tests;
@@ -141,6 +143,221 @@ pub(crate) struct NewTestTargetProposal {
     /// repair-start gate treats as unnameable: the card never fabricates one.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub(crate) workspace_identity: String,
+}
+
+/// The one projection of the selected new-test proposal (#13204). The CLI
+/// repair card, the agent packet and MCP read the kind, file and (for an
+/// inline module) the module name from here, so no surface chooses its own
+/// target or wording. No insertion anchor exists beyond the inline module
+/// name; this type invents none, selects nothing and generates no test.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub(crate) struct SelectedProposal {
+    pub(crate) kind: NewTestKind,
+    pub(crate) file: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) module: Option<String>,
+}
+
+impl SelectedProposal {
+    /// Projects the producer-owned proposal. The file spelling is the stable
+    /// forward-slash path text, which for a repository-relative path is what
+    /// `display_path` rendered (the analysis layer may not call output).
+    pub(crate) fn from_proposal(proposal: &NewTestTargetProposal) -> Self {
+        Self {
+            kind: proposal.kind,
+            file: crate::analysis::stable_path_text(&proposal.file),
+            module: None,
+        }
+    }
+
+    /// Projects the admitted proposal together with the governed inline
+    /// module the same admission captured for it, for the surfaces that hold
+    /// the whole admission (an InlineUnit proposal's module is its `region`).
+    pub(crate) fn from_admission(admission: &NewTestTargetAdmission) -> Option<Self> {
+        let proposal = admission.proposal.as_ref()?;
+        let selected = Self::from_proposal(proposal);
+        let module = match (proposal.kind, admission.region.as_ref()) {
+            (NewTestKind::InlineUnit, Some(region)) if region.file == proposal.file => {
+                Some(region.module_name.as_str())
+            }
+            _ => None,
+        };
+        Some(selected.with_module(module))
+    }
+
+    /// Adds the governed inline module the producer admitted for the same
+    /// file, for the surfaces that hold the region.
+    pub(crate) fn with_module(mut self, module: Option<&str>) -> Self {
+        self.module = module.map(str::to_string);
+        self
+    }
+
+    /// The plain-language statement of the selected proposal.
+    pub(crate) fn statement(&self) -> String {
+        match (&self.kind, &self.module) {
+            (NewTestKind::Integration, _) => {
+                format!("add a new integration test file `{}`", self.file)
+            }
+            (NewTestKind::InlineUnit, Some(module)) => {
+                format!("add a test inside the `{module}` module of `{}`", self.file)
+            }
+            (NewTestKind::InlineUnit, None) => {
+                format!("add a test in the inline test module of `{}`", self.file)
+            }
+        }
+    }
+}
+
+/// The premise a new-test proposal rests on, shared by the bind-time check and
+/// the read-only preflight so one rule decides staleness (#13205): an
+/// integration proposal names a path that must hold nothing yet, an inline
+/// proposal an existing production file. `exists` is the caller's observation
+/// of that path.
+pub(crate) fn proposal_premise_error(
+    kind: NewTestKind,
+    file: &str,
+    exists: bool,
+) -> Option<String> {
+    match (kind, exists) {
+        (NewTestKind::Integration, true) => Some(format!(
+            "the new-test proposal is stale: it names `{file}` as a new integration test file, but that path already exists; re-run the before phase to get a current proposal"
+        )),
+        (NewTestKind::InlineUnit, false) => Some(format!(
+            "the new-test proposal is stale: it names the existing file `{file}` for an inline test module, but that file does not exist; re-run the before phase to get a current proposal"
+        )),
+        _ => None,
+    }
+}
+
+/// What a read-only look at a proposed target finds. There is no test yet, so
+/// the only non-refusal state is `NoTestYet`: never an empty or invented test
+/// result.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum ProposedTargetPreflight {
+    NoTestYet { package: String },
+    Refused(String),
+}
+
+/// Whether a manifest declares a `[package]` (a virtual workspace root does
+/// not own tests). A manifest that exists but cannot be read or parsed is an
+/// error, never "not a package", so the walk cannot slip past it to an
+/// ancestor.
+fn declares_package(manifest: &Path) -> Result<bool, String> {
+    if !manifest.is_file() {
+        return Ok(false);
+    }
+    let text = std::fs::read_to_string(manifest).map_err(|error| error.to_string())?;
+    let table = text
+        .parse::<toml::Table>()
+        .map_err(|error| error.to_string())?;
+    Ok(table.contains_key("package"))
+}
+
+/// Read-only preflight of a proposed new-test target (#13205): the path stays
+/// inside the repository, no parent is a symlink, the stale premise holds, and
+/// an owning Cargo package exists. Nothing is executed or written.
+pub(crate) fn preflight_new_test_target(
+    root: &Path,
+    kind: NewTestKind,
+    file: &str,
+) -> ProposedTargetPreflight {
+    let refuse = |reason: String| ProposedTargetPreflight::Refused(reason);
+    let relative = Path::new(file);
+    if file.is_empty()
+        || !relative
+            .components()
+            .all(|component| matches!(component, Component::Normal(_)))
+    {
+        return refuse(format!(
+            "the proposed test path `{file}` is not a plain path inside the repository; re-run the before phase to get a current proposal"
+        ));
+    }
+    // No directory on the way may be a symlink: it could point outside. A
+    // directory that does not exist yet is fine; any other error refuses.
+    let mut walked = root.to_path_buf();
+    let parts: Vec<_> = relative.components().collect();
+    for part in &parts[..parts.len().saturating_sub(1)] {
+        walked.push(part);
+        match std::fs::symlink_metadata(&walked) {
+            Ok(meta) if meta.file_type().is_symlink() => {
+                return refuse(format!(
+                    "the proposed test path `{file}` passes through a symlinked directory; re-run the before phase after replacing the link with a real directory"
+                ));
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return refuse(format!(
+                    "the proposed test path `{file}` could not be inspected ({error}); check the directory permissions, then re-run the before phase"
+                ));
+            }
+        }
+    }
+    let target = root.join(relative);
+    let exists = match std::fs::symlink_metadata(&target) {
+        Ok(meta) => {
+            if kind == NewTestKind::InlineUnit && !meta.file_type().is_file() {
+                return refuse(format!(
+                    "the production file `{file}` for the proposed inline test module is not a regular file; re-run the before phase to get a current proposal"
+                ));
+            }
+            true
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+        Err(error) => {
+            return refuse(format!(
+                "the proposed test path `{file}` could not be inspected ({error}); check the directory permissions, then re-run the before phase"
+            ));
+        }
+    };
+    if let Some(reason) = proposal_premise_error(kind, file, exists) {
+        return refuse(reason);
+    }
+    if kind == NewTestKind::Integration
+        && !(parts.len() >= 2
+            && parts[parts.len() - 2].as_os_str() == "tests"
+            && file.ends_with(".rs")
+            && relative.file_name().is_some_and(|name| name != ".rs"))
+    {
+        return refuse(format!(
+            "the proposed integration test `{file}` is not a `tests/<name>.rs` file; re-run the before phase to get a current proposal"
+        ));
+    }
+    // The owning package: the nearest Cargo.toml above the file (above its
+    // `tests` directory for an integration test).
+    let mut dir = relative.parent().map(Path::to_path_buf).unwrap_or_default();
+    if kind == NewTestKind::Integration {
+        dir = dir.parent().map(Path::to_path_buf).unwrap_or_default();
+    }
+    loop {
+        let manifest = root.join(&dir).join("Cargo.toml");
+        let owned = match declares_package(&manifest) {
+            Ok(owned) => owned,
+            Err(error) => {
+                let shown = if dir.as_os_str().is_empty() {
+                    "Cargo.toml".to_string()
+                } else {
+                    format!("{}/Cargo.toml", dir.to_string_lossy().replace('\\', "/"))
+                };
+                return refuse(format!(
+                    "the manifest `{shown}` that would own the proposed test `{file}` cannot be read or parsed ({error}); fix {shown}, then re-run the before phase"
+                ));
+            }
+        };
+        if owned {
+            let package = if dir.as_os_str().is_empty() {
+                ".".to_string()
+            } else {
+                dir.to_string_lossy().replace('\\', "/")
+            };
+            return ProposedTargetPreflight::NoTestYet { package };
+        }
+        if !dir.pop() {
+            return refuse(format!(
+                "no Cargo package owns the proposed test path `{file}`; run the repair from a Cargo workspace root or re-run the before phase"
+            ));
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]

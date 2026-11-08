@@ -1,0 +1,2 @@
+<!-- section: Changed -->
+- The LSP actionable profile now adds a passive Hint row at each changed line of a Python or TypeScript file whose preview findings it withholds (for example `preview python: no_static_path for ..., not an actionable gap`), bounded by the existing marker cap and carrying no finding id, repair or actionability data, so the editor says which change lacks a test instead of only a count. (#13442)
