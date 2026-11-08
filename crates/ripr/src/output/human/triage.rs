@@ -623,6 +623,7 @@ pub(crate) fn render_human_triage(
             }
             categories.len() > 1
         };
+        let mut stub_template: Option<String> = None;
         for finding in triage.omitted.iter().take(listed) {
             let currentness = if label_currentness {
                 format!(", {}", hidden_bullet_currentness(finding))
@@ -653,14 +654,19 @@ pub(crate) fn render_human_triage(
                         );
                     }
                     Some(StubRouteDecision::SeamStub { seam_id }) => {
-                        let command = navigation.stub_seam_command(seam_id);
-                        out.push_str("      Write a test for it:\n");
-                        out.push_str(&format!("        {command}\n"));
-                        super::push_powershell_variant(out, "        ", &command);
+                        // One command template below serves every listed row;
+                        // only the row's id repeats here.
+                        out.push_str(&format!("      Test id: {seam_id}\n"));
+                        stub_template = Some(navigation.stub_seam_command("TEST_ID"));
                     }
                     _ => {}
                 }
             }
+        }
+        if let Some(command) = stub_template {
+            out.push_str("  Write a test for a listed row, replacing TEST_ID with its Test id:\n");
+            out.push_str(&format!("    {command}\n"));
+            super::push_powershell_variant(out, "    ", &command);
         }
         // #9373: gloss each class named by a listed row, once, in the plain
         // vocabulary, so a run with several classes needs no `human-full`
