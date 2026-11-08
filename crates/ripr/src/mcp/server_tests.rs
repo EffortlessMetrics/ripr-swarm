@@ -11,6 +11,72 @@ fn healthy_server() -> Result<McpServer, String> {
     McpServer::new(status, root).map_err(|error| error.to_string())
 }
 
+#[tokio::test]
+async fn conditional_resource_observes_failure_and_bounds() -> Result<(), String> {
+    let server = healthy_server()?;
+    let arguments =
+        |digest: Option<&str>| -> Result<Option<serde_json::Map<String, Value>>, String> {
+            let mut args = serde_json::json!({"uri": "ripr://workspace/status"});
+            if let Some(digest) = digest {
+                args["seen_digest"] = serde_json::json!(digest);
+            }
+            serde_json::from_value(args).map_err(|error| error.to_string())
+        };
+    // SDK handler wrappers serialize through the complete wire-result conversion.
+    let first = server
+        .conditional_resource_tool(arguments(None)?, super::super::MAX_RESPONSE_BYTES)
+        .await
+        .map(ServerResult::from)
+        .map_err(|error| error.to_string())?;
+    let first = serde_json::to_value(first).map_err(|error| error.to_string())?;
+    let digest = first
+        .pointer("/structuredContent/digest")
+        .and_then(Value::as_str)
+        .ok_or("first read lost digest")?
+        .to_string();
+    let repeated = server
+        .conditional_resource_tool(arguments(Some(&digest))?, super::super::MAX_RESPONSE_BYTES)
+        .await
+        .map(ServerResult::from)
+        .map_err(|error| error.to_string())?;
+    let repeated = serde_json::to_value(repeated).map_err(|error| error.to_string())?;
+    if repeated.pointer("/structuredContent/state") != Some(&serde_json::json!("unchanged")) {
+        return Err(format!("equal status must be unchanged: {repeated}"));
+    }
+    {
+        let mut session = server.session.lock().await;
+        session.last_failure = Some(workspace::AttemptFailure::new(
+            workspace::CODE_ANALYSIS_FAILED,
+            "fixture failure",
+            "retry refresh",
+        ));
+    }
+    let failed = server
+        .conditional_resource_tool(arguments(Some(&digest))?, super::super::MAX_RESPONSE_BYTES)
+        .await
+        .map(ServerResult::from)
+        .map_err(|error| error.to_string())?;
+    let failed = serde_json::to_value(failed).map_err(|error| error.to_string())?;
+    if failed.pointer("/structuredContent/state") != Some(&serde_json::json!("changed")) {
+        return Err(format!(
+            "failed refresh must change the status result: {failed}"
+        ));
+    }
+    let bounded = server
+        .conditional_resource_tool(arguments(None)?, 64)
+        .await
+        .map(ServerResult::from)
+        .map_err(|error| error.to_string())?;
+    let bounded = serde_json::to_value(bounded).map_err(|error| error.to_string())?;
+    if bounded.pointer("/structuredContent/failure/code")
+        != Some(&serde_json::json!("result_too_large"))
+        || bounded.get("isError") != Some(&serde_json::json!(true))
+    {
+        return Err(format!("small budget must refuse: {bounded}"));
+    }
+    Ok(())
+}
+
 #[tokio::test(flavor = "current_thread")]
 async fn delayed_durable_read_leaves_the_async_executor_and_status_available() -> Result<(), String>
 {
@@ -542,9 +608,9 @@ fn sdk_server_metadata_preserves_bounded_status_instructions() -> Result<(), Str
         return Err("SDK metadata changed application identity or analysis authority".into());
     }
     let tools = &server.tools;
-    if tools.tools.len() != 10 {
+    if tools.tools.len() != 11 {
         return Err(format!(
-            "SDK descriptor must expose the ten-tool slice surface, got {} tools",
+            "SDK descriptor must expose the eleven-tool slice surface, got {} tools",
             tools.tools.len()
         ));
     }
