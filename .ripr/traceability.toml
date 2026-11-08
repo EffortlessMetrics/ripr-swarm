@@ -17213,6 +17213,9 @@ id = "RIPR-SPEC-0222"
 name = "Byte-bounded classified-cache store publication"
 spec = "docs/specs/RIPR-SPEC-0222-byte-bounded-classified-cache-store.md"
 tests = [
+  "crates/ripr/src/analysis/seam_cache.rs::tests::classified_reference_budget_rejects_single_and_late_shard_without_a_prefix",
+  "crates/ripr/src/analysis/seam_cache.rs::tests::classified_reference_budget_refuses_default_scale_amplification",
+  "crates/ripr/src/analysis/seam_cache/related_test_table.rs::tests::classified_reference_budget_tracks_byte_ceiling_and_pretty_writer",
   "crates/ripr/src/analysis/seam_cache/store.rs::tests::borrowed_single_entry_matches_owned_codec_bytes",
   "crates/ripr/src/atomic_file.rs::tests::stranded_temp_names_match_only_what_this_module_creates",
   "crates/ripr/src/atomic_file.rs::tests::sweep_removes_only_old_matching_regular_files",
@@ -17264,6 +17267,7 @@ fixtures = []
 code = [
   "crates/ripr/src/analysis/seam_cache/store.rs",
   "crates/ripr/src/analysis/seam_cache.rs",
+  "crates/ripr/src/analysis/seam_cache/related_test_table.rs",
   "crates/ripr/src/atomic_file.rs",
   "crates/ripr/src/analysis/seam_classification.rs",
 ]
