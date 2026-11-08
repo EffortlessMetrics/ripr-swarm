@@ -191,20 +191,33 @@ fn user_text_summary_rejects_missing_or_swapped_outcome_bindings() {
 }
 
 #[cfg(unix)]
+struct SummaryScratch(std::path::PathBuf);
+
+#[cfg(unix)]
+impl SummaryScratch {
+    fn new(case: &str) -> std::io::Result<Self> {
+        let path = std::env::temp_dir().join(format!(
+            "ripr-user-text-summary-{}-{case}",
+            std::process::id()
+        ));
+        std::fs::File::create_new(&path)?;
+        Ok(Self(path))
+    }
+}
+
+#[cfg(unix)]
+impl Drop for SummaryScratch {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
+#[cfg(unix)]
 #[test]
 fn user_text_summary_reports_each_actual_outcome_and_missing_value()
 -> Result<(), Box<dyn std::error::Error>> {
     use std::fs;
-    use std::path::PathBuf;
     use std::process::Command;
-
-    struct Scratch(PathBuf);
-
-    impl Drop for Scratch {
-        fn drop(&mut self) {
-            let _ = fs::remove_dir_all(&self.0);
-        }
-    }
 
     let summary = WORKFLOW
         .split("\n      - ")
@@ -224,11 +237,8 @@ fn user_text_summary_reports_each_actual_outcome_and_missing_value()
         "USER_TEXT_MATCHER_RESULT",
     ];
     let labels = ["user_text_base", "user_text_recovery", "user_text_matcher"];
-    let scratch =
-        std::env::temp_dir().join(format!("ripr-user-text-summary-{}", std::process::id()));
-    fs::create_dir(&scratch)?;
-    let scratch = Scratch(scratch);
-    let path = scratch.0.join("summary.md");
+    let scratch = SummaryScratch::new("outcomes")?;
+    let path = &scratch.0;
     for target in 0..3 {
         for outcome in ["success", "failure", "skipped", "cancelled", ""] {
             let mut command = Command::new("bash");
@@ -238,7 +248,7 @@ fn user_text_summary_reports_each_actual_outcome_and_missing_value()
                 .arg("-c")
                 .arg(&script)
                 .env_clear()
-                .env("GITHUB_STEP_SUMMARY", &path)
+                .env("GITHUB_STEP_SUMMARY", path)
                 .env("GITHUB_SHA", "workflow-sha")
                 .env("SUBJECT_HEAD", "subject-head")
                 .env("INTEGRATION_SUBJECT", "integration-sha")
@@ -252,9 +262,9 @@ fn user_text_summary_reports_each_actual_outcome_and_missing_value()
                     command.env(variable, if index == target { outcome } else { "success" });
                 }
             }
-            fs::write(&path, "")?;
+            fs::write(path, "")?;
             assert!(command.status()?.success());
-            let rendered = fs::read_to_string(&path)?;
+            let rendered = fs::read_to_string(path)?;
             for (index, label) in labels.iter().enumerate() {
                 let expected = if index == target {
                     if outcome.is_empty() {
@@ -288,7 +298,58 @@ fn user_text_summary_reports_each_actual_outcome_and_missing_value()
         }
     }
     fs::remove_file(path)?;
-    fs::remove_dir(&scratch.0)?;
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn user_text_summary_scratch_cleans_up_on_success_error_and_unwind()
+-> Result<(), Box<dyn std::error::Error>> {
+    let scratch = SummaryScratch::new("normal")?;
+    let normal_path = scratch.0.clone();
+    drop(scratch);
+    assert!(!normal_path.exists());
+
+    let error_path = std::env::temp_dir().join(format!(
+        "ripr-user-text-summary-{}-error",
+        std::process::id()
+    ));
+    let error = (|| -> std::io::Result<()> {
+        let _scratch = SummaryScratch::new("error")?;
+        Err(std::io::Error::other("injected error"))
+    })();
+    assert!(matches!(error, Err(ref error) if error.to_string() == "injected error"));
+    assert!(!error_path.exists());
+
+    let unwind_path = std::env::temp_dir().join(format!(
+        "ripr-user-text-summary-{}-unwind",
+        std::process::id()
+    ));
+    let unwind = std::panic::catch_unwind(|| -> std::io::Result<()> {
+        let _scratch = SummaryScratch::new("unwind")?;
+        std::panic::resume_unwind(Box::new("injected unwind"));
+    });
+    assert!(unwind.is_err());
+    assert!(!unwind_path.exists());
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn user_text_summary_scratch_preserves_replacement_directory()
+-> Result<(), Box<dyn std::error::Error>> {
+    use std::fs;
+
+    let scratch = SummaryScratch::new("replacement")?;
+    let replacement = scratch.0.clone();
+    fs::remove_file(&replacement)?;
+    fs::create_dir(&replacement)?;
+    let sentinel = replacement.join("summary.md");
+    fs::write(&sentinel, "must survive")?;
+    drop(scratch);
+    assert_eq!(fs::read_to_string(&sentinel)?, "must survive");
+    fs::remove_file(sentinel)?;
+    fs::remove_dir(replacement)?;
     Ok(())
 }
 
