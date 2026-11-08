@@ -6371,9 +6371,16 @@ pub(crate) fn line_prefix_looks_like_comment_or_string(body_text: &str, idx: usi
 ///
 /// A `/*` written inside a `//` line comment or a string on its line opens
 /// nothing (a comment such as `// a trailing /* after a segment`), so it
-/// must not hide the code after it (#13592 follow-up). Strings are tracked
-/// per line, like [`line_prefix_looks_like_comment_or_string`], so a
-/// misread quote cannot spill past its line.
+/// must not hide the code after it (#13592 follow-up). The scan is a line
+/// lexer without regex or multi-line template awareness, so it fails closed:
+/// an uncertain `/*` still opens a comment and hides what follows.
+///
+/// - A quote suppresses a `/*` only when the same quote closes later on its
+///   line; a regex `"`, a JSX apostrophe or the closing backtick of a
+///   multi-line template opens no string.
+/// - `//` starts a line comment only at the start of a line or after
+///   whitespace, `;`, `)` or `}`; the `\//` ending a regex such as
+///   `/^https?:\/\//` is not one.
 pub(crate) fn inside_block_comment(body_text: &str, idx: usize) -> bool {
     let Some(prefix) = body_text.get(..idx) else {
         return false;
@@ -6401,7 +6408,7 @@ pub(crate) fn inside_block_comment(body_text: &str, idx: usize) -> bool {
             if byte == open {
                 quote = None;
             }
-        } else if byte == b'/' && next == Some(b'/') {
+        } else if byte == b'/' && next == Some(b'/') && starts_line_comment(bytes, i) {
             // Line comment: skip to the end of the line.
             match bytes[i..].iter().position(|&b| b == b'\n') {
                 Some(offset) => {
@@ -6414,12 +6421,41 @@ pub(crate) fn inside_block_comment(body_text: &str, idx: usize) -> bool {
             in_block = true;
             i += 2;
             continue;
-        } else if matches!(byte, b'\'' | b'"' | b'`') {
+        } else if matches!(byte, b'\'' | b'"' | b'`') && closes_on_line(bytes, i) {
             quote = Some(byte);
         }
         i += 1;
     }
     in_block
+}
+
+/// `true` when the `//` at `at` reads as a line comment: at the start of its
+/// line or after whitespace, `;`, `)` or `}`.
+fn starts_line_comment(bytes: &[u8], at: usize) -> bool {
+    let line_start = bytes[..at]
+        .iter()
+        .rposition(|&b| b == b'\n')
+        .map_or(0, |offset| offset + 1);
+    match bytes[line_start..at].iter().rev().next() {
+        None => true,
+        Some(&before) => before.is_ascii_whitespace() || matches!(before, b';' | b')' | b'}'),
+    }
+}
+
+/// `true` when the quote byte at `at` is closed by the same quote later on
+/// its line, honouring backslash escapes.
+fn closes_on_line(bytes: &[u8], at: usize) -> bool {
+    let open = bytes[at];
+    let mut i = at + 1;
+    while let Some(&byte) = bytes.get(i) {
+        match byte {
+            b'\n' => return false,
+            b'\\' => i += 2,
+            _ if byte == open => return true,
+            _ => i += 1,
+        }
+    }
+    false
 }
 
 /// `true` when `prefix` ends inside a string or template literal's text.
@@ -6442,6 +6478,7 @@ fn has_unclosed_quote_or_template(prefix: &str) -> bool {
     let mut escaped = false;
     let mut chars = prefix.chars().peekable();
     while let Some(ch) = chars.next() {
+        let nested = stack.len() > 1;
         let Some(mode) = stack.last_mut() else {
             return false;
         };
@@ -6466,6 +6503,10 @@ fn has_unclosed_quote_or_template(prefix: &str) -> bool {
                 '\'' => stack.push(Mode::Single),
                 '"' => stack.push(Mode::Double),
                 '`' => stack.push(Mode::Template),
+                // A `/` inside a substitution may open a regex whose
+                // braces or quotes this scan cannot follow; fail closed
+                // and read the rest as text.
+                '/' if nested => return true,
                 '{' => *mode = Mode::Code(depth + 1),
                 '}' if depth > 0 => *mode = Mode::Code(depth - 1),
                 // Closes a template substitution and resumes the template

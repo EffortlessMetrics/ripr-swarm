@@ -50,3 +50,36 @@ fn a_real_block_comment_still_hides_its_calls() {
     // A `//` inside an open block comment does not end it.
     assert!(!contains_call_name("/* see // note\n render(x);", "render"));
 }
+
+#[test]
+fn an_uncertain_block_comment_opener_still_hides_its_calls() {
+    // A regex ending in `\//` is not a line comment.
+    assert!(!contains_call_name(
+        "const re = /^https?:\\/\\//; /* legacy:\n  render(x);\n*/",
+        "render"
+    ));
+    // A regex `"` opens no string that could swallow the `/*`.
+    assert!(!contains_call_name(
+        "s.replace(/\"/g, '\\\\\"'); /* old:\n  render(x);\n*/",
+        "render"
+    ));
+    // The closing backtick of a multi-line template opens nothing.
+    assert!(!contains_call_name(
+        "const t = `\nline\n`; /* disabled\n  render(x);\n*/",
+        "render"
+    ));
+    // A JSX apostrophe opens no string.
+    assert!(!contains_call_name(
+        "<p>Don't</p>; /* off\n  render(x);\n*/",
+        "render"
+    ));
+}
+
+#[test]
+fn a_regex_inside_a_template_substitution_fails_closed() {
+    // The `{` in the regex must not keep the substitution open past `}`.
+    assert!(!contains_call_name(
+        "`${s.replace(/{/g, '')} then render(y)`",
+        "render"
+    ));
+}
