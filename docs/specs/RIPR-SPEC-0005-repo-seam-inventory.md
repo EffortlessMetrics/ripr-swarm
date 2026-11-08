@@ -598,8 +598,8 @@ against fixture repos.
   owner-result field observation completes the producer-owned missing
   `field_value` fact after known activation; exact field equality stays
   already-gripped; wrapper, helper-transfer, shadow, reassignment, sibling
-  field, token coincidence, unknown activation, failed target authority,
-  mutable field borrow, assertion-message-only field credit, assertion-local
+  field (as a weak observation), token coincidence, unknown activation,
+  failed target authority, mutable field borrow, assertion-message-only field credit, assertion-local
   shadow, and same-name local or imported callees stay non-ready. A grouped
   nested-`super` import of the unique owner completes the route; a foreign
   module, cfg-ambiguous same-name pair, or leading `::` extern-prelude import
@@ -607,6 +607,14 @@ against fixture repos.
   refused DirectOwnerCall related test does not fall through to a Proposed
   target; an advisory related observer does not block an independently
   admitted proposal.
+  When the only related test binds the direct owner result once and never
+  reads the changed field (#13700), the same fact completes the route if the
+  field's declared visibility reaches that test file (a sibling-field-only
+  assertion is such a test, and an integration test's `use package::owner`
+  import counts when the shared call-identity authority settles it on the
+  owner); a strong or aliased read, a second candidate test, a binding passed
+  elsewhere, shadowed or format-captured, an owner name imported from another
+  crate, and a field the test file cannot name stay non-ready.
 - `analysis/related-test-ranking-v2-stabilization`: tests that direct owner
 calls outrank weaker relationship signals, strong oracles outrank smoke-only
 oracles inside the same relation, activation-value overlap breaks remaining

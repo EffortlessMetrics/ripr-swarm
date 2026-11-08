@@ -1,0 +1,323 @@
+//! #13700: a unique related test that binds a direct owner result and never
+//! reads the changed field starts the field-value repair route
+//! (`benchmarks/repair_start/cases.json` case `rust/field-change`). Every
+//! other shape stays fail-closed: a strong read, a second candidate test, a
+//! binding passed elsewhere or shadowed, and a field the test cannot name.
+//! Integration fixtures spell the owner bare: the in-memory index has no
+//! package-name authority, so a `use <package>::owner` import is settled
+//! only end to end (`tests/unread_owner_result_field_repair_start.rs`).
+
+use super::*;
+
+const PUBLIC_CONFIG: &str = r#"
+pub struct Config {
+    pub retries: u32,
+    pub verbose: bool,
+}
+
+pub fn default_config() -> Config {
+    Config {
+        retries: 5,
+        verbose: false,
+    }
+}
+"#;
+
+const PRIVATE_CONFIG: &str = r#"
+pub struct Config {
+    retries: u32,
+    pub verbose: bool,
+}
+
+pub fn default_config() -> Config {
+    Config {
+        retries: 5,
+        verbose: false,
+    }
+}
+"#;
+
+const UNREAD_REASON: &str = "is bound but never read by the related test";
+
+fn integration_case(production: &str, test_source: &str) -> Result<ConstructorFieldCase, String> {
+    constructor_field_case_at(
+        "src/lib.rs",
+        production,
+        "tests/t.rs",
+        test_source,
+        "retries",
+    )
+}
+
+fn inline_case(production: &str, test_source: &str) -> Result<ConstructorFieldCase, String> {
+    let path = PathBuf::from("src/lib.rs");
+    let source = format!("{production}\n{test_source}");
+    classified_from_files(&[(path.clone(), source.as_str())], &path, "retries")
+}
+
+fn unread_fact_count(case: &ConstructorFieldCase) -> usize {
+    case.classified
+        .evidence
+        .missing_discriminators
+        .iter()
+        .filter(|fact| fact.reason.contains(UNREAD_REASON))
+        .count()
+}
+
+/// The setup must reach the gate under test: the owner runs (activation
+/// `Yes`) and the named test is related through a direct owner call.
+fn setup_must_reach_gate(case: &ConstructorFieldCase, test_name: &str) -> Result<(), String> {
+    let evidence = &case.classified.evidence;
+    if evidence.activate.state != StageState::Yes
+        || !evidence.related_tests.iter().any(|test| {
+            test.test_name == test_name && test.relation_reason == RelationReason::DirectOwnerCall
+        })
+    {
+        return Err(format!(
+            "fixture must activate the owner through `{test_name}`: activate={:?}, related={:?}",
+            evidence.activate.state,
+            evidence
+                .related_tests
+                .iter()
+                .map(|test| (test.test_name.clone(), test.relation_reason))
+                .collect::<Vec<_>>()
+        ));
+    }
+    Ok(())
+}
+
+fn unread_route_must_be_ready(case: &ConstructorFieldCase, test_name: &str) -> Result<(), String> {
+    setup_must_reach_gate(case, test_name)?;
+    let required = required_field(&case.seam)?;
+    let eligibility = repair_packet_eligibility(&case.classified);
+    let missing = &case.classified.evidence.missing_discriminators;
+    let target_name = match &eligibility.readiness.target_selection {
+        RepairTargetSelection::Existing(target) => case
+            .classified
+            .evidence
+            .related_tests
+            .iter()
+            .find(|test| test.test_target.as_ref() == Some(target))
+            .map(|test| test.test_name.clone()),
+        _ => None,
+    };
+    if unread_fact_count(case) != 1
+        || !missing.iter().any(|fact| fact.value == required)
+        || eligibility.readiness.state != RepairRouteState::Ready
+        || !eligibility.eligible()
+        || !is_safe_for_repair_packet(&case.classified)
+        || target_name.as_deref() != Some(test_name)
+    {
+        return Err(format!(
+            "an unread owner-result field must start one deterministic repair: class={:?}, missing={missing:?}, readiness={:?}, target={target_name:?}, eligible={}",
+            case.classified.class,
+            eligibility.readiness.state,
+            eligibility.eligible()
+        ));
+    }
+    Ok(())
+}
+
+fn no_unread_fact(case: &ConstructorFieldCase, label: &str) -> Result<(), String> {
+    if unread_fact_count(case) != 0 {
+        return Err(format!(
+            "{label} must not grow the unread field fact: missing={:?}",
+            case.classified.evidence.missing_discriminators
+        ));
+    }
+    route_must_stay_unready(case, label)
+}
+
+#[test]
+fn unread_public_field_in_integration_test_starts_repair() -> Result<(), String> {
+    let case = integration_case(
+        PUBLIC_CONFIG,
+        r#"
+#[test]
+fn default_config_is_quiet() {
+    let c = default_config();
+    assert!(!c.verbose);
+}
+"#,
+    )?;
+    unread_route_must_be_ready(&case, "default_config_is_quiet")
+}
+
+#[test]
+fn unread_private_field_in_inline_test_starts_repair() -> Result<(), String> {
+    let case = inline_case(
+        PRIVATE_CONFIG,
+        r#"
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_config_is_quiet() {
+        let c = default_config();
+        assert!(!c.verbose);
+    }
+}
+"#,
+    )?;
+    unread_route_must_be_ready(&case, "default_config_is_quiet")
+}
+
+#[test]
+fn strong_read_of_the_field_gets_no_repair() -> Result<(), String> {
+    let case = integration_case(
+        PUBLIC_CONFIG,
+        r#"
+#[test]
+fn default_config_retries_five_times() {
+    let c = default_config();
+    assert_eq!(c.retries, 5);
+}
+"#,
+    )?;
+    setup_must_reach_gate(&case, "default_config_retries_five_times")?;
+    no_unread_fact(&case, "a strong field read")?;
+    if repair_packet_eligibility(&case.classified).readiness.state
+        != RepairRouteState::AlreadyGripped
+    {
+        return Err(format!(
+            "a strong field read must stay AlreadyGripped: {:?}",
+            repair_packet_eligibility(&case.classified).readiness.state
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn field_read_through_an_alias_gets_no_unread_fact() -> Result<(), String> {
+    let case = integration_case(
+        PUBLIC_CONFIG,
+        r#"
+#[test]
+fn default_config_is_quiet() {
+    let c = default_config();
+    let retries = c.retries;
+    assert!(!c.verbose);
+    assert!(retries > 0);
+}
+"#,
+    )?;
+    setup_must_reach_gate(&case, "default_config_is_quiet")?;
+    if unread_fact_count(&case) != 0 {
+        return Err("a field read through an alias is not unread".to_string());
+    }
+    Ok(())
+}
+
+#[test]
+fn two_candidate_tests_are_not_a_unique_target() -> Result<(), String> {
+    let case = integration_case(
+        PUBLIC_CONFIG,
+        r#"
+#[test]
+fn default_config_is_quiet() {
+    let c = default_config();
+    assert!(!c.verbose);
+}
+
+#[test]
+fn default_config_is_still_quiet() {
+    let d = default_config();
+    assert!(!d.verbose);
+}
+"#,
+    )?;
+    setup_must_reach_gate(&case, "default_config_is_quiet")?;
+    setup_must_reach_gate(&case, "default_config_is_still_quiet")?;
+    no_unread_fact(&case, "two candidate tests")
+}
+
+#[test]
+fn binding_passed_elsewhere_is_not_unread() -> Result<(), String> {
+    let case = integration_case(
+        PUBLIC_CONFIG,
+        r#"
+fn inspect(config: &Config) -> bool {
+    config.verbose
+}
+
+#[test]
+fn default_config_is_quiet() {
+    let c = default_config();
+    assert!(!inspect(&c));
+}
+"#,
+    )?;
+    setup_must_reach_gate(&case, "default_config_is_quiet")?;
+    no_unread_fact(&case, "a binding passed to a helper")
+}
+
+#[test]
+fn shadowed_binding_is_not_unread() -> Result<(), String> {
+    let case = integration_case(
+        PUBLIC_CONFIG,
+        r#"
+#[test]
+fn default_config_is_quiet() {
+    let c = default_config();
+    assert!(!c.verbose);
+    let c = 3;
+    assert!(c > 0);
+}
+"#,
+    )?;
+    setup_must_reach_gate(&case, "default_config_is_quiet")?;
+    no_unread_fact(&case, "a shadowed binding")
+}
+
+#[test]
+fn private_field_from_integration_test_is_not_visible() -> Result<(), String> {
+    let case = integration_case(
+        PRIVATE_CONFIG,
+        r#"
+#[test]
+fn default_config_is_quiet() {
+    let c = default_config();
+    assert!(!c.verbose);
+}
+"#,
+    )?;
+    setup_must_reach_gate(&case, "default_config_is_quiet")?;
+    no_unread_fact(&case, "a field the test file cannot name")
+}
+
+#[test]
+fn whole_value_debug_format_is_not_unread() -> Result<(), String> {
+    let case = integration_case(
+        PUBLIC_CONFIG,
+        r#"
+#[test]
+fn default_config_is_quiet() {
+    let c = default_config();
+    assert!(!c.verbose, "{c:?}");
+}
+"#,
+    )?;
+    setup_must_reach_gate(&case, "default_config_is_quiet")?;
+    if unread_fact_count(&case) != 0 {
+        return Err("a format capture of the whole value is not unread".to_string());
+    }
+    Ok(())
+}
+
+#[test]
+fn foreign_crate_import_of_the_owner_name_is_not_unread() -> Result<(), String> {
+    let case = integration_case(
+        PUBLIC_CONFIG,
+        r#"
+use other_crate::default_config;
+
+#[test]
+fn default_config_is_quiet() {
+    let c = default_config();
+    assert!(!c.verbose);
+}
+"#,
+    )?;
+    no_unread_fact(&case, "an owner name imported from another crate")
+}

@@ -8,12 +8,20 @@
 //! import counts as that owner only when the resolved module uniquely
 //! matches this seam's owner; `super::` itself is not a whitelist, and a
 //! leading `::` extern-prelude path is not a local module.
+//!
+//! #13700: the same fact also starts when the *only* related test binds the
+//! owner result exactly once and never reads the changed field at all: every
+//! later mention of the binding is a read of a different named field, the
+//! binding is never shadowed, passed, matched or formatted, the field name
+//! appears nowhere in the test, and the field's declared visibility reaches
+//! the test file. Any read of the field (strong or weak) keeps the earlier
+//! reading; anything this token reading cannot place withholds the fact.
 
 use super::record_field_name;
 use super::related_tests::call_text_contains_named_call;
 use super::related_tests::context::{CompactGripContext, CompactTest};
 use super::related_tests::module_path_for_index;
-use crate::analysis::rust_index::{FunctionSummary, RustIndex};
+use crate::analysis::rust_index::{FunctionSummary, RustIndex, TestSummary};
 use crate::analysis::seams::{RepoSeam, RequiredDiscriminator, SeamKind};
 use crate::analysis::syntax::parse_clean_source_file;
 use crate::analysis::syntax::ra::LineIndex;
@@ -59,6 +67,7 @@ pub(super) fn missing_field_value_facts(
 
     let mut saw_strong = false;
     let mut saw_weak = false;
+    let mut unread = 0usize;
     for indexed in related {
         match owner_result_field_observation(
             indexed,
@@ -69,21 +78,36 @@ pub(super) fn missing_field_value_facts(
         ) {
             Some(OwnerResultObservation::Strong) => saw_strong = true,
             Some(OwnerResultObservation::Weak) => saw_weak = true,
+            Some(OwnerResultObservation::Unread) => unread += 1,
             None => {}
         }
         if saw_strong {
             break;
         }
     }
-    if saw_strong || !saw_weak {
+    if saw_strong {
         return Vec::new();
     }
+    let reason = if saw_weak {
+        format!(
+            "owner-result field `{field_name}` is observed only by a weak oracle; an exact field-value discriminator is missing"
+        )
+    } else if let [only] = related
+        && unread == 1
+        && constructed_field_visible_from(seam, owner_fn, field_name, &only.test.file, context)
+    {
+        // #13700: one deterministic target. A second related test, or a
+        // field the test file cannot name, withholds the fact.
+        format!(
+            "owner-result field `{field_name}` is bound but never read by the related test; an exact field-value discriminator is missing"
+        )
+    } else {
+        return Vec::new();
+    };
 
     vec![MissingDiscriminatorFact {
         value: field.clone(),
-        reason: format!(
-            "owner-result field `{field_name}` is observed only by a weak oracle; an exact field-value discriminator is missing"
-        ),
+        reason,
         flow_sink: None,
         shape: DiscriminatorShape::Other,
         drafted_boundary: None,
@@ -128,6 +152,9 @@ pub(super) fn assigned_field_weak_read_fact(
 enum OwnerResultObservation {
     Strong,
     Weak,
+    /// #13700: one direct owner-result binding whose changed field the test
+    /// never names (see [`binding_never_reads_field`]).
+    Unread,
 }
 
 fn owner_result_field_observation(
@@ -162,8 +189,8 @@ fn owner_result_field_observation(
     let function = parsed.unique_test_fn(&indexed.test.name, indexed.test.start_line)?;
     if owner_callee_is_ambiguous(
         &function,
-        owner_name,
-        &indexed.test.file,
+        owner_fn,
+        indexed.test,
         owner_module,
         context.index,
     ) {
@@ -190,15 +217,166 @@ fn owner_result_field_observation(
                     return Some(OwnerResultObservation::Strong);
                 }
                 Some(OwnerResultObservation::Weak) => kind = Some(OwnerResultObservation::Weak),
-                None => {}
+                Some(OwnerResultObservation::Unread) | None => {}
             }
         }
+    }
+    if kind.is_none()
+        && let [binding] = bindings.as_slice()
+        && binding_never_reads_field(&function, binding, field_name)
+    {
+        return Some(OwnerResultObservation::Unread);
     }
     kind
 }
 
+/// #13700: whether the test never reads `field` through `binding` or any other
+/// way the token stream can spell. Fail-closed token reading over the whole
+/// test function, macro bodies included: `binding` is declared once (never
+/// shadowed); every other mention of it is `binding.<other_field>` with no
+/// call or turbofish after it (never passed, matched, compared whole or
+/// method-called); `field` is never named as an identifier; and no string
+/// literal names `field` or captures `binding` in a format argument.
+fn binding_never_reads_field(
+    function: &ast::Fn,
+    binding: &OwnerResultBinding,
+    field: &str,
+) -> bool {
+    use ra_ap_syntax::SyntaxKind;
+    let declarations = function
+        .syntax()
+        .descendants()
+        .filter_map(ast::IdentPat::cast)
+        .filter(|pattern| {
+            pattern
+                .name()
+                .is_some_and(|name| name.text() == binding.name)
+        })
+        .count();
+    if declarations != 1 {
+        return false;
+    }
+    let tokens: Vec<_> = function
+        .syntax()
+        .descendants_with_tokens()
+        .filter_map(|element| element.into_token())
+        .filter(|token| !token.kind().is_trivia())
+        .collect();
+    let capture = format!("{{{}", binding.name);
+    for (at, token) in tokens.iter().enumerate() {
+        match token.kind() {
+            SyntaxKind::STRING | SyntaxKind::BYTE_STRING | SyntaxKind::C_STRING => {
+                let text = token.text();
+                if crate::analysis::classify::mentions_in(text, field) > 0
+                    || text.contains(&capture)
+                {
+                    return false;
+                }
+            }
+            SyntaxKind::IDENT => {
+                let text = token.text();
+                if text.trim_start_matches("r#") == field {
+                    return false;
+                }
+                if text != binding.name || token.text_range() == binding.name_range {
+                    continue;
+                }
+                let previous = at.checked_sub(1).and_then(|index| tokens.get(index));
+                if previous.is_some_and(|token| token.kind() == SyntaxKind::DOT) {
+                    // `other.<name>`: a field of something else.
+                    continue;
+                }
+                let dot = tokens.get(at + 1);
+                let name = tokens.get(at + 2);
+                let after = tokens.get(at + 3);
+                let other_field_read = dot.is_some_and(|token| token.kind() == SyntaxKind::DOT)
+                    && name.is_some_and(|token| token.kind() == SyntaxKind::IDENT)
+                    && !after.is_some_and(|token| {
+                        matches!(token.kind(), SyntaxKind::L_PAREN | SyntaxKind::COLON2)
+                    });
+                if !other_field_read {
+                    return false;
+                }
+            }
+            _ => {}
+        }
+    }
+    true
+}
+
+/// #13700: whether the record literal that holds the changed field names a
+/// struct the owner's file declares exactly once with that field, and that
+/// field's declared visibility ([`crate::analysis::classify::FieldTable`])
+/// reaches `test_file`. Anything this reading cannot place is not visible.
+fn constructed_field_visible_from(
+    seam: &RepoSeam,
+    owner_fn: &FunctionSummary,
+    field: &str,
+    test_file: &Path,
+    context: &CompactGripContext<'_>,
+) -> bool {
+    if seam.file() != owner_fn.file.as_path() {
+        return false;
+    }
+    let Some(parsed) = context.parsed_test_file(seam.file()) else {
+        return false;
+    };
+    let mut literals = parsed
+        .parse
+        .tree()
+        .syntax()
+        .descendants()
+        .filter_map(ast::RecordExprField::cast)
+        .filter(|entry| {
+            entry
+                .field_name()
+                .is_some_and(|name| name.text().trim_start_matches("r#") == field)
+                && parsed.lines.line(entry.syntax().text_range().start()) == seam.display_line()
+        });
+    let (Some(entry), None) = (literals.next(), literals.next()) else {
+        return false;
+    };
+    let Some(path) = entry
+        .syntax()
+        .ancestors()
+        .find_map(ast::RecordExpr::cast)
+        .and_then(|record| record.path())
+    else {
+        return false;
+    };
+    let path = path.syntax().text().to_string();
+    let type_name = if path == "Self" {
+        let crate::analysis::facts::FunctionImplContext::Impl { self_type } =
+            &owner_fn.impl_context
+        else {
+            return false;
+        };
+        self_type
+            .split('<')
+            .next()
+            .unwrap_or(self_type)
+            .trim()
+            .to_string()
+    } else {
+        path
+    };
+    if !valid_identifier(&type_name) {
+        return false;
+    }
+    let Some(facts) = context.index.files().get(owner_fn.file.as_path()) else {
+        return false;
+    };
+    let Some(reach) = crate::analysis::classify::FieldTable::parse(&facts.source)
+        .and_then(|table| table.struct_field_reach(&type_name, field))
+    else {
+        return false;
+    };
+    crate::analysis::classify::test_can_name_field(reach, &owner_fn.file, test_file)
+}
+
 struct OwnerResultBinding {
     name: String,
+    name_range: ra_ap_syntax::TextRange,
     line: usize,
     range_end: ra_ap_syntax::TextSize,
 }
@@ -286,14 +464,20 @@ impl ParsedTestFile {
 
 fn owner_callee_is_ambiguous(
     function: &ast::Fn,
-    owner_name: &str,
-    test_file: &Path,
+    owner_fn: &FunctionSummary,
+    test: &TestSummary,
     owner_module: Option<&str>,
     index: &RustIndex,
 ) -> bool {
+    let owner_name = owner_fn.name.as_str();
     nested_owner_fn(function, owner_name)
         || sibling_owner_fn(function, owner_name)
-        || foreign_owner_import(function, owner_name, test_file, owner_module, index)
+        || (foreign_owner_import(function, owner_name, &test.file, owner_module, index)
+            // #13700: an import the module walk reads as foreign (an
+            // integration test's `use package::owner`) still names the owner
+            // when the shared call-identity authority settles the bare call
+            // on it. Unsettled or rival readings stay ambiguous.
+            && !crate::analysis::classify::bare_owner_call_settles_on_owner(index, owner_fn, test))
         || local_owner_binding(function, owner_name)
 }
 
@@ -601,6 +785,14 @@ fn direct_owner_result_bindings(
         let Some(name) = plain_binding_name(&binding) else {
             continue;
         };
+        let Some(name_range) = binding
+            .pat()
+            .and_then(|pattern| ast::IdentPat::cast(pattern.syntax().clone()))
+            .and_then(|pattern| pattern.name())
+            .map(|name| name.syntax().text_range())
+        else {
+            continue;
+        };
         let Some(initializer) = binding.initializer() else {
             continue;
         };
@@ -613,6 +805,7 @@ fn direct_owner_result_bindings(
             .unwrap_or_else(|| lines.line(binding.syntax().text_range().start()));
         found.push(OwnerResultBinding {
             name,
+            name_range,
             line,
             range_end: binding.syntax().text_range().end(),
         });
