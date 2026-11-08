@@ -4097,8 +4097,21 @@ pub(crate) enum ImporterAliasMap {
     Root,
     /// The importer's nearest package config, compiled exactly.
     Nested(std::rc::Rc<TsAliasMap>),
-    /// A nearer package config owns `paths` but cannot be compiled exactly.
-    NestedUnavailable,
+    /// A nearer package config (in this directory) owns `paths` but cannot
+    /// be compiled exactly.
+    NestedUnavailable(PathBuf),
+}
+
+/// Whether `specifier` may be claimed by an importer's uncompilable package
+/// config in `config_dir`, or by the root map: either one means the
+/// specifier must stay unresolved rather than fall through to a package name.
+pub(crate) fn unavailable_config_claims(
+    root_map: &TsAliasMap,
+    config_dir: &Path,
+    specifier: &str,
+) -> bool {
+    (root_map.has_tsconfig() && root_map.paths_key_matches(specifier))
+        || super::tsconfig::package_config_claims(config_dir, specifier)
 }
 
 /// The alias map that governs `importer`'s non-relative specifiers.
@@ -4109,10 +4122,10 @@ pub(crate) fn importer_alias_map(
 ) -> ImporterAliasMap {
     match nearer_paths_config_dir(root, importer) {
         None => ImporterAliasMap::Root,
-        Some(config_dir) => nested_alias_map(root_map, &config_dir).map_or(
-            ImporterAliasMap::NestedUnavailable,
-            ImporterAliasMap::Nested,
-        ),
+        Some(config_dir) => match nested_alias_map(root_map, &config_dir) {
+            Some(nested) => ImporterAliasMap::Nested(nested),
+            None => ImporterAliasMap::NestedUnavailable(config_dir),
+        },
     }
 }
 
@@ -4214,14 +4227,15 @@ pub(crate) fn normalized_relative_import_module(
             return Some(strip_typescript_module_extension(&normalized));
         }
         // The owning package config cannot be compiled exactly: withhold a
-        // specifier the root map would claim, but let one it does not own
-        // (a workspace package name) fall through as before.
-        ImporterAliasMap::NestedUnavailable
-            if alias_map.has_tsconfig() && alias_map.paths_key_matches(source) =>
-        {
-            return None;
+        // specifier that it or the root map would claim (a `paths` key can
+        // shadow a package name), but let an unclaimed workspace package
+        // name fall through as before.
+        ImporterAliasMap::NestedUnavailable(config_dir) => {
+            if unavailable_config_claims(alias_map, &config_dir, source) {
+                return None;
+            }
         }
-        ImporterAliasMap::NestedUnavailable | ImporterAliasMap::Root => {}
+        ImporterAliasMap::Root => {}
     }
     let resolved_path = run_cached_alias_resolution(alias_map, source)?;
     // Normalize the resolved workspace-relative path to a module string.
@@ -6381,6 +6395,32 @@ mod nested_config_withhold_tests {
         if aliased.is_some() {
             return Err(format!(
                 "root-claimed alias must stay withheld, got {aliased:?}"
+            ));
+        }
+        // A package-name key in the unusable package config shadows the
+        // workspace package: the import stays unresolved.
+        let root =
+            disagreeing_fixture(r#"{"compilerOptions":{"paths":{"@acme/*":["./local/*"]}}}"#)?;
+        write(
+            &root,
+            "packages/util/package.json",
+            r#"{"name":"@acme/util","main":"src/index.ts"}"#,
+        )?;
+        write(
+            &root,
+            "packages/util/src/index.ts",
+            "export function util() {}",
+        )?;
+        let packages = super::super::workspace_packages::WorkspacePackages::discover(&root, &files);
+        let map = load_alias_map(&root)
+            .ok_or("root tsconfig must load")?
+            .with_workspace_packages(packages);
+        let shadowed =
+            normalized_relative_import_module(importer, "@acme/util", Some(&map), Some(&root));
+        cleanup(&root);
+        if shadowed.is_some() {
+            return Err(format!(
+                "a package-config key shadowing the package name must withhold, got {shadowed:?}"
             ));
         }
         Ok(())

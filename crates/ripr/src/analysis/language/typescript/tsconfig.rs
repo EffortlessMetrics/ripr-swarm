@@ -1112,6 +1112,47 @@ pub(crate) fn nested_configs_fingerprint(root: &Path, files: &[PathBuf]) -> Opti
     found.then(|| hasher.finish())
 }
 
+/// Whether the paths-owning config(s) in `config_dir` may claim `specifier`
+/// through their own `compilerOptions.paths` keys (#12754). Fail-closed: an
+/// unreadable or unparseable config, a non-object `paths`, or `paths`
+/// inherited only through `extends` counts as claiming, since its effective
+/// keys are not observable here. `"paths": null` declares no keys.
+pub(crate) fn package_config_claims(config_dir: &Path, specifier: &str) -> bool {
+    for name in ["tsconfig.json", "jsconfig.json"] {
+        let path = config_dir.join(name);
+        if !path.is_file() || !config_file_owns_paths(&path) {
+            continue;
+        }
+        let Some(value) = read_config_capped(&path)
+            .ok()
+            .and_then(|text| strip_jsonc(&text).ok())
+            .and_then(|normalized| serde_json::from_str::<serde_json::Value>(&normalized).ok())
+        else {
+            return true;
+        };
+        match value
+            .get("compilerOptions")
+            .and_then(|options| options.get("paths"))
+        {
+            Some(serde_json::Value::Object(keys)) => {
+                let claims = keys.keys().any(|key| match key.matches('*').count() {
+                    0 => key == specifier,
+                    1 => key.split_once('*').is_some_and(|(prefix, suffix)| {
+                        match_glob(specifier, prefix, suffix).is_some()
+                    }),
+                    _ => false,
+                });
+                if claims {
+                    return true;
+                }
+            }
+            Some(serde_json::Value::Null) => {}
+            _ => return true,
+        }
+    }
+    false
+}
+
 /// `true` when the config at `path` determines its importers' `paths`, so the
 /// root map must not stand in for them: it declares `compilerOptions.paths`,
 /// inherits them through a same-directory `extends` chain
