@@ -1670,6 +1670,14 @@ pub(in crate::analysis::test_grip_evidence) fn helper_owner_calls_by_file_with_f
                             allow_fanout_wrappers,
                         ))
                     && call_text_contains_named_call(&call.text, &call.name)
+                    // `fn route<helpers: Trait>() { helpers::read() }` calls the
+                    // trait's function, not a same-spelled module's (#12891).
+                    // Last, because it masks the whole body.
+                    && !every_named_call_is_type_parameter_qualified(
+                        &function.body,
+                        &function.name,
+                        &call.name,
+                    )
             })
             .map(|call| call.name.clone())
             .collect::<BTreeSet<_>>();
@@ -3328,6 +3336,58 @@ pub(in crate::analysis::test_grip_evidence) fn trailing_rust_identifier(text: &s
         .collect::<String>()
 }
 
+/// Whether `body` (a function starting at its `fn` declaration) calls `name`
+/// only through paths whose qualifier is one of the function's own generic
+/// parameters, such as `fn route<helpers: Foreign>() { helpers::read() }`. A
+/// type parameter shadows a same-spelled module, so such a call never reaches
+/// the module's function. Unreadable generics answer no (keep the call).
+fn every_named_call_is_type_parameter_qualified(
+    body: &str,
+    function_name: &str,
+    name: &str,
+) -> bool {
+    let masked = crate::analysis::extract::mask_comments_and_strings(body);
+    let header = format!("fn {function_name}");
+    let word = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
+    // Match the declaration on identifier boundaries so `fn route_more<..>`
+    // is not read as `fn route`.
+    let Some(at) = masked.match_indices(&header).map(|(at, _)| at).find(|at| {
+        !masked[..*at].chars().next_back().is_some_and(word)
+            && !masked[at + header.len()..].chars().next().is_some_and(word)
+    }) else {
+        return false;
+    };
+    let after_name = masked[at + header.len()..].trim_start();
+    if !after_name.starts_with('<') {
+        return false;
+    }
+    let Some((params, _)) = generic_parameter_names(after_name) else {
+        return false;
+    };
+    let mut seen = false;
+    for (start, _) in masked.match_indices(name) {
+        if masked[..start].chars().next_back().is_some_and(word)
+            || !masked[start + name.len()..].trim_start().starts_with('(')
+            || trailing_rust_identifier(masked[..start].trim_end()) == "fn"
+        {
+            continue;
+        }
+        seen = true;
+        let Some(qualifier) = masked[..start].strip_suffix("::") else {
+            return false;
+        };
+        if !params
+            .iter()
+            .any(|param| trailing_rust_identifier(qualifier) == param.as_str())
+            || qualifier[..qualifier.len() - trailing_rust_identifier(qualifier).len()]
+                .ends_with("::")
+        {
+            return false;
+        }
+    }
+    seen
+}
+
 pub(in crate::analysis::test_grip_evidence) fn call_text_contains_named_call(
     text: &str,
     name: &str,
@@ -4267,4 +4327,40 @@ pub(in crate::analysis::test_grip_evidence) fn inherent_helper_path_reaches_owne
         visited.remove(&(helper.file.clone(), helper.start_line, helper.name.clone()));
     }
     false
+}
+
+#[cfg(test)]
+mod type_parameter_qualified_call_tests {
+    use super::every_named_call_is_type_parameter_qualified as shadowed;
+
+    #[test]
+    fn a_type_parameter_qualifier_shadows_a_same_spelled_module() {
+        let body = "fn route<helpers: Foreign>() -> Option<u32> {\n    helpers::read()\n}\n";
+        assert!(shadowed(body, "route", "read"));
+    }
+
+    #[test]
+    fn a_module_qualifier_without_a_matching_parameter_keeps_the_call() {
+        let body = "fn route<T: Foreign>() -> Option<u32> {\n    helpers::read()\n}\n";
+        assert!(!shadowed(body, "route", "read"));
+        let no_generics = "fn route() -> Option<u32> {\n    helpers::read()\n}\n";
+        assert!(!shadowed(no_generics, "route", "read"));
+    }
+
+    #[test]
+    fn a_longer_function_name_sharing_the_prefix_is_not_the_declaration() {
+        let longer = "fn route_more<helpers: Foreign>() {\n    helpers::read();\n}\n";
+        assert!(!shadowed(longer, "route", "read"));
+        let both =
+            "fn route_more<T>() {}\nfn route<helpers: Foreign>() {\n    helpers::read();\n}\n";
+        assert!(shadowed(both, "route", "read"));
+    }
+
+    #[test]
+    fn one_unqualified_or_module_call_keeps_the_function() {
+        let both = "fn route<helpers: Foreign>() {\n    helpers::read();\n    read();\n}\n";
+        assert!(!shadowed(both, "route", "read"));
+        let deeper = "fn route<helpers: Foreign>() {\n    crate::helpers::read();\n}\n";
+        assert!(!shadowed(deeper, "route", "read"));
+    }
 }
