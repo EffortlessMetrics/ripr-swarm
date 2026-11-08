@@ -26,7 +26,8 @@ result. See [Why ripr](WHY_RIPR.md).
 | `git diff main \| cargo mutants --in-diff /dev/stdin` | `ripr check --base main` | Includes uncommitted edits by default; `--committed` limits to history. |
 | `--file src/foo.rs` / `-f` | `--path src/foo.rs` | Repeatable; file, directory or glob. |
 | `--exclude 'src/gen/**'` / `-e` | `--exclude 'src/gen/**'` | Repeatable; wins over `--path`. |
-| `-p <pkg>` / `--package` / `--workspace` | `--path crates/<pkg>` | There is no `-p`; select the package by its directory. Running from inside a member still analyzes the whole workspace. |
+| `-p <pkg>` / `--package` | `--path crates/<pkg>` | There is no `-p`; select the package by its directory. Running from inside a member still analyzes the whole workspace. |
+| `--workspace` | `ripr check` | The default already covers every changed file in the workspace. |
 | `--re REGEX` / `--exclude-re REGEX` | none | Selection is by file path and by diff, not by mutant name. |
 | `--list` / `--list-files` | `ripr check --format json` | Lists probes and findings without any test run (the only mode). |
 | `--check` (compile only) | not applicable | Nothing is built. |
@@ -157,9 +158,9 @@ bare clone as `origin`:
 - Large workspaces: `review-comments` refuses with `review_guidance_oversized`
   (exit `2`, so the gate also exits `2`) when the workspace has more than 1,200
   analyzable files. Raise `RIPR_REVIEW_GUIDANCE_MAX_INDEX_FILES` on a runner
-  with enough memory (about 1.2 GB for 2,500 files). A diff over 1,000 changed
-  lines is analyzed partially unless you raise `RIPR_PARTIAL_DIFF_LINE_BUDGET`.
-  See [Configuration](CONFIGURATION.md).
+  with enough memory (about 1.2 GB for 2,500 files). Separately, `ripr check`
+  analyzes a diff over 1,000 changed lines partially unless you raise
+  `RIPR_PARTIAL_DIFF_LINE_BUDGET`. See [Configuration](CONFIGURATION.md).
 
 ### Minimal GitHub Actions steps
 
@@ -253,8 +254,8 @@ costs more than a plain `ripr check`. The import is advisory and does not change
   `--suppression-policy` does not reach the gate
   ([#13895](https://github.com/EffortlessMetrics/ripr-swarm/issues/13895)).
   Until those land, read `missed-txt` alongside the gate decision.
-- **Exclusions read as incomplete.** Any `--path`/`--exclude` scope currently
-  marks the run `partial_with_limitations`, so `missed-txt` prints a `# ripr:`
+- **Exclusions read as incomplete.** A `--path`/`--exclude` scope that leaves
+  any changed file out currently marks the run `partial_with_limitations`, so `missed-txt` prints a `# ripr:`
   comment even on a clean change
   ([#13894](https://github.com/EffortlessMetrics/ripr-swarm/issues/13894)).
 - **Mutation operators.** ripr's probe families are not cargo-mutants' operator
