@@ -1,0 +1,1 @@
+tools/repo-policy/tests/merge_group_subject.rs|Command::new|1|ci/qualification-proof|#8082: GNU timeout bounds actual shipped verifier and private Git-DAG fixture setup; no product build, network or production GitHub operation.
