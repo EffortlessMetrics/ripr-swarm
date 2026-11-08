@@ -12,6 +12,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 #[path = "common/advisory_write_safety.rs"]
 mod advisory_write_safety;
 #[cfg(feature = "lang-rust")]
+#[path = "cli_smoke/agent_output_budget.rs"]
+mod agent_output_budget;
+#[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/agent_policy_guidance.rs"]
 mod agent_policy_guidance;
 #[cfg(feature = "lang-rust")]
@@ -131,6 +134,9 @@ mod recall_tradeoff;
 #[cfg(unix)]
 #[path = "cli_smoke/receipt_recovery_root.rs"]
 mod receipt_recovery_root;
+#[cfg(unix)]
+#[path = "cli_smoke/receipt_write_containment.rs"]
+mod receipt_write_containment;
 #[path = "cli_smoke/related_test_count.rs"]
 mod related_test_count;
 #[cfg(feature = "lang-rust")]
