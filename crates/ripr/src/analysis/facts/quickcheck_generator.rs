@@ -321,9 +321,11 @@ impl ModuleWalk<'_> {
     }
 
     /// Taint a refused file and every file its modules can load. Without
-    /// attributes on module items, every descendant lives under `module_dir`
-    /// (other crate roots are separate crates). An unreadable file or an
-    /// attributed module item (`#[path]`, `cfg_attr`) is unbounded.
+    /// attributes on module items, every descendant lives under `module_dir`.
+    /// A file whose module directory is `src` (a crate root) can also load the
+    /// other root as a module (`mod main;` / `mod lib;`), so that root is
+    /// tainted too. An unreadable file or an attributed module item
+    /// (`#[path]`, `cfg_attr`) is unbounded.
     fn taint(&mut self, path: &Path, module_dir: &Path) {
         self.tainted.insert(path.to_path_buf());
         let index = self.index;
@@ -351,9 +353,10 @@ impl ModuleWalk<'_> {
             self.taint_all = true;
             return;
         }
+        let loads_roots = module_dir == Path::new("src");
         for file in index.files.keys() {
             if file.starts_with(module_dir)
-                && !CRATE_ROOTS.iter().any(|root| file == Path::new(root))
+                && (loads_roots || !CRATE_ROOTS.iter().any(|root| file == Path::new(root)))
             {
                 self.tainted.insert(file.clone());
             }

@@ -406,6 +406,25 @@ fn unsupported_spellings_and_layouts_keep_the_product_reading() -> Result<(), St
                         ("src/generators.rs", generator.clone()),
                     ],
                 ),
+                (
+                    "sibling root loaded as a module of a refused root",
+                    QUICKCHECK,
+                    vec![
+                        (
+                            "src/lib.rs",
+                            format!(
+                                "extern crate self as quickcheck;\n{PRODUCT}\npub trait Arbitrary {{\n    fn arbitrary(g: &mut u8) -> Self;\n}}\nmod main;\n"
+                            ),
+                        ),
+                        (
+                            "src/main.rs",
+                            format!(
+                                "{}\nfn main() {{}}\n",
+                                quickcheck_impl("quickcheck::Arbitrary", "crate::Pair")
+                            ),
+                        ),
+                    ],
+                ),
             ];
             for (label, dependency, files) in &cases {
                 assert_reading(label, dependency, files, Reading::Product)?;

@@ -191,7 +191,9 @@ indexed) are admitted the same way, with every file on that chain
 namespace-checked. A refused file taints every file under its module
 directory, whichever root reaches that file: `src/lib.rs` and `src/main.rs`
 may declare the same module, and a file is admitted only when no walk from
-either root refused it or an ancestor. A refused file whose module targets
+either root refused it or an ancestor. A refused crate root's module
+directory is `src`, so it taints the other crate root as well, which it can
+load as a module (`mod main;` or `mod lib;`). A refused file whose module targets
 cannot be bounded (no parsed syntax, or a module item carrying an attribute
 other than `#[cfg(test)]`, such as `#[path]`) refuses every generator in the
 package. `#[path]` modules, out-of-line children of inline modules, and
