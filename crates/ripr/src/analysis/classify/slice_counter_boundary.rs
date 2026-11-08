@@ -357,6 +357,23 @@ fn per_byte_counter_shape(owner: &FunctionSummary, expression: &str) -> Option<(
     if exits_early {
         return None;
     }
+    // Statements outside the loop (before it, or after it) must not leave the
+    // function early either: an early `return` or `?` there means the loop and
+    // its counter need not run for the literal inputs. A fallible step inside
+    // the loop after the predicate stays accepted: it only matters for element
+    // values that the test's own paired assertion on the call result pins.
+    let statement_exits = statements.iter().any(|statement| {
+        !statement
+            .syntax()
+            .text_range()
+            .contains_range(for_loop.syntax().text_range())
+            && statement.syntax().descendants().any(|node| {
+                ast::ReturnExpr::can_cast(node.kind()) || ast::TryExpr::can_cast(node.kind())
+            })
+    });
+    if statement_exits {
+        return None;
+    }
     Some((slice, counter))
 }
 
@@ -597,6 +614,17 @@ mod tests {
     fn a_predicate_before_the_increment_is_refused() {
         let body = counter_body(&format!("{GUARD}        count += 1;\n"), "");
         assert_eq!(shape(&body, "16 < count"), None);
+    }
+
+    #[test]
+    fn an_early_exit_outside_the_loop_is_refused() {
+        let before = "pub fn chunk_size(hex: &[u8]) -> Result<u64, ChunkError> {\n    let mut count = 0;\n    let head = hex.first().ok_or(ChunkError::Empty)?;\n    for &b in hex {\n        count += 1;\n        if 16 < count {\n            return Err(ChunkError::TooLong);\n        }\n    }\n    Ok(0)\n}";
+        assert_eq!(shape(before, "16 < count"), None);
+        let after = counter_body(
+            &format!("        count += 1;\n{GUARD}"),
+            "    check(count)?;\n",
+        );
+        assert_eq!(shape(&after, "16 < count"), None);
     }
 
     #[test]
