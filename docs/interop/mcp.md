@@ -634,7 +634,8 @@ producer's retained-row cap, and typed limitation states for anything the
 producer did not establish. The readiness block reports the committed
 producer repair-readiness facts (candidate actionability, an established
 discriminator, and a strong directly-related test fix site on a test
-surface) with the typed first-failing-gate reason when not ready — this
+surface; for a weakly exposed item that names its missing discriminator, the
+weak directly-related test the repair extends) with the typed first-failing-gate reason when not ready — this
 evidence never authorizes an edit by itself — and the repair boundary is
 `none_declared` until `ripr_prepare_repair` binds a session transaction;
 then the repair-attempt link names that transaction instead of staying an
@@ -682,7 +683,14 @@ exception is a saved-worktree snapshot, #7357, whose withheld verdict is a
 snapshot-level fact, so a finding-level gate stays first there), so
 `ripr_prepare_repair` and `ripr repair` name the same cause for the same item
 (#10718). The producer-side reasons remain for items the gate admits or when
-no seam evaluation ran.
+no seam evaluation ran. A producer-side refusal is derived from the committed
+source and tests, so its `recovery` and `next` (`await_producer_fact`, route
+`ripr_get_gap`) say that `ripr_refresh` on an unchanged tree returns the same
+refusal; refresh only after the committed code or tests change. A gate-admitted
+weakly exposed item that names its missing discriminator is ready on every
+route, and `ripr_list_gaps`, `ripr_prepare_repair`, `ripr_get_repair_card` and
+`ripr repair` name the same single test file (the packet's `fix_site` carries
+`oracle_strength`). When several related tests qualify, the fix site is the existing test the shared repair gate recommends (`ripr repair`'s "test to extend"); a recommendation outside the item's own high-confidence related tests refuses as `fix_site_not_established` naming that file, and with no recommendation the strongest candidate leads. When the shared gate's only target is a producer-owned new-test proposal (`SeamVerdict::AdmittedProposed`, the target `ripr agent repair --phase before` starts from), the item is ready with that proposal as its fix site: `fix_site.file` and `allowed_edit_surface` name the proposal file the CLI edit cage allows (`selected_target.path`), `fix_site.new_test_kind` is `integration` or `inline_unit`, and `test_name`, `line` and `oracle` are empty (an inline proposal also carries `inline_test_module`). A seam the producer admits no proposal for stays not ready. Prepare packets carry `fix_site.new_test_kind: null` for an existing-test fix site. The proposal path must pass the filesystem-free part of the CLI preflight (plain relative path, `<dir>/tests/<name>.rs` for integration); the file-exists, symlink and owning-manifest checks stay at the CLI start preflight, not at MCP prepare.
 
 The truncation refusal covers repair readiness (`ripr_list_gaps`,
 `ripr_get_gap`, `ripr_prepare_repair`). `ripr_get_repair_card` reads the same

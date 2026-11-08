@@ -85,6 +85,13 @@ and variable attributes directly; `cargo test -p xtask --test rust_activation`
 owns their Unix test integration. This exception does not retain other scripts
 under `tools/`.
 
+The explicit pre-compiler Node provisioner and its isolated controls are retained
+at `tools/provision-dev.cjs` and `tools/provision-dev.test.cjs` (#13437). They
+require the image's checked Node runtime, reuse existing setup authorities, and
+run before Rust or npm dependencies are installed. Their process and network
+surfaces remain subject to the count policies; the exception does not extend to
+neighboring files.
+
 Other repo automation, release helpers, fixture runners, and policy checks
 should be converted to Rust/`xtask` rather than newly allowlisted.
 

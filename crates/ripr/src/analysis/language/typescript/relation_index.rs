@@ -191,6 +191,8 @@ impl RelationIndex {
         owner: &TypeScriptOwner,
         all_tests: &'a [TypeScriptTest],
     ) -> Vec<&'a TypeScriptTest> {
+        #[cfg(test)]
+        RELATION_INDEX_ENUMERATIONS.with(|count| count.set(count.get() + 1));
         self.candidate_indices(owner, all_tests.len())
             .into_iter()
             .map(|i| &all_tests[i as usize])
@@ -200,6 +202,14 @@ impl RelationIndex {
 
 fn non_empty(name: &str) -> Option<&str> {
     if name.is_empty() { None } else { Some(name) }
+}
+
+#[cfg(test)]
+thread_local! {
+    /// `RelationIndex::candidates` enumerations on this thread: one owner's
+    /// line context must cost exactly one (#10925).
+    pub(crate) static RELATION_INDEX_ENUMERATIONS: std::cell::Cell<usize> =
+        const { std::cell::Cell::new(0) };
 }
 
 /// Identifier runs of a test body, including string-literal contents and

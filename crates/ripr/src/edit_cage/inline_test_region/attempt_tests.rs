@@ -83,6 +83,7 @@ fn inline_policy() -> Result<EditCagePolicy, String> {
         ignored_build_output: None,
         untracked_build_lockfile: None,
         inline_test_module_target: true,
+        new_test_proposal: None,
     })
 }
 

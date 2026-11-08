@@ -1104,11 +1104,13 @@ fn evidence_promotion_optional_related_test_miss(
         None => Ok(None),
         Some(Value::Null) => Ok(Some(ExpectedRelatedTestMissConstraint::Absent)),
         Some(Value::String(value)) => {
-            const KNOWN_MISSES: [&str; 8] = [
+            const KNOWN_MISSES: [&str; 10] = [
                 "no_call_path",
                 "no_assertion",
                 "assertion_not_observing",
                 "assertion_not_credited",
+                "assertion_inert",
+                "assertion_admission_unproven",
                 "weak_assertion",
                 "missing_input",
                 "missing_exact_assertion",

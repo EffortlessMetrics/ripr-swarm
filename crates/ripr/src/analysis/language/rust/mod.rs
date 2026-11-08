@@ -2747,7 +2747,7 @@ impl RustAdapter {
             let token = cancellation::current_token();
             let overlay = committed_source::current_overlay();
             let graph_counter = classify::InheritedGraphCounter::capture();
-            let classify_one = |(_, seeded): &(
+            let classify_one = |(changed, seeded): &(
                 &ChangedFile,
                 crate::analysis::probes::SeededProbe,
             )| {
@@ -2778,6 +2778,7 @@ impl RustAdapter {
                                             &transitive_reach,
                                             seeded.propagation_origin.as_ref(),
                                             Some(&value_origins),
+                                            Some(changed),
                                         )
                                     }));
                                 match contained {
@@ -5160,10 +5161,15 @@ mod tests {
                     assert!(test.oracle.is_none());
                     assert_eq!(test.oracle_kind, OracleKind::Unknown);
                     assert_eq!(test.oracle_strength, OracleStrength::None);
-                    assert_eq!(
-                        test.miss,
-                        Some(crate::domain::RelatedTestMiss::AssertionNotCredited)
-                    );
+                    // The full scope resolves the shadowing macro (inert); the
+                    // name-admitted scope cannot read it, an analyzer limit
+                    // (RIPR-SPEC-0221).
+                    let expected_miss = if std::ptr::eq(finding, &full) {
+                        crate::domain::RelatedTestMiss::AssertionInert
+                    } else {
+                        crate::domain::RelatedTestMiss::AssertionAdmissionUnproven
+                    };
+                    assert_eq!(test.miss, Some(expected_miss));
                 }
             } else {
                 for finding in [&full, &named] {
