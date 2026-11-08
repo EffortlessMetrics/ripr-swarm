@@ -1065,6 +1065,11 @@ next=ripr context ... --at SELECTOR
   `--from` replay with `--suppression-policy` is refused for this format. All
   are static advisory, never runtime mutation outcomes.
 - `next=` is the scope-bound `ripr context` command for this finding.
+- A run with no test-side gap prints records only for limited findings that
+  carry a concrete next step (a producer-established discriminator on
+  preview-limited evidence). A static-limited finding would print
+  `missing=-`, which names nothing to fix, so it gets no record: the report is
+  header, `stop=`, `limits=` and the `next=` explain drill-in (#13594).
 
 `ripr check --format human` is the bounded default terminal surface. It prints
 header and summary counts, then one `Start here:` triage block with a closed

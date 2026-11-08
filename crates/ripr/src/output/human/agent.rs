@@ -422,25 +422,29 @@ fn render_limited_records(
     drill_in: Option<&FindingDrillIn>,
     terminal: &str,
 ) -> String {
+    // #13594: a record with `missing=-` names nothing to fix, so only a
+    // finding carrying a concrete producer discriminator earns one. The rest
+    // stay counted in `limits=` and reachable through the `next=` explain
+    // drill-in, which still names the first limited finding.
+    let records: Vec<&Finding> = limited
+        .iter()
+        .copied()
+        .filter(|finding| limited_record_projects_missing(finding))
+        .collect();
     let mut tests: Vec<TestRef> = Vec::new();
-    for finding in limited.iter().take(MIN_GAP_LINES) {
+    for finding in records.iter().take(MIN_GAP_LINES) {
         let test_ref =
             strongest_test(finding).map(|test| intern_test(&mut tests, &output.root, test));
-        out.push_str(&gap_line(
-            &output.root,
-            finding,
-            test_ref,
-            limited_record_projects_missing(finding),
-        ));
+        out.push_str(&gap_line(&output.root, finding, test_ref, true));
         out.push('\n');
     }
     for (index, test) in tests.iter().enumerate() {
         out.push_str(&format!("t{}={}\n", index + 1, test.line));
     }
-    if limited.len() > MIN_GAP_LINES {
+    if records.len() > MIN_GAP_LINES {
         out.push_str(&format!(
             "+{} more limited findings not shown; `--format json` lists all\n",
-            limited.len() - MIN_GAP_LINES
+            records.len() - MIN_GAP_LINES
         ));
     }
     out.push_str(terminal);
