@@ -1,4 +1,5 @@
 mod npm_native;
+mod packages;
 mod payload;
 mod producer;
 mod qualification;
@@ -12,6 +13,10 @@ use sha2::{Digest, Sha256};
 use crate::{command_success_owned, run_owned};
 
 pub(crate) fn release_server_archive(args: &[String]) -> Result<(), String> {
+    if let Some(artifacts) = optional_release_arg(args, "packages-from") {
+        let out_dir = required_release_arg(args, "out-dir", "PACKAGES_OUT_DIR")?;
+        return packages::produce_family(Path::new(&artifacts), Path::new(&out_dir));
+    }
     if let Some(payload_dir) = optional_release_arg(args, "npm-payload-dir") {
         let identity = required_release_arg(args, "payload-identity", "PAYLOAD_IDENTITY")?;
         let producer = required_release_arg(args, "producer-receipt", "PRODUCER_RECEIPT")?;

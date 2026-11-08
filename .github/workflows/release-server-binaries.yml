@@ -1,5 +1,10 @@
 # Swarm builds release-shaped assets for inspection. Public release authority
 # belongs to EffortlessMetrics/ripr; this workflow cannot publish assets.
+#
+# After the five server archives qualify, the same payload bytes are wrapped
+# into the PyPI and npm package family (one ripr-rs wheel and one native npm
+# package per target, plus the launcher) and each platform installs its own
+# packages offline on a native runner. Nothing here uploads to a registry.
 name: Rehearse ripr Server Binaries (read-only)
 
 on:
@@ -28,3 +33,110 @@ jobs:
       candidate_sha: ${{ github.sha }}
       candidate_ref: ${{ inputs.candidate_ref }}
       version: ${{ inputs.version }}
+
+  packages:
+    # Wrap each target's qualified payload; never rebuild the binary.
+    name: build PyPI and npm packages from the qualified archives
+    needs: rehearse
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # v1
+        with:
+          toolchain: 1.95.0
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          pattern: ripr-{server-qualification,final-native-payload,server-build-identity}-*
+          path: ${{ runner.temp }}/archive-artifacts
+
+      - name: Wrap every target's payload as a wheel and a native npm package
+        run: cargo xtask release-server-archive --packages-from "${{ runner.temp }}/archive-artifacts" --out-dir "${{ runner.temp }}/packages"
+
+      - name: Pack the npm launcher
+        run: npm pack --ignore-scripts --pack-destination "${{ runner.temp }}/packages/npm" ./packaging/npm/launcher
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ripr-platform-packages
+          path: ${{ runner.temp }}/packages/
+          if-no-files-found: error
+
+  package-smoke:
+    # Each platform installs from the full local wheelhouse (pip must pick its
+    # own tag) and from the launcher plus its own native npm package, offline,
+    # then starts ripr in a fresh Cargo project.
+    name: install packages on ${{ matrix.target }}
+    needs: packages
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: x86_64-unknown-linux-gnu, os: ubuntu-22.04, wheel_tag: manylinux_2_34_x86_64, npm_package: ripr-linux-x64-gnu, macos_min: "" }
+          - { target: aarch64-unknown-linux-gnu, os: ubuntu-22.04-arm, wheel_tag: manylinux_2_34_aarch64, npm_package: ripr-linux-arm64-gnu, macos_min: "" }
+          - { target: x86_64-apple-darwin, os: macos-15-intel, wheel_tag: macosx_10_12_x86_64, npm_package: ripr-darwin-x64, macos_min: "10.12" }
+          - { target: aarch64-apple-darwin, os: macos-15, wheel_tag: macosx_11_0_arm64, npm_package: ripr-darwin-arm64, macos_min: "11.0" }
+          - { target: x86_64-pc-windows-msvc, os: windows-latest, wheel_tag: win_amd64, npm_package: ripr-win32-x64-msvc, macos_min: "" }
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: ripr-platform-packages
+          path: ${{ runner.temp }}/packages
+
+      - name: Install offline through pip and npm, then start ripr
+        env:
+          VERSION: ${{ inputs.version }}
+          CANDIDATE_SHA: ${{ github.sha }}
+          WHEEL_TAG: ${{ matrix.wheel_tag }}
+          NPM_PACKAGE: ${{ matrix.npm_package }}
+          MACOS_MIN: ${{ matrix.macos_min }}
+        run: |
+          set -euo pipefail
+          packages="$RUNNER_TEMP/packages"; expected="ripr ${VERSION#v} ($CANDIDATE_SHA)"
+          if command -v ripr; then echo "::error::an ambient ripr is on PATH"; exit 1; fi
+          python -m venv "$RUNNER_TEMP/venv"
+          bindir="$RUNNER_TEMP/venv/bin"; [ -d "$bindir" ] || bindir="$RUNNER_TEMP/venv/Scripts"
+          "$bindir/python" -m pip install --no-index --pre --find-links "$packages/wheels" --report "$RUNNER_TEMP/pip-report.json" ripr-rs
+          chosen=$("$bindir/python" -c 'import json,sys; print(json.load(open(sys.argv[1]))["install"][0]["download_info"]["url"])' "$RUNNER_TEMP/pip-report.json")
+          echo "pip chose $chosen"
+          case "$chosen" in *"-py3-none-$WHEEL_TAG.whl") ;; *) echo "::error::pip chose $chosen, not the $WHEEL_TAG wheel"; exit 1 ;; esac
+          mkdir "$RUNNER_TEMP/npm-project" && cd "$RUNNER_TEMP/npm-project" && npm init -y > /dev/null
+          npm install --offline --ignore-scripts --no-audit --no-fund --cache "$RUNNER_TEMP/npm-cache" \
+            "$packages"/npm/effortlessmetrics-ripr-[0-9]*.tgz "$packages"/npm/effortlessmetrics-"$NPM_PACKAGE"-[0-9]*.tgz
+          npm_bin="$RUNNER_TEMP/npm-project/node_modules/.bin"
+          cd "$RUNNER_TEMP" && cargo new --quiet smoke-project && cd smoke-project
+          for ripr in "$bindir/ripr" "$npm_bin/ripr"; do
+            actual=$("$ripr" --version | tr -d '\r')
+            echo "$ripr: $actual"
+            if [ "$actual" != "$expected" ]; then echo "::error::$ripr reported '$actual', expected '$expected'"; exit 1; fi
+            "$ripr" doctor
+          done
+          if [ -n "$MACOS_MIN" ]; then
+            minos=$(otool -l "$bindir/ripr" | grep -A4 -E 'LC_BUILD_VERSION|LC_VERSION_MIN_MACOSX' | awk '$1 == "minos" || $1 == "version" { print $2; exit }')
+            echo "Mach-O minimum macOS $minos; wheel tag claims $MACOS_MIN"
+            if [ -z "$minos" ] || [ "$(printf '%s\n%s\n' "$minos" "$MACOS_MIN" | sort -V | tail -n 1)" != "$MACOS_MIN" ]; then
+              echo "::error::binary needs macOS $minos, above the $WHEEL_TAG claim"; exit 1
+            fi
+          fi
