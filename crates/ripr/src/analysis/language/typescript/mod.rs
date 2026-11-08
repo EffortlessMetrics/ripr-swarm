@@ -1015,6 +1015,15 @@ impl TypeScriptAdapter {
             Some(&options.root),
         );
 
+        // A named import of a class through a re-export barrel reads as the
+        // direct import of the declaring module (#13592 B3).
+        reexport_index.rewrite_class_barrel_imports(
+            &mut all_tests,
+            &related_tests::ExportedClasses::from_owners(&all_owners),
+            alias_map_ref,
+            Some(&options.root),
+        );
+
         // #10028: invert the test corpus once so each owner's relation scans
         // (pass-1 candidates, module-entry union, the two named-limitation
         // passes) pre-filter by body-name / import-shape / re-export-exposure
