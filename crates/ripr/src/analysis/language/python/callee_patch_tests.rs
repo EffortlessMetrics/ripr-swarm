@@ -266,3 +266,50 @@ fn mock_siblings_keep_their_limit_without_an_independent_discriminator() -> Resu
     assert_ne!(sibling_class(&[MOCK_TEST, weak])?, ExposureClass::Exposed);
     Ok(())
 }
+
+/// Negative controls (#13632): the edit's value reaches the patched callee
+/// through more than one binding hop, a loop, an unpack, a nested scope or a
+/// call spread over lines. Each keeps `mocked_module`.
+#[test]
+fn an_edit_that_reaches_the_patched_callee_transitively_keeps_the_limit() -> Result<(), String> {
+    let bodies: [&str; 8] = [
+        // Alias chain.
+        "    base = amount * 3\n    key = base + 1\n    return rate_for(key)\n",
+        "    base = amount * 3\n    first = base\n    second = first\n    return rate_for(second)\n",
+        // Loop variable.
+        "    base = amount * 3\n    total = 0\n    for step in [base, 1]:\n        total = step\n    return rate_for(total)\n",
+        // Tuple unpack.
+        "    base = amount * 3\n    first, second = base, 1\n    return rate_for(second)\n",
+        // Nested def default argument.
+        "    base = amount * 3\n\n    def inner(a=rate_for(base)):\n        return a\n\n    return inner()\n",
+        // Nested def whose default reads the edit, called with the default.
+        "    base = amount * 3\n\n    def inner(a=base):\n        return rate_for(a)\n\n    return inner()\n",
+        // Nested def body that reads the tainted name.
+        "    base = amount * 3\n\n    def inner():\n        return rate_for(base)\n\n    return inner()\n",
+        // Call spread over lines.
+        "    base = amount * 3\n    key = base + 1\n    return rate_for(\n        key,\n    )\n",
+    ];
+    for body in bodies {
+        let source = format!(
+            "def rate_for(region):\n    return 1\n\n\ndef tax_for(amount, region):\n{body}"
+        );
+        let line = source
+            .lines()
+            .position(|text| text == BASE_NEW)
+            .map(|index| index + 1)
+            .ok_or_else(|| format!("edited line in {source}"))?;
+        let finding = classify(
+            &source,
+            &caller_test(PATCH_RATE, "60"),
+            line,
+            BASE_OLD,
+            BASE_NEW,
+        )?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::StaticUnknown,
+            "{source}\n{finding:?}"
+        );
+    }
+    Ok(())
+}
