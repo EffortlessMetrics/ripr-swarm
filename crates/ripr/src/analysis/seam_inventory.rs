@@ -2693,7 +2693,7 @@ fn classify_scoped_seams_streamed(
     trace_latency_phase(
         "review_scope_partition",
         &format!(
-            "seams_{}_first_{}_rest_{} {}",
+            "seams_{}_first_{}_rest_{}_{}",
             seams.len(),
             first.len(),
             rest.len(),
@@ -2775,7 +2775,7 @@ fn classify_evidence_windows(
         // default path pays nothing per window.
         let diagnostic_fragment = if latency_trace::latency_trace_enabled() {
             format!(
-                "{} {}",
+                "{}_{}",
                 pass.window_memo_lengths(),
                 super::resource_cost::current_rss_trace_fragment()
             )
@@ -2786,7 +2786,7 @@ fn classify_evidence_windows(
         trace_latency_phase(
             "review_evidence_window",
             &format!(
-                "evaluated_{evaluated}_window_{}_retained_{} {}",
+                "evaluated_{evaluated}_window_{}_retained_{}_{}",
                 window.len(),
                 consumer.retained_payloads(),
                 diagnostic_fragment

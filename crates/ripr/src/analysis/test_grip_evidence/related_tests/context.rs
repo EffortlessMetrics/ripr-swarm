@@ -262,8 +262,11 @@ impl<'a> CompactGripContext<'a> {
     /// the opt-in latency trace. Counts only: no keys, paths, or source text
     /// leave the context, and nothing is recorded while tracing is off.
     pub(crate) fn window_memo_lengths(&self) -> String {
+        // Single whitespace-free token: the structured latency-trace
+        // consumer keeps only the first status token, so spaces here would
+        // silently drop most counters from structured reports.
         format!(
-            "memo_cleared[owner_named={} same_module={} parsed_sources={} inherent_helper_reach={}] memo_surviving[source_digest={} evidence_functions_by_line={} owner_lookups={} fixture_names={} unresolved_reach={}]",
+            "memo_cleared_owner_named={}_same_module={}_parsed_sources={}_inherent_helper_reach={}_memo_surviving_source_digest={}_evidence_functions_by_line={}_owner_lookups={}_fixture_names={}_unresolved_reach={}",
             memo(&self.owner_named_cache).len(),
             memo(&self.same_module_cache).len(),
             memo(&self.parsed_sources).len(),
