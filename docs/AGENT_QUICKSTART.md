@@ -29,7 +29,11 @@ that fit, and no promise of guided `ripr repair`, which covers Rust only; the
 route is `ripr check --format agent`, then a hand-written test. A repo with
 Rust plus another language keeps the Rust block and adds a short note. The
 Cursor rule's `globs` and description follow the detected languages. Detection
-looks at the root and its immediate children only.
+looks at the root and its immediate children only. A detected language counts
+only when `[languages].enabled` in `ripr.toml` turns it on; otherwise the block
+says those files are not analyzed and points at `ripr doctor` instead of
+promising a loop. `--force` also refreshes the Cursor front matter, but only
+when it is exactly the one ripr wrote; your own front matter is kept.
 
 ## What `--agents` does to your files
 

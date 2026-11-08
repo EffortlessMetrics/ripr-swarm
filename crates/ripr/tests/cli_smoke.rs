@@ -17266,9 +17266,12 @@ fn init_agents_writes_language_appropriate_instructions() -> Result<(), String> 
             &["pytest -k", "(Python, preview)", "**/*.py"],
             &["cargo test", "assert_eq!", "**/*.rs", "ripr repair <"],
         ),
+        // `tsconfig.json` is a TypeScript project marker, so the generated
+        // config enables TypeScript; a bare `package.json` would not, and the
+        // block must then not promise TypeScript analysis.
         (
-            "package.json",
-            "{\"devDependencies\":{\"jest\":\"^29\"}}\n",
+            "tsconfig.json",
+            "{}\n",
             &["npx jest", "npx vitest", "**/*.ts", "**/*.tsx"],
             &["cargo test", "assert_eq!", "**/*.rs", "ripr repair <"],
         ),
@@ -17303,6 +17306,36 @@ fn init_agents_writes_language_appropriate_instructions() -> Result<(), String> 
         }
         ignore_remove_dir_all(&workspace);
     }
+    // A kept ripr.toml that enables only Rust: the Python loop is not
+    // promised, and the block says Python is not analyzed.
+    let workspace = unique_temp_workspace("init-agents-language-disabled");
+    std::fs::create_dir_all(&workspace).map_err(|e| e.to_string())?;
+    std::fs::write(
+        workspace.join("pyproject.toml"),
+        "[project]\nname = \"x\"\n",
+    )
+    .map_err(|e| e.to_string())?;
+    std::fs::write(
+        workspace.join("ripr.toml"),
+        "[languages]\nenabled = [\"rust\"]\n",
+    )
+    .map_err(|e| e.to_string())?;
+    let root = workspace.display().to_string();
+    let out = run_ripr(&[
+        "init", "--root", &root, "--agents", "claude", "--agents", "cursor",
+    ]);
+    assert_success(&out);
+    for file in ["CLAUDE.md", ".cursor/rules/ripr.mdc"] {
+        let text = std::fs::read_to_string(workspace.join(file)).map_err(|e| e.to_string())?;
+        assert!(
+            text.contains("Python files here are NOT analyzed"),
+            "{file}: {text}"
+        );
+        for banned in ["pytest", "(Python, preview)", "**/*.py"] {
+            assert!(!text.contains(banned), "{file}: unexpected {banned:?}");
+        }
+    }
+    ignore_remove_dir_all(&workspace);
     Ok(())
 }
 

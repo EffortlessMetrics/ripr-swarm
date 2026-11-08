@@ -8,6 +8,7 @@
 use super::init::{InitAction, InitTarget, path_is_occupied};
 use crate::cli::commands_options::InitAgent;
 use crate::cli::suggest::unknown_value;
+use crate::domain::LanguageId;
 use crate::output;
 use std::path::{Path, PathBuf};
 
@@ -69,11 +70,19 @@ MCP is optional and read-only; the CLI above is cheaper. Setup: ripr init --mcp
 /// Languages the written instructions cover. A Rust-only (or undetected) root
 /// keeps the Rust text byte for byte; Python and TypeScript/JavaScript get the
 /// verify command and assertion advice that fit them.
+///
+/// A preview language counts only when it is both detected and enabled for
+/// `ripr check`; a detected language that is not enabled is named in a note
+/// instead, so the instructions never promise analysis that will not run.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct AgentLanguages {
     pub(super) rust: bool,
     pub(super) python: bool,
     pub(super) typescript: bool,
+    /// Python detected but not enabled.
+    pub(super) python_not_enabled: bool,
+    /// TypeScript/JavaScript detected but not enabled.
+    pub(super) typescript_not_enabled: bool,
 }
 
 impl AgentLanguages {
@@ -82,22 +91,50 @@ impl AgentLanguages {
         rust: true,
         python: false,
         typescript: false,
+        python_not_enabled: false,
+        typescript_not_enabled: false,
     };
 
-    /// Detect from the file markers `ripr check` uses. Nothing detected means
-    /// Rust, the primary language.
-    pub(super) fn detect(root: &Path) -> Self {
-        use crate::domain::LanguageId;
+    /// Detect from the file markers `ripr check` uses, keeping the preview
+    /// languages `enabled` (the effective `[languages].enabled`) turns on.
+    /// Nothing covered means Rust, the primary language.
+    pub(super) fn detect(root: &Path, enabled: &[LanguageId]) -> Self {
         let found = crate::config::language_detection::detect_languages(root);
-        let python = found.contains(&LanguageId::Python);
-        let typescript =
+        Self::from_languages(&found, enabled)
+    }
+
+    fn from_languages(found: &[LanguageId], enabled: &[LanguageId]) -> Self {
+        let python_found = found.contains(&LanguageId::Python);
+        let typescript_found =
             found.contains(&LanguageId::TypeScript) || found.contains(&LanguageId::JavaScript);
+        // The config's `javascript` alias parses to `TypeScript`.
+        let python = python_found && enabled.contains(&LanguageId::Python);
+        let typescript = typescript_found && enabled.contains(&LanguageId::TypeScript);
         let rust = found.contains(&LanguageId::Rust) || !(python || typescript);
         Self {
             rust,
             python,
             typescript,
+            python_not_enabled: python_found && !python,
+            typescript_not_enabled: typescript_found && !typescript,
         }
+    }
+
+    /// Note for detected languages `ripr check` will not analyze; empty when
+    /// every detected language is enabled.
+    fn not_enabled_note(self) -> String {
+        let (label, entries) = match (self.python_not_enabled, self.typescript_not_enabled) {
+            (false, false) => return String::new(),
+            (true, true) => (
+                "Python and TypeScript/JavaScript",
+                "`python` and `typescript`",
+            ),
+            (true, false) => ("Python", "`python`"),
+            (false, true) => ("TypeScript/JavaScript", "`typescript`"),
+        };
+        format!(
+            "\n{label} files here are NOT analyzed: ripr.toml `[languages].enabled` lacks {entries}\n(or this ripr build has no support for them), so `ripr check` reports nothing for them.\nRun `ripr doctor` for the fix; do not treat them as covered.\n"
+        )
     }
 
     fn preview_label(self) -> &'static str {
@@ -136,6 +173,10 @@ impl AgentLanguages {
 
     /// The instruction text written between the markers.
     pub(super) fn block(self) -> String {
+        format!("{}{}", self.language_block(), self.not_enabled_note())
+    }
+
+    fn language_block(self) -> String {
         let preview = self.python || self.typescript;
         if !preview {
             return AGENT_BLOCK.to_string();
@@ -166,12 +207,14 @@ Loop (max 3 rounds per gap):
            changed field, branch and boundary (below, equal, above). {advice}
 4. VERIFY  Run {verify}; it must pass.
            Then run `ripr check --quiet --format json-compact` once on the same root, base and
-           saved source (new files need `git add -N PATH`). Check its exit status before
-           reading the JSON; do not change inputs before DONE.
+           saved source (new files need `git add -N PATH`). The new test must be in the
+           analyzed source: commit it, or pass `--worktree` to both FIND and VERIFY. Check that
+           run's exit status before reading the JSON; do not change inputs before DONE.
 5. DONE    Use that same report; require exit 0 and these fields:
            `analysis_outcome.outcome.kind`: `complete_no_findings` or `complete_with_findings`;
            `analysis_outcome.analysis_complete`: true; `summary.findings` = `summary.exposed`.
-           Missing required fields or `analysis_outcome.document_complete: false` mean STOP.
+           Missing required fields, `analysis_outcome.document_complete: false`, or
+           `unanalyzed_working_tree: true` mean STOP.
            `gaps=0` in the agent header is not enough: `no_static_path`, `reachable_unrevealed`
            and `*_unknown` findings are not exposed. If findings remain, return to FIND.
            Report tests and static result; this does not establish runtime bug detection.
@@ -224,6 +267,23 @@ MCP is optional and read-only; the CLI above is cheaper. Setup: ripr init --mcp
             names.join("/"),
             globs.join(", ")
         )
+    }
+
+    /// Byte length of front matter at the start of `text` that ripr itself
+    /// wrote for some language set, `None` otherwise. Only an exact match of a
+    /// generated shape counts, so user-authored front matter is never touched.
+    fn generated_cursor_frontmatter_len(text: &str) -> Option<usize> {
+        (1u8..8)
+            .map(|bits| Self {
+                rust: bits & 1 != 0,
+                python: bits & 2 != 0,
+                typescript: bits & 4 != 0,
+                python_not_enabled: false,
+                typescript_not_enabled: false,
+            })
+            .map(Self::cursor_frontmatter)
+            .find(|front| text.starts_with(front.as_str()))
+            .map(|front| front.len())
     }
 }
 
@@ -353,14 +413,23 @@ pub(super) fn plan_agent_target(
         .map_err(|err| format!("cannot read existing {shown}: {err}; fix its permissions or encoding, or remove it, nothing was written"))?;
     match find_section(&text, &shown)? {
         Some((start, end)) => {
-            if text[start..end] == section || !force {
+            let mut body = format!("{}{}{}", &text[..start], section, &text[end..]);
+            // A refresh also brings ripr's own Cursor front matter (its globs)
+            // up to the current languages; anything else before the section
+            // is the user's and stays as written.
+            if agent == InitAgent::Cursor
+                && let Some(len) = AgentLanguages::generated_cursor_frontmatter_len(&body)
+                && len <= start
+            {
+                body.replace_range(..len, &languages.cursor_frontmatter());
+            }
+            if body == text || !force {
                 return Ok(InitTarget {
                     path,
                     action: InitAction::LeaveUnchanged,
                     body: text,
                 });
             }
-            let body = format!("{}{}{}", &text[..start], section, &text[end..]);
             Ok(InitTarget {
                 path,
                 action: InitAction::Update,
@@ -573,12 +642,18 @@ mod tests {
         rust: false,
         python: true,
         typescript: false,
+        python_not_enabled: false,
+        typescript_not_enabled: false,
     };
     const TYPESCRIPT: AgentLanguages = AgentLanguages {
         rust: false,
         python: false,
         typescript: true,
+        python_not_enabled: false,
+        typescript_not_enabled: false,
     };
+    const ALL_ENABLED: [LanguageId; 3] =
+        [LanguageId::Rust, LanguageId::Python, LanguageId::TypeScript];
 
     #[test]
     fn rust_root_keeps_the_rust_text_and_globs() {
@@ -622,6 +697,8 @@ mod tests {
             "Analyzer limit",
             "after 3 exact-assert tests",
             "exits 2 or 3",
+            "`unanalyzed_working_tree: true` mean STOP",
+            "commit it, or pass `--worktree` to both FIND and VERIFY",
         ] {
             assert!(block.contains(needle), "python block lost {needle:?}");
             assert!(
@@ -667,9 +744,8 @@ mod tests {
     #[test]
     fn mixed_rust_and_python_keeps_the_rust_block_and_adds_the_preview_note() {
         let mixed = AgentLanguages {
-            rust: true,
             python: true,
-            typescript: false,
+            ..AgentLanguages::RUST
         };
         let block = mixed.block();
         assert!(block.starts_with(AGENT_BLOCK));
@@ -685,29 +761,168 @@ mod tests {
     #[test]
     fn detect_reads_the_root_markers() -> Result<(), String> {
         let root = temp_root("detect")?;
-        assert_eq!(AgentLanguages::detect(&root), AgentLanguages::RUST);
+        assert_eq!(
+            AgentLanguages::detect(&root, &ALL_ENABLED),
+            AgentLanguages::RUST
+        );
         std::fs::write(root.join("pyproject.toml"), "[project]\nname = \"x\"\n")
             .map_err(|err| err.to_string())?;
-        assert_eq!(AgentLanguages::detect(&root), PYTHON);
+        assert_eq!(AgentLanguages::detect(&root, &ALL_ENABLED), PYTHON);
         std::fs::write(root.join("package.json"), "{}").map_err(|err| err.to_string())?;
         assert_eq!(
-            AgentLanguages::detect(&root),
+            AgentLanguages::detect(&root, &ALL_ENABLED),
             AgentLanguages {
-                rust: false,
                 python: true,
-                typescript: true
+                ..TYPESCRIPT
             }
         );
         std::fs::write(root.join("Cargo.toml"), "[package]\nname = \"x\"\n")
             .map_err(|err| err.to_string())?;
-        assert!(AgentLanguages::detect(&root).rust);
+        assert!(AgentLanguages::detect(&root, &ALL_ENABLED).rust);
         let planned = plan_agent_target(
             InitAgent::Cursor,
             root.join(CURSOR_RULE_FILE),
             false,
-            AgentLanguages::detect(&root),
+            AgentLanguages::detect(&root, &ALL_ENABLED),
         )?;
         assert!(planned.body.contains("**/*.py"), "{}", planned.body);
+        Ok(())
+    }
+
+    #[test]
+    fn detected_but_not_enabled_languages_are_not_promised() {
+        let found = [LanguageId::Python, LanguageId::JavaScript];
+        // `enabled = ["rust"]` in a Python + JavaScript repo: no preview block.
+        let rust_only = AgentLanguages::from_languages(&found, &[LanguageId::Rust]);
+        assert_eq!(
+            rust_only,
+            AgentLanguages {
+                python_not_enabled: true,
+                typescript_not_enabled: true,
+                ..AgentLanguages::RUST
+            }
+        );
+        let block = rust_only.block();
+        assert!(block.starts_with(AGENT_BLOCK), "{block}");
+        for banned in [
+            "pytest",
+            "npx jest",
+            "(Python, preview)",
+            "Python/TypeScript files here are a preview",
+        ] {
+            assert!(
+                !block.contains(banned),
+                "disabled language promised: {banned:?}"
+            );
+        }
+        assert!(
+            block.contains("Python and TypeScript/JavaScript files here are NOT analyzed"),
+            "{block}"
+        );
+        assert!(block.contains("lacks `python` and `typescript`"), "{block}");
+        assert!(block.contains("Run `ripr doctor` for the fix"), "{block}");
+        let front = rust_only.cursor_frontmatter();
+        assert!(front.contains("globs: [\"**/*.rs\"]"), "{front}");
+
+        // Python enabled, JavaScript not: Python preview plus a TS note only.
+        let python_only =
+            AgentLanguages::from_languages(&found, &[LanguageId::Rust, LanguageId::Python]);
+        assert_eq!(
+            python_only,
+            AgentLanguages {
+                typescript_not_enabled: true,
+                ..PYTHON
+            }
+        );
+        let block = python_only.block();
+        assert!(block.contains("(Python, preview)"), "{block}");
+        assert!(!block.contains("npx jest"), "{block}");
+        assert!(
+            block.contains("TypeScript/JavaScript files here are NOT analyzed"),
+            "{block}"
+        );
+        assert!(!block.contains("Python and TypeScript"), "{block}");
+
+        // Everything enabled: no note.
+        let all = AgentLanguages::from_languages(&found, &ALL_ENABLED);
+        assert!(!all.block().contains("NOT analyzed"));
+        assert!(all.python && all.typescript && !all.rust);
+    }
+
+    #[test]
+    fn force_refreshes_generated_cursor_frontmatter_but_not_user_frontmatter() -> Result<(), String>
+    {
+        let root = temp_root("cursor-front")?;
+        let path = root.join(CURSOR_RULE_FILE);
+        let mixed = AgentLanguages {
+            python: true,
+            ..AgentLanguages::RUST
+        };
+        apply(&plan(InitAgent::Cursor, &path, false)?)?;
+        let rust_text = read(&path)?;
+        assert!(rust_text.starts_with(&AgentLanguages::RUST.cursor_frontmatter()));
+        // The user adds notes after the section.
+        let with_notes = format!("{rust_text}\nMy own rule.\n");
+        std::fs::write(&path, &with_notes).map_err(|err| err.to_string())?;
+
+        // Python appears; without --force nothing changes.
+        let kept = plan_agent_target(InitAgent::Cursor, path.clone(), false, mixed)?;
+        assert_eq!(kept.action, InitAction::LeaveUnchanged);
+        assert_eq!(kept.body, with_notes);
+
+        let forced = plan_agent_target(InitAgent::Cursor, path.clone(), true, mixed)?;
+        assert_eq!(forced.action, InitAction::Update);
+        assert_eq!(
+            forced.body,
+            format!(
+                "{}{}\nMy own rule.\n",
+                mixed.cursor_frontmatter(),
+                marked_section(mixed)
+            ),
+            "force must refresh ripr's front matter and section and keep the user's notes"
+        );
+        assert!(
+            forced.body.contains("\"**/*.rs\", \"**/*.py\""),
+            "{}",
+            forced.body
+        );
+        apply(&forced)?;
+        let again = plan_agent_target(InitAgent::Cursor, path.clone(), true, mixed)?;
+        assert_eq!(
+            again.action,
+            InitAction::LeaveUnchanged,
+            "refresh is idempotent"
+        );
+
+        // User-authored front matter is never rewritten, even with --force.
+        let custom = format!(
+            "---\ndescription: my team rule\nglobs: [\"src/**/*.rs\"]\n---\n{}",
+            marked_section(AgentLanguages::RUST)
+        );
+        std::fs::write(&path, &custom).map_err(|err| err.to_string())?;
+        let forced = plan_agent_target(InitAgent::Cursor, path.clone(), true, mixed)?;
+        assert_eq!(forced.action, InitAction::Update);
+        assert_eq!(
+            forced.body,
+            format!(
+                "---\ndescription: my team rule\nglobs: [\"src/**/*.rs\"]\n---\n{}",
+                marked_section(mixed)
+            )
+        );
+        // A ripr-shaped front matter in a non-Cursor file is user text.
+        let claude = root.join("CLAUDE.md");
+        let text = format!(
+            "{}{}",
+            AgentLanguages::RUST.cursor_frontmatter(),
+            marked_section(AgentLanguages::RUST)
+        );
+        std::fs::write(&claude, &text).map_err(|err| err.to_string())?;
+        let forced = plan_agent_target(InitAgent::Claude, claude, true, mixed)?;
+        assert!(
+            forced
+                .body
+                .starts_with(&AgentLanguages::RUST.cursor_frontmatter())
+        );
         Ok(())
     }
 
