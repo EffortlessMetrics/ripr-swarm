@@ -21,6 +21,13 @@ own body, so something may reach it unseen. This is the positive control for
 #10160; a same-named call on another receiver in a different function reads the
 same way, since the scan does not tell receivers apart.
 
+The expected static class per finding (machine-checked against
+`expected/check.json` by `check-fixture-contracts`, #12928):
+
+```expected-classes
+probe:src_lib.rs:predicate:6fb64460 -> weakly_exposed
+```
+
 ## Must Not
 
 - Treat a caller outside the owner's body as the owner's own recursion.

@@ -68,12 +68,25 @@ or mutated value is held to the builder's rules:
   transliteration of this paragraph, not copied from the builder; it checks
   fidelity to the paragraph and is not an independent oracle. A precondition
   without a `document_version` still mints but can never verify:
-  `verify_document_version` refuses absent versions.
+  `verify_document_version` refuses absent versions. This passive v1
+  representation remains permitted; minting is not permission to apply.
+  `must_not_change`, `verification_command_refs`, and `receipt_command_refs`
+  are required advisory envelope fields, excluded from the identity: the ID
+  identifies the exact snapshot-bound source replacement, not the complete
+  precondition document or authority to execute commands. Changing those fields
+  alone preserves the ID and does not establish envelope equivalence or safety.
+  Consumers must inspect the current complete precondition and independently
+  enforce its constraints; the ID cannot authenticate advisory fields. This
+  documents the existing v1 boundary without changing the hash, schema version,
+  catalog inputs, or positive corpus IDs.
 - **Range.** `assertion_range` uses the LSP convention: 0-based lines and UTF-16
   character offsets, end exclusive. It must cover exactly the retained
   `original_source_text`: a single-line range is as wide as the text in UTF-16
   units, and a multi-line range spans one line per line break and ends at the
-  width of the last line. A range one unit short or long refuses with
+  width of the last line. LF, CRLF, and lone CR each count as one line break;
+  line-ending characters do not contribute to the last line's UTF-16 width,
+  including when the text ends in a line break (end character zero).
+  A range one unit short or long refuses with
   `source_text_mismatch`, in the builder and in `validate`.
 - **Validation evidence.** Parse and format validation must both be `passed`.
   `failed` names `parse_validation_failed` / `format_validation_failed`;
@@ -82,6 +95,9 @@ or mutated value is held to the builder's rules:
   `.rs` file under a `tests` directory segment, with no absolute root, drive
   prefix, empty, `.` or `..` segment. A naming convention (`*_test.rs`) cannot
   establish a test role (RIPR-SPEC-0153), so such files are not recognized.
+  The builder canonicalizes native separators and surrounding whitespace using
+  the contained-path authority. A decoded DTO's `test_file` must already equal
+  that canonical spelling; aliases refuse with `outside_allowed_edit_surface`.
   The sole allowed edit surface must equal it.
 - **Source.** The original text and/or its `sha256:` digest (64 lowercase hex)
   must be retained, and agree when both are. `verify_source_text` compares the
