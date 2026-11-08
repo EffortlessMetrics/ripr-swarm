@@ -435,6 +435,57 @@ fn testpaths_and_ignore_options_withhold_credit() -> Result<(), String> {
 }
 
 #[test]
+fn norecursedirs_trailing_slash_names_the_directory() -> Result<(), String> {
+    let ini = "[pytest]\nnorecursedirs = .git build .env/ env/ .pyenv/ .tmp/ .eggs/ venv/\n";
+    // The python-semver spelling no longer disables the whole configuration.
+    assert_credited(
+        "semver-spelling",
+        &[("pytest.ini", ini), ("tests/test_calc.py", TEST_BODY)],
+    )?;
+    // The slash entry still excludes the directory it names.
+    let got = controls_of(
+        "env-slash",
+        &[
+            ("pytest.ini", "[pytest]\nnorecursedirs = env/\n"),
+            ("env/test_calc.py", TEST_BODY),
+        ],
+        "env/test_calc.py",
+    )?;
+    if got != ["pytest.collection(norecursedirs)"] {
+        return Err(format!("env/ should exclude env/test_calc.py: {got:?}"));
+    }
+    // A different directory is not excluded.
+    assert_credited(
+        "other-dir",
+        &[
+            ("pytest.ini", "[pytest]\nnorecursedirs = env/\n"),
+            ("tests/test_calc.py", TEST_BODY),
+        ],
+    )?;
+    // Any other separator-bearing entry stays unevaluated.
+    for (label, entry) in [
+        ("nested", "a/b/"),
+        ("slash-only", "/"),
+        ("double", "env//"),
+        ("leading", "/env/"),
+        ("inner", "a/b"),
+    ] {
+        assert_withheld(
+            label,
+            &[
+                (
+                    "pytest.ini",
+                    &format!("[pytest]\nnorecursedirs = {entry}\n"),
+                ),
+                ("tests/test_calc.py", TEST_BODY),
+            ],
+            "pytest.collection(unevaluated config)",
+        )?;
+    }
+    Ok(())
+}
+
+#[test]
 fn python_classes_and_functions_options_apply_to_pytest_tests() -> Result<(), String> {
     let class_test = "from calc import price\n\n\nclass TestP:\n    def test_p(self):\n        assert price(3) == 6\n";
     let got = controls_of(

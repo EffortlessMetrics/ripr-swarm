@@ -688,6 +688,22 @@ impl IniRules {
             // An option that is present but empty, quoted oddly, or built from
             // path separators or character classes this pass does not match
             // is not evaluated.
+            // `norecursedirs = env/` names the directory `env`; read a single
+            // trailing slash as the basename pattern `env`. Any other `/`
+            // (`a/b/`, `/`, `env//`) stays unevaluated.
+            let words = if key == "norecursedirs" {
+                words.map(|words| {
+                    words
+                        .into_iter()
+                        .map(|word| match word.strip_suffix('/') {
+                            Some(name) => name.to_string(),
+                            None => word,
+                        })
+                        .collect::<Vec<_>>()
+                })
+            } else {
+                words
+            };
             let usable = words.filter(|words| {
                 !words.is_empty()
                     && words.iter().all(|word| {
