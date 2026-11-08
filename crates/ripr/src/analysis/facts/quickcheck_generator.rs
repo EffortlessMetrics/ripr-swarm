@@ -387,6 +387,13 @@ fn generator_impls(tree: &ast::SourceFile, provider: Provider) -> Vec<AdmittedIm
             }) else {
                 return false;
             };
+            // An attribute on the impl item itself (`#[cfg(test)]`, ...) is
+            // not part of its methods' parsed role, so the generator role
+            // would override what that attribute means. Keep such methods'
+            // existing role.
+            if item.attrs().next().is_some() {
+                return false;
+            }
             let Some(trait_ty) = item.trait_() else {
                 return false;
             };

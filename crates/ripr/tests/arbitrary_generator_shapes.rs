@@ -285,6 +285,22 @@ fn generator_modules_read_as_stimulus_and_test_only_modules_stay_silent() -> Res
                     ),
                 )],
                 Reading::Silent,
+            )?;
+            // `#[cfg(test)]` on the impl item itself is not a module gate:
+            // the parser keeps its methods' ordinary role, so the change keeps
+            // the product reading it had before the generator role existed
+            // (infection_unknown), never the stimulus reading.
+            assert_reading(
+                "cfg(test) on the generator impl item",
+                QUICKCHECK,
+                &[(
+                    "src/lib.rs",
+                    format!(
+                        "{PRODUCT}\n#[cfg(test)]\n{}",
+                        quickcheck_impl("quickcheck::Arbitrary", "Pair")
+                    ),
+                )],
+                Reading::Product,
             )
         },
     )

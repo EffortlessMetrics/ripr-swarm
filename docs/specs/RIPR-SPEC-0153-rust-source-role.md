@@ -183,7 +183,11 @@ qualified provider path, with or without a leading `::`, or by a single name
 that a non-glob provider import directly in the impl's own module binds,
 including `use quickcheck::Arbitrary as Arb;` (a same-module item of that name
 would collide with the import). Only module-level impls count, never impls in
-a function body.
+a function body, and never an impl item that carries any attribute itself:
+the parser derives a method's role from the method and its modules, not from
+attributes on the enclosing impl, so `#[cfg(test)] impl quickcheck::Arbitrary
+for T` keeps its methods' ordinary role (the product reading, not the
+stimulus reading).
 
 Files reached from an admitted root through plain top-level out-of-line
 `mod name;` declarations (`dir/name.rs` or `dir/name/mod.rs`, exactly one
@@ -532,7 +536,8 @@ and shared/boundary-line ownership (#11545).
 pipeline, imported and aliased QuickCheck spellings, proptest and `arbitrary`
 providers, sibling and nested module generators, silent `#[cfg(test)]`
 generators, and product readings for glob imports, other-scope imports,
-local trait imports, another provider's trait, `#[path]` and undeclared
+local trait imports, another provider's trait, `#[cfg(test)]` on the
+generator impl item, `#[path]` and undeclared
 modules, opaque root expansions, a module shared with a refused sibling
 root (positive twin: both roots clean), a child import rebinding the provider
 name, a derive in the generator's file or beside a non-generator trait impl,
