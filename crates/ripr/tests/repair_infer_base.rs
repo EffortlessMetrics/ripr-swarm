@@ -59,6 +59,7 @@ impl Repo {
     }
 
     /// A package with no Rust seam whose only change is to a Python file.
+    #[cfg(feature = "lang-python")]
     fn python_only(form: Form) -> Result<Self, String> {
         let repo = Self::empty()?;
         repo.write(
@@ -505,6 +506,7 @@ fn an_explicit_base_reads_the_dirty_working_tree_too() -> Result<(), String> {
 }
 
 #[test]
+#[cfg(feature = "lang-python")]
 fn zero_seam_refusal_leads_with_the_unscoped_note() -> Result<(), String> {
     let repo = Repo::python_only(Form::NoResolvableBase)?;
     repo.assert_changed_paths(Form::NoResolvableBase, "tools/x.py")?;
@@ -519,6 +521,7 @@ fn zero_seam_refusal_leads_with_the_unscoped_note() -> Result<(), String> {
 }
 
 #[test]
+#[cfg(feature = "lang-python")]
 fn an_explicit_base_reaches_the_non_rust_guidance() -> Result<(), String> {
     let repo = Repo::python_only(Form::NoResolvableBase)?;
     let explicit = repo.ripr(&["repair", "--root", ".", "--base", "HEAD~1"])?;

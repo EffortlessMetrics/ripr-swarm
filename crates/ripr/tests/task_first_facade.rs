@@ -483,6 +483,7 @@ fn repair_after_explicit_base_check_points_back_to_its_gap_start() -> Result<(),
 /// Switches the Python and TypeScript preview adapters on for a fixture, so a
 /// test of the enabled-language repair guidance does not depend on zero-config
 /// marker detection (#13571).
+#[cfg(all(feature = "lang-python", feature = "lang-typescript"))]
 fn enable_preview_languages(root: &Path) -> Result<(), String> {
     std::fs::write(
         root.join("ripr.toml"),
@@ -496,6 +497,7 @@ fn enable_preview_languages(root: &Path) -> Result<(), String> {
 /// `ripr.toml` line, instead of pointing at a `ripr check` that analyzes
 /// nothing.
 #[test]
+#[cfg(all(feature = "lang-python", feature = "lang-typescript"))]
 fn repair_with_python_not_enabled_says_it_was_not_analyzed() -> Result<(), String> {
     let fixture = Fixture::empty("facade-python-not-enabled")?;
     let root = &fixture.root;
@@ -538,6 +540,7 @@ fn repair_with_python_not_enabled_says_it_was_not_analyzed() -> Result<(), Strin
 /// space in it (the message quotes the root; the Rust marker probe must use
 /// the real path), and a second disabled language is named too.
 #[test]
+#[cfg(all(feature = "lang-python", feature = "lang-typescript"))]
 fn repair_not_enabled_line_keeps_rust_for_a_spaced_root_and_names_every_language()
 -> Result<(), String> {
     let fixture = Fixture::empty("facade python off spaced")?;
@@ -569,6 +572,7 @@ fn repair_not_enabled_line_keeps_rust_for_a_spaced_root_and_names_every_language
 /// repair start covers Rust only and points at `ripr check`'s manual route
 /// instead of looping through `ripr pilot`.
 #[test]
+#[cfg(all(feature = "lang-python", feature = "lang-typescript"))]
 fn repair_with_changed_non_rust_code_says_rust_only() -> Result<(), String> {
     let fixture = Fixture::empty("facade-nonrust")?;
     let root = &fixture.root;
@@ -611,6 +615,7 @@ fn nonrust_repair_stderr(root: &Path, root_arg: &str) -> Result<String, String> 
 /// #10682: a clean branch whose change is committed (no dirty tree) reads the
 /// same committed diff `ripr check` analyzes, not just `git diff HEAD`.
 #[test]
+#[cfg(all(feature = "lang-python", feature = "lang-typescript"))]
 fn repair_with_committed_only_non_rust_change_says_rust_only() -> Result<(), String> {
     let fixture = Fixture::empty("facade-nonrust-committed")?;
     let root = &fixture.root;
@@ -635,6 +640,7 @@ fn repair_with_committed_only_non_rust_change_says_rust_only() -> Result<(), Str
 
 /// #10682: a C-quoted (non-ASCII) filename is still recognised by extension.
 #[test]
+#[cfg(all(feature = "lang-python", feature = "lang-typescript"))]
 fn repair_with_quoted_non_rust_filename_says_rust_only() -> Result<(), String> {
     let fixture = Fixture::empty("facade-nonrust-quoted")?;
     let root = &fixture.root;
@@ -685,6 +691,7 @@ fn repair_ignores_non_rust_change_in_a_sibling_package() -> Result<(), String> {
 /// #10682: a deletion-only change gets no `check` finding, so the message
 /// does not promise one.
 #[test]
+#[cfg(all(feature = "lang-python", feature = "lang-typescript"))]
 fn repair_with_deletion_only_non_rust_change_does_not_promise_a_finding() -> Result<(), String> {
     let fixture = Fixture::empty("facade-nonrust-deletion")?;
     let root = &fixture.root;
