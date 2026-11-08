@@ -63,18 +63,42 @@ fn position(value: Option<&Value>, what: &str) -> Result<(u64, u64), String> {
     Ok((line, column))
 }
 
-/// The one removed and one added line of a mutation diff, without markers.
-fn changed_line_pair(diff: &str) -> Option<(&str, &str)> {
+/// The one removed and one added line of a mutation diff, without markers,
+/// provided every original-side line of every hunk (context and removed, at
+/// the hunk header's line numbers) matches `source_lines`. A dump made from
+/// another revision whose mutated line is unchanged but whose surrounding
+/// code moved or changed is therefore refused, not scored.
+fn changed_line_pair<'a>(diff: &'a str, source_lines: &[&str]) -> Option<(&'a str, &'a str)> {
     let mut removed = None;
     let mut added = None;
+    let mut cursor: Option<usize> = None;
     for line in diff.split('\n') {
-        if line.starts_with("---") || line.starts_with("+++") {
+        if let Some(header) = line.strip_prefix("@@ -") {
+            let start = header.split([',', ' ']).next()?.parse::<usize>().ok()?;
+            cursor = Some(start.saturating_sub(1));
             continue;
         }
-        if let Some(text) = line.strip_prefix('-') {
-            removed.replace(text).map_or(Some(()), |_| None)?;
-        } else if let Some(text) = line.strip_prefix('+') {
+        // File headers (`--- ...`, `+++ ...`) precede the first hunk.
+        let Some(at) = cursor.as_mut() else {
+            continue;
+        };
+        if let Some(text) = line.strip_prefix('+') {
             added.replace(text).map_or(Some(()), |_| None)?;
+            continue;
+        }
+        let (text, is_removed) = if let Some(text) = line.strip_prefix('-') {
+            (text, true)
+        } else if let Some(text) = line.strip_prefix(' ') {
+            (text, false)
+        } else {
+            continue;
+        };
+        if source_lines.get(*at) != Some(&text) {
+            return None;
+        }
+        *at += 1;
+        if is_removed {
+            removed.replace(text).map_or(Some(()), |_| None)?;
         }
     }
     Some((removed?, added?))
@@ -110,6 +134,7 @@ fn code_points_to_utf16(line: &str, col: usize) -> u64 {
 pub(crate) fn parse_cosmic_ray_dump(
     dump: &str,
     read_source: &dyn Fn(&str) -> Option<String>,
+    version: Option<&str>,
 ) -> Result<(Vec<MutationSource>, Value), String> {
     let mut by_path: BTreeMap<String, (String, Vec<SyntheticMutant>)> = BTreeMap::new();
     let mut lines = 0usize;
@@ -181,9 +206,10 @@ pub(crate) fn parse_cosmic_ray_dump(
         let Some(entry) = by_path.get_mut(&path) else {
             return Err(format!("{what}: internal error: `{path}` not tracked"));
         };
+        let source_lines: Vec<&str> = entry.0.split('\n').collect();
         let line_text = usize::try_from(start_line)
             .ok()
-            .and_then(|line| entry.0.split('\n').nth(line - 1));
+            .and_then(|line| source_lines.get(line - 1).copied());
 
         // Columns and replacement are recovered from the mutated file; any
         // failure keeps the mutant visible but unscoreable.
@@ -192,7 +218,7 @@ pub(crate) fn parse_cosmic_ray_dump(
             None
         } else {
             line_text.zip(diff).and_then(|(original, diff)| {
-                let (removed, added) = changed_line_pair(diff)?;
+                let (removed, added) = changed_line_pair(diff, &source_lines)?;
                 if removed != original {
                     return None;
                 }
@@ -250,7 +276,9 @@ pub(crate) fn parse_cosmic_ray_dump(
     sources.sort_by(|a, b| a.path.cmp(&b.path));
     Ok((
         sources,
-        json!({"name": "cosmic-ray", "report_format": "cosmic-ray dump"}),
+        // The dump does not name its producer, so the version is whatever
+        // the caller states (`--cosmic-ray-version`), or null.
+        json!({"name": "cosmic-ray", "report_format": "cosmic-ray dump", "version": version}),
     ))
 }
 
@@ -299,7 +327,7 @@ mod tests {
                 "    return x > 1",
             ),
         );
-        let (sources, tool) = parse_cosmic_ray_dump(&dump, &read)?;
+        let (sources, tool) = parse_cosmic_ray_dump(&dump, &read, None)?;
         assert_eq!(sources.len(), 1);
         assert_eq!(sources[0].path, "src/m.py");
         let mutant = &sources[0].mutants[0];
@@ -326,7 +354,7 @@ mod tests {
              "diff": "--- a\n+++ b\n@@ -1 +1 @@\n-x = \"😀\" + 1\n+x = \"😀\" - 1\n"}
         ])
         .to_string();
-        let (sources, _) = parse_cosmic_ray_dump(&dump, &read_wide)?;
+        let (sources, _) = parse_cosmic_ray_dump(&dump, &read_wide, None)?;
         let mutant = &sources[0].mutants[0];
         assert_eq!(mutant.replacement, "-");
         assert_eq!((mutant.start_col, mutant.end_col), (9, 10));
@@ -366,7 +394,7 @@ mod tests {
             (2, 14),
             &result("normal", "killed", "    return x >= 1", "    return x > 1"), // ripr-allow: static-language: cosmic-ray outcome name
         );
-        let (sources, _) = parse_cosmic_ray_dump(&dump, &read)?;
+        let (sources, _) = parse_cosmic_ray_dump(&dump, &read, None)?;
         assert_eq!(sources[0].mutants[0].outcome, UNLOCATABLE_DIFF);
         // The diff's removed line is not the file's line (stale checkout).
         let stale = pair(
@@ -375,7 +403,7 @@ mod tests {
             (2, 15),
             &result("normal", "killed", "    return y >= 1", "    return y > 1"), // ripr-allow: static-language: cosmic-ray outcome name
         );
-        let (sources, _) = parse_cosmic_ray_dump(&stale, &read)?;
+        let (sources, _) = parse_cosmic_ray_dump(&stale, &read, None)?;
         assert_eq!(sources[0].mutants[0].outcome, UNLOCATABLE_DIFF);
         // A multi-line range is not synthesized.
         let multi = pair(
@@ -384,8 +412,46 @@ mod tests {
             (3, 0),
             &result("normal", "killed", "    return x >= 1", "    return x > 1"), // ripr-allow: static-language: cosmic-ray outcome name
         );
-        let (sources, _) = parse_cosmic_ray_dump(&multi, &read)?;
+        let (sources, _) = parse_cosmic_ray_dump(&multi, &read, None)?;
         assert_eq!(sources[0].mutants[0].outcome, UNLOCATABLE_MULTILINE);
+        Ok(())
+    }
+
+    #[test]
+    fn a_diff_whose_context_differs_from_the_checkout_is_never_scored() -> Result<(), String> {
+        // Same removed line, but the dump's context line is from another
+        // revision (`def f(y):`), so its outcome belongs to other code.
+        let stale_context = "--- mutation diff ---\n--- a/src/m.py\n+++ b/src/m.py\n@@ -1,2 +1,2 @@\n def f(y):\n-    return x >= 1\n+    return x > 1\n";
+        let moved = "--- a/src/m.py\n+++ b/src/m.py\n@@ -4,1 +4,1 @@\n-    return x >= 1\n+    return x > 1\n";
+        for diff in [stale_context, moved] {
+            let dump = pair(
+                "ctx",
+                (2, 13),
+                (2, 15),
+                &json!({"worker_outcome": "normal", "test_outcome": "killed", "diff": diff}), // ripr-allow: static-language: cosmic-ray outcome name
+            );
+            let (sources, _) = parse_cosmic_ray_dump(&dump, &read, None)?;
+            assert_eq!(sources[0].mutants[0].outcome, UNLOCATABLE_DIFF, "{diff}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_removed_line_that_starts_with_dashes_is_still_located() -> Result<(), String> {
+        let src = "x = 1\n--y\n";
+        let read_dashes = |_: &str| Some(src.to_string());
+        let dump = json!([
+            {"job_id": "d", "mutations": [{"module_path": "m.py", "operator_name": "o",
+                "occurrence": 0, "start_pos": [2, 0], "end_pos": [2, 1]}]},
+            {"worker_outcome": "normal", "test_outcome": "survived", // ripr-allow: static-language: cosmic-ray outcome name
+             "diff": "--- mutation diff ---\n--- a/m.py\n+++ b/m.py\n@@ -1,2 +1,2 @@\n x = 1\n---y\n+ -y\n"}
+        ])
+        .to_string();
+        let (sources, tool) = parse_cosmic_ray_dump(&dump, &read_dashes, Some("8.8.0"))?;
+        let mutant = &sources[0].mutants[0];
+        assert_eq!(mutant.replacement, " ");
+        assert_eq!(mutant.outcome, "missed");
+        assert_eq!(tool["version"], "8.8.0");
         Ok(())
     }
 
@@ -396,7 +462,7 @@ mod tests {
             pair("p2", (2, 13), (2, 15), &Value::Null),
             pair("p1", (2, 4), (2, 10), &Value::Null)
         );
-        let (sources, _) = parse_cosmic_ray_dump(&dump, &read)?;
+        let (sources, _) = parse_cosmic_ray_dump(&dump, &read, None)?;
         let ids: Vec<_> = sources[0].mutants.iter().map(|m| m.id.as_str()).collect();
         assert_eq!(ids, ["p1", "p2"]);
         assert!(sources[0].mutants.iter().all(|m| m.outcome == "pending"));
@@ -422,9 +488,9 @@ mod tests {
             ),
             ("unreadable file", good.replace("src/m.py", "src/gone.py")),
         ] {
-            assert!(parse_cosmic_ray_dump(&dump, &read).is_err(), "{name}");
+            assert!(parse_cosmic_ray_dump(&dump, &read, None).is_err(), "{name}");
         }
-        parse_cosmic_ray_dump(&good, &read)?;
+        parse_cosmic_ray_dump(&good, &read, None)?;
         Ok(())
     }
 }

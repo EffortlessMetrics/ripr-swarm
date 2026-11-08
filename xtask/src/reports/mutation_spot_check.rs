@@ -134,7 +134,7 @@ const REDERIVE_USAGE: &str =
     "usage: cargo xtask mutation-spot-check --rederive-summaries <mutation-spot-check.json>";
 const USAGE: &str = "usage: cargo xtask mutation-spot-check --repo <name>=<checkout> [--repo ...] [--mutants-out <name>=<mutants.out dir>] [--run-mutants] [--mutants-arg <name>=<arg>] [--jobs <n>] [--mutant-timeout-secs <n>] [--examples <n>] [--ripr <binary>]
   TypeScript (real Stryker outcomes, synthetic-diff verdict join): --repo <name>=<checkout> --stryker-report <name>=<mutation.json> [--max-mutants <n>]
-  Python (real cosmic-ray outcomes, same join): --repo <name>=<checkout> --cosmic-ray-dump <name>=<cosmic-ray dump output> [--max-mutants <n>]
+  Python (real cosmic-ray outcomes, same join): --repo <name>=<checkout> --cosmic-ray-dump <name>=<cosmic-ray dump output> [--cosmic-ray-version <v>] [--max-mutants <n>]
   One run scores one synthetic-diff language; do not mix --stryker-report and --cosmic-ray-dump.";
 
 fn harness_owned_mutants_arg(arg: &str) -> bool {
@@ -203,8 +203,12 @@ pub(crate) fn mutation_spot_check(args: &[String]) -> Result<(), String> {
                 let relative = synthetic_diff::checkout_relative(path)?;
                 fs::read_to_string(checkout.join(relative)).ok()
             };
-            let parsed = cosmic_ray::parse_cosmic_ray_dump(&dump, &read_source)
-                .map_err(|err| format!("`{name}`: {err}"))?;
+            let parsed = cosmic_ray::parse_cosmic_ray_dump(
+                &dump,
+                &read_source,
+                options.cosmic_ray_version.as_deref(),
+            )
+            .map_err(|err| format!("`{name}`: {err}"))?;
             Some((synthetic_diff::PYTHON, parsed))
         } else {
             None
@@ -247,6 +251,8 @@ struct Options {
     stryker_reports: BTreeMap<String, PathBuf>,
     /// Repos scored from a `cosmic-ray dump` (Python) instead of cargo-mutants.
     cosmic_ray_dumps: BTreeMap<String, PathBuf>,
+    /// The cosmic-ray version that produced the dumps; a dump does not say.
+    cosmic_ray_version: Option<String>,
     max_mutants: usize,
     run_mutants: bool,
     jobs: usize,
@@ -262,6 +268,7 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
         mutants_args: BTreeMap::new(),
         stryker_reports: BTreeMap::new(),
         cosmic_ray_dumps: BTreeMap::new(),
+        cosmic_ray_version: None,
         max_mutants: synthetic_diff::DEFAULT_MAX_MUTANTS,
         run_mutants: false,
         jobs: DEFAULT_JOBS,
@@ -316,6 +323,10 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
                     .entry(name.trim().to_string())
                     .or_default()
                     .push(arg.to_string());
+            }
+            "--cosmic-ray-version" => {
+                index += 1;
+                options.cosmic_ray_version = Some(required_arg(args, index, flag)?.to_string());
             }
             "--max-mutants" | "--stryker-max-mutants" => {
                 index += 1;
@@ -382,6 +393,9 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
                 "`{name}` is scored from a cosmic-ray dump, so --mutants-out and --mutants-arg do not apply to it"
             ));
         }
+    }
+    if options.cosmic_ray_version.is_some() && options.cosmic_ray_dumps.is_empty() {
+        return Err("--cosmic-ray-version only applies with --cosmic-ray-dump".to_string());
     }
     if !options.stryker_reports.is_empty() && !options.cosmic_ray_dumps.is_empty() {
         return Err(

@@ -93,7 +93,7 @@ jobs:
         # the final step turns a missing receipt into a red job.
         continue-on-error: true
         shell: bash
-        run: cargo xtask mutation-spot-check $(cat "$RUNNER_TEMP/xtask-args")
+        run: cargo xtask mutation-spot-check --cosmic-ray-version "$(jq -r .cosmic_ray.version benchmarks/mutation_spot_check/corpus-python.json)" $(cat "$RUNNER_TEMP/xtask-args")
 
       - name: Upload the spot-check receipt, dumps and per-package status
         if: always()

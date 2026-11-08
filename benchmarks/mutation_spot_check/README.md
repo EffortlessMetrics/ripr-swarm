@@ -256,7 +256,11 @@ line. The parser (`cosmic_ray.rs`) reads `module_path`, `start_pos`/`end_pos`
 `worker_outcome`, `test_outcome` and `diff`. cosmic-ray records no replacement
 text, so the replacement is recovered from the diff's one removed/added line
 pair against the checkout's own file, and the columns are converted to the
-join's UTF-16 form. A mutant whose range does not reproduce its diff, or that
+join's UTF-16 form. Every original-side line of the diff's hunk (context and
+removed, at the hunk header's line numbers) must match the checkout, so a dump
+from another revision is not scored. A dump does not name its producer, so
+`--cosmic-ray-version <v>` records the version in `mutation_tool.version`
+(null when omitted); the workflow passes the corpus pin. A mutant whose range does not reproduce its diff, or that
 spans several lines, is not guessed at: its outcome token is
 `unlocatable_diff` or `unlocatable_multiline`, so it lands in
 `unscoreable_outcome` and stays countable in the receipt.
