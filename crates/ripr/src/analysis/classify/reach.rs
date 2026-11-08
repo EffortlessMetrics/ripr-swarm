@@ -673,31 +673,37 @@ fn imported_names(source: &str, keep_root: impl Fn(&str) -> bool) -> Vec<String>
     names
 }
 
-/// Parser-backed owner ids carry their impl segment
-/// (`src/lib.rs::impl Display for Money::fmt`).
 /// How many production caller hops [`owner_tested_through_production_caller`]
 /// walks up from the owner before giving up.
 const PRODUCTION_CALLER_HOPS: usize = 6;
 
-fn call_names(call: &str, name: &str) -> bool {
-    call == name
-        || call
-            .strip_suffix(name)
-            .is_some_and(|prefix| prefix.ends_with("::"))
-}
+/// A caller name that more production functions define than this is not
+/// followed as a link. Three keeps a small overload family on one path
+/// (semver's `matches` on `VersionReq`, `Comparator` and the free helper all
+/// lead to `matches_impl`), while a common name such as `new`, `get` or `len`
+/// cannot stand in for a path. Measured on the five-crate cargo-mutants
+/// corpus (#12900): at 1 and 2 the rule removes 21 and 28 false gaps; at 3 it
+/// removes 61 and moves 8 boundary misses on `matches_*` helpers, which the
+/// tests do run, to `weakly_exposed`; above 3 it changes 6 more.
+const MAX_LINK_DEFINITIONS: usize = 3;
 
 /// Whether a chain of production callers (at most
-/// [`PRODUCTION_CALLER_HOPS`] hops, matched by callee name) leads from
-/// `owner` to a function that a test, or a test-side helper, calls by name.
+/// [`PRODUCTION_CALLER_HOPS`] hops) leads from `owner` to a function that a
+/// test, or a test-side helper, calls by name.
 ///
 /// This is a name-level lookalike of transitive reach: it never establishes
 /// reach and never credits an oracle. It only answers whether tests that
 /// merely sit near the owner are the whole story. When the owner sits behind
 /// a production caller that tests do call (a private helper behind a public
 /// entry), a missing assertion on the nearby tests is no evidence that the
-/// change goes unnoticed (#12900). A same-named call of another type also
-/// matches, which can only keep more findings out of `reachable_unrevealed`.
-/// A caller no test calls (an unexercised sibling) does not count.
+/// change goes unnoticed (#12900).
+///
+/// `CallFact::name` is the bare callee identifier, so a link is matched by
+/// name. A caller whose name more than [`MAX_LINK_DEFINITIONS`] production
+/// functions define (`new`, `get`, `len`) is not followed: a same-named call
+/// could be any of them, and following it would let a common name stand for a
+/// real path. A caller no test calls (an unexercised sibling) does not count
+/// either.
 pub(in crate::analysis) fn owner_tested_through_production_caller(
     owner: &FunctionSummary,
     index: &RustIndex,
@@ -706,38 +712,46 @@ pub(in crate::analysis) fn owner_tested_through_production_caller(
     if owner.name.is_empty() {
         return false;
     }
+    let production = || {
+        index
+            .functions()
+            .iter()
+            .filter(|function| function.source_role == FunctionSourceRole::Production)
+    };
+    let mut definitions: HashMap<&str, usize> = HashMap::new();
+    for function in production() {
+        *definitions.entry(function.name.as_str()).or_default() += 1;
+    }
     let tested = |name: &str| {
         index
             .tests()
             .iter()
-            .any(|test| test.calls.iter().any(|call| call_names(&call.name, name)))
+            .any(|test| test.calls.iter().any(|call| call.name == name))
             || index.functions().iter().any(|function| {
                 function.source_role != FunctionSourceRole::Production
-                    && function
-                        .calls
-                        .iter()
-                        .any(|call| call_names(&call.name, name))
+                    && function.calls.iter().any(|call| call.name == name)
             })
     };
-    let mut seen: BTreeSet<String> = BTreeSet::from([owner.name.clone()]);
-    let mut frontier: Vec<String> = vec![owner.name.clone()];
+    let mut seen: BTreeSet<&str> = BTreeSet::from([owner.name.as_str()]);
+    let mut frontier: Vec<&str> = vec![owner.name.as_str()];
     for _ in 0..PRODUCTION_CALLER_HOPS {
-        let mut next = Vec::new();
-        for function in index.functions().iter() {
-            if function.source_role != FunctionSourceRole::Production
-                || function.id == owner.id
-                || function.name.is_empty()
-                || seen.contains(&function.name)
+        let mut next: Vec<&str> = Vec::new();
+        for function in production() {
+            let name = function.name.as_str();
+            if function.id == owner.id
+                || name.is_empty()
+                || seen.contains(name)
+                || definitions.get(name).copied().unwrap_or(0) > MAX_LINK_DEFINITIONS
             {
                 continue;
             }
             if function
                 .calls
                 .iter()
-                .any(|call| frontier.iter().any(|name| call_names(&call.name, name)))
+                .any(|call| frontier.contains(&call.name.as_str()))
             {
-                seen.insert(function.name.clone());
-                next.push(function.name.clone());
+                seen.insert(name);
+                next.push(name);
             }
         }
         if next.iter().any(|name| tested(name)) {
@@ -751,6 +765,8 @@ pub(in crate::analysis) fn owner_tested_through_production_caller(
     false
 }
 
+/// Parser-backed owner ids carry their impl segment
+/// (`src/lib.rs::impl Display for Money::fmt`).
 pub(in crate::analysis) fn is_trait_impl_method(owner: &FunctionSummary) -> bool {
     owner
         .id
@@ -1067,6 +1083,30 @@ mod tests {
             assert!(
                 !owner_tested_through_production_caller(owner_named(&index, owner)?, &index),
                 "{owner} has no production caller that tests call"
+            );
+        }
+        Ok(())
+    }
+
+    /// A caller in a test-only module is a test-side lookalike, not a
+    /// production link, and a caller name that more than
+    /// `MAX_LINK_DEFINITIONS` production functions define is not followed: a
+    /// test calling `run` could mean any of them.
+    #[test]
+    fn test_module_caller_and_ambiguous_caller_name_are_not_links() -> Result<(), String> {
+        let lib = "fn helper() -> u32 { 1 }\n\
+                   pub mod a { pub fn run() -> u32 { super::helper() } }\n\
+                   pub mod b { pub fn run() -> u32 { 2 } }\n\
+                   pub mod c { pub fn run() -> u32 { 3 } }\n\
+                   pub mod d { pub fn run() -> u32 { 4 } }\n\
+                   fn lonely() -> u32 { 3 }\n\
+                   #[cfg(test)]\nmod tests {\n    fn wrap() -> u32 { super::lonely() }\n    #[test]\n    fn calls_wrap() { assert_eq!(wrap(), 3); }\n}\n";
+        let test = "#[test]\nfn runs() { assert!(ripr_fixture::a::run() > 0); }\n";
+        let index = parsed_index(&[("src/lib.rs", lib), ("tests/run.rs", test)])?;
+        for owner in ["helper", "lonely"] {
+            assert!(
+                !owner_tested_through_production_caller(owner_named(&index, owner)?, &index),
+                "{owner} must not be tested through an ambiguous or test-side caller"
             );
         }
         Ok(())

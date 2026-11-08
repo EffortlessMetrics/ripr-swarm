@@ -4,5 +4,6 @@
   to a function the tests do call (a helper behind a public entry). Those
   nearby tests are not shown to run the helper, so their missing assertion is
   no evidence the change goes unnoticed; the finding reads `weakly_exposed`
-  instead. On the five-crate cargo-mutants corpus this removes 67 false
-  positive gaps for 8 true ones (#12900).
+  instead. On the five-crate cargo-mutants corpus this removes 61 false
+  positive gaps; 8 boundary misses on helpers the tests do run move to
+  `weakly_exposed` with them (#12900).

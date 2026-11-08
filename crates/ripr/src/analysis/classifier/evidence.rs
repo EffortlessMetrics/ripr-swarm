@@ -28,6 +28,11 @@ use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
+/// Evidence line for a finding kept out of `reachable_unrevealed` because its
+/// related tests are proximity guesses and a production caller chain leads to
+/// a function tests call (#12900).
+const PROXIMITY_REACH_OF_TESTED_CALLER_NOTE: &str = "Related tests share only a file or name token with this function, and a production caller that tests call leads to it; their missing assertion does not show the change goes unnoticed";
+
 mod side_flip;
 mod tuple_match;
 
@@ -1742,18 +1747,6 @@ impl ClassifiedProbeEvidence {
             && context
                 .owner_fn
                 .is_some_and(|owner| !context.owner_may_be_reached_unseen(owner));
-        let proximity_reach_of_named_owner = reach.state == StageState::Weak
-            && !context.related_tests.is_empty()
-            && context.related_tests.iter().all(|(_, reason)| {
-                *reason != RelationReason::SeamCalleeCall && !reason.establishes_reach(true)
-            })
-            && context.owner_fn.is_some_and(|owner| {
-                !crate::analysis::classify::is_trait_impl_method(owner)
-                    && crate::analysis::classify::owner_tested_through_production_caller(
-                        owner,
-                        context.index,
-                    )
-            });
         // A weak stage is replaced too: with no reaching test, an
         // unconfirmed oracle (#5830 withholds confirmation from tokens that
         // only coincide with the owner's) is no discriminator at all.
@@ -1842,6 +1835,25 @@ impl ClassifiedProbeEvidence {
         };
         let mut evidence =
             evidence_summaries([&reach, &infect, &propagate, &observe, &discriminate]);
+        // #12900: computed last, on the final stages, and only when the
+        // finding could read `reachable_unrevealed` (observe `No` on weak,
+        // proximity-only reach), so the caller walk runs for those alone.
+        let proximity_reach_of_named_owner = reach.state == StageState::Weak
+            && observe.state == StageState::No
+            && !context.related_tests.is_empty()
+            && context.related_tests.iter().all(|(_, reason)| {
+                *reason != RelationReason::SeamCalleeCall && !reason.establishes_reach(true)
+            })
+            && context.owner_fn.is_some_and(|owner| {
+                !crate::analysis::classify::is_trait_impl_method(owner)
+                    && crate::analysis::classify::owner_tested_through_production_caller(
+                        owner,
+                        context.index,
+                    )
+            });
+        if proximity_reach_of_named_owner {
+            evidence.push(PROXIMITY_REACH_OF_TESTED_CALLER_NOTE.to_string());
+        }
         // Disclose a refused related assertion whenever the refusal can
         // matter: the reveal is not fully established. See
         // `preferred_refusal_note` for which one.
