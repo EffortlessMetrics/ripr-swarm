@@ -1200,7 +1200,12 @@ mutant calibrates the rule; ripr reports only the static shape.
     parse-everything-or-refuse: a collection form the adapter cannot
     evaluate (a computed `collect_ignore`, a collection hook, a character
     class, an unparsable or unreadable file, `-o`, `-c` or `--rootdir` in
-    `addopts`) withholds credit for its scope. Not modelled, so credit is
+    `addopts`) withholds credit for its scope. A `norecursedirs` entry with
+    exactly one trailing `/` and no other `/` (`env/`) is read as the
+    basename pattern without the slash; every other `/`-bearing entry
+    (`a/b/`, `/`, `env//`) still refuses the config as unevaluated. This
+    deliberately over-withholds relative to pytest, whose path-pattern match
+    likely excludes nothing for `env/`; it never grants credit. Not modelled, so credit is
     unchanged: the default `norecursedirs`, `-k`, `-m` and `--deselect`,
     `pytest_collection_modifyitems`, and command-line arguments. Known
     limits: `testpaths` is assumed to govern collection (an invocation that

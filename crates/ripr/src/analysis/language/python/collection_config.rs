@@ -688,8 +688,9 @@ impl IniRules {
             // An option that is present but empty, quoted oddly, or built from
             // path separators or character classes this pass does not match
             // is not evaluated.
-            // `norecursedirs = env/` names the directory `env`; read a single
-            // trailing slash as the basename pattern `env`. Any other `/`
+            // Conservative reading, not pytest semantics: read a single
+            // trailing slash (`env/`) as the basename pattern `env`, which may
+            // withhold more than pytest does but never grants credit. Any other `/`
             // (`a/b/`, `/`, `env//`) stays unevaluated.
             let words = if key == "norecursedirs" {
                 words.map(|words| {

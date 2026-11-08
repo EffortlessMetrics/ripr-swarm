@@ -442,7 +442,8 @@ fn norecursedirs_trailing_slash_names_the_directory() -> Result<(), String> {
         "semver-spelling",
         &[("pytest.ini", ini), ("tests/test_calc.py", TEST_BODY)],
     )?;
-    // The slash entry still excludes the directory it names.
+    // Conservative reading, not a claim about pytest: `env/` is read as the
+    // basename pattern `env`, so a test under `env/` is withheld.
     let got = controls_of(
         "env-slash",
         &[
