@@ -350,7 +350,7 @@ fn render_pilot_summary_md_with_target(
             .seam_limit_selection_order
             .map_or_else(String::new, |order| format!(" (`{}`)", order.as_str()));
         out.push_str(&format!(
-            "- Seam limit reached: analyzed {} of {} seams{selection}; Rust seam counts and top gaps below cover only that slice; top gaps are prioritized within it\n",
+            "- Seam limit reached: analyzed {} of {} seams{selection}; Rust seam counts and Rust gaps below cover only that slice; those gaps are prioritized within it\n",
             limit.analyzed, limit.total
         ));
         out.push_str(&format!(
