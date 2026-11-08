@@ -276,9 +276,13 @@ pub(super) fn measure_corpus_entry(
                 .unwrap_or_else(|| "missing".to_string());
             let complete = exited_zero(&measured) && status == "complete";
             let ms = duration_ms(&measured);
+            let reason = summary
+                .as_ref()
+                .and_then(|summary| summary["reason"].as_str().map(str::to_string));
             let detail = format!(
-                "exit {}, pilot status `{status}`{}",
+                "exit {}, pilot status `{status}`{}{}",
                 exit_label(&measured),
+                pilot_reason_suffix(reason.as_deref()),
                 if measured.output.timed_out {
                     ", harness deadline reached"
                 } else {
@@ -1966,4 +1970,14 @@ pub(crate) fn cpu_model_slug(cpuinfo: &str) -> Option<String> {
         .collect::<Vec<_>>()
         .join("-");
     (!slug.is_empty()).then_some(slug)
+}
+
+/// A partial pilot summary names why it stopped (`reason`, for example
+/// `timeout`); carrying it in the sample detail keeps a budget cut apart from
+/// a failure in the row.
+pub(super) fn pilot_reason_suffix(reason: Option<&str>) -> String {
+    match reason {
+        Some(reason) if !reason.is_empty() => format!(" (reason `{reason}`)"),
+        _ => String::new(),
+    }
 }
