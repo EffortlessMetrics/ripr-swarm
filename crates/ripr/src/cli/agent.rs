@@ -1,5 +1,5 @@
 use crate::app::agent_brief::{AGENT_BRIEF_HARD_MAX_SEAMS, DEFAULT_AGENT_BRIEF_MAX_SEAMS};
-use crate::cli::parse::expect_value;
+use crate::cli::parse::{expect_value, reconcile_root};
 use crate::cli::suggest::{unknown_argument, unknown_value};
 use std::path::PathBuf;
 
@@ -187,6 +187,10 @@ pub(super) struct AgentRepairOptions {
     pub(super) verify_authorization: crate::app::python_repair_verification::VerifyAuthorization,
     /// Request the rollback proof as part of the verify phase (#3570).
     pub(super) verify_rollback: bool,
+    /// `--test-result <path>` (#13203 slice B): a caller-supplied focused
+    /// `cargo test` result that the after phase validates and records. After
+    /// phase only; ripr never runs the tests itself.
+    pub(super) test_result: Option<PathBuf>,
     /// Explicit repair-attempt store locator, resolved against `root`.
     /// `None` is the repository-local default and keeps next-command bytes
     /// compatible.
@@ -355,6 +359,7 @@ fn parse_agent_repair_command(args: &[String]) -> Result<AgentCommand, String> {
     let mut verify_authorized = false;
     let mut verify_authority: Option<String> = None;
     let mut verify_rollback = false;
+    let mut test_result: Option<PathBuf> = None;
     let mut store: Option<PathBuf> = None;
     let mut json = false;
     let mut i = 0usize;
@@ -363,7 +368,13 @@ fn parse_agent_repair_command(args: &[String]) -> Result<AgentCommand, String> {
             "--json" => json = true,
             "--root" => {
                 i += 1;
-                root = PathBuf::from(expect_value(args, i, "--root")?);
+                let reconciled = reconcile_root(
+                    &root,
+                    root_explicit,
+                    expect_value(args, i, "--root")?,
+                    "agent repair",
+                )?;
+                root = reconciled;
                 root_explicit = true;
             }
             "--seam-id" => {
@@ -470,6 +481,15 @@ fn parse_agent_repair_command(args: &[String]) -> Result<AgentCommand, String> {
             }
             "--verify-rollback" => {
                 verify_rollback = true;
+            }
+            "--test-result" => {
+                i += 1;
+                refuse_repeated_flag(test_result.is_some(), "agent repair", "--test-result")?;
+                let value = expect_value(args, i, "--test-result")?;
+                if value.trim().is_empty() {
+                    return Err("agent repair --test-result requires a non-empty path; pass the focused test result file right after --test-result".to_string());
+                }
+                test_result = Some(PathBuf::from(value));
             }
             "--store" => {
                 i += 1;
@@ -642,6 +662,12 @@ fn parse_agent_repair_command(args: &[String]) -> Result<AgentCommand, String> {
                 .to_string(),
         );
     }
+    if test_result.is_some() && phase != AgentRepairPhase::After {
+        return Err(
+            "agent repair --test-result is only valid with --phase after; the focused run happens after the edit and the after phase records it"
+                .to_string(),
+        );
+    }
     if phase == AgentRepairPhase::Verify && edit_authorization.authorized {
         return Err(
             "agent repair --edit-authorized/--edit-authority are only valid with --phase before; the verify phase takes --verify-authorized and --verify-authority <identity>"
@@ -714,6 +740,7 @@ fn parse_agent_repair_command(args: &[String]) -> Result<AgentCommand, String> {
         edit_authorization,
         verify_authorization,
         verify_rollback,
+        test_result,
         store,
         json,
         quiet: false,
@@ -746,7 +773,13 @@ pub(super) fn parse_agent_start_options(args: &[String]) -> Result<AgentStartOpt
         match args[i].as_str() {
             "--root" => {
                 i += 1;
-                root = PathBuf::from(expect_value(args, i, "--root")?);
+                let reconciled = reconcile_root(
+                    &root,
+                    root_explicit,
+                    expect_value(args, i, "--root")?,
+                    "agent start",
+                )?;
+                root = reconciled;
                 root_explicit = true;
             }
             "--seam-id" => {
@@ -797,7 +830,13 @@ pub(super) fn parse_agent_brief_options(args: &[String]) -> Result<AgentBriefOpt
         match args[i].as_str() {
             "--root" => {
                 i += 1;
-                root = PathBuf::from(expect_value(args, i, "--root")?);
+                let reconciled = reconcile_root(
+                    &root,
+                    root_explicit,
+                    expect_value(args, i, "--root")?,
+                    "agent brief",
+                )?;
+                root = reconciled;
                 root_explicit = true;
             }
             "--diff" => {
@@ -876,7 +915,13 @@ pub(super) fn parse_agent_packet_options(args: &[String]) -> Result<AgentPacketO
         match args[i].as_str() {
             "--root" => {
                 i += 1;
-                root = PathBuf::from(expect_value(args, i, "--root")?);
+                let reconciled = reconcile_root(
+                    &root,
+                    root_explicit,
+                    expect_value(args, i, "--root")?,
+                    "agent packet",
+                )?;
+                root = reconciled;
                 root_explicit = true;
             }
             "--seam-id" => {
@@ -967,7 +1012,13 @@ pub(super) fn parse_agent_card_options(args: &[String]) -> Result<AgentCardOptio
         match args[i].as_str() {
             "--root" => {
                 i += 1;
-                root = PathBuf::from(expect_value(args, i, "--root")?);
+                let reconciled = reconcile_root(
+                    &root,
+                    root_explicit,
+                    expect_value(args, i, "--root")?,
+                    "agent card",
+                )?;
+                root = reconciled;
                 root_explicit = true;
             }
             "--seam-id" => {
@@ -1018,7 +1069,13 @@ pub(super) fn parse_agent_stub_options(args: &[String]) -> Result<AgentStubOptio
         match args[i].as_str() {
             "--root" => {
                 i += 1;
-                root = PathBuf::from(expect_value(args, i, "--root")?);
+                let reconciled = reconcile_root(
+                    &root,
+                    root_explicit,
+                    expect_value(args, i, "--root")?,
+                    "agent stub",
+                )?;
+                root = reconciled;
                 root_explicit = true;
             }
             "--kind" => {
@@ -1083,7 +1140,13 @@ pub(super) fn parse_agent_verify_options(args: &[String]) -> Result<AgentVerifyO
         match args[i].as_str() {
             "--root" => {
                 i += 1;
-                root = PathBuf::from(expect_value(args, i, "--root")?);
+                let reconciled = reconcile_root(
+                    &root,
+                    root_explicit,
+                    expect_value(args, i, "--root")?,
+                    "agent verify",
+                )?;
+                root = reconciled;
                 root_explicit = true;
             }
             "--before" => {
@@ -1144,7 +1207,13 @@ pub(super) fn parse_agent_verify_execute_options(
         match args[i].as_str() {
             "--root" => {
                 i += 1;
-                root = PathBuf::from(expect_value(args, i, "--root")?);
+                let reconciled = reconcile_root(
+                    &root,
+                    root_explicit,
+                    expect_value(args, i, "--root")?,
+                    "agent verify-execute",
+                )?;
+                root = reconciled;
                 root_explicit = true;
             }
             "--packet" => {
@@ -1219,7 +1288,13 @@ pub(super) fn parse_agent_receipt_options(args: &[String]) -> Result<AgentReceip
         match args[i].as_str() {
             "--root" => {
                 i += 1;
-                root = PathBuf::from(expect_value(args, i, "--root")?);
+                let reconciled = reconcile_root(
+                    &root,
+                    root_explicit,
+                    expect_value(args, i, "--root")?,
+                    "agent receipt",
+                )?;
+                root = reconciled;
                 root_explicit = true;
             }
             "--verify-json" => {
@@ -1312,7 +1387,13 @@ pub(super) fn parse_agent_status_options(args: &[String]) -> Result<AgentStatusO
         match args[i].as_str() {
             "--root" => {
                 i += 1;
-                root = PathBuf::from(expect_value(args, i, "--root")?);
+                let reconciled = reconcile_root(
+                    &root,
+                    root_explicit,
+                    expect_value(args, i, "--root")?,
+                    "agent status",
+                )?;
+                root = reconciled;
                 root_explicit = true;
             }
             "--json" => json = true,
@@ -1368,7 +1449,13 @@ pub(super) fn parse_agent_review_summary_options(
         match args[i].as_str() {
             "--root" => {
                 i += 1;
-                root = PathBuf::from(expect_value(args, i, "--root")?);
+                let reconciled = reconcile_root(
+                    &root,
+                    root_explicit,
+                    expect_value(args, i, "--root")?,
+                    "agent review-summary",
+                )?;
+                root = reconciled;
                 root_explicit = true;
             }
             "--json" => json = true,
@@ -1569,20 +1656,36 @@ mod tests {
         Ok(())
     }
 
-    /// A duplicate `--root` stays last-win everywhere, including the
-    /// pattern-setting parsers, so scripted double-root invocations keep
-    /// working (#10542).
+    /// A repeated `--root` reconciles (#9008, #10542): a conflicting repeat
+    /// refuses naming both values, while an identical repeat is absorbed so
+    /// scripted double-root invocations keep working.
     #[test]
-    fn agent_root_stays_last_win() -> Result<(), String> {
-        let parsed = parse_agent_start_options(&args(&[
+    fn agent_root_reconciles_repeats() -> Result<(), String> {
+        match parse_agent_start_options(&args(&[
             "--root",
             "first",
             "--root",
             "second",
             "--seam-id",
             "a",
+        ])) {
+            Err(message)
+                if message == "agent start takes --root once (got 'first' and 'second')" => {}
+            other => {
+                return Err(format!(
+                    "conflicting --root repeat was not refused: {other:?}"
+                ));
+            }
+        }
+        let parsed = parse_agent_start_options(&args(&[
+            "--root",
+            "first",
+            "--root",
+            "first",
+            "--seam-id",
+            "a",
         ]))?;
-        assert_eq!(parsed.root, PathBuf::from("second"));
+        assert_eq!(parsed.root, PathBuf::from("first"));
         Ok(())
     }
 
@@ -1804,6 +1907,7 @@ mod tests {
                         authority: None,
                     },
                 verify_rollback: false,
+                test_result: None,
                 store: None,
                 json: false,
                 quiet: false,
@@ -1839,6 +1943,7 @@ mod tests {
                         authority: None,
                     },
                 verify_rollback: false,
+                test_result: None,
                 store: None,
                 json: false,
                 quiet: false,
@@ -1880,6 +1985,7 @@ mod tests {
                         authority: None,
                     },
                 verify_rollback: false,
+                test_result: None,
                 store: Some(PathBuf::from("target/ripr/alt-attempts")),
                 json: false,
                 quiet: false,
@@ -2021,6 +2127,7 @@ mod tests {
                     authority: None,
                 },
                 verify_rollback: false,
+                test_result: None,
                 store: None,
                 json: false,
                 quiet: false,

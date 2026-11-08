@@ -906,6 +906,8 @@ pub struct FileFacts {
     /// Opaque property blocks from the existing source parse. No expansion or
     /// executable-test authority is inferred from the macro's spelling.
     pub unresolved_property_macros: Vec<UnresolvedPropertyMacroFact>,
+    /// Owner-bound Verus guard facts admitted inside `verus! { .. }` (#10747).
+    pub verus_guard_facts: Vec<crate::analysis::verus::VerusGuardFact>,
     /// Source-role provenance for this file occurrence (#3533): the ordered
     /// edge chain from the compilation unit whose declarations and include
     /// edges composed this file's roles, plus the earliest edge in the chain
@@ -1000,6 +1002,11 @@ pub enum FunctionSourceRole {
     /// Ordinary production function: no test-defining attribute and not a
     /// member of a test-required module. The historical `is_test == false`.
     Production,
+    /// A manifest- and namespace-verified QuickCheck input generator. It is
+    /// stimulus support, not an executable test or production seam. Diff
+    /// analysis retains its changes as explicit uncertainty rather than
+    /// silently skipping them with ordinary test helpers (#11545).
+    TestInputGenerator,
     /// Carries an exact supported test-defining attribute (`#[test]`,
     /// `#[tokio::test]`, `#[async_std::test]`, `#[rstest]`, ...). Registers
     /// an executable `TestFact`. When the facts came from the lexical
@@ -1128,6 +1135,12 @@ impl<T> SharedFactSlice<T> {
         Self(None)
     }
 
+    /// True when this slice holds no backing allocation (the empty `None` state).
+    #[cfg(test)]
+    pub(crate) fn is_unallocated(&self) -> bool {
+        self.0.is_none()
+    }
+
     #[cfg(test)]
     pub(crate) fn shared_storage_with(&self, other: &Self) -> bool {
         match (&self.0, &other.0) {
@@ -1150,6 +1163,22 @@ impl<T> SharedFactSlice<T> {
     {
         let arc = self.0.get_or_insert_with(|| Arc::new(Vec::new()));
         Arc::make_mut(arc)
+    }
+
+    /// Iterates mutably only when storage exists and this view owns it alone.
+    ///
+    /// Unlike [`Self::make_mut`], this never materializes an `Arc<Vec<T>>` for
+    /// the empty `None` state, and it never clones a buffer shared with a
+    /// sibling view, so finalize-time compaction stays allocation-free for
+    /// empty and shared slices.
+    pub(crate) fn iter_mut_if_unique(&mut self) -> std::slice::IterMut<'_, T>
+    where
+        T: Clone,
+    {
+        match &mut self.0 {
+            Some(arc) if Arc::strong_count(arc) == 1 => Arc::make_mut(arc).iter_mut(),
+            _ => [].iter_mut(),
+        }
     }
 
     pub(crate) fn is_uniquely_owned(&self) -> bool {
@@ -1416,6 +1445,31 @@ pub struct TestFact {
     /// Body-relative `let` binding facts, mirroring
     /// `FunctionFact.let_bindings` (#3727 Slice A).
     pub let_bindings: SharedFactSlice<LetBindingFact>,
+    /// `Some` only for a test produced by a `macro_rules!` expansion and
+    /// pinned to its invocation line (#12320). Authored tests are `None`, so
+    /// a consumer can tell the two apart even when they share a name and line.
+    pub generated: Option<MacroGeneratedOrigin>,
+}
+
+/// Provenance of a macro-generated test (#12320).
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    serde::Serialize,
+    serde::Deserialize,
+)]
+pub struct MacroGeneratedOrigin {
+    /// The expanded test body declares its own `use` or item, which can
+    /// rebind a callee the invocation-site scopes would resolve differently.
+    /// Such a test borrows no invocation-site scopes: wrong credit is worse
+    /// than abstaining.
+    pub body_declares_items: bool,
 }
 
 impl TestFact {
@@ -1793,6 +1847,8 @@ pub(crate) struct TestFactWire {
     pub nested_fn_names: Vec<String>,
     #[serde(default)]
     pub let_bindings: Vec<LetBindingFact>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub generated: Option<MacroGeneratedOrigin>,
 }
 
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
@@ -1821,6 +1877,8 @@ pub(crate) struct FileFactsWire {
     pub used_lexical_fallback: bool,
     pub module_declarations: Vec<ModuleDeclarationFact>,
     pub unresolved_property_macros: Vec<UnresolvedPropertyMacroFact>,
+    #[serde(default)]
+    pub verus_guard_facts: Vec<crate::analysis::verus::VerusGuardFact>,
     pub source: String,
     #[serde(default)]
     pub(crate) item_scopes: Option<Box<ModuleItemScopes>>,
@@ -1895,6 +1953,7 @@ impl TestFactWire {
             attrs: fact.attrs.to_vec(),
             nested_fn_names: fact.nested_fn_names.to_vec(),
             let_bindings: fact.let_bindings.to_vec(),
+            generated: fact.generated,
         }
     }
 
@@ -1915,6 +1974,7 @@ impl TestFactWire {
             attrs: fact.attrs.to_vec(),
             nested_fn_names: fact.nested_fn_names.to_vec(),
             let_bindings: fact.let_bindings.to_vec(),
+            generated: fact.generated,
         }
     }
 }
@@ -1979,6 +2039,7 @@ impl From<&FileFacts> for FileFactsWire {
             used_lexical_fallback: facts.used_lexical_fallback,
             module_declarations: facts.module_declarations.clone(),
             unresolved_property_macros: facts.unresolved_property_macros.clone(),
+            verus_guard_facts: facts.verus_guard_facts.clone(),
             source: facts.source.to_string(),
             item_scopes: facts.item_scopes.clone(),
             macro_candidates: facts.macro_candidates.clone(),
@@ -2023,6 +2084,7 @@ impl TestFactWire {
             attrs: self.attrs.into(),
             nested_fn_names: self.nested_fn_names.into(),
             let_bindings: self.let_bindings.into(),
+            generated: self.generated,
         })
     }
 }
@@ -2067,6 +2129,7 @@ impl FileFactsWire {
             used_lexical_fallback: self.used_lexical_fallback,
             module_declarations: self.module_declarations,
             unresolved_property_macros: self.unresolved_property_macros,
+            verus_guard_facts: self.verus_guard_facts,
             role_provenance: SourceRoleProvenance::default(),
             source,
             item_scopes: self.item_scopes,
@@ -2146,6 +2209,7 @@ impl<'de> serde::Deserialize<'de> for TestFact {
             attrs: wire.attrs.into(),
             nested_fn_names: wire.nested_fn_names.into(),
             let_bindings: wire.let_bindings.into(),
+            generated: wire.generated,
         })
     }
 }
@@ -2225,6 +2289,8 @@ struct TestFactWireRef<'a> {
     attrs: &'a [String],
     nested_fn_names: &'a [String],
     let_bindings: &'a [LetBindingFact],
+    #[serde(skip_serializing_if = "Option::is_none")]
+    generated: Option<MacroGeneratedOrigin>,
 }
 
 #[derive(serde::Serialize)]
@@ -2252,6 +2318,8 @@ struct FileFactsWireRef<'a> {
     used_lexical_fallback: bool,
     module_declarations: &'a [ModuleDeclarationFact],
     unresolved_property_macros: &'a [UnresolvedPropertyMacroFact],
+    #[serde(default)]
+    verus_guard_facts: &'a [crate::analysis::verus::VerusGuardFact],
     source: &'a str,
     item_scopes: Option<&'a ModuleItemScopes>,
     macro_candidates: Option<&'a MacroBindingCandidates>,
@@ -2298,6 +2366,7 @@ impl<'a> From<&'a FileFacts> for FileFactsWireRef<'a> {
                     attrs: &fact.attrs,
                     nested_fn_names: &fact.nested_fn_names,
                     let_bindings: &fact.let_bindings,
+                    generated: fact.generated,
                 })
                 .collect(),
             returns: &facts.returns,
@@ -2319,6 +2388,7 @@ impl<'a> From<&'a FileFacts> for FileFactsWireRef<'a> {
             used_lexical_fallback: facts.used_lexical_fallback,
             module_declarations: &facts.module_declarations,
             unresolved_property_macros: &facts.unresolved_property_macros,
+            verus_guard_facts: &facts.verus_guard_facts,
             source: &facts.source,
             item_scopes: facts.item_scopes.as_deref(),
             macro_candidates: facts.macro_candidates.as_deref(),
@@ -2552,6 +2622,7 @@ mod tests {
             used_lexical_fallback: false,
             module_declarations: Vec::new(),
             unresolved_property_macros: Vec::new(),
+            verus_guard_facts: Vec::new(),
             role_provenance: SourceRoleProvenance::default(),
             source: Arc::clone(&source),
             item_scopes: None,
@@ -2633,6 +2704,7 @@ mod tests {
             used_lexical_fallback: false,
             module_declarations: Vec::new(),
             unresolved_property_macros: Vec::new(),
+            verus_guard_facts: Vec::new(),
             role_provenance: SourceRoleProvenance::default(),
             source: Arc::clone(&source),
             item_scopes: None,
@@ -2842,6 +2914,7 @@ fn checks_helper() {
             used_lexical_fallback: false,
             module_declarations: Vec::new(),
             unresolved_property_macros: Vec::new(),
+            verus_guard_facts: Vec::new(),
             role_provenance: SourceRoleProvenance::default(),
             source: Arc::clone(&home),
             item_scopes: None,
@@ -2927,6 +3000,25 @@ fn checks_helper() {
             with_probe_shapes > 0,
             "no source reached the probe-shape branches"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn file_facts_wire_ref_roundtrips_verus_guard_facts() -> Result<(), serde_json::Error> {
+        let source = "verus! {\nfn inc(x: u32) -> (r: u32)\n    ensures r == x,\n{ x }\n}\n";
+        let mut facts = crate::analysis::rust_index::summarize_file(
+            PathBuf::from("src/lib.rs"),
+            source.to_string(),
+        );
+        facts.verus_guard_facts = crate::analysis::verus::verus_guard_facts(source);
+        assert_eq!(facts.verus_guard_facts.len(), 1);
+        let wire = serde_json::to_string(&FileFactsWireRef::from(&facts))?;
+        assert!(
+            wire.contains("\"verus_guard_facts\""),
+            "borrowed wire must serialize guard facts"
+        );
+        let decoded: FileFacts = serde_json::from_str(&wire)?;
+        assert_eq!(decoded.verus_guard_facts, facts.verus_guard_facts);
         Ok(())
     }
 

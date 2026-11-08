@@ -555,6 +555,7 @@ fn extract_rstest_cases_preserves_string_literal_whitespace() {
         attrs: vec!["#[rstest]".to_string(), "#[case(\"a b\")]".to_string()].into(),
         nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
         let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
+        generated: None,
     };
     let (cases, params) = extract_rstest_cases(&test);
     assert_eq!(params, vec!["input"]);
@@ -627,6 +628,7 @@ fn allowed_builder_method_names_includes_required_discriminator_tokens() {
         attrs: crate::analysis::facts::SharedFactSlice::empty(),
         nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
         let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
+        generated: None,
     };
     let facts = ValueEnvFacts::default();
     let env = ValueEnv::new(&seam, &facts);
@@ -997,6 +999,7 @@ fn extract_rstest_cases_maps_case_rows_to_case_marked_parameters_only() {
         ].into(),
         nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
         let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
+        generated: None,
     };
 
     let (cases, params) = extract_rstest_cases(&test);
@@ -1039,6 +1042,7 @@ fn case_columns_stay_aligned_past_a_pattern_parameter() {
         .into(),
         nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
         let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
+        generated: None,
     };
 
     assert_eq!(
@@ -1070,6 +1074,7 @@ fn case_value_not_credited_past_a_shadowing_let_after_a_url_string() {
         ].into(),
         nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
         let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
+        generated: None,
     };
 
     assert_eq!(
@@ -1096,6 +1101,7 @@ fn rstest_case_test(name: &str, body: &str) -> TestSummary {
         .into(),
         nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
         let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
+        generated: None,
     }
 }
 
@@ -1226,12 +1232,13 @@ fn facts_test(name: &str, file: &str, body: &str) -> TestSummary {
         start_line: 1,
         end_line: 8,
         body: body.into(),
-        calls: Vec::new(),
+        calls: crate::analysis::facts::SharedFactSlice::empty(),
         assertions: Vec::new(),
-        literals: Vec::new(),
-        attrs: Vec::new(),
-        nested_fn_names: Vec::new(),
-        let_bindings: Vec::new(),
+        literals: crate::analysis::facts::SharedFactSlice::empty(),
+        attrs: crate::analysis::facts::SharedFactSlice::empty(),
+        nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+        let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
+        generated: None,
     }
 }
 

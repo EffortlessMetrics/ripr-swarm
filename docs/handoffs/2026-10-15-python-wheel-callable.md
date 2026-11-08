@@ -65,6 +65,58 @@ build a wheel or run the hosted pip/uv jobs. Source checks are not hosted proof
 or measured savings. Changelog fragments: `changelog.d/4987-wheel-callable-subject.md`,
 `4987-wheel-parallel-contract.md`, `4987-wheel-codegen.md` (Internal / CI).
 
+## Installed ordinary-test hook (#10690)
+
+The existing `source-contract` producer also builds the `boundary_gap_closure`
+integration runner from the selected source. It selects exactly one test
+executable from Cargo's JSON messages, retains the build status and streams,
+and binds the staged bytes to the candidate SHA/tree and SHA-256. The separate
+`ripr-python-ordinary-runner-<subject_sha>` artifact carries that runner and its
+source receipt. It carries no workspace analyzer executable and creates no
+second wheel build.
+
+Only the pip consumer adds the ordinary row. Its installation and Python
+preview still run with the existing Rust-free environment, offline wheelhouse,
+planted PATH decoy and no source checkout. After those steps, a separately named
+toolchain step provisions Rust 1.95.0 for the fixture's native Cargo tests. The
+uv consumer retains its existing install, preview, reinstall and uninstall
+coverage. Both consumers still require the source contract and wheel build.
+
+The pip hook cross-checks the runner receipt and wheel receipt against the same
+source/tree, checks the staged digest, and invokes exactly
+`ordinary_daily_loop::ordinary_loop_preserves_production_subject_and_native_outcome`.
+All five strict inputs are supplied in an otherwise cleared environment:
+`RIPR_ORDINARY_MODE=installed`, the already verified `CONSUMER_EXECUTABLE`, its
+expected payload SHA-256, its complete source-bearing version line, and a fresh
+absolute evidence directory. Missing or mismatched input cannot select the
+Cargo-built analyzer. The selected fixture is embedded in the test runner;
+neither a checkout nor a hidden source-fixture copy is required in the consumer.
+
+A positive hook requires one exact selected and executed test, native exit zero,
+the strict admission and completion records, one executed positive project test,
+retained command streams/outcomes, unchanged analyzer and runner bytes, and
+fixture cleanup. The existing case separately checks wrong input, wrong base,
+zero project-test execution, wrong expectation and restoration. The artifact
+`ripr-python-ordinary-installed-<subject_sha>` retains the invocation, package
+and runner identities, tool versions, stdout/stderr, statuses and raw journey
+evidence for seven days, including partial evidence when the invocation fails.
+An incomplete or failed run is not promoted to a completed installed journey.
+
+The workflow contract's `ordinary` child module replays the actual added shell
+with explicit Cargo and runner test doubles. It rejects ambiguous compiler
+artifacts, failed builds, dirty/wrong source, wrong transferred identities,
+empty execution, missing completion and partial strict inputs. These are
+orchestration controls, not a wheel build or a native fixture pass. The retained
+8-minute source-contract and 5-minute callable-consumer budgets still require
+measurement on the exact hosted candidate.
+
+This is a controlled ordinary fixture row under #10690/#4508. It does not
+complete the governed repair, literal three-language matrix, real client/editor,
+blind operator, formal-verifier or empirical adoption acceptance. Static
+movement remains separate from the observed native result. Reverting this hook
+removes its staging and pip-only native phase while preserving the callable
+interface and the existing Rust-free package checks.
+
 ## Parallel source contract
 
 In an observation recorded on the source branch (not re-run here), a callable

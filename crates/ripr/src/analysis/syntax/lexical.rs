@@ -172,6 +172,7 @@ pub(crate) fn summarize_file_lexically(path: PathBuf, text: String) -> FileFacts
                     // the lexical fallback, like `FunctionFact` above.
                     nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
                     let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
+                    generated: None,
                 });
             }
             functions.push(function);
@@ -210,6 +211,7 @@ pub(crate) fn summarize_file_lexically(path: PathBuf, text: String) -> FileFacts
         // fail-closed standalone roles (#3533).
         module_declarations: Vec::new(),
         unresolved_property_macros,
+        verus_guard_facts: crate::analysis::verus::verus_guard_facts(source.as_ref()),
         role_provenance: super::super::facts::SourceRoleProvenance::default(),
         source,
         item_scopes: None,

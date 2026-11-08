@@ -312,3 +312,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — currentness_matrix_tail (24)
+
+Reason:
+RIPR-SPEC-0156: the fixture diff header now names the line before the gap (+12,0) as git writes it, so the input identity changes while the anchor stays at line 13 (#13098)
+
+Command:
+`cargo xtask goldens bless currentness_matrix_tail --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

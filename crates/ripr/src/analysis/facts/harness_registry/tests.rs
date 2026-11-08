@@ -3073,6 +3073,7 @@ fn demote_harness_target_functions_drops_differently_named_test_facts()
         attrs: vec!["#[test]".to_string()].into(),
         nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
         let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
+        generated: None,
     };
     let file_facts = FileFacts {
         path: target.to_path_buf(),

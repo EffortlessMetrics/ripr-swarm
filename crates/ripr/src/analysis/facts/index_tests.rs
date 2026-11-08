@@ -474,6 +474,64 @@ fn executable_test_common_payload_shares_one_backing_allocation() -> Result<(), 
 }
 
 #[test]
+fn finalize_keeps_empty_common_slices_unallocated() -> Result<(), String> {
+    let path = PathBuf::from("tests/shared_payload.rs");
+    let facts = membership_fixture(&path)?;
+    let mut index = RustIndex::default();
+    index.insert_file(path, facts, true);
+    index.finalize()?;
+    let mut empty_slices = 0usize;
+    for function in index.functions() {
+        for (empty, unallocated) in [
+            (function.calls.is_empty(), function.calls.is_unallocated()),
+            (
+                function.literals.is_empty(),
+                function.literals.is_unallocated(),
+            ),
+            (function.attrs.is_empty(), function.attrs.is_unallocated()),
+            (
+                function.nested_fn_names.is_empty(),
+                function.nested_fn_names.is_unallocated(),
+            ),
+            (
+                function.let_bindings.is_empty(),
+                function.let_bindings.is_unallocated(),
+            ),
+        ] {
+            if empty {
+                empty_slices += 1;
+                assert!(unallocated, "finalize materialized an empty function slice");
+            }
+        }
+    }
+    for test in index.tests() {
+        for (empty, unallocated) in [
+            (test.calls.is_empty(), test.calls.is_unallocated()),
+            (test.literals.is_empty(), test.literals.is_unallocated()),
+            (test.attrs.is_empty(), test.attrs.is_unallocated()),
+            (
+                test.nested_fn_names.is_empty(),
+                test.nested_fn_names.is_unallocated(),
+            ),
+            (
+                test.let_bindings.is_empty(),
+                test.let_bindings.is_unallocated(),
+            ),
+        ] {
+            if empty {
+                empty_slices += 1;
+                assert!(unallocated, "finalize materialized an empty test slice");
+            }
+        }
+    }
+    assert!(
+        empty_slices > 0,
+        "fixture must contain an empty common slice"
+    );
+    Ok(())
+}
+
+#[test]
 fn file_function_membership_retains_only_handle_capacity() -> Result<(), String> {
     let path = PathBuf::from("src/membership.rs");
     let facts = membership_fixture(&path)?;

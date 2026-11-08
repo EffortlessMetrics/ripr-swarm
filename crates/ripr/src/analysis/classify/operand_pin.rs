@@ -13,6 +13,10 @@
 
 mod primitive_binding;
 use primitive_binding::TypeSite;
+pub(super) use primitive_binding::{
+    callable_context_is_closed, closed_primitive_parameters, declared_return_is_primitive,
+    enum_constructor_context_is_closed,
+};
 
 use super::super::rust_index::{RustIndex, TestSummary};
 use crate::analysis::facts::{FunctionContainer, FunctionSummary};
@@ -1023,6 +1027,7 @@ mod tests {
             attrs: crate::analysis::facts::SharedFactSlice::empty(),
             nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
             let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
+            generated: None,
         }
     }
 

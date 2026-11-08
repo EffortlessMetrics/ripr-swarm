@@ -557,6 +557,7 @@ fn apply_libtest_mimic_target(
                 attrs: crate::analysis::facts::SharedFactSlice::empty(),
                 nested_fn_names: nested_fn_names.into(),
                 let_bindings: let_bindings.into(),
+                generated: None,
             },
             span_start: position,
             span_end: close_index,
@@ -1808,6 +1809,7 @@ fn registered_attribute_test_fact(function: &FunctionFact) -> TestFact {
         // parser-produced shadow facts — same body, same decisions.
         nested_fn_names: function.nested_fn_names.clone(),
         let_bindings: function.let_bindings.clone(),
+        generated: None,
     }
 }
 

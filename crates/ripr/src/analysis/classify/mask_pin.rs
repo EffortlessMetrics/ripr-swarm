@@ -402,6 +402,7 @@ mod tests {
             attrs: crate::analysis::facts::SharedFactSlice::empty(),
             nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
             let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
+            generated: None,
         }
     }
 

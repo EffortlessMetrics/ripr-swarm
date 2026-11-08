@@ -1,0 +1,1 @@
+editors/vscode/test/suite/developer_setup.test.ts|child_process|2|lsp/editor-test|#13201: one child-side guard forbids diagnostic subprocess APIs; one controlled host fixture creates a pipe-holding descendant under the existing process owner. Native PID, terminal-status and cleanup controls; no new production spawn authority.

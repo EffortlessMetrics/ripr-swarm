@@ -183,6 +183,8 @@ pub struct RustIndex {
     /// serialized provider receipt. Rebuilt together with property registration.
     pub(super) proptest_metadata_failures:
         BTreeMap<(PathBuf, usize, String), super::proptest::ProptestMetadataFailure>,
+    /// Transient VP3R resource edges; rebuilt during index construction (#5171).
+    pub(crate) resource_dependencies: super::resource_dependencies::ResourceDependencyFacts,
     pub(super) bolero_receipts: BTreeMap<(PathBuf, usize, String), super::bolero::BoleroReceipt>,
 }
 
@@ -204,6 +206,7 @@ pub struct FileData {
     pub used_lexical_fallback: bool,
     pub module_declarations: Vec<ModuleDeclarationFact>,
     pub unresolved_property_macros: Vec<UnresolvedPropertyMacroFact>,
+    pub verus_guard_facts: Vec<crate::analysis::verus::VerusGuardFact>,
     pub role_provenance: SourceRoleProvenance,
     pub source: std::sync::Arc<str>,
     pub(crate) item_scopes: Option<Box<ModuleItemScopes>>,
@@ -383,7 +386,7 @@ impl serde::Serialize for FileFactsView<'_> {
             .iter()
             .map(|fact| ProbeShapeFactWire::attached(fact, &self.source))
             .collect();
-        let mut state = serializer.serialize_struct("FileFacts", 12)?;
+        let mut state = serializer.serialize_struct("FileFacts", 13)?;
         state.serialize_field("path", &self.path)?;
         state.serialize_field("functions", &functions)?;
         state.serialize_field("tests", &tests)?;
@@ -396,6 +399,7 @@ impl serde::Serialize for FileFactsView<'_> {
             "unresolved_property_macros",
             &self.unresolved_property_macros,
         )?;
+        state.serialize_field("verus_guard_facts", &self.verus_guard_facts)?;
         state.serialize_field("source", self.source.as_ref())?;
         state.serialize_field("item_scopes", &self.item_scopes)?;
         state.serialize_field("macro_candidates", &self.macro_candidates)?;
@@ -634,6 +638,7 @@ impl RustIndex {
             used_lexical_fallback,
             module_declarations,
             unresolved_property_macros,
+            verus_guard_facts,
             role_provenance,
             source,
             item_scopes,
@@ -675,6 +680,7 @@ impl RustIndex {
                     used_lexical_fallback,
                     module_declarations,
                     unresolved_property_macros,
+                    verus_guard_facts,
                     role_provenance,
                     source,
                     item_scopes,
@@ -811,36 +817,26 @@ impl RustIndex {
             fact.impl_attrs.shrink_to_fit();
             fact.nested_fn_names.shrink_capacity_if_unique();
             fact.let_bindings.shrink_capacity_if_unique();
-            if fact.calls.is_uniquely_owned() {
-                for call in fact.calls.make_mut().iter_mut() {
-                    call.name.shrink_to_fit();
-                }
+            for call in fact.calls.iter_mut_if_unique() {
+                call.name.shrink_to_fit();
             }
             for ret in &mut fact.returns {
                 ret.text.shrink_to_fit();
             }
-            if fact.literals.is_uniquely_owned() {
-                for literal in fact.literals.make_mut().iter_mut() {
-                    literal.value.shrink_to_fit();
-                }
+            for literal in fact.literals.iter_mut_if_unique() {
+                literal.value.shrink_to_fit();
             }
-            if fact.attrs.is_uniquely_owned() {
-                for attr in fact.attrs.make_mut().iter_mut() {
-                    attr.shrink_to_fit();
-                }
+            for attr in fact.attrs.iter_mut_if_unique() {
+                attr.shrink_to_fit();
             }
             for attr in &mut fact.impl_attrs {
                 attr.shrink_to_fit();
             }
-            if fact.nested_fn_names.is_uniquely_owned() {
-                for name in fact.nested_fn_names.make_mut().iter_mut() {
-                    name.shrink_to_fit();
-                }
+            for name in fact.nested_fn_names.iter_mut_if_unique() {
+                name.shrink_to_fit();
             }
-            if fact.let_bindings.is_uniquely_owned() {
-                for binding in fact.let_bindings.make_mut().iter_mut() {
-                    binding.name.shrink_to_fit();
-                }
+            for binding in fact.let_bindings.iter_mut_if_unique() {
+                binding.name.shrink_to_fit();
             }
         }
         self.test_facts.records.shrink_to_fit();
@@ -855,10 +851,8 @@ impl RustIndex {
             fact.attrs.shrink_capacity_if_unique();
             fact.nested_fn_names.shrink_capacity_if_unique();
             fact.let_bindings.shrink_capacity_if_unique();
-            if fact.calls.is_uniquely_owned() {
-                for call in fact.calls.make_mut().iter_mut() {
-                    call.name.shrink_to_fit();
-                }
+            for call in fact.calls.iter_mut_if_unique() {
+                call.name.shrink_to_fit();
             }
             for assertion in &mut fact.assertions {
                 assertion.text.shrink_to_fit();
@@ -867,25 +861,17 @@ impl RustIndex {
                     token.shrink_to_fit();
                 }
             }
-            if fact.literals.is_uniquely_owned() {
-                for literal in fact.literals.make_mut().iter_mut() {
-                    literal.value.shrink_to_fit();
-                }
+            for literal in fact.literals.iter_mut_if_unique() {
+                literal.value.shrink_to_fit();
             }
-            if fact.attrs.is_uniquely_owned() {
-                for attr in fact.attrs.make_mut().iter_mut() {
-                    attr.shrink_to_fit();
-                }
+            for attr in fact.attrs.iter_mut_if_unique() {
+                attr.shrink_to_fit();
             }
-            if fact.nested_fn_names.is_uniquely_owned() {
-                for name in fact.nested_fn_names.make_mut().iter_mut() {
-                    name.shrink_to_fit();
-                }
+            for name in fact.nested_fn_names.iter_mut_if_unique() {
+                name.shrink_to_fit();
             }
-            if fact.let_bindings.is_uniquely_owned() {
-                for binding in fact.let_bindings.make_mut().iter_mut() {
-                    binding.name.shrink_to_fit();
-                }
+            for binding in fact.let_bindings.iter_mut_if_unique() {
+                binding.name.shrink_to_fit();
             }
         }
         for (visited, file) in self.files.values_mut().enumerate() {
@@ -1044,6 +1030,7 @@ impl RustIndex {
             used_lexical_fallback,
             module_declarations,
             unresolved_property_macros,
+            verus_guard_facts,
             role_provenance,
             source,
             item_scopes,
@@ -1059,6 +1046,7 @@ impl RustIndex {
             used_lexical_fallback,
             module_declarations,
             unresolved_property_macros,
+            verus_guard_facts,
             role_provenance,
             source,
             item_scopes,
