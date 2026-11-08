@@ -4191,6 +4191,61 @@ fn continue_refuses_a_diverged_head_with_recovery() -> Result<(), String> {
     Ok(())
 }
 
+/// #11584: a typed after-phase refusal under `continue --json` prints the
+/// `repair_after_refusal` document on stdout with exit 3; without `--json`
+/// the same refusal leaves stdout empty.
+#[test]
+fn continue_json_prints_the_typed_after_refusal_document() -> Result<(), String> {
+    let fixture = Fixture::boundary("facade-continue-json-stale")?;
+    let root = &fixture.root;
+    let root_arg = root.to_string_lossy().into_owned();
+    git_commit(root, "second commit")?;
+    let before = run_ripr(
+        root,
+        &[
+            "agent",
+            "repair",
+            "--root",
+            &root_arg,
+            "--seam-id",
+            FIXTURE_SEAM,
+            "--phase",
+            "before",
+        ],
+    )?;
+    assert_exit(&before, 0, "advanced before phase");
+    let attempt_id = attempt_id_from_before_stderr(&stderr_text(&before))?;
+    run_git(root, &["reset", "--hard", "HEAD~1"])?;
+    let pricing = std::fs::read_to_string(root.join("tests/pricing.rs"))
+        .map_err(|error| format!("read pricing tests: {error}"))?;
+    std::fs::write(
+        root.join("tests/pricing.rs"),
+        format!("{pricing}{FIXTURE_BOUNDARY_TEST}"),
+    )
+    .map_err(|error| format!("write focused edit: {error}"))?;
+
+    let plain = run_ripr(root, &["continue", "--root", &root_arg])?;
+    assert_exit(&plain, 3, "continue on a diverged head");
+    assert!(
+        stdout_text(&plain).is_empty(),
+        "without --json the refusal keeps stdout empty:\n{}",
+        stdout_text(&plain)
+    );
+
+    let json = run_ripr(root, &["continue", "--root", &root_arg, "--json"])?;
+    assert_exit(&json, 3, "continue --json on a diverged head");
+    let document: serde_json::Value = serde_json::from_slice(&json.stdout)
+        .map_err(|error| format!("refusal stdout must be JSON: {error}"))?;
+    assert_eq!(document["kind"], "repair_after_refusal", "{document:#}");
+    assert!(
+        stdout_text(&json).contains(&attempt_id),
+        "the refusal document must name the attempt:\n{}",
+        stdout_text(&json)
+    );
+    assert!(stderr_text(&json).contains("does not descend"));
+    Ok(())
+}
+
 /// Control 7: foreign CWD with `--root` — attempt, store, and artifacts
 /// stay under the selected root on every façade command.
 #[test]
@@ -4704,7 +4759,10 @@ fn help_surfaces_stay_task_first() -> Result<(), String> {
             row["exit"]["kind"], "decision_or_refusal",
             "{id} must advertise its decision exits"
         );
-        assert!(row["accepts_json_flag"].is_null(), "{id} has no JSON flag");
+        assert_eq!(
+            row["accepts_json_flag"], "--json",
+            "{id} accepts --json (#11584)"
+        );
     }
     let status = find("cmd:status")?;
     // #12417: the unanchored discovery refusal is a typed decision, so both
@@ -4875,7 +4933,7 @@ fn continue_on_unsuccessful_terminal_attempts_refuses_without_completion() -> Re
             "a {state} attempt is never already complete:\n{stderr}"
         );
         // The refusal carries the status-shaped facts on stderr while
-        // stdout stays empty per `EXIT_TYPED_REFUSAL_EMPTY_STDOUT`. The
+        // stdout stays empty (an ended attempt is a selection refusal). The
         // flipped fixture keeps its terminal evidence by design, so the
         // test pins the status markers, not receipt absence: the
         // selector keys on state.
@@ -6855,5 +6913,174 @@ fn status_attempt_with_a_malformed_id_names_status_not_agent_status() -> Result<
         "{stderr}"
     );
     assert!(!stderr.contains("agent status"), "{stderr}");
+    Ok(())
+}
+
+/// #11584: `ripr repair --json` prints the packet envelope with the additive
+/// `repair_attempt.attempt_id` on stdout and nothing but that document; a
+/// repeated start prints the existing attempt's status document; without
+/// `--json` stdout is still the human summary and card.
+#[test]
+fn repair_json_prints_the_packet_with_the_attempt_id() -> Result<(), String> {
+    let fixture = Fixture::boundary("facade-repair-json")?;
+    let root = &fixture.root;
+    let root_arg = root.to_string_lossy().into_owned();
+    let started = run_ripr(root, &["repair", "--root", &root_arg, "--json"])?;
+    assert_exit(&started, 0, "repair --json start");
+    let ids = attempt_ids(root);
+    assert_eq!(ids.len(), 1, "exactly one attempt must be created");
+    let document: serde_json::Value = serde_json::from_slice(&started.stdout)
+        .map_err(|error| format!("stdout must be one JSON document: {error}"))?;
+    assert_eq!(
+        document.pointer("/repair_attempt/attempt_id"),
+        Some(&serde_json::Value::String(ids[0].clone())),
+        "the packet must carry the started attempt id:\n{document:#}"
+    );
+    // A repeated start resumes the attempt and prints its typed status.
+    let repeated = run_ripr(root, &["repair", "--root", &root_arg, "--json"])?;
+    assert_exit(&repeated, 0, "repeated repair --json");
+    let status = run_ripr(
+        root,
+        &[
+            "status",
+            "--root",
+            &root_arg,
+            "--attempt",
+            &ids[0],
+            "--json",
+        ],
+    )?;
+    assert_exit(&status, 0, "status --json of the resumed attempt");
+    assert_eq!(
+        stdout_text(&repeated),
+        stdout_text(&status),
+        "a resumed --json start must print the attempt's status document"
+    );
+    assert_eq!(attempt_ids(root), ids, "no second attempt may be created");
+
+    // Negative control: without --json the stdout stays the human document.
+    let human_fixture = Fixture::boundary("facade-repair-json-off")?;
+    let human_root = &human_fixture.root;
+    let human_arg = human_root.to_string_lossy().into_owned();
+    let human = run_ripr(human_root, &["repair", "--root", &human_arg])?;
+    assert_exit(&human, 0, "repair without --json");
+    assert!(
+        serde_json::from_slice::<serde_json::Value>(&human.stdout).is_err(),
+        "without --json stdout must stay the human summary:\n{}",
+        stdout_text(&human)
+    );
+    assert!(stdout_text(&human).contains("Next, after the test edit"));
+    Ok(())
+}
+
+/// #11584: `ripr continue --json` prints the after-phase document, and an
+/// already-complete attempt prints the same status JSON `ripr status --json`
+/// prints.
+#[test]
+fn continue_json_prints_its_after_phase_document() -> Result<(), String> {
+    let fixture = Fixture::boundary("facade-continue-json")?;
+    let root = &fixture.root;
+    let root_arg = root.to_string_lossy().into_owned();
+    let started = run_ripr(root, &["repair", "--root", &root_arg])?;
+    assert_exit(&started, 0, "repair start");
+    let ids = attempt_ids(root);
+    assert_eq!(ids.len(), 1);
+    let pricing = std::fs::read_to_string(root.join("tests/pricing.rs"))
+        .map_err(|error| format!("read pricing tests: {error}"))?;
+    std::fs::write(
+        root.join("tests/pricing.rs"),
+        format!("{pricing}{FIXTURE_BOUNDARY_TEST}"),
+    )
+    .map_err(|error| format!("write focused edit: {error}"))?;
+    let continued = run_ripr(root, &["continue", "--root", &root_arg, "--json"])?;
+    assert_exit(&continued, 0, "continue --json");
+    let document: serde_json::Value = serde_json::from_slice(&continued.stdout)
+        .map_err(|error| format!("continue --json stdout must be JSON: {error}"))?;
+    assert!(document.is_object(), "after-phase document:\n{document:#}");
+    assert!(
+        stdout_text(&continued).contains(&ids[0]),
+        "the after-phase document must name the attempt:\n{}",
+        stdout_text(&continued)
+    );
+    assert_eq!(read_manifest(root, &ids[0])?["state"], "ready_to_finish");
+
+    let status = run_ripr(
+        root,
+        &[
+            "status",
+            "--root",
+            &root_arg,
+            "--attempt",
+            &ids[0],
+            "--json",
+        ],
+    )?;
+    assert_exit(&status, 0, "status --json");
+    let repeated = run_ripr(
+        root,
+        &[
+            "continue",
+            "--root",
+            &root_arg,
+            "--attempt",
+            &ids[0],
+            "--json",
+        ],
+    )?;
+    assert_exit(&repeated, 0, "repeated continue --json");
+    assert_eq!(
+        stdout_text(&repeated),
+        stdout_text(&status),
+        "already-complete --json output must equal the attempt status JSON"
+    );
+    Ok(())
+}
+
+/// #11584: `--json` does not change refusal or usage behavior. Argv usage
+/// errors stay prose-only (#6834) and a facade refusal keeps its exit code,
+/// empty stdout and stderr prose.
+#[test]
+fn repair_and_continue_json_keep_refusals_and_usage_errors_prose_only() -> Result<(), String> {
+    let fixture = Fixture::empty("facade-json-refusals")?;
+    let root = &fixture.root;
+    let root_arg = root.to_string_lossy().into_owned();
+    for argv in [
+        vec![
+            "repair",
+            "--json",
+            "--bogus-flag-11584",
+            "--root",
+            &root_arg,
+        ],
+        vec![
+            "continue",
+            "--json",
+            "--bogus-flag-11584",
+            "--root",
+            &root_arg,
+        ],
+    ] {
+        let output = run_ripr(root, &argv)?;
+        assert_exit(&output, 2, &format!("usage error {argv:?}"));
+        assert!(
+            stdout_text(&output).is_empty(),
+            "usage error must keep stdout empty:\n{}",
+            stdout_text(&output)
+        );
+        assert!(stderr_text(&output).contains("--bogus-flag-11584"));
+    }
+    let refused = run_ripr(root, &["repair", "--root", &root_arg, "--json"])?;
+    assert_exit(&refused, 3, "repair --json with no eligible gap");
+    assert_refusal_code(
+        &refused,
+        "no_eligible_seam",
+        "not_started",
+        "no_eligible_seam",
+    );
+    assert!(stdout_text(&refused).is_empty());
+    let none = run_ripr(root, &["continue", "--root", &root_arg, "--json"])?;
+    assert_exit(&none, 3, "continue --json with no attempt");
+    assert!(stdout_text(&none).is_empty());
+    assert!(stderr_text(&none).contains("no current attempt"));
     Ok(())
 }
