@@ -219,6 +219,17 @@ tool ran to completion, so this is a notification, not a refusal
 alert with no source location). A healthy run emits no `invocations` and is
 byte-identical to before.
 
+`ripr review-comments` has no limitations channel for ranked review items, so
+it refuses a failed pass instead of rendering the stand-ins as ordinary seams
+(#13340): the diff-scoped streamed walk's `evidence_limitations` go through
+`ScopedClassifiedSeamInventory::require_complete_evidence`, which shares the
+`producer_failure` refusal wording with the classified-seam report owner. The
+run receipt records `failed` at `canonical_analysis` with the pass-wide
+repair route, and no review artifact is written. `BoundedAgentBrief` is only
+the streaming sink for that walk; its sole production caller is
+`review-comments`, so the gate sits at the caller that owns the result. A
+healthy run is byte-identical.
+
 `ripr agent status` (the pilot withheld-every-seam stop) reads the retained
 pilot `repo-exposure.json` by `limitations[]` category as well as `run_status`.
 A pass-wide `producer_failure` (or `limited_seam_evidence`) replaces the
@@ -308,6 +319,12 @@ second tuple element via `let (classified, _) = ...`.
   in `crates/ripr/src/app/agent_status.rs`: the declined-files-only stop names
   a failed evidence pass read from the summary or the repo exposure report, and
   keeps its plain message otherwise.
+
+- `review_comments_refuses_a_failed_seam_evidence_warm` in
+  `crates/ripr/src/cli/commands/review_comments.rs`: unarmed control on a
+  separate root publishes the artifacts; `WarmPanicGuard::arm(1)` and `arm(2)`
+  on fresh roots refuse with `producer_failure`, record a failed receipt and
+  publish no artifact.
 
 **Both slices**:
 

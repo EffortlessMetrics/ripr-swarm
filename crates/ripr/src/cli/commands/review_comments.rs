@@ -865,6 +865,13 @@ fn review_comments_with_admission(
         options.timeout_ms,
         "canonical_analysis",
     )?;
+    // #13340: a failed seam-evidence warm leaves every streamed seam an opaque
+    // stand-in; refuse rather than rank them as ordinary review seams.
+    scoped_inventory
+        .require_complete_evidence("review-comments")
+        .map_err(|error| {
+            record_review_comments_error(&mut receipt, &receipt_path, "canonical_analysis", error)
+        })?;
     receipt.phase("canonical_analysis", "route_construction");
     receipt.write_atomic(&receipt_path)?;
     let mut selection = selection_builder.selection().map_err(|error| {
@@ -1887,6 +1894,90 @@ mod tests {
         assert!(rendered_md.contains("Advisory static evidence only"));
 
         std::fs::remove_dir_all(&root).map_err(|err| format!("remove temp root: {err}"))?;
+        Ok(())
+    }
+
+    /// #13340: a failed seam-evidence warm leaves every streamed seam an opaque
+    /// stand-in; review-comments refuses instead of ranking them. The unarmed
+    /// control runs on a separate root first (the cache replays healthy walks).
+    #[test]
+    fn review_comments_refuses_a_failed_seam_evidence_warm() -> Result<(), String> {
+        fn run(label: &str, armed: Option<u8>) -> Result<(PathBuf, Result<(), String>), String> {
+            let root = unique_command_test_dir(label);
+            std::fs::create_dir_all(root.join("src"))
+                .map_err(|err| format!("create src: {err}"))?;
+            std::fs::write(
+                root.join("Cargo.toml"),
+                "[package]\nname = \"review_comments_failed_warm\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+            )
+            .map_err(|err| format!("write Cargo.toml: {err}"))?;
+            std::fs::write(
+                root.join("src/lib.rs"),
+                "pub fn discounted_total(amount: i32) -> i32 {\n    if amount > 10 { amount - 1 } else { amount }\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn above_threshold_gets_discount() {\n        assert_eq!(discounted_total(11), 10);\n    }\n}\n",
+            )
+            .map_err(|err| format!("write src/lib.rs: {err}"))?;
+            let out = root.join("target/ripr/review/comments.json");
+            let call_args = args(&[
+                "--root",
+                &root.display().to_string(),
+                "--base",
+                "HEAD~1",
+                "--head",
+                "HEAD",
+                "--out",
+                &out.display().to_string(),
+            ]);
+            let loader = |_root: &Path, _base: &str, _head: &str| {
+                Ok("diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -2 +2 @@\n-    if amount >= 10 { amount - 1 } else { amount }\n+    if amount > 10 { amount - 1 } else { amount }\n".to_string())
+            };
+            let result = match armed {
+                Some(n) => {
+                    let _guard = crate::analysis::test_grip_evidence::WarmPanicGuard::arm(n);
+                    review_comments_with_diff_loader(&call_args, loader)
+                }
+                None => review_comments_with_diff_loader(&call_args, loader),
+            };
+            Ok((root, result))
+        }
+
+        let (control_root, control) = run("review-failed-warm-control", None)?;
+        control?;
+        let control_out = control_root.join("target/ripr/review/comments.json");
+        if !control_out.exists() {
+            return Err("healthy control must publish review artifacts".to_string());
+        }
+        let _ = std::fs::remove_dir_all(&control_root);
+
+        for n in [1, 2] {
+            let (root, result) = run(&format!("review-failed-warm-{n}"), Some(n))?;
+            let out = root.join("target/ripr/review/comments.json");
+            let error = match result {
+                Ok(()) => {
+                    return Err(format!("arm({n}) must refuse a failed evidence warm"));
+                }
+                Err(error) => error,
+            };
+            if !error.contains("review-comments refused")
+                || !error.contains("producer_failure")
+                || !error.contains("pass-wide")
+            {
+                return Err(format!("arm({n}) refusal wording: {error}"));
+            }
+            if out.exists() || out.with_extension("md").exists() {
+                return Err(format!("arm({n}) published review artifacts"));
+            }
+            let receipt: serde_json::Value = serde_json::from_str(
+                &std::fs::read_to_string(out.with_file_name("run-receipt.json"))
+                    .map_err(|err| format!("read receipt: {err}"))?,
+            )
+            .map_err(|err| format!("parse receipt: {err}"))?;
+            if receipt["status"] != "failed" || receipt["active_phase"] != "canonical_analysis" {
+                return Err(format!(
+                    "arm({n}) receipt must record the failure: {receipt}"
+                ));
+            }
+            let _ = std::fs::remove_dir_all(&root);
+        }
         Ok(())
     }
 
