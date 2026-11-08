@@ -4,7 +4,8 @@
 //! other shape stays fail-closed: a strong read, a second candidate test, a
 //! binding passed elsewhere or shadowed, a second owner call that may observe
 //! the whole value, a `use` alias of the owner, a changed field of a nested
-//! record, and a field the test cannot name.
+//! record or of an `async` block's `return`, a declared return type that is
+//! only an alias of the constructed struct, and a field the test cannot name.
 //! Integration fixtures spell the owner bare: the in-memory index has no
 //! package-name authority, so a `use <package>::owner` import is settled
 //! only end to end (`tests/unread_owner_result_field_repair_start.rs`).
@@ -321,6 +322,7 @@ fn default_config_is_quiet() {
 }
 "#,
     )?;
+    setup_must_reach_gate(&case, "default_config_is_quiet")?;
     no_unread_fact(&case, "an owner name imported from another crate")
 }
 
@@ -451,4 +453,99 @@ fn default_config_is_quiet() {
     )?;
     setup_must_reach_gate(&case, "default_config_is_quiet")?;
     no_unread_fact(&case, "a changed field of a nested record")
+}
+
+#[test]
+fn early_return_construction_in_the_owner_starts_repair() -> Result<(), String> {
+    let case = integration_case(
+        r#"
+pub struct Config {
+    pub retries: u32,
+    pub verbose: bool,
+}
+
+pub fn default_config() -> Config {
+    return Config {
+        retries: 5,
+        verbose: false,
+    };
+}
+"#,
+        r#"
+#[test]
+fn default_config_is_quiet() {
+    let c = default_config();
+    assert!(!c.verbose);
+}
+"#,
+    )?;
+    unread_route_must_be_ready(&case, "default_config_is_quiet")
+}
+
+#[test]
+fn return_inside_an_async_block_is_not_unread() -> Result<(), String> {
+    // The `return` leaves the future, not the owner: the changed literal is
+    // not what `default_config` returns.
+    let case = integration_case(
+        r#"
+pub struct Config {
+    pub retries: u32,
+    pub verbose: bool,
+}
+
+pub fn default_config() -> Config {
+    let _later = async {
+        return Config {
+            retries: 5,
+            verbose: false,
+        };
+    };
+    Config {
+        retries: 3,
+        verbose: false,
+    }
+}
+"#,
+        r#"
+#[test]
+fn default_config_is_quiet() {
+    let c = default_config();
+    assert!(!c.verbose);
+}
+"#,
+    )?;
+    setup_must_reach_gate(&case, "default_config_is_quiet")?;
+    no_unread_fact(&case, "a `return` inside an async block")
+}
+
+#[test]
+fn return_type_alias_of_the_constructed_struct_is_not_unread() -> Result<(), String> {
+    // The declared return type `Cfg` only aliases `Config`; the equality
+    // gate cannot place it, so it fails closed.
+    let case = integration_case(
+        r#"
+pub struct Config {
+    pub retries: u32,
+    pub verbose: bool,
+}
+
+pub type Cfg = Config;
+
+pub fn default_config() -> Cfg {
+    Config {
+        retries: 5,
+        verbose: false,
+    }
+}
+"#,
+        r#"
+#[test]
+fn default_config_is_quiet() {
+    let c = default_config();
+    assert!(!c.verbose);
+}
+"#,
+    )?;
+    setup_must_reach_gate(&case, "default_config_is_quiet")?;
+    no_unread_fact(&case, "a declared return type alias")
 }

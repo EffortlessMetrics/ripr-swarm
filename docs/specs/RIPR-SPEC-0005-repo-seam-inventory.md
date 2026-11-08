@@ -619,8 +619,12 @@ against fixture repos.
   owner's top-level return construction (a nested record such as
   `Wrapper { inner: Inner { .. } }`), an owner name imported from
   a rival module or crate, and a field the test file cannot name stay
-  non-ready. Only the test body is scanned: a helper, constant, macro or
-  trait delegation defined outside it that calls the owner is not seen.
+  non-ready, as do a changed literal returned from an `async`, `const`,
+  `try` or `gen` block inside the owner and a declared return type that only
+  aliases the constructed struct. Only the test body is scanned: a helper,
+  constant, macro or trait delegation defined outside it that calls the
+  owner is not seen, and neither is an alias re-exported from the
+  production crate (`pub use config::default_config as dc;`).
 - `analysis/related-test-ranking-v2-stabilization`: tests that direct owner
 calls outrank weaker relationship signals, strong oracles outrank smoke-only
 oracles inside the same relation, activation-value overlap breaks remaining

@@ -242,8 +242,10 @@ fn owner_result_field_observation(
 /// identifier; and no string literal names `field` or captures `binding` in a
 /// format argument. Only the test body is scanned: a helper, `const`, macro
 /// or trait delegation (`Config::default()` calling the owner) defined
-/// outside it is not read, so a call to the owner made there is not seen.
-/// A `use` alias of the owner in the test file is refused separately
+/// outside it is not read, and neither is an alias re-exported from the
+/// production crate (`pub use config::default_config as dc;`), so a call to
+/// the owner made through any of them is not seen. A `use` alias of the
+/// owner in the test file itself is refused separately
 /// ([`file_renames_owner`]).
 fn binding_never_reads_field(
     function: &ast::Fn,
@@ -323,12 +325,12 @@ fn binding_never_reads_field(
 /// #13700: the owner's declared return type name (generics stripped) when
 /// `record` is the owner function's top-level return construction: its body's
 /// tail expression or the value of a `return` directly in the owner (not in a
-/// closure), parentheses allowed. A nested initializer, a call argument or
-/// any other position answers `None`.
-fn owner_top_level_return_type(
-    record: &ast::RecordExpr,
-    owner_fn: &FunctionSummary,
-) -> Option<String> {
+/// closure, and not in an `async`, `const`, `try` or `gen` block, whose
+/// `return` leaves that block rather than the owner), parentheses allowed.
+/// The enclosing function must be the owner's own node (`owner_node`), not
+/// a same-named nested `fn`. A nested initializer, a call argument or any
+/// other position answers `None`.
+fn owner_top_level_return_type(record: &ast::RecordExpr, owner_node: &ast::Fn) -> Option<String> {
     let mut outer = record.syntax().clone();
     while let Some(parent) = outer
         .parent()
@@ -345,13 +347,22 @@ fn owner_top_level_return_type(
         ast::Fn::cast(body.syntax().parent()?)?
     } else if ast::ReturnExpr::can_cast(parent.kind()) {
         let enclosing = parent.ancestors().find(|node| {
-            ast::Fn::can_cast(node.kind()) || ast::ClosureExpr::can_cast(node.kind())
+            ast::Fn::can_cast(node.kind())
+                || ast::ClosureExpr::can_cast(node.kind())
+                || ast::BlockExpr::cast(node.clone()).is_some_and(|block| {
+                    block.modifier().is_some_and(|modifier| {
+                        !matches!(
+                            modifier,
+                            ast::BlockModifier::Unsafe(_) | ast::BlockModifier::Label(_)
+                        )
+                    })
+                })
         })?;
         ast::Fn::cast(enclosing)?
     } else {
         return None;
     };
-    if function.name()?.text() != owner_fn.name {
+    if function.syntax() != owner_node.syntax() {
         return None;
     }
     let ty = function.ret_type()?.ty()?.syntax().text().to_string();
@@ -416,7 +427,10 @@ fn constructed_field_visible_from(
     let Some(record) = entry.syntax().ancestors().find_map(ast::RecordExpr::cast) else {
         return false;
     };
-    let Some(owner_return) = owner_top_level_return_type(&record, owner_fn) else {
+    let Some(owner_node) = parsed.unique_test_fn(&owner_fn.name, owner_fn.start_line) else {
+        return false;
+    };
+    let Some(owner_return) = owner_top_level_return_type(&record, &owner_node) else {
         return false;
     };
     let Some(path) = record.path() else {
