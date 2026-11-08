@@ -9,9 +9,9 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
 use super::{hex_lower, payload, producer, sha256_file};
-use crate::policy::distribution::{DistributionContract, load_distribution_contract};
-
-const TARGET: &str = "x86_64-unknown-linux-gnu";
+use crate::policy::distribution::{
+    DistributionContract, TargetContract, load_distribution_contract,
+};
 
 fn verify_extracted_file(
     bytes: &[u8],
@@ -72,45 +72,98 @@ fn verify_notices(
     Ok(())
 }
 
+/// The policy row for the identity's target, with the npm metadata the
+/// launcher's platform map requires. Linux rows must name glibc; other
+/// platforms must not declare a libc.
+pub(super) fn contract_target<'a>(
+    identity: &payload::FinalNativePayloadIdentity,
+    contract: &'a DistributionContract,
+) -> Result<&'a TargetContract, String> {
+    let target = contract
+        .target
+        .iter()
+        .find(|row| row.rust_target == identity.target)
+        .ok_or_else(|| format!("missing {} distribution policy", identity.target))?;
+    if target.executable != identity.executable {
+        return Err(format!(
+            "native npm producer requires executable {} for {}, got {}",
+            target.executable, identity.target, identity.executable
+        ));
+    }
+    let expected_package = format!(
+        "{}/ripr-{}-{}{}",
+        contract.npm.scope,
+        target.npm_os,
+        target.npm_cpu,
+        match (target.npm_os.as_str(), target.npm_libc.as_deref()) {
+            ("linux", Some("glibc")) => "-gnu",
+            ("win32", None) => "-msvc",
+            ("darwin", None) => "",
+            _ =>
+                return Err(format!(
+                    "{} npm libc metadata does not match the launcher contract",
+                    identity.target
+                )),
+        }
+    );
+    if target.npm_package != expected_package {
+        return Err(format!(
+            "{} npm package {} does not match the launcher contract {expected_package}",
+            identity.target, target.npm_package
+        ));
+    }
+    Ok(target)
+}
+
+fn platform_label(target: &TargetContract) -> String {
+    let os = match target.npm_os.as_str() {
+        "linux" => "Linux",
+        "darwin" => "macOS",
+        "win32" => "Windows",
+        other => other,
+    };
+    match target.npm_libc.as_deref() {
+        Some(libc) => format!("{os} {} {libc}", target.npm_cpu),
+        None => format!("{os} {}", target.npm_cpu),
+    }
+}
+
+/// npm's tarball name for a scoped package: `@scope/name` packs as
+/// `scope-name-<version>.tgz`.
+pub(super) fn tarball_name(package: &str, version: &str) -> String {
+    format!(
+        "{}-{version}.tgz",
+        package.trim_start_matches('@').replace('/', "-")
+    )
+}
+
 fn manifest(
     identity: &payload::FinalNativePayloadIdentity,
     contract: &DistributionContract,
 ) -> Result<Value, String> {
-    if identity.target != TARGET || identity.executable != "ripr" {
-        return Err(format!(
-            "native npm producer only admits {TARGET}/ripr, got {}/{}",
-            identity.target, identity.executable
-        ));
-    }
-    let target = contract
-        .target
-        .iter()
-        .find(|row| row.rust_target == TARGET)
-        .ok_or_else(|| format!("missing {TARGET} distribution policy"))?;
-    if target.npm_package != "@effortlessmetrics/ripr-linux-x64-gnu"
-        || target.npm_os != "linux"
-        || target.npm_cpu != "x64"
-        || target.npm_libc.as_deref() != Some("glibc")
-    {
-        return Err("Linux x64 npm metadata does not match the launcher contract".to_string());
-    }
+    let target = contract_target(identity, contract)?;
     let files: Vec<String> = identity
         .files
         .iter()
         .map(|file| package_path(identity, &file.path))
         .collect();
-    Ok(json!({
+    let mut manifest = json!({
         "name": target.npm_package,
         "version": identity.version,
-        "description": "Native ripr executable for Linux x64 glibc",
+        "description": format!("Native ripr executable for {}", platform_label(target)),
         "license": "MIT OR Apache-2.0",
         "repository": {"type": "git", "url": "https://github.com/EffortlessMetrics/ripr.git"},
-        "os": [target.npm_os], "cpu": [target.npm_cpu], "libc": [target.npm_libc],
+        "os": [target.npm_os], "cpu": [target.npm_cpu],
         "files": files,
         "exports": {"./package.json": "./package.json"},
         "publishConfig": {"access": "public"},
-        "riprNative": {"schemaVersion": 1, "product": "ripr", "target": TARGET, "executable": "bin/ripr"}
-    }))
+        "riprNative": {"schemaVersion": 1, "product": "ripr", "target": identity.target,
+            "executable": format!("bin/{}", identity.executable)}
+    });
+    if let Some(libc) = &target.npm_libc {
+        manifest["libc"] = json!([libc]);
+    }
+    Ok(manifest)
 }
 
 fn append(
@@ -149,7 +202,7 @@ fn require_source_executable(path: &Path) -> Result<(), String> {
 
 #[cfg(not(unix))]
 fn require_source_executable(_path: &Path) -> Result<(), String> {
-    Err("Linux native package mode must be verified on a Unix host".to_string())
+    Err("POSIX native package mode must be verified on a Unix host".to_string())
 }
 
 fn pack(
@@ -161,7 +214,11 @@ fn pack(
     let mut metadata =
         serde_json::to_vec_pretty(&manifest(identity, contract)?).map_err(|e| e.to_string())?;
     metadata.push(b'\n');
-    require_source_executable(&payload_dir.join(&identity.executable))?;
+    // A Windows payload carries no POSIX mode (its archive is a zip); the
+    // packed entry still gets 0o755 below so the extracted bytes are uniform.
+    if !identity.executable.ends_with(".exe") {
+        require_source_executable(&payload_dir.join(&identity.executable))?;
+    }
     let file = OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -403,7 +460,12 @@ pub(super) fn produce(
     let producer_hash = hex_lower(&Sha256::digest(&producer_bytes));
     let build_bytes = fs::read(build_identity_path)
         .map_err(|e| format!("read selected-target build identity: {e}"))?;
-    let archive_name = format!("ripr-server-v{}-{TARGET}.tar.gz", identity.version);
+    let contract = load_distribution_contract()?;
+    let target = contract_target(&identity, &contract)?;
+    let archive_name = format!(
+        "ripr-server-v{}-{}.{}",
+        identity.version, identity.target, target.archive
+    );
     if archive_path.file_name().and_then(|name| name.to_str()) != Some(archive_name.as_str()) {
         return Err(
             "qualified archive filename does not match the selected target/version".to_string(),
@@ -411,7 +473,7 @@ pub(super) fn produce(
     }
     let archive_hash = sha256_file(archive_path)?;
     let expected_qualification = json!({
-        "target": TARGET, "candidate_sha": identity.source.commit_sha,
+        "target": identity.target, "candidate_sha": identity.source.commit_sha,
         "candidate_tree": identity.source.tree_sha, "version": identity.version,
         "archive_file": archive_name, "archive_sha256": archive_hash,
         "archive_readback_verified": true, "cargo_lock_sha256": identity.cargo_lock_sha256,
@@ -427,7 +489,6 @@ pub(super) fn produce(
         "cargo_verbose_version": identity.toolchain.cargo_verbose_version
     });
     verify_qualification(&build_bytes, &expected_qualification)?;
-    let contract = load_distribution_contract()?;
     manifest(&identity, &contract)?;
     fs::create_dir_all(out_dir).map_err(|e| format!("create output directory: {e}"))?;
     let staging = out_dir.join(format!(
@@ -440,10 +501,8 @@ pub(super) fn produce(
     ));
     fs::create_dir(&staging).map_err(|e| format!("create npm staging directory: {e}"))?;
     let result = (|| {
-        let package_name = format!(
-            "effortlessmetrics-ripr-linux-x64-gnu-{}.tgz",
-            identity.version
-        );
+        let package_name = tarball_name(&target.npm_package, &identity.version);
+        let receipt_name = format!("npm-native-receipt-{}.json", identity.target);
         let package = staging.join(&package_name);
         pack(payload_dir, &identity, &contract, &package)?;
         let (verified_tarball_hash, verified_tarball_bytes) =
@@ -464,7 +523,7 @@ pub(super) fn produce(
         "qualified_archive_sha256": archive_hash,
         "tarball": package.file_name().and_then(|s| s.to_str()).ok_or("invalid package file name")?,
         "tarball_sha256": verified_tarball_hash, "files": identity.files});
-        let receipt_path = staging.join("npm-native-receipt.json");
+        let receipt_path = staging.join(&receipt_name);
         let mut output = OpenOptions::new()
             .write(true)
             .create_new(true)
@@ -477,7 +536,7 @@ pub(super) fn produce(
         )
         .map_err(|e| e.to_string())?;
         let output_package = out_dir.join(&package_name);
-        let output_receipt = out_dir.join("npm-native-receipt.json");
+        let output_receipt = out_dir.join(&receipt_name);
         promote_pair(
             &verified_tarball_bytes,
             &verified_tarball_hash,
@@ -507,6 +566,8 @@ mod tests {
     use super::*;
     #[cfg(unix)]
     use crate::policy::distribution::parse_distribution_contract;
+
+    const TARGET: &str = "x86_64-unknown-linux-gnu";
 
     #[test]
     fn extracted_executable_requires_both_expected_bytes_and_executable_mode() -> Result<(), String>
@@ -726,7 +787,7 @@ mod tests {
             };
         }
         let mut wrong_target = identity.clone();
-        wrong_target.target = "aarch64-unknown-linux-gnu".into();
+        wrong_target.target = "riscv64gc-unknown-linux-gnu".into();
         let Err(_) = manifest(&wrong_target, &contract) else {
             return Err("manifest for an uncontracted target accepted".to_string());
         };
@@ -750,6 +811,164 @@ mod tests {
             .map_err(|e| e.to_string())?;
         let Err(_) = pack(&source, &identity, &contract, &root.join("no-mode.tgz")) else {
             return Err("payload without the execute bit accepted".to_string());
+        };
+        fs::remove_dir_all(root).map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    #[test]
+    fn tarball_name_follows_npm_scoped_pack_convention() {
+        assert_eq!(
+            tarball_name("@effortlessmetrics/ripr-win32-x64-msvc", "0.11.0"),
+            "effortlessmetrics-ripr-win32-x64-msvc-0.11.0.tgz"
+        );
+    }
+
+    #[cfg(unix)]
+    fn synthetic_identity(
+        source: &Path,
+        target: &str,
+        executable: &str,
+    ) -> Result<payload::FinalNativePayloadIdentity, String> {
+        for (path, bytes) in [
+            (executable, b"native".as_slice()),
+            ("LICENSE-MIT", b"mit"),
+            ("LICENSE-APACHE", b"apache"),
+            (
+                "README-server.txt",
+                super::super::release_server_readme("0.11.0").as_bytes(),
+            ),
+        ] {
+            fs::write(source.join(path), bytes).map_err(|e| e.to_string())?;
+        }
+        let files = payload::payload_file_identities(source, executable)?;
+        Ok(payload::FinalNativePayloadIdentity {
+            schema_version: 1,
+            kind: "ripr_final_native_payload".into(),
+            product: "ripr".into(),
+            version: "0.11.0".into(),
+            target: target.into(),
+            executable: executable.into(),
+            source: PayloadSourceIdentity {
+                commit_sha: "a".repeat(40),
+                tree_sha: "b".repeat(40),
+            },
+            cargo_lock_sha256: "c".repeat(64),
+            selected_features: vec![],
+            toolchain: PayloadToolchainIdentity {
+                rustc_verbose_version: "rust".into(),
+                cargo_verbose_version: "cargo".into(),
+            },
+            build_environment: PayloadBuildEnvironmentIdentity {
+                os: "test".into(),
+                arch: "test".into(),
+                ci_provider: "test".into(),
+                runner_image: None,
+            },
+            payload_aggregate_sha256: payload::aggregate_payload_digest(&files)?,
+            files,
+            native_runtime_evidence: NativeRuntimeEvidenceIdentity {
+                state: "test".into(),
+                source: "test".into(),
+            },
+        })
+    }
+
+    /// Every policy target packs into the launcher's exact package name,
+    /// platform metadata and executable path, with no cross-target leakage.
+    #[cfg(unix)]
+    #[test]
+    fn every_policy_target_packs_its_own_launcher_package() -> Result<(), String> {
+        let contract = parse_distribution_contract(
+            "policy",
+            include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../policy/distribution.toml"
+            )),
+        )?;
+        let launcher: Value = serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../packaging/npm/launcher/package.json"
+        )))
+        .map_err(|e| e.to_string())?;
+        let platforms = launcher["ripr"]["platforms"]
+            .as_array()
+            .ok_or("launcher platform map missing")?;
+        assert_eq!(platforms.len(), contract.target.len());
+        let root = std::env::temp_dir().join(format!(
+            "ripr-npm-family-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map_err(|e| e.to_string())?
+                .as_nanos()
+        ));
+        fs::create_dir(&root).map_err(|e| e.to_string())?;
+        let mut packed = Vec::new();
+        for row in &contract.target {
+            let source = root.join(&row.rust_target);
+            fs::create_dir(&source).map_err(|e| e.to_string())?;
+            let identity = synthetic_identity(&source, &row.rust_target, &row.executable)?;
+            use std::os::unix::fs::PermissionsExt;
+            // Windows payloads come from a zip without POSIX modes; only the
+            // POSIX targets need the source execute bit.
+            let mode = if row.executable.ends_with(".exe") {
+                0o644
+            } else {
+                0o755
+            };
+            fs::set_permissions(
+                source.join(&row.executable),
+                fs::Permissions::from_mode(mode),
+            )
+            .map_err(|e| e.to_string())?;
+            let value = manifest(&identity, &contract)?;
+            let platform = platforms
+                .iter()
+                .find(|item| item["rustTarget"] == json!(row.rust_target))
+                .ok_or_else(|| format!("launcher has no row for {}", row.rust_target))?;
+            assert_eq!(value["name"], platform["package"]);
+            assert_eq!(value["os"], json!([platform["nodePlatform"]]));
+            assert_eq!(value["cpu"], json!([platform["nodeArch"]]));
+            assert_eq!(value["riprNative"]["executable"], platform["executable"]);
+            assert_eq!(value["riprNative"]["target"], json!(row.rust_target));
+            if platform["libc"].is_null() {
+                assert!(
+                    value.get("libc").is_none(),
+                    "{} declares libc",
+                    row.rust_target
+                );
+            } else {
+                assert_eq!(value["libc"], json!([platform["libc"]]));
+            }
+            assert_eq!(
+                launcher["optionalDependencies"][row.npm_package.as_str()],
+                json!(identity.version)
+            );
+            let package = root.join(tarball_name(&row.npm_package, &identity.version));
+            pack(&source, &identity, &contract, &package)?;
+            verify_package(&package, &identity, &contract)?;
+            packed.push((package, identity));
+        }
+        // A package verified against another target's identity is refused.
+        for (index, (package, _)) in packed.iter().enumerate() {
+            let (_, other) = &packed[(index + 1) % packed.len()];
+            let Err(_) = verify_package(package, other, &contract) else {
+                return Err(format!(
+                    "{} accepted another target's identity",
+                    package.display()
+                ));
+            };
+        }
+        let mut windows_without_exe = packed
+            .iter()
+            .find(|(_, identity)| identity.executable == "ripr.exe")
+            .ok_or("no Windows target")?
+            .1
+            .clone();
+        windows_without_exe.executable = "ripr".into();
+        let Err(_) = manifest(&windows_without_exe, &contract) else {
+            return Err("Windows target without ripr.exe accepted".to_string());
         };
         fs::remove_dir_all(root).map_err(|e| e.to_string())?;
         Ok(())
