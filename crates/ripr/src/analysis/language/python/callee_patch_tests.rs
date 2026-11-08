@@ -320,7 +320,15 @@ fn an_edit_that_reaches_the_patched_callee_transitively_keeps_the_limit() -> Res
 /// `mocked_module`.
 #[test]
 fn receiver_literal_and_target_shapes_keep_the_limit() -> Result<(), String> {
-    let bodies: [&str; 15] = [
+    let bodies: [&str; 21] = [
+        // Unpacking, `yield from`, star, `with` and `await` run protocols.
+        "    base = amount * 3\n    obj = base\n    a, b = obj\n    return rate_for(region)\n",
+        "    base = amount * 3\n    obj = base\n    yield from obj\n",
+        "    base = amount * 3\n    obj = base\n    return [*obj]\n",
+        "    base = amount * 3\n    obj = base\n    with obj:\n        pass\n    return rate_for(region)\n",
+        "    base = amount * 3\n    obj = base\n    await obj\n    return rate_for(region)\n",
+        // A decorator calls its name without parentheses.
+        "    base = amount * 3\n    @helper\n    def inner():\n        pass\n    return base * rate_for(region)\n",
         // A tainted receiver read through a property, with no call at all.
         "    base = amount * 3\n    self.x = base\n    return self.rate\n",
         // A tainted container subscript or iteration may run user code.

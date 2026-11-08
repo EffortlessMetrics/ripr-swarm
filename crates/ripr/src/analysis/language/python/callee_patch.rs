@@ -508,7 +508,8 @@ fn edit_reaches_owner_calls(
         if text.contains(';') {
             return true;
         }
-        if tainted_receiver(text, &taint) {
+        // A decorator is a call with no parentheses.
+        if text.starts_with('@') || tainted_receiver(text, &taint) {
             return true;
         }
         if is_function_header(text) {
@@ -542,7 +543,8 @@ fn edit_reaches_owner_calls(
 
 /// Whether a tainted name is used where Python may run its own code without a
 /// visible call: an attribute read or write (a property or setter), a
-/// subscript, or the right side of `in` (iteration or membership).
+/// subscript, iteration or membership (`in`, `yield from`, `*x`, tuple
+/// unpacking), or a context manager, `await` or `match` subject.
 fn tainted_receiver(text: &str, taint: &[&str]) -> bool {
     let all = tokens(text);
     all.iter().enumerate().any(|(position, (start, token))| {
@@ -550,11 +552,15 @@ fn tainted_receiver(text: &str, taint: &[&str]) -> bool {
             return false;
         }
         let after = text[start + token.len()..].trim_start();
-        let follows_in = position
+        let follows_protocol = position
             .checked_sub(1)
             .and_then(|prev| all.get(prev))
-            .is_some_and(|(_, prev)| *prev == "in");
-        after.starts_with('.') || after.starts_with('[') || follows_in
+            .is_some_and(|(_, prev)| ["in", "from", "with", "await", "match"].contains(prev));
+        let starred = text[..*start].trim_end().ends_with('*');
+        after.starts_with('.') || after.starts_with('[') || follows_protocol || starred
+    }) || assignment_split(text).is_some_and(|(target, value, _)| {
+        // `a, b = obj` unpacks through `__iter__`.
+        target.contains(',') && data_names(value).iter().any(|name| taint.contains(name))
     })
 }
 
