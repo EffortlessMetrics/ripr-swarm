@@ -243,8 +243,10 @@ impl UnseenReachNames {
         let mut named: HashMap<String, usize> = HashMap::new();
         let mut named_free: HashMap<String, usize> = HashMap::new();
         for tallies in source_namings_many(&sources) {
-            add_tallies(&mut named, &tallies.named);
-            add_tallies(&mut named_free, &tallies.free);
+            for (name, named_count, free_count) in tallies.iter() {
+                add_tally(&mut named, name, named_count);
+                add_tally(&mut named_free, name, free_count);
+            }
         }
         let workspace_traits = workspace_trait_names(index);
         let workspace_crates = index.workspace_member_crates().clone();
@@ -717,41 +719,87 @@ fn reference_shaped_outside_code(source: &str, at: usize, ident: &str) -> bool {
 }
 
 /// One source's identifier tallies for [`UnseenReachNames`]: how often it
-/// names each identifier outside a `fn` definition, and the subset of those
-/// spellings that can denote a module-level free function.
+/// names each identifier outside a `fn` definition, and how often a spelling
+/// can denote a module-level free function.
+///
+/// The run memo keeps one per workspace source for the whole run, so the
+/// distinct names are packed into one buffer instead of one `String` per
+/// name per map: two `HashMap<String, usize>` per file held about 94 MB at
+/// `check` peak on ripr-swarm (#13703).
 #[derive(Debug, Default, PartialEq, Eq)]
 struct SourceNamings {
-    named: HashMap<String, usize>,
-    free: HashMap<String, usize>,
+    /// Every distinct name, concatenated in sorted order.
+    names: Box<str>,
+    tallies: Box<[NameTally]>,
 }
 
-fn tally<'a>(names: impl Iterator<Item = &'a str>) -> HashMap<String, usize> {
-    let mut counts: HashMap<String, usize> = HashMap::new();
+/// A name's end offset in [`SourceNamings::names`] (it starts where the
+/// previous name ends) and its two counts.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct NameTally {
+    end: u32,
+    named: u32,
+    free: u32,
+}
+
+impl SourceNamings {
+    /// `(name, named count, free count)` for every distinct name.
+    fn iter(&self) -> impl Iterator<Item = (&str, usize, usize)> + '_ {
+        let mut start = 0usize;
+        self.tallies.iter().filter_map(move |tally| {
+            let end = tally.end as usize;
+            let name = self.names.get(start..end);
+            start = end;
+            Some((name?, tally.named as usize, tally.free as usize))
+        })
+    }
+}
+
+fn tally<'a>(names: impl Iterator<Item = &'a str>) -> HashMap<&'a str, usize> {
+    let mut counts: HashMap<&'a str, usize> = HashMap::new();
     for name in names {
-        match counts.get_mut(name) {
-            Some(count) => *count += 1,
-            None => {
-                counts.insert(name.to_string(), 1);
-            }
-        }
+        *counts.entry(name).or_insert(0) += 1;
     }
     counts
 }
 
 fn scan_source_namings(source: &str) -> SourceNamings {
+    let named = tally(identifiers_outside_fn_definition(source));
+    let free = tally(free_function_namings(source));
+    let mut keys: Vec<&str> = named
+        .keys()
+        .chain(free.keys().filter(|name| !named.contains_key(*name)))
+        .copied()
+        .collect();
+    keys.sort_unstable();
+    let count = |map: &HashMap<&str, usize>, name: &str| {
+        map.get(name)
+            .map_or(0, |n| u32::try_from(*n).unwrap_or(u32::MAX))
+    };
+    let mut names = String::with_capacity(keys.iter().map(|name| name.len()).sum());
+    let mut tallies = Vec::with_capacity(keys.len());
+    for name in keys {
+        names.push_str(name);
+        tallies.push(NameTally {
+            end: u32::try_from(names.len()).unwrap_or(u32::MAX),
+            named: count(&named, name),
+            free: count(&free, name),
+        });
+    }
     SourceNamings {
-        named: tally(identifiers_outside_fn_definition(source)),
-        free: tally(free_function_namings(source)),
+        names: names.into_boxed_str(),
+        tallies: tallies.into_boxed_slice(),
     }
 }
 
-fn add_tallies(total: &mut HashMap<String, usize>, part: &HashMap<String, usize>) {
-    for (name, count) in part {
-        match total.get_mut(name) {
-            Some(sum) => *sum += count,
-            None => {
-                total.insert(name.clone(), *count);
-            }
+fn add_tally(total: &mut HashMap<String, usize>, name: &str, count: usize) {
+    if count == 0 {
+        return;
+    }
+    match total.get_mut(name) {
+        Some(sum) => *sum += count,
+        None => {
+            total.insert(name.to_string(), count);
         }
     }
 }
@@ -962,6 +1010,37 @@ mod tests {
     use crate::domain::SymbolId;
     use std::collections::BTreeMap;
     use std::path::PathBuf;
+
+    #[test]
+    fn packed_source_namings_keep_every_name_and_both_counts() {
+        let source =
+            "use crate::m::kb;\nfn kb() {}\nfn f() { kb(); kb(); x.kb(); Size::mb(); mb(); }\n";
+        let expected_named: HashMap<String, usize> =
+            tally(identifiers_outside_fn_definition(source))
+                .into_iter()
+                .map(|(name, n)| (name.to_string(), n))
+                .collect();
+        let expected_free: HashMap<String, usize> = tally(free_function_namings(source))
+            .into_iter()
+            .map(|(name, n)| (name.to_string(), n))
+            .collect();
+        assert!(!expected_named.is_empty() && !expected_free.is_empty());
+        let packed = scan_source_namings(source);
+        let mut named = HashMap::new();
+        let mut free = HashMap::new();
+        let mut previous: Option<&str> = None;
+        for (name, named_count, free_count) in packed.iter() {
+            assert!(previous < Some(name), "names are distinct and sorted");
+            previous = Some(name);
+            assert!(named_count + free_count > 0, "{name} carries a count");
+            add_tally(&mut named, name, named_count);
+            add_tally(&mut free, name, free_count);
+        }
+        assert_eq!(named, expected_named);
+        assert_eq!(free, expected_free);
+        assert_eq!(packed.tallies.len(), packed.iter().count());
+        assert_eq!(scan_source_namings(""), SourceNamings::default());
+    }
 
     #[test]
     fn given_no_related_tests_when_building_reach_evidence_then_stage_is_no() {
