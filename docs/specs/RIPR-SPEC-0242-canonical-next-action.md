@@ -154,7 +154,9 @@ and unbounded `pr-evidence` path omit the object.
 - `crates/ripr/src/output/human/triage.rs`: check adapter; line-family
   dispatch from the canonical case; diff-source bound from declared
   provenance of the effective analysis source; `detail_route` copied onto
-  the `check_triage` stop.
+  the `check_triage` stop; additive `repair_route` copied onto the same stop
+  only when the shared gap-bound repair decision says `ripr agent repair` can
+  start the selected preview finding (#13599; the class stays non-executable).
 - `crates/ripr/src/output/render.rs`: navigation-aware check JSON adapter
   embeds the same producer decision; generic JSON omits it.
 - `crates/ripr/src/app/navigation.rs`: `CheckDiffProvenance::from_effective_source`

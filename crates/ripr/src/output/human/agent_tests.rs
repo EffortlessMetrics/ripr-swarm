@@ -1220,6 +1220,70 @@ fn check_agent_preview_terminal_derives_the_route_claim_from_the_shared_decision
     assert!(!unrouted.contains("nothing more is fixable"), "{unrouted}");
 }
 
+/// #13599 fail-closed arm: the validated start exists but tracked production
+/// files differ from HEAD, so the start would refuse. The agent text says to
+/// commit first and prints no runnable start, and the JSON canonical action
+/// carries no `repair_route`.
+#[test]
+fn check_agent_blocked_gap_start_says_commit_first_and_names_no_command() -> Result<(), String> {
+    let drill_in = crate::app::FindingDrillIn::Commands(
+        crate::app::FindingNavigation::legacy().with_repair_route_outcome(
+            crate::app::CheckRepairRoute::GapRoute(crate::app::GapRepairRoute {
+                finding_id: "probe:a".to_string(),
+                gap_id: "gap:python:src/lib.rs:pricing:predicate_boundary:predicate:pct==50"
+                    .to_string(),
+                base: "origin/main".to_string(),
+                uncommitted_files: vec!["src/lib.rs".to_string()],
+            }),
+        ),
+    );
+    let check = output(vec![python_card_gap("probe:a")]);
+    let text = render(
+        &check,
+        &RiprConfig::default(),
+        Some(&drill_in),
+        CheckDiffProvenance::CommittedHistory,
+    );
+    assert!(
+        text.contains("once your uncommitted production change is committed"),
+        "{text}"
+    );
+    assert!(text.contains("\nopen="), "{text}");
+    assert!(!text.contains("stop="), "{text}");
+    assert!(!text.contains("next=ripr agent repair"), "{text}");
+
+    let triage = super::triage::select_human_triage(&check, &RiprConfig::default());
+    let action = super::triage::canonical_next_action_for_triage(
+        &triage,
+        &check,
+        Some(&drill_in),
+        CheckDiffProvenance::CommittedHistory,
+    )?;
+    let json = serde_json::to_value(&action).map_err(|error| error.to_string())?;
+    assert!(json["stop"].get("repair_route").is_none(), "{json}");
+    Ok(())
+}
+
+/// The header token follows the body: an incomplete analysis prints the
+/// incomplete terminal, so it must not claim a startable repair.
+#[test]
+fn check_agent_incomplete_run_does_not_claim_repairable() -> Result<(), String> {
+    let check = outcome_output(
+        crate::analysis_outcome::AnalysisOutcomeKind::PartialWithLimitations,
+        vec![python_card_gap("probe:a")],
+    )?;
+    let text = render(
+        &check,
+        &RiprConfig::default(),
+        Some(&gap_route_drill_in("probe:a")),
+        CheckDiffProvenance::CommittedHistory,
+    );
+    assert!(text.contains("analysis=incomplete"), "{text}");
+    assert!(!text.contains("repairable="), "{text}");
+    assert!(!text.contains("next=ripr agent repair"), "{text}");
+    Ok(())
+}
+
 #[test]
 fn explain_agent_agrees_with_check_agent_on_gap_membership() {
     // One predicate decides "gap" for both surfaces: for every class, explain

@@ -70,9 +70,22 @@ pub(super) fn render(
     // #13599: one producer-owned decision (the validated gap-bound repair
     // start) feeds the header, the terminal line, `next=` and the JSON
     // canonical action; it is never re-derived in this renderer.
-    let repair_start = triage::gap_repair_start(triage.selected, drill_in);
+    let mut incomplete_lines = String::new();
+    let incomplete = render_incomplete_analysis(&mut incomplete_lines, output);
+    // The start is offered only on the path that prints it: a preview-advisory
+    // terminal in the limited-records state (no gap, no open-limited row, not
+    // incomplete). The header token and `next=` both read this one value, so
+    // `repairable=1` never appears beside a body that names no start.
+    let repair_start = triage::gap_repair_start(triage.selected, drill_in).filter(|_| {
+        !incomplete
+            && gaps.is_empty()
+            && open_limited_findings(&triage).is_empty()
+            && !limited_record_findings(&triage).is_empty()
+            && triage::check_case_for_triage(&triage, output)
+                == NextActionCheckCase::PreviewAdvisory
+    });
     let mut out = header_line(output, &considered, gaps.len(), repair_start.is_some());
-    let incomplete = render_incomplete_analysis(&mut out, output);
+    out.push_str(&incomplete_lines);
     let next = next_line(&triage, output, &gaps, drill_in, provenance);
     if output.findings.is_empty() && !output.no_scope_provided {
         out.push_str(if incomplete {
