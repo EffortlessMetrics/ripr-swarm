@@ -1544,6 +1544,16 @@ pub(crate) fn typescript_gap_record_for(finding: &Finding) -> Option<GapRecord> 
     // same record, so the packet and the ledger agree. `ripr outcome` is a
     // movement command and must not appear here.
     record.receipt_command = Some(preview_receipt_write_command(&record));
+    // #11691 parity (RIPR-SPEC-0088 §PR8): `unknown` is reserved for
+    // non-promotable preview findings. A projected packet that passes the
+    // shared validator IS promotable, so the agent GapRecord must flip to
+    // `actionable` on the same condition the JSON `preview_actionability`
+    // surface uses; keeping the stale `unknown` here would make the agent
+    // packet contradict the completed packet and hide a delegatable repair
+    // from agent consumers.
+    if crate::output::agent_seam_packets::validate_agent_gap_record_packet(&record).is_ok() {
+        record.gap_state = "actionable".to_string();
+    }
     Some(record)
 }
 
