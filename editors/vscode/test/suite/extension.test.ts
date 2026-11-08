@@ -464,7 +464,7 @@ suite('Extension Smoke', () => {
   });
 
   test('real server surfaces seam diagnostic, hover provider, and agent actions', async function (this: Mocha.Context) {
-    this.timeout(75000);
+    this.timeout(150000);
     skipUnlessTrustedTestHost(this);
     if (!process.env.RIPR_TEST_SERVER_PATH) {
       this.skip();
@@ -501,19 +501,32 @@ suite('Extension Smoke', () => {
       diagnostic.range.start.line,
       diagnostic.range.start.character + 1
     );
-    const hoverText = await waitForHoverText(uri, hoverPosition, (text) =>
-      text.includes('**ripr** changed behavior') &&
-      text.includes('Tests only loosely check this') &&
-      text.includes('Weak / missing evidence:')
+    // The save and `ripr.refreshDiagnostics` each start saved-workspace
+    // analysis, and the retained seam diagnostic is already published while
+    // that analysis runs. The server labels retained evidence as not current
+    // and withholds repair actions until the analysis for the saved revision
+    // commits (#13680), so wait for current hover evidence before asking for
+    // actions (#13783). Reaching it also proves the save's revision converges.
+    const hoverText = await waitForHoverText(
+      uri,
+      hoverPosition,
+      (text) =>
+        text.includes('**ripr** changed behavior') &&
+        text.includes('Tests only loosely check this') &&
+        text.includes('Weak / missing evidence:') &&
+        !text.includes('ripr retained evidence is not current'),
+      60000
     );
     assert.ok(hoverText.includes('**ripr** changed behavior'), hoverText);
     assert.ok(hoverText.includes('Tests only loosely check this'), hoverText);
     assert.ok(hoverText.includes('Weak / missing evidence:'), hoverText);
+    assert.ok(!hoverText.includes('ripr retained evidence is not current'), hoverText);
 
-    const actions = await vscode.commands.executeCommand<Array<vscode.CodeAction | vscode.Command>>(
-      'vscode.executeCodeActionProvider',
+    const actions = await waitForCodeActions(
       uri,
-      diagnostic.range
+      diagnostic.range,
+      (action) => action.title === 'Inspect Test Gap - Copy Context',
+      15000
     );
     const contextCommand = assertCommandAction(actions, 'Inspect Test Gap - Copy Context', 'ripr.copyContext');
     const packetCommand = assertCommandAction(
