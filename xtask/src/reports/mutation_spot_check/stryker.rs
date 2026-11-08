@@ -14,7 +14,7 @@
 use super::synthetic_diff::{MutationSource, SyntheticMutant};
 use serde_json::{Value, json};
 
-/// Join outcome token for a Stryker status. Only the killed status is
+/// Join outcome token for a Stryker status. Only the detected-by-tests status is
 /// `caught` and only the undetected and no-coverage statuses are `missed`;
 /// every other status keeps its own token and is never scored. Stryker counts
 /// `Timeout` as detected, but it stays unscored here: the conservative choice
