@@ -132,19 +132,19 @@ sys.exit(not result.wasSuccessful())
 "#;
 
 #[test]
-fn authenticated_intake_protocol_and_currentness_controls() {
+fn authenticated_intake_protocol_and_currentness_controls() -> Result<(), Box<dyn std::error::Error>> {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .and_then(|path| path.parent())
-        .expect("repository root");
+        .ok_or("repository root missing")?;
     let output = Command::new("timeout")
         .args(["--kill-after=1s", "30s", "python3", "-I", "-c", CONTROLS])
         .arg(root.join(".github/actions/pr-candidate-admission/queue_intake.py"))
-        .output()
-        .expect("bounded Python control launch");
+        .output()?;
     assert!(
         output.status.success(),
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
+    Ok(())
 }
