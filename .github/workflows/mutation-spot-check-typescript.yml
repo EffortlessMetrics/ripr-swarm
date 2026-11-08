@@ -9,9 +9,9 @@ name: Mutation spot check (TypeScript)
 # verdict with the real outcome. Runs weekly and on demand, never on a pull
 # request. Read-only: no secrets, nothing is published or pushed.
 #
-# STATUS: this workflow has NOT run. No package in the corpus has been
-# confirmed to install, pass its tests under Stryker, or produce a report; the
-# first run is the first evidence. The receipt is advisory and its
+# STATUS: first hosted run 2026-11-08 installed and scored defu and ufo
+# (scule was dropped: its vitest crashes the Stryker runner). The receipt is
+# advisory and its
 # `synthetic_diff_verdict` figures are never merged with the Rust span-join
 # figures.
 

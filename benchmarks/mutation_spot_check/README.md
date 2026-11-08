@@ -239,9 +239,10 @@ verdict agrees with a real mutant, not suite adequacy.
 pinned packages of `corpus-typescript.json` (Stryker 9.6.1 with the vitest
 runner), uploads the receipt and a per-package Stryker exit-status file, and
 ends with a step that fails the job when the receipt is missing or a package
-failed. **That workflow and corpus have not run**: no package has been
-confirmed to install, pass its tests under Stryker or yield a report, and the
-Stryker version and its vitest runner were chosen without a registry check.
+failed. First hosted run (2026-11-08, Stryker 9.6.1): defu and ufo installed, ran
+under Stryker and were scored (1,107 mutants); scule was dropped because its
+vitest crashes the Stryker vitest runner. Figures bind to the recorded
+revisions and are not promoted to the public receipt yet.
 The join code (`xtask/src/reports/mutation_spot_check/synthetic_diff.rs`) is
 language-generic; another mutation tool only needs a report parser like
 `stryker.rs`.
