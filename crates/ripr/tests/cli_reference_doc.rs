@@ -125,9 +125,9 @@ fn help_text_carries_no_issue_or_spec_references() -> Result<(), String> {
     let mut offenders = Vec::new();
     for (index, line) in document.lines().enumerate() {
         let bytes = line.as_bytes();
-        let issue_ref = bytes.windows(4).any(|window| {
-            window[0] == b'#' && window[1..].iter().all(u8::is_ascii_digit)
-        });
+        let issue_ref = bytes
+            .windows(4)
+            .any(|window| window[0] == b'#' && window[1..].iter().all(u8::is_ascii_digit));
         if issue_ref || line.contains("RIPR-SPEC-") {
             offenders.push(format!("{}: {line}", index + 1));
         }
