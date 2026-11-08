@@ -203,6 +203,9 @@ mod suite_factory;
 mod tests_extract;
 #[cfg(test)]
 mod tests_extract_tests;
+mod throw_boundary_guard;
+#[cfg(test)]
+mod throw_boundary_tests;
 pub(crate) mod tsconfig;
 mod typed_loose_equality_guard;
 mod types;
@@ -289,6 +292,7 @@ pub(crate) use table_loop_rows::*;
 pub(crate) use table_rows::*;
 pub(crate) use ternary_arm_guard::*;
 pub(crate) use tests_extract::*;
+pub(crate) use throw_boundary_guard::*;
 #[cfg(test)]
 pub(crate) use tsconfig::load_alias_map;
 pub(crate) use tsconfig::{
