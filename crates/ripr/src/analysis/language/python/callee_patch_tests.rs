@@ -320,7 +320,16 @@ fn an_edit_that_reaches_the_patched_callee_transitively_keeps_the_limit() -> Res
 /// `mocked_module`.
 #[test]
 fn receiver_literal_and_target_shapes_keep_the_limit() -> Result<(), String> {
-    let bodies: [&str; 21] = [
+    let bodies: [&str; 27] = [
+        // Protocols reached past the adjacent token: multi-item `with`, a
+        // `for` target unpacking a display element, list-target unpacking,
+        // a parenthesized star, and `raise` of a tainted class.
+        "    base = amount * 3\n    obj = base\n    with lock, obj:\n        pass\n    return rate_for(region)\n",
+        "    base = amount * 3\n    obj = base\n    for a, b in [(1, 2), obj]:\n        pass\n    return rate_for(region)\n",
+        "    base = amount * 3\n    obj = base\n    [a] = obj\n    return rate_for(region)\n",
+        "    base = amount * 3\n    obj = base\n    x = (*(obj),)\n    return rate_for(region)\n",
+        "    base = amount * 3\n    obj = base\n    for item in [] or obj:\n        pass\n    return rate_for(region)\n",
+        "    base = amount * 3\n    obj = base\n    raise obj\n",
         // Unpacking, `yield from`, star, `with` and `await` run protocols.
         "    base = amount * 3\n    obj = base\n    a, b = obj\n    return rate_for(region)\n",
         "    base = amount * 3\n    obj = base\n    yield from obj\n",

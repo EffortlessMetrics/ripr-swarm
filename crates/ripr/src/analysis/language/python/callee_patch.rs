@@ -509,7 +509,10 @@ fn edit_reaches_owner_calls(
             return true;
         }
         // A decorator is a call with no parentheses.
-        if text.starts_with('@') || tainted_receiver(text, &taint) {
+        if text.starts_with('@')
+            || tainted_receiver(text, &taint)
+            || tainted_outside_plain_shape(text, &taint)
+        {
             return true;
         }
         if is_function_header(text) {
@@ -562,6 +565,74 @@ fn tainted_receiver(text: &str, taint: &[&str]) -> bool {
         // `a, b = obj` unpacks through `__iter__`.
         target.contains(',') && data_names(value).iter().any(|name| taint.contains(name))
     })
+}
+
+/// Whether `text` reads a tainted name in any statement shape other than an
+/// allowlisted one: `name = value`, `name op= value`, `return value`, or an
+/// `if`/`elif`/`while`/`assert` test, where `value` holds no display or
+/// attribute (`[`, `{`, `.`), no unary star and no `in`, `for`, `from`,
+/// `await`, `yield` or `lambda`. Everything else (`with`, `match`, `for`,
+/// `raise`, unpacking, expression statements) may run a protocol method on the
+/// tainted value, so it is refused rather than enumerated.
+fn tainted_outside_plain_shape(text: &str, taint: &[&str]) -> bool {
+    if !data_names(text).iter().any(|name| taint.contains(name)) {
+        return false;
+    }
+    let value = match assignment_split(text) {
+        Some((target, value, _)) => {
+            let target = target.trim();
+            let plain = !target.is_empty()
+                && is_plain_name(target)
+                && target.chars().all(is_python_identifier_char);
+            if !plain {
+                return true;
+            }
+            value
+        }
+        None => {
+            let Some(value) = ["return ", "if ", "elif ", "while ", "assert "]
+                .iter()
+                .find_map(|head| text.strip_prefix(head))
+            else {
+                return true;
+            };
+            value
+        }
+    };
+    if value.contains(['[', '{']) {
+        return true;
+    }
+    let bytes = value.as_bytes();
+    for (index, ch) in value.char_indices() {
+        let before = value[..index].trim_end();
+        match ch {
+            '.' => {
+                // `1.5` is a number; any other dot is an attribute.
+                let numeric = index > 0
+                    && bytes[index - 1].is_ascii_digit()
+                    && tokens(before)
+                        .pop()
+                        .is_some_and(|(_, token)| token.starts_with(|c: char| c.is_ascii_digit()));
+                if !numeric {
+                    return true;
+                }
+            }
+            // A star with no left operand unpacks.
+            '*' if before.is_empty()
+                || before.ends_with(['(', ',', '=', ':'])
+                || (before.ends_with('*') && {
+                    let rest = before[..before.len() - 1].trim_end();
+                    rest.is_empty() || rest.ends_with(['(', ',', '=', ':'])
+                }) =>
+            {
+                return true;
+            }
+            _ => {}
+        }
+    }
+    tokens(value)
+        .iter()
+        .any(|(_, token)| ["in", "for", "from", "await", "yield", "lambda"].contains(token))
 }
 
 /// Every call of `text` as `(callee, arguments)`: the callee is `Some(name)`
