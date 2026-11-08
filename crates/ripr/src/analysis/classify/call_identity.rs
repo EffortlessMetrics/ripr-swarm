@@ -156,9 +156,70 @@ pub(crate) struct CallIdentityMemos {
     /// value check. Different source bytes or trusted names never share a result;
     /// the whole memo expires with this analysis index, including on clone.
     pub(super) standard_derive_bindings: Mutex<DeriveBindingMemo>,
+    /// #13525: per (test file, type name), whether the file imports that name
+    /// from a crate outside the workspace. The answer depends on the file's
+    /// syntax alone, so the per-(probe, test) receiver check reads it once.
+    external_imports: Mutex<BTreeMap<(std::path::PathBuf, String), bool>>,
+    /// Per type name, the one indexed file that declares it (`None` when no
+    /// file or several files do). The answer depends only on the indexed
+    /// sources, so the per-(seam, test) enum-variant check reads it once
+    /// instead of masking every file that mentions the name each time.
+    sole_type_declarers: Mutex<BTreeMap<String, Option<std::path::PathBuf>>>,
+    /// #12886: the cross-file resolver for assertion-forwarding workspace
+    /// macros, built on first use by a gap that needs it.
+    assertion_wrapper_visibility:
+        std::sync::OnceLock<crate::analysis::facts::macro_visibility::MacroVisibility>,
 }
 
 impl CallIdentityMemos {
+    /// The memoized answer for (`file`, `name`), computed by `compute` on
+    /// first use (recomputed, not cached, if the lock is poisoned).
+    pub(super) fn external_import(
+        &self,
+        file: &std::path::Path,
+        name: &str,
+        compute: impl FnOnce() -> bool,
+    ) -> bool {
+        let key = (file.to_path_buf(), name.to_string());
+        if let Ok(cache) = self.external_imports.lock()
+            && let Some(found) = cache.get(&key)
+        {
+            return *found;
+        }
+        let answer = compute();
+        if let Ok(mut cache) = self.external_imports.lock() {
+            cache.insert(key, answer);
+        }
+        answer
+    }
+
+    /// The memoized sole declaring file for `name`, computed by `compute` on
+    /// first use (recomputed, not cached, if the lock is poisoned).
+    pub(super) fn sole_type_declarer(
+        &self,
+        name: &str,
+        compute: impl FnOnce() -> Option<std::path::PathBuf>,
+    ) -> Option<std::path::PathBuf> {
+        if let Ok(cache) = self.sole_type_declarers.lock()
+            && let Some(found) = cache.get(name)
+        {
+            return found.clone();
+        }
+        let answer = compute();
+        if let Ok(mut cache) = self.sole_type_declarers.lock() {
+            cache.insert(name.to_string(), answer.clone());
+        }
+        answer
+    }
+
+    /// The memoized assertion-wrapper resolver, built by `build` on first use.
+    pub(super) fn assertion_wrapper_visibility(
+        &self,
+        build: impl FnOnce() -> crate::analysis::facts::macro_visibility::MacroVisibility,
+    ) -> &crate::analysis::facts::macro_visibility::MacroVisibility {
+        self.assertion_wrapper_visibility.get_or_init(build)
+    }
+
     pub(super) fn hidden_impls(&self, index: &RustIndex) -> &super::implicit_call::HiddenImpls {
         self.hidden_impls
             .get_or_init(|| super::implicit_call::HiddenImpls::build(index))

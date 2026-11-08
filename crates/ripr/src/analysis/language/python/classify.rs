@@ -405,6 +405,8 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
         return None;
     }
     let (family, delta) = classify_probe_shape_with_old(line_text, old_line_text);
+    // Analysis keeps `family`; only the finding's own presentation reads a
+    // plain local value edit as a value (#13587).
     // The changed line's probe family (and, for a field change, its changed
     // field) selects which assertion of each related test this finding judges
     // (#5572). Every consumer below — the public rows, sink alignment, the
@@ -1443,7 +1445,7 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
         location: SourceLocation::new(file.to_string_lossy().as_ref(), line, 1),
         owner: Some(owner.symbol_id()),
         family: family.clone(),
-        delta,
+        delta: delta.clone(),
         before: None,
         after: Some(line_text.to_string()),
         expression: line_text.to_string(),
@@ -1699,6 +1701,11 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
         has_oracle_eligible_relation,
         &missing_discriminators,
     );
+    // The value presentation (#13587) applies only to the plain no-card case.
+    // A repair card requires a missing discriminator and keys its wording on
+    // the family, so a finding with one keeps the analysis family: a message
+    // pin never reads as an "exact return-value assertion".
+    let presentation_allowed = missing_discriminators.is_empty();
     let repair_placement = (!unproven_list_equality && !imported_literal_gap)
         .then(|| python_repair_placement(&class, &related_candidates))
         .flatten();
@@ -2019,6 +2026,24 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
         // Resolved above, before the probe moved into the finding (#3281).
         source_currentness,
     };
+    if presentation_allowed && finding.canonical_gap.is_some() {
+        let (presented_family, presented_delta) = super::probe_shape::presented_python_shape(
+            owner,
+            &finding.probe.family,
+            &finding.probe.delta,
+            line_text,
+        );
+        if presented_family != finding.probe.family {
+            finding.canonical_gap = Some(canonical_python_gap_for(
+                file,
+                owner,
+                &presented_family,
+                line_text,
+            ));
+            finding.probe.family = presented_family;
+            finding.probe.delta = presented_delta;
+        }
+    }
     apply_python_no_static_path_limit(&mut finding, owner, owners, all_tests);
     note_runner_invocation(&mut finding, owner, all_tests);
     // #10708: the with-no-static-link guidance is pre-limit advice. The

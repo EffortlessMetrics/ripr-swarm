@@ -133,6 +133,43 @@ note = "async runtime workspace, cfg- and macro-heavy; the pinned change edits t
 heavy = true
 size_tier = "medium"
 
+# Large real-repository rows from the 2026-11-08 robustness sweep
+# (audit/robustness-sweep-2026-11-04.md, main 0c2d3789; shallow clones, 15-file
+# edits): warm check 18 s bevy / 32 s deno / 26 s polars, cold pilot 73 s deno
+# and a stop at exactly 275 s on bevy and polars, peak RSS at most 525 MB. The
+# sweep's edits were synthetic; these rows pin a real upstream commit that edits
+# several Rust files, applied as the usual `HEAD~1` base diff. Ratchet ceilings
+# with about 30% headroom over those measurements, not goals; the memory
+# ceiling is under the 1,024 MB large-tier bar, so it needs no ratchet note.
+# The 275 s pilot stop is a suspected pilot-budget cut, not verified; a partial
+# pilot is an incomplete sample (never a value), and its reason is in the detail.
+[[corpus]]
+id = "bevy"
+url = "https://github.com/bevyengine/bevy"
+sha = "bd34fb2e03befade64de183470eb7cf19a18e28f"
+note = "game engine workspace (~2,000 .rs files); the pinned change edits crates/bevy_pbr/src/material.rs and crates/bevy_sprite_render/src/mesh2d/material.rs"
+heavy = true
+ceilings = { "speed.warm_check_ms" = 25000, "speed.warm_check_peak_rss_mb" = 700, "speed.cold_pilot_ms" = 300000, "speed.cold_pilot_peak_rss_mb" = 700 }
+size_tier = "large"
+
+[[corpus]]
+id = "deno"
+url = "https://github.com/denoland/deno"
+sha = "685eb3b4b4ffaf2770480b8a99021e8b03292786"
+note = "JavaScript runtime workspace (~1,050 .rs files); the pinned change edits libs/cli_parser/src/parse.rs and its two test files"
+heavy = true
+ceilings = { "speed.warm_check_ms" = 42000, "speed.warm_check_peak_rss_mb" = 700, "speed.cold_pilot_ms" = 95000, "speed.cold_pilot_peak_rss_mb" = 700 }
+size_tier = "large"
+
+[[corpus]]
+id = "polars"
+url = "https://github.com/pola-rs/polars"
+sha = "3ec0fdbe0e65e88d38f61f11b72ead984297647d"
+note = "dataframe engine workspace (~2,300 .rs files); the pinned change edits six files across polars-arrow bitmap/array iterators and polars-ops IEJoin"
+heavy = true
+ceilings = { "speed.warm_check_ms" = 34000, "speed.warm_check_peak_rss_mb" = 700, "speed.cold_pilot_ms" = 300000, "speed.cold_pilot_peak_rss_mb" = 700 }
+size_tier = "large"
+
 [[corpus]]
 id = "servo"
 url = "https://github.com/servo/servo"

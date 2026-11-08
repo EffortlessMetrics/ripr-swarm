@@ -174,6 +174,9 @@ mod ts_limitations_truncation;
 #[path = "cli_smoke/typescript_caught_assertions.rs"]
 mod typescript_caught_assertions;
 #[cfg(feature = "lang-typescript")]
+#[path = "cli_smoke/typescript_constructor_callback.rs"]
+mod typescript_constructor_callback;
+#[cfg(feature = "lang-typescript")]
 #[path = "cli_smoke/typescript_effect_aliases.rs"]
 mod typescript_effect_aliases;
 #[cfg(feature = "lang-typescript")]
@@ -9611,6 +9614,141 @@ fn disable_ambient_git_excludes(root: &Path) -> Result<(), Box<dyn std::error::E
     Ok(())
 }
 
+/// A `git` shim on a private PATH directory: it passes the first `allowed`
+/// `check-ignore` calls through and answers "not ignored" afterwards, so a
+/// test can place an ignore-rule change at an exact admission boundary.
+/// Returns the shim directory (remove it when done) and the PATH to use.
+#[cfg(unix)]
+fn check_ignore_flip_shim(allowed: u32) -> Result<(PathBuf, String), Box<dyn std::error::Error>> {
+    use std::os::unix::fs::PermissionsExt;
+    let real_git = String::from_utf8(run_command("sh", None, &["-c", "command -v git"])?.stdout)?
+        .trim()
+        .to_string();
+    let shim_dir = unique_temp_workspace("agent-repair-late-ignore-shim");
+    std::fs::create_dir_all(&shim_dir)?;
+    let count = shim_dir.join("count");
+    let shim = shim_dir.join("git");
+    std::fs::write(
+        &shim,
+        format!(
+            "#!/bin/sh\nfor a in \"$@\"; do\n  if [ \"$a\" = check-ignore ]; then\n    n=$(cat '{count}' 2>/dev/null || echo 0)\n    n=$((n+1))\n    echo $n > '{count}'\n    if [ $n -gt {allowed} ]; then exit 1; fi\n  fi\ndone\nexec '{real_git}' \"$@\"\n",
+            count = count.display(),
+            real_git = real_git
+        ),
+    )?;
+    std::fs::set_permissions(&shim, std::fs::Permissions::from_mode(0o755))?;
+    let path = format!(
+        "{}:{}",
+        shim_dir.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+    Ok((shim_dir, path))
+}
+
+/// #13452: a Git-ignore answer that flips between the early admission and the
+/// first shared workflow write must refuse before anything shared is written,
+/// not at the later attempt-publication recheck after the files were replaced.
+/// The shim passes the first `git check-ignore` through and answers "not
+/// ignored" afterwards, so the first call is the early admission and the
+/// second is the pre-write recheck.
+#[cfg(unix)]
+#[test]
+fn agent_repair_before_rechecks_build_ignore_before_the_first_shared_write()
+-> Result<(), Box<dyn std::error::Error>> {
+    let fixture = RepairBuildIgnoreFixture::new(unique_temp_workspace("agent-repair-late-ignore"))?;
+    let root = fixture.0.as_path();
+    init_producer_fixture_repo(root)?;
+    std::fs::write(root.join(".git/info/exclude"), "/target/\n")?;
+    disable_ambient_git_excludes(root)?;
+    let (shim_dir, path) = check_ignore_flip_shim(1)?;
+    let root_arg = root.display().to_string();
+    let output = run_command_with_env(
+        env!("CARGO_BIN_EXE_ripr"),
+        root,
+        &[
+            "agent",
+            "repair",
+            "--json",
+            "--root",
+            root_arg.as_str(),
+            "--seam-id",
+            BOUNDARY_GAP_SEAM_ID,
+            "--phase",
+            "before",
+        ],
+        &[("PATH", path.as_str())],
+    )?;
+    let _ = std::fs::remove_dir_all(&shim_dir);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if output.status.success() || !stderr.contains("Nothing was started.") {
+        return Err(format!("flipped ignore answer must refuse as not started: {output:?}").into());
+    }
+    if !stderr
+        .lines()
+        .any(|line| line == "ripr: refusal code=build_output_not_ignored disposition=not_started")
+    {
+        return Err(format!("refusal lacks the typed line: {stderr}").into());
+    }
+    for artifact in [
+        "target/ripr/workflow/workflow.json",
+        "target/ripr/workflow/agent-packet.json",
+        "target/ripr/workflow/before.repo-exposure.json",
+    ] {
+        if root.join(artifact).exists() {
+            return Err(format!("pre-write recheck refused after writing {artifact}").into());
+        }
+    }
+    Ok(())
+}
+
+/// #13452: the attempt-publication recheck runs after the shared workflow
+/// files were written, so a flip at that boundary is an operational failure
+/// that says the shared files may have changed, not a clean `not_started`
+/// refusal. The shim lets the early admission and the pre-write recheck pass
+/// and flips the third `check-ignore`.
+#[cfg(unix)]
+#[test]
+fn agent_repair_late_ignore_flip_after_shared_writes_is_an_operational_failure()
+-> Result<(), Box<dyn std::error::Error>> {
+    let fixture = RepairBuildIgnoreFixture::new(unique_temp_workspace("agent-repair-late-op"))?;
+    let root = fixture.0.as_path();
+    init_producer_fixture_repo(root)?;
+    std::fs::write(root.join(".git/info/exclude"), "/target/\n")?;
+    disable_ambient_git_excludes(root)?;
+    let (shim_dir, path) = check_ignore_flip_shim(2)?;
+    let root_arg = root.display().to_string();
+    let output = run_command_with_env(
+        env!("CARGO_BIN_EXE_ripr"),
+        root,
+        &["repair", BOUNDARY_GAP_SEAM_ID, "--root", root_arg.as_str()],
+        &[("PATH", path.as_str())],
+    )?;
+    let _ = std::fs::remove_dir_all(&shim_dir);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if output.status.code() != Some(2) {
+        return Err(
+            format!("late flip must be an operational failure (exit 2): {output:?}").into(),
+        );
+    }
+    if stderr.contains("disposition=not_started")
+        || !stderr.contains("may already have been rewritten")
+    {
+        return Err(
+            format!("late flip must not claim a clean not-started refusal: {stderr}").into(),
+        );
+    }
+    let attempts = root.join("target/ripr/repair-attempts");
+    let published = attempts.exists()
+        && std::fs::read_dir(attempts)?
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            .any(|entry| entry.path().join("attempt.json").exists());
+    if published {
+        return Err("late flip published a durable repair attempt".into());
+    }
+    Ok(())
+}
+
 #[test]
 fn agent_repair_before_requires_effective_cargo_build_directory_ignore()
 -> Result<(), Box<dyn std::error::Error>> {
@@ -17172,6 +17310,93 @@ fn init_agents_appends_marked_section_idempotently_and_never_clobbers() -> Resul
     assert!(!unknown.status.success());
     assert!(String::from_utf8_lossy(&unknown.stderr).contains("copilot"));
 
+    ignore_remove_dir_all(&workspace);
+    Ok(())
+}
+
+/// #13596: a Python or TypeScript root gets pytest/jest advice and matching
+/// Cursor globs instead of the Rust text; a Rust root keeps the Rust text.
+/// Needs the Python and TypeScript analyzers: a build without them correctly
+/// reports those files as not analyzed instead of writing the preview loop.
+#[cfg(all(feature = "lang-python", feature = "lang-typescript"))]
+#[test]
+fn init_agents_writes_language_appropriate_instructions() -> Result<(), String> {
+    let cases: [(&str, &str, &[&str], &[&str]); 3] = [
+        (
+            "pyproject.toml",
+            "[project]\nname = \"x\"\n",
+            &["pytest -k", "(Python, preview)", "**/*.py"],
+            &["cargo test", "assert_eq!", "**/*.rs", "ripr repair <"],
+        ),
+        // `tsconfig.json` is a TypeScript project marker, so the generated
+        // config enables TypeScript; a bare `package.json` would not, and the
+        // block must then not promise TypeScript analysis.
+        (
+            "tsconfig.json",
+            "{}\n",
+            &["npx jest", "npx vitest", "**/*.ts", "**/*.tsx"],
+            &["cargo test", "assert_eq!", "**/*.rs", "ripr repair <"],
+        ),
+        (
+            "Cargo.toml",
+            "[package]\nname = \"x\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+            &["cargo test", "assert_eq!", "**/*.rs"],
+            &["pytest", "jest", "**/*.py"],
+        ),
+    ];
+    for (marker, text, wanted, banned) in cases {
+        let workspace = unique_temp_workspace("init-agents-language");
+        std::fs::create_dir_all(&workspace).map_err(|e| e.to_string())?;
+        std::fs::write(workspace.join(marker), text).map_err(|e| e.to_string())?;
+        let root = workspace.display().to_string();
+        let out = run_ripr(&["init", "--root", &root, "--agents", "all"]);
+        assert_success(&out);
+        let mut combined = String::new();
+        for file in ["CLAUDE.md", "AGENTS.md", ".cursor/rules/ripr.mdc"] {
+            combined.push_str(
+                &std::fs::read_to_string(workspace.join(file)).map_err(|e| e.to_string())?,
+            );
+        }
+        for needle in wanted {
+            assert!(combined.contains(needle), "{marker}: missing {needle:?}");
+        }
+        for needle in banned {
+            assert!(
+                !combined.contains(needle),
+                "{marker}: unexpected {needle:?}"
+            );
+        }
+        ignore_remove_dir_all(&workspace);
+    }
+    // A kept ripr.toml that enables only Rust: the Python loop is not
+    // promised, and the block says Python is not analyzed.
+    let workspace = unique_temp_workspace("init-agents-language-disabled");
+    std::fs::create_dir_all(&workspace).map_err(|e| e.to_string())?;
+    std::fs::write(
+        workspace.join("pyproject.toml"),
+        "[project]\nname = \"x\"\n",
+    )
+    .map_err(|e| e.to_string())?;
+    std::fs::write(
+        workspace.join("ripr.toml"),
+        "[languages]\nenabled = [\"rust\"]\n",
+    )
+    .map_err(|e| e.to_string())?;
+    let root = workspace.display().to_string();
+    let out = run_ripr(&[
+        "init", "--root", &root, "--agents", "claude", "--agents", "cursor",
+    ]);
+    assert_success(&out);
+    for file in ["CLAUDE.md", ".cursor/rules/ripr.mdc"] {
+        let text = std::fs::read_to_string(workspace.join(file)).map_err(|e| e.to_string())?;
+        assert!(
+            text.contains("Python files here are NOT analyzed"),
+            "{file}: {text}"
+        );
+        for banned in ["pytest", "(Python, preview)", "**/*.py"] {
+            assert!(!text.contains(banned), "{file}: unexpected {banned:?}");
+        }
+    }
     ignore_remove_dir_all(&workspace);
     Ok(())
 }
@@ -27380,7 +27605,7 @@ fn check_untracked_files_keep_committed_default_and_working_tree_reads_name_them
     }
     let untracked_only_human = human(&["check", "--root", &root_str]);
     if !untracked_only_human
-        .contains("Untracked files (src/new.rs) are invisible to both; stage them first")
+        .contains("Untracked files (src/new.rs) are not in either diff yet; stage them first")
     {
         return Err(format!(
             "the untracked-only default must print the #5258 note; got:\n{untracked_only_human}"
@@ -27559,11 +27784,24 @@ fn check_gitignored_files_are_disclosed_not_silent() -> Result<(), String> {
     .map_err(|err| format!("write alpha lib.rs: {err}"))?;
     std::fs::write(
         root.join(".gitignore"),
-        "target/\ncrates/alpha/src/ignored_gen.rs\n",
+        "target/\ncrates/alpha/src/ignored_gen.rs\nnode_modules/\n.venv/\n",
     )
     .map_err(|err| format!("write .gitignore: {err}"))?;
     run_git(&root, &["add", "."])?;
     run_git(&root, &["commit", "-m", "initial"])?;
+    // #13597: installed dependency trees are ignored but are not the user's
+    // sources; they must not be listed or drive the `git add -f` advice.
+    for (dir, file, body) in [
+        ("node_modules", "vendored.rs", "pub fn v() {}\n"),
+        ("node_modules/pkg/lib", "index.js", "module.exports = 1;\n"),
+        ("node_modules/pkg/src", "vendored.rs", "pub fn v() {}\n"),
+        (".venv/lib/site-packages/dep", "mod.py", "VALUE = 1\n"),
+    ] {
+        std::fs::create_dir_all(root.join(dir))
+            .map_err(|err| format!("create vendored dir {dir}: {err}"))?;
+        std::fs::write(root.join(dir).join(file), body)
+            .map_err(|err| format!("write vendored file {file}: {err}"))?;
+    }
     std::fs::create_dir_all(root.join("crates/alpha/target"))
         .map_err(|err| format!("create alpha target: {err}"))?;
     std::fs::write(
@@ -27638,6 +27876,14 @@ fn check_gitignored_files_are_disclosed_not_silent() -> Result<(), String> {
             "JSON must not name root target/ build output; got:\n{report}"
         ));
     }
+    if ignored.iter().any(|path| {
+        path.as_str()
+            .is_some_and(|p| p.contains("node_modules") || p.contains(".venv"))
+    }) {
+        return Err(format!(
+            "JSON must not name vendored dependency files; got:\n{report}"
+        ));
+    }
 
     // Human and human-full name the files and the force intent-to-add repair
     // (`git add -N` refuses ignored paths, verified against real git).
@@ -27659,6 +27905,11 @@ fn check_gitignored_files_are_disclosed_not_silent() -> Result<(), String> {
                     "{label} must disclose {expected:?}; got:\n{rendered}"
                 ));
             }
+        }
+        if rendered.contains("node_modules") || rendered.contains(".venv") {
+            return Err(format!(
+                "{label} must not name vendored dependency files; got:\n{rendered}"
+            ));
         }
         if rendered.contains("crunchy-x") {
             return Err(format!(
@@ -27686,6 +27937,38 @@ fn check_gitignored_files_are_disclosed_not_silent() -> Result<(), String> {
                 "worktree read must disclose {expected:?}; got:\n{dirty}"
             ));
         }
+    }
+    if dirty.contains("node_modules") || dirty.contains(".venv") {
+        return Err(format!(
+            "worktree read must not name vendored dependency files; got:\n{dirty}"
+        ));
+    }
+    let dirty_report = parse(&run_ripr(&[
+        "check",
+        "--root",
+        &root_str,
+        "--worktree",
+        "--json",
+    ]))?;
+    let dirty_ignored = dirty_report["ignored_working_tree_source_paths"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    if !dirty_ignored
+        .iter()
+        .any(|path| path == "crates/alpha/src/ignored_gen.rs")
+    {
+        return Err(format!(
+            "worktree JSON must name the ignored source; got:\n{dirty_report}"
+        ));
+    }
+    if dirty_ignored.iter().any(|path| {
+        path.as_str()
+            .is_some_and(|p| p.contains("node_modules") || p.contains(".venv"))
+    }) {
+        return Err(format!(
+            "worktree JSON must not name vendored dependency files; got:\n{dirty_report}"
+        ));
     }
 
     ignore_remove_dir_all(&root);
@@ -29456,6 +29739,81 @@ fn check_with_a_diff_file_does_not_show_unanalyzed_working_tree_disclosure() -> 
     if human.contains("uncommitted source and test changes were not analyzed") {
         return Err(format!(
             "a --diff run must not print the unanalyzed working tree note:\n{human}"
+        ));
+    }
+
+    ignore_remove_dir_all(&root);
+    Ok(())
+}
+
+/// #13658: an explicit empty `--diff` is a producer-declared `NoScope`
+/// (nothing was parsed or analyzed), so the agent and GitHub formats must
+/// refuse the all-clear wording; the renderer unit tests inject the outcome,
+/// and this smoke pins the producer-to-output routing with a real empty diff.
+#[test]
+fn check_empty_diff_file_is_not_a_clean_result_in_agent_and_github() -> Result<(), String> {
+    let root = unique_temp_workspace("empty-diff-not-clean");
+    std::fs::create_dir_all(root.join("src")).map_err(|err| format!("create src: {err}"))?;
+    run_git(&root, &["init"])?;
+    run_git(&root, &["config", "user.email", "test@test.com"])?;
+    run_git(&root, &["config", "user.name", "Test"])?;
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "pub fn add(a: i32, b: i32) -> i32 { a + b }\n",
+    )
+    .map_err(|err| format!("write lib.rs: {err}"))?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"spec-0083-empty-diff-fixture\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|err| format!("write Cargo.toml: {err}"))?;
+    run_git(&root, &["add", "."])?;
+    run_git(&root, &["commit", "-m", "initial"])?;
+    let patch = root.join("empty.patch");
+    std::fs::write(&patch, "").map_err(|err| format!("write empty patch: {err}"))?;
+    let root_str = root.to_string_lossy().into_owned();
+    let patch_str = patch.to_string_lossy().into_owned();
+
+    // Fixture construction: the producer must actually report NoScope, so the
+    // renderer assertions below cannot pass on a routing regression alone.
+    let json_run = run_ripr(&["check", "--root", &root_str, "--diff", &patch_str, "--json"]);
+    assert_success(&json_run);
+    let json = String::from_utf8_lossy(&json_run.stdout).into_owned();
+    if !json.contains("\"kind\": \"no_scope\"") && !json.contains("\"kind\":\"no_scope\"") {
+        return Err(format!(
+            "fixture precondition: an empty --diff must produce a no_scope outcome:\n{json}"
+        ));
+    }
+
+    let agent_run = run_ripr(&[
+        "check", "--root", &root_str, "--diff", &patch_str, "--format", "agent",
+    ]);
+    assert_success(&agent_run);
+    let agent = String::from_utf8_lossy(&agent_run.stdout).into_owned();
+    if !agent.contains("stop=nothing was in scope; zero findings is not a clean result") {
+        return Err(format!(
+            "an empty --diff must not read as done in --format agent:\n{agent}"
+        ));
+    }
+    if agent.contains("done=no changed behavior found in scope") {
+        return Err(format!(
+            "an empty --diff must not claim done in --format agent:\n{agent}"
+        ));
+    }
+
+    let github_run = run_ripr(&[
+        "check", "--root", &root_str, "--diff", &patch_str, "--format", "github",
+    ]);
+    assert_success(&github_run);
+    let github = String::from_utf8_lossy(&github_run.stdout).into_owned();
+    if !github.contains("::warning title=ripr nothing analyzed") {
+        return Err(format!(
+            "an empty --diff must warn in --format github:\n{github}"
+        ));
+    }
+    if github.contains("No static exposure findings found") {
+        return Err(format!(
+            "an empty --diff must not emit the clean notice in --format github:\n{github}"
         ));
     }
 
@@ -31355,8 +31713,8 @@ fn agent_status_repeats_the_named_cause_of_a_refused_after_phase()
         .to_string();
     for needle in [
         "analysis input identities differ",
-        "Analysis inputs changed after the repair started: Cargo.toml",
-        "To recover: restore those files to their before-phase state",
+        "analysis inputs changed after the repair started: Cargo.toml",
+        "to recover: restore those files to their before-phase state",
     ] {
         assert!(recorded.contains(needle), "lacks `{needle}`: {recorded}");
     }
@@ -31375,7 +31733,7 @@ fn agent_status_repeats_the_named_cause_of_a_refused_after_phase()
     );
     assert!(
         repair_route_markdown(&root)?
-            .contains("Analysis inputs changed after the repair started: Cargo.toml"),
+            .contains("analysis inputs changed after the repair started: Cargo.toml"),
         "the Markdown view must carry the named cause"
     );
 
