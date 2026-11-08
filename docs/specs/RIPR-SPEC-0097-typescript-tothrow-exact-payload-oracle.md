@@ -214,6 +214,32 @@ the old and new versions. On any other change, including this spec's
 fixture `typescript_tothrow_exact_oracle` (a condition change), every
 payload keeps this spec's reading.
 
+### Throw test at the exact boundary input (2026-11-08, #13601)
+
+A bare or class-named `toThrow` / `toThrowError` still reads BroadError /
+Weak as an oracle. On a Predicate seam whose changed line is one
+`if (<one comparison>) throw ...` line, a positive `toThrow` /
+`toThrowError` (or `rejects.toThrow`) on a call to the owner with only
+scalar literal arguments is credited as the check for that call, so the
+usual boundary witness decides whether the literal equals the missing
+boundary. A throw test at another input credits nothing. The credit needs
+all of these:
+
+- the owner is a function or arrow function with exactly one `throw`;
+- the condition has no `&&`, `||` or `??`;
+- the matcher has no argument, or its one argument is the class the line
+  throws, written as a bare identifier (`toThrow(RangeError)` for
+  `throw new RangeError(...)`); a message string, pattern or other class
+  is not credited;
+- the observed value is a callback `() => owner(...)` or, for
+  `rejects.toThrow`, the owner call itself;
+- the test has no negated check (`.not.`) and does not declare its own
+  owner name.
+
+Anything else keeps the reading above. Test mapping:
+`crates/ripr/src/analysis/language/typescript/throw_boundary_tests.rs`.
+Implementation: `throw_boundary_guard.rs` (`ts_throw_boundary_pin_facts`).
+
 ## Metrics
 
 - `tothrow_exact_payload_upgrades_to_exact_error_variant`: fixture
