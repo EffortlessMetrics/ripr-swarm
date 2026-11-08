@@ -1,2 +1,2 @@
 <!-- section: Changed -->
-- Rust checks: memoize helper-credit closure-callback syntax reads within one run so the second index build skips re-parsing the same test and helper bodies (#12947).
+- Rust checks: memoize the closure-argument-position and invoked-callback syntax reads of the helper-credit pass within one run, so overlapping index builds skip re-parsing the same test and helper bodies (#12947).

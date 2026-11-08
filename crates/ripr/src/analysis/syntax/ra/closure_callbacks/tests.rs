@@ -1022,3 +1022,40 @@ fn memoized_callback_reads_match_uncached_and_key_on_text_and_helper() {
         }
     }
 }
+
+/// #13577: the helper-credit pass asks this once per (test, helper call) in
+/// every overlapping index of a diff run, and each ask parsed the test body.
+/// Inside a run scope each distinct (body, helper) pair parses once and the
+/// answers equal the unmemoized ones.
+#[test]
+fn call_making_closure_answers_parse_once_per_pair_inside_a_run_scope() {
+    let with_closure = "fn t() { run(|| work()); other(|| 1); }";
+    let plain = "fn t() { run(work); }";
+    let pairs = [
+        (with_closure, "run", true),
+        (with_closure, "other", false),
+        (plain, "run", false),
+        (with_closure, "run", true),
+        (plain, "run", false),
+    ];
+    let _ = take_call_making_closure_scans();
+    for (text, helper, want) in pairs {
+        assert_eq!(passes_call_making_closure(text, helper), want, "{text}");
+    }
+    assert_eq!(
+        take_call_making_closure_scans(),
+        pairs.len(),
+        "without a scope every ask parses"
+    );
+    let _scope = crate::analysis::syntax::run_memo::enter();
+    for _ in 0..3 {
+        for (text, helper, want) in pairs {
+            assert_eq!(passes_call_making_closure(text, helper), want, "{text}");
+        }
+    }
+    assert_eq!(
+        take_call_making_closure_scans(),
+        3,
+        "three distinct (body, helper) pairs parse once across three index passes"
+    );
+}

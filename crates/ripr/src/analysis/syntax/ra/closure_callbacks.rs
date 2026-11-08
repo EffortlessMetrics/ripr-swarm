@@ -131,8 +131,10 @@ fn closure_argument_positions_uncached(test_text: &str, helper: &str) -> Option<
 /// spelling neither establishes `Clone` dispatch nor grants callback execution.
 /// Function items passed by name are not recognized.
 pub(crate) fn passes_call_making_closure(test_text: &str, helper: &str) -> bool {
-    crate::analysis::syntax::run_memo::memoize_with(
-        crate::analysis::syntax::run_memo::Product::PassesCallMakingClosure,
+    // Pure in the text and the helper name; the helper-credit pass asks it
+    // once per (test, helper call) in every overlapping index of a diff run.
+    super::super::run_memo::memoize_with(
+        super::super::run_memo::Product::CallMakingClosure,
         0,
         helper,
         test_text,
@@ -140,7 +142,21 @@ pub(crate) fn passes_call_making_closure(test_text: &str, helper: &str) -> bool 
     )
 }
 
+#[cfg(test)]
+thread_local! {
+    static CALL_MAKING_CLOSURE_SCANS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Parses [`passes_call_making_closure`] ran on this thread since the last
+/// call.
+#[cfg(test)]
+pub(crate) fn take_call_making_closure_scans() -> usize {
+    CALL_MAKING_CLOSURE_SCANS.with(|count| count.replace(0))
+}
+
 fn passes_call_making_closure_uncached(test_text: &str, helper: &str) -> bool {
+    #[cfg(test)]
+    CALL_MAKING_CLOSURE_SCANS.with(|count| count.set(count.get() + 1));
     let Some(parse) = parse_clean_source_file(test_text) else {
         return true;
     };
