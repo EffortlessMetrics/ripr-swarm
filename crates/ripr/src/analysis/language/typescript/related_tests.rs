@@ -4091,6 +4091,31 @@ fn nested_alias_map(root_map: &TsAliasMap, config_dir: &Path) -> Option<std::rc:
     )
 }
 
+/// Which alias map governs non-relative specifiers for one importer (#12754).
+pub(crate) enum ImporterAliasMap {
+    /// No nearer config owns `paths`: the workspace-root map applies.
+    Root,
+    /// The importer's nearest package config, compiled exactly.
+    Nested(std::rc::Rc<TsAliasMap>),
+    /// A nearer package config owns `paths` but cannot be compiled exactly.
+    NestedUnavailable,
+}
+
+/// The alias map that governs `importer`'s non-relative specifiers.
+pub(crate) fn importer_alias_map(
+    root_map: &TsAliasMap,
+    root: &Path,
+    importer: &Path,
+) -> ImporterAliasMap {
+    match nearer_paths_config_dir(root, importer) {
+        None => ImporterAliasMap::Root,
+        Some(config_dir) => nested_alias_map(root_map, &config_dir).map_or(
+            ImporterAliasMap::NestedUnavailable,
+            ImporterAliasMap::Nested,
+        ),
+    }
+}
+
 /// Resolve an import specifier relative to `test_file` to a normalized module
 /// path string (no extension, forward-slash separated).
 ///
@@ -4182,11 +4207,21 @@ pub(crate) fn normalized_relative_import_module(
     // `typescript_path_alias_unresolved` gap discloses the miss) when it
     // cannot be compiled exactly. Root fallback is unchanged when no nearer
     // config declares `paths`.
-    if let Some(config_dir) = nearer_paths_config_dir(root, test_file) {
-        let nested = nested_alias_map(alias_map, &config_dir)?;
-        let resolved_path = run_cached_alias_resolution(&nested, source)?;
-        let normalized = normalized_path(&resolved_path);
-        return Some(strip_typescript_module_extension(&normalized));
+    match importer_alias_map(alias_map, root, test_file) {
+        ImporterAliasMap::Nested(nested) => {
+            let resolved_path = run_cached_alias_resolution(&nested, source)?;
+            let normalized = normalized_path(&resolved_path);
+            return Some(strip_typescript_module_extension(&normalized));
+        }
+        // The owning package config cannot be compiled exactly: withhold a
+        // specifier the root map would claim, but let one it does not own
+        // (a workspace package name) fall through as before.
+        ImporterAliasMap::NestedUnavailable
+            if alias_map.has_tsconfig() && alias_map.paths_key_matches(source) =>
+        {
+            return None;
+        }
+        ImporterAliasMap::NestedUnavailable | ImporterAliasMap::Root => {}
     }
     let resolved_path = run_cached_alias_resolution(alias_map, source)?;
     // Normalize the resolved workspace-relative path to a module string.
@@ -6287,6 +6322,66 @@ mod nested_config_withhold_tests {
                     "{label} must stay unresolved (no root-map credit), got {verdict:?}"
                 ));
             }
+        }
+        Ok(())
+    }
+
+    /// `"paths": null` still owns the package's importers: the root map must
+    /// not credit its same-named file (review on #13696).
+    #[test]
+    fn null_package_paths_never_borrow_the_root_map() -> Result<(), String> {
+        let root = disagreeing_fixture(r#"{"compilerOptions":{"baseUrl":".","paths":null}}"#)?;
+        let map = load_alias_map(&root).ok_or("root tsconfig must load")?;
+        let resolved = normalized_relative_import_module(
+            Path::new("packages/a/src/consumer.test.ts"),
+            "@/owner",
+            Some(&map),
+            Some(&root),
+        );
+        cleanup(&root);
+        match resolved {
+            None => Ok(()),
+            Some(module) => Err(format!(
+                "paths:null must not resolve via root, got {module}"
+            )),
+        }
+    }
+
+    /// When the package config cannot be compiled, a workspace package name
+    /// the root map does not own still resolves through the package table.
+    #[test]
+    fn unavailable_package_config_keeps_workspace_package_names() -> Result<(), String> {
+        let root = disagreeing_fixture(r#"{"compilerOptions":{"paths":{"@/*":["./src/*"]}}}"#)?;
+        write(
+            &root,
+            "packages/util/package.json",
+            r#"{"name":"@acme/util","main":"src/index.ts"}"#,
+        )?;
+        write(
+            &root,
+            "packages/util/src/index.ts",
+            "export function util() {}",
+        )?;
+        let files = vec![PathBuf::from("packages/util/src/index.ts")];
+        let packages = super::super::workspace_packages::WorkspacePackages::discover(&root, &files);
+        let map = load_alias_map(&root)
+            .ok_or("root tsconfig must load")?
+            .with_workspace_packages(packages);
+        let importer = Path::new("packages/a/src/consumer.test.ts");
+        let package =
+            normalized_relative_import_module(importer, "@acme/util", Some(&map), Some(&root));
+        let aliased =
+            normalized_relative_import_module(importer, "@/owner", Some(&map), Some(&root));
+        cleanup(&root);
+        if package.as_deref() != Some("packages/util/src/index") {
+            return Err(format!(
+                "workspace package must still resolve, got {package:?}"
+            ));
+        }
+        if aliased.is_some() {
+            return Err(format!(
+                "root-claimed alias must stay withheld, got {aliased:?}"
+            ));
         }
         Ok(())
     }

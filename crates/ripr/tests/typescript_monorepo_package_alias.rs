@@ -54,6 +54,10 @@ impl Subject {
         Ok(Self(root))
     }
 
+    fn write(&self, name: &str, body: &str) -> Result<(), String> {
+        std::fs::write(self.0.join(name), body).map_err(|e| e.to_string())
+    }
+
     fn json(&self, changed: &str) -> Result<String, String> {
         std::fs::write(self.0.join("change.diff"), diff_for(changed)).map_err(|e| e.to_string())?;
         let output = std::process::Command::new(env!("CARGO_BIN_EXE_ripr"))
@@ -111,12 +115,21 @@ fn unmodelable_package_config_stays_unresolved() -> Result<(), String> {
         Some(ROOT),
         "{\"extends\":\"../tsconfig.base.json\",\"compilerOptions\":{\"baseUrl\":\".\",\"paths\":{\"@/*\":[\"src/*\"]}}}",
     )?;
+    // The base exists, so the refusal is the unsupported layout, not a
+    // missing file.
+    subject.write(
+        "packages/tsconfig.base.json",
+        "{\"compilerOptions\":{\"strict\":true}}",
+    )?;
     let json = subject.json("packages/a/src/pricing.ts")?;
     if json.contains("\"classification\": \"exposed\"") {
         return Err(format!("cross-directory extends must not credit: {json}"));
     }
     if !json.contains("typescript_path_alias_unresolved") {
         return Err(format!("the miss must stay disclosed: {json}"));
+    }
+    if !json.contains("nearest package tsconfig.json/jsconfig.json") {
+        return Err(format!("the cause must name the package config: {json}"));
     }
     Ok(())
 }

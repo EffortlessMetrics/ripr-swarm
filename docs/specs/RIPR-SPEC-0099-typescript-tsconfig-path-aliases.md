@@ -125,10 +125,11 @@ through a same-directory `extends` chain, or cannot be read or parsed. The
 package map follows the same rules as the root map (single-`*`, one candidate,
 unique file, no `..`/absolute), anchors `baseUrl` at the config's directory,
 and shares the workspace-package table. It fails closed (unresolved, with the
-existing `typescript_path_alias_unresolved` disclosure) when the config has no
+existing `typescript_path_alias_unresolved` disclosure, whose cause names the package config) when the config has no
 `baseUrl` (#12760), uses `references` or a package-name or cross-directory
 `extends`, is unreadable or invalid, or when `tsconfig.json` and
-`jsconfig.json` in one directory both own `paths`. A package with no owning
+`jsconfig.json` in one directory both own `paths`; a specifier the root map does not
+own (a workspace package name) still falls through to workspace packages then. A package with no owning
 config keeps the root fallback, and so does an `extends`-only config whose chain
 declares no followable `paths`. A package directory is not a full compilation
 unit: `include`/`files`, named configs such as `tsconfig.spec.json`, and
@@ -324,7 +325,7 @@ nonempty extracted owners and tests.
 ## Non-Goals
 
 - Following `references` chains, package-name `extends`, or cross-directory `extends` bases (inherited templates cannot be rebased exactly).
-- Full TypeScript project-graph or per-package tsconfig resolution.
+- Full TypeScript project-graph or compilation-unit resolution (`include`/`files`, named configs such as `tsconfig.spec.json`, `references` membership). The per-importer nearest package config of the #12754 amendment is in scope.
 - Node.js module resolution (bare specifier without paths alias).
 - Dynamic or computed paths keys.
 - `baseUrl`-only resolution without a `paths` entry (would require full node

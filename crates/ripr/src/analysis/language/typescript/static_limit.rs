@@ -528,8 +528,24 @@ pub(crate) fn alias_gap_for_unresolved_import(
             // own manifest; tsconfig advice would send the user elsewhere.
             let package_dir =
                 alias_map.and_then(|map| map.workspace_package_dir_for(&import.source));
-            let tsconfig_map = alias_map.filter(|map| map.has_tsconfig());
+            // The importer's own package config governs its aliases (#12754):
+            // derive the cause from that map, not the workspace-root one.
+            let importer_map = alias_map
+                .map(|map| super::related_tests::importer_alias_map(map, map.root(), &test.file));
+            let nested_map = match &importer_map {
+                Some(super::related_tests::ImporterAliasMap::Nested(map)) => Some(map.as_ref()),
+                _ => None,
+            };
+            let nested_unavailable = matches!(
+                importer_map,
+                Some(super::related_tests::ImporterAliasMap::NestedUnavailable)
+            );
+            let tsconfig_map = nested_map.or_else(|| alias_map.filter(|map| map.has_tsconfig()));
             let (cause_text, recovery_hint) = match (tsconfig_map, alias_unavailable) {
+                _ if package_dir.is_none() && nested_unavailable => (
+                    "the importing file's nearest package tsconfig.json/jsconfig.json declares compilerOptions.paths but cannot be followed exactly (no baseUrl, a references or cross-directory/package-name extends form, an unreadable or invalid config, or both tsconfig.json and jsconfig.json declaring paths)".to_string(),
+                    "give that package config a compilerOptions.baseUrl and inline any inherited compilerOptions.paths for credit".to_string(),
+                ),
                 _ if package_dir.is_some() => {
                     let manifest = package_dir
                         .map(|dir| normalized_path(&dir.join("package.json")))

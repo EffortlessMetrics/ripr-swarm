@@ -395,6 +395,11 @@ impl TsAliasMap {
         self.packages.package_dir_for(specifier)
     }
 
+    /// The workspace root this map resolves within.
+    pub(crate) fn root(&self) -> &Path {
+        &self.root
+    }
+
     /// `true` when the map's `paths` entries came from a loaded config.
     pub(crate) fn has_tsconfig(&self) -> bool {
         self.tsconfig_loaded
@@ -1122,9 +1127,17 @@ pub(crate) fn config_file_owns_paths(path: &Path) -> bool {
     let Ok(raw) = parse_raw_tsconfig(&text) else {
         return true;
     };
-    raw.compiler_options
-        .as_ref()
-        .is_some_and(|options| options.paths.is_some())
+    // Presence of the key counts, even `"paths": null` or `{}`: such a config
+    // still owns its importers, so the root map must not stand in for it.
+    let declares = strip_jsonc(&text)
+        .ok()
+        .and_then(|normalized| serde_json::from_str::<serde_json::Value>(&normalized).ok())
+        .is_some_and(|value| {
+            value
+                .get("compilerOptions")
+                .is_some_and(|options| options.get("paths").is_some())
+        });
+    declares
         || (raw.extends.is_some()
             && merge_compiler_options(path, &text, &mut Vec::new(), 0)
                 .is_ok_and(|merged| merged.paths.is_some()))
