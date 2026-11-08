@@ -20,9 +20,10 @@ use crate::analysis_outcome::{
 use crate::app::{CheckInput, CheckOutput, Mode};
 use crate::config::RiprConfig;
 use crate::domain::{
-    ActivationEvidence, Confidence, DeltaKind, ExposureClass, Finding, LanguageId, LanguageStatus,
-    MissingDiscriminatorFact, OracleKind, OracleStrength, Probe, ProbeFamily, ProbeId, RelatedTest,
-    RevealEvidence, RiprEvidence, SourceLocation, StageEvidence, StageState, Summary,
+    ActivationEvidence, Confidence, DeltaKind, DiscriminatorShape, ExposureClass, Finding,
+    LanguageId, LanguageStatus, MissingDiscriminatorFact, OracleKind, OracleStrength, Probe,
+    ProbeFamily, ProbeId, RelatedTest, RevealEvidence, RiprEvidence, SourceLocation, StageEvidence,
+    StageState, Summary,
 };
 use std::path::PathBuf;
 
@@ -167,6 +168,8 @@ fn classified_seam(class: SeamGripClass) -> ClassifiedSeam {
                 value: "amount == threshold".to_string(),
                 reason: "producer identified the equality boundary as missing".to_string(),
                 flow_sink: None,
+                shape: DiscriminatorShape::Boundary,
+                drafted_boundary: None,
             }],
             new_test_target: None,
             statically_contradicted_related_tests: 0,
@@ -207,7 +210,7 @@ fn refusal_badge_summary_applies_the_degraded_state_convention() -> Result<(), S
     let notice = crate::core_error::CoreError::base_unresolvable(
         "the base `deadbeef` does not resolve to a commit",
     )
-    .refusal_notice();
+    .refusal_notice(&crate::config::config_error_summary);
     let summary = refusal_badge_summary(&notice);
     assert_eq!(summary.status, BadgeStatus::Warn);
     assert_eq!(summary.color, "lightgrey");

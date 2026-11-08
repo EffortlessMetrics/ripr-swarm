@@ -34,6 +34,7 @@ Start here:
     - 6 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/weak_error_oracle/input --diff <cwd>/fixtures/weak_error_oracle/diff.patch --mode fast probe:src_lib.rs:error_path:99b06ce7
   ripr context --root <cwd>/fixtures/weak_error_oracle/input --diff <cwd>/fixtures/weak_error_oracle/diff.patch --mode fast --at probe:src_lib.rs:error_path:99b06ce7
   no repair start offered: ripr found 4 spots in this finding's file, but could not tie one to this finding's changed line, so it cannot pick one for you; `ripr pilot` lists them, or follow the Next step above
@@ -42,7 +43,7 @@ Write a test for it:
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output.
-    - ./src/lib.rs:7 (weak); kind: return_value; reason: Missing discriminator value: AuthError::RevokedToken
+    - ./src/lib.rs:7 (weak); kind: return_value; reason: Missing check value: AuthError::RevokedToken
   Hidden classes:
     weak = tests reach it but check it only loosely
   Full evidence: rerun with --format human-full

@@ -1,6 +1,6 @@
 //! Related test candidate discovery for the TypeScript preview adapter.
 
-use super::tsconfig::{TsAliasMap, TsOutDirMap, load_out_dir_map};
+use super::tsconfig::{TsAliasMap, TsOutDirMap, config_file_declares_paths, load_out_dir_map};
 use super::*;
 use std::collections::{BTreeSet, HashMap, HashSet};
 
@@ -66,6 +66,18 @@ pub(crate) struct ReExportIndex {
     /// Actual imports (not re-exports) used to finish a canonical enum chain.
     enum_imports: HashMap<String, Vec<TypeScriptImport>>,
     unstable_enum_roots: HashSet<(String, String)>,
+    /// Lazily derived adjacency over `star_edges`: module -> sorted unique
+    /// `export *` targets. The resolvers used to scan every star edge for
+    /// every frame they walked (O(total edges) per hop — the dominant
+    /// warm-run cost on barrel-heavy workspaces, #11676); this view answers
+    /// the same per-module question in one lookup. The graph fields are
+    /// immutable once the index is constructed, so a derived view cannot go
+    /// stale.
+    star_sources_by_module: std::sync::OnceLock<HashMap<String, Vec<String>>>,
+    /// Lazily derived: module -> sorted unique exported names held in
+    /// `entries` for that module, so `enum_exported_names` stops scanning
+    /// every entry key per graph visit.
+    entry_names_by_module: std::sync::OnceLock<HashMap<String, Vec<String>>>,
 }
 
 /// Outcome of resolving one exported name through the re-export graph.
@@ -262,7 +274,48 @@ impl ReExportIndex {
             enum_bindings,
             enum_imports,
             unstable_enum_roots,
+            star_sources_by_module: std::sync::OnceLock::new(),
+            entry_names_by_module: std::sync::OnceLock::new(),
         }
+    }
+
+    /// This module's `export *` targets, sorted and de-duplicated — exactly
+    /// the multiset `resolve_export_frame` and `resolve_namespace_export_hop`
+    /// used to collect by scanning all of `star_edges` per frame.
+    fn star_sources(&self, module: &str) -> &[String] {
+        let by_module = self.star_sources_by_module.get_or_init(|| {
+            let mut by_module: HashMap<String, Vec<String>> = HashMap::new();
+            for (from, to) in &self.star_edges {
+                by_module.entry(from.clone()).or_default().push(to.clone());
+            }
+            for targets in by_module.values_mut() {
+                targets.sort();
+                targets.dedup();
+            }
+            by_module
+        });
+        by_module.get(module).map_or(&[], Vec::as_slice)
+    }
+
+    /// The exported names `entries` records for this module, sorted and
+    /// de-duplicated — the same set `enum_exported_names` used to collect by
+    /// scanning every entry key per visited module.
+    fn entry_names(&self, module: &str) -> &[String] {
+        let by_module = self.entry_names_by_module.get_or_init(|| {
+            let mut by_module: HashMap<String, Vec<String>> = HashMap::new();
+            for (source, name) in self.entries.keys() {
+                by_module
+                    .entry(source.clone())
+                    .or_default()
+                    .push(name.clone());
+            }
+            for names in by_module.values_mut() {
+                names.sort();
+                names.dedup();
+            }
+            by_module
+        });
+        by_module.get(module).map_or(&[], Vec::as_slice)
     }
 
     /// Strict rule-15 identity, layered over the existing bounded export
@@ -521,18 +574,12 @@ impl ReExportIndex {
             if let Some(exports) = self.local_exports.get(&module) {
                 names.extend(exports.iter().map(String::as_str));
             }
-            names.extend(
-                self.entries
-                    .keys()
-                    .filter(|(source, _)| source == &module)
-                    .map(|(_, name)| name.as_str()),
-            );
+            names.extend(self.entry_names(&module).iter().map(String::as_str));
             if hops < MAX_REEXPORT_HOPS {
                 pending.extend(
-                    self.star_edges
+                    self.star_sources(&module)
                         .iter()
-                        .filter(|(source, _)| source == &module)
-                        .map(|(_, target)| (self.canonical_module(target), hops + 1)),
+                        .map(|target| (self.canonical_module(target), hops + 1)),
                 );
             }
         }
@@ -724,19 +771,13 @@ impl ReExportIndex {
         if name == "default" {
             return ExportResolution::NotFound;
         }
-        let mut star_sources: Vec<&String> = self
-            .star_edges
-            .iter()
-            .filter(|(from, _)| from == module)
-            .map(|(_, to)| to)
-            .collect();
+        let star_sources = self.star_sources(module);
         if star_sources.is_empty() {
             return ExportResolution::NotFound;
         }
         if hops >= MAX_REEXPORT_HOPS {
             return ExportResolution::Unknown;
         }
-        star_sources.sort();
         let mut found: Option<(String, String)> = None;
         for star_source in star_sources {
             match self.resolve_export_with_context(
@@ -903,7 +944,7 @@ impl ReExportIndex {
             return None;
         }
         let mut found: Option<String> = None;
-        for (_, star_source) in self.star_edges.iter().filter(|(from, _)| from == module) {
+        for star_source in self.star_sources(module) {
             // Another star source that exports `name` as an ordinary binding
             // makes the name ambiguous, whichever source binds a namespace.
             if !matches!(
@@ -1430,6 +1471,14 @@ pub(crate) fn same_package_root(
     }
 }
 
+#[cfg(test)]
+thread_local! {
+    /// Full `related_test_candidates` scans run on this thread: one owner's
+    /// line context must cost exactly one.
+    pub(crate) static RELATED_CANDIDATE_SCANS: std::cell::Cell<usize> =
+        const { std::cell::Cell::new(0) };
+}
+
 /// Collect related test candidates for `owner` from `all_tests`.
 ///
 /// `workspace_root` enables package-local ownership filtering when `Some`:
@@ -1465,6 +1514,8 @@ pub(crate) fn related_test_candidates<'a>(
     alias_map: Option<&TsAliasMap>,
     relation_index: &RelationIndex,
 ) -> Vec<TypeScriptRelatedCandidate<'a>> {
+    #[cfg(test)]
+    RELATED_CANDIDATE_SCANS.with(|count| count.set(count.get() + 1));
     let package_scope = workspace_root.map(|root| OwnerPackageScope::new(&owner.file, root));
     let in_owner_package = |test: &&TypeScriptTest| {
         package_scope
@@ -3966,6 +4017,74 @@ pub(crate) fn import_source_matches_owner(
         == ImportSourceResolution::OwnerModule
 }
 
+/// `true` when the importer lives under a nearer `tsconfig.json` /
+/// `jsconfig.json` that declares its own `compilerOptions.paths` (with or
+/// without `baseUrl` — TS 4.1+, #12760) and that config is NOT the workspace
+/// root one: the single root alias map must then be withheld for that
+/// importer, or it could credit the wrong owner (#12754 slice).
+///
+/// The walk starts at the importer's directory and climbs toward `root`
+/// (bounded, `MAX_NEARER_CONFIG_HOPS`); the nearest directory holding a
+/// declaring conventional config wins. A declaring root config — or no
+/// declaring config at all — keeps today's root fallback exactly. `extends`
+/// is not followed, `references` not consulted, and cross-directory bases
+/// not rebased: full per-config resolution remains out of scope.
+///
+/// Memoized for one analysis run beside the other resolver answers; outside
+/// a [`DirectoryModuleCacheScope`] every call probes afresh so no answer
+/// outlives the run that computed it.
+fn importer_has_nearer_paths_config(root: &Path, importer: &Path) -> bool {
+    // The verdict depends only on the importer's directory, so the run memo
+    // is keyed by it: every file in one directory shares one walk instead of
+    // re-reading the same configs per file.
+    let absolute = if importer.is_absolute() {
+        importer.to_path_buf()
+    } else {
+        root.join(importer)
+    };
+    let dir = absolute
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| root.to_path_buf());
+    run_memoized(
+        &(root.to_path_buf(), dir.clone()),
+        |cache| &mut cache.nearer_paths_withhold,
+        || nearer_paths_withhold_uncached(root, &dir),
+    )
+}
+
+/// Maximum directories climbed from the importer toward the workspace root
+/// looking for the nearest `paths`-declaring config.
+const MAX_NEARER_CONFIG_HOPS: usize = 32;
+
+fn nearer_paths_withhold_uncached(root: &Path, dir: &Path) -> bool {
+    // The importer is not under `root`: no nearer in-root config can own it,
+    // so the root map still applies. Check this before probing any config so
+    // an out-of-root (or differently spelled) directory is never treated as
+    // a nested config owner.
+    if dir.strip_prefix(root).is_err() {
+        return false;
+    }
+    let mut dir = dir.to_path_buf();
+    for _ in 0..MAX_NEARER_CONFIG_HOPS {
+        let ts_config = dir.join("tsconfig.json");
+        let js_config = dir.join("jsconfig.json");
+        let declares = (ts_config.is_file() && config_file_declares_paths(&ts_config))
+            || (js_config.is_file() && config_file_declares_paths(&js_config));
+        if declares {
+            return dir != root;
+        }
+        if dir == root {
+            return false;
+        }
+        let Some(parent) = dir.parent().map(Path::to_path_buf) else {
+            return false;
+        };
+        dir = parent;
+    }
+    false
+}
+
 /// Resolve an import specifier relative to `test_file` to a normalized module
 /// path string (no extension, forward-slash separated).
 ///
@@ -4050,7 +4169,19 @@ pub(crate) fn normalized_relative_import_module(
     // Non-relative specifier — consult alias map if available.
     let alias_map = alias_map?;
     let root = workspace_root?;
-    let _ = root; // root is captured by alias_map already
+    // Wrong-owner safeguard (#12754 slice): when the importer lives under a
+    // nearer config that declares its own `compilerOptions.paths`, the root
+    // map is not that importer's owner — withhold it for a specifier the
+    // root map would otherwise claim, and stay unresolved (the existing
+    // `typescript_path_alias_unresolved` gap discloses the miss). Root
+    // fallback is unchanged when no nearer config declares `paths`, and a
+    // specifier no root key owns still falls through to workspace packages.
+    if alias_map.has_tsconfig()
+        && alias_map.paths_key_matches(source)
+        && importer_has_nearer_paths_config(root, test_file)
+    {
+        return None;
+    }
     let resolved_path = run_cached_alias_resolution(alias_map, source)?;
     // Normalize the resolved workspace-relative path to a module string.
     let normalized = normalized_path(&resolved_path);
@@ -4144,6 +4275,10 @@ struct RunResolverCache {
     config_directories: HashMap<(PathBuf, bool), Option<bool>>,
     /// Tracked `*.snap` files per analysis root (`None`: unknown).
     tracked_snapshots: HashMap<PathBuf, Option<std::sync::Arc<HashSet<String>>>>,
+    /// Wrong-owner safeguard verdicts (#12754 slice), keyed by
+    /// `(workspace root, importer directory)`: `true` when the
+    /// importer lives under a nearer `paths`-declaring config.
+    nearer_paths_withhold: HashMap<(PathBuf, PathBuf), bool>,
     /// Per-body shadow indexes (#10925), keyed by the body text itself so a
     /// hit can never answer for different source. Bounded by
     /// `MAX_RUN_SHADOW_INDEXES`; past it bodies fall back to the exact
@@ -5921,6 +6056,271 @@ mod module_extension_tests {
 }
 
 #[cfg(test)]
+mod nested_config_withhold_tests {
+    //! Wrong-owner safeguard slice of #12754: the workspace-root alias map
+    //! must be withheld for an importer whose nearest `tsconfig.json` /
+    //! `jsconfig.json` declares its own `paths` (with or without `baseUrl` —
+    //! TS 4.1+, #12760). No expect/unwrap: every fallible step maps its error
+    //! into the `String` verdict (no-panic-family policy).
+    use super::super::tsconfig::load_alias_map;
+    use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn temp_dir(label: &str) -> Result<PathBuf, String> {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|err| format!("system time: {err}"))?
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!(
+            "ripr-ts-withhold-{label}-{}-{stamp}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir)
+            .map_err(|err| format!("create_dir_all({}): {err}", dir.display()))?;
+        Ok(dir)
+    }
+
+    fn write(root: &Path, name: &str, content: &str) -> Result<(), String> {
+        let path = root.join(name);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|err| format!("create_dir_all({}): {err}", parent.display()))?;
+        }
+        std::fs::write(&path, content).map_err(|err| format!("write({}): {err}", path.display()))
+    }
+
+    fn cleanup(root: &Path) {
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    /// Shared disagreeing-config fixture: root `paths {"@/*": ["shared/*"]}`
+    /// plus `packages/a` with its own `paths {"@/*": [...]}` and a
+    /// same-named `owner.ts` in both trees.
+    fn disagreeing_fixture(nested_config_body: &str) -> Result<PathBuf, String> {
+        let root = temp_dir("disagree")?;
+        write(
+            &root,
+            "tsconfig.json",
+            r#"{"compilerOptions":{"baseUrl":".","paths":{"@/*":["shared/*"]}}}"#,
+        )?;
+        write(&root, "shared/owner.ts", "export function owner() {}")?;
+        write(&root, "packages/a/tsconfig.json", nested_config_body)?;
+        write(
+            &root,
+            "packages/a/src/owner.ts",
+            "export function owner() {}",
+        )?;
+        write(
+            &root,
+            "packages/a/src/consumer.test.ts",
+            "import { owner } from '@/owner';\ntest('uses owner', () => { owner(); });\n",
+        )?;
+        Ok(root)
+    }
+
+    /// A nested config WITH `baseUrl` declaring the same `@/*` key must
+    /// withhold the root map: `@/owner` from package a stays unresolved
+    /// instead of crediting the root `shared/owner` file.
+    #[test]
+    fn root_map_withheld_under_nested_config_with_base_url() -> Result<(), String> {
+        let root = disagreeing_fixture(
+            r#"{"compilerOptions":{"baseUrl":".","paths":{"@/*":["src/*"]}}}"#,
+        )?;
+        let map = load_alias_map(&root).ok_or("root tsconfig must load")?;
+        let resolved = normalized_relative_import_module(
+            Path::new("packages/a/src/consumer.test.ts"),
+            "@/owner",
+            Some(&map),
+            Some(&root),
+        );
+        cleanup(&root);
+        match resolved {
+            Some(module) if module == "packages/a/src/owner" => Err(
+                "full per-package resolution is out of scope: the safeguard withholds, never remaps"
+                    .to_string(),
+            ),
+            Some(module) => Err(format!(
+                "@/owner from package a must not resolve through the root map, got {module} (wrong owner)"
+            )),
+            None => Ok(()),
+        }
+    }
+
+    /// A nested config with `paths` but NO `baseUrl` still declares (TS 4.1+,
+    /// #12760: `./`-relative templates resolve against the declaring config),
+    /// so the withhold applies there too — no reintroduced `baseUrl`
+    /// requirement.
+    #[test]
+    fn root_map_withheld_under_nested_config_without_base_url() -> Result<(), String> {
+        let root = disagreeing_fixture(r#"{"compilerOptions":{"paths":{"@/*":["./src/*"]}}}"#)?;
+        let map = load_alias_map(&root).ok_or("root tsconfig must load")?;
+        // Absolute importer spelling exercises the same walk as the
+        // workspace-relative one.
+        let importer = root.join("packages/a/src/consumer.test.ts");
+        let resolved =
+            normalized_relative_import_module(&importer, "@/owner", Some(&map), Some(&root));
+        cleanup(&root);
+        match resolved {
+            Some(module) if module == "packages/a/src/owner" => Err(
+                "full per-package resolution is out of scope: the safeguard withholds, never remaps"
+                    .to_string(),
+            ),
+            Some(module) => Err(format!(
+                "@/owner from package a must not resolve through the root map, got {module} (wrong owner)"
+            )),
+            None => Ok(()),
+        }
+    }
+
+    /// Root fallback is exactly today's behavior when no nearer config
+    /// declares `paths`: no nested config at all, a nested config without
+    /// `paths`, and an importer that does not live under the nested config.
+    #[test]
+    fn root_map_applies_without_nested_paths_declaration() -> Result<(), String> {
+        // Case 1: no nested config — the classic single-root shape.
+        let root = temp_dir("single-root")?;
+        write(
+            &root,
+            "tsconfig.json",
+            r#"{"compilerOptions":{"baseUrl":".","paths":{"@/*":["shared/*"]}}}"#,
+        )?;
+        write(&root, "shared/owner.ts", "export function owner() {}")?;
+        write(
+            &root,
+            "packages/a/src/consumer.test.ts",
+            "import { owner } from '@/owner';\n",
+        )?;
+        let map = load_alias_map(&root).ok_or("root tsconfig must load")?;
+        let resolved = normalized_relative_import_module(
+            Path::new("packages/a/src/consumer.test.ts"),
+            "@/owner",
+            Some(&map),
+            Some(&root),
+        );
+        cleanup(&root);
+        if resolved.as_deref() != Some("shared/owner") {
+            return Err(format!(
+                "single-root shape must resolve through the root map, got {resolved:?}"
+            ));
+        }
+
+        // Case 2: a nested config that declares no `paths` changes nothing.
+        let root = temp_dir("nested-no-paths")?;
+        write(
+            &root,
+            "tsconfig.json",
+            r#"{"compilerOptions":{"baseUrl":".","paths":{"@/*":["shared/*"]}}}"#,
+        )?;
+        write(&root, "shared/owner.ts", "export function owner() {}")?;
+        write(
+            &root,
+            "packages/a/tsconfig.json",
+            r#"{"compilerOptions":{"baseUrl":".","strict":true}}"#,
+        )?;
+        write(
+            &root,
+            "packages/a/src/consumer.test.ts",
+            "import { owner } from '@/owner';\n",
+        )?;
+        let map = load_alias_map(&root).ok_or("root tsconfig must load")?;
+        let resolved = normalized_relative_import_module(
+            Path::new("packages/a/src/consumer.test.ts"),
+            "@/owner",
+            Some(&map),
+            Some(&root),
+        );
+        cleanup(&root);
+        if resolved.as_deref() != Some("shared/owner") {
+            return Err(format!(
+                "a nested config without paths must keep the root fallback, got {resolved:?}"
+            ));
+        }
+
+        // Case 3: the importer lives at the root while a nested config
+        // disagrees elsewhere — the nearest declaring config is the root one.
+        let root = disagreeing_fixture(
+            r#"{"compilerOptions":{"baseUrl":".","paths":{"@/*":["src/*"]}}}"#,
+        )?;
+        write(
+            &root,
+            "tests/root.test.ts",
+            "import { owner } from '@/owner';\n",
+        )?;
+        let map = load_alias_map(&root).ok_or("root tsconfig must load")?;
+        let resolved = normalized_relative_import_module(
+            Path::new("tests/root.test.ts"),
+            "@/owner",
+            Some(&map),
+            Some(&root),
+        );
+        cleanup(&root);
+        if resolved.as_deref() != Some("shared/owner") {
+            return Err(format!(
+                "a root-level importer must keep the root fallback, got {resolved:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    /// The withhold is scoped to root-claimed non-relative specifiers: a
+    /// relative import from under a disagreeing nested config still resolves
+    /// lexically.
+    #[test]
+    fn relative_imports_unaffected_under_nested_config() -> Result<(), String> {
+        let root = disagreeing_fixture(
+            r#"{"compilerOptions":{"baseUrl":".","paths":{"@/*":["src/*"]}}}"#,
+        )?;
+        let map = load_alias_map(&root).ok_or("root tsconfig must load")?;
+        let resolved = normalized_relative_import_module(
+            Path::new("packages/a/src/consumer.test.ts"),
+            "./owner",
+            Some(&map),
+            Some(&root),
+        );
+        cleanup(&root);
+        if resolved.as_deref() != Some("packages/a/src/owner") {
+            return Err(format!(
+                "a relative import must resolve lexically despite the nested config, got {resolved:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    /// The withhold never fires for an importer outside the workspace root:
+    /// no nested in-root config can own it, so the root fallback applies even
+    /// when the importer's own directory declares `paths`.
+    #[test]
+    fn outside_root_importer_keeps_root_fallback() -> Result<(), String> {
+        let root = disagreeing_fixture(
+            r#"{"compilerOptions":{"baseUrl":".","paths":{"@/*":["src/*"]}}}"#,
+        )?;
+        // A directory outside the workspace root with its own declaring
+        // config; the importer lives there, not under `root`.
+        let outside = temp_dir("outside-root")?;
+        write(
+            &outside,
+            "tsconfig.json",
+            r#"{"compilerOptions":{"paths":{"@/*":["./src/*"]}}}"#,
+        )?;
+        let map = load_alias_map(&root).ok_or("root tsconfig must load")?;
+        let resolved = normalized_relative_import_module(
+            &outside.join("src/consumer.test.ts"),
+            "@/owner",
+            Some(&map),
+            Some(&root),
+        );
+        cleanup(&root);
+        cleanup(&outside);
+        if resolved.as_deref() != Some("shared/owner") {
+            return Err(format!(
+                "an importer outside the root must keep the root fallback, got {resolved:?}"
+            ));
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
 mod spy_binding_unicode_tests {
     use super::*;
 
@@ -5935,5 +6335,72 @@ mod spy_binding_unicode_tests {
         };
         // Must not panic, and must read the same as the ASCII spelling.
         assert_eq!(name("évi"), name("evi"));
+    }
+}
+
+#[cfg(test)]
+mod adjacency_view_tests {
+    use super::*;
+
+    /// The lazily derived per-module views must hold exactly the sorted,
+    /// de-duplicated multiset the resolvers used to collect by scanning all
+    /// of `star_edges` / `entries` per frame (#11676): the indexed fast path
+    /// is only sound if it cannot diverge from the raw scan it replaced.
+    #[test]
+    fn star_sources_view_matches_the_raw_scan() {
+        let index = ReExportIndex::from_parts(
+            vec![],
+            vec![
+                ("barrel".to_string(), "b".to_string()),
+                ("barrel".to_string(), "a".to_string()),
+                ("barrel".to_string(), "c".to_string()),
+                ("a".to_string(), "leaf1".to_string()),
+            ],
+            vec![],
+        );
+        let mut expected: Vec<String> = index
+            .star_edges
+            .iter()
+            .filter(|(from, _)| from == "barrel")
+            .map(|(_, to)| to.clone())
+            .collect();
+        expected.sort();
+        expected.dedup();
+        assert_eq!(index.star_sources("barrel"), expected.as_slice());
+        assert_eq!(index.star_sources("unstarred"), &[] as &[String]);
+        // Modules whose only edge is incoming have no sources.
+        assert_eq!(index.star_sources("leaf1"), &[] as &[String]);
+    }
+
+    #[test]
+    fn entry_names_view_matches_the_raw_scan() {
+        let index = ReExportIndex::from_parts(
+            vec![
+                (
+                    ("m".to_string(), "z".to_string()),
+                    ("z".to_string(), "m".to_string()),
+                ),
+                (
+                    ("m".to_string(), "a".to_string()),
+                    ("a".to_string(), "m".to_string()),
+                ),
+                (
+                    ("other".to_string(), "x".to_string()),
+                    ("x".to_string(), "other".to_string()),
+                ),
+            ],
+            vec![],
+            vec![],
+        );
+        let mut expected: Vec<String> = index
+            .entries
+            .keys()
+            .filter(|(source, _)| source == "m")
+            .map(|(_, name)| name.clone())
+            .collect();
+        expected.sort();
+        expected.dedup();
+        assert_eq!(index.entry_names("m"), expected.as_slice());
+        assert_eq!(index.entry_names("noentries"), &[] as &[String]);
     }
 }

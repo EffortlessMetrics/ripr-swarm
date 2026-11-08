@@ -8,7 +8,8 @@ use registry::eligible_json_manifest_bytes;
 use registry::json_manifest_digests;
 pub(crate) use registry::{
     LiteralJsonIdentity, eligible_json_root, eligible_proptest_root, locked_at_audited_version,
-    verified_json_identity, verified_proptest_identity, verified_proptest_identity_result,
+    verified_bolero_identity, verified_json_identity, verified_proptest_identity,
+    verified_proptest_identity_result,
 };
 
 /// One previously parsed manifest, scoped to a drop-in authority. Every query

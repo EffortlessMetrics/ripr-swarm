@@ -31,6 +31,7 @@ Start here:
     - 7 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/collection_argument_named/input --diff <cwd>/fixtures/collection_argument_named/diff.patch --mode fast probe:src_lib.rs:call_deletion:1f64eda5
   ripr context --root <cwd>/fixtures/collection_argument_named/input --diff <cwd>/fixtures/collection_argument_named/diff.patch --mode fast --at probe:src_lib.rs:call_deletion:1f64eda5
   no repair start offered: nothing to repair here; the related tests already notice this change (exposed)

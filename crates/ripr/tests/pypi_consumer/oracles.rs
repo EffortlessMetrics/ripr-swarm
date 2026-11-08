@@ -271,7 +271,7 @@ mod tests {
             "ripr explain --root '/tmp/consumer ü/fixtures/python/basic' --diff '/tmp/consumer ü/fixtures/python/basic/diff.patch' --mode fast {finding}"
         );
         let human = format!(
-            "Next: drill into the top finding:\n  {product}\n  ripr context --root '/tmp/consumer ü/fixtures/python/basic' --diff '/tmp/consumer ü/fixtures/python/basic/diff.patch' --mode fast --at {finding}\n"
+            "Next: drill into the top finding:\n  (finding id, for explain/context)\n  {product}\n  ripr context --root '/tmp/consumer ü/fixtures/python/basic' --diff '/tmp/consumer ü/fixtures/python/basic/diff.patch' --mode fast --at {finding}\n"
         );
         let command = extract_explain_continuation(&human)?;
         if command != product {

@@ -29,9 +29,14 @@
 eligible repairs, not coverage, runtime mutation outcomes, or all test gaps.
 See docs/BADGE_POLICY.md and docs/VERIFICATION.md. -->
 
-ripr reads your diff and related tests to find potential gaps in what they
-check. It explains the evidence and suggests where a focused test could help.
-Use the finding during review or hand it to a coding agent.
+Your tests pass. Would they notice if the change you just made were wrong?
+
+ripr reads your diff and the related tests and names a changed behavior no
+test appears to check, plus the missing case or assertion. Where a repair route
+exists, it also names the test to add. It does not run your tests or any
+mutants. Use the finding in review, or hand the gap to a coding agent.
+[Why ripr](docs/WHY_RIPR.md) covers how this differs from coverage, mutation
+testing and formal verification.
 
 A test can run the changed code without checking the behavior that changed:
 
@@ -109,6 +114,7 @@ published-versus-development split and build times.
 | Review a change | Inspect possible assertion gaps and the evidence behind them. | [CLI quickstart](docs/QUICKSTART.md#cli-first-hour) |
 | Analyze a Python change (preview) | Auto-enable the preview from project markers, inspect the advisory boundary gap, and follow the printed pytest/unittest route. | [Python first hour](docs/QUICKSTART.md#python-first-hour-preview) |
 | Write a focused test | Prepare a supported repair, edit the test yourself or with an agent, and compare the static evidence afterward. | [Repair a gap](docs/QUICKSTART.md#agent-or-reviewer-first-hour) |
+| Work in Muse | Install the native plugin, approve its MCP server, and use guided setup and test repair with an MCP-capable development build. | [Muse plugin guide](plugins/muse/ripr/README.md) |
 | Work in VS Code | Inspect saved-workspace diagnostics, open a related test, and copy a test brief. | [Editor quickstart](docs/QUICKSTART.md#vs-code-first-hour) |
 | Review in GitHub | Run `ripr init --ci github` to generate an advisory PR workflow with a summary and downloadable evidence. | [CI quickstart](docs/QUICKSTART.md#ci-first-hour) |
 
@@ -161,6 +167,7 @@ a promise that every surface is available from the published package.
 | Python | Analysis is `preview`. Selected pytest/unittest repair routes are `usable alpha`; a finding without a complete route has no repair card. The [Python first hour](docs/QUICKSTART.md#python-first-hour-preview) quickstart covers the marker-based auto-enable, the `check`/`pilot` flow, and the preview caveat. `ripr repair` and `ripr agent stub` are Rust-only; follow `check` -> `agent repair --gap-id` -> edit test -> commit -> `continue`. |
 | TypeScript / JavaScript | `preview` analysis, auto-enabled for detected TypeScript projects when no `ripr.toml` exists (opt out with `enabled = ["rust"]`). When a finding has a complete repair packet, `check` names the test file, the missing case, and the test command to run; see the [TypeScript first hour](docs/QUICKSTART.md#typescript-first-hour-preview). `ripr repair` and `ripr agent stub` are Rust-only. |
 | Perl | `preview` / advisory development only. It needs a `lang-perl` build and the unpublished `perl-ripr-facts` exporter (build it from `crates/perl-ripr-facts` in `EffortlessMetrics/perl-lsp` with `cargo build --release -p perl-ripr-facts`, put it on `PATH`, and set `[languages] enabled = ["perl"]` plus `[perl] producer = "perl-ripr-facts"`); no released build/exporter combination is usable yet. |
+| Julia | Spec-only preview contract ([RIPR-SPEC-0405](docs/specs/RIPR-SPEC-0405-julia-preview-package-dispatch-test-numerical-array-native-boundaries.md)); no adapter yet. Next implementation checkpoint: `adr/julia-parser-substrate`. |
 
 With no `ripr.toml`, ripr analyzes Rust and also enables Python preview when
 it detects Python project markers or Python source under `src/` or `tests/`;

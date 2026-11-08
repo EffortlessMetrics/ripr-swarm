@@ -2,7 +2,7 @@
 //!
 //! Built deterministically in memory from the path-dependency edges captured
 //! by slice A (#2968/#3037, see
-//! [`crate::analysis::seam_cache::PathDependencyEdge`]). No network, no
+//! [`crate::analysis::seam_cache::path_dependencies::PathDependencyEdge`]). No network, no
 //! filesystem walking of dependencies, no Cargo invocation: node identities
 //! are the captured repo-relative manifest paths and the lexically resolved
 //! dependency paths, so the graph answers "which manifests does this manifest
@@ -34,7 +34,7 @@
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::Path;
 
-use crate::analysis::seam_cache::{
+use crate::analysis::seam_cache::path_dependencies::{
     PathDependencySection, WorkspaceGraphProvenance, workspace_graph_provenance,
 };
 
@@ -169,7 +169,9 @@ impl PathDependencyAdjacency {
             // manifest joins the node set only through a connected edge so
             // a manifest whose every edge is disconnected does not appear
             // as an isolated participant.
-            if edge.resolution != crate::analysis::seam_cache::PathDependencyResolution::Resolved {
+            if edge.resolution
+                != crate::analysis::seam_cache::path_dependencies::PathDependencyResolution::Resolved
+            {
                 continue;
             }
             let Some(resolved) = edge.resolved_path.as_deref() else {
@@ -691,7 +693,7 @@ fn compose_detail(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::analysis::seam_cache::{
+    use crate::analysis::seam_cache::path_dependencies::{
         PathDependencyEdge, PathDependencyLimitation, PathDependencyLimitationKind,
         PathDependencyResolution, PathDependencySection, PathDependencySource,
         workspace_graph_provenance,

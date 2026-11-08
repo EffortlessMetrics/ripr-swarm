@@ -1,6 +1,6 @@
 # RIPR governed identity registry
 
-Generated from `crates/ripr/src/domain/identity`. Do not edit by hand.
+Generated from `crates/ripr-contract/src/domain/identity`. Do not edit by hand.
 
 This table is the human projection of the machine-readable registry. It names
 authorities and compatibility posture. It does not prove that consumers have
@@ -10,14 +10,14 @@ behavior, or support claims.
 | Identity | Owner | Class | Invalidation | Canonical fields | Aliases |
 | --- | --- | --- | --- | --- | --- |
 | `ActionId` | `(fingerprint in lsp::action_contract::action_data; typed wrapper is #4806)` (#1892/#1661/#4806) | `session-bound` | Action class, addressed canonical identity, command id, or stable action name change. Title text must not. | `action_id` | — |
-| `AnalysisAttemptId` | `lsp refresh generation echoed as snapshot_id (not #1602 handle)` (#1603/#1765/#4807) | `session-bound` | A new accepted refresh. Scheduler coalescing must not mint a completed snapshot handle. | `snapshot_id` | — |
+| `AnalysisAttemptId` | `domain::analysis_execution_identity::AnalysisAttemptId` (#1603/#1765/#4807) | `session-bound` | A new accepted refresh. Scheduler coalescing must not mint a completed snapshot handle. | `snapshot_id` | — |
 | `CanonicalItemId` | `domain::canonical_item::CanonicalItemId` (#1932/#4804 (records PR-era Lane 1 gap identity; typed wrapper is #4805)) | `portable` | Owner, seam kind, flow sink, missing discriminator, or assertion shape change. Line numbers are locators, not identity. | `canonical_gap_id` | `gap_id` |
 | `CommandId` | `domain::command_spec::CommandSpec.command_id` (#1617/#1754/#4808) | `portable` | Semantic argv, role, or policy change. Display-string-only changes must not. | `command_id` | — |
-| `CompletedAnalysisSnapshotId` | `analysis_outcome::AnalysisIdentity.snapshot_identity` (#1765/#1602/#4807) | `snapshot-bound` | Any completed-analysis input or result commitment change. Request order and scheduler generation do not define this id. | `snapshot_identity` | — |
-| `ContinuationId` | `(request continuation_id / success continuation_identity; typed wrapper is #4807)` (#1603/#1899/#4807) | `transport-bound` | Snapshot, profile, budget, or page-order change. | `continuation_id` | `continuation_identity` |
+| `CompletedAnalysisSnapshotId` | `domain::analysis_execution_identity::CompletedAnalysisSnapshotId` (#1765/#1602/#4807) | `snapshot-bound` | Any completed-analysis input or result commitment change. Request order and scheduler generation do not define this id. | `snapshot_identity` | — |
+| `ContinuationId` | `domain::analysis_execution_identity::ContinuationId` (#1603/#1899/#4807) | `transport-bound` | Snapshot, profile, budget, or page-order change. | `continuation_id` | `continuation_identity` |
 | `DiagnosticCodeId` | `LSP Diagnostic.code / diagnostic data diagnostic_id` (#1892/#4804 (distinct from DiagnosticResultId)) | `transport-bound` | Diagnostic code change. Result-id payload digest must not be substituted. | `diagnostic_id` | — |
-| `DiagnosticResultId` | `lsp::diagnostics::DiagnosticResultIdCache` (#1565/#1566/#4807) | `transport-bound` | Snapshot, document, delivery selection, or diagnostic payload change. | — | — |
-| `EditInstructionId` | `(not yet typed; #4806)` (#1571/#1895/#4806) | `snapshot-bound` | Any source, range, or document-version change. Cannot survive an edit. | — | — |
+| `DiagnosticResultId` | `domain::analysis_execution_identity::DiagnosticResultId` (#1565/#1566/#4807) | `transport-bound` | Snapshot, document, delivery selection, or diagnostic payload change. | — | — |
+| `EditInstructionId` | `domain::guarded_edit::EditInstructionId` (#1571/#1902/#4806) | `snapshot-bound` | Any source, range, or document-version change. Cannot survive an edit. | — | — |
 | `FeedbackReceiptId` | `domain::feedback::FeedbackReceipt.feedback_id / identity.receipt_id` (#4585/#4804 (same field name as repair ReceiptId; different authority)) | `snapshot-bound` | Referenced snapshot or judgment identity change. Timestamp is outside payload identity. | `receipt_id` | — |
 | `FindingId` | `domain::support::ProbeId` (#1932 (producer finding/probe identity; typed CanonicalItemId family is #4805)) | `portable` | Changed owner or probe family. Display titles do not participate. | `finding_id` | — |
 | `InputIdentity` | `lsp::input_identity::LspAnalysisInputIdentity` (#1642/#1671/#2000/#4804) | `repository-bound` | Any listed semantic input change. Absolute checkout spelling is recorded separately as root_identity containment evidence. | `input_identity` | — |

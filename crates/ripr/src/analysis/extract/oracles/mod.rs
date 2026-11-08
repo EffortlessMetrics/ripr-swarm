@@ -16,8 +16,8 @@ pub(crate) use pattern_admission::table_builds;
 #[cfg(test)]
 pub(crate) use patterns::contains_macro_invocation;
 pub(crate) use patterns::{
-    OracleTextShape, has_oracle_text_shape, is_inline_unwrap_err_error_assertion,
-    is_unwrap_err_bound_error_assertion,
+    OracleTextShape, has_oracle_text_shape, is_exact_membership_any_assertion,
+    is_inline_unwrap_err_error_assertion, is_unwrap_err_bound_error_assertion,
 };
 pub(crate) use reach::retain_reached_oracles;
 pub(crate) use scan::{

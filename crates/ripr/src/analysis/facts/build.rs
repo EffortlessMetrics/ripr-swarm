@@ -123,6 +123,7 @@ pub(crate) fn extend_index_from_loaded_files_with_cache(
         .include_targets
         .extend(extra_index.include_targets.iter().cloned());
     super::includes::resolve_repository_local_includes(root, index);
+    super::resource_dependencies::attach_resource_dependencies(root, index);
     index.workspace_authority = Some(WorkspaceRootAuthority::from_sources(
         root,
         index
@@ -162,12 +163,22 @@ pub(crate) fn build_index_from_paths_with_cache(
     paths: &[PathBuf],
     attribution: MissAttribution,
 ) -> Result<CachedRustIndex, String> {
+    build_index_from_paths_with_cache_and_consumed(root, paths, attribution, None)
+}
+
+pub(crate) fn build_index_from_paths_with_cache_and_consumed(
+    root: &Path,
+    paths: &[PathBuf],
+    attribution: MissAttribution,
+    consumed: Option<&mut crate::analysis::consumed_source::ConsumedRustSources>,
+) -> Result<CachedRustIndex, String> {
     build_index_from_paths_with_cache_and_adapters(
         root,
         paths,
         &RaRustSyntaxAdapter,
         &LexicalRustSyntaxAdapter,
         attribution,
+        consumed,
     )
 }
 
@@ -177,13 +188,14 @@ fn build_index_from_paths_with_cache_and_adapters(
     adapter: &(dyn RustSyntaxAdapter + Send + Sync),
     fallback: &(dyn RustSyntaxAdapter + Send + Sync),
     attribution: MissAttribution,
+    mut consumed: Option<&mut crate::analysis::consumed_source::ConsumedRustSources>,
 ) -> Result<CachedRustIndex, String> {
     let cache = RepoFileFactCache::at(root);
     // Each batch is read only when the shared loop asks for it, so the
     // previous batch's bytes are dropped before the next read.
     let batches = paths
         .chunks(PARSE_BATCH_FILES)
-        .map(|chunk| StreamedBatch::read(root, chunk));
+        .map(|chunk| StreamedBatch::read(root, chunk, consumed.as_deref_mut()));
     build_index_with_file_fact_cache_batches(root, batches, adapter, fallback, &cache, || {
         match attribution {
             MissAttribution::Named => cache.known_file_paths(),
@@ -221,7 +233,11 @@ struct StreamedBatch {
 }
 
 impl StreamedBatch {
-    fn read(root: &Path, chunk: &[PathBuf]) -> Result<Self, String> {
+    fn read(
+        root: &Path,
+        chunk: &[PathBuf],
+        mut consumed: Option<&mut crate::analysis::consumed_source::ConsumedRustSources>,
+    ) -> Result<Self, String> {
         let mut files = Vec::with_capacity(chunk.len());
         #[cfg(test)]
         let mut charge = streamed_source_bytes::Charge::default();
@@ -229,6 +245,9 @@ impl StreamedBatch {
             cancellation::checkpoint()?;
             let bytes = std::fs::read(root.join(file))
                 .map_err(|err| format!("read {} failed: {err}", file.display()))?;
+            if let Some(consumed) = consumed.as_mut() {
+                consumed.record(file, Some(&bytes));
+            }
             #[cfg(test)]
             charge.add(bytes.len());
             files.push((file.clone(), bytes));
@@ -288,6 +307,7 @@ fn build_index_with_file_fact_cache_batches<B: AsRef<[(PathBuf, Vec<u8>)]>>(
     let (mut index, files_content_hash) = batched?;
     cancellation::checkpoint()?;
     super::includes::resolve_repository_local_includes(root, &mut index);
+    super::resource_dependencies::attach_resource_dependencies(root, &mut index);
     cancellation::checkpoint()?;
     index.workspace_authority = Some(WorkspaceRootAuthority::from_sources(
         root,
@@ -323,6 +343,13 @@ struct CacheAccounting {
     first_corrupt_reason: Option<String>,
 }
 
+fn batch_end_error(stats: &FileFactCacheStats, error: String) -> String {
+    stats
+        .store_failure_diagnostic()
+        .map(|store| format!("{store}; batch ended with: {error}"))
+        .unwrap_or(error)
+}
+
 /// Admit, parse, store, and insert one `PARSE_BATCH_FILES` slice at a time
 /// (#5029). Cache-hit facts and parsed misses live outside the canonical
 /// index only for the current batch; every batch temporary is dropped before
@@ -349,7 +376,7 @@ fn insert_cached_file_batches<B: AsRef<[(PathBuf, Vec<u8>)]>>(
         first_corrupt_reason,
     } = accounting;
     enum Pending {
-        Ready(super::FileFacts),
+        Ready(Box<super::FileFacts>),
         Parse { key: RepoFileFactCacheKey },
     }
     // Only genuine misses need historical paths for invalidation attribution.
@@ -390,7 +417,7 @@ fn insert_cached_file_batches<B: AsRef<[(PathBuf, Vec<u8>)]>>(
             match load {
                 CacheLoad::Hit(facts) => {
                     stats.hits += 1;
-                    pending.push(Pending::Ready(facts));
+                    pending.push(Pending::Ready(Box::new(facts)));
                 }
                 CacheLoad::Miss => {
                     stats.misses += 1;
@@ -466,7 +493,7 @@ fn insert_cached_file_batches<B: AsRef<[(PathBuf, Vec<u8>)]>>(
                         }
                     }
                 }
-                return Err(error);
+                return Err(batch_end_error(stats, error));
             }
             for (position, result) in results {
                 parsed[position] = Some(result.map_err(WorkerError::into_message)?);
@@ -496,7 +523,7 @@ fn insert_cached_file_batches<B: AsRef<[(PathBuf, Vec<u8>)]>>(
                 index.non_utf8_sources.insert(file.clone());
             }
             let summary = match entry {
-                Pending::Ready(facts) => facts,
+                Pending::Ready(facts) => *facts,
                 Pending::Parse { key } => {
                     let Some(facts) = parsed[position].take() else {
                         return Err(format!(
@@ -521,7 +548,7 @@ fn insert_cached_file_batches<B: AsRef<[(PathBuf, Vec<u8>)]>>(
             }
         }
         if let Some(error) = abort {
-            return Err(error);
+            return Err(batch_end_error(stats, error));
         }
     }
     Ok((index, content_hash.finish()))
@@ -615,6 +642,49 @@ pub(crate) mod streamed_source_bytes {
     }
 }
 
+thread_local! {
+    static SECONDARY_PASS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Set once any build in this process has printed a corrupt-cache warning.
+/// Process-global and never reset: a process runs one `check`, so "already
+/// printed" is the whole run's state. (A long-lived host would keep
+/// suppressing secondary-pass warnings after its first one; secondary passes
+/// exist only for `check`'s follow-up routes.)
+static CORRUPT_WARNING_EMITTED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// Marks the calling thread's cache-backed builds as a secondary pass: the
+/// repair and stub route computations behind `check`'s follow-up routes
+/// (#11976), whose bounded and diff-scoped inventories re-read cache entries
+/// the analysis build already looked up. While held, once any corrupt-cache
+/// warning has printed in the process, ANY later warning from a secondary
+/// pass is suppressed, even one for different entries or with a different
+/// count or reason. The warning is a stderr-only advisory, so the analysis
+/// build's report stands for the run. A secondary pass that meets the first
+/// corruption of the process still reports it. Guards nest and restore the
+/// prior state on drop.
+#[must_use = "the secondary-pass marker ends when the guard is dropped"]
+pub(crate) struct SecondaryPassGuard(bool);
+
+impl SecondaryPassGuard {
+    pub(crate) fn enter() -> Self {
+        Self(SECONDARY_PASS.with(|flag| flag.replace(true)))
+    }
+}
+
+impl Drop for SecondaryPassGuard {
+    fn drop(&mut self) {
+        SECONDARY_PASS.with(|flag| flag.set(self.0));
+    }
+}
+
+/// Whether a build's corrupt-cache warning would only repeat an earlier one:
+/// true only for a secondary pass after a warning was already printed.
+fn repeats_earlier_warning(secondary_pass: bool, already_emitted: bool) -> bool {
+    secondary_pass && already_emitted
+}
+
 fn emit_corrupt_entries_warning(count: usize, first_reason: Option<&str>) {
     if let Some(reason) = first_reason {
         // #12432: the run-stable base-class reasons (tracked cache dir, base
@@ -622,7 +692,12 @@ fn emit_corrupt_entries_warning(count: usize, first_reason: Option<&str>) {
         // so each distinct base reports once instead of once per build;
         // ordinary per-entry reasons never reach the guard and keep the
         // per-build count+first-reason line.
-        if claim_base_untrusted_reason_emission(reason) {
+        let repeat = repeats_earlier_warning(
+            SECONDARY_PASS.with(std::cell::Cell::get),
+            CORRUPT_WARNING_EMITTED.load(std::sync::atomic::Ordering::Relaxed),
+        );
+        if !repeat && claim_base_untrusted_reason_emission(reason) {
+            CORRUPT_WARNING_EMITTED.store(true, std::sync::atomic::Ordering::Relaxed);
             eprintln!("{}", corrupt_entries_warning(count, reason));
         }
     }
@@ -694,6 +769,7 @@ fn build_index_with_adapters(
     }
     cancellation::checkpoint()?;
     super::includes::resolve_repository_local_includes(root, &mut index);
+    super::resource_dependencies::attach_resource_dependencies(root, &mut index);
     cancellation::checkpoint()?;
     index.workspace_authority = Some(WorkspaceRootAuthority::from_sources(
         root,
@@ -968,6 +1044,22 @@ mod tests {
             many.ends_with("first: (read failed: Not a directory)"),
             "{many}"
         );
+    }
+
+    #[test]
+    fn batch_end_error_prefers_store_failure_detail() {
+        use crate::analysis::seam_cache::{FileFactStoreError, FileFactStoreStage};
+        let mut stats = FileFactCacheStats::default();
+        stats.record_store_failure(
+            PathBuf::from("src/a.rs"),
+            FileFactStoreError {
+                stage: FileFactStoreStage::Write,
+                message: "disk full".to_string(),
+            },
+        );
+        let message = super::batch_end_error(&stats, "analysis cancelled: Cancelled".to_string());
+        assert!(message.contains("disk full"), "{message}");
+        assert!(message.contains("analysis cancelled"), "{message}");
     }
 
     use super::*;
@@ -2462,5 +2554,51 @@ pub fn check(x: i32) -> bool {
     #[test]
     fn uncached_source_failure_precedes_join_deadline() -> Result<(), Box<dyn Error>> {
         source_failure_precedes_join_deadline(false)
+    }
+}
+
+#[cfg(test)]
+mod secondary_pass_tests {
+    use super::{SECONDARY_PASS, SecondaryPassGuard, repeats_earlier_warning};
+
+    fn held() -> bool {
+        SECONDARY_PASS.with(std::cell::Cell::get)
+    }
+
+    #[test]
+    fn secondary_pass_with_no_earlier_warning_still_reports_first_corruption() {
+        assert!(!repeats_earlier_warning(true, false));
+        // Control: the primary pass never skips, before or after a warning.
+        assert!(!repeats_earlier_warning(false, false));
+    }
+
+    #[test]
+    fn secondary_pass_skips_only_a_repeat_of_an_earlier_warning() {
+        assert!(repeats_earlier_warning(true, true));
+        assert!(!repeats_earlier_warning(false, true));
+    }
+
+    #[test]
+    fn guard_restores_state_on_drop_nesting_and_early_return() {
+        assert!(!held());
+        {
+            let _outer = SecondaryPassGuard::enter();
+            assert!(held());
+            {
+                let _inner = SecondaryPassGuard::enter();
+                assert!(held());
+            }
+            // The inner drop restores the outer's state, not "off".
+            assert!(held());
+        }
+        assert!(!held());
+        // An early return through `?` drops the guard.
+        fn early() -> Result<(), String> {
+            let _guard = SecondaryPassGuard::enter();
+            Err("stop".to_string())?;
+            Ok(())
+        }
+        assert!(early().is_err());
+        assert!(!held());
     }
 }

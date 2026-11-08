@@ -1,0 +1,1 @@
+| [RIPR-SPEC-0402](../specs/RIPR-SPEC-0402-haskell-preview-package-component-example-property-laziness-ffi-boundaries.md) | accepted | Haskell preview package/component/example/property/laziness/FFI contract (#5887, #5596) |

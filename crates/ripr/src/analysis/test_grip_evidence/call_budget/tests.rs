@@ -1,6 +1,7 @@
 use super::*;
 use crate::analysis::extract::extract_call_facts;
 use crate::analysis::seams::{ExpectedSink, RepoSeam, RequiredDiscriminator, SeamKind};
+use crate::domain::DiscriminatorShape;
 use crate::domain::MissingDiscriminatorFact;
 use std::path::PathBuf;
 
@@ -18,6 +19,7 @@ fn test_with_line_of(distinct: usize) -> TestSummary {
         attrs: Vec::new(),
         nested_fn_names: Vec::new(),
         let_bindings: Vec::new(),
+        generated: None,
     }
 }
 
@@ -53,6 +55,8 @@ fn evidence(states: [StageState; 5], missing: usize) -> TestGripEvidence {
                 value: "index == 100".to_string(),
                 reason: "not observed".to_string(),
                 flow_sink: None,
+                shape: DiscriminatorShape::Boundary,
+                drafted_boundary: None,
             })
             .collect(),
         statically_contradicted_related_tests: 0,

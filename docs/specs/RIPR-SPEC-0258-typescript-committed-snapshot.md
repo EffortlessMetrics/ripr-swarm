@@ -166,11 +166,14 @@ runner's entry for it can be named and is committed:
 - no title holds `` ` ``, `\`, `$`, a line break or nothing, which the file
   escapes or the runner formats;
 - the file holds the entry `<titles> 1` exactly once, at the start of a
-  line as the runner writes it, and no `<titles> 2`,
-  where `<titles>` joins the describe titles and the test title with a
+  line as the runner writes it, as a parsed top-level assignment, and no
+  `<titles> 2`, where `<titles>` joins the describe titles and the test title with a
   space for Jest and with ` > ` for Vitest, followed under rule 2 by
   `: <hint>`. A second entry means the assertion ran more than once when
-  the file was written.
+  the file was written. A matching assignment nested in another construct
+  also refuses credit because it can overwrite the entry or add a counter.
+  A parse error or refused parser worker keeps medium; text inside comments
+  or other values is not an entry.
 
 **Rule 2. A Jest hint names its entry.** Jest's
 `toMatchSnapshot(hint)` records its entry under `<titles>: <hint>

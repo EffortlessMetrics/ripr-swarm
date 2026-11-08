@@ -1,0 +1,20 @@
+#[derive(Debug, PartialEq)]
+pub struct BadInput;
+
+pub fn parse(n: u32) -> Result<u32, BadInput> {
+    if n == 0 {
+        return Err(BadInput);
+    }
+    Ok(n * 2)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use claims::assert_ok_eq;
+
+    #[test]
+    fn parse_doubles() {
+        assert_ok_eq!(parse(5), 10);
+    }
+}

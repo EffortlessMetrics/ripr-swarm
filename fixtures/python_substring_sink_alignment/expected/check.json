@@ -27,6 +27,12 @@
       "classification": "weakly_exposed",
       "severity": "warning",
       "confidence": 0.40,
+      "confidence_basis": [
+        {"code": "preview_stages_not_modeled", "summary": "preview adapter: infection/propagation not modeled (Python)"},
+        {"code": "syntax_first_no_type_resolution", "summary": "syntax-first, no type or import resolution"},
+        {"code": "boundary_input_not_matched", "summary": "no observed call supplies the changed boundary input"}
+      ],
+      "confidence_why_capped": "Why capped: preview adapter: infection/propagation not modeled (Python); syntax-first, no type or import resolution; no observed call supplies the changed boundary input. Preview score, not on the same scale as Rust confidence.",
       "probe": {
         "id": "probe:src_pack.py:python_preview:cfc61771",
         "family": "predicate",
@@ -90,9 +96,7 @@
           "line": 4,
           "oracle_strength": "strong",
           "oracle_kind": "exact_value",
-          "oracle": "assert buffered_output == [1, 2]",
-          "miss": "observation_unconfirmed",
-          "why": "ripr could not confirm that this assertion observes the changed behavior"
+          "oracle": "assert buffered_output == [1, 2]"
         }
       ],
       "repair_placement": {

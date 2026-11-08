@@ -88,7 +88,8 @@ package = name, version, workspace_manifest_sha256,
           package_manifest_sha256, lock_sha256
 range = last_integrated_swarm_parent, all_reachable_count,
         first_parent_count, all_reachable_sha256, first_parent_sha256,
-        record_set_sha256
+        record_set_sha256,
+        path_record_count, path_record_sha256, path_record_recipe
 prerequisites = selected_claims(#2766), denominator(#2768), audit(#3807)
 pin = remote_ref_readback(#1609), ruleset(#1609)
 qualification = state("required_not_run"), required_execution_owners,
@@ -143,6 +144,24 @@ historical denominator's JSON hashes. The accepted #2768 packet must supply
 this exact recipe. `record_set_sha256` remains the reviewed owner's normalized
 record-set claim bound by the retained packet and independent manifest digest;
 this adapter does not reconstruct or adjudicate the ledger.
+
+`range.path_record_count` / `path_record_sha256` / `path_record_recipe` carry
+the raw Git path-record inventory of the same range (#4006 item 6, #2768),
+taken from the accepted #2768 ledger's `path_inventories.range_touched`: the
+shared `path_inventory` authority computed it at ledger capture from
+`git diff --name-only -z` raw records — decoded UTF-8 paths sorted bytewise and
+deduplicated, each followed by one NUL byte, hashed with SHA-256. The digest is
+NUL-framed, so a name containing a newline never collides with the two names a
+line split would invent; an LF-joined digest of the same paths is a different
+value and must refuse. The manifest range and the ledger denominator are the
+same base and cut (`last_integrated_swarm_parent` is the 0.11 release base;
+`candidate` is the frozen cut), and admission anchors that equivalence live: it
+recomputes the range counts and ordered digests against the admitted source,
+then compares the manifest's path-record count, digest and recipe as typed
+fields against the retained #2768 packet bytes for the same base and cut.
+`path_record_sha256` is lowercase 64-hex without the `sha256:` prefix, like the
+other range digests. A manifest without the identity fails to parse, so a
+missing inventory is never admitted as an empty one.
 The selected-claim/denominator/audit owners retain semantic acceptance. Their
 raw packet bindings are required, but a digest or self-issued `passed` label
 cannot establish that their predicates were accepted.

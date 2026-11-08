@@ -55,6 +55,9 @@ outputs:
   competing_prs:
     description: 'Comma-separated trusted competing PR numbers'
     value: ${{ steps.admit.outputs.competing_prs }}
+  concurrent_claims:
+    description: 'Live ownership claims on this PR as holder (@login), updated Nm; empty when none'
+    value: ${{ steps.admit.outputs.concurrent_claims }}
   changed_files:
     description: 'Counted changed files for the current PR (GitHub total minus declared generated files)'
     value: ${{ steps.admit.outputs.changed_files }}
@@ -70,6 +73,18 @@ outputs:
   cut_detail:
     description: 'Single concrete hard-cut admission detail naming what to fix'
     value: ${{ steps.admit.outputs.cut_detail }}
+  history_sync_status:
+    description: 'History-sync route status (#12437): not_requested, rejected, or validated'
+    value: ${{ steps.admit.outputs.history_sync_status }}
+  history_sync_detail:
+    description: 'Why a requested history-sync route was not honored'
+    value: ${{ steps.admit.outputs.history_sync_detail }}
+  history_sync_source:
+    description: 'Declared history-sync source as owner/repo@sha (validated subjects only)'
+    value: ${{ steps.admit.outputs.history_sync_source }}
+  history_sync_destination_base:
+    description: 'Declared history-sync destination base sha (validated subjects only)'
+    value: ${{ steps.admit.outputs.history_sync_destination_base }}
 
 runs:
   using: 'composite'
@@ -157,6 +172,8 @@ runs:
             and (.max_changed_files | type == "number")
             and (.max_changed_lines | type == "number")
             and (.status as $status | ($allowed | split(",") | index($status)) != null)
+            and (.history_sync == null or (.history_sync | type == "object" and (.status | type == "string")))
+            and ((.reason == "history_sync_admitted") == (.status == "admitted" and .history_sync.status == "validated"))
           ' "$file" >/dev/null; then
             refuse_early "candidate_result_invalid" "candidate admission produced no valid result; refresh the exact PR/head evidence and retry"
           fi
@@ -190,10 +207,10 @@ runs:
         }
 
         if [ "${ADMISSION_MODE:-admit}" != "admit" ]; then
-          printf '%s\n' '{"status":"self_test_pass","reason":"candidate_and_cut_controls_passed","detail":"","claim":"","acceptance_delta":"","competing_prs":[],"changed_files":0,"changed_lines":0,"max_changed_files":160,"max_changed_lines":3000}' > "$result"
+          printf '%s\n' '{"status":"self_test_pass","reason":"candidate_and_cut_controls_passed","detail":"","claim":"","acceptance_delta":"","competing_prs":[],"concurrent_claims":[],"changed_files":0,"changed_lines":0,"max_changed_files":160,"max_changed_lines":3000}' > "$result"
           printf '%s\n' '{"status":"admitted","reason":"cut_self_test_pass","detail":""}' > "$cut_result"
         elif [ -z "${ADMISSION_PR_NUMBER:-}" ]; then
-          printf '%s\n' '{"status":"not_applicable","reason":"non_pull_request_invocation","detail":"","claim":"","acceptance_delta":"","competing_prs":[],"changed_files":0,"changed_lines":0,"max_changed_files":160,"max_changed_lines":3000}' > "$result"
+          printf '%s\n' '{"status":"not_applicable","reason":"non_pull_request_invocation","detail":"","claim":"","acceptance_delta":"","competing_prs":[],"concurrent_claims":[],"changed_files":0,"changed_lines":0,"max_changed_files":160,"max_changed_lines":3000}' > "$result"
           printf '%s\n' '{"status":"admitted","reason":"cut_non_pull_request_invocation","detail":""}' > "$cut_result"
         else
           [ -n "${GH_TOKEN:-}" ] || refuse_early "token_missing" "candidate admission requires a read-only GitHub token"
@@ -201,6 +218,23 @@ runs:
           gh api "repos/${ADMISSION_REPOSITORY}/pulls/${ADMISSION_PR_NUMBER}" > "$current"
           gh api --paginate "repos/${ADMISSION_REPOSITORY}/pulls?state=open&per_page=100" | jq -s 'add' > "$open_prs"
           gh api --paginate "repos/${ADMISSION_REPOSITORY}/pulls/${ADMISSION_PR_NUMBER}/files?per_page=100" | jq -s 'add' > "$pr_files"
+          pr_comments="$tmp/pr-comments.json"
+          comments_probe="$tmp/comments-probe.txt"
+          # Conversation comments, not `pulls/{n}/comments`: the issue-comments
+          # endpoint is the one that carries PR conversation comments —
+          # `pulls/{n}/comments` returns review comments only and would
+          # silently detect nothing (#11736 Proposal B). It takes no
+          # sort/direction and lists oldest first, so the latest window is the
+          # last page: one per_page=1 probe reads the total from the Link
+          # header, then one bounded read of at most the final 100.
+          comments_total=1
+          gh api -i "repos/${ADMISSION_REPOSITORY}/issues/${ADMISSION_PR_NUMBER}/comments?per_page=1" > "$comments_probe"
+          probed="$(sed -n 's/^[Ll]ink:.*[?&]page=\([0-9]\{1,\}\)>; rel="last".*/\1/p' "$comments_probe" | tail -1)"
+          case "$probed" in
+            ''|*[!0-9]*) ;;
+            *) comments_total="$probed" ;;
+          esac
+          gh api "repos/${ADMISSION_REPOSITORY}/issues/${ADMISSION_PR_NUMBER}/comments?per_page=100&page=$(( (comments_total + 99) / 100 ))" > "$pr_comments"
 
           base_ref="$(jq -r '.base.ref // empty' "$current")"
           [ -n "$base_ref" ] || refuse_early "base_ref_missing" "candidate admission received no base ref from the PR snapshot; refresh the exact PR evidence and retry"
@@ -264,6 +298,8 @@ runs:
             --max-changed-files "${ADMISSION_MAX_CHANGED_FILES}" \
             --max-changed-lines "${ADMISSION_MAX_CHANGED_LINES}" \
             --pr-files "$pr_files" \
+            --base-sha "$base_sha" \
+            --comments "$pr_comments" \
             "${attrs_args[@]}" \
             "${docs_flag[@]}" > "$result"
           rc_candidate=$?
@@ -307,6 +343,7 @@ runs:
         claim="$(jq -r '.claim' "$result")"
         acceptance_delta="$(jq -r '.acceptance_delta' "$result")"
         competing_prs="$(jq -r '.competing_prs | map(tostring) | join(",")' "$result")"
+        concurrent_claims="$(jq -r '[(.concurrent_claims // [])[] | "\(.actor // "") (@\(.login // "unknown")), updated \(.age_minutes // 0)m"] | join(", ")' "$result")"
         changed_files="$(jq -r '.changed_files' "$result")"
         changed_lines="$(jq -r '.changed_lines' "$result")"
         max_files="$(jq -r '.max_changed_files' "$result")"
@@ -314,12 +351,17 @@ runs:
         cut_status="$(jq -r '.status' "$cut_result")"
         cut_reason="$(jq -r '.reason' "$cut_result")"
         cut_detail="$(jq -r '.detail // ""' "$cut_result")"
+        sync_status="$(jq -r '.history_sync.status // "not_requested"' "$result")"
+        sync_detail="$(jq -r '.history_sync.detail // ""' "$result")"
+        sync_source="$(jq -r 'if .history_sync.status == "validated" then "\(.history_sync.source)@\(.history_sync.source_sha)" else "" end' "$result")"
+        sync_base="$(jq -r 'if .history_sync.status == "validated" then .history_sync.destination_base else "" end' "$result")"
         status="$(sanitize_output_value "$status")"
         reason="$(sanitize_output_value "$reason")"
         detail="$(sanitize_output_value "$detail")"
         claim="$(sanitize_output_value "$claim")"
         acceptance_delta="$(sanitize_output_value "$acceptance_delta")"
         competing_prs="$(sanitize_output_value "$competing_prs")"
+        concurrent_claims="$(sanitize_output_value "$concurrent_claims")"
         changed_files="$(sanitize_output_value "$changed_files")"
         changed_lines="$(sanitize_output_value "$changed_lines")"
         max_files="$(sanitize_output_value "$max_files")"
@@ -327,6 +369,10 @@ runs:
         cut_status="$(sanitize_output_value "$cut_status")"
         cut_reason="$(sanitize_output_value "$cut_reason")"
         cut_detail="$(sanitize_output_value "$cut_detail")"
+        sync_status="$(sanitize_output_value "$sync_status")"
+        sync_detail="$(sanitize_output_value "$sync_detail")"
+        sync_source="$(sanitize_output_value "$sync_source")"
+        sync_base="$(sanitize_output_value "$sync_base")"
         {
           echo "status=$status"
           echo "reason=$reason"
@@ -334,11 +380,16 @@ runs:
           echo "claim=$claim"
           echo "acceptance_delta=$acceptance_delta"
           echo "competing_prs=$competing_prs"
+          echo "concurrent_claims=$concurrent_claims"
           echo "changed_files=$changed_files"
           echo "changed_lines=$changed_lines"
           echo "cut_status=$cut_status"
           echo "cut_reason=$cut_reason"
           echo "cut_detail=$cut_detail"
+          echo "history_sync_status=$sync_status"
+          echo "history_sync_detail=$sync_detail"
+          echo "history_sync_source=$sync_source"
+          echo "history_sync_destination_base=$sync_base"
         } >> "$GITHUB_OUTPUT"
         {
           echo "### PR candidate admission"
@@ -358,9 +409,22 @@ runs:
           echo "- claim: \`$claim\`"
           echo "- acceptance delta: \`$acceptance_delta\`"
           echo "- competing PRs: \`${competing_prs:-none}\`"
+          if [ -n "$concurrent_claims" ]; then
+            jq -rc '(.concurrent_claims // [])[] | "- live claims: \(.actor // "") (@\(.login // "unknown"), updated \(.age_minutes // 0)m ago)"' "$result" | while IFS= read -r claim_row; do
+              echo "$(sanitize_output_value "$claim_row")"
+            done
+          fi
           echo "- scope: \`$changed_files files / $changed_lines changed lines\`"
           echo "- ordinary limit: \`$max_files files / $max_lines changed lines\`"
+          echo "- history-sync: \`$sync_status\`${sync_detail:+ — $sync_detail}"
+          if [ "$sync_status" = "validated" ]; then
+            echo "- history-sync source: \`$sync_source\`; destination base: \`$sync_base\` (size caps not applied; diff-scoped PR evidence is not_applicable)"
+          fi
         } >> "$GITHUB_STEP_SUMMARY"
+
+        if [ -n "$concurrent_claims" ]; then
+          echo "::warning::candidate admission found a live ownership claim on this PR: $concurrent_claims — coordinate with the holder before pushing, re-blessing, or requesting qualification (docs/PR_AUTOMATION.md claim convention)"
+        fi
 
         if [ "$status" = "refused" ]; then
           if [ -n "$detail" ]; then

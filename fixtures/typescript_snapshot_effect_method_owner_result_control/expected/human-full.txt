@@ -83,6 +83,7 @@ TypeScript repair packet (advisory)
 Next step
   TypeScript preview advisory: changed behavior is observed under a strong oracle; verify the assertion targets the changed boundary value
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/typescript_snapshot_effect_method_owner_result_control/input --diff <cwd>/fixtures/typescript_snapshot_effect_method_owner_result_control/diff.patch --mode fast probe:src_lib.ts:typescript_preview:322bd6d3
   ripr context --root <cwd>/fixtures/typescript_snapshot_effect_method_owner_result_control/input --diff <cwd>/fixtures/typescript_snapshot_effect_method_owner_result_control/diff.patch --mode fast --at probe:src_lib.ts:typescript_preview:322bd6d3
 

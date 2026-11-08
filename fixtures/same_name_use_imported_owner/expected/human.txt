@@ -31,6 +31,7 @@ Start here:
     - 7 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/same_name_use_imported_owner/input --diff <cwd>/fixtures/same_name_use_imported_owner/diff.patch --mode fast probe:src_lib.rs:return_value:7408a668
   ripr context --root <cwd>/fixtures/same_name_use_imported_owner/input --diff <cwd>/fixtures/same_name_use_imported_owner/diff.patch --mode fast --at probe:src_lib.rs:return_value:7408a668
   no repair start offered: nothing to repair here; the related tests already notice this change (exposed)

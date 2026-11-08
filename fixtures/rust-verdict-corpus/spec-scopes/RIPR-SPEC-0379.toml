@@ -1,0 +1,3 @@
+id = "RIPR-SPEC-0379"
+scope = "out"
+reason = "Tool-capability registry schema and report-only xtask parser are repository-policy law with no runtime-mutant truth for a verdict corpus case; covered by xtask unit tests and `.ripr/tool-capabilities.toml` seed validation"

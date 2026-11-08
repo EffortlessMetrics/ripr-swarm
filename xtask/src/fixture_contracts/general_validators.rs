@@ -1215,6 +1215,116 @@ pub(crate) fn validate_cross_language_oracle_graph_fixture_corpus_at(
     Ok(())
 }
 
+const DOTNET_EVIDENCE_CONTRACT_CORPUS_ROOT: &str = "fixtures/dotnet-evidence-contract-corpus";
+const DOTNET_EVIDENCE_CONTRACT_REQUIRED_CASES: &[&str] = &[
+    "multi_targeting_disjoint_contexts",
+    "generated_member_requires_generator_scope",
+    "csharp_overload_signatures_separate",
+    "property_probe_excludes_backing_field",
+    "theory_registration_without_activation",
+    "cross_language_call_without_edge",
+    "fsharp_inference_unresolved",
+    "visualbasic_late_binding",
+    "package_reference_without_lock",
+    "mstest_language_scoped_identities",
+    "reject_synthetic_dotnet_semantic_language",
+    "reject_unresolved_target_universal_claim",
+];
+
+pub(crate) fn validate_dotnet_evidence_contract_fixture_corpus(
+    violations: &mut Vec<String>,
+) -> Result<(), String> {
+    let root = Path::new(DOTNET_EVIDENCE_CONTRACT_CORPUS_ROOT);
+    for required in ["SPEC.md", "corpus.json"] {
+        let path = root.join(required);
+        if !path.exists() {
+            violations.push(format!(
+                ".NET evidence contract fixture corpus is missing {}",
+                normalize_path(&path)
+            ));
+        }
+    }
+    let spec_path = root.join("SPEC.md");
+    if spec_path.exists() {
+        let body = read_text_lossy(&spec_path)?;
+        if !body.contains("RIPR-SPEC-0393") {
+            violations.push(".NET evidence contract SPEC.md must name RIPR-SPEC-0393".to_string());
+        }
+        for heading in ["## Given", "## When", "## Then", "## Must Not"] {
+            if !body.contains(heading) {
+                violations.push(format!(
+                    ".NET evidence contract SPEC.md must contain the `{heading}` section"
+                ));
+            }
+        }
+    }
+    let corpus_path = root.join("corpus.json");
+    if !corpus_path.exists() {
+        return Ok(());
+    }
+    let raw = read_text_lossy(&corpus_path)?;
+    let value: serde_json::Value = match serde_json::from_str(&raw) {
+        Ok(value) => value,
+        Err(error) => {
+            violations.push(format!(
+                ".NET evidence contract corpus.json is invalid JSON: {error}"
+            ));
+            return Ok(());
+        }
+    };
+    let Some(kind) = value.get("kind").and_then(|v| v.as_str()) else {
+        violations.push(".NET evidence contract corpus must declare kind".to_string());
+        return Ok(());
+    };
+    if kind != "dotnet_evidence_contract_corpus" {
+        violations.push(format!(
+            ".NET evidence contract corpus kind must be dotnet_evidence_contract_corpus, got {kind}"
+        ));
+    }
+    let Some(spec) = value.get("spec").and_then(|v| v.as_str()) else {
+        violations.push(".NET evidence contract corpus must declare spec".to_string());
+        return Ok(());
+    };
+    if !spec.contains("RIPR-SPEC-0393") {
+        violations.push(format!(
+            ".NET evidence contract corpus spec must reference RIPR-SPEC-0393, got {spec}"
+        ));
+    }
+    let Some(cases) = value.get("cases").and_then(|v| v.as_array()) else {
+        violations.push(".NET evidence contract corpus must declare a cases array".to_string());
+        return Ok(());
+    };
+    let mut seen = BTreeSet::<String>::new();
+    for (index, case) in cases.iter().enumerate() {
+        let Some(id) = case.get("id").and_then(|v| v.as_str()) else {
+            violations.push(format!(".NET evidence contract case {index} is missing id"));
+            continue;
+        };
+        if !seen.insert(id.to_string()) {
+            violations.push(format!(".NET evidence contract case {id} is duplicated"));
+        }
+        let Some(expect) = case.get("expect").and_then(|v| v.as_str()) else {
+            violations.push(format!(
+                ".NET evidence contract case {id} is missing expect"
+            ));
+            continue;
+        };
+        if expect != "accept" && expect != "reject" {
+            violations.push(format!(
+                ".NET evidence contract case {id} expect must be accept or reject, got {expect}"
+            ));
+        }
+    }
+    for required in DOTNET_EVIDENCE_CONTRACT_REQUIRED_CASES {
+        if !seen.contains(*required) {
+            violations.push(format!(
+                ".NET evidence contract corpus is missing case {required}"
+            ));
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn validate_bun_ub_cross_language_dogfood_fixture_corpus(
     violations: &mut Vec<String>,
 ) -> Result<(), String> {
@@ -1795,6 +1905,125 @@ pub(crate) fn validate_cache_payload_tamper_recovery_fixture_corpus(
     Ok(())
 }
 
+pub(crate) fn validate_incomplete_diff_corpus_fixture_corpus(
+    violations: &mut Vec<String>,
+) -> Result<(), String> {
+    let root = Path::new("fixtures/incomplete_diff_corpus");
+    for required in ["SPEC.md", "corpus.json"] {
+        let path = root.join(required);
+        if !path.exists() {
+            violations.push(format!(
+                "incomplete diff corpus fixture is missing {}",
+                normalize_path(&path)
+            ));
+        }
+    }
+    let spec_path = root.join("SPEC.md");
+    if spec_path.exists() {
+        let body = read_text_lossy(&spec_path)?;
+        if !body.contains("RIPR-SPEC-0147") {
+            violations.push(
+                "incomplete diff corpus SPEC.md must name RIPR-SPEC-0147 analysis outcome projection"
+                    .to_string(),
+            );
+        }
+        for heading in ["## Given", "## When", "## Then", "## Must Not"] {
+            if !body.contains(heading) {
+                violations.push(format!(
+                    "incomplete diff corpus SPEC.md must contain the `{heading}` section"
+                ));
+            }
+        }
+    }
+    let corpus_path = root.join("corpus.json");
+    if !corpus_path.exists() {
+        return Ok(());
+    }
+    let body = read_text_lossy(&corpus_path)?;
+    let corpus: serde_json::Value = match serde_json::from_str(&body) {
+        Ok(value) => value,
+        Err(error) => {
+            violations.push(format!(
+                "incomplete diff corpus.json is invalid JSON: {error}"
+            ));
+            return Ok(());
+        }
+    };
+    if corpus
+        .get("schema_version")
+        .and_then(serde_json::Value::as_str)
+        != Some("incomplete_diff_corpus.v1")
+    {
+        violations.push(
+            "incomplete diff corpus.json must declare schema_version incomplete_diff_corpus.v1"
+                .to_string(),
+        );
+    }
+    let Some(rows) = corpus.get("rows").and_then(serde_json::Value::as_array) else {
+        violations.push("incomplete diff corpus.json must contain a rows array".to_string());
+        return Ok(());
+    };
+    if rows.is_empty() {
+        violations.push("incomplete diff corpus.json must retain at least one row".to_string());
+    }
+    for row in rows {
+        let Some(id) = row.get("id").and_then(serde_json::Value::as_str) else {
+            violations.push("incomplete diff corpus row is missing id".to_string());
+            continue;
+        };
+        let Some(diff_path) = row.get("diff_path").and_then(serde_json::Value::as_str) else {
+            violations.push(format!(
+                "incomplete diff corpus row {id} is missing diff_path"
+            ));
+            continue;
+        };
+        let Some(expected_sha) = row.get("diff_sha256").and_then(serde_json::Value::as_str) else {
+            violations.push(format!(
+                "incomplete diff corpus row {id} is missing diff_sha256"
+            ));
+            continue;
+        };
+        for field in [
+            "role",
+            "expected_analysis_complete",
+            "expected_exit_code",
+            "expect_malformed_diff_limitation",
+        ] {
+            if row.get(field).is_none() {
+                violations.push(format!(
+                    "incomplete diff corpus row {id} is missing required field `{field}`"
+                ));
+            }
+        }
+        if let Some(role) = row.get("role").and_then(serde_json::Value::as_str)
+            && role != "incomplete"
+            && role != "complete_control"
+        {
+            violations.push(format!(
+                "incomplete diff corpus row {id} has unknown role `{role}`"
+            ));
+        }
+        let path = root.join(diff_path);
+        let bytes = match fs::read(&path) {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                violations.push(format!(
+                    "incomplete diff corpus row {id} is missing diff file {}: {error}",
+                    normalize_path(&path)
+                ));
+                continue;
+            }
+        };
+        let digest = format!("{:x}", Sha256::digest(&bytes));
+        if digest != expected_sha {
+            violations.push(format!(
+                "incomplete diff corpus row {id} diff_sha256 mismatch: expected {expected_sha}, observed {digest}"
+            ));
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn validate_blind_journey_contract_fixture_corpus(
     violations: &mut Vec<String>,
 ) -> Result<(), String> {
@@ -1825,6 +2054,41 @@ pub(crate) fn validate_blind_journey_contract_fixture_corpus(
         }
     }
     validate_blind_journey_contract_fixture_corpus_at(&root.join("corpus.json"), violations)
+}
+
+pub(crate) fn validate_repair_funnel_fixture_corpus(
+    violations: &mut Vec<String>,
+) -> Result<(), String> {
+    let root = Path::new("fixtures/repair_funnel");
+    for required in ["SPEC.md", "controls/corpus.json"] {
+        let path = root.join(required);
+        if !path.exists() {
+            violations.push(format!(
+                "repair funnel fixture corpus is missing {}",
+                normalize_path(&path)
+            ));
+        }
+    }
+    let spec_path = root.join("SPEC.md");
+    if spec_path.exists() {
+        let body = read_text_lossy(&spec_path)?;
+        if !body.contains("RIPR-SPEC-0410") {
+            violations
+                .push("repair funnel SPEC.md must name its RIPR-SPEC-0410 decision".to_string());
+        }
+    }
+    match crate::reports::repair_funnel_report_value() {
+        Ok(report) => {
+            if !report.control_failures.is_empty() {
+                violations.push(format!(
+                    "repair funnel controls corpus failed: {}",
+                    report.control_failures.join("; ")
+                ));
+            }
+        }
+        Err(error) => violations.push(format!("repair funnel projection failed: {error}")),
+    }
+    Ok(())
 }
 
 fn validate_blind_journey_contract_fixture_corpus_at(
@@ -2251,6 +2515,119 @@ pub(crate) fn validate_issue_lifecycle_intake_fixture_corpus(
     Ok(())
 }
 
+pub(crate) fn validate_verification_run_snapshot_binding_fixture_corpus(
+    violations: &mut Vec<String>,
+) -> Result<(), String> {
+    let root = Path::new("fixtures/verification_run_snapshot_binding");
+    let corpus_path = root.join("corpus.json");
+    if !corpus_path.exists() {
+        violations.push(format!(
+            "verification run snapshot binding fixture corpus is missing {}",
+            normalize_path(&corpus_path)
+        ));
+        return Ok(());
+    }
+    let body = read_text_lossy(&corpus_path)?;
+    let value: serde_json::Value = match serde_json::from_str(&body) {
+        Ok(value) => value,
+        Err(error) => {
+            violations.push(format!(
+                "verification run snapshot binding corpus is invalid JSON: {error}"
+            ));
+            return Ok(());
+        }
+    };
+    let Some(schema_version) = value.get("schema_version").and_then(|v| v.as_str()) else {
+        violations.push(
+            "verification run snapshot binding corpus must declare schema_version".to_string(),
+        );
+        return Ok(());
+    };
+    if schema_version != "verification_run_snapshot_binding_corpus.v1" {
+        violations.push(format!(
+            "verification run snapshot binding corpus schema_version must be verification_run_snapshot_binding_corpus.v1, got `{schema_version}`"
+        ));
+    }
+    let Some(cases) = value.get("cases").and_then(|v| v.as_array()) else {
+        violations.push(
+            "verification run snapshot binding corpus must declare a cases array".to_string(),
+        );
+        return Ok(());
+    };
+    if cases.len() != 10 {
+        violations.push(format!(
+            "verification run snapshot binding corpus must contain ten hostile cases, got {}",
+            cases.len()
+        ));
+    }
+    let mut seen_ids = std::collections::BTreeSet::new();
+    for (index, case) in cases.iter().enumerate() {
+        let id = case.get("id").and_then(|v| v.as_str()).unwrap_or("");
+        if id.is_empty() {
+            violations.push(format!(
+                "verification run snapshot binding corpus case {index} must declare a non-empty id"
+            ));
+        } else if !seen_ids.insert(id.to_string()) {
+            violations.push(format!(
+                "verification run snapshot binding corpus case id `{id}` is duplicated"
+            ));
+        }
+        let label = if id.is_empty() {
+            format!("case {index}")
+        } else {
+            format!("case `{id}`")
+        };
+        if !case.get("requested").is_some_and(|v| v.is_object()) {
+            violations.push(format!(
+                "verification run snapshot binding corpus {label} must declare a requested subject object"
+            ));
+        }
+        if !case.get("plan").is_some_and(|v| v.is_object()) {
+            violations.push(format!(
+                "verification run snapshot binding corpus {label} must declare a plan object"
+            ));
+        }
+        let expect = case.get("expect");
+        let compatibility = expect
+            .and_then(|v| v.get("compatibility"))
+            .and_then(|v| v.as_str());
+        match compatibility {
+            Some("compatible") => {}
+            Some("incompatible") => {
+                let axis = expect
+                    .and_then(|v| v.get("first_mismatch_axis"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                if axis.is_empty() {
+                    violations.push(format!(
+                        "verification run snapshot binding corpus {label} expects incompatible but names no first_mismatch_axis"
+                    ));
+                }
+                if !case.get("prepared").is_some_and(|v| v.is_object())
+                    && axis != "unsupported_or_partial_inventory"
+                {
+                    violations.push(format!(
+                        "verification run snapshot binding corpus {label} expects a subject mismatch but declares no prepared subject"
+                    ));
+                }
+            }
+            _ => violations.push(format!(
+                "verification run snapshot binding corpus {label} must expect compatibility `compatible` or `incompatible`"
+            )),
+        }
+        if expect
+            .and_then(|v| v.get("completeness"))
+            .and_then(|v| v.as_str())
+            .is_none()
+        {
+            violations.push(format!(
+                "verification run snapshot binding corpus {label} must declare expected completeness"
+            ));
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn validate_issue_lifecycle_contract_plan_fixture_corpus(
     violations: &mut Vec<String>,
 ) -> Result<(), String> {
@@ -2496,6 +2873,30 @@ pub(crate) fn validate_packaged_repair_parity_fixture(
         violations.push(format!(
             "packaged-repair-parity channel-receipt.schema.json artifact.sha256 pattern must accept shared digest format; got {digest_pattern:?}"
         ));
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_admission_incident_route_fixture_corpus(
+    violations: &mut Vec<String>,
+) -> Result<(), String> {
+    let root = Path::new(repo_policy::admission_incident_route::DEFAULT_ROUTE_CORPUS_DIR);
+    let mut complete = true;
+    for required in ["SPEC.md", "corpus.json"] {
+        let path = root.join(required);
+        if !path.exists() {
+            violations.push(format!(
+                "admission incident route fixture is missing {}",
+                normalize_path(&path)
+            ));
+            complete = false;
+        }
+    }
+    if !complete {
+        return Ok(());
+    }
+    if let Err(error) = repo_policy::admission_incident_route::check_committed_route_corpus() {
+        violations.push(error);
     }
     Ok(())
 }

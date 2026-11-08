@@ -48,6 +48,7 @@ Weakness
 Next step
   shared guidance: N1
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/rust_contradiction_mates_only/input --diff <cwd>/fixtures/rust_contradiction_mates_only/diff.patch --mode fast probe:src_lib.rs:predicate:596620ae
   ripr context --root <cwd>/fixtures/rust_contradiction_mates_only/input --diff <cwd>/fixtures/rust_contradiction_mates_only/diff.patch --mode fast --at probe:src_lib.rs:predicate:596620ae
 
@@ -71,6 +72,7 @@ Evidence
 Next step
   shared guidance: N1
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/rust_contradiction_mates_only/input --diff <cwd>/fixtures/rust_contradiction_mates_only/diff.patch --mode fast probe:src_lib.rs:return_value:fed8ac90
   ripr context --root <cwd>/fixtures/rust_contradiction_mates_only/input --diff <cwd>/fixtures/rust_contradiction_mates_only/diff.patch --mode fast --at probe:src_lib.rs:return_value:fed8ac90
 

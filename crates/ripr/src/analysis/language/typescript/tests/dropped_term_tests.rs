@@ -180,8 +180,16 @@ fn dropped_term_keeps_credit_only_with_a_non_zero_tested_input() -> Result<(), S
         "{summary}"
     );
 
-    // A call term does not fold: `shipping(6000)` is 0, and ripr cannot
-    // show otherwise.
+    // Same-module call term: `shipping(1000)` folds to 499 for the tested call.
+    let call_test = price_test("price(1000, 5)", "2003");
+    let finding = price_finding(
+        "dropped-term-call-nonzero",
+        &call_test,
+        "  return subtotal + fee + FLAT;",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed);
+
+    // `shipping(6000)` folds to 0, so dropping it stays weakly exposed.
     let finding = price_finding(
         "dropped-term-call",
         &test,
@@ -192,7 +200,7 @@ fn dropped_term_keeps_credit_only_with_a_non_zero_tested_input() -> Result<(), S
         finding
             .missing
             .iter()
-            .any(|line| line.contains("`shipping(subtotal)`, which is not shown to be non-zero")),
+            .any(|line| line.contains("`shipping(subtotal)`, which is 0 for every tested input")),
         "{:?}",
         finding.missing
     );

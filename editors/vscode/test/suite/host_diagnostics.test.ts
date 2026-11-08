@@ -2,6 +2,7 @@ import * as assert from 'assert';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { runFixtureProducer } from '../actionableQueueFixture';
 import {
   HOST_DIAGNOSTICS_DIR_NAME,
   HOST_DIAGNOSTICS_IDENTITY_FILE,
@@ -12,6 +13,8 @@ import {
   USER_DATA_DIR_NAME,
   finalizeHostRun,
   redactHostDiagnosticsText,
+  redactHostDiagnosticsPrefix,
+  redactHostDiagnosticsTail,
   resetHostLogDir,
   resolveHostDiagnosticsDir,
   resolveLogDir,
@@ -29,6 +32,43 @@ suite('VS Code test host diagnostics', () => {
 
   teardown(() => {
     fs.rmSync(root, { force: true, recursive: true });
+  });
+
+  test('redacts ordinary URL userinfo before prefix and tail byte caps without hiding the endpoint', () => {
+    const input = '🙂'.repeat(30) + ' https://private-user:p%40ss%3Aword@proxy.example:8080/path\n'
+      + 'HTTPS://another-user:password@secure.example/ ftp://username@files.example/\n'
+      + 'https://ordinary.example/path/user@host';
+    const redacted = redactHostDiagnosticsText(input);
+    for (const secret of ['private-user', 'p%40ss%3Aword', 'another-user', 'password', 'username']) {
+      assert.ok(!redacted.includes(secret), secret);
+    }
+    assert.ok(redacted.includes('proxy.example:8080/path'));
+    assert.ok(redacted.includes('https://ordinary.example/path/user@host'));
+    for (const clip of [redactHostDiagnosticsPrefix, redactHostDiagnosticsTail]) {
+      const bytes = clip(input, 160);
+      assert.ok(bytes.length <= 160);
+      assert.ok(!bytes.toString('utf8').includes('private-user'));
+      assert.ok(!bytes.toString('utf8').includes('p%40ss%3Aword'));
+      assert.strictEqual(Buffer.from(bytes.toString('utf8')).compare(bytes), 0);
+    }
+  });
+
+  test('long credential-free dotted text remains bounded in the actual redaction child', async () => {
+    const owner = path.resolve(__dirname, '../../../test/hostDiagnostics.ts');
+    const source = `const { redactHostDiagnosticsPrefix } = require(${JSON.stringify(owner)});
+      const text = 'a.'.repeat(512 * 1024) + ' https://synthetic-user:synthetic-password@proxy.example/path';
+      const bytes = redactHostDiagnosticsPrefix(text, 2 * 1024 * 1024);
+      const result = bytes.toString('utf8');
+      process.stdout.write(JSON.stringify({ bytes: bytes.length, prefix: result.startsWith('a.'.repeat(100)),
+        endpoint: result.includes('proxy.example/path'), credentials: result.includes('synthetic-') }));`;
+    const output = await runFixtureProducer(process.execPath, ['-e', source], {
+      cwd: root, env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }, timeoutMs: 5000, maxOutputBytes: 4096
+    });
+    const observed = JSON.parse(output);
+    assert.ok(observed.bytes > 1024 * 1024 && observed.bytes < 2 * 1024 * 1024);
+    assert.strictEqual(observed.prefix, true);
+    assert.strictEqual(observed.endpoint, true);
+    assert.strictEqual(observed.credentials, false);
   });
 
   test('pins a known user-data, log, and diagnostics folder under the artifact root', () => {
@@ -360,7 +400,7 @@ suite('VS Code test host diagnostics', () => {
   });
 
   for (const matrixFailure of [false, true]) {
-    test(`retains only the ${matrixFailure ? 'matrix' : 'first'} failing host and its intended artifacts`, () => {
+    test(`retains the ${matrixFailure ? 'matrix and primary' : 'first'} failing host artifacts`, () => {
       const firstProfile = resolveUserDataDir(root);
       const matrixProfile = path.join(firstProfile, 'multiroot');
       writeLog(root, 'host.log', 'FIRST_HOST_SENTINEL');
@@ -381,19 +421,54 @@ suite('VS Code test host diagnostics', () => {
           error: originalError });
         assert.strictEqual(result.exitCode, 1);
         assert.ok(logged.some(args => args[1] === originalError), 'retain the original error object');
-        const kept = fs.readFileSync(path.join(result.retention.diagnosticsDir, 'logs', 'host.log'), 'utf8');
-        assert.strictEqual(kept, matrixFailure ? 'MATRIX_HOST_SENTINEL' : 'FIRST_HOST_SENTINEL');
-        assert.strictEqual(fs.existsSync(path.join(result.retention.diagnosticsDir, 'acceptance.json')), matrixFailure);
+        const primaryKept = fs.readFileSync(
+          path.join(result.retention.diagnosticsDir, 'logs', 'host.log'), 'utf8');
+        assert.strictEqual(primaryKept, 'FIRST_HOST_SENTINEL');
+        assert.strictEqual(
+          fs.existsSync(path.join(result.retention.diagnosticsDir, 'acceptance.json')),
+          matrixFailure
+        );
         if (matrixFailure) {
-          assert.strictEqual(fs.readFileSync(path.join(result.retention.diagnosticsDir, 'acceptance.json'), 'utf8'),
+          assert.strictEqual(
+            fs.readFileSync(path.join(result.retention.diagnosticsDir, 'acceptance.json'), 'utf8'),
             '{"phase":"select root A","outcome":"failed"}');
+          assert.strictEqual(
+            fs.readFileSync(
+              path.join(result.retention.diagnosticsDir, 'multiroot', 'logs', 'host.log'), 'utf8'),
+            'MATRIX_HOST_SENTINEL');
+          assert.deepStrictEqual(fs.readdirSync(result.retention.diagnosticsDir).sort(),
+            ['acceptance.json', 'logs', 'multiroot', 'retention.json'].sort());
+        } else {
+          assert.deepStrictEqual(fs.readdirSync(result.retention.diagnosticsDir).sort(),
+            ['logs', 'retention.json'].sort());
         }
-        assert.deepStrictEqual(fs.readdirSync(result.retention.diagnosticsDir).sort(),
-          [...(matrixFailure ? ['acceptance.json'] : []), 'logs', 'retention.json'].sort());
         assert.deepStrictEqual(fs.readdirSync(path.join(result.retention.diagnosticsDir, 'logs')), ['host.log']);
       } finally { restore(); }
     });
   }
+
+  test('verbose primary logs cannot consume the nested host per-host budget', () => {
+    const firstProfile = resolveUserDataDir(root);
+    const matrixProfile = path.join(firstProfile, 'multiroot');
+    for (let i = 0; i < 24; i++) {
+      writeLog(root, `${i}.log`, '#'.repeat(MAX_HOST_DIAGNOSTICS_FILE_BYTES));
+    }
+    fs.mkdirSync(path.join(matrixProfile, 'logs'), { recursive: true });
+    fs.writeFileSync(path.join(matrixProfile, 'logs', 'matrix-current.log'), 'MATRIX_CURRENT');
+    const receipt = path.join(root, 'acceptance.json');
+    fs.writeFileSync(receipt, '{"phase":"select root A"}');
+    const result = finalizeHostRun({
+      artifactRoot: root,
+      userDataDir: firstProfile,
+      matrix: { userDataDir: matrixProfile, receiptPath: receipt },
+      error: new Error('matrix failed')
+    });
+    assert.strictEqual(
+      fs.readFileSync(
+        path.join(result.retention.diagnosticsDir, 'multiroot', 'logs', 'matrix-current.log'), 'utf8'),
+      'MATRIX_CURRENT');
+    assert.ok(result.retention.bytesWritten <= MAX_HOST_DIAGNOSTICS_BYTES);
+  });
 
   test('retains a sanitized partial matrix receipt without parsing or collecting siblings', () => {
     const receipt = path.join(root, 'acceptance.json');
@@ -585,7 +660,7 @@ suite('VS Code test host diagnostics', () => {
     const marker = "      const matrixUserData = path.join(userDataPath, 'multiroot');";
     assert.strictEqual(source.split(marker).length, 2, 'bind exactly one matrix setup');
     const start = source.indexOf(marker);
-    const end = source.indexOf('      await runTests({', start);
+    const end = source.indexOf('      await runtime.runTests({', start);
     assert.ok(end > start, 'matrix setup must end before the native host launch');
     const prepare = new Function('fs', 'path', 'process', 'userDataPath', 'matrixRoot',
       'testServerPath', 'resetHostLogDir',
@@ -621,11 +696,18 @@ suite('VS Code test host diagnostics', () => {
       assert.ok(logged.some(args => args[1] === original));
       assert.strictEqual(fs.readFileSync(path.join(result.retention.diagnosticsDir, 'acceptance.json'), 'utf8'),
         '{"outcome":"failed","phase":"select root A"}');
-      const current = path.join(result.retention.diagnosticsDir, 'logs', '99999999-current.log');
+      const current = path.join(
+        result.retention.diagnosticsDir, 'multiroot', 'logs', '99999999-current.log');
       assert.ok(fs.existsSync(current),
         `historical logs crowded out the current failure: ${JSON.stringify(result.retention.copiedFiles)}`);
       assert.strictEqual(fs.readFileSync(current, 'utf8'), 'CURRENT_MATRIX_FAILURE');
-      assert.deepStrictEqual(result.retention.copiedFiles, ['99999999-current.log']);
+      assert.strictEqual(
+        fs.readFileSync(path.join(result.retention.diagnosticsDir, 'logs', 'first.log'), 'utf8'),
+        'PRESERVE_FIRST_HOST');
+      assert.deepStrictEqual(result.retention.copiedFiles, ['first.log']);
+      const identity = JSON.parse(
+        fs.readFileSync(path.join(result.retention.diagnosticsDir, 'retention.json'), 'utf8'));
+      assert.deepStrictEqual(identity.matrix_copied_files, ['99999999-current.log']);
       assert.ok(result.retention.bytesWritten <= MAX_HOST_DIAGNOSTICS_BYTES);
       assert.strictEqual(fs.readFileSync(path.join(resolveLogDir(firstProfile), 'first.log'), 'utf8'), 'PRESERVE_FIRST_HOST');
       assert.strictEqual(fs.readFileSync(unrelated, 'utf8'), 'PRESERVE_NON_LOG_PROFILE_DATA');

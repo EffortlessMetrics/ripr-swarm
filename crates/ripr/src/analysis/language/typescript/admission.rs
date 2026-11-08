@@ -30,13 +30,16 @@
 //! test-support path (`tests/`, `__tests__`, `helpers`, `fixtures`, `*.spec`,
 //! ...), a third-party package (testing-library queries and `supertest`'s
 //! `.expect` assert), an unknown global (`fail`, a global `expect`), a direct
-//! call of a parameter (`reject(err)`), a `done`/`t` context passed on or
-//! called with an argument, a context member outside a tiny allowlist
-//! (`t.plan`, `t.fail`), `throw`, a dynamic callee (`handlers[k]()`,
-//! `make()()`), `import()`, JSX, a method whose name or receiver path reads
-//! as an assertion on a local (`result.verify()`, `x.should.equal`), a custom
-//! test registration (`const it = base.extend(...)`), or a nested test
-//! registration inside the test body.
+//! call of a parameter (`reject(err)`), a `then`/`reject` parameter passed on
+//! or aliased (`const r = rej; r(err)`, `setTimeout(rej, 0, err)`), a `done`/`t`
+//! context passed on or called with an argument, a context member outside a
+//! tiny allowlist (`t.plan`, `t.fail`), `throw`, a dynamic callee
+//! (`handlers[k]()`, `make()()`), `import()`, JSX, a method whose name or
+//! receiver path reads as an assertion on a local (`result.verify()`,
+//! `x.should.equal`), a custom test registration (`const it = base.extend(...)`),
+//! a nested test registration inside the test body, an AVA test (the runner
+//! fails a test with no assertions by default), or a describe parameter that
+//! shadows a production import.
 //!
 //! The runner also runs code the test does not name. Every statement at file
 //! level and in every `describe` callback that is not a test registration is
@@ -56,15 +59,17 @@
 //! body that this scan does not model is `Unresolved`, which is how an
 //! incomplete extraction stays distinct from an established absence.
 //!
-//! Known blind spots: the scan sees one file. Project setup files
-//! (`setupFiles`, `setupFilesAfterEach`, Vitest `setupFiles`, a global
+//! Known remaining blind spots for a later `no_assertion` miss (#5495): the
+//! scan sees one file. Project setup files (`setupFiles`,
+//! `setupFilesAfterEach`, Vitest `setupFiles`, a global
 //! `afterEach(() => expect.hasAssertions())`) and runner plugins can still fail
 //! a `NoAssertionLike` test. A relative import outside test-support paths is
 //! treated as production even when it is a test-only helper with a neutral
-//! name (`./utils` beside a colocated `src/cart.test.ts`). A value bound
-//! outside the test is judged by its declaration and hook writes; a write made
-//! by a sibling test (`shared = helper` in another `it`) is not traced. A
-//! `no_assertion` miss must account for these before it is emitted.
+//! name (`./utils` beside a colocated `src/cart.test.ts`). A sibling test that
+//! assigns an enclosing name withholds the established state; a write that is
+//! not an assignment (a mutation through a method) is still not traced. A
+//! `no_assertion` miss must account for the remaining one-file limits before
+//! it is emitted (#6889).
 //!
 //! Test activation (skip / todo / Vitest `fails` / Node `expectFailure`,
 //! #3506, #4638, #5433) is a separate fact and is not folded into this state.
@@ -221,6 +226,10 @@ impl TypeScriptAdmissionContext {
                 })
                 .collect(),
             reexport_names: reexport_spellings(statements),
+            // Callers pass a workspace-relative path (the analysis loop's
+            // `relative`). An absolute path whose ancestors contain `test` /
+            // `spec` over-withholds every relative import as test support;
+            // that is fail-closed, not a grant (#6889).
             test_dir: file
                 .parent()
                 .map(|dir| {
@@ -243,7 +252,22 @@ impl TypeScriptAdmissionContext {
         context.registration_imports.extend(namespace_picks);
         let mut helpers = BTreeSet::new();
         let mut enclosing = BTreeSet::new();
-        collect_setup_names(statements, &mut helpers, &mut enclosing);
+        let file_import_locals = context
+            .imports
+            .iter()
+            .map(|import| import.local.clone())
+            .collect();
+        let describe_aliases = describe_binding_names(&esm_imports, &context.registration_imports);
+        let runner_roots = runner_test_roots(&esm_imports, &context.registration_imports);
+        collect_setup_names(
+            statements,
+            &mut helpers,
+            &mut enclosing,
+            &describe_aliases,
+            &runner_roots,
+            &file_import_locals,
+            false,
+        );
         context.helpers = helpers;
         context.enclosing = enclosing;
         // Names are complete only after the whole file is seen.
@@ -273,11 +297,21 @@ impl TypeScriptAdmissionContext {
         }
         let mut scan = Scan::new(self, true);
         scan.test_registration(call);
-        if scan.assertion_like {
+        if scan.assertion_like || self.runner_fails_without_assertions() {
             TypeScriptAssertionAdmission::Unresolved
         } else {
             TypeScriptAssertionAdmission::NoAssertionLike
         }
+    }
+
+    /// AVA fails a test that makes no assertions (`failWithoutAssertions`,
+    /// default true). The body may contain only production calls and still
+    /// fail, so the established absence is not honest (#6889).
+    fn runner_fails_without_assertions(&self) -> bool {
+        self.imports.iter().any(|import| {
+            let source = import.source.as_str();
+            source == "ava" || source.starts_with("ava/")
+        })
     }
 
     /// Root admission for bare and awaited registrations. Reuse the
@@ -1063,6 +1097,17 @@ pub(super) fn namespace_pick_locals_for_test(source: &str, file: &Path) -> Vec<S
         .collect()
 }
 
+/// Enclosing names collected from describe-like setup (#6889). Used to pin
+/// aliased / awaited / peeled suite forms the extractor does not yet turn
+/// into tests.
+#[cfg(test)]
+pub(super) fn enclosing_names_for_test(source: &str, file: &Path) -> BTreeSet<String> {
+    let allocator = oxc_allocator::Allocator::default();
+    let ret = oxc_parser::Parser::new(&allocator, source, super::source_type_for(file)).parse();
+    let imports = super::extract_imports_for_test_file(&ret.program.body);
+    TypeScriptAdmissionContext::of_program(&ret.program, &imports, file).enclosing
+}
+
 /// The segments of `specifier` resolved against the test file's directory.
 fn resolve_relative(test_dir: &[String], specifier: &str) -> Vec<String> {
     let mut segments: Vec<String> = if specifier.starts_with('/') {
@@ -1450,6 +1495,14 @@ impl<'c> Scan<'c> {
         if self.context.helpers.contains(name) {
             return Name::Helper;
         }
+        // A describe/loop parameter shadows an import of the same name
+        // (`describe.each([[1]])('d', (checkout) => ...)`). File-level
+        // `require()` bindings stay imports: they are omitted from
+        // `enclosing` so a production owner used as a callee stays inert
+        // (#6889).
+        if self.context.enclosing.contains(name) {
+            return Name::Enclosing;
+        }
         if let Some(import) = self
             .context
             .imports
@@ -1457,9 +1510,6 @@ impl<'c> Scan<'c> {
             .find(|import| import.local == name)
         {
             return Name::Import(import);
-        }
-        if self.context.enclosing.contains(name) {
-            return Name::Enclosing;
         }
         Name::Global
     }
@@ -1899,10 +1949,14 @@ impl<'c> Scan<'c> {
                         self.setup_statements(&body.statements);
                     }
                 }
-                (
-                    RegistrationKind::Test,
-                    Argument::ArrowFunctionExpression(_) | Argument::FunctionExpression(_),
-                ) => {}
+                (RegistrationKind::Test, Argument::ArrowFunctionExpression(arrow)) => {
+                    self.sibling_test_enclosing_writes(&arrow.params, &arrow.body.statements);
+                }
+                (RegistrationKind::Test, Argument::FunctionExpression(function)) => {
+                    if let Some(body) = &function.body {
+                        self.sibling_test_enclosing_writes(&function.params, &body.statements);
+                    }
+                }
                 (_, other) => self.argument(other),
             }
         }
@@ -1934,6 +1988,31 @@ impl<'c> Scan<'c> {
     }
 
     fn function(&mut self, params: &FormalParameters<'_>, statements: &[Statement<'_>]) {
+        self.function_with_params(params, statements, Bound::Param);
+    }
+
+    /// Promise `then` / thenable callbacks: every parameter can reject the
+    /// awaited test, including after aliasing (`const r = rej; r(err)`).
+    fn thenable_value(&mut self, expression: &Expression<'_>) {
+        match expression.get_inner_expression() {
+            Expression::ArrowFunctionExpression(arrow) => {
+                self.function_with_params(&arrow.params, &arrow.body.statements, Bound::Context);
+            }
+            Expression::FunctionExpression(function) => {
+                if let Some(body) = &function.body {
+                    self.function_with_params(&function.params, &body.statements, Bound::Context);
+                }
+            }
+            other => self.expr(other),
+        }
+    }
+
+    fn function_with_params(
+        &mut self,
+        params: &FormalParameters<'_>,
+        statements: &[Statement<'_>],
+        bound: Bound,
+    ) {
         let mut names = Vec::new();
         for param in &params.items {
             pattern_names(&param.pattern, &mut names);
@@ -1941,11 +2020,171 @@ impl<'c> Scan<'c> {
         if let Some(rest) = &params.rest {
             pattern_names(&rest.rest.argument, &mut names);
         }
-        let scope = names.into_iter().map(|name| (name, Bound::Param)).collect();
+        let scope = names.into_iter().map(|name| (name, bound)).collect();
         self.push_function_scope(scope, statements);
         self.parameter_defaults(params);
         self.statements(statements);
         self.scopes.pop();
+    }
+
+    /// A sibling test that writes an enclosing name can install a helper the
+    /// current test then calls as a receiver (`shared.add(...)`). Hook writes
+    /// are scanned as setup; only another test's assignment is the gap (#6889).
+    fn sibling_test_enclosing_writes(
+        &mut self,
+        params: &FormalParameters<'_>,
+        statements: &[Statement<'_>],
+    ) {
+        let mut names = Vec::new();
+        for param in &params.items {
+            pattern_names(&param.pattern, &mut names);
+        }
+        if let Some(rest) = &params.rest {
+            pattern_names(&rest.rest.argument, &mut names);
+        }
+        let scope = names.into_iter().map(|name| (name, Bound::Local)).collect();
+        self.push_function_scope(scope, statements);
+        self.enclosing_writes_in_statements(statements);
+        self.scopes.pop();
+    }
+
+    fn enclosing_writes_in_statements(&mut self, statements: &[Statement<'_>]) {
+        for statement in statements {
+            if self.assertion_like {
+                return;
+            }
+            self.enclosing_writes_in_statement(statement);
+        }
+    }
+
+    fn enclosing_writes_in_statement(&mut self, statement: &Statement<'_>) {
+        if self.assertion_like {
+            return;
+        }
+        match statement {
+            Statement::BlockStatement(block) => self.enclosing_writes_in_statements(&block.body),
+            Statement::ExpressionStatement(statement) => {
+                self.enclosing_writes_in_expr(&statement.expression);
+            }
+            Statement::IfStatement(statement) => {
+                self.enclosing_writes_in_expr(&statement.test);
+                self.enclosing_writes_in_statement(&statement.consequent);
+                if let Some(alternate) = &statement.alternate {
+                    self.enclosing_writes_in_statement(alternate);
+                }
+            }
+            Statement::ForStatement(statement) => {
+                if let Some(init) = &statement.init
+                    && let Some(expression) = init.as_expression()
+                {
+                    self.enclosing_writes_in_expr(expression);
+                }
+                self.opt_enclosing_writes_in_expr(statement.test.as_ref());
+                self.opt_enclosing_writes_in_expr(statement.update.as_ref());
+                self.enclosing_writes_in_statement(&statement.body);
+            }
+            Statement::ForInStatement(statement) => {
+                self.enclosing_writes_in_expr(&statement.right);
+                self.enclosing_writes_in_statement(&statement.body);
+            }
+            Statement::ForOfStatement(statement) => {
+                self.enclosing_writes_in_expr(&statement.right);
+                self.enclosing_writes_in_statement(&statement.body);
+            }
+            Statement::WhileStatement(statement) => {
+                self.enclosing_writes_in_expr(&statement.test);
+                self.enclosing_writes_in_statement(&statement.body);
+            }
+            Statement::DoWhileStatement(statement) => {
+                self.enclosing_writes_in_statement(&statement.body);
+                self.enclosing_writes_in_expr(&statement.test);
+            }
+            Statement::ReturnStatement(statement) => {
+                self.opt_enclosing_writes_in_expr(statement.argument.as_ref());
+            }
+            Statement::LabeledStatement(statement) => {
+                self.enclosing_writes_in_statement(&statement.body);
+            }
+            Statement::TryStatement(statement) => {
+                self.enclosing_writes_in_statements(&statement.block.body);
+                if let Some(handler) = &statement.handler {
+                    self.enclosing_writes_in_statements(&handler.body.body);
+                }
+                if let Some(finalizer) = &statement.finalizer {
+                    self.enclosing_writes_in_statements(&finalizer.body);
+                }
+            }
+            Statement::SwitchStatement(statement) => {
+                self.enclosing_writes_in_expr(&statement.discriminant);
+                for case in &statement.cases {
+                    self.opt_enclosing_writes_in_expr(case.test.as_ref());
+                    self.enclosing_writes_in_statements(&case.consequent);
+                }
+            }
+            other => {
+                if let Some(Declaration::VariableDeclaration(declaration)) = other.as_declaration()
+                {
+                    for declarator in &declaration.declarations {
+                        self.opt_enclosing_writes_in_expr(declarator.init.as_ref());
+                    }
+                }
+            }
+        }
+    }
+
+    fn opt_enclosing_writes_in_expr(&mut self, expression: Option<&Expression<'_>>) {
+        if let Some(expression) = expression {
+            self.enclosing_writes_in_expr(expression);
+        }
+    }
+
+    fn enclosing_writes_in_expr(&mut self, expression: &Expression<'_>) {
+        if self.assertion_like {
+            return;
+        }
+        match expression.get_inner_expression() {
+            Expression::AssignmentExpression(assignment) => {
+                if let Some(id) = assignment_target_identifier(&assignment.left)
+                    && matches!(self.resolve(id), Name::Enclosing)
+                {
+                    self.flag();
+                    return;
+                }
+                self.enclosing_writes_in_expr(&assignment.right);
+            }
+            Expression::SequenceExpression(sequence) => {
+                for expression in &sequence.expressions {
+                    self.enclosing_writes_in_expr(expression);
+                }
+            }
+            Expression::ConditionalExpression(conditional) => {
+                self.enclosing_writes_in_expr(&conditional.test);
+                self.enclosing_writes_in_expr(&conditional.consequent);
+                self.enclosing_writes_in_expr(&conditional.alternate);
+            }
+            Expression::AwaitExpression(awaited) => {
+                self.enclosing_writes_in_expr(&awaited.argument)
+            }
+            Expression::ParenthesizedExpression(inner) => {
+                self.enclosing_writes_in_expr(&inner.expression);
+            }
+            Expression::CallExpression(call) => {
+                for argument in &call.arguments {
+                    if let Some(expression) = argument.as_expression() {
+                        self.enclosing_writes_in_expr(expression);
+                    }
+                }
+            }
+            Expression::ArrowFunctionExpression(arrow) => {
+                self.enclosing_writes_in_statements(&arrow.body.statements);
+            }
+            Expression::FunctionExpression(function) => {
+                if let Some(body) = &function.body {
+                    self.enclosing_writes_in_statements(&body.statements);
+                }
+            }
+            _ => {}
+        }
     }
 
     fn parameter_defaults(&mut self, params: &FormalParameters<'_>) {
@@ -2310,7 +2549,13 @@ impl<'c> Scan<'c> {
                     match property {
                         ObjectPropertyKind::ObjectProperty(property) => {
                             self.computed_key(&property.key, property.computed);
-                            self.expr(&property.value);
+                            // A thenable's `reject` parameter fails the awaited
+                            // test wherever it is aliased or passed on (#6889).
+                            if !property.computed && property_key_is_then(&property.key) {
+                                self.thenable_value(&property.value);
+                            } else {
+                                self.expr(&property.value);
+                            }
                         }
                         ObjectPropertyKind::SpreadProperty(spread) => self.expr(&spread.argument),
                     }
@@ -2995,15 +3240,138 @@ fn for_each_callback<'b, 'a>(
     }
 }
 
+/// Names that can open a describe callback: literal `describe`/`suite`
+/// roots plus runner imports renamed from those (`import { describe as d }`).
+fn describe_binding_names(
+    esm_imports: &[TypeScriptImport],
+    registration_imports: &[TypeScriptImport],
+) -> BTreeSet<String> {
+    let mut names: BTreeSet<String> = DESCRIBE_ROOTS
+        .iter()
+        .map(|name| (*name).to_string())
+        .collect();
+    for import in esm_imports.iter().chain(registration_imports) {
+        if import
+            .imported
+            .as_deref()
+            .is_some_and(|imported| DESCRIBE_ROOTS.contains(&imported))
+        {
+            names.insert(import.local.clone());
+        }
+    }
+    names
+}
+
+/// Locals bound to a runner `test`/`it` (including default imports) so
+/// `test.describe` / `spec.describe` is recognized as a suite.
+fn runner_test_roots(
+    esm_imports: &[TypeScriptImport],
+    registration_imports: &[TypeScriptImport],
+) -> BTreeSet<String> {
+    let mut names: BTreeSet<String> = TEST_ROOTS.iter().map(|name| (*name).to_string()).collect();
+    for import in esm_imports.iter().chain(registration_imports) {
+        if import.imported.as_deref().is_some_and(|imported| {
+            matches!(imported, "test" | "it" | "default") || TEST_ROOTS.contains(&imported)
+        }) {
+            names.insert(import.local.clone());
+        }
+    }
+    names
+}
+
+/// The inner `describe(...)` call of a setup expression, including
+/// `await describe(...)` and `describe(...).timeout(ms)`.
+fn describe_suite_call<'a, 'b>(
+    expression: &'b Expression<'a>,
+    describe_aliases: &BTreeSet<String>,
+    runner_roots: &BTreeSet<String>,
+) -> Option<&'b oxc_ast::ast::CallExpression<'a>> {
+    let expression = match expression.get_inner_expression() {
+        Expression::AwaitExpression(awaited) => awaited.argument.get_inner_expression(),
+        other => other,
+    };
+    let Expression::CallExpression(call) = expression else {
+        return None;
+    };
+    if callee_is_describe_like(
+        call.callee.get_inner_expression(),
+        describe_aliases,
+        runner_roots,
+    ) || for_each_callback(call).is_some()
+    {
+        return Some(call);
+    }
+    if let Expression::StaticMemberExpression(member) = call.callee.get_inner_expression() {
+        return describe_suite_call(&member.object, describe_aliases, runner_roots);
+    }
+    None
+}
+
+fn callee_is_describe_like(
+    callee: &Expression<'_>,
+    describe_aliases: &BTreeSet<String>,
+    runner_roots: &BTreeSet<String>,
+) -> bool {
+    match callee.get_inner_expression() {
+        Expression::Identifier(identifier) => describe_aliases.contains(identifier.name.as_str()),
+        Expression::CallExpression(factory) => callee_is_describe_like(
+            factory.callee.get_inner_expression(),
+            describe_aliases,
+            runner_roots,
+        ),
+        other => static_chain(other).is_some_and(|(root, segments)| {
+            let Expression::Identifier(identifier) = root else {
+                return false;
+            };
+            let name = identifier.name.as_str();
+            describe_aliases.contains(name)
+                || (segments.first().copied() == Some("describe") && runner_roots.contains(name))
+        }),
+    }
+}
+
+fn property_key_is_then(key: &PropertyKey<'_>) -> bool {
+    match key {
+        PropertyKey::StaticIdentifier(identifier) => identifier.name == "then",
+        PropertyKey::StringLiteral(literal) => literal.value == "then",
+        _ => false,
+    }
+}
+
+fn assignment_target_identifier<'a>(
+    target: &'a oxc_ast::ast::AssignmentTarget<'_>,
+) -> Option<&'a str> {
+    target
+        .as_simple_assignment_target()
+        .and_then(|simple| match simple {
+            oxc_ast::ast::SimpleAssignmentTarget::AssignmentTargetIdentifier(identifier) => {
+                Some(identifier.name.as_str())
+            }
+            _ => None,
+        })
+}
+
 /// Names bound outside test callbacks, split into helpers (functions and
 /// classes) and other enclosing bindings.
 fn collect_setup_names(
     statements: &[Statement<'_>],
     helpers: &mut BTreeSet<String>,
     enclosing: &mut BTreeSet<String>,
+    describe_aliases: &BTreeSet<String>,
+    runner_roots: &BTreeSet<String>,
+    file_import_locals: &BTreeSet<String>,
+    nested: bool,
 ) {
     for statement in statements {
-        collect_setup_statement_names(statement, helpers, enclosing);
+        collect_setup_statement_names(
+            statement,
+            helpers,
+            enclosing,
+            describe_aliases,
+            runner_roots,
+            file_import_locals,
+            nested,
+        );
     }
 }
 
@@ -3011,11 +3379,21 @@ fn collect_setup_statement_names(
     statement: &Statement<'_>,
     helpers: &mut BTreeSet<String>,
     enclosing: &mut BTreeSet<String>,
+    describe_aliases: &BTreeSet<String>,
+    runner_roots: &BTreeSet<String>,
+    file_import_locals: &BTreeSet<String>,
+    nested: bool,
 ) {
     match statement {
         Statement::ExportNamedDeclaration(export) => {
             if let Some(declaration) = &export.declaration {
-                collect_declaration_names(declaration, helpers, enclosing);
+                collect_declaration_names(
+                    declaration,
+                    helpers,
+                    enclosing,
+                    file_import_locals,
+                    nested,
+                );
             }
         }
         Statement::ExportDefaultDeclaration(export) => match &export.declaration {
@@ -3032,30 +3410,11 @@ fn collect_setup_statement_names(
             _ => {}
         },
         Statement::ExpressionStatement(statement) => {
-            let Expression::CallExpression(call) = statement.expression.get_inner_expression()
+            let Some(call) =
+                describe_suite_call(&statement.expression, describe_aliases, runner_roots)
             else {
                 return;
             };
-            // A describe-like callback (or a `forEach` that registers tests)
-            // binds names for every test inside. Shadowing is ignored here,
-            // which only adds names.
-            let describe_like = static_chain(call.callee.get_inner_expression())
-                .or_else(|| match call.callee.get_inner_expression() {
-                    Expression::CallExpression(factory) => {
-                        static_chain(factory.callee.get_inner_expression())
-                    }
-                    _ => None,
-                })
-                .is_some_and(|(root, _)| {
-                    matches!(root, Expression::Identifier(identifier)
-                        if DESCRIBE_ROOTS.contains(&identifier.name.as_str()))
-                })
-                || matches!(call.callee.get_inner_expression(), Expression::Identifier(identifier)
-                    if DESCRIBE_ROOTS.contains(&identifier.name.as_str()))
-                || for_each_callback(call).is_some();
-            if !describe_like {
-                return;
-            }
             for argument in &call.arguments {
                 let (params, body) = match argument {
                     Argument::ArrowFunctionExpression(arrow) => {
@@ -3073,72 +3432,190 @@ fn collect_setup_statement_names(
                 }
                 enclosing.extend(names);
                 if let Some(body) = body {
-                    collect_setup_names(body, helpers, enclosing);
+                    collect_setup_names(
+                        body,
+                        helpers,
+                        enclosing,
+                        describe_aliases,
+                        runner_roots,
+                        file_import_locals,
+                        true,
+                    );
                 }
             }
         }
-        Statement::BlockStatement(block) => collect_setup_names(&block.body, helpers, enclosing),
+        Statement::BlockStatement(block) => collect_setup_names(
+            &block.body,
+            helpers,
+            enclosing,
+            describe_aliases,
+            runner_roots,
+            file_import_locals,
+            nested,
+        ),
         Statement::IfStatement(statement) => {
-            collect_setup_statement_names(&statement.consequent, helpers, enclosing);
+            collect_setup_statement_names(
+                &statement.consequent,
+                helpers,
+                enclosing,
+                describe_aliases,
+                runner_roots,
+                file_import_locals,
+                nested,
+            );
             if let Some(alternate) = &statement.alternate {
-                collect_setup_statement_names(alternate, helpers, enclosing);
+                collect_setup_statement_names(
+                    alternate,
+                    helpers,
+                    enclosing,
+                    describe_aliases,
+                    runner_roots,
+                    file_import_locals,
+                    nested,
+                );
             }
         }
         Statement::ForStatement(statement) => {
             if let Some(oxc_ast::ast::ForStatementInit::VariableDeclaration(declaration)) =
                 &statement.init
             {
-                collect_variable_names(declaration, helpers, enclosing);
+                collect_variable_names(declaration, helpers, enclosing, file_import_locals, true);
             }
-            collect_setup_statement_names(&statement.body, helpers, enclosing);
+            collect_setup_statement_names(
+                &statement.body,
+                helpers,
+                enclosing,
+                describe_aliases,
+                runner_roots,
+                file_import_locals,
+                true,
+            );
         }
         Statement::ForInStatement(statement) => {
             if let oxc_ast::ast::ForStatementLeft::VariableDeclaration(declaration) =
                 &statement.left
             {
-                collect_variable_names(declaration, helpers, enclosing);
+                collect_variable_names(declaration, helpers, enclosing, file_import_locals, true);
             }
-            collect_setup_statement_names(&statement.body, helpers, enclosing);
+            collect_setup_statement_names(
+                &statement.body,
+                helpers,
+                enclosing,
+                describe_aliases,
+                runner_roots,
+                file_import_locals,
+                true,
+            );
         }
         Statement::ForOfStatement(statement) => {
             if let oxc_ast::ast::ForStatementLeft::VariableDeclaration(declaration) =
                 &statement.left
             {
-                collect_variable_names(declaration, helpers, enclosing);
+                collect_variable_names(declaration, helpers, enclosing, file_import_locals, true);
             }
-            collect_setup_statement_names(&statement.body, helpers, enclosing);
+            collect_setup_statement_names(
+                &statement.body,
+                helpers,
+                enclosing,
+                describe_aliases,
+                runner_roots,
+                file_import_locals,
+                true,
+            );
         }
         Statement::WhileStatement(statement) => {
-            collect_setup_statement_names(&statement.body, helpers, enclosing);
+            collect_setup_statement_names(
+                &statement.body,
+                helpers,
+                enclosing,
+                describe_aliases,
+                runner_roots,
+                file_import_locals,
+                nested,
+            );
         }
         Statement::DoWhileStatement(statement) => {
-            collect_setup_statement_names(&statement.body, helpers, enclosing);
+            collect_setup_statement_names(
+                &statement.body,
+                helpers,
+                enclosing,
+                describe_aliases,
+                runner_roots,
+                file_import_locals,
+                nested,
+            );
         }
         Statement::LabeledStatement(statement) => {
-            collect_setup_statement_names(&statement.body, helpers, enclosing);
+            collect_setup_statement_names(
+                &statement.body,
+                helpers,
+                enclosing,
+                describe_aliases,
+                runner_roots,
+                file_import_locals,
+                nested,
+            );
         }
         Statement::TryStatement(statement) => {
-            collect_setup_names(&statement.block.body, helpers, enclosing);
+            collect_setup_names(
+                &statement.block.body,
+                helpers,
+                enclosing,
+                describe_aliases,
+                runner_roots,
+                file_import_locals,
+                nested,
+            );
             if let Some(handler) = &statement.handler {
                 if let Some(param) = &handler.param {
                     let mut names = Vec::new();
                     pattern_names(&param.pattern, &mut names);
                     enclosing.extend(names);
                 }
-                collect_setup_names(&handler.body.body, helpers, enclosing);
+                collect_setup_names(
+                    &handler.body.body,
+                    helpers,
+                    enclosing,
+                    describe_aliases,
+                    runner_roots,
+                    file_import_locals,
+                    nested,
+                );
             }
             if let Some(finalizer) = &statement.finalizer {
-                collect_setup_names(&finalizer.body, helpers, enclosing);
+                collect_setup_names(
+                    &finalizer.body,
+                    helpers,
+                    enclosing,
+                    describe_aliases,
+                    runner_roots,
+                    file_import_locals,
+                    nested,
+                );
             }
         }
         Statement::SwitchStatement(statement) => {
             for case in &statement.cases {
-                collect_setup_names(&case.consequent, helpers, enclosing);
+                collect_setup_names(
+                    &case.consequent,
+                    helpers,
+                    enclosing,
+                    describe_aliases,
+                    runner_roots,
+                    file_import_locals,
+                    nested,
+                );
             }
         }
         other => {
             if let Some(declaration) = other.as_declaration() {
-                collect_declaration_names(declaration, helpers, enclosing);
+                collect_declaration_names(
+                    declaration,
+                    helpers,
+                    enclosing,
+                    file_import_locals,
+                    nested,
+                );
             }
         }
     }
@@ -3148,10 +3625,12 @@ fn collect_declaration_names(
     declaration: &Declaration<'_>,
     helpers: &mut BTreeSet<String>,
     enclosing: &mut BTreeSet<String>,
+    file_import_locals: &BTreeSet<String>,
+    nested: bool,
 ) {
     match declaration {
         Declaration::VariableDeclaration(declaration) => {
-            collect_variable_names(declaration, helpers, enclosing);
+            collect_variable_names(declaration, helpers, enclosing, file_import_locals, nested);
         }
         Declaration::FunctionDeclaration(function) => {
             if let Some(id) = &function.id {
@@ -3174,14 +3653,22 @@ fn collect_variable_names(
     declaration: &VariableDeclaration<'_>,
     helpers: &mut BTreeSet<String>,
     enclosing: &mut BTreeSet<String>,
+    file_import_locals: &BTreeSet<String>,
+    nested: bool,
 ) {
     for declarator in &declaration.declarations {
         let mut names = Vec::new();
         pattern_names(&declarator.id, &mut names);
         if declarator.init.as_ref().is_some_and(is_function_like) {
             helpers.extend(names);
-        } else {
+        } else if nested {
             enclosing.extend(names);
+        } else {
+            enclosing.extend(
+                names
+                    .into_iter()
+                    .filter(|name| !file_import_locals.contains(name)),
+            );
         }
     }
 }

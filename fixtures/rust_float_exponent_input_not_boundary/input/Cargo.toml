@@ -1,0 +1,4 @@
+[package]
+name = "rust_float_exponent_input_not_boundary"
+version = "0.1.0"
+edition = "2024"

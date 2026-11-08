@@ -47,6 +47,7 @@ Weakness
 Next step
   The related test `reads_successfully` already asserts an exact value; the gap is not the assertion shape. Add a test input that executes the changed error arm and assert the exact variant or payload it produces
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/error_path_diagnostic_neutral/input --diff <cwd>/fixtures/error_path_diagnostic_neutral/diff.patch --mode fast probe:src_lib.rs:error_path:fedbf836
   ripr context --root <cwd>/fixtures/error_path_diagnostic_neutral/input --diff <cwd>/fixtures/error_path_diagnostic_neutral/diff.patch --mode fast --at probe:src_lib.rs:error_path:fedbf836
 
@@ -91,5 +92,6 @@ Stop reasons:
 Next step
   Not a candidate edit target (base_deleted): the changed source is not current on the candidate side, so this finding recommends no test change
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/error_path_diagnostic_neutral/input --diff <cwd>/fixtures/error_path_diagnostic_neutral/diff.patch --mode fast probe:src_lib.rs:static_unknown:afc04379
   ripr context --root <cwd>/fixtures/error_path_diagnostic_neutral/input --diff <cwd>/fixtures/error_path_diagnostic_neutral/diff.patch --mode fast --at probe:src_lib.rs:static_unknown:afc04379

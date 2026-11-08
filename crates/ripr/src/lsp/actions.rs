@@ -195,6 +195,14 @@ fn command_permitted(command: &str, client_features: &ClientFeatureProfile) -> b
     SERVER_EXECUTED_COMMANDS.contains(&command) || client_features.supports_client_command(command)
 }
 
+/// Whether the negotiated client is offered an executable "Inspect finding"
+/// quick fix (#13440). It is the same `command_permitted` decision that
+/// gates `copy_context_action` in `code_action_response`, so hover guidance
+/// can never promise the action to a client the gate would strip or disable.
+pub(super) fn inspect_finding_quick_fix_offered(client_features: &ClientFeatureProfile) -> bool {
+    command_permitted(COPY_CONTEXT_COMMAND, client_features)
+}
+
 /// The capability the client must hold for a command (#1892): a
 /// server-executed command runs inside the server (`"server"`); any other
 /// command requires the client-command advertisement itself (#1776).
@@ -2335,32 +2343,51 @@ fn copy_suggested_assertion_action(
     })
 }
 
+/// The one owner of related-test navigation routing (RIPR-SPEC-0129), shared
+/// by the `quickfix.ripr.navigate` code action and the code lens click:
+/// the client-side `ripr.openRelatedTest` when the client advertised it; else,
+/// for a `window/showDocument` client, the server-executed
+/// `ripr.showRelatedTest` bound to the snapshot input identity (the server
+/// answers with `window/showDocument`; it never edits or runs a test); else
+/// no route. A snapshot without an input identity cannot bind the server
+/// command, so no route is offered. Returns `(command id, action name, args)`.
+pub(super) fn related_test_navigation_route(
+    target: LSPAny,
+    snapshot: Option<&AnalysisSnapshot>,
+    client_features: &ClientFeatureProfile,
+) -> Option<(&'static str, &'static str, LSPAny)> {
+    if client_features.supports_client_command(OPEN_RELATED_TEST_COMMAND) {
+        return Some((OPEN_RELATED_TEST_COMMAND, "open_related_test", target));
+    }
+    if !client_features.show_document {
+        return None;
+    }
+    let identity = snapshot.and_then(AnalysisSnapshot::input_identity_id)?;
+    let mut target = target;
+    target
+        .as_object_mut()?
+        .insert("input_identity".to_string(), Value::String(identity));
+    Some((SHOW_RELATED_TEST_COMMAND, "show_related_test", target))
+}
+
 fn open_related_test_action(
     target: LSPAny,
     diagnostic: &Diagnostic,
     snapshot: Option<&AnalysisSnapshot>,
     client_features: &ClientFeatureProfile,
 ) -> Option<CodeActionOrCommand> {
-    // Generic-client navigation (RIPR-SPEC-0129): a client that did not
-    // advertise the client-side `ripr.openRelatedTest` command but does
-    // advertise `window/showDocument` gets the same navigation through the
-    // server-executed `ripr.showRelatedTest` command. The server answers it
-    // with a `window/showDocument` request; it never edits or runs a test.
-    let (command_id, action_name, arguments) = if !client_features
-        .supports_client_command(OPEN_RELATED_TEST_COMMAND)
-        && client_features.show_document
-    {
-        // The server command is bound to the snapshot input identity; a
-        // snapshot without one cannot bind it, so no action is offered.
-        let identity = snapshot.and_then(AnalysisSnapshot::input_identity_id)?;
-        let mut target = target;
-        target
-            .as_object_mut()?
-            .insert("input_identity".to_string(), Value::String(identity));
-        (SHOW_RELATED_TEST_COMMAND, "show_related_test", target)
-    } else {
-        (OPEN_RELATED_TEST_COMMAND, "open_related_test", target)
-    };
+    // A code action keeps offering the client-side command to a client that
+    // advertised neither route (the integration may register it without
+    // advertising it); a showDocument client whose snapshot cannot bind the
+    // server command gets no action.
+    let (command_id, action_name, arguments) =
+        match related_test_navigation_route(target.clone(), snapshot, client_features) {
+            Some(route) => route,
+            None if !client_features.show_document => {
+                (OPEN_RELATED_TEST_COMMAND, "open_related_test", target)
+            }
+            None => return None,
+        };
     Some(CodeActionOrCommand::CodeAction(CodeAction {
         title: OPEN_RELATED_TEST_TITLE.to_string(),
         kind: Some(CodeActionKind::new("quickfix.ripr.navigate")),
@@ -3342,7 +3369,7 @@ mod tests {
             gap_artifacts: Vec::new(),
             gap_artifact_rejections: Vec::new(),
             harness_facts: super::super::state::HarnessFactsOnSnapshot::NotRegistered,
-            diagnostics_by_uri: BTreeMap::new(),
+            diagnostics_by_uri: BTreeMap::new().into(),
             diagnostic_uri_index: None,
             delivery_selection: None,
             seams_deferred: false,

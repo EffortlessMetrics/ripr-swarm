@@ -1,0 +1,1 @@
+crates/ripr/tests/lsp_parent_death_watchdog.rs|Command::new|3|lsp-parent-death-watchdog|#12575: Linux integration test spawns a bash launcher and built ripr lsp --stdio, sends initialize over held-open stdio, kills the launcher with kill -9, and reaps the tree on every path; no network or arbitrary shell commands beyond the pinned binary invocation.

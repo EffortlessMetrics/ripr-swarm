@@ -31,11 +31,12 @@ Start here:
       no test path = no test path found; unclear = analysis limited, not a verdict;
       found = listed for review; suppressed by your settings = hidden by your suppression policy;
       base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
-    - reach weak: No test is seen calling as_object; tests share only its file or a name token: wrapper_route
+    - reach weak: No test is seen calling as_object; tests share only a name token
     - infection yes: Reachable tests can plausibly activate this changed behavior
     - 6 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/inherent_receiver_local_wrapper/input --diff <cwd>/fixtures/inherent_receiver_local_wrapper/diff.patch --mode fast probe:src_lib.rs:match_arm:f9032269
   ripr context --root <cwd>/fixtures/inherent_receiver_local_wrapper/input --diff <cwd>/fixtures/inherent_receiver_local_wrapper/diff.patch --mode fast --at probe:src_lib.rs:match_arm:f9032269
   no repair start offered: `ripr check` reads a gap or limit for this change, but `ripr repair` judges the surrounding code as a whole and finds its tests already notice changes there (exposed), so it has no gap to start from. The two read different evidence (your changed lines versus the surrounding code as a whole) and ripr does not start a repair on conflicting evidence; follow the Next step above

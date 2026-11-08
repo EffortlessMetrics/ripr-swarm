@@ -176,6 +176,20 @@ pub(crate) fn render_pilot_summary_json(
         )),
         None => out.push_str("  \"repo_exposure_byte_bound\": null,\n"),
     }
+    // #13340: the inventory's evidence pass failed. Omitted when healthy so
+    // the summary stays byte-identical.
+    if !context.inventory_evidence_limitations.is_empty() {
+        out.push_str("  \"inventory_evidence_limitations\": [\n");
+        for (idx, limitation) in context.inventory_evidence_limitations.iter().enumerate() {
+            if idx > 0 {
+                out.push_str(",\n");
+            }
+            out.push_str(
+                &crate::output::repo_exposure::evidence_limitation_json_object(limitation, 4),
+            );
+        }
+        out.push_str("\n  ],\n");
+    }
     push_declined_rust_files_json(&mut out, declined_rust_files(context));
     out.push_str(&format!(
         "  \"withheld_static_limitations_total\": {},\n",
@@ -313,6 +327,7 @@ fn render_pilot_summary_md_with_target(
     // #6602: a seam limit cut the classified list before ranking, so every
     // Rust seam count below covers only the seams that were kept, and the
     // actionable count is a lower bound.
+    push_inventory_evidence_limitations(&mut out, context, true);
     if let Some(bound) = context.repo_exposure_byte_bound {
         out.push_str(&format!(
             "- repo-exposure.json byte bound reached: it lists {} of {} spots ({} byte budget); ranking and `agent-seam-packets.json` cover all {}. Set `{}=0` to list every spot\n",
@@ -726,6 +741,7 @@ fn render_pilot_terminal_with_target(
             limit.analyzed, limit.total
         ));
     }
+    push_inventory_evidence_limitations(&mut out, context, false);
     // #12108: the terminal states the byte cut too, as JSON and Markdown do.
     if let Some(bound) = context.repo_exposure_byte_bound {
         out.push_str(&format!(
@@ -814,7 +830,11 @@ fn render_pilot_terminal_with_target(
         if let Some(value) = outline.candidate_value.as_ref() {
             out.push_str(&format!("  candidate value: {value}\n"));
         }
-        push_assertion_shape(&mut out, &outline.assertion_shape);
+        push_assertion_shape(
+            &mut out,
+            &outline.assertion_shape,
+            outline.assertion_drafted,
+        );
         // Only a seam that passes the fail-closed repair-packet flip gets the
         // paste-ready command. Route readiness alone is weaker: a ready seam
         // can still be ineligible, and offering a repair transaction there
@@ -1285,21 +1305,21 @@ impl CurrentChangeLabel {
         // drawn from the analyzed seams alone must say it may not be all.
         let unseen = unanalyzed.map(|(analyzed, total)| {
             format!(
-                "the seam limit left {} of {total} seams unanalyzed, so the change may have seams pilot did not see",
+                "pilot's limit left {} of {total} spots unchecked, so your change may touch spots pilot did not see",
                 total.saturating_sub(analyzed)
             )
         });
         let gripped = touched.saturating_sub(withheld);
         let mut reason = if withheld > 0 {
             let which = match (withheld, touched) {
-                (1, 1) => format!("the analyzed seam on {}", lines(1)),
-                (w, t) if w == t => format!("the {t} analyzed seams on {}", lines(t)),
-                (w, t) => format!("{w} of the {t} analyzed seams on {}", lines(t)),
+                (1, 1) => format!("the checked spot on {}", lines(1)),
+                (w, t) if w == t => format!("the {t} checked spots on {}", lines(t)),
+                (w, t) => format!("{w} of the {t} checked spots on {}", lines(t)),
             };
             let what = if withheld == 1 {
-                "its static evidence is unknown or opaque, so it is a static limitation, not a gap"
+                "ripr cannot tell from the code whether a test would notice a change there, so it is not listed as a gap"
             } else {
-                "their static evidence is unknown or opaque, so they are static limitations, not gaps"
+                "ripr cannot tell from the code whether a test would notice a change there, so they are not listed as gaps"
             };
             let rest = match gripped {
                 0 => String::new(),
@@ -1310,11 +1330,11 @@ impl CurrentChangeLabel {
         } else if touched > 0 {
             match touched {
                 1 => format!(
-                    "The analyzed seam on {} has no gap to rank: it is already gripped, intentional or suppressed",
+                    "The checked spot on {} has no gap to rank: it is already gripped, intentional or suppressed",
                     lines(1)
                 ),
                 t => format!(
-                    "The {t} analyzed seams on {} have no gap to rank: they are already gripped, intentional or suppressed",
+                    "The {t} checked spots on {} have no gap to rank: they are already gripped, intentional or suppressed",
                     lines(t)
                 ),
             }
@@ -1322,14 +1342,14 @@ impl CurrentChangeLabel {
             // #6944: `ripr check` analyzes these files, so "no seam" alone
             // would contradict it; say why pilot did not look.
             format!(
-                "No seam pilot analyzed is on {}: {}",
+                "Pilot checked no spot on {}: {}",
                 lines(1),
                 note.reason(code)
             )
         } else if unseen.is_some() {
-            format!("No analyzed seam is on {}", lines(1))
+            format!("Pilot checked no spot on {}", lines(1))
         } else {
-            return format!("No seam pilot analyzed is on {}.", lines(1));
+            return format!("Pilot checked no spot on {}.", lines(1));
         };
         if touched > 0
             && let Some(note) = diff_only
@@ -1358,7 +1378,7 @@ impl CurrentChangeLabel {
                 seams,
                 diff_only,
             } => format!(
-                "not part of it. {} This recommendation is elsewhere in the repo. For the change itself, run: {check}",
+                "this gap is not on a line you changed. {} For the change itself, run: {check}",
                 Self::why_elsewhere(*seams, diff_only.as_ref(), base.as_ref(), false)
             ),
         }
@@ -1367,7 +1387,7 @@ impl CurrentChangeLabel {
     fn markdown(&self) -> String {
         match self {
             Self::PartOfChange { base } => format!(
-                "part of it (this seam is on {})",
+                "part of it (this gap is on {})",
                 Self::changed_line(base.as_ref(), true)
             ),
             Self::Elsewhere {
@@ -1376,7 +1396,7 @@ impl CurrentChangeLabel {
                 seams,
                 diff_only,
             } => format!(
-                "not part of it. {} This recommendation is elsewhere in the repo. For the change itself, run `{check}`.",
+                "this gap is not on a line you changed. {} For the change itself, run `{check}`.",
                 Self::why_elsewhere(*seams, diff_only.as_ref(), base.as_ref(), true)
             ),
         }
@@ -1384,11 +1404,49 @@ impl CurrentChangeLabel {
 }
 
 /// Project the producer's named coverage limitation, even with a changed top pick.
+/// #13340: names a failed inventory evidence pass, so a count read from the
+/// opaque stand-ins is never taken for an inventory result. Nothing for a
+/// healthy run.
+fn push_inventory_evidence_limitations(
+    out: &mut String,
+    context: PilotSummaryContext<'_>,
+    markdown: bool,
+) {
+    for limitation in context.inventory_evidence_limitations {
+        let prefix = if markdown {
+            "- Inventory limitation"
+        } else {
+            "  inventory limitation"
+        };
+        out.push_str(&terminal_safe(format!(
+            "{prefix}: {}: {}; spot counts and rankings below are not an inventory result. {}\n",
+            limitation.kind.as_str(),
+            limitation.kind.plain_label(),
+            limitation.recovery.detail
+        )));
+    }
+}
+
 fn push_changed_file_limitations(
     out: &mut String,
     change: Option<&PilotCurrentChange>,
     markdown: bool,
 ) {
+    // #13340: the classification's own pass-wide failure has no path and is
+    // not an absent file, so it is named on its own line before the files.
+    for limitation in change.map_or(&[][..], PilotCurrentChange::evidence_limitations) {
+        let prefix = if markdown {
+            "- Current change limitation"
+        } else {
+            "  current change limitation"
+        };
+        out.push_str(&terminal_safe(format!(
+            "{prefix}: {}: {}. {}\n",
+            limitation.kind.as_str(),
+            limitation.kind.plain_label(),
+            limitation.recovery.detail
+        )));
+    }
     let Some(limitations) = change.and_then(PilotCurrentChange::absent_file_limitations) else {
         return;
     };
@@ -1441,6 +1499,18 @@ fn push_current_change_json(
         }
         out.push_str("],\n");
     }
+    // #13340: present only when the change classification's evidence warm
+    // failed, so a healthy summary stays byte-identical.
+    if !change.evidence_limitations().is_empty() {
+        out.push_str("    \"evidence_limitations\": [");
+        for (index, limitation) in change.evidence_limitations().iter().enumerate() {
+            if index > 0 {
+                out.push_str(", ");
+            }
+            out.push_str(&format!("\"{}\"", json_escape(limitation.kind.as_str())));
+        }
+        out.push_str("],\n");
+    }
     if change.is_changed() {
         out.push_str(&format!(
             "    \"actionable_seams_in_change\": {},\n",
@@ -1476,15 +1546,14 @@ const UNANALYZED_ONLY_VERDICT: &str = "this repository's source is in languages 
 /// Why pilot withheld seams from its ranking (#5497): their class is
 /// `opaque` or an `*_unknown` class, so ripr's static evidence could not
 /// establish whether a test discriminates them.
-const WITHHELD_REASON: &str =
-    "static evidence is unknown or opaque, so they are static limitations, not gaps";
+const WITHHELD_REASON: &str = "ripr cannot tell from the code whether a test would notice a change there, so nothing here is listed as a gap";
 
 /// Why an empty ranking with withheld seams is not a clean result.
-const WITHHELD_ONLY_VERDICT: &str = "were withheld because their static evidence is unknown or opaque. ripr cannot tell whether a test discriminates them, so this is not a clean result.";
+const WITHHELD_ONLY_VERDICT: &str = "were withheld because ripr cannot tell from the code whether a test would notice a change there, so this is not a clean result.";
 
 /// Closing line for [`WITHHELD_ONLY_VERDICT`]: no gap to test, no snapshot
 /// pair to compare.
-const WITHHELD_ONLY_NEXT: &str = "No gap to test: each withheld seam's evidence in the repo exposure report names the stage ripr could not resolve.";
+const WITHHELD_ONLY_NEXT: &str = "Nothing to act on yet: the repo exposure report says, for each withheld spot, which step ripr could not work out.";
 
 /// [`WITHHELD_ONLY_NEXT`], unless a seam limit cut seams pilot never
 /// classified: those may hold gaps, so "no gap to test" would claim an
@@ -1492,7 +1561,7 @@ const WITHHELD_ONLY_NEXT: &str = "No gap to test: each withheld seam's evidence 
 fn withheld_only_next(seam_limit: Option<&crate::analysis::SeamLimitInfo>) -> String {
     match seam_limit {
         Some(limit) => format!(
-            "No gap ranked among the {} seams pilot analyzed, but the seam limit left {} of {} seams unanalyzed and they may hold gaps: raise or remove RIPR_PILOT_SEAM_BUDGET and RIPR_REPO_EXPOSURE_SEAM_LIMIT, then rerun pilot. Each withheld seam's evidence in the repo exposure report names the stage ripr could not resolve.",
+            "No gap ranked among the {} spots pilot checked, but its limit left {} of {} spots unchecked and they may hold gaps: raise or remove RIPR_PILOT_SEAM_BUDGET and RIPR_REPO_EXPOSURE_SEAM_LIMIT, then rerun pilot. The repo exposure report says, for each withheld spot, which step ripr could not work out.",
             limit.analyzed,
             limit.total.saturating_sub(limit.analyzed),
             limit.total
@@ -1502,7 +1571,7 @@ fn withheld_only_next(seam_limit: Option<&crate::analysis::SeamLimitInfo>) -> St
 }
 
 fn seam_count_label(count: usize) -> String {
-    format!("{count} {}", if count == 1 { "seam" } else { "seams" })
+    format!("{count} {}", if count == 1 { "spot" } else { "spots" })
 }
 
 /// Withheld seams counted over the kept seams only are a lower bound once a
@@ -2156,7 +2225,7 @@ fn json_string_array_field_refs(
 
 fn push_python_first_use_md(out: &mut String, first_use: &PilotPythonFirstUse) {
     out.push_str("## Python Preview First Use\n\n");
-    out.push_str(&format!("- Status: `{}`\n", first_use.status.as_str()));
+    out.push_str(&format!("- Result: {}\n", first_use.status.plain_label()));
     out.push_str("- Language: `python` (`preview`)\n");
     out.push_str("- Boundary: `preview_advisory_only`\n");
     out.push_str(&format!(
@@ -2226,7 +2295,7 @@ fn push_python_repair_card_md(out: &mut String, card: &PythonRepairCard) {
 
 fn push_python_first_use_terminal(out: &mut String, first_use: &PilotPythonFirstUse) {
     out.push_str("Python preview:\n");
-    out.push_str(&format!("  status: {}\n", first_use.status.as_str()));
+    out.push_str(&format!("  result: {}\n", first_use.status.plain_label()));
     out.push_str("  language: python (preview)\n");
     out.push_str(&format!("  findings: {}\n", first_use.findings_total));
     out.push_str(&format!(
@@ -2293,6 +2362,8 @@ fn repair_action_label(action: &str) -> &'static str {
 /// #9244 item 3: shared placeholder-assertion wording. The helper lives in
 /// `output::placeholder_assertion` so the other human handoff lines use the
 /// same fill-in note.
-fn push_assertion_shape(out: &mut String, shape: &str) {
-    crate::output::placeholder_assertion::push_terminal_assertion(out, "  ", shape);
+fn push_assertion_shape(out: &mut String, shape: &str, drafted: bool) {
+    crate::output::placeholder_assertion::push_drafted_terminal_assertion(
+        out, "  ", shape, drafted,
+    );
 }

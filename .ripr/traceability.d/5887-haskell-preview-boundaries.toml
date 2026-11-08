@@ -1,0 +1,15 @@
+# Spec-only: Haskell preview contract before parser, routing, or adapter work (#5887).
+[[behavior]]
+id = "RIPR-SPEC-0402"
+name = "Haskell preview package, component, example-test, property, laziness, and FFI boundaries"
+spec = "docs/specs/RIPR-SPEC-0402-haskell-preview-package-component-example-property-laziness-ffi-boundaries.md"
+tests = []
+fixtures = []
+code = []
+outputs = [
+  "docs/specs/RIPR-SPEC-0402-haskell-preview-package-component-example-property-laziness-ffi-boundaries.md",
+  "docs/spec-index.d/RIPR-SPEC-0402.md",
+]
+metrics = [
+  "unit_test_pass_rate",
+]

@@ -136,12 +136,17 @@ pub(in crate::analysis) fn missing_evidence(
         ),
         ExposureClass::WeaklyExposed => {}
     }
+    // #12414: a Predicate finding that already names a missing input — the
+    // equality boundary or an inserted guard's domain — carries no extra
+    // generic line; the typed shape, not a `==` string match, decides.
     if matches!(probe.family, ProbeFamily::Predicate)
         && infect.state != StageState::Yes
-        && !activation
-            .missing_discriminators
-            .iter()
-            .any(|fact| fact.value.contains("=="))
+        && !activation.missing_discriminators.iter().any(|fact| {
+            matches!(
+                fact.shape,
+                DiscriminatorShape::Boundary | DiscriminatorShape::GuardDomain
+            )
+        })
     {
         missing.push("No detected boundary input for the changed predicate".to_string());
     }
@@ -278,7 +283,14 @@ pub(in crate::analysis) fn recommended_next_step(
     owner_assertion_shaped: bool,
     stop_reasons: &[StopReason],
 ) -> Option<String> {
-    recommended_next_step_with_boundary(probe, class, owner_assertion_shaped, stop_reasons, false)
+    recommended_next_step_with_boundary(
+        probe,
+        class,
+        owner_assertion_shaped,
+        stop_reasons,
+        false,
+        false,
+    )
 }
 
 /// Next-step guidance when the caller knows whether a related test already
@@ -292,6 +304,7 @@ pub(in crate::analysis) fn recommended_next_step_with_boundary(
     owner_assertion_shaped: bool,
     stop_reasons: &[StopReason],
     boundary_input_observed: bool,
+    collection_contents_check_side_effect: bool,
 ) -> Option<String> {
     if boundary_input_observed
         && !owner_assertion_shaped
@@ -327,6 +340,10 @@ pub(in crate::analysis) fn recommended_next_step_with_boundary(
                 // the changed error path plus an assertion pinning this exact
                 // variant (RIPR-SPEC-0106).
                 "Add a test input that reaches the changed error path and assert the exact error variant it returns."
+            } else if matches!(probe.family, ProbeFamily::SideEffect)
+                && collection_contents_check_side_effect
+            {
+                crate::analysis::repair_route::COLLECTION_CONTENTS_CHECK_NEXT_STEP
             } else {
                 weakly_exposed_guidance_for_family(&probe.family)
             }
@@ -746,6 +763,26 @@ mod tests {
             )
         );
 
+        let localized_collection_push = recommended_next_step_with_boundary(
+            &probe(ProbeFamily::SideEffect, "buf.push(msg.to_string())"),
+            &ExposureClass::WeaklyExposed,
+            false,
+            &[],
+            false,
+            true,
+        );
+        assert_eq!(
+            localized_collection_push.as_deref(),
+            Some(crate::analysis::repair_route::COLLECTION_CONTENTS_CHECK_NEXT_STEP)
+        );
+        assert!(
+            !localized_collection_push
+                .as_deref()
+                .unwrap_or_default()
+                .contains("mock"),
+            "{localized_collection_push:?}"
+        );
+
         let match_arm = recommended_next_step(
             &probe(ProbeFamily::MatchArm, "None => 0"),
             &ExposureClass::WeaklyExposed,
@@ -767,6 +804,7 @@ mod tests {
             false,
             &[],
             true,
+            false,
         );
         assert_eq!(
             observed.as_deref(),
@@ -779,6 +817,7 @@ mod tests {
             &ExposureClass::WeaklyExposed,
             false,
             &[],
+            false,
             false,
         );
         assert_eq!(
@@ -794,6 +833,7 @@ mod tests {
             false,
             &[],
             true,
+            false,
         );
         assert_ne!(
             other_family.as_deref(),
@@ -809,6 +849,7 @@ mod tests {
             true,
             &[],
             true,
+            false,
         );
         assert_eq!(
             step.as_deref(),
@@ -1239,6 +1280,8 @@ mod tests {
             value: value.to_string(),
             reason: format!("no related test call uses {value}"),
             flow_sink: None,
+            shape: DiscriminatorShape::Boundary,
+            drafted_boundary: None,
         }]
     }
 

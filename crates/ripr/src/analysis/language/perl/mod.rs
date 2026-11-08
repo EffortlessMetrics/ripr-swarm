@@ -72,7 +72,7 @@ const PERL_ORACLE_MATCHER_GRADING: &str = "oracle_matcher_grading";
 
 /// Stable reason marker for a *configured* managed Perl facts producer that
 /// was invoked and failed (#6828). The adapter returns this marked reason so
-/// the pipeline's `perl_run_status_for_err` can map it to
+/// the pipeline's `adapter_run_status_for_err` can map it to
 /// [`LanguageRunStatus::Failed`], whose typed limitation is `producer_failure`
 /// with `inspect_failure` recovery — not the generic missing-packet advice.
 pub(crate) const PERL_PRODUCER_FAILURE_REASON_PREFIX: &str = "producer failure: ";
@@ -3314,6 +3314,8 @@ fn stable_repo_path_arg(path: String, field: &str) -> Result<String, String> {
     Ok(path)
 }
 
+#[cfg(test)]
+mod boundary_input_projection_tests;
 #[cfg(test)]
 mod capability_disposition_tests;
 #[cfg(test)]

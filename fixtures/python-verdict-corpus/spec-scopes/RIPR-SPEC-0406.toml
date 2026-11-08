@@ -1,0 +1,3 @@
+id = "RIPR-SPEC-0406"
+scope = "out"
+reason = "Terraform evidence contract is normative spec law for #5969; runtime mutant proof lands in Terraform judged corpora (#5979)"

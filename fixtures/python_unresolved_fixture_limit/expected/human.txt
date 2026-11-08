@@ -17,6 +17,7 @@ Start here:
   Language: python
   Language status: preview
   Static exposure: unknown (severity: note, confidence 0.20)
+  Why capped: preview adapter: infection/propagation not modeled (Python); syntax-first, no type or import resolution; whether a test checks this behavior is not established. Preview score, not on the same scale as Rust confidence.
   Why unknown: test `test_apply_discount_fixture_case` takes pytest fixture `discount_case` that ripr does not read, so it cannot tell what it supplies; open the fixture to see whether it passes the changed input
   Changed behavior: if amount >= threshold:
   Analyzer limit: Static limit `unresolved_pytest_fixture`: a related pytest test depends on
@@ -39,6 +40,7 @@ Start here:
     - 4 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/python_unresolved_fixture_limit/input --diff <cwd>/fixtures/python_unresolved_fixture_limit/diff.patch --mode fast probe:src_pricing.py:python_preview:ca00849b
   ripr context --root <cwd>/fixtures/python_unresolved_fixture_limit/input --diff <cwd>/fixtures/python_unresolved_fixture_limit/diff.patch --mode fast --at probe:src_pricing.py:python_preview:ca00849b
   no repair start offered: this finding has no gap ID, so there is no gap to start a repair from; follow the Next step above
