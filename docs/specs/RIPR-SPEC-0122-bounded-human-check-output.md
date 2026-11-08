@@ -166,10 +166,15 @@ remainder that does not exist:
   total first and then the mix — `T finding(s) omitted: L lower-priority, B
   base-side evidence (not candidate edit targets)` (a `U unresolved
   currentness` clause joins when present), so the leading count always
-  equals the number of listed bullets (#8389) — and an omitted set that is entirely
+  equals the number of findings the listed bullets represent (#8389) — and an omitted set that is entirely
   base-side or entirely unresolved currentness says so (`All N omitted
   finding(s) are base-side evidence, not candidate edit targets.`). Pure
   lower-priority omitted sets keep the single count clause.
+- Byte-identical consecutive hidden rows (same location, class, kind, reason
+  and any stub sub-block) collapse into one bullet ending ` (xN)`, where `N`
+  is the number of findings it stands for. The count line, the twenty-finding
+  listing cap and the `… and N more` continuation keep counting findings, not
+  bullets, so no finding disappears from the totals (#8389).
 - `N == 0` — the heading is `More:` and the count line is not rendered. The
   two format pointers still render, unchanged, because they remain useful
   when nothing was omitted.

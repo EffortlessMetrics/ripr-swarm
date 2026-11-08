@@ -19,6 +19,22 @@ ripr init --agents all       # all three
 Add `--dry-run` first to see exactly what would be written. Then commit the file
 so every session sees it.
 
+## Python and TypeScript repos
+
+`--agents` looks at the repo root for `Cargo.toml`, `pyproject.toml` / `setup.py`
+/ `pytest.ini`, and `package.json` / `tsconfig.json`. A Rust repo gets the Rust
+block below. A Python or TypeScript/JavaScript repo gets a variant with the
+test command (`pytest` or `unittest`, `jest` or `vitest`) and assertion advice
+that fit, and no promise of guided `ripr repair`, which covers Rust only; the
+route is `ripr check --format agent`, then a hand-written test. A repo with
+Rust plus another language keeps the Rust block and adds a short note. The
+Cursor rule's `globs` and description follow the detected languages. Detection
+looks at the root and its immediate children only. A detected language counts
+only when `[languages].enabled` in `ripr.toml` turns it on; otherwise the block
+says those files are not analyzed and points at `ripr doctor` instead of
+promising a loop. `--force` also refreshes the Cursor front matter, but only
+when it is exactly the one ripr wrote; your own front matter is kept.
+
 ## What `--agents` does to your files
 
 - It writes a short block (about 700 tokens) between `<!-- ripr:agents:begin ... -->`
@@ -110,10 +126,16 @@ Cursor and Claude Code share one entry shape:
 ```json
 {
   "mcpServers": {
-    "ripr": { "command": "ripr", "args": ["mcp", "--stdio"] }
+    "ripr": {
+      "command": "ripr",
+      "args": ["mcp", "--stdio"],
+      "env": { "RIPR_MCP_TOOLS_LIST": "slim" }
+    }
   }
 }
 ```
+
+The `env` line asks for the slim `tools/list` (about 29 KB smaller at every session start; results are unchanged). Delete it if your host validates results against `outputSchema`.
 
 `ripr init --mcp` and the Cursor file were exercised against the real
 `ripr` binary. The `claude`, `codex` and Cursor clients' own registration and
