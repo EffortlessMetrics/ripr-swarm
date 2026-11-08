@@ -849,7 +849,94 @@ pub(super) fn delivered_diagnostics_for_uri(
         diagnostics.push(delivery_omission_diagnostic(omission));
     }
     push_unlisted_language_not_analyzed(snapshot, uri, &mut diagnostics);
+    push_empty_scope_marker(snapshot, uri, &mut diagnostics);
     diagnostics
+}
+
+/// The passive Information marker served on a document of a snapshot whose
+/// analysis scope was empty (#13441). A clean tree publishes no row, so a
+/// pull-only or push client otherwise sees silence that reads as an
+/// all-clear; the not-all-clear fact lived only in the line-0 hover and the
+/// refresh log (#12416). Served at serve time, not stored: there is no
+/// changed file to anchor it to, and a stored batch would make a first
+/// finding look like a delivery change. It is gated on the same fact as the
+/// other empty-scope disclosures (an empty-scope outcome kind and no row of
+/// any kind in the snapshot), so a snapshot with findings, gap rows or other
+/// markers never carries it, and it disappears with the next real snapshot.
+/// No finding identity, repair data or actionability; never a Warning.
+fn push_empty_scope_marker(
+    snapshot: &AnalysisSnapshot,
+    uri: &Uri,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    if diagnostics.is_empty()
+        && snapshot_serves_empty_scope_marker(snapshot)
+        && super::uri::file_uri_relative_to_root(&snapshot.root, uri).is_some()
+    {
+        diagnostics.push(empty_scope_diagnostic(snapshot));
+    }
+}
+
+/// True when the snapshot is an empty-scope outcome with no row of any kind,
+/// the one state in which its documents carry the empty-scope marker.
+pub(super) fn snapshot_serves_empty_scope_marker(snapshot: &AnalysisSnapshot) -> bool {
+    snapshot.diagnostic_count() == 0
+        && snapshot.findings.is_empty()
+        && snapshot.gap_artifacts.is_empty()
+        && snapshot
+            .analysis_outcome
+            .as_ref()
+            .is_some_and(|outcome| outcome.kind.is_empty_scope())
+}
+
+/// True for the served-not-stored empty-scope marker (#13441). It is never
+/// line-local evidence and never part of the committed baseline.
+pub(super) fn is_empty_scope_marker(diagnostic: &Diagnostic) -> bool {
+    diagnostic
+        .data
+        .as_ref()
+        .is_some_and(|data| data["kind"] == "empty_scope")
+        && diagnostic.code
+            == Some(NumberOrString::String(
+                super::diagnostic_catalog::DIAGNOSTIC_LANGUAGE_NOT_ANALYZED_CODE.to_string(),
+            ))
+}
+
+/// The marker payload a snapshot would serve, or `None`. Comparing payloads
+/// (not just presence) lets a committed snapshot whose marker text changed
+/// (a different base or empty-scope cause) be re-served.
+pub(super) fn empty_scope_marker_payload(snapshot: &AnalysisSnapshot) -> Option<Diagnostic> {
+    snapshot_serves_empty_scope_marker(snapshot).then(|| empty_scope_diagnostic(snapshot))
+}
+
+/// The marker for an empty analysis scope. Shares the governed
+/// `ripr-diagnostic-language-not-analyzed` code (nothing was analyzed, so an
+/// empty list is not a clean result) with `data.kind` `empty_scope`.
+pub(super) fn empty_scope_diagnostic(snapshot: &AnalysisSnapshot) -> Diagnostic {
+    // The not-all-clear fact and recovery route come from the shared wording
+    // owner (#12416), so the marker cannot drift from hover and status.
+    let disclosure = super::backend::empty_scope_disclosure(
+        snapshot.analysis_outcome.as_ref(),
+        snapshot.base.as_deref(),
+        false,
+    )
+    .unwrap_or_else(|| super::backend::EMPTY_SCOPE_LSP_RETRY_ROUTE.to_string());
+    Diagnostic {
+        range: Range::default(),
+        severity: Some(DiagnosticSeverity::INFORMATION),
+        code: Some(NumberOrString::String(
+            super::diagnostic_catalog::DIAGNOSTIC_LANGUAGE_NOT_ANALYZED_CODE.to_string(),
+        )),
+        source: Some("ripr".to_string()),
+        message: format!("ripr: {disclosure} This is a static advisory, not runtime evidence."),
+        data: Some(serde_json::json!({
+            "delivery_eligible": true,
+            "kind": "empty_scope",
+            "not_analyzed_reason": "empty_scope",
+            "recovery": super::backend::EMPTY_SCOPE_LSP_RETRY_ROUTE,
+        })),
+        ..Default::default()
+    }
 }
 
 /// The producer names at most three changed files per disabled language, so
@@ -1138,6 +1225,13 @@ pub(super) fn workspace_diagnostic_result_id(snapshot: &AnalysisSnapshot) -> Str
             .clone()
             .unwrap_or_else(|| "no-base".to_string()),
     ];
+    // #13441: the served empty-scope marker is not a stored document, so its
+    // payload joins the workspace identity directly; otherwise a marker, a
+    // changed marker and no marker could share one identity.
+    if let Some(marker) = empty_scope_marker_payload(snapshot) {
+        parts.push("empty-scope-marker".to_string());
+        parts.push(marker.message);
+    }
     for uri in snapshot.diagnostics_by_uri.keys() {
         parts.push(normalized_document_uri(&snapshot.root, uri));
         parts.push(document_diagnostic_result_id_with_omissions(
