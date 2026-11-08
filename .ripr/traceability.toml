@@ -1858,6 +1858,9 @@ id = "RIPR-SPEC-0011"
 name = "LLM work loop"
 spec = "docs/specs/RIPR-SPEC-0011-llm-work-loop.md"
 tests = [
+  "crates/ripr/src/edit_cage/mod.rs::tests::eol_only_flip_of_a_forbidden_file_is_not_an_edit",
+  "crates/ripr/src/edit_cage/mod.rs::tests::eol_flip_without_git_normalization_remains_an_edit",
+  "crates/ripr/src/cli/commands/agent.rs::tests::line_ending_only_note_names_skipped_files_and_stays_silent_without_them",
   "crates/ripr/tests/task_first_facade.rs::repair_loop_projection_tracks_real_attempt_states",
   "crates/ripr/src/cli/commands/agent_refusal_tests.rs::verify_typed_refusal_classifier_matches_only_whole_or_leading_clauses",
   "crates/ripr/src/cli/commands/agent_refusal_tests.rs::after_refusal_json_is_one_versioned_document_with_trimmed_error",

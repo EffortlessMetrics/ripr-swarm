@@ -3729,7 +3729,22 @@ fn line_ending_only_note(after: &crate::app::repair_attempt::RepairAttemptAfter)
     let listed = paths
         .iter()
         .take(CAGE_RECOVERY_MAX_VIOLATIONS)
-        .map(|path| format!("`{path}`"))
+        // A repository file name is untrusted text: escape control characters
+        // (a newline included) so a crafted name cannot forge another
+        // narration line.
+        .map(|path| {
+            let shown: String = path
+                .chars()
+                .flat_map(|ch| {
+                    if ch.is_control() {
+                        ch.escape_default().collect::<Vec<_>>()
+                    } else {
+                        vec![ch]
+                    }
+                })
+                .collect();
+            format!("`{shown}`")
+        })
         .collect::<Vec<_>>()
         .join(", ");
     let more = if paths.len() > CAGE_RECOVERY_MAX_VIOLATIONS {
@@ -6039,6 +6054,11 @@ mod tests {
         let recorded = serde_json::to_value(&none).map_err(|err| err.to_string())?;
         if recorded.get("line_ending_only_paths").is_some() {
             return Err(format!("an empty list must not be serialized: {recorded}"));
+        }
+        after.line_ending_only_paths = vec!["src/a\nripr: forged.rs".to_string()];
+        let line = line_ending_only_note(&after).ok_or("a skipped file must be named")?;
+        if line.contains('\n') || !line.contains("`src/a\\nripr: forged.rs`") {
+            return Err(format!("a control character must be escaped: {line:?}"));
         }
         after.line_ending_only_paths = (0..12).map(|index| format!("src/f{index}.rs")).collect();
         let line = line_ending_only_note(&after).ok_or("skipped files must be named")?;
