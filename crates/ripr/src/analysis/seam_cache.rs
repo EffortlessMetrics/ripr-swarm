@@ -3108,9 +3108,10 @@ impl FileFactCacheStats {
 /// CLI build to alternate on one cache without evicting each other.
 const FILE_FACT_RETAINED_OTHER_BUILDS: usize = 2;
 
-/// An other build used (hit or written) within this window is never pruned,
-/// whatever its rank: a frequently rebuilt local CLI must not evict an editor
-/// server that is still in use.
+/// An other build whose use marker (a cache hit) is younger than this is
+/// never pruned, whatever its rank: a frequently rebuilt local CLI must not
+/// evict an editor server that is still in use. Builds that only wrote get no
+/// grace, so dirty rebuilds cannot accumulate.
 const FILE_FACT_RECENT_BUILD_GRACE: std::time::Duration =
     std::time::Duration::from_secs(7 * 24 * 60 * 60);
 
@@ -3124,6 +3125,20 @@ const FILE_FACT_BUILD_USE_REFRESH: std::time::Duration = std::time::Duration::fr
 
 static FILE_FACT_BUILD_USE_NOTED: Mutex<BTreeMap<PathBuf, std::time::Instant>> =
     Mutex::new(BTreeMap::new());
+
+/// Whether `path` is a directory that is not a symlink.
+fn is_real_dir(path: &Path) -> bool {
+    std::fs::symlink_metadata(path)
+        .is_ok_and(|meta| meta.is_dir() && !meta.file_type().is_symlink())
+}
+
+/// [`is_real_dir`], or nothing exists at `path` yet.
+fn is_real_dir_or_absent(path: &Path) -> bool {
+    match std::fs::symlink_metadata(path) {
+        Ok(meta) => meta.is_dir() && !meta.file_type().is_symlink(),
+        Err(err) => err.kind() == std::io::ErrorKind::NotFound,
+    }
+}
 
 fn build_use_marker_name(identity: &str) -> String {
     format!("{:016x}", fnv1a_64(identity.as_bytes()))
@@ -3602,20 +3617,12 @@ impl RepoFileFactCache {
         }
     }
 
-    /// Best-effort removal of current-schema entries written by older builds
-    /// (#7047). A key embeds the analyzer identity, so such an entry is never
-    /// served again, yet every ripr upgrade used to leave a full generation
-    /// behind. The current build and the [`FILE_FACT_RETAINED_OTHER_BUILDS`]
-    /// most recently used other builds are kept, and so is any build used
-    /// within [`FILE_FACT_RECENT_BUILD_GRACE`]. "Used" is the later of its
-    /// newest entry and its use marker (see `note_build_use`), so an editor
-    /// server that only hits is not evicted by a run of local rebuilds. Entries whose header cannot be read, temp files
-    /// and non-JSON files are left alone.
     /// Records that this build served a hit, at most once per
     /// [`FILE_FACT_BUILD_USE_REFRESH`] per process. A warm run never writes an
     /// entry, so entry mtimes alone would make an editor server that only
     /// hits look abandoned to the prune; this marker is its "last used" time.
-    /// Production layout and a usable base only; failures are ignored.
+    /// Production layout, usable base and a real (non-symlink) marker
+    /// directory only; the write is atomic and failures are ignored.
     fn note_build_use(&self) {
         let Some(layer_dir) = self.file_fact_schema_layer_dir() else {
             return;
@@ -3641,16 +3648,26 @@ impl RepoFileFactCache {
             return;
         }
         let marker_dir = layer_dir.join(FILE_FACT_BUILD_USE_DIR);
-        if !cache_path_contained_in_base(&self.base, &marker_dir) {
+        if !cache_path_contained_in_base(&self.base, &marker_dir)
+            || !is_real_dir_or_absent(&layer_dir)
+            || !is_real_dir_or_absent(&marker_dir)
+        {
             return;
         }
         let identity = crate::build_identity::cache_identity();
         let marker = marker_dir.join(build_use_marker_name(identity));
+        // A planted symlink at the marker path is replaced by the atomic
+        // rename, never written through.
         let _ = std::fs::create_dir_all(&marker_dir)
-            .and_then(|()| std::fs::write(&marker, identity.as_bytes()));
+            .map_err(|err| err.to_string())
+            .and_then(|()| {
+                crate::atomic_file::write_cache(&marker, identity.as_bytes(), "build use marker")
+            });
     }
 
-    /// Last-used time per other build, from the use markers.
+    /// Last-hit time per other build, from the use markers. A marker counts
+    /// only when it is a small regular file whose name is the hash of its
+    /// content.
     fn other_build_use_markers(
         &self,
         identity: &str,
@@ -3659,7 +3676,11 @@ impl RepoFileFactCache {
         let Some(layer_dir) = self.file_fact_schema_layer_dir() else {
             return markers;
         };
-        let Ok(entries) = std::fs::read_dir(layer_dir.join(FILE_FACT_BUILD_USE_DIR)) else {
+        let marker_dir = layer_dir.join(FILE_FACT_BUILD_USE_DIR);
+        if !is_real_dir(&layer_dir) || !is_real_dir(&marker_dir) {
+            return markers;
+        }
+        let Ok(entries) = std::fs::read_dir(&marker_dir) else {
             return markers;
         };
         for entry in entries.flatten() {
@@ -3684,14 +3705,22 @@ impl RepoFileFactCache {
         markers
     }
 
+    /// Best-effort removal of current-schema entries written by older builds
+    /// (#7047). A key embeds the analyzer identity, so such an entry is never
+    /// served again, yet every ripr upgrade (and every dirty local rebuild)
+    /// used to leave a full generation behind.
+    ///
+    /// Kept: the current build; the [`FILE_FACT_RETAINED_OTHER_BUILDS`] most
+    /// recently used other builds, where "used" is the later of a build's
+    /// newest entry and its use marker; and any build whose use marker (proof
+    /// of a hit, see `note_build_use`) is younger than
+    /// [`FILE_FACT_RECENT_BUILD_GRACE`], so an editor server that only hits
+    /// survives a run of local rebuilds while write-only rebuilds do not pile
+    /// up. Entries whose header cannot be read, temp files and non-JSON files
+    /// are left alone; nothing is removed through a symlinked directory.
     fn prune_stale_build_entries(&self) {
         let identity = crate::build_identity::cache_identity();
-        // Like the schema-sibling prune, never act through a symlinked entry
-        // directory: containment below is lexical.
-        let Ok(dir_meta) = std::fs::symlink_metadata(&self.dir) else {
-            return;
-        };
-        if dir_meta.file_type().is_symlink() || !dir_meta.is_dir() {
+        if !is_real_dir(&self.dir) {
             return;
         }
         let Ok(entries) = std::fs::read_dir(&self.dir) else {
@@ -3725,24 +3754,27 @@ impl RepoFileFactCache {
             slot.1.push(path);
         }
         let mut markers = self.other_build_use_markers(identity);
-        for (build, (used, _)) in &markers {
+        for (build, (hit, _)) in &markers {
             if let Some(slot) = by_build.get_mut(build) {
-                slot.0 = slot.0.max(*used);
+                slot.0 = slot.0.max(*hit);
             }
         }
+        let now = std::time::SystemTime::now();
+        let hit_recently = |hit: std::time::SystemTime| {
+            now.duration_since(hit)
+                .map_or(true, |age| age < FILE_FACT_RECENT_BUILD_GRACE)
+        };
         let mut builds: Vec<(String, (std::time::SystemTime, Vec<PathBuf>))> =
             by_build.into_iter().collect();
         // Newest first; the identity breaks ties so the choice is deterministic.
         builds.sort_by(|(left_id, (left, _)), (right_id, (right, _))| {
             right.cmp(left).then_with(|| left_id.cmp(right_id))
         });
-        let now = std::time::SystemTime::now();
-        for (build, (last_used, paths)) in builds.into_iter().skip(FILE_FACT_RETAINED_OTHER_BUILDS)
-        {
-            let recently_used = now
-                .duration_since(last_used)
-                .map_or(true, |age| age < FILE_FACT_RECENT_BUILD_GRACE);
-            if recently_used {
+        for (rank, (build, (_, paths))) in builds.into_iter().enumerate() {
+            let marker = markers.remove(&build);
+            if rank < FILE_FACT_RETAINED_OTHER_BUILDS
+                || marker.as_ref().is_some_and(|(hit, _)| hit_recently(*hit))
+            {
                 continue;
             }
             for path in paths {
@@ -3750,8 +3782,14 @@ impl RepoFileFactCache {
                     let _ = std::fs::remove_file(&path);
                 }
             }
-            if let Some((_, marker)) = markers.remove(&build) {
-                let _ = std::fs::remove_file(marker);
+            if let Some((_, marker_path)) = marker {
+                let _ = std::fs::remove_file(marker_path);
+            }
+        }
+        // Markers of builds that no longer have entries, once past the grace.
+        for (hit, marker_path) in markers.into_values() {
+            if !hit_recently(hit) && cache_path_contained_in_base(&self.base, &marker_path) {
+                let _ = std::fs::remove_file(marker_path);
             }
         }
     }
@@ -10594,28 +10632,66 @@ mod file_fact_stale_build_prune_tests {
     }
 
     #[test]
-    fn builds_used_within_the_grace_window_are_never_pruned() -> Result<(), String> {
+    fn grace_needs_a_hit_marker_and_write_only_builds_get_none() -> Result<(), String> {
         let template = current_entry_bytes("build-prune-template-5")?;
         let base = scratch("build-prune-grace")?;
         let cache = RepoFileFactCache::at_base(&base);
-        let dir = base
-            .join(CacheLayer::FileFacts.name())
-            .join(FILE_FACT_CACHE_SCHEMA_VERSION);
-        let mut planted = Vec::new();
-        for (index, age) in [3_u64, 2, 1].iter().enumerate() {
-            planted.push(plant_build_entry(
+        let layer = base.join(CacheLayer::FileFacts.name());
+        let dir = layer.join(FILE_FACT_CACHE_SCHEMA_VERSION);
+        // Four write-only dirty rebuilds from the last few days, plus one
+        // build that only hits, last seen 5 days ago (inside the grace).
+        let hitter = plant_build_entry(&dir, &template, "hitter.json", "0.6.9+hits", 50)?;
+        plant_use_marker(&layer, "0.6.9+hits", 5)?;
+        let mut writers = Vec::new();
+        for (index, age) in [4_u64, 3, 2, 1].iter().enumerate() {
+            writers.push(plant_build_entry(
                 &dir,
                 &template,
-                &format!("recent{index}.json"),
-                &format!("0.6.{index}+x"),
+                &format!("dirty{index}.json"),
+                &format!("0.6.{index}+dirty"),
                 *age,
             )?);
         }
+        // A spoofed marker (name is not the hash of its content) is ignored.
+        let spoof_dir = layer.join(FILE_FACT_BUILD_USE_DIR);
+        std::fs::write(spoof_dir.join("0000000000000000"), "0.6.0+dirty")
+            .map_err(|error| error.to_string())?;
         store_one(&cache)?;
-        let all_kept = planted.iter().all(|path| path.exists());
+        let observed = (
+            hitter.exists(),
+            writers.iter().map(|path| path.exists()).collect::<Vec<_>>(),
+        );
         super::ignore_remove_dir_all(&base);
-        if !all_kept {
-            return Err("builds used within the grace window must be kept".to_string());
+        if observed != (true, vec![false, false, true, true]) {
+            return Err(format!(
+                "expected hitter kept, two oldest dirty builds gone, two newest kept; got {observed:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn use_marker_is_never_written_through_a_symlinked_marker_dir() -> Result<(), String> {
+        let base = scratch("build-prune-marker-symlink")?;
+        let outside = scratch("build-prune-marker-outside")?;
+        let layer = base.join(CacheLayer::FileFacts.name());
+        std::fs::create_dir_all(&layer).map_err(|error| error.to_string())?;
+        std::os::unix::fs::symlink(&outside, layer.join(FILE_FACT_BUILD_USE_DIR))
+            .map_err(|error| format!("symlink: {error}"))?;
+        let cache = RepoFileFactCache::at_base(&base);
+        let key = RepoFileFactCacheKey::new(Path::new("src/sym.rs"), b"pub fn s() {}\n");
+        cache
+            .store_file_facts(&key, &FileFacts::default())
+            .map_err(|error| error.message)?;
+        let hit = matches!(cache.load_file_facts(&key), CacheLoad::Hit(_));
+        let outside_written = std::fs::read_dir(&outside)
+            .map(|entries| entries.count())
+            .unwrap_or(0);
+        super::ignore_remove_dir_all(&base);
+        super::ignore_remove_dir_all(&outside);
+        if !hit || outside_written != 0 {
+            return Err(format!("hit={hit} files written outside={outside_written}"));
         }
         Ok(())
     }
