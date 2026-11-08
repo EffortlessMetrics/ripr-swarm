@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "https://github.com/EffortlessMetrics/ripr/schemas/ripr/ripr-config.schema.json",
+  "$id": "https://github.com/EffortlessMetrics/ripr/schemas/config/ripr-toml.schema.json",
   "title": "ripr.toml",
   "description": "Repository configuration for ripr. Unknown keys are rejected by ripr itself; this schema lets editors flag them first.",
   "type": "object",

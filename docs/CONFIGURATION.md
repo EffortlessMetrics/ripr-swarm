@@ -94,7 +94,7 @@ key; most value errors also give the line and the accepted values. Check a
 file with `ripr config validate`.
 
 Editors can validate and complete the file with the published JSON schema,
-[`schemas/ripr/ripr-config.schema.json`](../schemas/ripr/ripr-config.schema.json).
+[`schemas/config/ripr-toml.schema.json`](../schemas/config/ripr-toml.schema.json).
 For Even Better TOML or Taplo, add `#:schema` pointing at it, or map it to
 `ripr.toml` in the extension's schema settings.
 

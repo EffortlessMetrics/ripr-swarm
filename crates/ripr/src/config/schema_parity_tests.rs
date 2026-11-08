@@ -6,7 +6,7 @@ use super::*;
 use serde_json::Value;
 use std::collections::BTreeSet;
 
-const SCHEMA: &str = include_str!("../../../../schemas/ripr/ripr-config.schema.json");
+const SCHEMA: &str = include_str!("../../../../schemas/config/ripr-toml.schema.json");
 const CONFIG_DOC: &str = include_str!("../../../../docs/CONFIGURATION.md");
 
 fn schema() -> Result<Value, String> {

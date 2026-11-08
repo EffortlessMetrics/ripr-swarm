@@ -312,7 +312,7 @@ then the load fails and the error adds `did you mean `mode`?`, built only from
 the parser's fixed key names; an unrelated key gets no suggestion. The
 source-free summary keeps the hint only when it names a known key.
 
-Given schemas/ripr/ripr-config.schema.json and the docs/CONFIGURATION.md
+Given schemas/config/ripr-toml.schema.json and the docs/CONFIGURATION.md
 reference table,
 then their keys, types, enums and integer floors equal what the parser accepts.
 ```

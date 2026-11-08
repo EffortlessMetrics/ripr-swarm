@@ -239,7 +239,7 @@ pub(crate) const VERIFICATION_CORPUS_BINDINGS: &[Binding] = &[
         excluded: &[],
     },
     Binding {
-        schema_path: "schemas/ripr/ripr-config.schema.json",
+        schema_path: "schemas/config/ripr-toml.schema.json",
         pointer: None,
         corpus: Corpus::Exempt(
             "describes the ripr.toml input, not a producer output; crates/ripr/src/config/schema_parity_tests.rs holds its keys, enums and docs equal to the parser",
