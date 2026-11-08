@@ -2356,6 +2356,10 @@ are scoped or reviewed.
 
 ### Fixed
 
+- A Jest `test.only` with a literal timeout no longer treats an array length
+  assertion as observing a changed appended string value in the bounded
+  fresh-array case (#12949, RIPR-SPEC-0243).
+
 - Security: a repository can no longer seed `ripr check` with its own cache.
   The seam-fact, classified-seam and file-fact caches protect entries with an
   unkeyed digest that anyone can recompute, so a committed
