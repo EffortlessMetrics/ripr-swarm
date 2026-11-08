@@ -42,7 +42,11 @@ pub(crate) enum Compat {
 pub(crate) fn assess(old: &Value, new: &Value) -> Compat {
     let mut breaking = Vec::new();
     compare(old, new, "#", &mut breaking);
-    let bumped = version_const(old) != version_const(new);
+    // Only a changed pin counts; deleting the pin is not a bump.
+    let bumped = matches!(
+        (version_const(old), version_const(new)),
+        (Some(o), Some(n)) if o != n
+    );
     if breaking.is_empty() || bumped {
         Compat::Compatible {
             bumped,
@@ -65,6 +69,30 @@ fn type_set(value: &Value) -> BTreeSet<String> {
             .filter_map(|item| item.as_str().map(str::to_string))
             .collect(),
         _ => BTreeSet::new(),
+    }
+}
+
+/// Copy of `value` with annotation keywords removed at every depth, so
+/// verbatim comparisons ignore wording-only edits.
+fn strip_annotations(value: &Value) -> Value {
+    match value {
+        Value::Object(map) => Value::Object(
+            map.iter()
+                .filter(|(key, _)| !ANNOTATIONS.contains(&key.as_str()))
+                .map(|(key, value)| (key.clone(), strip_annotations(value)))
+                .collect(),
+        ),
+        Value::Array(items) => Value::Array(items.iter().map(strip_annotations).collect()),
+        other => other.clone(),
+    }
+}
+
+/// `true`, absent, or an object schema with no constraining keyword.
+fn accepts_everything(value: Option<&Value>) -> bool {
+    match value {
+        None | Some(Value::Bool(true)) => true,
+        Some(Value::Object(map)) => map.keys().all(|key| ANNOTATIONS.contains(&key.as_str())),
+        _ => false,
     }
 }
 
@@ -115,6 +143,8 @@ fn compare(old: &Value, new: &Value, path: &str, out: &mut Vec<String>) {
                 out.push(format!("{path}: enum value {value} removed"));
             }
         }
+        // `const: c` widening to an `enum` that still contains `c` is fine.
+        (None, Some(Value::Array(n))) if old.get("const").is_some_and(|c| n.contains(c)) => {}
         (None, Some(_)) => out.push(format!("{path}: enum constraint added")),
         _ => {}
     }
@@ -158,16 +188,45 @@ fn compare(old: &Value, new: &Value, path: &str, out: &mut Vec<String>) {
             }
         }
     }
-    let open = |value: Option<&Value>| !matches!(value, Some(Value::Bool(false)));
-    if open(old.get("additionalProperties")) && !open(new.get("additionalProperties")) {
-        out.push(format!("{path}: additionalProperties closed"));
-    } else if let (Some(o), Some(n)) = (
-        old.get("additionalProperties"),
-        new.get("additionalProperties"),
-    ) && o.is_object()
-        && n.is_object()
+    // additionalProperties: closing it, or constraining extras that used to
+    // be accepted, narrows the schema.
+    let old_extra = old.get("additionalProperties");
+    let new_extra = new.get("additionalProperties");
+    match (old_extra, new_extra) {
+        (_, Some(Value::Bool(false))) if old_extra != Some(&Value::Bool(false)) => {
+            out.push(format!("{path}: additionalProperties closed"));
+        }
+        (Some(o), Some(n)) if o.is_object() && n.is_object() => {
+            compare(o, n, &format!("{path}/additionalProperties"), out);
+        }
+        _ if accepts_everything(old_extra) && !accepts_everything(new_extra) => {
+            out.push(format!("{path}: additionalProperties constrained"));
+        }
+        _ => {}
+    }
+    // A property added to an object whose extras were accepted constrains
+    // values existing documents may already carry under that name.
+    if old_extra != Some(&Value::Bool(false))
+        && let Some(new_props) = new.get("properties").and_then(Value::as_object)
     {
-        compare(o, n, &format!("{path}/additionalProperties"), out);
+        let old_props = old.get("properties").and_then(Value::as_object);
+        for (name, new_schema) in new_props {
+            if old_props.is_some_and(|props| props.contains_key(name)) {
+                continue;
+            }
+            match old_extra {
+                Some(extra @ Value::Object(_)) if !accepts_everything(Some(extra)) => compare(
+                    extra,
+                    new_schema,
+                    &format!("{path}/properties/{name}"),
+                    out,
+                ),
+                _ if accepts_everything(Some(new_schema)) => {}
+                _ => out.push(format!(
+                    "{path}: property `{name}` added with constraints to an object that accepted extra properties"
+                )),
+            }
+        }
     }
 
     // items.
@@ -203,6 +262,12 @@ fn compare(old: &Value, new: &Value, path: &str, out: &mut Vec<String>) {
             (None, Some(n)) => out.push(format!("{path}: {key} {n} added")),
             _ => {}
         }
+    }
+    // pattern: removal widens; a new or different pattern may narrow.
+    match (old.get("pattern"), new.get("pattern")) {
+        (Some(o), Some(n)) if o != n => out.push(format!("{path}: pattern changed")),
+        (None, Some(_)) => out.push(format!("{path}: pattern added")),
+        _ => {}
     }
     if old.get("uniqueItems") != Some(&Value::Bool(true))
         && new.get("uniqueItems") == Some(&Value::Bool(true))
@@ -275,6 +340,7 @@ fn compare(old: &Value, new: &Value, path: &str, out: &mut Vec<String>) {
         "maxItems",
         "maxProperties",
         "uniqueItems",
+        "pattern",
         "anyOf",
         "oneOf",
         "allOf",
@@ -285,7 +351,7 @@ fn compare(old: &Value, new: &Value, path: &str, out: &mut Vec<String>) {
         if HANDLED.contains(&key.as_str()) || ANNOTATIONS.contains(&key.as_str()) {
             continue;
         }
-        if new.get(key) != Some(old_value) {
+        if new.get(key).map(strip_annotations) != Some(strip_annotations(old_value)) {
             out.push(format!("{path}: `{key}` changed or removed"));
         }
     }
@@ -327,26 +393,61 @@ fn base_rev(root: &Path) -> Option<String> {
 /// as not established rather than as a pass.
 pub(crate) fn check(root: &Path, published: &[String]) -> (Vec<String>, String) {
     let Some(rev) = base_rev(root) else {
+        // Locally a shallow checkout is reported, not failed; in CI a gate
+        // that silently stops comparing is a false pass.
+        let note =
+            "schema compatibility not established (no merge base with origin/main)".to_string();
+        if std::env::var_os("CI").is_some() {
+            return (
+                vec![format!("{note}; fetch origin/main with history in CI")],
+                note,
+            );
+        }
+        return (Vec::new(), note);
+    };
+    let git = |args: &[&str], what: &str| {
+        let args: Vec<String> = args.iter().map(|arg| arg.to_string()).collect();
+        crate::run::capture_output_in_dir("git", &args, root, what)
+            .ok()
+            .filter(|output| output.status.success())
+            .map(|output| output.stdout)
+    };
+    let Some(listing) = git(
+        &["ls-tree", "-r", "--name-only", &rev, "--", "schemas"],
+        "git ls-tree",
+    ) else {
         return (
-            Vec::new(),
-            "schema compatibility not established (no merge base with origin/main)".to_string(),
+            vec![format!(
+                "schema compatibility: could not list schemas at {rev}"
+            )],
+            "schema compatibility not established (base listing failed)".to_string(),
         );
     };
+    let base_schemas: BTreeSet<&str> = listing
+        .lines()
+        .filter(|path| path.ends_with(".json"))
+        .collect();
     let mut violations = Vec::new();
+    for removed in base_schemas
+        .iter()
+        .filter(|path| !published.iter().any(|current| current == *path))
+    {
+        violations.push(format!(
+            "{removed}: published schema removed or renamed; consumers that vendor it break"
+        ));
+    }
     let (mut compared, mut added, mut bumped) = (0usize, 0usize, 0usize);
     for rel in published {
-        let args = ["show".to_string(), format!("{rev}:{rel}")];
-        let shown = crate::run::capture_output_in_dir("git", &args, root, "git show");
-        let Ok(shown) = shown else {
-            violations.push(format!("{rel}: could not read base copy"));
-            continue;
-        };
-        if !shown.status.success() {
+        if !base_schemas.contains(rel.as_str()) {
             added += 1; // new schema: nothing to be compatible with
             continue;
         }
+        let Some(base_text) = git(&["show", &format!("{rev}:{rel}")], "git show") else {
+            violations.push(format!("{rel}: could not read base copy at {rev}"));
+            continue;
+        };
         let (Ok(old), Ok(new)) = (
-            serde_json::from_str::<Value>(&shown.stdout),
+            serde_json::from_str::<Value>(&base_text),
             std::fs::read_to_string(root.join(rel))
                 .map_err(|e| e.to_string())
                 .and_then(|text| serde_json::from_str::<Value>(&text).map_err(|e| e.to_string())),
@@ -370,10 +471,16 @@ pub(crate) fn check(root: &Path, published: &[String]) -> (Vec<String>, String) 
             }
         }
     }
+    let head = git(&["rev-parse", "HEAD"], "git rev-parse").unwrap_or_default();
+    let scope = if head.trim() == rev {
+        " (merge base is HEAD: only uncommitted edits are compared)"
+    } else {
+        ""
+    };
     (
         violations,
         format!(
-            "schema compatibility: compared {compared} published schema(s) with merge base {}, {added} new, {bumped} breaking change(s) accepted by version bump",
+            "schema compatibility: compared {compared} published schema(s) with merge base {}{scope}, {added} new, {bumped} breaking change(s) accepted by version bump",
             &rev[..rev.len().min(12)]
         ),
     )
@@ -428,7 +535,7 @@ mod tests {
         let wider = edited(|v| {
             v["properties"]["a"]["enum"] = json!(["x", "y", "z"]);
             v["properties"]["b"]["maxItems"] = json!(9);
-            v["properties"]["c"] = json!({"type": "string"});
+            v["properties"]["c"] = json!({"description": "unconstrained"});
             v["properties"]["a"]["type"] = json!(["string", "null"]);
         });
         assert!(matches!(
@@ -497,6 +604,40 @@ mod tests {
                 "{name}: expected `{needle}` in {found:?}"
             );
         }
+    }
+
+    #[test]
+    fn review_findings_are_covered() {
+        // Extras constrained, a typed property added to an open object.
+        let found = violations(edited(|v| {
+            v["additionalProperties"] = json!({"type": "string"})
+        }));
+        assert!(
+            found
+                .iter()
+                .any(|l| l.contains("additionalProperties constrained")),
+            "{found:?}"
+        );
+        let found = violations(edited(|v| v["properties"]["c"] = json!({"type": "string"})));
+        assert!(
+            found.iter().any(|l| l.contains("property `c` added")),
+            "{found:?}"
+        );
+        // Deleting the version pin is not a bump.
+        let found = violations(edited(|v| {
+            v["properties"]["schema_version"] = json!({});
+            v["properties"]["a"]["enum"] = json!(["x"]);
+        }));
+        assert!(found.iter().any(|l| l.contains("enum value")), "{found:?}");
+        // Closed objects may gain typed properties; const may widen to enum;
+        // a pattern may be dropped; wording inside verbatim keywords is ignored.
+        let old = json!({"properties": {"k": {"const": "a", "pattern": "^a$", "not": {"description": "x", "type": "null"}}}, "additionalProperties": false});
+        let new = json!({"properties": {"k": {"enum": ["a", "b"], "not": {"description": "y", "type": "null"}}, "n": {"type": "string"}}, "additionalProperties": false});
+        assert!(
+            matches!(assess(&old, &new), Compat::Compatible { breaking: 0, .. }),
+            "{:?}",
+            assess(&old, &new)
+        );
     }
 
     #[test]

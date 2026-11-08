@@ -186,14 +186,21 @@ Breaking-change gate (#1720): `cargo xtask check-verification-contracts` also
 compares every published schema with its copy at the merge base with
 `origin/main` and fails when the edit narrows what existing consumers accept
 without changing `properties.schema_version.const`. Treated as breaking: a
-removed property, enum value or `$defs` entry; a newly required field; a
-narrowed `type`; a tightened bound, `pattern` or `uniqueItems`; a closed
-`additionalProperties`; a changed `const`; fewer `anyOf`/`oneOf` alternatives
-or more `allOf` conjuncts; and any unrecognized keyword that changed. Widening
-edits and annotation-only edits (`description`, `title`, `examples`, ...) pass.
-A version bump accepts a breaking edit explicitly. With no merge base (shallow
-checkout) the gate prints `schema compatibility not established` instead of
-claiming a pass.
+removed or renamed schema file; a removed property, enum value or `$defs`
+entry; a newly required field; a narrowed `type`; a tightened bound, a new or
+changed `pattern`, or `uniqueItems`; closing or constraining
+`additionalProperties`, or adding a constrained property to an object that
+accepted extra properties; a changed `const`; fewer `anyOf`/`oneOf`
+alternatives (compared by position, so reordering counts) or more `allOf`
+conjuncts; and any other keyword whose non-annotation content changed.
+Widening edits pass, as does a new property on an object with
+`additionalProperties: false`, `const` widening to an `enum` that contains it,
+a dropped `pattern`, and annotation-only edits (`description`, `title`,
+`examples`, ...) at any depth. Changing the version pin accepts a breaking edit
+explicitly; deleting the pin does not. A schema with no pin (the Shields badge
+schema) cannot take a breaking edit at all. With no merge base the gate prints
+`schema compatibility not established`; it passes locally but fails when `CI`
+is set, so a shallow CI checkout cannot silently skip the comparison.
 
 ### `json-terse`: semantically compacted check JSON
 
