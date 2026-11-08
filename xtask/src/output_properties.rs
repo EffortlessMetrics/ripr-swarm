@@ -531,6 +531,13 @@ fn terse_multibyte_legend_round_trips_and_validates_check_schema() -> Result<(),
             "dropped_aliases lists {alias} exactly when a finding dropped it"
         );
     }
+    // The schema's terse branch cannot tie a missing action to its alias
+    // without a version bump, so the producer invariant is held here.
+    for terse_finding in terse_findings {
+        if terse_finding.get("suggested_next_action").is_none() {
+            assert!(aliases.contains(&Value::from("suggested_next_action")));
+        }
+    }
     assert!(
         full_findings
             .iter()
