@@ -1,9 +1,11 @@
 name: Mutation Spot Check
 
-# Real-mutant corpus refresh (#12901). Clones the pinned checkouts in
-# benchmarks/mutation_spot_check/corpus.json, mutates them with cargo-mutants
-# 27.1.0 and joins the outcomes to ripr's static verdicts through
-# `cargo xtask mutation-spot-check --run-mutants`. This is the one place
+# Real-mutant corpus refresh (#12901, #13650). Pins the checkouts in
+# benchmarks/mutation_spot_check/corpus.json, mutates each crate in its own
+# matrix job with cargo-mutants 27.1.0 (`cargo xtask mutation-spot-check
+# --run-mutants`, so one lost runner loses one crate, not the corpus), then a
+# final job scores every surviving `mutants.out` together through
+# `--mutants-out` into the single scoreboard receipt. This is the one place
 # third-party crate build scripts and tests run, so it runs on a hosted runner
 # with read-only permissions and no secrets. Advisory: it never fails on
 # agreement numbers and never writes the default branch. The receipt is an
@@ -27,12 +29,35 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  spot-check:
+  plan:
     runs-on: ubuntu-latest
-    timeout-minutes: 350
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+      - name: Select corpus crates
+        id: matrix
+        run: |
+          set -euo pipefail
+          filter=",${REPOS_FILTER// /},"
+          matrix=$(jq -c --arg f "$filter" '{include: [.repos[] | select(. as $r | $f == ",," or ($f | contains("," + $r.name + ",")))]}' benchmarks/mutation_spot_check/corpus.json)
+          test "$(jq '.include | length' <<<"$matrix")" -gt 0
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+        env:
+          REPOS_FILTER: ${{ github.event.inputs.repos }}
+
+  mutate:
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
     env:
       CARGO_TERM_COLOR: never
-      REPOS_FILTER: ${{ github.event.inputs.repos }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
@@ -52,34 +77,102 @@ jobs:
       - name: Build ripr
         run: cargo build --release -p ripr --bin ripr
 
-      # Checkouts live outside target/ so rust-cache never saves them, and each
-      # is pinned to its manifest revision (detached HEAD, no credentials).
-      - name: Clone the pinned corpus
+      # The checkout lives outside target/ so rust-cache never saves it, and is
+      # pinned to its manifest revision (detached HEAD, no credentials).
+      - name: Clone the pinned crate
+        env:
+          CRATE_NAME: ${{ matrix.name }}
+          CRATE_URL: ${{ matrix.url }}
+          CRATE_REV: ${{ matrix.rev }}
         run: |
           set -euo pipefail
-          corpus="$RUNNER_TEMP/spot-check-corpus"
-          REPOS_FILTER="${REPOS_FILTER// /}"
-          mkdir -p "$corpus"
-          : > "$RUNNER_TEMP/repo-args"
-          jq -r '.repos[] | [.name, .url, .rev] | @tsv' benchmarks/mutation_spot_check/corpus.json |
-          while IFS=$'\t' read -r name url rev; do
-            if [ -n "$REPOS_FILTER" ] && ! printf ',%s,' "$REPOS_FILTER" | grep -q ",$name,"; then continue; fi
-            git init -q "$corpus/$name"
-            git -C "$corpus/$name" remote add origin "$url"
-            git -C "$corpus/$name" fetch -q --depth 1 origin "$rev"
-            git -C "$corpus/$name" checkout -q FETCH_HEAD
-            printf '%s\n' "--repo" "$name=$corpus/$name" >> "$RUNNER_TEMP/repo-args"
-            jq -r --arg n "$name" '.repos[] | select(.name == $n) | (.mutants_args // [])[] | "--mutants-arg\n\($n)=\(.)"' benchmarks/mutation_spot_check/corpus.json >> "$RUNNER_TEMP/repo-args"
-          done
-          test -s "$RUNNER_TEMP/repo-args"
+          git init -q "$RUNNER_TEMP/crate"
+          git -C "$RUNNER_TEMP/crate" remote add origin "$CRATE_URL"
+          git -C "$RUNNER_TEMP/crate" fetch -q --depth 1 origin "$CRATE_REV"
+          git -C "$RUNNER_TEMP/crate" checkout -q FETCH_HEAD
+          jq -r --arg n "$CRATE_NAME" '.repos[] | select(.name == $n) | (.mutants_args // [])[] | "--mutants-arg\n\($n)=\(.)"' benchmarks/mutation_spot_check/corpus.json > "$RUNNER_TEMP/extra-args"
 
       - name: Run the spot check
+        id: spot
+        # Advisory lane: a scoring failure must not hide the per-crate upload.
+        continue-on-error: true
+        env:
+          CRATE_NAME: ${{ matrix.name }}
+        run: |
+          set -euo pipefail
+          mapfile -t extra < "$RUNNER_TEMP/extra-args"
+          cargo xtask mutation-spot-check --repo "$CRATE_NAME=$RUNNER_TEMP/crate" "${extra[@]}" --run-mutants --jobs 3 --ripr target/release/ripr
+
+      # The score job admits only legs that finished: a failed run can leave a
+      # partial mutants.out that would abort the whole aggregate.
+      - name: Mark the leg complete
+        if: steps.spot.outcome == 'success'
+        run: touch "target/ripr/reports/mutation-spot-check/$CRATE_NAME-mutants/LEG_COMPLETE"
+        env:
+          CRATE_NAME: ${{ matrix.name }}
+
+      - name: Upload the crate's receipt and mutants.out
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: spot-${{ matrix.name }}
+          path: |
+            target/ripr/reports/mutation-spot-check.*
+            target/ripr/reports/mutation-spot-check/${{ matrix.name }}-mutants/mutants.out
+            target/ripr/reports/mutation-spot-check/${{ matrix.name }}-mutants/LEG_COMPLETE
+          if-no-files-found: warn
+
+  score:
+    needs: [plan, mutate]
+    if: always() && needs.plan.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      CARGO_TERM_COLOR: never
+      CORPUS: ${{ needs.plan.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          cache-on-failure: true
+
+      - name: Build ripr
+        run: cargo build --release -p ripr --bin ripr
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          pattern: spot-*
+          path: ${{ runner.temp }}/legs
+
+      # Scores only crates whose mutants.out remained; the checkout is needed
+      # because the harness verifies each mutant diff against the pinned source.
+      - name: Score the surviving crates together
         # Advisory lane: a scoring failure must not hide the receipt upload.
         continue-on-error: true
         run: |
           set -euo pipefail
-          mapfile -t args < "$RUNNER_TEMP/repo-args"
-          cargo xtask mutation-spot-check "${args[@]}" --run-mutants --jobs 3 --ripr target/release/ripr
+          corpus="$RUNNER_TEMP/spot-check-corpus"
+          : > "$RUNNER_TEMP/score-args"
+          while IFS=$'\t' read -r name url rev; do
+            marker=$(find "$RUNNER_TEMP/legs/spot-$name" -type f -name LEG_COMPLETE 2>/dev/null | head -n 1 || true)
+            out="${marker:+$(dirname "$marker")/mutants.out}"
+            if [ -z "$marker" ] || [ ! -s "$out/outcomes.json" ] || [ ! -s "$out/mutants.json" ]; then echo "::warning::incomplete or missing leg for $name; not scored"; continue; fi
+            git init -q "$corpus/$name"
+            git -C "$corpus/$name" remote add origin "$url"
+            git -C "$corpus/$name" fetch -q --depth 1 origin "$rev"
+            git -C "$corpus/$name" checkout -q FETCH_HEAD
+            printf '%s\n' --repo "$name=$corpus/$name" --mutants-out "$name=$out" >> "$RUNNER_TEMP/score-args"
+          done < <(jq -r '.include[] | [.name, .url, .rev] | @tsv' <<<"$CORPUS")
+          test -s "$RUNNER_TEMP/score-args"
+          mapfile -t args < "$RUNNER_TEMP/score-args"
+          cargo xtask mutation-spot-check "${args[@]}" --ripr target/release/ripr
 
       - name: Publish the report to the job summary
         if: always()
