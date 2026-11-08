@@ -33,6 +33,9 @@ pub(crate) use extract::{mask_comments_and_strings, rust_identity_spans};
 // Source-role recognition stays with the cfg-predicate authority (#3530/#3534);
 // consumers outside `analysis` ask it instead of matching attribute text.
 pub(crate) use facts::cfg_predicates::attribute_is_plain_test_gate;
+// A long-lived server keeps unchanged files' parse facts in memory across
+// refreshes; one-shot commands leave this off.
+pub(crate) use facts::enable_process_fact_memo;
 pub(crate) use pipeline::NON_TEXT_ONLY_DETAIL;
 pub(crate) use pipeline::{
     DIFF_CHANGED_PYTHON_LINE_LIMIT_ENV, DIFF_CHANGED_TYPESCRIPT_LINE_LIMIT_ENV,
@@ -191,20 +194,29 @@ pub(crate) use syntax::fn_signature::{
 pub(crate) use syntax::governed_cfg_test_modules;
 pub(crate) use syntax::parse_clean_source_file;
 
-/// Names of the executable test functions defined in one Rust file, from the
-/// parser-backed facts (the same role authority the test selector uses). The
-/// focused-run record counts a ran test only when its name is in this set.
+/// Module-qualified executable test functions defined in one Rust file, from
+/// parser-backed facts. Ambiguous duplicate symbol identities fail closed.
 pub(crate) fn executable_test_function_names(
     path: &Path,
     source: &str,
 ) -> Result<std::collections::BTreeSet<String>, String> {
     use syntax::{RaRustSyntaxAdapter, RustSyntaxAdapter};
     let facts = RaRustSyntaxAdapter.summarize_file(path, source)?;
+    let prefix = format!("{}::", stable_path_text(path));
     Ok(facts
         .functions
         .iter()
-        .filter(|function| function.source_role.registers_executable_test())
-        .map(|function| function.name.clone())
+        .filter(|function| {
+            function.source_role.registers_executable_test()
+                && matches!(function.item.container, facts::FunctionContainer::Free)
+                && function.item.has_body
+                && !function
+                    .id
+                    .0
+                    .ends_with(&format!("{}#L{}", function.name, function.start_line))
+        })
+        .filter_map(|function| function.id.0.strip_prefix(&prefix))
+        .map(str::to_string)
         .collect())
 }
 pub(crate) use workspace::DiffOnlySource;
