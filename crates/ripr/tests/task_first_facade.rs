@@ -333,18 +333,35 @@ fn assert_refusal_code(output: &Output, code: &str, disposition: &str, label: &s
     );
 }
 
-fn attempt_id_from_before_stderr(stderr: &str) -> Result<String, String> {
-    stderr
+/// The one next command a successful before phase printed (#13803): the
+/// stdout `Next, after the test edit:` line of a human start, or the stderr
+/// `ripr: attempt next command:` line that `--json` and an ambiguous
+/// baseline keep.
+fn printed_before_next_command(output: &Output) -> Result<String, String> {
+    let stdout = stdout_text(output);
+    let stderr = stderr_text(output);
+    stdout
         .lines()
-        .find_map(|line| line.strip_prefix("ripr: attempt next command: "))
-        .and_then(|command| {
-            command
-                .split_whitespace()
-                .skip_while(|word| *word != "--attempt")
-                .nth(1)
-                .map(|id| id.trim_matches('\'').to_string())
+        .find_map(|line| line.strip_prefix("Next, after the test edit: "))
+        .or_else(|| {
+            stderr
+                .lines()
+                .find_map(|line| line.strip_prefix("ripr: attempt next command: "))
         })
-        .ok_or_else(|| format!("before phase printed no attempt command:\n{stderr}"))
+        .map(str::to_string)
+        .ok_or_else(|| {
+            format!("before phase printed no next command:\nstdout:\n{stdout}\nstderr:\n{stderr}")
+        })
+}
+
+fn attempt_id_from_before(output: &Output) -> Result<String, String> {
+    let command = printed_before_next_command(output)?;
+    command
+        .split_whitespace()
+        .skip_while(|word| *word != "--attempt")
+        .nth(1)
+        .map(|id| id.trim_matches('\'').to_string())
+        .ok_or_else(|| format!("before phase next command names no attempt:\n{command}"))
 }
 
 /// Control 1: no current actionable item — `ripr repair` emits an honest
@@ -750,11 +767,13 @@ fn repair_single_item_matches_advanced_card() -> Result<(), String> {
         persisted.contains("ripr agent repair") && persisted.contains("--phase after"),
         "persisted next_command stays the advanced after spelling:\n{persisted}"
     );
-    let stderr = stderr_text(&repair);
-    let printed = stderr
-        .lines()
-        .find_map(|line| line.strip_prefix("ripr: attempt next command: "))
-        .ok_or_else(|| format!("before phase printed no attempt command:\n{stderr}"))?;
+    let printed = printed_before_next_command(&repair)?;
+    // #13803: a human start prints the next command once, on stdout.
+    assert!(
+        !stderr_text(&repair).contains("ripr: attempt next command: "),
+        "a human start must not repeat the next command on stderr:\n{}",
+        stderr_text(&repair)
+    );
     assert!(
         printed.starts_with("ripr continue --root ")
             && printed.contains(&format!("--attempt {}", ids[0])),
@@ -2876,11 +2895,11 @@ fn repair_human_path_identity_journey(name: &str, sibling: &str) -> Result<(), S
             "missing literal artifact path for {file}: {stderr}"
         );
     }
+    // #13803: a human start no longer repeats the manifest path on stderr;
+    // the manifest lives under the lexical root the `wrote` lines name.
     let attempt_relative = format!("target/ripr/repair-attempts/{id}/attempt.json");
     assert!(
-        stderr.contains(&format!(
-            "ripr: attempt manifest: {expected_display}/{attempt_relative}"
-        )),
+        root.join(&attempt_relative).is_file() && !stderr.contains("ripr: attempt manifest: "),
         "{stderr}"
     );
     let attempt_dir = root.join("target/ripr/repair-attempts").join(id);
@@ -3448,7 +3467,7 @@ fn continue_single_attempt_advances_it() -> Result<(), String> {
         ],
     )?;
     assert_exit(&before, 0, "advanced before phase");
-    let attempt_id = attempt_id_from_before_stderr(&stderr_text(&before))?;
+    let attempt_id = attempt_id_from_before(&before)?;
     let pricing = std::fs::read_to_string(root.join("tests/pricing.rs"))
         .map_err(|error| format!("read pricing tests: {error}"))?;
     std::fs::write(
@@ -3519,7 +3538,7 @@ fn continue_no_movement_uses_retained_target_and_recovers_after_edit() -> Result
     let root_arg = root.to_string_lossy().into_owned();
     let before = run_ripr(root, &["repair", "--root", &root_arg])?;
     assert_exit(&before, 0, "prepare pricing attempt");
-    let attempt_id = attempt_id_from_before_stderr(&stderr_text(&before))?;
+    let attempt_id = attempt_id_from_before(&before)?;
     assert_eq!(compatibility_packet_target(root)?, "tests/pricing.rs");
 
     // Independently prepare a valid packet with the same production seam
@@ -3649,7 +3668,7 @@ fn continue_no_movement_keeps_inline_test_module_restrictions() -> Result<(), St
     git_commit(root, "inline test target")?;
     let before = run_ripr(root, &["repair"])?;
     assert_exit(&before, 0, "prepare inline attempt");
-    let attempt_id = attempt_id_from_before_stderr(&stderr_text(&before))?;
+    let attempt_id = attempt_id_from_before(&before)?;
     assert_eq!(compatibility_packet_target(root)?, "src/lib.rs");
     let refused = run_ripr(root, &["continue", "--attempt", &attempt_id])?;
     assert_exit(&refused, 3, "continue before inline edit");
@@ -4069,7 +4088,7 @@ fn retained_ambiguous_baseline_blocks_continue_and_repeat_repair_reuse() -> Resu
     }
     let before = run_ripr(root, &["repair", FIXTURE_SEAM, "--root", &root_arg])?;
     assert_exit(&before, 0, "ambiguous before publication");
-    let attempt_id = attempt_id_from_before_stderr(&stderr_text(&before))?;
+    let attempt_id = attempt_id_from_before(&before)?;
     let original = manifest_bytes(root, &attempt_id)?;
     let status = run_ripr(
         root,
@@ -4112,7 +4131,7 @@ fn retained_ambiguous_baseline_blocks_continue_and_repeat_repair_reuse() -> Resu
     }
     let repeated = run_ripr(root, &["repair", FIXTURE_SEAM, "--root", &root_arg])?;
     assert_exit(&repeated, 0, "repair captures a fresh baseline");
-    let new_id = attempt_id_from_before_stderr(&stderr_text(&repeated))?;
+    let new_id = attempt_id_from_before(&repeated)?;
     assert_ne!(new_id, attempt_id);
     assert_eq!(attempt_ids(root).len(), 2);
     assert_eq!(manifest_bytes(root, &attempt_id)?, original);
@@ -4157,7 +4176,7 @@ fn continue_refuses_a_diverged_head_with_recovery() -> Result<(), String> {
         ],
     )?;
     assert_exit(&before, 0, "advanced before phase");
-    let attempt_id = attempt_id_from_before_stderr(&stderr_text(&before))?;
+    let attempt_id = attempt_id_from_before(&before)?;
     // Move HEAD to an ancestor of the prepared head: it no longer
     // descends, so the after path must refuse rather than finish.
     run_git(root, &["reset", "--hard", "HEAD~1"])?;
@@ -4214,7 +4233,7 @@ fn continue_json_prints_the_typed_after_refusal_document() -> Result<(), String>
         ],
     )?;
     assert_exit(&before, 0, "advanced before phase");
-    let attempt_id = attempt_id_from_before_stderr(&stderr_text(&before))?;
+    let attempt_id = attempt_id_from_before(&before)?;
     run_git(root, &["reset", "--hard", "HEAD~1"])?;
     let pricing = std::fs::read_to_string(root.join("tests/pricing.rs"))
         .map_err(|error| format!("read pricing tests: {error}"))?;
@@ -4313,7 +4332,7 @@ fn continue_on_a_terminal_attempt_is_already_complete() -> Result<(), String> {
         ],
     )?;
     assert_exit(&before, 0, "advanced before phase");
-    let attempt_id = attempt_id_from_before_stderr(&stderr_text(&before))?;
+    let attempt_id = attempt_id_from_before(&before)?;
     let pricing = std::fs::read_to_string(root.join("tests/pricing.rs"))
         .map_err(|error| format!("read pricing tests: {error}"))?;
     std::fs::write(
@@ -4436,7 +4455,7 @@ fn status_human_and_json_agree_on_live_attempts() -> Result<(), String> {
         ],
     )?;
     assert_exit(&before, 0, "advanced before phase");
-    let attempt_id = attempt_id_from_before_stderr(&stderr_text(&before))?;
+    let attempt_id = attempt_id_from_before(&before)?;
     for use_json in [false, true] {
         let mut args = vec![
             "status",
@@ -4871,7 +4890,7 @@ fn continue_on_unsuccessful_terminal_attempts_refuses_without_completion() -> Re
         ],
     )?;
     assert_exit(&before, 0, "advanced before phase");
-    let attempt_id = attempt_id_from_before_stderr(&stderr_text(&before))?;
+    let attempt_id = attempt_id_from_before(&before)?;
     let pricing = std::fs::read_to_string(root.join("tests/pricing.rs"))
         .map_err(|error| format!("read pricing tests: {error}"))?;
     std::fs::write(
@@ -4990,7 +5009,7 @@ fn continue_on_unconfirmed_ready_to_finish_refuses_without_completion() -> Resul
         ],
     )?;
     assert_exit(&before, 0, "advanced before phase");
-    let attempt_id = attempt_id_from_before_stderr(&stderr_text(&before))?;
+    let attempt_id = attempt_id_from_before(&before)?;
     let pricing = std::fs::read_to_string(root.join("tests/pricing.rs"))
         .map_err(|error| format!("read pricing tests: {error}"))?;
     std::fs::write(
@@ -5209,7 +5228,7 @@ fn attempt_with_focused_edit(fixture: &Fixture, test: &str) -> Result<(String, S
         ],
     )?;
     assert_exit(&before, 0, "advanced before phase");
-    let attempt_id = attempt_id_from_before_stderr(&stderr_text(&before))?;
+    let attempt_id = attempt_id_from_before(&before)?;
     let pricing = std::fs::read_to_string(root.join("tests/pricing.rs"))
         .map_err(|error| format!("read pricing tests: {error}"))?;
     std::fs::write(root.join("tests/pricing.rs"), format!("{pricing}{test}"))
@@ -5462,7 +5481,7 @@ fn attempt_refused_by_stray_file(
         ],
     )?;
     assert_exit(&before, 0, "advanced before phase");
-    let attempt_id = attempt_id_from_before_stderr(&stderr_text(&before))?;
+    let attempt_id = attempt_id_from_before(&before)?;
     let pricing = std::fs::read_to_string(root.join("tests/pricing.rs"))
         .map_err(|error| format!("read pricing tests: {error}"))?;
     std::fs::write(root.join("tests/pricing.rs"), format!("{pricing}{test}"))
@@ -5560,7 +5579,7 @@ fn diverged_head_recovery_drops_only_the_restart_when_the_gate_refuses() -> Resu
                 ],
             )?;
             assert_exit(&before, 0, "advanced before phase");
-            let attempt_id = attempt_id_from_before_stderr(&stderr_text(&before))?;
+            let attempt_id = attempt_id_from_before(&before)?;
             let pricing = std::fs::read_to_string(root.join("tests/pricing.rs"))
                 .map_err(|error| format!("read pricing tests: {error}"))?;
             std::fs::write(root.join("tests/pricing.rs"), format!("{pricing}{test}"))
@@ -5658,7 +5677,7 @@ fn continue_after_phase_narration_drops_the_start_recipe_when_the_gate_refuses()
             ],
         )?;
         assert_exit(&before, 0, "advanced before phase");
-        let attempt_id = attempt_id_from_before_stderr(&stderr_text(&before))?;
+        let attempt_id = attempt_id_from_before(&before)?;
         let pricing = std::fs::read_to_string(root.join("tests/pricing.rs"))
             .map_err(|error| format!("read pricing tests: {error}"))?;
         std::fs::write(root.join("tests/pricing.rs"), format!("{pricing}{test}"))
@@ -6606,15 +6625,13 @@ fn quiet_drops_narration_and_keeps_results_and_refusals() -> Result<(), String> 
             "--quiet must drop `{dropped}`:\n{quiet_err}"
         );
     }
-    for kept in [
-        "is waiting for your test",
-        "attempt next command: ripr continue",
-    ] {
-        assert!(
-            quiet_err.contains(kept),
-            "--quiet must keep the result line `{kept}`:\n{quiet_err}"
-        );
-    }
+    // #13803: the result (attempt id and next command) is the stdout
+    // `Next, after the test edit:` line, which quiet never drops.
+    let quiet_next = printed_before_next_command(&quiet_start)?;
+    assert!(
+        quiet_next.starts_with("ripr continue ") && quiet_next.contains("--attempt "),
+        "--quiet must keep the next command:\n{quiet_next}"
+    );
     assert!(
         !stdout_text(&quiet_start).is_empty(),
         "--quiet leaves the stdout card in place"

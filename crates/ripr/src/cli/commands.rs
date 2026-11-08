@@ -48,7 +48,8 @@ mod swarm_command;
 mod task_first;
 
 pub(super) use agent::{
-    SeamIdSurface, SeamIdTranslateError, agent, before_phase_stdout, resolve_agent_repair_root,
+    SeamIdSurface, SeamIdTranslateError, agent, before_phase_stdout,
+    before_phase_stdout_owns_start_result, resolve_agent_repair_root,
     run_before_repair_with_identity, translate_agent_repair_seam_id, translate_seam_id_for,
 };
 pub(super) use context::context;

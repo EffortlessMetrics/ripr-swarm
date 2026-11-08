@@ -4491,6 +4491,19 @@ pub(in crate::cli) fn before_phase_stdout(
     Ok(document)
 }
 
+/// Whether the human before-phase stdout already carries the whole start
+/// result: the target, the one edit surface with its terminality, and the one
+/// next command (#13803). Only then may stderr drop its copies of them, so an
+/// agent reading both streams sees each fact once. `--json`, an ambiguous
+/// baseline, or a packet the summary cannot read keeps the stderr lines.
+pub(in crate::cli) fn before_phase_stdout_owns_start_result(
+    packet: &str,
+    json: bool,
+    continuation: &output::agent_seam_packets::BeforePhaseAttemptContinuation,
+) -> bool {
+    !json && !continuation.baseline_ambiguous && before_phase_summary(packet, "", true).is_some()
+}
+
 /// The stdout trailer for an attempt born with an ambiguous baseline
 /// (#7204): a driver that captures only stdout must not read the after
 /// command as the unqualified next action, so the warning and the
