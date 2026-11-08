@@ -24,6 +24,8 @@ def step(name, number, **kw):
 
 class API:
     def __init__(self):
+        self.current = dict(id=10, run_attempt=1, head_sha=HEAD, event='pull_request')
+        self.runs = [dict(total_count=1, workflow_runs=[dict(id=10, run_attempt=1, head_sha=HEAD, event='pull_request', display_title=f'Merge-ready request {HEAD}', created_at='2026-11-08T00:00:00Z')])]
         self.job = dict(id=30, run_id=10, run_attempt=1, head_sha=HEAD,
                         name='Ripr Rust Small on GitHub Hosted / Rust gates', status='completed', conclusion='success',
                         steps=[step('Set up job', 1), step('Run actions/checkout@v6', 2), step('Capture checkout observation', 3),
@@ -36,7 +38,10 @@ class API:
                                                       sha=GENERATION, ref='refs/pull/42/merge')])
         self.obj = dict(sha=COMMIT, tree={'sha': TREE}, parents=[{'sha': BASE}, {'sha': HEAD}])
         self.caller, self.leaf = CALLER, LEAF
+    def pages(self, path):
+        return copy.deepcopy(self.runs)
     def get(self, path):
+        if path == 'actions/runs/10': return copy.deepcopy(self.current)
         if path == 'actions/jobs/30': return copy.deepcopy(self.job)
         if path == 'actions/runs/10/attempts/1': return copy.deepcopy(self.detail)
         if path == f'contents/.github/workflows/routed-rust.yml?ref={GENERATION}': return {'sha': self.caller}
@@ -63,6 +68,12 @@ class ReaderTests(unittest.TestCase):
         def wrong_order(a): a.job['steps'][3]['number'] = 9
         def duplicate(a): a.job['steps'].append(copy.deepcopy(a.job['steps'][3]))
         def stale_attempt(a): a.job['run_attempt'] = 2
+        def later_attempt(a): a.current['run_attempt'] = 2
+        def newer_request(a):
+            later = dict(a.runs[0]['workflow_runs'][0], id=11, created_at='2026-11-08T01:00:00Z')
+            a.runs[0]['workflow_runs'].append(later)
+            a.runs[0]['total_count'] = 2
+        def incomplete_inventory(a): a.runs[0]['total_count'] = 2
         def wrong_run(a): a.job['run_id'] = 11
         def wrong_job(a): a.job['id'] = 31
         def job_failure(a): a.job['conclusion'] = 'failure'
@@ -83,7 +94,7 @@ class ReaderTests(unittest.TestCase):
         def wrong_leaf(a): a.leaf = '9' * 40
         def wrong_origin(a): a.job['steps'][5]['name'] = a.job['steps'][5]['name'].replace('attempt=1', 'attempt=2')
         def wrong_ref(a): a.detail['referenced_workflows'][0]['ref'] = 'refs/pull/43/merge'
-        for mutation in (missing, failed, failed_checkout, wrong_order, duplicate, stale_attempt, wrong_run, wrong_job, job_failure, forged_head, unsupported_parents, forged_tree, wrong_commit, wrong_workflow, wrong_repository, missing_ref, duplicate_ref, conflicting_ref, wrong_caller, wrong_leaf, wrong_origin, wrong_ref):
+        for mutation in (missing, failed, failed_checkout, wrong_order, duplicate, stale_attempt, later_attempt, newer_request, incomplete_inventory, wrong_run, wrong_job, job_failure, forged_head, unsupported_parents, forged_tree, wrong_commit, wrong_workflow, wrong_repository, missing_ref, duplicate_ref, conflicting_ref, wrong_caller, wrong_leaf, wrong_origin, wrong_ref):
             with self.subTest(mutation=mutation.__name__):
                 api = API(); mutation(api)
                 with self.assertRaises(m.Refusal): m.read(api, **PARAMS)
@@ -93,6 +104,16 @@ class ReaderTests(unittest.TestCase):
             with self.subTest(field=field):
                 params = dict(PARAMS); params[field] = '9' * 40
                 with self.assertRaises(m.Refusal): m.read(API(), **params)
+
+    def test_pages_use_supported_explicit_reads(self):
+        class Pages(m.Gh):
+            def __init__(self): self.paths = []
+            def get(self, path):
+                self.paths.append(path)
+                return {'total_count': 101, 'workflow_runs': [None] * (100 if len(self.paths) == 1 else 1)}
+        api = Pages()
+        self.assertEqual(len(api.pages('actions/runs?per_page=100')), 2)
+        self.assertEqual(api.paths, ['actions/runs?per_page=100&page=1', 'actions/runs?per_page=100&page=2'])
 
 
 class ProducerTests(unittest.TestCase):

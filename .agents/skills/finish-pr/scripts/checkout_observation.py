@@ -5,6 +5,7 @@ those hashes. GitHub metadata identifies the running source; the observation is
 not an authority for its own producer.
 """
 import argparse
+import datetime
 import json
 import re
 import subprocess
@@ -25,9 +26,55 @@ class Refusal(Exception):
     pass
 
 
+def latest_request(api, head, run_id, attempt):
+    pages = api.pages(f'actions/workflows/routed-rust.yml/runs?event=pull_request&head_sha={head}&per_page=100')
+    if not isinstance(pages, list) or not pages:
+        raise Refusal('workflow request inventory unavailable')
+    runs, counts = [], []
+    for page in pages:
+        if not isinstance(page, dict) or type(page.get('total_count')) is not int or not isinstance(page.get('workflow_runs'), list):
+            raise Refusal('workflow request inventory incomplete')
+        counts.append(page['total_count'])
+        runs.extend(page['workflow_runs'])
+    if len(set(counts)) != 1 or counts[0] != len(runs) or counts[0] >= 1000:
+        raise Refusal('workflow request inventory incomplete, changed or capped')
+    if any(not isinstance(r, dict) or type(r.get('id')) is not int or type(r.get('run_attempt')) is not int or r['run_attempt'] < 1 or r.get('head_sha') != head or r.get('event') != 'pull_request' for r in runs):
+        raise Refusal('workflow request identity is ambiguous')
+    if len({r['id'] for r in runs}) != len(runs):
+        raise Refusal('workflow request identity is duplicated')
+    requests, metadata = [], []
+    for run in runs:
+        title = run.get('display_title')
+        if title == f'Merge-ready request {head}': requests.append(run)
+        elif title == f"Label metadata {run['id']}": metadata.append(run)
+        else: raise Refusal('workflow request purpose is ambiguous')
+    if not requests or (len(requests) > 1 and any(r['run_attempt'] != 1 for r in requests)):
+        raise Refusal('workflow request is missing or rerun ordering is ambiguous')
+    def created(run):
+        value = run.get('created_at')
+        if not isinstance(value, str) or not value.endswith('Z'):
+            raise Refusal('workflow request time is missing')
+        try:
+            return datetime.datetime.fromisoformat(value[:-1] + '+00:00')
+        except ValueError as error:
+            raise Refusal('workflow request time is invalid') from error
+    ordered = sorted(((created(r), r) for r in requests), key=lambda pair: pair[0])
+    if len(ordered) > 1 and ordered[-1][0] == ordered[-2][0]:
+        raise Refusal('latest workflow request is ambiguous')
+    when, latest = ordered[-1]
+    if any(r['run_attempt'] != 1 or created(r) >= when for r in metadata):
+        raise Refusal('newer or rerun metadata request has unverified origin')
+    if latest['id'] != run_id or latest['run_attempt'] != attempt:
+        raise Refusal('requested workflow run or attempt is stale')
+
+
 def read(api, *, pr, run_id, attempt, job_id, head, base, tree, caller_blob, leaf_blob):
     if any(not SHA.fullmatch(x or '') for x in (head, base, tree, caller_blob, leaf_blob)):
         raise Refusal('expected subject or independently reviewed workflow blob is invalid')
+    latest_request(api, head, run_id, attempt)
+    current = api.get(f'actions/runs/{run_id}')
+    if not isinstance(current, dict) or current.get('id') != run_id or current.get('run_attempt') != attempt or current.get('head_sha') != head or current.get('event') != 'pull_request':
+        raise Refusal('requested attempt is stale or does not match the current run')
     job = api.get(f'actions/jobs/{job_id}')
     if not isinstance(job, dict) or job.get('id') != job_id or job.get('run_id') != run_id or job.get('run_attempt') != attempt or job.get('head_sha') != head:
         raise Refusal('job does not match requested run, attempt and head')
@@ -96,6 +143,17 @@ class Gh:
             return json.loads(result.stdout)
         except (OSError, subprocess.TimeoutExpired, UnicodeError, json.JSONDecodeError) as error:
             raise Refusal(f'GitHub read unavailable or invalid: {error}') from error
+
+    def pages(self, path):
+        pages = []
+        for number in range(1, 11):
+            page = self.get(f'{path}&page={number}')
+            if not isinstance(page, dict) or not isinstance(page.get('workflow_runs'), list) or type(page.get('total_count')) is not int:
+                raise Refusal('workflow request page is malformed')
+            pages.append(page)
+            if len(page['workflow_runs']) < 100 or sum(len(p['workflow_runs']) for p in pages) >= page['total_count']:
+                return pages
+        raise Refusal('workflow request inventory exceeds the page limit')
 
 
 def main():
