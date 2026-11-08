@@ -50,8 +50,9 @@ pub(super) enum ActionDisabledReason {
     /// unresolved test target suppressed the repair-packet surface).
     PreviewOrStaticLimitation,
     /// The finding has no bounded repair route yet: its seam fails the
-    /// producer-owned repair-packet flip (or no fix site is known), so ripr
-    /// has not picked a test to extend (#13716). Distinct from a static
+    /// producer-owned repair-packet flip (or no fix site is known): ripr
+    /// lacks a selected test target or the exact discriminator it must
+    /// check (#13716). Distinct from a static
     /// limitation, which names something ripr cannot trace.
     RepairRouteNotReady,
     // Reserved below: closed-vocabulary members with named future producers.
@@ -122,7 +123,7 @@ impl ActionDisabledReason {
                 "Static preview limitation: this finding crosses a language boundary ripr cannot trace; inspect the test target by hand"
             }
             Self::RepairRouteNotReady => {
-                "ripr has not picked a test to extend for this finding yet; copy the context packet and inspect it by hand"
+                "ripr does not have a complete repair route for this finding yet (a test to extend and the exact value it must check); copy the context packet and inspect it by hand"
             }
             Self::StaleDocument => "The document changed after this analysis snapshot",
             Self::WorkspaceRootBlocked => "The workspace root is blocked for analysis",

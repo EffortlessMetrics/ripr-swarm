@@ -472,8 +472,9 @@ client supports:
   record without a safe verify/receipt command), and
   `preview_or_static_limitation` (cross-language unresolved target), and
   `repair_route_not_ready` (a same-language seam that fails the
-  repair-packet flip only because ripr has not picked a test to extend
-  yet, or an actionable gap with no fix site, #13716). A seam-addressed
+  repair-packet flip only because ripr has no complete repair route yet,
+  meaning a test target plus the exact discriminator it must check, or an
+  actionable gap with no fix site, #13716). A seam-addressed
   action reads its readiness from the seam's own producer-owned
   repair-packet flip, the same gate the seam hover and
   `repair_start_command_for` use, so a seam past the flip is offered the
