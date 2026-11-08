@@ -4315,8 +4315,8 @@ fn nearer_paths_config_dir_uncached(root: &Path, dir: &Path) -> Option<PathBuf> 
     for _ in 0..MAX_NEARER_CONFIG_HOPS {
         let ts_config = dir.join("tsconfig.json");
         let js_config = dir.join("jsconfig.json");
-        let declares = (ts_config.is_file() && config_file_owns_paths(&ts_config))
-            || (js_config.is_file() && config_file_owns_paths(&js_config));
+        let declares = (ts_config.is_file() && config_file_owns_paths(root, &ts_config))
+            || (js_config.is_file() && config_file_owns_paths(root, &js_config));
         if declares {
             return (dir != root).then_some(dir);
         }
@@ -4358,7 +4358,7 @@ pub(crate) fn unavailable_config_claims(
     specifier: &str,
 ) -> bool {
     (root_map.has_tsconfig() && root_map.paths_key_matches(specifier))
-        || super::tsconfig::package_config_claims(config_dir, specifier)
+        || super::tsconfig::package_config_claims(root_map.root(), config_dir, specifier)
 }
 
 /// The alias map that governs `importer`'s non-relative specifiers.
@@ -6490,9 +6490,10 @@ mod nested_config_withhold_tests {
         Ok(())
     }
 
-    /// A package config that inherits `paths` through a same-directory
-    /// `extends` resolves; a cross-directory base, an unparseable config, and
-    /// a directory where both `tsconfig.json` and `jsconfig.json` declare
+    /// A package config that inherits `paths` or `baseUrl` through a relative
+    /// in-workspace `extends` resolves (an inherited `baseUrl` at its
+    /// declaring config); a base outside the workspace, an unparseable config,
+    /// and a directory where both `tsconfig.json` and `jsconfig.json` declare
     /// `paths` stay unresolved rather than guessing.
     #[test]
     fn nested_config_fails_closed_when_it_cannot_be_modeled_exactly() -> Result<(), String> {
@@ -6551,7 +6552,23 @@ mod nested_config_withhold_tests {
                     "packages/tsconfig.base.json",
                     r#"{"compilerOptions":{"baseUrl":"."}}"#,
                 ),
+                ("packages/src/owner.ts", "export function owner() {}"),
             ],
+        )?;
+        // #11204: the inherited `baseUrl` stays anchored at the base that
+        // declares it (`packages/`), as `tsc` resolves it, not at the
+        // extending package directory.
+        if cross.as_deref() != Some("packages/src/owner") {
+            return Err(format!(
+                "cross-directory extends must resolve at the base anchor, got {cross:?}"
+            ));
+        }
+        let escaping = check(
+            "escaping-extends",
+            &[(
+                "packages/a/tsconfig.json",
+                r#"{"extends":"../../../outside.json","compilerOptions":{"paths":{"@/*":["src/*"]}}}"#,
+            )],
         )?;
         let unparseable = check(
             "unparseable",
@@ -6574,7 +6591,7 @@ mod nested_config_withhold_tests {
             ],
         )?;
         for (label, verdict) in [
-            ("cross-directory extends", cross),
+            ("extends base outside the workspace", escaping),
             ("unparseable config", unparseable),
             ("tsconfig.json + jsconfig.json both declaring", both),
         ] {
@@ -6671,6 +6688,33 @@ mod nested_config_withhold_tests {
             ));
         }
         Ok(())
+    }
+
+    /// #11204: the common monorepo layout — a package config that only
+    /// extends a shared base two directories up — resolves through the base's
+    /// own `baseUrl` anchor (the shared root), not the package directory.
+    #[test]
+    fn package_extending_a_shared_base_resolves_at_the_base_anchor() -> Result<(), String> {
+        let root = disagreeing_fixture(r#"{"extends":"../../tsconfig.base.json"}"#)?;
+        write(
+            &root,
+            "tsconfig.base.json",
+            r#"{"compilerOptions":{"baseUrl":".","paths":{"@/*":["packages/a/src/*"]}}}"#,
+        )?;
+        let map = load_alias_map(&root).ok_or("root tsconfig must load")?;
+        let resolved = normalized_relative_import_module(
+            Path::new("packages/a/src/consumer.test.ts"),
+            "@/owner",
+            Some(&map),
+            Some(&root),
+        );
+        cleanup(&root);
+        match resolved.as_deref() {
+            Some("packages/a/src/owner") => Ok(()),
+            other => Err(format!(
+                "expected the base-anchored package owner, got {other:?}"
+            )),
+        }
     }
 
     /// A nested config with `paths` but NO `baseUrl` still declares (TS 4.1+,
