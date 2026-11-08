@@ -13,7 +13,9 @@ ripr uses three ordinary command exit codes, plus standalone Unix check interrup
 `exposed` and `weakly_exposed` findings. A non-zero exit from `check` means the
 analysis did not complete, not that it disapproved of your diff. The blocking
 decision belongs to `ripr gate evaluate`, which exits `3` when the gate blocks
-after writing its report. Do not build a CI gate on `check`'s exit code; read
+after writing its report. `ripr gate check --base REV` runs `review-comments`
+and then the same evaluation, with the same exit codes. If `review-comments`
+cannot complete, gate check exits `2` (config_error); it never passes. Do not build a CI gate on `check`'s exit code; read
 its output, or run the gate.
 
 ## Why codes 2 and 3?
@@ -118,10 +120,22 @@ reached the caller.
   `repo-badge-*`, `repo-seams-*`, `repo-exposure-md`, and
   `repo-exposure-summary-json` — write
   nothing to stdout and put the prose diagnostic on stderr for now; that
-  gap is a named limitation, not a clean result. These machine formats and
-  usage-class errors keep stdout empty. Usage-class errors include argv
-  errors and `context`/`explain` selector misses or ambiguity; their guidance
-  and retry listing stay on stderr (RIPR-SPEC-0003).
+  gap is a named limitation, not a clean result. These machine formats keep
+  stdout empty. Usage-class errors include argv errors and
+  `context`/`explain` selector misses or ambiguity; their guidance and retry
+  listing stay on stderr (RIPR-SPEC-0003). Under an explicit JSON request
+  (`--json` or a JSON `--format`) these covered classes also write a minimal
+  `cli_refusal` document to stdout (#11584, #6834 decision): an unknown
+  command, an unknown flag or stray positional, an unrecognized value
+  rejected by the CLI's shared unknown-value builder, `explain --format
+  json`, and a `context` selector miss or ambiguity. The document carries
+  `schema_version`, `tool`, `status: "refused"` and
+  `error {code, message, token?, next}`. Exit code and stderr are
+  unchanged, and without a JSON request stdout stays empty. Other argv
+  errors keep empty stdout even under a JSON request: a flag missing its
+  value, a malformed value (for example a non-numeric number), conflicting
+  flags, and a value rejected outside the shared builder (for example a
+  gate mode); see `docs/OUTPUT_SCHEMA.md`.
   Fresh selector misses also retain producer-owned language limitations for
   that run, with the configured-off or unavailable-binary recovery. These
   describe analysis scope rather than prove why the selector missed;
@@ -150,8 +164,9 @@ reached the caller.
 
 ## When you see exit code 3
 
-- **Gate failure**: `ripr gate evaluate` evaluated successfully and blocked
-  the PR; the full report was still written to `--out`.
+- **Gate failure**: `ripr gate evaluate` or `ripr gate check` evaluated
+  successfully and blocked the PR; the full report was still written to
+  `--out`.
 - **Doctor findings**: `ripr doctor` completed its diagnosis and at least
   one check failed; the full report was already written (human screen or
   `--json` document) and stderr names `doctor found issues` (#5102). A

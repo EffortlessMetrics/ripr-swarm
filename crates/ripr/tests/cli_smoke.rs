@@ -17,6 +17,9 @@ mod agent_output_budget;
 #[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/agent_policy_guidance.rs"]
 mod agent_policy_guidance;
+#[cfg(any(feature = "lang-typescript", feature = "lang-python"))]
+#[path = "cli_smoke/agent_seam_preview_route.rs"]
+mod agent_seam_preview_route;
 #[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/artifact_mode_precedence.rs"]
 mod artifact_mode_precedence;
@@ -45,6 +48,8 @@ mod common;
 #[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/diff_absolute_root.rs"]
 mod diff_absolute_root;
+#[path = "cli_smoke/diff_nothing_analyzed.rs"]
+mod diff_nothing_analyzed;
 #[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/diff_pairing.rs"]
 mod diff_pairing;
@@ -134,6 +139,9 @@ mod recall_tradeoff;
 #[cfg(unix)]
 #[path = "cli_smoke/receipt_recovery_root.rs"]
 mod receipt_recovery_root;
+#[cfg(unix)]
+#[path = "cli_smoke/receipt_write_containment.rs"]
+mod receipt_write_containment;
 #[path = "cli_smoke/related_test_count.rs"]
 mod related_test_count;
 #[cfg(feature = "lang-rust")]
@@ -167,6 +175,9 @@ mod source_unicode;
 #[cfg(any(feature = "lang-rust", feature = "lang-typescript"))]
 #[path = "cli_smoke/structural_workspace_markers.rs"]
 mod structural_workspace_markers;
+#[cfg(feature = "lang-rust")]
+#[path = "cli_smoke/stub_closes_own_gap.rs"]
+mod stub_closes_own_gap;
 #[path = "cli_smoke/suppression_notice.rs"]
 mod suppression_notice;
 #[path = "cli_smoke/ts_limitations_boundaries.rs"]
@@ -3465,7 +3476,10 @@ fn explain_format_agent_prints_compact_lines_and_json_is_refused() -> Result<(),
     let json = run_command(env!("CARGO_BIN_EXE_ripr"), Some(&root), &json_args)
         .map_err(|err| format!("run explain --format json: {err}"))?;
     assert!(!json.status.success(), "json must be refused");
-    assert!(json.stdout.is_empty(), "refusal keeps stdout empty");
+    assert!(
+        String::from_utf8_lossy(&json.stdout).contains("\"status\": \"refused\""),
+        "explicit JSON request gets a cli_refusal document"
+    );
     assert!(
         String::from_utf8_lossy(&json.stderr).contains("ripr context --at"),
         "{}",
@@ -4023,6 +4037,28 @@ fn gate_evaluate_complete_gap_ledger_is_advisory_in_visible_only_mode() -> Resul
     Ok(())
 }
 
+/// #11584: a completed run carries neither refusal key, so a consumer can
+/// branch on `status` alone.
+#[test]
+fn check_json_completed_run_carries_neither_status_nor_error() -> Result<(), String> {
+    let root = workspace_root().display().to_string();
+    let diff = sample_diff().display().to_string();
+    let output = run_ripr(&["check", "--root", &root, "--diff", &diff, "--json"]);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let value: serde_json::Value = serde_json::from_str(&stdout)
+        .map_err(|err| format!("completed stdout should parse as JSON: {err}\n{stdout}"))?;
+    assert!(
+        value["findings"]
+            .as_array()
+            .is_some_and(|rows| !rows.is_empty()),
+        "control must be a completed analysis, not a refusal: {stdout}"
+    );
+    assert_ne!(value["analysis_scope"]["downstream_consumable"], false);
+    assert!(value.get("status").is_none(), "{stdout}");
+    assert!(value.get("error").is_none(), "{stdout}");
+    Ok(())
+}
+
 #[test]
 fn check_json_diff_scope_oversized_emits_limited_artifact() -> Result<(), String> {
     let root = workspace_root().display().to_string();
@@ -4048,6 +4084,14 @@ fn check_json_diff_scope_oversized_emits_limited_artifact() -> Result<(), String
     );
     assert_eq!(value["run_limitations"][0]["downstream_consumable"], false);
     assert_eq!(value["findings"].as_array().map(Vec::len), Some(0));
+    // #11584: the scope-guard refusal carries the shared refusal block, with
+    // the guard's own diagnostic as the block's message.
+    assert_eq!(value["status"], "refused");
+    assert_eq!(value["error"]["code"], "diff_scope_oversized");
+    assert_eq!(
+        value["error"]["message"],
+        value["run_limitations"][0]["message"]
+    );
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
@@ -4386,6 +4430,9 @@ fn assert_check_json_refusal(
         ("/run_limitations/0/run_status", identity),
         ("/run_limitations/0/basis", identity),
         ("/run_limitations/0/repair_route", repair_route),
+        // #11584: the shared refusal block rides beside the frozen keys.
+        ("/status", "refused"),
+        ("/error/code", identity),
     ] {
         let actual = value.pointer(pointer).and_then(serde_json::Value::as_str);
         if actual != Some(expected) {
@@ -4500,28 +4547,161 @@ fn check_json_unresolvable_base_emits_refusal_envelope() -> Result<(), String> {
     Ok(())
 }
 
-/// #6834 (owner ruling): argv usage errors stay prose-only. There is no
-/// successfully parsed invocation to echo, so no envelope exists: exit 2,
-/// empty stdout, the cause on stderr.
-#[test]
-fn check_json_argv_usage_errors_stay_prose_only() -> Result<(), String> {
-    let output = run_ripr(&["check", "--json", "--bogus-flag-6834"]);
+/// #11584 (#6834 owner decision, 2026-11-08): argv usage errors under an
+/// explicit JSON request write a minimal `cli_refusal` document to stdout.
+/// Exit code and stderr prose are unchanged; without a JSON request stdout
+/// stays empty.
+fn assert_cli_refusal(
+    output: &Output,
+    code: &str,
+    token: &str,
+    stderr_needle: &str,
+) -> Result<serde_json::Value, String> {
     if output.status.code() != Some(2) {
-        return Err(format!(
-            "expected exit 2, got {:?}\nstderr:\n{}",
-            output.status.code(),
-            String::from_utf8_lossy(&output.stderr)
-        ));
-    }
-    if !output.stdout.is_empty() {
-        return Err(format!(
-            "argv usage errors must not emit an envelope, got {} stdout bytes",
-            output.stdout.len()
-        ));
+        return Err(format!("expected exit 2, got {:?}", output.status.code()));
     }
     let stderr = String::from_utf8_lossy(&output.stderr);
-    if !stderr.contains("--bogus-flag-6834") {
-        return Err(format!("stderr must name the flag, got: {stderr}"));
+    if !stderr.contains(stderr_needle) {
+        return Err(format!("stderr prose must stay, got: {stderr}"));
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let value: serde_json::Value = serde_json::from_str(&stdout)
+        .map_err(|err| format!("stdout must parse as JSON: {err}\n{stdout}"))?;
+    if value["schema_version"] != "0.1"
+        || value["tool"] != "ripr"
+        || value["status"] != "refused"
+        || value["error"]["code"] != code
+        || value["error"]["token"] != token
+    {
+        return Err(format!("unexpected cli_refusal document: {value}"));
+    }
+    if value["error"]["message"].as_str().is_none() {
+        return Err(format!("error.message must be a string: {value}"));
+    }
+    let key_count = value.as_object().map_or(0, serde_json::Map::len);
+    if key_count != 4 {
+        return Err(format!("document must stay minimal: {value}"));
+    }
+    Ok(value)
+}
+
+#[test]
+fn check_json_argv_usage_errors_emit_cli_refusal() -> Result<(), String> {
+    let output = run_ripr(&["check", "--json", "--bogus-flag-6834"]);
+    let value = assert_cli_refusal(
+        &output,
+        "unknown_argument",
+        "--bogus-flag-6834",
+        "--bogus-flag-6834",
+    )?;
+    if value["error"]["next"]["command"] != "ripr check --help --all" {
+        return Err(format!("next must point at help: {value}"));
+    }
+
+    let output = run_ripr(&["bogus-command-6834", "--json"]);
+    assert_cli_refusal(
+        &output,
+        "unknown_command",
+        "bogus-command-6834",
+        "unknown command",
+    )?;
+
+    let output = run_ripr(&["check", "--format", "yaml-6834", "--json"]);
+    assert_cli_refusal(&output, "unknown_value", "yaml-6834", "yaml-6834")?;
+    Ok(())
+}
+
+/// #11584 review: every JSON format `OutputFormat` accepts is a JSON request,
+/// including `json-terse`; SARIF stays outside the class.
+#[test]
+fn check_unknown_flag_under_json_terse_format_emits_cli_refusal() -> Result<(), String> {
+    let output = run_ripr(&["check", "--format", "json-terse", "--bogus-flag-6834"]);
+    assert_cli_refusal(
+        &output,
+        "unknown_argument",
+        "--bogus-flag-6834",
+        "--bogus-flag-6834",
+    )?;
+    let sarif = run_ripr(&["check", "--format", "sarif", "--bogus-flag-6834"]);
+    if sarif.status.code() != Some(2) || !sarif.stdout.is_empty() {
+        return Err(format!(
+            "sarif is not a JSON request: expected exit 2 and empty stdout, got {:?} and {} bytes",
+            sarif.status.code(),
+            sarif.stdout.len()
+        ));
+    }
+    Ok(())
+}
+
+/// #11584 review: a stray positional on `context` (the explain-habit paste)
+/// is the `unknown_argument` class. Its prose keeps the `--at` retry; the
+/// document's `next` is the fixed help route, never caller text.
+#[test]
+fn context_stray_positional_under_json_emits_cli_refusal() -> Result<(), String> {
+    let stray = "probe:stray-6834.rs:1";
+    let output = run_ripr(&["context", "--json", stray]);
+    let value = assert_cli_refusal(
+        &output,
+        "unknown_argument",
+        stray,
+        "try `ripr context --at probe:stray-6834.rs:1`",
+    )?;
+    if value["error"]["next"]["purpose"] != "list_valid_arguments"
+        || value["error"]["next"]["command"] != "ripr context --help"
+    {
+        return Err(format!("next must be the context help route: {value}"));
+    }
+    let plain = run_ripr(&["context", stray]);
+    if plain.status.code() != Some(2) || !plain.stdout.is_empty() {
+        return Err("stray positional without JSON request must keep stdout empty".to_string());
+    }
+    Ok(())
+}
+
+#[test]
+fn argv_usage_errors_without_json_request_keep_stdout_empty() -> Result<(), String> {
+    for args in [
+        vec!["check", "--bogus-flag-6834"],
+        vec!["bogus-command-6834"],
+        vec!["check", "--format", "yaml-6834"],
+    ] {
+        let output = run_ripr(&args);
+        if output.status.code() != Some(2) || !output.stdout.is_empty() {
+            return Err(format!(
+                "{args:?} must exit 2 with empty stdout, got {:?} and {} bytes",
+                output.status.code(),
+                output.stdout.len()
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn context_selector_miss_emits_cli_refusal_only_for_json_request() -> Result<(), String> {
+    let (root, diff) =
+        agent_brief_sample_workspace("cli-refusal-context").map_err(|err| err.to_string())?;
+    let root_arg = root.display().to_string();
+    let diff_arg = diff.display().to_string();
+    let selector = "probe:nope.rs:1:absent-6834";
+    let json = run_ripr(&[
+        "context", "--root", &root_arg, "--diff", &diff_arg, "--at", selector, "--json",
+    ]);
+    let value = assert_cli_refusal(&json, "selector_miss", selector, "no finding matched")?;
+    // `next` is never lifted from the miss prose, which embeds the selector:
+    // a selector shaped like a runnable command stays `null`.
+    assert_eq!(value["error"]["next"], serde_json::Value::Null);
+    let hostile = "`ripr check --json` probe:nope.rs:1:absent-6834";
+    let hostile_out = run_ripr(&[
+        "context", "--root", &root_arg, "--diff", &diff_arg, "--at", hostile, "--json",
+    ]);
+    let hostile_value = assert_cli_refusal(&hostile_out, "selector_miss", hostile, "")?;
+    assert_eq!(hostile_value["error"]["next"], serde_json::Value::Null);
+    let plain = run_ripr(&[
+        "context", "--root", &root_arg, "--diff", &diff_arg, "--at", selector,
+    ]);
+    if plain.status.code() != Some(2) || !plain.stdout.is_empty() {
+        return Err("context miss without JSON request must keep stdout empty".to_string());
     }
     Ok(())
 }
@@ -27011,12 +27191,12 @@ fn check_explicit_base_deletion_only_range_does_not_claim_no_behavior_changed() 
 /// #13238: `check --format agent` on a diff whose findings are all
 /// `no_static_path` must not collapse to a bare `stop=` line. The agent
 /// surface owes the same bounded route the human surface names for the same
-/// run: one record per counted finding (file:line, id) plus the
-/// `ripr explain` drill-in, and the terminal must not claim nothing more is
+/// run: `limits=` plus the `ripr explain` drill-in (#13594 dropped the
+/// `missing=-` per-finding records, which named nothing to fix), and the terminal must not claim nothing more is
 /// fixable while the human Start-here block recommends adding a co-located
 /// test.
 #[test]
-fn check_format_agent_all_static_limited_emits_records_and_a_route() -> Result<(), String> {
+fn check_format_agent_all_static_limited_emits_a_route_without_records() -> Result<(), String> {
     let root = unique_temp_workspace("agent-format-all-limited");
     std::fs::create_dir_all(root.join("src")).map_err(|e| format!("mkdir: {e}"))?;
     run_git(&root, &["init", "-b", "main"])?;
@@ -27052,14 +27232,11 @@ fn check_format_agent_all_static_limited_emits_records_and_a_route() -> Result<(
             "expected both new functions counted as no_static_path (predicate + return_value probes):\n{stdout}"
         ));
     }
-    if !stdout.contains("no_static_path|src/lib.rs:") || !stdout.contains("|id=") {
+    // #13594: static-limited findings carry no concrete next step, so no
+    // `missing=-` record is printed; `limits=` and the drill-in carry the route.
+    if stdout.contains("no_static_path|src/lib.rs:") || stdout.contains("missing=-") {
         return Err(format!(
-            "the all-limited run must emit bounded records (file:line + id):\n{stdout}"
-        ));
-    }
-    if !stdout.contains("src/lib.rs:4|") || !stdout.contains("src/lib.rs:8|") {
-        return Err(format!(
-            "the records must name both changed functions (levy at line 4, fee at line 8):\n{stdout}"
+            "the all-limited run must not emit missing=- records:\n{stdout}"
         ));
     }
     if !stdout.contains("next=ripr explain ") {
@@ -28155,6 +28332,117 @@ fn check_default_base_with_clean_worktree_keeps_no_scope_note_only() -> Result<(
             "no-origin JSON must bind guidance to its resolved local base: {value}"
         ));
     }
+
+    ignore_remove_dir_all(&root);
+    Ok(())
+}
+
+/// #13644: a bare human `ripr check` on a clean base branch whose HEAD has a
+/// parent analyzes the last commit and says so, so a caller does not spend a
+/// call on `nothing in scope`. JSON keeps the empty-range contract, and a
+/// dirty tree or an explicit `--base` keeps its own scope.
+#[test]
+fn check_clean_base_branch_with_parent_analyzes_last_commit_in_human_only() -> Result<(), String> {
+    let root = unique_temp_workspace("last-commit-fallback");
+    std::fs::create_dir_all(root.join("src")).map_err(|err| format!("create src: {err}"))?;
+    run_git(&root, &["init", "-b", "main"])?;
+    run_git(&root, &["config", "user.email", "test@test.com"])?;
+    run_git(&root, &["config", "user.name", "Test"])?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"last-commit-fallback\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|err| format!("write Cargo.toml: {err}"))?;
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "pub fn can_vote(age: u32) -> bool { age > 18 }\n",
+    )
+    .map_err(|err| format!("write lib.rs: {err}"))?;
+    run_git(&root, &["add", "."])?;
+    run_git(&root, &["commit", "-m", "initial"])?;
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "pub fn can_vote(age: u32) -> bool { age >= 18 }\n",
+    )
+    .map_err(|err| format!("rewrite lib.rs: {err}"))?;
+    run_git(&root, &["commit", "-am", "boundary"])?;
+    let root_str = root.to_string_lossy().into_owned();
+
+    let human = run_ripr(&["check", "--root", &root_str]);
+    assert_success(&human);
+    let stdout = String::from_utf8_lossy(&human.stdout);
+    let stderr = String::from_utf8_lossy(&human.stderr);
+    if !stdout.contains("base: HEAD~1") || stdout.contains("0 changed behaviors checked") {
+        return Err(format!(
+            "bare check on a clean base branch must analyze the last commit; got:\n{stdout}"
+        ));
+    }
+    if stdout.contains("ripr explain") && !stdout.contains("--base 'HEAD~1'") {
+        return Err(format!(
+            "drill-in commands must stay on the analyzed last-commit range; got:\n{stdout}"
+        ));
+    }
+    if !stderr.contains("analyzed the last commit (--base HEAD~1)") {
+        return Err(format!(
+            "the auto-scope must be labeled on stderr; got:\n{stderr}"
+        ));
+    }
+
+    let json = run_ripr(&["check", "--root", &root_str, "--json"]);
+    assert_success(&json);
+    let value: serde_json::Value =
+        serde_json::from_slice(&json.stdout).map_err(|err| format!("parse check JSON: {err}"))?;
+    if value["base"] != "main" || value["findings"].as_array().is_none_or(|f| !f.is_empty()) {
+        return Err(format!(
+            "JSON must keep the resolved base unchanged: {value}"
+        ));
+    }
+
+    let explicit = run_ripr(&["check", "--root", &root_str, "--base", "main"]);
+    assert_success(&explicit);
+    if String::from_utf8_lossy(&explicit.stderr).contains("analyzed the last commit") {
+        return Err("an explicit --base must not be rescoped".to_string());
+    }
+
+    // An ignored routed source file is not a clean checkout: keep the empty
+    // result and its disclosure.
+    std::fs::write(root.join(".git/info/exclude"), "src/generated.rs\n")
+        .map_err(|err| format!("write exclude: {err}"))?;
+    std::fs::write(root.join("src/generated.rs"), "pub fn g() -> u8 { 1 }\n")
+        .map_err(|err| format!("write ignored source: {err}"))?;
+    let ignored = run_ripr(&["check", "--root", &root_str]);
+    assert_success(&ignored);
+    if !String::from_utf8_lossy(&ignored.stdout).contains("base: main") {
+        return Err(format!(
+            "an ignored source file must keep the original range; got:\n{}",
+            String::from_utf8_lossy(&ignored.stdout)
+        ));
+    }
+    if String::from_utf8_lossy(&ignored.stderr).contains("analyzed the last commit") {
+        return Err(format!(
+            "an ignored source file must keep the empty-range result; got:\n{}",
+            String::from_utf8_lossy(&ignored.stdout)
+        ));
+    }
+    std::fs::remove_file(root.join("src/generated.rs"))
+        .map_err(|err| format!("remove ignored source: {err}"))?;
+
+    // A clone resolves the default base to `origin/main` while HEAD is `main`;
+    // an older remote branch in that clone must not disable the fallback.
+    run_git(&root, &["branch", "older", "HEAD~1"])?;
+    let clone = unique_temp_workspace("last-commit-fallback-clone");
+    let clone_str = clone.to_string_lossy().into_owned();
+    run_git(&root, &["clone", "--quiet", &root_str, &clone_str])?;
+    let cloned = run_ripr(&["check", "--root", &clone_str]);
+    assert_success(&cloned);
+    if !String::from_utf8_lossy(&cloned.stderr).contains("analyzed the last commit") {
+        return Err(format!(
+            "a clean clone on its default branch must analyze the last commit; got:\n{}\n{}",
+            String::from_utf8_lossy(&cloned.stdout),
+            String::from_utf8_lossy(&cloned.stderr)
+        ));
+    }
+    ignore_remove_dir_all(&clone);
 
     ignore_remove_dir_all(&root);
     Ok(())

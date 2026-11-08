@@ -623,6 +623,7 @@ test.only("discount boundary", () => {
         exported_as_default: false,
         class_default_export: false,
         default_object_member: false,
+        default_object_unsafe_siblings: Vec::new(),
         commonjs_default_export: false,
         commonjs_whole_function: false,
         constructor_callback: false,

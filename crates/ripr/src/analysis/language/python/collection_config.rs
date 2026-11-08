@@ -2,8 +2,11 @@
 //!
 //! A test pytest never collects does not run, so its assertion is no evidence
 //! about the changed behavior. Two project-level sources decide that, and both
-//! are evaluated here so a skipped-at-collection test gets the same
-//! `test_activation_unestablished` limit as a `@pytest.mark.skip` one:
+//! are evaluated here so a skipped-at-collection test gets the
+//! `test_activation_unestablished` limit. Unlike an unconditional
+//! `@pytest.mark.skip`, which provably never runs and so leaves a gap, a
+//! command line naming the file can bypass these rules, so they stay
+//! unestablished:
 //!
 //! - `conftest.py` `collect_ignore` / `collect_ignore_glob`, relative to the
 //!   conftest's directory;

@@ -19,6 +19,7 @@ mod parse;
 pub(crate) mod progress;
 mod rerun;
 mod suggest;
+mod usage_refusal;
 mod workflow_catalog;
 
 pub(crate) use parse::expect_value;
@@ -26,6 +27,9 @@ pub(crate) use parse::expect_value;
 pub use parse::extract_global_verbose;
 pub(crate) use parse::reconcile_root;
 pub(crate) use suggest::unknown_argument;
+
+#[doc(hidden)]
+pub use commands::impacted_evidence_command::run_impacted_evidence_at;
 
 /// The command completed. Shared by `Ok(())` paths and by the
 /// `help --json` exit contract (`docs/EXIT_CODES.md`).
@@ -117,7 +121,15 @@ pub fn run_with_interrupt_handling(args: Vec<String>) -> Result<(), CommandError
 }
 
 fn run_with_policy(args: Vec<String>, interrupt_handling: bool) -> Result<(), CommandError> {
+    // #11584: under an explicit JSON request a usage-class failure also writes
+    // a standalone `cli_refusal` document to stdout; exit code and stderr
+    // prose are unchanged. The argv copy is only read for that request check.
+    usage_refusal::reset();
+    let argv = args.clone();
     let outcome = run_command(args, interrupt_handling);
+    if let Err(error) = &outcome {
+        usage_refusal::emit_for(&argv, error);
+    }
     // #5213: observe this process's own CPU time and peak resident memory
     // once the command has finished, so the peak covers rendering and
     // serialization instead of stopping at the analysis boundary. Emits

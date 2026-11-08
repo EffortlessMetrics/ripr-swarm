@@ -37,7 +37,7 @@ pub(crate) use crate::analysis::language::adapter::render_fact_cache_line;
 /// On-disk schema version of a `typescript-file-facts` envelope. Any change
 /// to a serialized fact spelling (field rename, type change, new label) is
 /// a schema change: bump this so stale entries read as misses.
-pub(crate) const TYPESCRIPT_FILE_FACT_SCHEMA_VERSION: &str = "7";
+pub(crate) const TYPESCRIPT_FILE_FACT_SCHEMA_VERSION: &str = "8";
 
 /// Approximate per-run ceiling on newly persisted fact bytes. Parsing the
 /// file already happened by store time, so exhausting the budget only skips
@@ -340,6 +340,14 @@ impl TypeScriptFileFactStore {
         }
     }
 
+    /// True when an envelope file for `key` exists, so a [`Self::load`] could
+    /// serve it. Existence only: the load still validates identity and
+    /// integrity. The parallel lookahead skips such files, leaving them to the
+    /// loop's own lookup.
+    pub(crate) fn entry_exists(&self, key: &TypeScriptFileFactKey) -> bool {
+        self.dir.join(key.filename()).exists()
+    }
+
     /// True when a schema- and analyzer-matching entry for `normalized_file`
     /// existed when the run began. The snapshot is header-only and taken
     /// once; entries written during this run are deliberately not observed.
@@ -527,7 +535,7 @@ mod tests {
     fn schema_version_pins_ast_probe_shape_facts() -> Result<(), String> {
         // #11250 added per-line probe shapes to the persisted facts, so
         // envelopes written before them must read as misses.
-        assert_eq!(TYPESCRIPT_FILE_FACT_SCHEMA_VERSION, "7");
+        assert_eq!(TYPESCRIPT_FILE_FACT_SCHEMA_VERSION, "8");
         // A stale-schema envelope: the exact bytes the pre-#11250 ("3")
         // binary wrote — same identity, valid integrity digest, older
         // schema version — sitting at the entry path the current key

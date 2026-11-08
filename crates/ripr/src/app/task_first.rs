@@ -3181,24 +3181,33 @@ pub(crate) fn non_rust_repair_guidance(
         .map(|entry| entry.language)
         .collect::<Vec<_>>()
         .join(" and ");
+    // #13790: short lines that say what is true. Only the seam flow behind
+    // `ripr repair` is Rust-only; a TypeScript or Python preview gap can still
+    // start the delegated loop by gap id, but only through the start `ripr
+    // check` prints, which that check prints only when the shared readiness
+    // owner accepts the gap. No start command is composed here.
     let head = format!(
-        "the changed code under {root_display} is {languages}, and `ripr repair` works from Rust gaps only"
+        "the changed code under {root_display} is {languages}.\nThe `ripr repair` seam flow is Rust only."
     );
+    let check = format!("`ripr check --root {root_display}`");
     if !changed.iter().any(|entry| entry.adds_code) {
         return format!(
-            "{head}. The change only removes code, so `ripr check --root {root_display}` names no gap for it; look at the tests of the remaining behavior by hand"
+            "{head}\nThe change only removes code, so {check} names no gap for it.\nLook at the tests of the remaining behavior by hand."
         );
     }
-    let start = if changed
+    let gap_bound = changed
         .iter()
-        .any(|entry| !gap_bound_start_pointer(entry.language).is_empty())
-    {
-        "; once it is committed and the repair packet is complete, `ripr check` also prints a `ripr agent repair --gap-id <gap> --base <base> --phase before` start"
-    } else {
-        ""
-    };
+        .filter(|entry| entry.adds_code && !gap_bound_start_pointer(entry.language).is_empty())
+        .map(|entry| entry.language)
+        .collect::<Vec<_>>();
+    if gap_bound.is_empty() {
+        return format!(
+            "{head}\nAdd the test by hand: {check} names the test and its verify command."
+        );
+    }
+    let gap_bound = gap_bound.join(" and ");
     format!(
-        "{head}. Run `ripr check --root {root_display}` for the test to add by hand and its verify command{start}"
+        "{head}\n{gap_bound} preview gaps start with the `ripr agent repair --gap-id ...` command that {check} prints when one is ready.\nOtherwise, add the test by hand: {check} names the test and its verify command."
     )
 }
 
@@ -3271,6 +3280,124 @@ pub(crate) fn gap_bound_start_pointer(language: &str) -> &'static str {
     } else {
         ""
     }
+}
+
+/// The preview languages of a scope's changed files when that scope is
+/// TypeScript/Python preview code only (#13791): every routed file is a
+/// TypeScript or Python file whose adapter `enabled` analyzes, and none is
+/// Rust or another language. Routing is the shared language router's;
+/// unrouted files (docs, config) are ignored. Empty means the scope is not
+/// preview-only, so callers keep their generic wording.
+pub(crate) fn preview_only_scope_languages(
+    files: &[std::path::PathBuf],
+    enabled: &[crate::domain::LanguageId],
+) -> Vec<&'static str> {
+    use crate::domain::LanguageId;
+    let mut languages: Vec<&'static str> = Vec::new();
+    for file in files {
+        let Some(id) = crate::analysis::route(file) else {
+            continue;
+        };
+        if !matches!(id, LanguageId::TypeScript | LanguageId::Python) || !enabled.contains(&id) {
+            return Vec::new();
+        }
+        // The TypeScript adapter also analyzes JavaScript; name the files'
+        // own language so a JavaScript-only scope is not called TypeScript.
+        let javascript = id == LanguageId::TypeScript
+            && file
+                .extension()
+                .and_then(|ext| ext.to_str())
+                .is_some_and(|ext| {
+                    matches!(
+                        ext.to_ascii_lowercase().as_str(),
+                        "js" | "mjs" | "cjs" | "jsx"
+                    )
+                });
+        let name = if javascript {
+            "JavaScript"
+        } else {
+            id.display_name()
+        };
+        if !languages.contains(&name) {
+            languages.push(name);
+        }
+    }
+    languages.sort_unstable();
+    languages
+}
+
+/// The TypeScript/Python subset of [`non_rust_item_language`] (#13791): the
+/// preview languages whose finding and gap ids the seam surfaces route to
+/// `ripr check --format agent`. Other non-Rust ids keep their terminal
+/// no-seam-inventory wording.
+pub(crate) fn preview_item_language(item: &str) -> Option<&'static str> {
+    non_rust_item_language(item).filter(|language| matches!(*language, "TypeScript" | "Python"))
+}
+
+/// The input a preview route's `ripr check --format agent` replays (#13791).
+/// A brief that selected a saved patch replays that patch, a `--base` brief
+/// replays its base, and a `--files` brief can only point at the current
+/// diff, which the wording qualifies instead of presenting as equivalent.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PreviewCheckInput<'a> {
+    /// No working set to replay: `check`'s own default diff.
+    Default,
+    /// The brief's `--base` revision.
+    Base(&'a str),
+    /// The brief's saved patch, already resolved by the brief's own diff
+    /// path owner; rendered absolute so it reads the same from any cwd.
+    Diff(&'a Path),
+    /// A `--files` selection: `check` reads the current diff, which need not
+    /// match the selected files.
+    CurrentDiffNotFiles,
+}
+
+/// The single owner of the preview route's `ripr check ... --format agent`
+/// command (#13791). The brief warning, the card/packet prose and the card's
+/// typed `remedy_route` all render it here so their machine remedies agree.
+pub(crate) fn preview_check_command(root: &Path, input: PreviewCheckInput<'_>) -> String {
+    let root_arg = shell_arg(&bound_root(&root.to_string_lossy()));
+    let scope = match input {
+        PreviewCheckInput::Base(base) => format!(" --base {}", shell_arg(base)),
+        PreviewCheckInput::Diff(diff) => {
+            format!(
+                " --diff {}",
+                shell_arg(&bound_root(&diff.to_string_lossy()))
+            )
+        }
+        PreviewCheckInput::Default | PreviewCheckInput::CurrentDiffNotFiles => String::new(),
+    };
+    format!("ripr check --root {root_arg}{scope} --format agent")
+}
+
+/// The one-line working route for a seam-addressed agent command (`agent
+/// brief`, `agent card`, `agent packet`) whose subject is TypeScript/Python
+/// preview code (#13791). The seam inventory those commands read covers
+/// Rust files only, so no seam exists and no config change adds one; the
+/// route that works is `ripr check --format agent` over the same input,
+/// then the gap-bound start `check` prints only when the shared readiness
+/// owner admits it. This names that start conditionally and never claims
+/// one is ready.
+pub(crate) fn preview_seam_route(
+    root: &Path,
+    input: PreviewCheckInput<'_>,
+    languages: &[&str],
+) -> String {
+    let subject = format!("{} preview code", languages.join(" and "));
+    let command = preview_check_command(root, input);
+    let base_value = match input {
+        PreviewCheckInput::Base(base) => shell_arg(base),
+        _ => "<base>".to_string(),
+    };
+    let findings = match input {
+        PreviewCheckInput::CurrentDiffNotFiles => {
+            "for the current diff's findings (that diff need not match the --files selection)"
+        }
+        _ => "for its findings",
+    };
+    format!(
+        "run `{command}` {findings}, and when that prints a `ripr agent repair --gap-id <gap> --base {base_value} --phase before` start, run that start. The seam inventory behind `agent brief`, `agent card` and `agent packet` covers Rust files only, so no seam exists for {subject} and no config change adds one",
+    )
 }
 
 fn unknown_repair_item(root: &Path, item: &str) -> String {
@@ -6121,6 +6248,125 @@ pub(crate) mod tests {
                 && !rust.contains("covers Rust files only"),
             "{rust}"
         );
+    }
+
+    /// #13791: only a scope whose routed changed files are all enabled
+    /// TypeScript/Python preview files reads as preview-only; any Rust or
+    /// other-language file, or a disabled adapter, keeps the generic
+    /// wording.
+    #[test]
+    fn preview_only_scope_languages_requires_every_routed_file_to_be_enabled_preview() {
+        use crate::domain::LanguageId::{Python, Rust, TypeScript};
+        use std::path::PathBuf;
+        let files = |paths: &[&str]| paths.iter().map(PathBuf::from).collect::<Vec<_>>();
+        let all = [Rust, TypeScript, Python];
+        assert_eq!(
+            preview_only_scope_languages(&files(&["src/a.ts", "README.md", "t/a.test.ts"]), &all),
+            vec!["TypeScript"]
+        );
+        assert_eq!(
+            preview_only_scope_languages(&files(&["b.py", "a.ts"]), &all),
+            vec!["Python", "TypeScript"]
+        );
+        assert_eq!(
+            preview_only_scope_languages(&files(&["web/app.js", "web/a.mjs"]), &all),
+            vec!["JavaScript"]
+        );
+        assert_eq!(
+            preview_only_scope_languages(&files(&["web/app.js", "src/a.ts"]), &all),
+            vec!["JavaScript", "TypeScript"]
+        );
+        for (scope, enabled) in [
+            (files(&["src/a.ts", "src/lib.rs"]), &all[..]),
+            (files(&["src/lib.rs"]), &all[..]),
+            (files(&["lib/Pricing.pm", "a.py"]), &all[..]),
+            (files(&["src/a.ts"]), &[Rust][..]),
+            (files(&["README.md"]), &all[..]),
+            (Vec::new(), &all[..]),
+        ] {
+            assert!(
+                preview_only_scope_languages(&scope, enabled).is_empty(),
+                "{scope:?} under {enabled:?} must not read as preview-only"
+            );
+        }
+    }
+
+    /// #13791: the route names `check --format agent` first (the remedy a
+    /// refusal envelope derives) and the gap-bound start only conditionally.
+    #[test]
+    fn preview_seam_route_names_check_agent_first_and_the_start_conditionally() {
+        let route = preview_seam_route(
+            Path::new("repo"),
+            PreviewCheckInput::Base("main"),
+            &["TypeScript"],
+        );
+        assert!(
+            route.starts_with("run `ripr check --root ")
+                && route.contains(" --base main --format agent` for its findings")
+                && route.contains("when that prints a `ripr agent repair --gap-id <gap> --base main --phase before` start")
+                && route.contains("no seam exists for TypeScript preview code")
+                && route.contains("covers Rust files only")
+                && !route.contains("current config")
+                && !route.contains('\n'),
+            "{route}"
+        );
+        let unbased =
+            preview_seam_route(Path::new("repo"), PreviewCheckInput::Default, &["Python"]);
+        assert!(
+            unbased.starts_with("run `ripr check --root ")
+                && unbased.contains("repo --format agent` for its findings")
+                && unbased.contains("--base <base> --phase before"),
+            "{unbased}"
+        );
+    }
+
+    /// #13791 review: a saved-patch brief's route replays that patch with
+    /// `--diff <absolute path>` (never `--base`), and a `--files` brief's
+    /// route says the current diff need not match the selection.
+    #[test]
+    fn preview_seam_route_replays_a_saved_patch_and_qualifies_a_files_scope() {
+        let diff = Path::new("/work/repo dir/change.diff");
+        let route = preview_seam_route(
+            Path::new("repo"),
+            PreviewCheckInput::Diff(diff),
+            &["TypeScript"],
+        );
+        let expected = preview_check_command(Path::new("repo"), PreviewCheckInput::Diff(diff));
+        assert!(
+            route.starts_with(&format!("run `{expected}` for its findings"))
+                && expected.ends_with(&format!(
+                    " --diff {} --format agent",
+                    shell_arg(&bound_root("/work/repo dir/change.diff"))
+                ))
+                && (cfg!(windows) || expected.contains(" --diff '/work/repo dir/change.diff' "))
+                && !expected.contains("--base")
+                && route.contains("--base <base> --phase before")
+                && !route.contains('\n'),
+            "{route}"
+        );
+        let files = preview_seam_route(
+            Path::new("repo"),
+            PreviewCheckInput::CurrentDiffNotFiles,
+            &["Python"],
+        );
+        assert!(
+            files.contains("repo --format agent` for the current diff's findings (that diff need not match the --files selection)")
+                && !files.contains("--diff")
+                && !files.contains(" --base main"),
+            "{files}"
+        );
+        assert_eq!(
+            preview_check_command(Path::new("repo"), PreviewCheckInput::Base("main")),
+            preview_check_command(Path::new("repo"), PreviewCheckInput::Default)
+                .replace(" --format agent", " --base main --format agent")
+        );
+        assert_eq!(
+            preview_item_language("probe:src_a.ts:typescript_preview:abcd1234"),
+            Some("TypeScript")
+        );
+        assert_eq!(preview_item_language("gap:python:a.py:f:x"), Some("Python"));
+        assert_eq!(preview_item_language("probe:src_lib.rs:12:predicate"), None);
+        assert_eq!(preview_item_language("seam-discount"), None);
     }
 
     #[test]
