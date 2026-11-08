@@ -58,3 +58,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — compile_time_assert_stop_reason (6)
+
+Reason:
+RIPR-SPEC-0002: #12040 review: compile-time guard ignores qualified/shadowed/cfg-gated assertions; missing text no longer claims a violation
+
+Command:
+`cargo xtask goldens bless compile_time_assert_stop_reason --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

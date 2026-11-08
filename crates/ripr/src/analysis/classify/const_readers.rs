@@ -735,7 +735,7 @@ pub(in crate::analysis) fn function_reads(body: &str, name: &str) -> bool {
 
 /// A local, loop variable, pattern binding or parameter spelled like the
 /// constant. Every check is whole-word, so `let LIMIT_X` does not shadow.
-fn shadows(masked: &str, name: &str) -> bool {
+pub(super) fn shadows(masked: &str, name: &str) -> bool {
     let bytes = masked.as_bytes();
     let mut start = 0;
     while let Some(found) = masked[start..].find(name) {

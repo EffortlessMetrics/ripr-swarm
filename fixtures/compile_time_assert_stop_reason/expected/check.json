@@ -152,7 +152,7 @@
       "flow_sinks": [
       ],
       "evidence": ["No tests were found, so activation/infection cannot be estimated", "Propagation is not statically obvious from syntax-first analysis"],
-      "missing": ["compile-time assertion: a violating edit fails to build; no missing test is established"],
+      "missing": ["compile-time assertion constrains this line: the build, not a test, checks the new value against it; ripr has not evaluated it"],
       "assertion_texts": {
       },
       "activation": {

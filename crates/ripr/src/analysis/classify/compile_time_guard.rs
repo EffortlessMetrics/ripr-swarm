@@ -8,7 +8,7 @@
 //! Fail closed on anything not spelled plainly: the assertion must be an item
 //! in the probe's own file, and a name declared more than once is not linked.
 
-use super::const_readers::{declaration_count, is_ident_byte};
+use super::const_readers::{declaration_count, is_ident_byte, shadows};
 use super::decision::is_compile_time_assertion;
 
 /// Whether the changed line `probe_line` (1-based) of `masked_source` (comments
@@ -19,6 +19,11 @@ pub(in crate::analysis) fn constrained_by_compile_time_assertion(
     probe_line: usize,
     const_name: Option<&str>,
 ) -> bool {
+    // A `macro_rules!` template may hold an assertion that is never built as
+    // written; fail closed rather than guess.
+    if masked_source.contains("macro_rules!") {
+        return false;
+    }
     let spans = assertion_spans(masked_source);
     if spans.iter().any(|span| {
         line_of(masked_source, span.0) <= probe_line && probe_line <= line_of(masked_source, span.1)
@@ -64,6 +69,7 @@ fn assertion_spans(masked: &str) -> Vec<(usize, usize)> {
             _ => false,
         };
         if is_head
+            && !cfg_gated(masked, at)
             && let Some(end) = item_end(masked, word_end)
             && is_compile_time_assertion(&masked[at..end])
         {
@@ -74,6 +80,24 @@ fn assertion_spans(masked: &str) -> Vec<(usize, usize)> {
         }
     }
     spans
+}
+
+/// An attribute line directly above the item mentions `cfg`: the assertion may
+/// not be built, so it is not credited as a guard.
+fn cfg_gated(masked: &str, at: usize) -> bool {
+    let line_start = masked[..at].rfind('\n').map_or(0, |n| n + 1);
+    let mut rest = &masked[..line_start];
+    loop {
+        let trimmed = rest.trim_end();
+        let line = trimmed.rsplit('\n').next().unwrap_or("").trim_start();
+        if !line.starts_with("#[") && !line.starts_with("#![") {
+            return false;
+        }
+        if line.contains("cfg") {
+            return true;
+        }
+        rest = &trimmed[..trimmed.len() - line.len()];
+    }
 }
 
 /// `_: ..` after `const`, not `_NAME`.
@@ -101,10 +125,13 @@ fn mentions_word(text: &str, name: &str) -> bool {
         let at = start + found;
         let end = at + name.len();
         start = end;
+        let before = text[..at].trim_end();
+        let qualified = before.ends_with("::") || before.ends_with('.');
         if (at == 0 || !is_ident_byte(bytes[at - 1]))
             && !bytes.get(end).is_some_and(|b| is_ident_byte(*b))
+            && !qualified
         {
-            return true;
+            return !shadows(text, name);
         }
     }
     false
@@ -155,6 +182,30 @@ mod tests {
         assert!(guard(block, 3, None));
         let macro_form = "const K: usize = 2;\nstatic_assertions::const_assert!(K > 0);\n";
         assert!(guard(macro_form, 1, Some("K")));
+    }
+
+    #[test]
+    fn a_path_field_or_local_binding_is_not_a_mention() {
+        for assertion in [
+            "assert!(other::N <= 4)",
+            "assert!(cfg.N <= 4)",
+            "{ let N = 3; assert!(N > 0); }",
+        ] {
+            let src = format!("pub const N: usize = 1;\nconst _: () = {assertion};\n");
+            assert!(!guard(&src, 1, Some("N")), "{assertion}");
+        }
+    }
+
+    #[test]
+    fn cfg_gated_and_macro_template_assertions_are_not_guards() {
+        let gated =
+            "pub const N: usize = 1;\n#[cfg(feature = \"x\")]\nconst _: () = assert!(N <= 4);\n";
+        assert!(!guard(gated, 1, Some("N")));
+        assert!(!guard(gated, 3, None));
+        let other_attr = "pub const N: usize = 1;\n#[inline]\nconst _: () = assert!(N <= 4);\n";
+        assert!(guard(other_attr, 1, Some("N")));
+        let template = "pub const N: usize = 1;\nmacro_rules! m { () => { const _: () = assert!(N <= 4); }; }\n";
+        assert!(!guard(template, 1, Some("N")));
     }
 
     #[test]

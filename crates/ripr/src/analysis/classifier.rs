@@ -696,7 +696,7 @@ fn withhold_compile_time_guard_as_unknown(finding: &mut Finding) {
         )
     });
     finding.missing = vec![
-        "compile-time assertion: a violating edit fails to build; no missing test is established"
+        "compile-time assertion constrains this line: the build, not a test, checks the new value against it; ripr has not evaluated it"
             .to_string(),
     ];
     finding.activation.missing_discriminators.clear();
