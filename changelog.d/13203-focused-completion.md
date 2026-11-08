@@ -1,0 +1,3 @@
+<!-- section: Fixed -->
+- Refuse incomplete or contradictory caller-reported focused test event sequences (a test reporting both `ok` and `failed`, a `started` test with no terminal event, or an unclosed or mismatched suite) before finishing a repair attempt. `--test-result` remains optional and does not gate finish (#13203).
+- A focused `--test-result` finish now binds the caller-reported claim to the evaluated HEAD and the exact test-file bytes, commits the claim before publishing the receipt, restores the attempt to `awaiting_edit` when publication or retention fails, and shows an interrupted focused finish as limited in status. Recovering an interrupted focused finish is not included yet (#13203).

@@ -834,6 +834,95 @@ closed. Staleness at bind time and at verdict time is covered by the
 edit-cage unit tests; the real-binary tests cover the bound, created-file
 credit and the out-of-cage refusal.
 
+## Amendment (#13203 B): a caller-supplied focused test result is validated and recorded
+
+ripr does not run `cargo test` (ADR 0022 keeps execution authority outside
+ripr). `ripr agent repair --phase after --attempt <id> --test-result <file>`
+takes a result the caller produced and only validates and records it. The file
+is a JSON document with `schema_version` `0.1`, `kind` `focused_test_result`,
+`attempt_id`, `head`, `test_file` and `libtest_events` (libtest JSON event
+objects). The shared after-phase authority checks, before anything is
+finished, that the envelope and recognized event fields are well formed, that `attempt_id` is this attempt,
+that `head` is the repository HEAD the phase evaluates, that `test_file` is the
+attempt's selected test file (the proposal's file for a proposal), and that at
+least one test **ran** (`ok` or `failed`; `started`, `ignored` and libtest's slow-test `timeout` notice do not count)
+and is an executable test defined in that file, or, for an inline module,
+reached through the governed module's path. Duplicates do not add to the count.
+Any failure, including zero counted tests, is a refusal that leaves the attempt
+awaiting its edit and records nothing. When the cage then finishes compliant,
+the normalized record (`ran_tests`, `passed`, `failed`, `uncounted_ran`, the
+bound attempt id and HEAD) is retained as the `focused_test_result` terminal
+artifact. The record states that ripr checked shape, binding, file membership
+and per-test outcomes and did not observe the run: the caller's claim that
+those events came from that file stays the caller's. A failed test the selected file
+does not define is refused rather than passed over. `--test-result` is
+optional and does not gate finish: it validates and records a caller-reported
+result, and requiring one to finish is a later, separate change.
+The retained artifact is the normalized record, not the caller's bytes.
+Caller-reported progress must be complete: started or timeout tests need a
+terminal outcome, and each announced suite must close before another begins.
+Suite integer summaries must match distinct observed outcomes (including foreign
+tests) and the announced test count, excluding filtered-out tests. Contradictory
+outcomes within a suite refuse; identical duplicates do not inflate counts.
+Sequential suites are supported; any observed failure remains visible in the
+normalized record. Terminal-only claims remain supported and do not establish
+whole-process completion. Neither framing nor counts authenticate the binary,
+the run's origin, an exit code or omitted suites. Bench rows require numeric
+nonnegative median and deviation and reconcile as measured outcomes.
+Before committing a compliant finish, the existing edit-cage capture must
+match the HEAD and exact test-file bytes used for result validation. If either
+changed, the after phase refuses without committing a verdict, so the caller
+can rerun the test and retry. A descendant committed before validation remains
+eligible, and a result remains optional and does not gate finish.
+If publication or terminal retention fails after a compliant finish, the
+attempt is restored to `awaiting_edit` for retry when the exact finish is
+still owned and no terminal evidence has been committed. An apply-record
+failure can also restore the exact terminal retention that this same
+invocation committed, provided its entire manifest remains unchanged; reusing
+another retainer's result grants no rollback custody. An unsuccessful restore
+is reported explicitly. The finish commits the normalized claim before
+publishing the receipt, and retention checks the bytes against that claim.
+A focused finish records its receipt protocol before evaluation starts.
+A separate durable marker precedes evaluation, and a successful decision commits
+the exact rendered receipt and verified-input digests before receipt publication.
+A stop after the marker without a matching durable success and receipt is
+ambiguous, so status reports the attempt as limited and a new attempt is the
+safe route. Standalone receipt publication does not commit the after-phase
+outcome. Recovering an interrupted focused finish with the original claim is
+not part of this change: it lands separately, and until then an interrupted
+focused finish is inspected and restarted as a new attempt. These transaction
+checks assume the local manifest and cooperating writers honor the existing
+lock and integrity model; they do not protect against a writer that can
+arbitrarily rewrite the manifest itself.
+The named trusted-surface receipt refusal remains a decision refusal with its
+existing recovery guidance; it is not classified as a publication failure.
+These records remain caller claims.
+
+A refusal is an after-phase refusal like any other: it counts against the
+attempt's after-phase retry budget, so "retryable" holds only up to that
+budget. When a validated result is not recorded because the cage verdict is not
+compliant, stderr says so in one line instead of dropping it silently.
+
+Attribution remains the caller's claim: libtest events do not identify their
+test binary, so another binary can have the same test path. For an integration
+file the event's module-qualified test name must match a parser-identified
+executable test in the selected file. For an inline module the event must match
+the parser-identified test's full path within the uniquely governed module,
+prefixed by the file's own module path (`src/foo.rs` is `foo`, `src/a/b.rs` is `a::b`,
+`src/a/mod.rs` is `a`, `lib.rs` and `main.rs` are the crate root, `tests/x.rs`
+is its own root), so `bar::tests::adds` does not
+count for `src/foo.rs`. When that module path cannot be derived (a `src/bin`
+target, a non-`src` file, a nested `tests/` file) nothing counts; a `#[path]`
+module is not detectable from the file and stays the caller's claim. A failed
+test counts as having **ran**: `ran_tests` includes it and `failed` reports it,
+so a later finish gate would have to require `failed == 0` to treat it as a pass.
+
+A focused test result is accepted for Rust test files only: a Python or
+TypeScript attempt that passes `--test-result` is refused up front with that
+scope and the next step of finishing without the flag. A result file must be
+saved outside the checkout; one inside it would be an untracked edit the cage
+judges, so it is refused with that next step.
+
 ## Amendment (#13205): a proposed new-test target is preflighted read-only
 
 Before an attempt follows a new-test proposal, one shared preflight
@@ -854,6 +943,12 @@ early stale guard, and both use the same stale rule. A virtual workspace
 manifest (no `[package]`) does not own a proposed test, and a manifest that
 exists but cannot be read or parsed refuses rather than falling through to an
 ancestor.
+
+The limitation records the before-phase observation in historical language, so
+it remains accurate after the proposed test is created and the attempt finishes.
+Package-name syntax follows stable Cargo 1.95 (Unicode XID start or underscore,
+then XID continuation or hyphen), rather than cargo-new or registry restrictions.
+This check establishes name identity, not complete Cargo manifest validity.
 
 ## Amendment (#13204): one projection of the selected new-test proposal
 
@@ -876,63 +971,6 @@ the module, so it is not repeated as a proposal. A not-ready item or a refused
 verdict discloses no proposal. The
 LSP and VS Code surfaces already read `recommended_test.file` from the packet;
 asserting their parity is slice 2 of #13204.
-
-## Amendment (#13203 B): a caller-supplied focused test result is validated and recorded
-
-ripr does not run `cargo test` (ADR 0022 keeps execution authority outside
-ripr). `ripr agent repair --phase after --attempt <id> --test-result <file>`
-takes a result the caller produced and only validates and records it. The file
-is a JSON document with `schema_version` `0.1`, `kind` `focused_test_result`,
-`attempt_id`, `head`, `test_file` and `libtest_events` (libtest JSON event
-objects). The shared after-phase authority checks, before anything is
-finished, that the document is well formed, that `attempt_id` is this attempt,
-that `head` is the repository HEAD the phase evaluates, that `test_file` is the
-attempt's selected test file (the proposal's file for a proposal), and that at
-least one test **ran** (`ok` or `failed`; `started`, `ignored` and libtest's slow-test `timeout` notice do not count)
-and is an executable test defined in that file, or, for an inline module,
-reached through the governed module's path. Duplicates do not add to the count.
-Any failure, including zero counted tests, is a refusal that leaves the attempt
-awaiting its edit and records nothing. When the cage then finishes compliant,
-the normalized record (`ran_tests`, `passed`, `failed`, `uncounted_ran`, the
-bound attempt id and HEAD) is retained as the `focused_test_result` terminal
-artifact. The record states that ripr checked shape, binding, file membership
-and per-test outcomes and did not observe the run: the caller's claim that
-those events came from that file stays the caller's. This change validates
-binding and per-test outcomes only; it does not yet refuse the same test
-reporting both `ok` and `failed`, a `started` test with no terminal event, or a
-missing terminal suite event. Stream completeness is checked by the later
-custody change. The retained artifact is the normalized record, not the
-caller's bytes. `--test-result` is optional and does not gate finish: it validates and records a
-caller-reported result, and ripr never runs or observes the tests. Requiring a
-result to finish is a later, separate change.
-
-A refusal is an after-phase refusal like any other: it counts against the
-attempt's after-phase retry budget, so "retryable" holds only up to that
-budget. When a validated result is not recorded because the cage verdict is not
-compliant, stderr says so in one line instead of dropping it silently.
-
-Attribution is the caller's claim. For an integration file the match is
-name-only: a test counts when its function name is an executable test defined
-in the selected file. For an inline module the libtest path must start with the
-file's own module path (`src/foo.rs` is `foo`, `src/a/b.rs` is `a::b`,
-`src/a/mod.rs` is `a`, `lib.rs` and `main.rs` are the crate root, `tests/x.rs`
-is its own root) followed by the governed module, so `bar::tests::adds` does not
-count for `src/foo.rs`. When that module path cannot be derived (a `src/bin`
-target, a non-`src` file, a nested `tests/` file) nothing counts; a `#[path]`
-module is not detectable from the file and stays the caller's claim. A failed
-test counts as having **ran**: `ran_tests` includes it and `failed` reports it,
-so a later finish gate must require `failed == 0` for a pass.
-
-A `failed` event for a test the selected file does not define is refused (the
-failure cannot be attributed outside the file), and so is a suite that reports
-`failed` when no failed test in the file explains it; an unattributed `ok` is
-simply not counted. The result stays a caller-reported claim.
-
-A focused test result is accepted for Rust test files only: a Python or
-TypeScript attempt that passes `--test-result` is refused up front with that
-scope and the next step of finishing without the flag. A result file must be
-saved outside the checkout; one inside it would be an untracked edit the cage
-judges, so it is refused with that next step.
 
 ## Amendment (#12959): a refused changed-field seam names its next step
 
@@ -964,6 +1002,8 @@ read of a written field stays #11870.
 - `crates/ripr/src/output/agent_seam_packets.rs::tests::selected_proposal_reads_the_same_in_card_packet_and_mcp` (#13204)
 - `crates/ripr/tests/new_test_proposal_attempt.rs::a_proposal_attempt_says_no_test_exists_yet` (#13205)
 - `crates/ripr/tests/new_test_proposal_attempt.rs::an_existing_test_target_attempt_has_no_not_yet_disclosure` (#13205)
+- `crates/ripr/tests/proposal_only_repair_start.rs::inline_proposal_with_an_invalid_package_identity_leaves_no_attempt` (#13205)
+- `crates/ripr/tests/proposal_only_repair_start.rs::package_name_preflight_agrees_with_cargo_metadata` (#13205)
 - `crates/ripr/src/analysis/new_test_target/preflight_tests.rs::a_plain_integration_path_with_no_file_has_no_test_yet` (#13205)
 - `crates/ripr/src/analysis/new_test_target/preflight_tests.rs::a_member_package_is_named_for_its_own_tests_directory` (#13205)
 - `crates/ripr/src/analysis/new_test_target/preflight_tests.rs::paths_that_escape_or_are_not_plain_are_refused` (#13205)
@@ -992,6 +1032,18 @@ read of a written field stays #11870.
 - `crates/ripr/tests/focused_test_result.rs::a_result_saved_inside_the_checkout_is_refused_up_front` (#13203)
 - `crates/ripr/src/app/focused_run.rs::tests::a_non_rust_selected_file_is_refused_up_front` (#13203)
 - `crates/ripr/tests/focused_test_result.rs::a_failed_only_result_is_recorded_as_ran_with_the_failure_visible` (#13203)
+- `crates/ripr/tests/focused_test_result.rs::failed_focused_result_publication_restores_the_attempt_for_retry` (#13203)
+- `crates/ripr/tests/focused_test_result.rs::failed_receipt_publication_restores_focused_finish_for_retry` (#13203)
+- `crates/ripr/tests/focused_test_result.rs::receipt_surface_decision_is_not_mislabeled_as_publication_failure` (#13203)
+- `crates/ripr/tests/focused_test_result.rs::another_after_cannot_drop_or_undo_a_focused_result` (#13203)
+- `crates/ripr/tests/focused_test_result.rs::foreign_focused_bytes_are_not_retained` (#13203)
+- `crates/ripr/tests/focused_test_result.rs::noncompliant_finish_does_not_retain_the_supplied_focused_result` (#13203)
+- `crates/ripr/tests/focused_test_result.rs::malformed_suite_event_is_refused_even_with_a_counted_test` (#13203)
+- `crates/ripr/tests/focused_test_result.rs::focused_result_does_not_bind_a_replaced_test_file` (#13203)
+- `crates/ripr/tests/focused_test_result.rs::focused_result_does_not_bind_an_intervening_descendant_commit` (#13203)
+- `crates/ripr/tests/focused_test_result.rs::focused_result_accepts_a_descendant_committed_before_validation` (#13203)
+- `crates/ripr/tests/focused_test_result.rs::finish_without_a_focused_result_remains_supported` (#13203)
+- `crates/ripr/src/app/focused_run.rs::tests::inline_result_requires_the_named_test_to_be_in_the_governed_module` (#13203)
 - `crates/ripr/src/app/focused_run.rs::tests::an_inline_module_is_attributed_through_the_files_own_module_path` (#13203)
 - `crates/ripr/src/app/focused_run.rs::tests::an_inline_module_whose_path_cannot_be_derived_counts_nothing` (#13203)
 - `crates/ripr/src/app/focused_run.rs::tests::a_timeout_event_is_not_terminal_and_never_counts_by_itself` (#13203)

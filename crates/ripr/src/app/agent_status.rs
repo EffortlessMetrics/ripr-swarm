@@ -590,7 +590,12 @@ fn attempt_receipt(
         // terminal evidence (above). One finished without it (by the C2b build,
         // which issued none) never consults the one-slot compatibility file,
         // which another attempt's receipt may occupy.
-        AttemptTerminalReceipt::NotRetained if manifest.gap_binding.is_some() => {
+        AttemptTerminalReceipt::NotRetained
+            if manifest.gap_binding.is_some() || after.focused_result.is_some() =>
+        {
+            // A focused finish records its complete evidence under the
+            // attempt. A standalone compatibility receipt cannot stand in for
+            // the after phase's durable evaluation outcome.
             AgentStatusAttemptReceipt::NotIssued
         }
         AttemptTerminalReceipt::NotRetained => {
@@ -3093,6 +3098,9 @@ pub(crate) fn build_agent_attempt_status(
         _ => {}
     }
     let mut limitations = manifest.limitations.clone();
+    if let Some(limitation) = focused_receipt_recovery_limitation(&manifest) {
+        limitations.push(limitation.to_string());
+    }
     if matches!(
         manifest.state,
         RepairAttemptState::Prepared | RepairAttemptState::AwaitingEdit
@@ -3188,6 +3196,41 @@ fn corrupt_attempt_status(
     }
 }
 
+/// An unfinished focused evidence set is not a legacy compatibility result.
+/// Status cannot assume the shared receipt is the accepted one; the after
+/// phase verifies the exact durable digests before recovering it.
+pub(crate) fn focused_receipt_recovery_limitation(
+    manifest: &RepairAttemptManifest,
+) -> Option<&'static str> {
+    if manifest.state != RepairAttemptState::ReadyToFinish
+        || !manifest.terminal_artifacts.is_empty()
+    {
+        return None;
+    }
+    let pending = manifest.after.as_ref()?.focused_result.as_ref()?;
+    if manifest.last_after_refusal.is_some() {
+        return Some(
+            "the focused finish ended in a recorded refusal; inspect that refusal and start a new attempt",
+        );
+    }
+    if pending.receipt_protocol.as_deref() != Some("durable-v1") {
+        return Some(
+            "the focused receipt recovery protocol is unknown; inspect the attempt and start a new attempt",
+        );
+    }
+    match &manifest.focused_receipt_evaluation {
+        None => Some(
+            "no focused receipt evaluation is recorded yet; if the after phase is no longer running, inspect the attempt and start a new attempt",
+        ),
+        Some(crate::app::repair_attempt::FocusedReceiptEvaluation::Started) => Some(
+            "focused receipt evaluation has started but no outcome is recorded; if the after phase is no longer running, inspect the attempt and start a new attempt",
+        ),
+        Some(crate::app::repair_attempt::FocusedReceiptEvaluation::Accepted { .. }) => Some(
+            "the focused receipt decision was committed; if the after phase is no longer running, inspect the attempt and start a new attempt",
+        ),
+    }
+}
+
 /// The #4798 status-class projection for one validated attempt. It composes
 /// the manifest's operational state, the receipt the attempt actually
 /// retained (never another attempt's compatibility projection), and
@@ -3209,7 +3252,14 @@ fn attempt_status_class(
             _ => "limited",
         },
         RepairAttemptState::ReadyToFinish => {
-            if manifest.terminal_artifacts.is_empty() {
+            if manifest.terminal_artifacts.is_empty()
+                && manifest
+                    .after
+                    .as_ref()
+                    .is_some_and(|after| after.focused_result.is_some())
+            {
+                "limited"
+            } else if manifest.terminal_artifacts.is_empty() {
                 // Finished before attempt-local terminal retention existed:
                 // any reading travels through the one-slot compatibility
                 // projection, which is exactly the strength it has earned
@@ -5331,6 +5381,7 @@ mod tests {
             delta_sha256: "sha256:fixture-delta".to_string(),
             delta_binding: None,
             receipt_projection_predecessor: None,
+            focused_result: None,
             packet_sha256: "sha256:fixture-packet".to_string(),
             current: true,
             verdict: EditCageVerdict {
@@ -5493,6 +5544,7 @@ mod tests {
                 delta_sha256: "sha256:delta".to_string(),
                 delta_binding: None,
                 receipt_projection_predecessor: None,
+                focused_result: None,
                 packet_sha256: "sha256:packet".to_string(),
                 current: true,
                 verdict: EditCageVerdict {
@@ -5501,6 +5553,7 @@ mod tests {
                     violations: Vec::new(),
                 },
             }),
+            focused_receipt_evaluation: None,
             last_after_refusal: None,
             after_refusal_count: 0,
             after_refusal_history: Vec::new(),
@@ -7808,6 +7861,7 @@ mod tests {
             limitations: Vec::new(),
             non_claims: Vec::new(),
             after: None,
+            focused_receipt_evaluation: None,
             last_after_refusal: None,
             after_refusal_count: 0,
             after_refusal_history: Vec::new(),
