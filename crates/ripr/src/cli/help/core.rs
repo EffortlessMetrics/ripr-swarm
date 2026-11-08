@@ -667,8 +667,8 @@ pub(super) const CONTEXT_HELP: &str = r#"Print one finding's changed code and re
 Use this when an agent or tool needs the facts behind one `ripr check`
 finding: the changed expression ripr examined, the tests that appear to
 reach it, the values they check, and any assertion that seems to be missing.
-Output is always JSON; `--json` is accepted and changes nothing. To read the
-same finding as prose, run `ripr explain` with the same selector.
+Output is always JSON. To read the same finding as prose, run `ripr explain`
+with the same selector.
 
 Usage: ripr context [--root PATH] [--base REV] [--worktree|--committed|--diff PATH] [--from PATH] [--path GLOB] [--exclude GLOB] [--mode MODE] [--no-unchanged-tests] [--perl-facts PATH] [--suppression-policy PATH] --at <finding-id|file:line> [--max-related-tests N] [--json] [--quiet]
 
@@ -722,7 +722,8 @@ Options:
                Use this Perl facts file for replay.
   --suppression-policy PATH
                Apply the explicit suppression policy for replay.
-  --json       Accepted; output is always JSON.
+  --json       Output is already JSON; passing it also makes usage errors
+               and selector misses print a `cli_refusal` JSON document.
   --quiet      Suppress analysis progress and heartbeats on stderr, like
                `ripr check --quiet`. Does not change stdout, exit codes, or
                error reporting.
@@ -731,8 +732,9 @@ Exit status:
   0  the JSON packet was printed
   2  usage error (no selector, conflicting flags), a selector that matches
      no finding or several, or a failed analysis. Once the arguments are
-     accepted, a failure also prints a JSON refusal document on stdout;
-     usage errors and selector misses keep stdout empty.
+     accepted, a failure also prints a JSON refusal document on stdout.
+     Usage errors and selector misses keep stdout empty unless `--json` is
+     passed, which prints the `cli_refusal` document instead.
 
 Filesystem effects:
   Fresh analysis may create or refresh disposable cache files under
