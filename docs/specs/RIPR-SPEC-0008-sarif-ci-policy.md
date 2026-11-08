@@ -22,6 +22,45 @@ suppression handling, and conservative defaults.
 The SARIF layer is a renderer over existing analyzer evidence. It must not
 classify findings or seams itself.
 
+### Cross-surface conformance (#12925)
+
+The same producer finding retains its class, canonical identity and contract
+confidence on JSON, SARIF, LSP and context-packet projections. MCP's gap list
+retains canonical identity, class and language; its detail document also names
+the original finding ID. GitHub annotation titles retain class and messages
+retain the canonical gap ID when one exists. Annotation text does not carry a
+structured finding ID or language field. Context packets identify the probe
+and optional canonical gap rather than supplying a separate finding ID.
+
+Candidate currentness, diagnostic visibility and repair readiness are distinct.
+An annotation's warning level is not permission to repair. LSP's full profile
+can disclose all classes; its actionable profile requires a current finding,
+an eligible gap class and a witness with a discriminator and fix site. This
+includes `no_static_path` when those facts exist. MCP finding readiness is
+conjoined with the shared seam validator at snapshot admission; a projected
+finding's readiness alone does not authorize `ripr_prepare_repair`.
+For example, `helper_chain_one_hop` currently supplies an `infection_unknown`
+finding with an established canonical discriminator and strong direct tests;
+its finding-level MCP readiness is true. A blanket class-based refusal would
+change the existing readiness contract rather than prove parity.
+
+The context packet carries a finding's classification. The separate
+`ripr agent packet` contract consumes a GapRecord or classified seam and uses
+`gap_state`/`evidence_class`, not the seven finding classes. TypeScript's
+existing finding-to-GapRecord producer is tested through the real packet
+renderer, including complete-packet and unreachable-discriminator controls.
+Rust findings do not become GapRecords through the check-output ledger route;
+their seam-packet path requires the separately scoped seam inventory. No test
+may manufacture that missing relationship or equate the distinct taxonomies.
+
+Conformance proof must preserve unavailable fields as unavailable, compare
+fields where the surface actually exposes them, and reject a mismatched class,
+identity or configured severity without changing classification or weakening
+any repair refusal. Existing representative fixtures cover every class each
+selected adapter emits. Optional `expected/sarif.json` and
+`expected/github.txt` files participate in the normal fixture golden check and
+spec-reasoned blessing route.
+
 The SARIF layer should:
 
 - declare `columnKind: "unicodeCodePoints"` on finding and repo-seam runs,

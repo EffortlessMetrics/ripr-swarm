@@ -83,6 +83,14 @@ Portable semantic identity hashes canonical qualification content with layers
 sorted by `layer_id`, excluding `semantic_digest` and checkout `locator:` suffixes
 on limitation messages.
 
+The digest sorts `limitations` by `limitation_id`, `safety_refs` by `receipt_id`,
+`non_claims` by `claim`, and `supersession_history` by
+`superseded_qualification_id`. Validation rejects a receipt where two entries of
+one of these lists share that key (`DuplicateIdentity`), so the digest cannot
+depend on input order. Substrate compatibility compares `dependencies` in
+`dependency_id` order, matching the digest's keyed-set treatment. The digest
+function itself does not validate; only validated receipts carry this guarantee.
+
 ## Required Evidence
 
 - Unit tests in `crates/ripr/src/provider_contract/adapter_substrate/tests.rs`
@@ -110,6 +118,10 @@ on limitation messages.
 2. TypeScript and JavaScript receipts share a family id with distinct languages.
 3. A packet producer claiming syntax facts: rejected with `ImpossibleClaimCeiling`.
 4. Reordered layers and relocated checkout locators: identical semantic digest.
+5. Two `limitations` (or `safety_refs`, `non_claims`, `supersession_history`)
+   entries sharing a sort key: rejected with `DuplicateIdentity`.
+6. Two receipts whose dependencies differ only in list order are compatible for
+   substrate sharing; differing dependency versions are not.
 
 ## Test Mapping
 

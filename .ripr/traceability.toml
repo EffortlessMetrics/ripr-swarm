@@ -1858,13 +1858,14 @@ id = "RIPR-SPEC-0011"
 name = "LLM work loop"
 spec = "docs/specs/RIPR-SPEC-0011-llm-work-loop.md"
 tests = [
+  "crates/ripr/tests/task_first_facade.rs::repair_loop_projection_tracks_real_attempt_states",
   "crates/ripr/src/cli/commands/agent_refusal_tests.rs::verify_typed_refusal_classifier_matches_only_whole_or_leading_clauses",
   "crates/ripr/src/cli/commands/agent_refusal_tests.rs::after_refusal_json_is_one_versioned_document_with_trimmed_error",
   "crates/ripr/src/cli/commands/agent_refusal_tests.rs::before_phase_dirty_premise_refusal_names_paths_and_commit_first_recovery",
   "crates/ripr/src/cli/commands/agent_refusal_tests.rs::agent_verify_execute_refuses_a_missing_root_as_failure_not_decision",
   "crates/ripr/src/cli/commands/agent_refusal_tests.rs::agent_status_refuses_a_malformed_attempt_id_before_reading_artifacts",
   "crates/ripr/src/cli/commands/agent_refusal_tests.rs::agent_status_accepts_an_out_dir_that_names_the_default_workflow_dir",
-  "crates/ripr/src/cli/commands/agent_refusal_tests.rs::after_refusal_reason_folds_narration_into_sentences",
+  "crates/ripr/src/cli/commands/agent_refusal_tests.rs::after_refusal_reason_preserves_narration_case_and_lines",
   "crates/ripr/src/cli/commands/agent_refusal_tests.rs::short_head_truncates_long_heads_and_keeps_short_or_unsliceable_ones",
   "crates/ripr/src/cli/commands/agent_refusal_tests.rs::agent_start_out_dir_anchors_relative_dirs_at_root_only",
   "crates/ripr/src/cli/commands/agent_refusal_tests.rs::seam_id_translation_passes_plain_ids_through_without_resolving",
@@ -9390,6 +9391,7 @@ id = "RIPR-SPEC-0108"
 name = "evidence-promotion honesty meta-gate"
 spec = "docs/specs/RIPR-SPEC-0108-evidence-promotion-honesty-meta-gate.md"
 tests = [
+  "crates/ripr/src/analysis/classifier.rs::tests::given_foreign_trait_impl_with_no_related_test_when_classified_then_reach_is_undecided",
   "crates/ripr/tests/operand_whitespace.rs::primitive_type_aliases_do_not_hide_observed_operator_effects",
   "crates/ripr/tests/operand_whitespace.rs::whitespace_does_not_supply_the_missing_shipping_discriminator",
   "crates/ripr/tests/operand_callee_identity.rs::a_genuine_primitive_call_retains_the_operand_pin_downgrade",
@@ -14673,6 +14675,7 @@ id = "RIPR-SPEC-0195"
 name = "Repair-attempt store identity and resolver"
 spec = "docs/specs/RIPR-SPEC-0195-repair-attempt-store-identity.md"
 tests = [
+  "crates/ripr/src/edit_cage/mod.rs::tests::staging_name_removed_after_the_nlink_read_is_not_ambiguous",
   "crates/ripr/tests/task_first_facade.rs::repair_human_paths_preserve_percent_root_identity",
   "crates/ripr/tests/task_first_facade.rs::repair_human_paths_preserve_literal_backslash_root_identity",
   "crates/ripr/src/output/path.rs::tests::repair_path_display_preserves_literal_percent_on_both_hosts",
@@ -14707,6 +14710,7 @@ tests = [
   "crates/ripr/src/cli/commands/agent.rs::tests::repair_after_cage_recovery_repeats_explicit_store",
   "crates/ripr/src/cli/agent.rs::tests::agent_repair_parses_explicit_store_and_rejects_empty",
   "crates/ripr/src/cli/agent.rs::tests::agent_status_parses_explicit_store_and_rejects_empty",
+  "crates/ripr/src/edit_cage/mod.rs::tests::staged_publication_pair_outside_the_attempt_store_stays_unsafe",
 ]
 fixtures = [
 ]
@@ -16472,6 +16476,7 @@ id = "RIPR-SPEC-0215"
 name = "MCP repair card projection"
 spec = "docs/specs/RIPR-SPEC-0215-repair-card-mcp-projection.md"
 tests = [
+  "crates/ripr/tests/mcp_cli_repair_parity.rs::repair_card_next_step_tracks_live_attempt_state_over_stdio",
   "crates/ripr/src/mcp/repair_card.rs::tests::repair_card_resource_uri_parsing_is_strict",
   "crates/ripr/src/mcp/repair_card.rs::tests::card_read_fails_closed_on_every_missing_producer_fact",
   "crates/ripr/src/mcp/repair_card.rs::tests::stale_snapshot_and_in_flight_read_fail_closed",

@@ -151,10 +151,25 @@ fn corpus_cases_cover_substrate_acceptance_matrix() -> Result<(), String> {
         .iter()
         .find(|case| case.id == "matrix_all_substrate_classes")
         .ok_or_else(|| "missing matrix_all_substrate_classes corpus case".to_string())?;
+    // Count alone passes when one class layer id is swapped for another unique id.
+    let expected_layers: std::collections::BTreeSet<String> = AdapterSubstrateClassV1::ALL
+        .iter()
+        .map(|class| format!("class.{}", class.as_str()))
+        .collect();
+    let actual_layers: std::collections::BTreeSet<String> = matrix
+        .qualification
+        .layers
+        .iter()
+        .map(|layer| layer.layer_id.clone())
+        .collect();
+    assert_eq!(
+        actual_layers, expected_layers,
+        "matrix case must carry exactly one layer per substrate class"
+    );
     assert_eq!(
         matrix.qualification.layers.len(),
         AdapterSubstrateClassV1::ALL.len(),
-        "matrix case must cover every substrate class layer"
+        "matrix case must not repeat a class layer"
     );
     for case in corpus.cases {
         let result = case.qualification.validate();
@@ -487,4 +502,84 @@ fn semantic_digest_is_order_and_relocation_invariant() -> Result<(), String> {
         .map_err(|error| error.to_string())?;
     assert_eq!(digest, relocated_digest);
     Ok(())
+}
+
+#[test]
+fn digest_sorted_lists_reject_duplicate_keys() -> Result<(), String> {
+    type Corrupt = fn(&mut AdapterSubstrateQualificationV1);
+    let cases: [(&str, Corrupt); 4] = [
+        ("limitations", |q| {
+            for message in ["a", "b"] {
+                q.limitations.push(SubstrateLimitationV1 {
+                    limitation_id: "dup".into(),
+                    category: "scope".into(),
+                    message: message.into(),
+                });
+            }
+        }),
+        ("safety_refs", |q| {
+            let mut second = q.safety_refs[0].clone();
+            second.harness_generation = "other.v1".into();
+            q.safety_refs.push(second);
+        }),
+        ("non_claims", |q| {
+            q.non_claims.push(SubstrateNonClaimV1 {
+                claim: q.non_claims[0].claim.clone(),
+                reason: "different reason".into(),
+            });
+        }),
+        ("supersession_history", |q| {
+            for reason in ["a", "b"] {
+                q.supersession_history.push(SubstrateSupersessionRecordV1 {
+                    superseded_qualification_id: "old.q".into(),
+                    reason: reason.into(),
+                });
+            }
+        }),
+    ];
+    for (field, corrupt) in cases {
+        let mut qualification = base_qualification(
+            "dup.keys",
+            "python",
+            AdapterSubstrateClassV1::InProcessParser,
+        );
+        require_ok(qualification.validate(), field)?;
+        corrupt(&mut qualification);
+        let error = require_err(qualification.validate(), field)?;
+        assert!(
+            error
+                .to_string()
+                .contains(&format!("{field} contains duplicate identity values")),
+            "{field}: {error}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn dependency_order_does_not_change_substrate_compatibility() {
+    let two_dependencies = |language: &str, reversed: bool| {
+        let mut qualification = base_qualification(
+            "dep.order",
+            language,
+            AdapterSubstrateClassV1::InProcessParser,
+        );
+        qualification.shared_adapter_family_id = Some("family.shared".into());
+        qualification.dependencies = vec![
+            dependency("dep.primary", "1.0.0", "grammar.v1"),
+            dependency("dep.secondary", "2.0.0", "grammar.v2"),
+        ];
+        if reversed {
+            qualification.dependencies.reverse();
+        }
+        qualification
+    };
+    let left = two_dependencies("typescript", false);
+    assert!(substrate_classes_compatible(
+        &left,
+        &two_dependencies("javascript", true)
+    ));
+    let mut different = two_dependencies("javascript", true);
+    different.dependencies[0].exact_version = "9.9.9".into();
+    assert!(!substrate_classes_compatible(&left, &different));
 }

@@ -864,11 +864,31 @@ packet's recommended test take their kind and file from it unchanged, and MCP
 discloses it as `proposed_new_test {kind, file, module, summary}` on a gap item
 whose shared-gate target is the proposal (a `SeamVerdict::AdmittedProposed`),
 including a proposal-only item whose finding has no existing fix site
-(`fix_site_not_established`): that item stays not ready and names the proposal
-the CLI card names. An item held by any other gate names none.
-The MCP disclosure is only a disclosure: readiness, the refusal code and the
-admit-or-refuse decision are exactly those of a plain `Admitted` verdict, and a
-refusal stays a refusal. No renderer picks its own file or kind, no target is
+(`fix_site_not_established`). An item held by any other gate names none.
+Amendment (#13538): the verdict is also the readiness authority. A finding that
+passed the finding-level actionability and discriminator gates but holds only
+for lack of an existing fix site (`fix_site_not_established`, or an existing
+test off a test surface) is ready exactly when the shared gate admits the
+proposal as the seam's target, with the proposal as its fix site: the
+integration file (which must be a shared test-surface path) or the production
+file with its one governed inline module. `ripr_prepare_repair` then names that
+file as its allowed edit surface, the file `ripr agent repair --phase before`
+confines the edit cage to (`selected_target.path`), with `fix_site.new_test_kind`
+set and `test_name`, `line` and `oracle` empty because no test exists yet. A
+proposal that cannot take that shape stays held, and a seam the producer admits
+no proposal for stays not ready on both surfaces. No MCP-side gate decides this.
+The proposal fix site additionally requires the filesystem-free part of the CLI
+preflight (`is_plain_relative_path`, `is_integration_test_file_shape`: no `..`,
+no absolute path, exactly `<dir>/tests/<name>.rs`); a ready item whose proposal
+cannot take that shape is held as `fix_site_not_established` rather than keeping
+a stale existing-test fix site. An inline proposal is read from the shared
+verdict before the plain inline-module verdict, so it is distinguished from an
+existing inline test and stays confined to its governed module
+(`inline_test_module`). The file-exists, symlink and owning-manifest checks stay
+at the CLI start preflight (`ripr agent repair --phase before`), not at MCP
+prepare. Prepare packets now carry `fix_site.new_test_kind` (`null` for an
+existing-test fix site).
+No renderer picks its own file or kind, no target is
 selected here and no test is generated. No insertion anchor exists yet; the only
 anchor-like fact is the governed inline module name, carried as `module` where
 the surface holds the admission's region (MCP does, and an InlineUnit proposal's
@@ -1118,6 +1138,17 @@ read of a written field stays #11870.
   Agent Receipt, and Agent Review Summary output contracts.
 - `.ripr/traceability.toml` maps this spec to tests, code, outputs, and
   metrics.
+
+### Repair-loop state projection (#13382)
+
+Recorded after-phase refusals preserve narration line boundaries and source/path
+case; joining a path or colon-ended heading must not invent punctuation or a
+different path. When the shared start gate withholds a new attempt, status
+removes both fully spelled before-phase recipes and the bare compatibility
+repair-start hint from its projected refusal and history. Retained manifests
+are not rewritten by inspection. Finished attempt state, gap closure and actual
+project-test execution remain separate observations.
+
 
 ## Metrics
 

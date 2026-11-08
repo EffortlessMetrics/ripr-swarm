@@ -263,6 +263,30 @@ impl ClassifiedProbeEvidence {
                 .owner_fn
                 .is_none_or(|owner| context.owner_may_be_reached_unseen(owner))
         });
+        // A method of a foreign trait (`Display::fmt`, `Add::add`) runs
+        // through formatting, operators and generic helpers that never spell
+        // its name, so no related test is not a ruled-out path: reach is
+        // undecided, as it already is when a proximity test is related.
+        let reach = match context.owner_fn {
+            Some(owner)
+                if reach.state == StageState::No
+                    && context.related_tests.is_empty()
+                    && crate::analysis::classify::owner_runs_through_language_dispatch(
+                        owner,
+                        context.index,
+                    ) =>
+            {
+                StageEvidence::new(
+                    StageState::Weak,
+                    Confidence::Low,
+                    format!(
+                        "No test is seen calling {}; a trait method can run through formatting, operators or generic code",
+                        owner.name
+                    ),
+                )
+            }
+            _ => reach,
+        };
         let reach = if context.const_readers.is_empty() {
             reach
         } else {
