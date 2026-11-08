@@ -71,8 +71,10 @@ writes the default branch, and its numbers gate nothing.
 
 The harness writes the receipt only when the whole run finishes, and the job is
 capped at 350 minutes, so a run that times out uploads nothing. If the first
-full run does, dispatch it in batches with the `repos` input and merge nothing
-by hand: promote only a receipt from one complete run, or split the manifest.
+full run does, split the manifest into smaller complete manifests and rerun each.
+A `repos` batch is for trying a crate, not for promotion: before promoting, check
+that the receipt's repository names and revisions exactly match `corpus.json`,
+and never promote a filtered receipt while the manifest still lists more crates.
 
 To promote a run, download the artifact, replace
 `metrics/public-proof/mutation-spot-check.json` with it, carry over the recorded
