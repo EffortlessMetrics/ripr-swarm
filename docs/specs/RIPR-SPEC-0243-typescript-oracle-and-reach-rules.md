@@ -1742,7 +1742,10 @@ the masker.
 22. **Mock call counts (2026-10-22, #9684).**
     Adopted: for a changed side-effect call (a probe whose
     change is to what the owner's call sends), an assertion whose observed
-    expression ends in `.mock.callCount()` or `.mock.calls.length`,
+    expression ends in `.mock.callCount()` or `.mock.calls.length`, or in the
+    bounded Sinon spy forms `.callCount`, `.callCount()` and
+    `.getCalls().length` (any receiver; no `.mock` segment exists to bind, so
+    the rule fails closed),
     including optional chains, literal computed keys, and unambiguously bound
     callback-local `const` aliases of those paths, counts calls and reads
     `mock_expectation` / weak (#10174),
@@ -1763,11 +1766,16 @@ the masker.
     lexically later; this demotion establishes no execution or admission. Count facts are read once per related test; ordinary argument
     pins do not trigger repeated whole-test parsing. Mutable, destructured,
     outer-scope and ambiguous aliases, dynamic keys within the count
-    suffix, arithmetic on a count, and other APIs such as Sinon `callCount`
-    properties retain their existing reading; they are not covered by this
-    bounded recognizer. Ambiguous alias spellings, a test body that fails to
-    parse, and a worker-refusal textual fallback likewise retain the existing
-    reading (a disclosed fail-open). `toHaveBeenCalledTimes` already reads weak mock
+    suffix, arithmetic on a count, and other count APIs (for example Sinon
+    `spy.args.length` or `calledOnce`) retain their existing reading; they are
+    not covered by this bounded recognizer. A Sinon-named receiver that is
+    merely a plain counter with a `callCount` member also loses argument credit,
+    a deliberate miss rather than wrong credit. Ambiguous alias spellings and a
+    test body that fails to parse retain the existing reading (a disclosed
+    fail-open). When the parse worker refuses, a textual fallback demotes only
+    plain identifier-path receivers of the same count suffixes (no optional
+    chain, index or alias), so a worker failure cannot restore exact credit for
+    those. `toHaveBeenCalledTimes` already reads weak mock
     evidence without an exact-value equality.
     For the separately bounded #12949 case, a direct test imports unaliased
     `test` and `expect` from the same `vitest` or `@jest/globals` module and
@@ -1779,7 +1787,9 @@ the masker.
     sink observation. An exact pin on index zero that distinguishes the
     literal from its uppercase form retains credit. The Jest extension requires
     a plain `test(...)` or `test.only(...)` registration on that imported binding;
-    an unused import cannot authenticate another registration, and a locally
+    `test.only` also admits a third, finite nonnegative numeric literal timeout
+    up to 2147483647. Computed timeouts and extra arguments retain their prior
+    readings. An unused import cannot authenticate another registration, and a locally
     replaced `only` member is refused. Existing Vitest registration readings remain unchanged.
     Mixed-framework pairs, global Jest bindings, renamed imports, added or multiple push arguments,
     aliases, mutation, shadowing and unrecognized forms retain their prior

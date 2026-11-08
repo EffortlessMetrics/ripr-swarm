@@ -3105,6 +3105,80 @@ fn retained_hover_discloses_analysis_health_without_changing_evidence() -> Resul
 }
 
 #[test]
+fn hover_during_interactive_debounce_window_is_not_presented_as_current() -> Result<(), String> {
+    // A changed save advances the workspace revision before the debounce
+    // sleep ends and the attempt is marked queued. In that window the
+    // retained snapshot describes the pre-save workspace.
+    let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
+    let backend = service.inner();
+    let finding = sample_finding();
+    let uri = test_uri("file:///workspace/src/pricing.rs")?;
+    backend
+        .refresh_plan(sample_workspace_diagnostics(
+            PathBuf::from("/workspace"),
+            uri.clone(),
+            vec![diagnostic_for_finding(Path::new("/workspace"), &finding)],
+            vec![finding],
+        ))
+        .ok_or_else(|| "expected retained snapshot".to_string())?;
+    backend.set_analysis_attempt_state_for_test(AnalysisAttemptState::Succeeded);
+    let params = hover_params(uri, 87, 1);
+    let text = || -> Result<String, String> {
+        match backend
+            .hover_for_position(&params)
+            .ok_or_else(|| "expected retained evidence hover".to_string())?
+            .contents
+        {
+            HoverContents::Markup(markup) => Ok(markup.value),
+            _ => Err("expected markup hover".to_string()),
+        }
+    };
+    assert!(!text()?.contains("retained evidence is not current"));
+    backend.set_interactive_debounce_open_for_test(true);
+    let during = text()?;
+    assert!(
+        during.starts_with("**ripr retained evidence is not current**"),
+        "debounce window hover claimed currentness: {during}"
+    );
+    assert!(during.contains("Wait for saved-workspace analysis to complete"));
+    assert!(during.contains("Add an exact boundary assertion."));
+    // The overlay is a projection: the recorded attempt state is untouched.
+    assert_eq!(
+        backend.analysis_attempt_state_for_test(),
+        AnalysisAttemptState::Succeeded
+    );
+    backend.set_interactive_debounce_open_for_test(false);
+    assert!(!text()?.contains("retained evidence is not current"));
+    // The debounce claim drops before the attempt is marked queued, and the
+    // save awaits quarantine publication before claiming it. The committed
+    // snapshot's revision closes both gaps: once a save advances the
+    // workspace revision, the older snapshot stays non-current with the
+    // debounce flag closed until a refresh for the new revision commits.
+    advance_revision_past_snapshot(backend)?;
+    let moved = text()?;
+    assert!(
+        moved.starts_with("**ripr retained evidence is not current**"),
+        "advanced revision hover claimed currentness: {moved}"
+    );
+    assert!(moved.contains("Wait for saved-workspace analysis to complete"));
+    Ok(())
+}
+
+/// Advance the workspace revision past the committed snapshot's
+/// saved-workspace revision, as a changed save does after a commit.
+fn advance_revision_past_snapshot(backend: &Backend) -> Result<(), String> {
+    let analyzed = backend
+        .latest_analysis_snapshot()
+        .and_then(|snapshot| snapshot.input_identity)
+        .map(|identity| identity.saved_workspace_revision)
+        .ok_or_else(|| "snapshot must carry an input identity".to_string())?;
+    while backend.workspace_revision() <= analyzed {
+        backend.advance_workspace_revision();
+    }
+    Ok(())
+}
+
+#[test]
 fn hover_for_position_shows_snapshot_age_and_refresh_duration() -> Result<(), String> {
     let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
     let backend = service.inner();
@@ -21196,6 +21270,42 @@ fn execute_command_collect_repair_packet_distinguishes_in_flight_from_terminal()
                 refresh_state == "in_flight"
             );
         }
+        Ok(())
+    })
+}
+
+#[test]
+fn execute_command_collect_repair_packet_withheld_during_debounce_window() -> Result<(), String> {
+    // A changed save advanced the revision but the attempt is not queued yet:
+    // the Succeeded pre-save snapshot must not be served as a current packet.
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|err| format!("failed to start test runtime: {err}"))?;
+    runtime.block_on(async {
+        let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
+        let backend = service.inner();
+        seed_successful_snapshot(backend)?;
+        backend.set_analysis_attempt_state_for_test(AnalysisAttemptState::Succeeded);
+        let before = repair_packet_sentinel_for(backend).await?;
+        if before["reason"] == "analysis_snapshot_stale" {
+            return Err(format!("succeeded snapshot must not be stale: {before}"));
+        }
+        backend.set_interactive_debounce_open_for_test(true);
+        let during = repair_packet_sentinel_for(backend).await?;
+        assert_eq!(during["status"], "not_actionable_or_incomplete");
+        assert_eq!(during["reason"], "analysis_snapshot_stale");
+        assert_eq!(during["refresh_state"], "in_flight");
+        assert_eq!(during["attempt_state"], "queued");
+        backend.set_interactive_debounce_open_for_test(false);
+        let after = repair_packet_sentinel_for(backend).await?;
+        assert_eq!(after, before);
+        // A save that advanced the revision withholds the packet even after
+        // the debounce flag closes, until the new revision commits.
+        advance_revision_past_snapshot(backend)?;
+        let moved = repair_packet_sentinel_for(backend).await?;
+        assert_eq!(moved["reason"], "analysis_snapshot_stale");
+        assert_eq!(moved["refresh_state"], "in_flight");
         Ok(())
     })
 }

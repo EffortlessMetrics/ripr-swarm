@@ -99,6 +99,7 @@ Task map:
 Setup:
   ripr doctor
   ripr capabilities [--language NAME] [--json | --markdown]
+  ripr completions <bash|zsh|fish|powershell>
   ripr init [--root PATH] [--ci github] [--mcp] [--agents TARGET] [--dry-run] [--force]
   ripr config validate [--root PATH]
   ripr cache status [--root PATH] [--json]
@@ -117,8 +118,8 @@ Analysis:
   ripr calibrate cargo-mutants --mutants-json PATH --repo-exposure-json PATH [--format md|markdown|text|json] [--out PATH]
 
 Repair:
-  ripr repair [<item>] [--root PATH] [--base REF]
-  ripr continue [--attempt ID] [--root PATH]
+  ripr repair [<item>] [--root PATH] [--base REF] [--json]
+  ripr continue [--attempt ID] [--root PATH] [--json]
   ripr status [--attempt ID] [--root PATH] [--json]
 
 Editor & Agent:
