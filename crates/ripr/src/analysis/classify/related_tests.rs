@@ -2111,7 +2111,11 @@ fn type_reexported_from_owner_dependency(
     stripped_file: &str,
     self_type: &str,
 ) -> bool {
-    if reexport.test_manifest == reexport.owner_manifest {
+    // A partially indexed test package may hold a competing definition or
+    // a second import of `T` the scans below cannot see.
+    if reexport.test_manifest == reexport.owner_manifest
+        || context.unindexed_manifests.contains(reexport.test_manifest)
+    {
         return false;
     }
     let crate_dir = reexport
@@ -2200,11 +2204,14 @@ fn type_reexported_from_owner_dependency(
     {
         return false;
     }
-    super::reveal::flattened_use_paths(&module_source)
+    // The hop must be a module-level `pub use dep::...::T;` spelled as one
+    // plain path: a private, nested-scope or brace-list import is refused.
+    super::reveal::flattened_use_paths(&file_level_use_text(&module_source))
         .iter()
         .any(|reexport_import| {
             reexport_import.alias.is_none()
                 && reexport_import.path.rsplit("::").next() == Some(self_type)
+                && module_source.contains(&format!("pub use {};", reexport_import.path))
                 && reexport
                     .library_dependency_names
                     .contains(path_root(&reexport_import.path))
@@ -13731,6 +13738,24 @@ fn crate_c_score_test() {
         crate_c_files: &[(&str, &str)],
         manifest: &str,
     ) -> Result<Vec<RelationReason>, String> {
+        reexport_related_with(
+            body,
+            crate_c_files,
+            manifest,
+            PathDependencySection::Dependencies,
+            false,
+        )
+    }
+
+    /// [`reexport_related`] with the dependency section of `crate_c`'s edge
+    /// to `crate_a`, and whether `crate_c` is left partially unindexed.
+    fn reexport_related_with(
+        body: &str,
+        crate_c_files: &[(&str, &str)],
+        manifest: &str,
+        section: PathDependencySection,
+        crate_c_unindexed: bool,
+    ) -> Result<Vec<RelationReason>, String> {
         let root = temp_dir("reexport")?;
         std::fs::create_dir_all(root.join("crates/crate_c")).map_err(|e| e.to_string())?;
         std::fs::write(root.join("crates/crate_c/Cargo.toml"), manifest)
@@ -13745,14 +13770,20 @@ fn crate_c_score_test() {
             &[(
                 "crates/crate_c/Cargo.toml",
                 "crates/crate_a",
-                PathDependencySection::Dependencies,
+                section,
                 "crate-a",
             )],
             false,
         );
         let prefixes = crate_abc_prefixes();
+        let unindexed: BTreeSet<String> = if crate_c_unindexed {
+            BTreeSet::from(["crates/crate_c/Cargo.toml".to_string()])
+        } else {
+            BTreeSet::new()
+        };
         let mut context = edge_context(&adjacency, &prefixes, &index);
         context.root = &root;
+        context.unindexed_manifests = &unindexed;
         let probe = probe("crates/crate_a/src/metadata.rs", "Self::WARN");
         let related = find_related_tests(&probe, Some(&owner), &index, true, None, Some(&context))
             .into_iter()
@@ -13866,9 +13897,38 @@ fn crate_c_score_test() {
                 vec![(filter, hop)],
                 "[package]\nname='crate-c'\n[lib]\npath='lib/x.rs'\n",
             ),
-            // A renamed import does not resolve.
+            // A private, nested-scope or brace-list hop is not an established
+            // module-level re-export.
             (
-                "use crate_c::filter::LevelFilter as F; F::current()",
+                TRACING_BODY,
+                vec![(filter, "use crate_a::metadata::LevelFilter;\n")],
+                CRATE_C_MANIFEST,
+            ),
+            (
+                TRACING_BODY,
+                vec![(
+                    filter,
+                    "mod inner { pub use crate_a::metadata::LevelFilter; }\n",
+                )],
+                CRATE_C_MANIFEST,
+            ),
+            // Two imports of the type in the module file itself.
+            (
+                TRACING_BODY,
+                vec![(
+                    filter,
+                    "pub use crate_a::metadata::LevelFilter;\npub use crate_a::LevelFilter;\n",
+                )],
+                CRATE_C_MANIFEST,
+            ),
+            // The test file globs, or binds the library name locally.
+            (
+                "use crate_c::filter::LevelFilter; use other::*; LevelFilter::current()",
+                vec![(filter, hop)],
+                CRATE_C_MANIFEST,
+            ),
+            (
+                "use crate_c::filter::LevelFilter; mod crate_c {} LevelFilter::current()",
                 vec![(filter, hop)],
                 CRATE_C_MANIFEST,
             ),
@@ -13877,6 +13937,47 @@ fn crate_c_score_test() {
             let related = reexport_related(body, &files, manifest)?;
             assert!(related.is_empty(), "{body} {files:?}: must not relate");
         }
+        Ok(())
+    }
+
+    /// #4905: a nested module path resolves by layout; a dev-only edge to
+    /// the owner (invisible to library code) or a partially indexed test
+    /// package refuses the same hop.
+    #[test]
+    fn reexport_hop_needs_a_library_edge_and_a_whole_test_package() -> Result<(), String> {
+        let hop = "pub use crate_a::metadata::LevelFilter;\n";
+        let nested = "use crate_c::filter::level::LevelFilter; LevelFilter::current()";
+        assert_eq!(
+            reexport_related(
+                nested,
+                &[("crates/crate_c/src/filter/level.rs", hop)],
+                CRATE_C_MANIFEST
+            )?,
+            vec![RelationReason::DirectOwnerCall]
+        );
+        let files = [("crates/crate_c/src/filter.rs", hop)];
+        assert!(
+            reexport_related_with(
+                TRACING_BODY,
+                &files,
+                CRATE_C_MANIFEST,
+                PathDependencySection::DevDependencies,
+                false,
+            )?
+            .is_empty(),
+            "dev-dependency hop must not relate"
+        );
+        assert!(
+            reexport_related_with(
+                TRACING_BODY,
+                &files,
+                CRATE_C_MANIFEST,
+                PathDependencySection::Dependencies,
+                true,
+            )?
+            .is_empty(),
+            "partially indexed test package must not relate"
+        );
         Ok(())
     }
 
