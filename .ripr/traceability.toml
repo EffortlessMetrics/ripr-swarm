@@ -18309,6 +18309,10 @@ id = "RIPR-SPEC-0238"
 name = "Python oracle and reach rules"
 spec = "docs/specs/RIPR-SPEC-0238-python-oracle-and-reach-rules.md"
 tests = [
+  "crates/ripr/src/analysis/language/python/helper_module_attribute_tests.rs::given_a_helper_called_through_a_relative_conftest_module_when_resolved_then_it_reads_as_the_exact_assertion",
+  "crates/ripr/src/analysis/language/python/helper_module_attribute_tests.rs::given_a_module_name_the_test_can_rebind_or_the_import_cannot_prove_when_called_then_nothing_resolves",
+  "crates/ripr/src/analysis/language/python/helper_module_attribute_tests.rs::given_the_helper_is_patched_outside_the_test_body_when_called_then_nothing_resolves",
+  "crates/ripr/src/analysis/language/python/helper_module_attribute_tests.rs::given_the_package_or_helper_module_can_replace_the_helper_when_called_then_nothing_resolves",
   "crates/ripr/src/analysis/language/python/module_value_tests.rs::a_module_receiver_is_refused_when_the_package_init_rebinds_the_submodule_name",
   "crates/ripr/src/analysis/language/python/module_value_tests.rs::a_module_receiver_still_reaches_a_submodule_reexported_from_the_package_init",
   "crates/ripr/src/analysis/language/python/module_value_tests.rs::an_ancestor_package_init_rebinding_a_path_segment_refuses_the_receiver",

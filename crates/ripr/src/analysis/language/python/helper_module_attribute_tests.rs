@@ -277,5 +277,51 @@ fn given_the_helper_is_patched_outside_the_test_body_when_called_then_nothing_re
             CALL,
             vec![],
         ),
+        // A walrus in the test body rebinds the module name.
+        (
+            "from . import conftest",
+            "    (conftest := object())\n    conftest.check_equal(sq(3), 9)",
+            vec![],
+        ),
     ])
+}
+
+#[test]
+fn given_the_package_or_helper_module_can_replace_the_helper_when_called_then_nothing_resolves()
+-> Result<(), String> {
+    let autouse_patch = "import sys\nimport pytest\n\n\ndef check_equal(actual, expected):\n    assert actual == expected\n\n\n@pytest.fixture(autouse=True)\ndef _quiet(monkeypatch):\n    monkeypatch.setattr(sys.modules[__name__], \"check_equal\", print)\n";
+    assert_unresolved(&[
+        // The package `__init__` imports another object under the name.
+        (
+            "from tests import conftest",
+            CALL,
+            vec![("tests/__init__.py", "from other import conftest\n")],
+        ),
+        // A star import in the package `__init__` may bind the name.
+        (
+            "from tests import conftest",
+            CALL,
+            vec![("tests/__init__.py", "from other import *\n")],
+        ),
+        // The helper's own module patches the helper in an autouse fixture.
+        (
+            "from . import conftest",
+            CALL,
+            vec![(CONFTEST, autouse_patch)],
+        ),
+    ])
+}
+
+#[test]
+fn given_a_package_import_of_a_plain_submodule_when_resolved_then_it_reads_as_the_assertion()
+-> Result<(), String> {
+    let source = test_source("from tests import conftest", CALL);
+    let test = resolved(&[
+        (TEST_FILE, &source),
+        (CONFTEST, EQ_HELPER),
+        ("tests/__init__.py", "VERSION = 1\n"),
+    ])?;
+
+    assert_eq!(gate_texts(&test), ["assert sq(3) == 9"]);
+    Ok(())
 }

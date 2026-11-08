@@ -60,12 +60,13 @@ pub(super) struct PythonHelperModule {
     /// Attribute names assigned anywhere in the module (`x.attr = ...`).
     #[serde(default)]
     assigned_attributes: BTreeSet<String>,
-    /// True only when the module has no star import and nowhere names a
-    /// patcher or dynamic namespace writer (`patch`, `setattr`, `globals`,
-    /// `sys.modules`, ...). A module-level or autouse-fixture patch of an
-    /// imported module's attribute is otherwise invisible to the
-    /// module-attribute helper read. Defaults to false so a stale cached
-    /// module fails closed.
+    /// True only when the module has no star import, no walrus, and nowhere
+    /// names a patcher or dynamic namespace writer (`patch`, `setattr`,
+    /// `globals`, `sys.modules`, ...). A module-level or autouse-fixture
+    /// patch of an imported module's attribute is otherwise invisible to the
+    /// module-attribute helper read; both the test module and the helper's
+    /// module must be patch-free. Defaults to false so a stale cached module
+    /// fails closed.
     #[serde(default)]
     patch_free: bool,
 }
@@ -177,7 +178,10 @@ pub(super) fn collect_helper_module(
     let imports = collect_imports_from_statements(file, statements);
     // A star import may rebind any name, wrapper included.
     let star_import = imports.iter().any(|import| import.imported == "*");
+    // A walrus (`conftest := other`) rebinds a name that `bound_names` and
+    // the import scan do not see.
     module.patch_free = !star_import
+        && !source.contains(":=")
         && !source.contains("patch")
         && !super::module_constants::writes_namespace_in_text(source);
     let imported: BTreeSet<String> = imports.into_iter().map(|import| import.alias).collect();
@@ -687,17 +691,25 @@ fn resolve_module_helper<'a>(
         import.imported.clone()
     } else {
         // `from pkg import helpers` names a submodule only when the package
-        // `__init__` does not bind the same name itself.
+        // `__init__` does not bind the same name itself, by assignment, def,
+        // import or star import.
         let package = format!("{}/__init__.py", import.source_module.replace('.', "/"));
-        if modules
-            .get(Path::new(&package))
-            .is_some_and(|init| init.bound.contains(&import.imported))
-        {
+        if modules.get(Path::new(&package)).is_some_and(|init| {
+            init.bound.contains(&import.imported)
+                || init.import_bindings.contains_key(&import.imported)
+                || init.import_bindings.contains_key("*")
+        }) {
             return None;
         }
         format!("{}.{}", import.source_module, import.imported)
     };
-    module_for(&dotted, modules)?
+    let target = module_for(&dotted, modules)?;
+    // The helper's own module may replace its helper (an autouse fixture
+    // patching `sys.modules[__name__]`, a module-level `setattr`).
+    if !target.patch_free {
+        return None;
+    }
+    target
         .helpers
         .iter()
         .find(|helper| helper.name == helper_name)
