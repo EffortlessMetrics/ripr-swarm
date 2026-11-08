@@ -1746,8 +1746,17 @@ index 0000000..1111111 100644
             test_harnesses: Vec::new(),
         })?;
         assert!(instant.findings.iter().any(|finding| {
-            finding.class == crate::domain::ExposureClass::NoStaticPath
-                && finding.related_tests.is_empty()
+            finding.class == crate::domain::ExposureClass::StaticUnknown
+                && finding.ripr.reach.state == crate::domain::StageState::Unknown
+                && finding
+                    .stop_reasons
+                    .contains(&crate::domain::StopReason::TransitiveReachUnresolved)
+                && finding.static_limit_kind
+                    == Some(crate::domain::StaticLimitKind::RustTransitiveReachUnresolved)
+                && finding
+                    .evidence
+                    .iter()
+                    .any(|line| line.contains("partial_index_reach:"))
         }));
         Ok(())
     }
