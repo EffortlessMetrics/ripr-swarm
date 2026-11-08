@@ -27909,6 +27909,72 @@ fn check_default_base_with_clean_worktree_keeps_no_scope_note_only() -> Result<(
     Ok(())
 }
 
+/// #13644: a bare human `ripr check` on a clean base branch whose HEAD has a
+/// parent analyzes the last commit and says so, so a caller does not spend a
+/// call on `nothing in scope`. JSON keeps the empty-range contract, and a
+/// dirty tree or an explicit `--base` keeps its own scope.
+#[test]
+fn check_clean_base_branch_with_parent_analyzes_last_commit_in_human_only() -> Result<(), String> {
+    let root = unique_temp_workspace("last-commit-fallback");
+    std::fs::create_dir_all(root.join("src")).map_err(|err| format!("create src: {err}"))?;
+    run_git(&root, &["init", "-b", "main"])?;
+    run_git(&root, &["config", "user.email", "test@test.com"])?;
+    run_git(&root, &["config", "user.name", "Test"])?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"last-commit-fallback\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|err| format!("write Cargo.toml: {err}"))?;
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "pub fn can_vote(age: u32) -> bool { age > 18 }\n",
+    )
+    .map_err(|err| format!("write lib.rs: {err}"))?;
+    run_git(&root, &["add", "."])?;
+    run_git(&root, &["commit", "-m", "initial"])?;
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "pub fn can_vote(age: u32) -> bool { age >= 18 }\n",
+    )
+    .map_err(|err| format!("rewrite lib.rs: {err}"))?;
+    run_git(&root, &["commit", "-am", "boundary"])?;
+    let root_str = root.to_string_lossy().into_owned();
+
+    let human = run_ripr(&["check", "--root", &root_str]);
+    assert_success(&human);
+    let stdout = String::from_utf8_lossy(&human.stdout);
+    let stderr = String::from_utf8_lossy(&human.stderr);
+    if !stdout.contains("base: HEAD~1") || stdout.contains("0 changed behaviors checked") {
+        return Err(format!(
+            "bare check on a clean base branch must analyze the last commit; got:\n{stdout}"
+        ));
+    }
+    if !stderr.contains("analyzed the last commit (--base HEAD~1)") {
+        return Err(format!(
+            "the auto-scope must be labeled on stderr; got:\n{stderr}"
+        ));
+    }
+
+    let json = run_ripr(&["check", "--root", &root_str, "--json"]);
+    assert_success(&json);
+    let value: serde_json::Value =
+        serde_json::from_slice(&json.stdout).map_err(|err| format!("parse check JSON: {err}"))?;
+    if value["base"] != "main" {
+        return Err(format!(
+            "JSON must keep the resolved base unchanged: {value}"
+        ));
+    }
+
+    let explicit = run_ripr(&["check", "--root", &root_str, "--base", "main"]);
+    assert_success(&explicit);
+    if String::from_utf8_lossy(&explicit.stderr).contains("analyzed the last commit") {
+        return Err("an explicit --base must not be rescoped".to_string());
+    }
+
+    ignore_remove_dir_all(&root);
+    Ok(())
+}
+
 /// First-run walk: a clean base branch holding only a new, never-staged source
 /// file used to answer "edit a tracked source file", contradicting the header
 /// that already named the untracked file. Start-here now leads with the

@@ -353,6 +353,14 @@ a gitlink (#10648).
   shows NO guidance; (e) bare `ripr check` that analyzed changed files with 0
   probes shows NO guidance in any form (#4012).
 
+- (f) bare human `ripr check` on a clean checkout of the resolved base branch,
+  where HEAD has a parent, analyzes the last commit (`--base HEAD~1`) and
+  labels that on stderr (#13644). Decision (Steven, 2026-11-08, delegated):
+  agents otherwise spend a dead-end call on "nothing in scope" before
+  `--base HEAD~1`. Human format only; machine and gate formats keep the
+  empty-range contract so CI runs on `main` are unchanged. An explicit scope,
+  a dirty tree or an untracked source file keeps the existing disclosure.
+
 ## Metrics
 
 - Gate: all disclosure acceptance tests pass.

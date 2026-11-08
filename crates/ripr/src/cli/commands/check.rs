@@ -1904,6 +1904,42 @@ fn check_inner(
             ));
         }
     };
+    // #13644: a bare human `ripr check` on a clean checkout of the comparison
+    // base has an empty range by construction; the usual intent is the commit
+    // just made. Analyze it instead of costing a caller a dead-end call, and
+    // say so. Human format only: gate, JSON, SARIF and GitHub formats keep
+    // their empty-range contract.
+    if matches!(format, OutputFormat::Human)
+        && !scope_explicitly_provided
+        && !base_explicitly_provided
+        && !input_diff_file_is_some
+        && !worktree_run
+        && candidate_tree.is_none()
+        && output_dir.is_none()
+        && write_artifact.is_none()
+        && last_commit_fallback_applies(&output, &limited_check_input.root)
+    {
+        let mut retry = limited_check_input.clone();
+        retry.base = Some("HEAD~1".to_string());
+        let retry_config = config.clone();
+        let retried = super::check_budget::run_with_budget(
+            check_timeout,
+            None,
+            || {},
+            move || app::check_with_progress_core(retry, &retry_config, progress_scope, None),
+        );
+        if let Ok(retried) = retried
+            && retried
+                .analysis_outcome
+                .as_ref()
+                .is_some_and(|outcome| outcome.counts.changed_file_count > 0)
+        {
+            eprintln!(
+                "ripr: no diff against the comparison base (you are on it); analyzed the last commit (--base HEAD~1). Pass --base to choose another range."
+            );
+            output = retried;
+        }
+    }
     // The findings formats apply suppression only through the explicit flag.
     // Disclose a detected default without parsing it or changing stdout/exit
     // semantics. Implicit policy consumers retain their existing authority.
@@ -2287,6 +2323,37 @@ fn record_human_legend_seen(root: &Path, marker: &Path) {
 /// empty result. Its `--base {candidate}` remediation is the same one
 /// the human Start-here line names for this state, so stderr and stdout
 /// do not diverge.
+/// #13644: true when an unscoped check produced an empty range because HEAD
+/// is the checked-out comparison-base branch itself, the tree is clean and
+/// HEAD has a parent, so `--base HEAD~1` names the last commit.
+fn last_commit_fallback_applies(output: &crate::CheckOutput, root: &Path) -> bool {
+    if !output.findings.is_empty()
+        || output.unanalyzed_working_tree
+        || !output.untracked_working_tree_source_paths.is_empty()
+        || output
+            .analysis_outcome
+            .as_ref()
+            .is_none_or(|outcome| outcome.counts.changed_file_count != 0)
+    {
+        return false;
+    }
+    let Some(base) = output.base.as_deref() else {
+        return false;
+    };
+    let git = |args: &[&str]| {
+        crate::git::run_git_output_with_deadline(
+            root,
+            args,
+            Some(std::time::Duration::from_secs(5)),
+        )
+        .ok()
+        .filter(|out| out.status.success())
+    };
+    git(&["symbolic-ref", "--quiet", "--short", "HEAD"])
+        .is_some_and(|out| String::from_utf8_lossy(&out.stdout).trim() == base)
+        && git(&["rev-parse", "--verify", "--quiet", "HEAD~1"]).is_some()
+}
+
 fn default_base_is_head_hedge(
     base: &str,
     base_commit: Option<&str>,
