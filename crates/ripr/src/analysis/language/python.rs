@@ -2474,6 +2474,9 @@ mod module_field_tests;
 mod helper_assertions_tests;
 
 #[cfg(test)]
+mod helper_module_attribute_tests;
+
+#[cfg(test)]
 mod capability_disposition_tests;
 
 #[cfg(test)]
