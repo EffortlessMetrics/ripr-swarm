@@ -36668,7 +36668,10 @@ fn pilot_budget_discloses_inventory_order_when_change_is_unavailable()
         "{clean_summary}"
     );
     std::fs::remove_dir_all(root.join(".git"))?;
-    let ceiling = root.parent().and_then(Path::to_str).ok_or("fixture parent path")?;
+    let ceiling = root
+        .parent()
+        .and_then(Path::to_str)
+        .ok_or("fixture parent path")?;
     let pilot = run_command_with_env(
         env!("CARGO_BIN_EXE_ripr"),
         &root,
