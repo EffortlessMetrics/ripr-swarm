@@ -370,6 +370,10 @@ jobs:
           cargo xtask check-user-text --tree "$GITHUB_WORKSPACE"
           cd "$GITHUB_WORKSPACE"
 
+      # ci-policy is the sole owner of the dependency, process and network
+      # policy leaves (#13485): it executes each exactly once and retains
+      # their reports under target/ripr/reports/, so no duplicate leaf
+      # steps follow this one.
       - name: Repository policy preflight
         id: precommit
         env:
@@ -379,18 +383,6 @@ jobs:
       - name: Evidence promotion honesty
         id: promotion_honesty
         run: cargo xtask check-evidence-promotion-honesty
-
-      - name: Dependency policy
-        id: dependencies
-        run: cargo xtask check-dependencies
-
-      - name: Process policy
-        id: process_policy
-        run: cargo xtask check-process-policy
-
-      - name: Network policy
-        id: network_policy
-        run: cargo xtask check-network-policy
 
       # Lint optional-feature code as well as type-checking it (#13152).
       # Keep the default-feature workspace pass below: cfg(not(feature = ...))
@@ -679,9 +671,6 @@ jobs:
           PRECOMMIT_RESULT: ${{ steps.precommit.outcome }}
           PROMOTION_HONESTY_RESULT: ${{ steps.promotion_honesty.outcome }}
           AGENT_SKILLS_RESULT: ${{ steps.agent_skills.outcome }}
-          DEPENDENCIES_RESULT: ${{ steps.dependencies.outcome }}
-          PROCESS_POLICY_RESULT: ${{ steps.process_policy.outcome }}
-          NETWORK_POLICY_RESULT: ${{ steps.network_policy.outcome }}
           ALL_FEATURES_CHECK_RESULT: ${{ steps.all_features_check.outcome }}
           CLIPPY_RESULT: ${{ steps.clippy.outcome }}
           RUST_TESTS_RESULT: ${{ steps.rust-tests.outcome }}
@@ -707,9 +696,6 @@ jobs:
             printf '| precommit | %s |\n' "${PRECOMMIT_RESULT:-not_reported}"
             printf '| promotion_honesty | %s |\n' "${PROMOTION_HONESTY_RESULT:-not_reported}"
             printf '| agent_skills | %s |\n' "${AGENT_SKILLS_RESULT:-not_reported}"
-            printf '| dependencies | %s |\n' "${DEPENDENCIES_RESULT:-not_reported}"
-            printf '| process_policy | %s |\n' "${PROCESS_POLICY_RESULT:-not_reported}"
-            printf '| network_policy | %s |\n' "${NETWORK_POLICY_RESULT:-not_reported}"
             printf '| all_features_check | %s |\n' "${ALL_FEATURES_CHECK_RESULT:-not_reported}"
             printf '| clippy | %s |\n' "${CLIPPY_RESULT:-not_reported}"
             printf '| rust-tests | %s |\n' "${RUST_TESTS_RESULT:-not_reported}"

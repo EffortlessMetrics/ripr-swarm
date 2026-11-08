@@ -53969,9 +53969,6 @@ fn routed_rust_required_lanes_run_full_precommit_table() -> Result<(), String> {
     let reusable = reusable_rust_workflow_text()?;
     for lane_only in [
         "cargo xtask check-evidence-promotion-honesty",
-        "cargo xtask check-dependencies",
-        "cargo xtask check-process-policy",
-        "cargo xtask check-network-policy",
         "cargo xtask goldens check",
         "cargo xtask fixtures",
     ] {
@@ -53979,6 +53976,20 @@ fn routed_rust_required_lanes_run_full_precommit_table() -> Result<(), String> {
         if count != 1 {
             return Err(format!(
                 "rust-gates.yml must enumerate lane-only gate `{lane_only}` exactly once, found {count}"
+            ));
+        }
+    }
+    // #13485: the policy leaves run exactly once inside `cargo xtask
+    // ci-policy`; duplicate leaf steps in rust-gates.yml must not return.
+    for leaf in [
+        "cargo xtask check-dependencies",
+        "cargo xtask check-process-policy",
+        "cargo xtask check-network-policy",
+    ] {
+        let count = reusable.matches(leaf).count();
+        if count != 0 {
+            return Err(format!(
+                "rust-gates.yml must run `{leaf}` once via ci-policy, not as a duplicate step, found {count}"
             ));
         }
     }

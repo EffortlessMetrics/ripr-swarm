@@ -20,9 +20,6 @@ const REQUIRED_GATES: &[(&str, &str)] = &[
         "promotion_honesty",
         "cargo xtask check-evidence-promotion-honesty",
     ),
-    ("dependencies", "cargo xtask check-dependencies"),
-    ("process_policy", "cargo xtask check-process-policy"),
-    ("network_policy", "cargo xtask check-network-policy"),
     (
         "all_features_check",
         "cargo clippy -p ripr --all-targets --all-features -- -D warnings",
@@ -144,11 +141,25 @@ fn rust_gate_workflow_preserves_complete_ordered_command_inventory() {
 #[test]
 fn rust_gate_workflow_rejects_missing_required_command() {
     let changed = WORKFLOW.replace(
-        "        run: cargo xtask check-network-policy",
-        "        run: echo policy omitted",
+        "        run: cargo xtask goldens check",
+        "        run: echo goldens omitted",
     );
     let findings = contract_violations(&changed);
-    assert!(findings.contains(&"network_policy: exact command missing".to_owned()));
+    assert!(findings.contains(&"goldens: exact command missing".to_owned()));
+}
+
+#[test]
+fn rust_gate_workflow_runs_policy_leaves_once_via_ci_policy() {
+    // #13485: ci-policy is the sole owner of these leaves; duplicate
+    // workflow steps must not return.
+    for leaf in [
+        "cargo xtask check-dependencies",
+        "cargo xtask check-process-policy",
+        "cargo xtask check-network-policy",
+    ] {
+        assert_eq!(WORKFLOW.matches(leaf).count(), 0, "{leaf} duplicated");
+    }
+    assert_eq!(WORKFLOW.matches("cargo xtask ci-policy").count(), 1);
 }
 
 #[test]
