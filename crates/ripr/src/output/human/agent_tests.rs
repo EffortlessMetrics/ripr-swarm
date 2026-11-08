@@ -341,7 +341,7 @@ fn top_gap_carries_location_missing_value_test_id_and_next_command() {
     // counts (2 findings, 1 exposed); no outcome means refused.
     assert_eq!(
         lines[4],
-        "verify=refused|outcome=missing|findings=2|exposed=1|reason=outcome_missing,gaps_remain"
+        "verify=refused|outcome=missing|findings=2|exposed=1|reason=outcome_missing,unexposed_findings_remain"
     );
     assert_eq!(lines.len(), 5, "{text}");
 }
@@ -1684,7 +1684,7 @@ fn verification_record_counts_the_full_summary_not_the_displayed_subset() -> Res
     assert!(text.contains("\ndone="), "{text}");
     assert_eq!(
         verify_line(&hidden)?,
-        "verify=refused|outcome=complete_with_findings|findings=5|exposed=4|reason=gaps_remain"
+        "verify=refused|outcome=complete_with_findings|findings=5|exposed=4|reason=unexposed_findings_remain"
     );
     // A displayed gap list capped by the budget never changes the full counts.
     let many: Vec<Finding> = (0..30)
@@ -1695,8 +1695,30 @@ fn verification_record_counts_the_full_summary_not_the_displayed_subset() -> Res
     assert!(text.contains("more gaps not shown"), "{text}");
     assert_eq!(
         verify_line(&capped)?,
-        "verify=refused|outcome=complete_with_findings|findings=30|exposed=0|reason=gaps_remain"
+        "verify=refused|outcome=complete_with_findings|findings=30|exposed=0|reason=unexposed_findings_remain"
     );
+    Ok(())
+}
+
+/// #13825: a report whose only open findings are static limits says `gaps=0`
+/// and ends in `stop=`; its refusal must not name a gap the same report says
+/// does not exist.
+#[test]
+fn a_limits_only_refusal_does_not_name_a_gap_the_header_denies() -> Result<(), String> {
+    use crate::analysis_outcome::AnalysisOutcomeKind::CompleteWithFindings;
+    let limits = outcome_output(
+        CompleteWithFindings,
+        vec![finding("probe:unknown", ExposureClass::StaticUnknown, 3)],
+    )?;
+    let text = agent_dispatch(&limits, &RiprConfig::default())?;
+    assert!(text.contains(" gaps=0"), "{text}");
+    assert!(text.contains("\nstop="), "{text}");
+    let verify = verify_line(&limits)?;
+    assert_eq!(
+        verify,
+        "verify=refused|outcome=complete_with_findings|findings=1|exposed=0|reason=unexposed_findings_remain"
+    );
+    assert!(!verify.contains("gap"), "{verify}");
     Ok(())
 }
 
