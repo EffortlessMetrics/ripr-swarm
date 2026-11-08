@@ -2001,10 +2001,28 @@ tests = [
   "crates/ripr/tests/focused_test_result.rs::a_result_saved_inside_the_checkout_is_refused_up_front",
   "crates/ripr/src/app/focused_run.rs::tests::a_non_rust_selected_file_is_refused_up_front",
   "crates/ripr/tests/focused_test_result.rs::a_failed_only_result_is_recorded_as_ran_with_the_failure_visible",
+  "crates/ripr/tests/focused_test_result.rs::failed_focused_result_publication_restores_the_attempt_for_retry",
+  "crates/ripr/tests/focused_test_result.rs::receipt_surface_decision_is_not_mislabeled_as_publication_failure",
+  "crates/ripr/tests/focused_test_result.rs::malformed_suite_event_is_refused_even_with_a_counted_test",
+  "crates/ripr/tests/focused_test_result.rs::completion_counts_and_multiple_suites_are_checked",
+  "crates/ripr/tests/focused_test_result.rs::incomplete_suites_are_refused_before_finish",
+  "crates/ripr/tests/focused_test_result.rs::interrupted_surface_refusal_cannot_be_retried",
+  "crates/ripr/tests/focused_test_result.rs::standalone_receipt_does_not_finish_an_unresolved_evaluation",
+  "crates/ripr/tests/focused_test_result.rs::a_failed_evaluation_start_restores_the_attempt_for_retry",
+  "crates/ripr/src/app/repair_attempt/mod.rs::tests::focused_restore_refuses_another_finish_or_committed_evidence",
+  "crates/ripr/tests/focused_test_result.rs::focused_result_does_not_bind_a_replaced_test_file",
+  "crates/ripr/tests/focused_test_result.rs::focused_result_does_not_bind_an_intervening_descendant_commit",
+  "crates/ripr/tests/focused_test_result.rs::focused_result_accepts_a_descendant_committed_before_validation",
+  "crates/ripr/tests/focused_test_result.rs::finish_without_a_focused_result_remains_supported",
+  "crates/ripr/src/app/focused_run.rs::tests::inline_result_requires_the_named_test_to_be_in_the_governed_module",
   "crates/ripr/src/app/focused_run.rs::tests::an_inline_module_is_attributed_through_the_files_own_module_path",
   "crates/ripr/src/app/focused_run.rs::tests::an_inline_module_whose_path_cannot_be_derived_counts_nothing",
   "crates/ripr/src/app/focused_run.rs::tests::a_timeout_event_is_not_terminal_and_never_counts_by_itself",
   "crates/ripr/src/app/focused_run.rs::tests::zero_in_scope_tests_are_not_counted",
+  "crates/ripr/tests/focused_test_result.rs::failed_receipt_publication_restores_focused_finish_for_retry",
+  "crates/ripr/tests/focused_test_result.rs::another_after_cannot_drop_or_undo_a_focused_result",
+  "crates/ripr/tests/focused_test_result.rs::foreign_focused_bytes_are_not_retained",
+  "crates/ripr/tests/focused_test_result.rs::noncompliant_finish_does_not_retain_the_supplied_focused_result",
   "crates/ripr/src/app/task_first.rs::tests::closure_outcome_says_nothing_to_do_when_everything_was_noticed",
   "crates/ripr/src/cli/commands/task_first.rs::tests::open_on_change_closes_on_the_reasons_not_the_repository_tour",
   "crates/ripr/src/app/task_first.rs::tests::both_check_consumers_share_one_check_run",
@@ -14675,6 +14693,7 @@ id = "RIPR-SPEC-0195"
 name = "Repair-attempt store identity and resolver"
 spec = "docs/specs/RIPR-SPEC-0195-repair-attempt-store-identity.md"
 tests = [
+  "crates/ripr/src/edit_cage/mod.rs::tests::staging_name_removed_after_the_nlink_read_is_not_ambiguous",
   "crates/ripr/tests/task_first_facade.rs::repair_human_paths_preserve_percent_root_identity",
   "crates/ripr/tests/task_first_facade.rs::repair_human_paths_preserve_literal_backslash_root_identity",
   "crates/ripr/src/output/path.rs::tests::repair_path_display_preserves_literal_percent_on_both_hosts",
@@ -14709,6 +14728,7 @@ tests = [
   "crates/ripr/src/cli/commands/agent.rs::tests::repair_after_cage_recovery_repeats_explicit_store",
   "crates/ripr/src/cli/agent.rs::tests::agent_repair_parses_explicit_store_and_rejects_empty",
   "crates/ripr/src/cli/agent.rs::tests::agent_status_parses_explicit_store_and_rejects_empty",
+  "crates/ripr/src/edit_cage/mod.rs::tests::staged_publication_pair_outside_the_attempt_store_stays_unsafe",
 ]
 fixtures = [
 ]
