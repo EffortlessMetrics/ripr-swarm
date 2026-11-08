@@ -157,29 +157,52 @@ pub(crate) fn explain_finding_with_config_navigation_mode_and_progress(
                     .any(|entry| entry.finding_id == finding.id)
             }),
         )),
-        FindingSelection::Ambiguous(candidates) => Err(ambiguous_finding_match(
-            selector,
-            &candidates,
-            &explain_navigation_list_command(&navigation),
+        FindingSelection::Ambiguous(candidates) => Err(refuse_selector_miss(
+            sink,
+            ambiguous_finding_match(
+                selector,
+                &candidates,
+                &explain_navigation_list_command(&navigation),
+            ),
         )),
-        FindingSelection::Undecided(limitation) => Err(selector_limitation_fresh_run(
-            selector,
-            &explain_navigation_list_command(&navigation),
-            &limitation,
+        FindingSelection::Undecided(limitation) => Err(refuse_selector_miss(
+            sink,
+            selector_limitation_fresh_run(
+                selector,
+                &explain_navigation_list_command(&navigation),
+                &limitation,
+            ),
         )),
-        FindingSelection::NoMatch => Err(no_finding_matched_fresh_run(
-            selector,
-            &explain_navigation_list_command(&navigation),
-            &root,
-            worktree,
-            committed_history,
-            &retry_command,
-            &worktree_list_command,
-            &committed_list_command,
-            worktree_from_default,
-            &output,
+        FindingSelection::NoMatch => Err(refuse_selector_miss(
+            sink,
+            no_finding_matched_fresh_run(
+                selector,
+                &explain_navigation_list_command(&navigation),
+                &root,
+                worktree,
+                committed_history,
+                &retry_command,
+                &worktree_list_command,
+                &committed_list_command,
+                worktree_from_default,
+                &output,
+            ),
         )),
     }
+}
+
+/// #13239: a post-analysis selector refusal — a miss, an ambiguity, or an
+/// undecidable location — is user-fixable usage, not an internal failure.
+/// Flag the held-success sink, mirroring the `context` adapter (#9922 /
+/// #9244 item 9), so the dropped CLI sink suppresses
+/// `ripr progress: failed` beside the real error; the refusal message and
+/// exit code are unchanged. `None` is the library-caller legacy and has no
+/// sink to flag.
+fn refuse_selector_miss(sink: Option<&dyn AnalysisProgressSink>, message: String) -> String {
+    if let Some(sink) = sink {
+        sink.user_fixable_failure();
+    }
+    message
 }
 
 const EXPLAIN_JSON_FORMAT_SUFFIX: &str = " --format json";

@@ -70,7 +70,8 @@
             "recommendation_calibration": { "$ref": "#/$defs/subject_input" },
             "mutation_calibration": { "$ref": "#/$defs/subject_input" },
             "baseline": { "$ref": "#/$defs/subject_input" },
-            "exception_policy": { "$ref": "#/$defs/subject_input" }
+            "exception_policy": { "$ref": "#/$defs/subject_input" },
+            "acknowledgements": { "$ref": "#/$defs/subject_input" }
           }
         },
         "labels_sha256": {
@@ -129,7 +130,8 @@
         "recommendation_calibration": { "$ref": "#/$defs/nullable_string" },
         "mutation_calibration": { "$ref": "#/$defs/nullable_string" },
         "baseline": { "$ref": "#/$defs/nullable_string" },
-        "exception_policy": { "type": "string", "minLength": 1 }
+        "exception_policy": { "type": "string", "minLength": 1 },
+        "acknowledgements": { "type": "string", "minLength": 1 }
       }
     },
     "policy": {
@@ -244,7 +246,15 @@
         },
         "threshold": { "type": "string", "minLength": 1 },
         "acknowledgement_label": { "$ref": "#/$defs/nullable_string" },
-        "baseline_identity": { "$ref": "#/$defs/nullable_string" }
+        "baseline_identity": { "$ref": "#/$defs/nullable_string" },
+        "acknowledgement_id": { "$ref": "#/$defs/nullable_string" },
+        "acknowledgement_match_kind": { "$ref": "#/$defs/nullable_string" },
+        "acknowledgement_actor": { "$ref": "#/$defs/nullable_string" },
+        "acknowledgement_reason": { "$ref": "#/$defs/nullable_string" },
+        "acknowledgement_expires_at": { "$ref": "#/$defs/nullable_string" },
+        "acknowledgement_review_after": { "$ref": "#/$defs/nullable_string" },
+        "acknowledgement_global_scope": { "type": ["boolean", "null"] },
+        "acknowledgement_limitation": { "$ref": "#/$defs/nullable_string" }
       }
     },
     "repair_route": {

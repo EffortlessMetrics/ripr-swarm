@@ -36,6 +36,8 @@
 //! developer meets first.
 
 pub(crate) mod pilot;
+mod stryker;
+mod synthetic_diff;
 
 use crate::run::{
     capture_bytes_in_dir_with_timeout, capture_output_with_timeout,
@@ -123,9 +125,14 @@ const FLAGGED_OR_UNKNOWN_CLASSES: &[&str] = &[
 const RECALL_LANGUAGES: &[&str] = &["rust", "python", "typescript"];
 /// Language of every repo this harness scores: it drives cargo-mutants.
 const HARNESS_LANGUAGE: &str = "rust";
+/// Scored claim pairs (canonical_precise, strongly_gripped or ungripped, caught
+/// or missed) a synthetic-diff language needs before `recall_of_missed`
+/// reports it as established rather than `insufficient_sample`.
+const MIN_SCORED_FOR_ESTABLISHED: usize = 30;
 const REDERIVE_USAGE: &str =
     "usage: cargo xtask mutation-spot-check --rederive-summaries <mutation-spot-check.json>";
-const USAGE: &str = "usage: cargo xtask mutation-spot-check --repo <name>=<checkout> [--repo ...] [--mutants-out <name>=<mutants.out dir>] [--run-mutants] [--mutants-arg <name>=<arg>] [--jobs <n>] [--mutant-timeout-secs <n>] [--examples <n>] [--ripr <binary>]";
+const USAGE: &str = "usage: cargo xtask mutation-spot-check --repo <name>=<checkout> [--repo ...] [--mutants-out <name>=<mutants.out dir>] [--run-mutants] [--mutants-arg <name>=<arg>] [--jobs <n>] [--mutant-timeout-secs <n>] [--examples <n>] [--ripr <binary>]
+  TypeScript (real Stryker outcomes, synthetic-diff verdict join): --repo <name>=<checkout> --stryker-report <name>=<mutation.json> [--stryker-max-mutants <n>]";
 
 fn harness_owned_mutants_arg(arg: &str) -> bool {
     if let Some(bundle) = arg.strip_prefix('-').filter(|rest| !rest.starts_with('-')) {
@@ -182,6 +189,23 @@ pub(crate) fn mutation_spot_check(args: &[String]) -> Result<(), String> {
 
     let mut repos = Vec::new();
     for (name, checkout) in &options.repos {
+        if let Some(report_path) = options.stryker_reports.get(name) {
+            let (sources, tool) = stryker::parse_stryker_report(&read_json(report_path)?)
+                .map_err(|err| format!("`{name}`: {err}"))?;
+            repos.push(synthetic_diff::spot_check_synthetic_repo(
+                &synthetic_diff::SyntheticRepo {
+                    binary: &binary,
+                    scratch: &scratch,
+                    name,
+                    checkout,
+                    profile: synthetic_diff::TYPESCRIPT,
+                    sources: &sources,
+                    tool,
+                    max_mutants: options.stryker_max_mutants,
+                },
+            )?);
+            continue;
+        }
         repos.push(spot_check_repo(
             &binary, &scratch, name, checkout, &options,
         )?);
@@ -201,6 +225,9 @@ struct Options {
     repos: Vec<(String, PathBuf)>,
     mutants_out: BTreeMap<String, PathBuf>,
     mutants_args: BTreeMap<String, Vec<String>>,
+    /// Repos scored from a Stryker report (TypeScript) instead of cargo-mutants.
+    stryker_reports: BTreeMap<String, PathBuf>,
+    stryker_max_mutants: usize,
     run_mutants: bool,
     jobs: usize,
     mutant_timeout_secs: u64,
@@ -213,6 +240,8 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
         repos: Vec::new(),
         mutants_out: BTreeMap::new(),
         mutants_args: BTreeMap::new(),
+        stryker_reports: BTreeMap::new(),
+        stryker_max_mutants: synthetic_diff::DEFAULT_MAX_MUTANTS,
         run_mutants: false,
         jobs: DEFAULT_JOBS,
         mutant_timeout_secs: DEFAULT_MUTANT_TIMEOUT_SECS,
@@ -223,7 +252,7 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
     while index < args.len() {
         let flag = args[index].as_str();
         match flag {
-            "--repo" | "--mutants-out" => {
+            "--repo" | "--mutants-out" | "--stryker-report" => {
                 index += 1;
                 let (name, path) = parse_named_path(required_arg(args, index, flag)?, flag)?;
                 if flag == "--repo" {
@@ -231,6 +260,10 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
                         return Err(format!("duplicate --repo name `{name}`"));
                     }
                     options.repos.push((name, path));
+                } else if flag == "--stryker-report" {
+                    if options.stryker_reports.insert(name.clone(), path).is_some() {
+                        return Err(format!("duplicate --stryker-report name `{name}`"));
+                    }
                 } else if options.mutants_out.insert(name.clone(), path).is_some() {
                     return Err(format!("duplicate --mutants-out name `{name}`"));
                 }
@@ -254,6 +287,11 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
                     .entry(name.trim().to_string())
                     .or_default()
                     .push(arg.to_string());
+            }
+            "--stryker-max-mutants" => {
+                index += 1;
+                options.stryker_max_mutants =
+                    parse_positive(required_arg(args, index, flag)?, flag)? as usize;
             }
             "--run-mutants" => options.run_mutants = true,
             "--jobs" => {
@@ -289,6 +327,16 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
     for name in options.mutants_out.keys() {
         if !options.repos.iter().any(|(repo, _)| repo == name) {
             return Err(format!("--mutants-out `{name}` names no --repo"));
+        }
+    }
+    for name in options.stryker_reports.keys() {
+        if !options.repos.iter().any(|(repo, _)| repo == name) {
+            return Err(format!("--stryker-report `{name}` names no --repo"));
+        }
+        if options.mutants_out.contains_key(name) || options.mutants_args.contains_key(name) {
+            return Err(format!(
+                "`{name}` is scored from a Stryker report, so --mutants-out and --mutants-arg do not apply to it"
+            ));
         }
     }
     for name in options.mutants_args.keys() {
@@ -357,6 +405,9 @@ struct RepoRun {
     /// Judged pilot recommendations, or why pilot produced none. A pilot
     /// failure does not discard the repo's validated mutation outcomes.
     pilot: Result<Vec<Value>, String>,
+    /// Receipt fields of a synthetic-diff repo (`agreement_method`, the
+    /// mutation tool, ...); `None` for a Rust span-join repo.
+    synthetic: Option<Value>,
 }
 
 fn spot_check_repo(
@@ -471,6 +522,7 @@ fn spot_check_repo(
             &mutant_genres(&mutant_records),
         )
         .map_err(|err| format!("`{name}`: {err}"))?,
+        synthetic: None,
         pilot: pilot_top.map(|top| {
             pilot::judge_recommendations(
                 &top,
@@ -757,6 +809,9 @@ struct Record {
     expression: Option<String>,
     mutant: String,
     operator_token: &'static str,
+    /// ripr's own classification token for a synthetic-diff record; empty for
+    /// the Rust span join, whose `grip_class` is the seam's.
+    verdict_token: String,
 }
 
 /// Seam id to source expression, from the repo exposure JSON.
@@ -897,6 +952,7 @@ fn classify_records(
             expression,
             mutant,
             operator_token,
+            verdict_token: String::new(),
         });
     }
     let unjoined = |runtime: &Value, disposition: String| Record {
@@ -911,6 +967,7 @@ fn classify_records(
         expression: None,
         mutant: text(runtime, "/mutant_id"),
         operator_token: "not_applicable",
+        verdict_token: String::new(),
     };
     for (key, disposition) in [
         ("ambiguous_file_line_matches", "ambiguous_file_line"),
@@ -1069,7 +1126,18 @@ fn analyzer_version(binary: &Path) -> Result<String, String> {
     Ok(version.to_string())
 }
 
-fn build_report(repos: &[RepoRun], examples: usize, analyzer: &str) -> Value {
+fn build_report(all_repos: &[RepoRun], examples: usize, analyzer: &str) -> Value {
+    // Synthetic-diff repos (TypeScript) are scored by a different join, so
+    // their numbers stay out of every Rust span-join aggregate below and are
+    // reported under `synthetic_diff_verdict` instead.
+    let repos: Vec<&RepoRun> = all_repos
+        .iter()
+        .filter(|repo| repo.synthetic.is_none())
+        .collect();
+    let synthetic_repos: Vec<&RepoRun> = all_repos
+        .iter()
+        .filter(|repo| repo.synthetic.is_some())
+        .collect();
     let mut by_disposition: BTreeMap<String, BTreeMap<String, BTreeMap<String, usize>>> =
         BTreeMap::new();
     // Both families are always reported, so a run that scores only one
@@ -1084,7 +1152,7 @@ fn build_report(repos: &[RepoRun], examples: usize, analyzer: &str) -> Value {
     let mut example_seams = BTreeSet::new();
     let mut operator_tokens: BTreeMap<&str, usize> = BTreeMap::new();
     let mut operator_token_absent = Vec::new();
-    for repo in repos {
+    for repo in &repos {
         for record in &repo.records {
             let grip_class = if record.grip_class.is_empty() {
                 "no_joined_seam"
@@ -1147,7 +1215,7 @@ fn build_report(repos: &[RepoRun], examples: usize, analyzer: &str) -> Value {
         .collect::<serde_json::Map<_, _>>();
     let by_disposition_value = json!(by_disposition);
     let mut language_outcomes: BTreeMap<String, Value> = BTreeMap::new();
-    for repo in repos {
+    for repo in all_repos {
         merge_outcomes(
             language_outcomes
                 .entry(repo.language.clone())
@@ -1155,29 +1223,21 @@ fn build_report(repos: &[RepoRun], examples: usize, analyzer: &str) -> Value {
             &json!(outcome_table(&repo.records)),
         );
     }
-    json!({
+    let recall = recall_of_missed(&by_disposition_value, &language_outcomes);
+    let coverage = seam_coverage(&by_disposition_value);
+    let families = Value::Object(families);
+    let replacement = replacement_criterion(Some(&families), &recall, &coverage, None);
+    let mut report = json!({
         "schema_version": SCHEMA_VERSION,
         "status": "advisory",
         "analyzer_version": analyzer,
         "claim_boundary": "Agreement is scored only on canonical_precise records: a BinaryOperator or UnaryOperator mutant that ripr calibrate joined by seam_id or by unique span containment to a predicate_boundary or return_value seam, with a caught or missed outcome. File/line fallback joins, span-overlap ties, unmatched records, and unsupported genres, seam kinds or outcomes are counted as exclusions and never scored. Claims are limited to the recorded checkout revisions, cargo-mutants versions, and this join rule; this is not a suite adequacy measure.",
-        "repos": repos.iter().map(|repo| json!({
-            "name": repo.name,
-            "language": repo.language,
-            "revision": repo.revision,
-            "mutant_diffs_checked_against_revision": repo.diffs_checked,
-            "exposure_run_status": repo.exposure_run_status,
-            "cargo_mutants_args": repo.cargo_mutants_args,
-            "cargo_mutants_version": repo.cargo_mutants_version,
-            "mutant_timeout_secs": repo.mutant_timeout_secs,
-            "mutant_set_sha256": repo.mutant_set_sha256,
-            "calibration_metrics": repo.metrics,
-            "pairings": pairing_counts(&repo.records),
-            "outcomes_by_disposition_and_grip_class": outcome_table(&repo.records),
-        })).collect::<Vec<_>>(),
+        "repos": all_repos.iter().map(repo_entry).collect::<Vec<_>>(),
         "outcomes_by_disposition_and_grip_class": by_disposition,
         "scored_families": families,
-        "recall_of_missed": recall_of_missed(&by_disposition_value, &language_outcomes),
-        "seam_coverage": seam_coverage(&by_disposition_value),
+        "recall_of_missed": recall,
+        "seam_coverage": coverage,
+        "replacement_criterion": replacement,
         "disagreement_examples": disagreements,
         "operator_token_diagnostic": {
             "counts": operator_tokens,
@@ -1189,6 +1249,277 @@ fn build_report(repos: &[RepoRun], examples: usize, analyzer: &str) -> Value {
                 .map(|repo| (repo.name.clone(), repo.pilot.clone()))
                 .collect::<Vec<_>>(),
         ),
+    });
+    if !synthetic_repos.is_empty() {
+        report["synthetic_diff_verdict"] = synthetic_section(&synthetic_repos, examples);
+    }
+    report
+}
+
+/// One repo's entry in the receipt's `repos` array.
+fn repo_entry(repo: &RepoRun) -> Value {
+    let methods: &[&str] = if repo.synthetic.is_some() {
+        &[synthetic_diff::AGREEMENT_METHOD]
+    } else {
+        CANONICAL_JOIN_METHODS
+    };
+    let mut entry = json!({
+        "name": repo.name,
+        "language": repo.language,
+        "revision": repo.revision,
+        "mutant_diffs_checked_against_revision": repo.diffs_checked,
+        "exposure_run_status": repo.exposure_run_status,
+        "cargo_mutants_args": repo.cargo_mutants_args,
+        "cargo_mutants_version": repo.cargo_mutants_version,
+        "mutant_timeout_secs": repo.mutant_timeout_secs,
+        "mutant_set_sha256": repo.mutant_set_sha256,
+        "calibration_metrics": repo.metrics,
+        "pairings": pairing_counts(&repo.records, methods),
+        "outcomes_by_disposition_and_grip_class": outcome_table(&repo.records),
+    });
+    if let (Some(extra), Some(fields)) = (
+        repo.synthetic.as_ref().and_then(Value::as_object),
+        entry.as_object_mut(),
+    ) {
+        for (key, value) in extra {
+            fields.insert(key.clone(), value.clone());
+        }
+    }
+    entry
+}
+
+/// Scores of the synthetic-diff repos, kept apart from the Rust span-join
+/// numbers: ripr's diff-time verdict on a synthetic one-hunk diff of each real
+/// mutant, against the mutant's real outcome.
+fn synthetic_section(repos: &[&RepoRun], examples: usize) -> Value {
+    let mut tables: BTreeMap<String, BTreeMap<String, usize>> =
+        ["claims_discriminator", "claims_no_discriminator"]
+            .into_iter()
+            .map(|family| (family.to_string(), BTreeMap::new()))
+            .collect();
+    let mut owners: BTreeMap<String, BTreeSet<(String, String)>> = BTreeMap::new();
+    let mut tokens: BTreeMap<String, BTreeMap<String, usize>> = BTreeMap::new();
+    let mut exclusions: BTreeMap<String, usize> = BTreeMap::new();
+    let mut disagreement_examples: BTreeMap<&str, Vec<Value>> = BTreeMap::new();
+    let mut records_total = 0;
+    let mut outcomes = json!({});
+    for repo in repos {
+        merge_outcomes(&mut outcomes, &json!(outcome_table(&repo.records)));
+        for record in &repo.records {
+            records_total += 1;
+            if record.disposition != CANONICAL_PRECISE {
+                *exclusions.entry(record.disposition.clone()).or_default() += 1;
+                continue;
+            }
+            *tokens
+                .entry(record.verdict_token.clone())
+                .or_default()
+                .entry(record.outcome.clone())
+                .or_default() += 1;
+            let family = verdict_family(&record.grip_class);
+            let verdict = agreement(family, &record.outcome);
+            if verdict == "unscored" {
+                continue;
+            }
+            *tables
+                .entry(family.to_string())
+                .or_default()
+                .entry(verdict.to_string())
+                .or_default() += 1;
+            owners
+                .entry(family.to_string())
+                .or_default()
+                .insert((repo.name.clone(), record.seam_id.clone()));
+            let list = disagreement_examples.entry(verdict).or_default();
+            if verdict != "agree" && list.len() < examples {
+                list.push(example(repo, record));
+            }
+        }
+    }
+    disagreement_examples.remove("agree");
+    let families = tables
+        .iter()
+        .map(|(family, counts)| {
+            let agree = counts.get("agree").copied().unwrap_or(0);
+            let total: usize = counts.values().sum();
+            (
+                family.clone(),
+                json!({
+                    "mutants_scored": total,
+                    "owners_scored": owners.get(family).map_or(0, BTreeSet::len),
+                    "counts": counts,
+                    "agreement_rate": rate(agree, total),
+                }),
+            )
+        })
+        .collect::<serde_json::Map<_, _>>();
+    let canonical = records_total - exclusions.values().sum::<usize>();
+    json!({
+        "agreement_method": synthetic_diff::AGREEMENT_METHOD,
+        "repos": repos.iter().map(|repo| json!({"name": repo.name, "language": repo.language})).collect::<Vec<_>>(),
+        "claim_boundary": "Advisory and never mixed with the Rust span-join figures. For each real mutation-tool mutant, a one-hunk diff from the original to the mutated source is run through `ripr check --diff` in a scratch copy of the checkout whose ripr.toml enables the language, and the classification on the mutated lines is read back. Only pairs with a caught or missed runtime outcome (the mutation tool's detected mutants versus its undetected or uncovered ones) and exactly one classification and owner on the mutated lines are scored: exposed claims a discriminator (a missed mutant is an overclaim); reachable_unrevealed and no_static_path claim none (a caught mutant is a false gap); weakly_exposed and the unknown classes are counted but not scored. Every other mutant is an exclusion with its reason, and canonical_precise plus the exclusions equals records_total. TypeScript analysis is a syntax-first preview; a mutated line is not a seam; the figures bind to the recorded revisions and tool versions and are not suite adequacy.",
+        "records_total": records_total,
+        "canonical_precise": canonical,
+        "excluded": exclusions,
+        "scored_families": families,
+        "verdict_tokens_by_outcome": tokens,
+        "outcomes_by_disposition_and_grip_class": outcomes,
+        "disagreement_examples": disagreement_examples,
+    })
+}
+
+/// Bars of the `replacement_criterion` row. Precision and flagged-or-unknown
+/// recall are the R2 rows of the release ladder in docs/METRICS.md. The other
+/// two are agent-chosen technical bars with the rationale in
+/// `COVERAGE_RATIONALE` and `TIME_RATIO_RATIONALE`; change them here, never in
+/// a published receipt.
+const PRECISION_THRESHOLD: f64 = 0.97;
+const RECALL_FLAGGED_OR_UNKNOWN_THRESHOLD: f64 = 0.80;
+const SCORED_COVERAGE_THRESHOLD: f64 = 0.50;
+/// Maximum ripr wall time as a share of full cargo-mutants wall time.
+const TIME_RATIO_THRESHOLD: f64 = 0.10;
+const LADDER_SOURCE: &str = "docs/METRICS.md release ladder R2";
+const COVERAGE_RATIONALE: &str = "agent-chosen: a majority of generated mutants must reach a canonical_precise seam join and so receive a scored verdict";
+const TIME_RATIO_RATIONALE: &str = "agent-chosen: ripr must cost under a tenth of a full cargo-mutants run on the same crate to be a usable substitute in the edit loop";
+
+fn threshold_status(observed: Option<f64>, threshold: f64, at_most: bool) -> &'static str {
+    match observed {
+        None => "not_established",
+        Some(value) if at_most && value <= threshold => "met",
+        Some(value) if !at_most && value >= threshold => "met",
+        Some(_) => "not_met",
+    }
+}
+
+/// Verdict over criterion rows: `replaces` only when every thresholded
+/// (non-informational) row is `met`; otherwise `not_yet` with the ids that are
+/// `not_met` or `not_established`.
+fn replacement_verdict(criteria: &[Value]) -> Value {
+    let mut unmet = Vec::new();
+    let mut not_established = Vec::new();
+    for row in criteria {
+        let id = row
+            .get("id")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        match row.get("status").and_then(Value::as_str) {
+            Some("met") | Some("informational") => {}
+            Some("not_met") => unmet.push(id),
+            _ => not_established.push(id),
+        }
+    }
+    let verdict = if unmet.is_empty() && not_established.is_empty() {
+        "replaces"
+    } else {
+        "not_yet"
+    };
+    json!({
+        "verdict": verdict,
+        "not_met": unmet,
+        "not_established": not_established,
+    })
+}
+
+/// Stated, machine-readable "replaces cargo-mutants" criterion with a status per
+/// criterion, derived from the other summary rows of the same receipt. `timing`
+/// is the optional recorded `timing_observation` (`ripr_seconds`,
+/// `cargo_mutants_seconds`); no timing is ever invented.
+fn replacement_criterion(
+    report_families: Option<&Value>,
+    recall: &Value,
+    coverage: &Value,
+    timing: Option<&Value>,
+) -> Value {
+    let scope = json!(["rust"]);
+    let f = |value: Option<&Value>| value.and_then(Value::as_f64);
+    let precision =
+        f(report_families.and_then(|v| v.pointer("/claims_discriminator/agreement_rate")));
+    let flagged = f(recall.get("flagged_or_unknown_share_of_missed"));
+    let strict = f(recall.get("ungripped_share_of_missed"));
+    let precise = f(coverage.get("canonical_precise_share"));
+    let ripr_secs = f(timing.and_then(|t| t.get("ripr_seconds")));
+    let mutants_secs = f(timing.and_then(|t| t.get("cargo_mutants_seconds")));
+    // The bar is compared against the unrounded ratio; only the serialised
+    // figure is rounded for display.
+    let raw_ratio = match (ripr_secs, mutants_secs) {
+        (Some(ripr), Some(full)) if full > 0.0 && ripr >= 0.0 => Some(ripr / full),
+        _ => None,
+    };
+    let ratio = raw_ratio.map(|raw| (raw * 1000.0).round() / 1000.0);
+    let mut time_row = json!({
+        "id": "time_vs_full_cargo_mutants",
+        "description": "ripr wall time on the diff as a share of full cargo-mutants wall time on the same checkout",
+        "threshold": TIME_RATIO_THRESHOLD,
+        "threshold_source": TIME_RATIO_RATIONALE,
+        "recorded": timing.cloned(),
+        "direction": "at_most",
+        "observed": {"ripr_seconds": ripr_secs, "cargo_mutants_seconds": mutants_secs, "ratio": ratio},
+        "status": threshold_status(raw_ratio, TIME_RATIO_THRESHOLD, true),
+        "scope": scope,
+    });
+    if ratio.is_none() {
+        time_row["reason"] = json!(
+            "no paired timing of ripr and full cargo-mutants is recorded for these checkouts; no figure is claimed"
+        );
+    }
+    let criteria = vec![
+        json!({
+            "id": "precision_of_discriminator_claims",
+            "description": "agreement of ripr claims_discriminator seams with runtime outcomes",
+            "threshold": PRECISION_THRESHOLD,
+            "threshold_source": LADDER_SOURCE,
+            "direction": "at_least",
+            "observed": precision,
+            "status": threshold_status(precision, PRECISION_THRESHOLD, false),
+            "scope": scope,
+        }),
+        json!({
+            "id": "recall_flagged_or_unknown",
+            "description": "share of runtime-missed mutants ripr flagged as a gap or an honest unknown",
+            "threshold": RECALL_FLAGGED_OR_UNKNOWN_THRESHOLD,
+            "threshold_source": LADDER_SOURCE,
+            "direction": "at_least",
+            "observed": flagged,
+            "status": threshold_status(flagged, RECALL_FLAGGED_OR_UNKNOWN_THRESHOLD, false),
+            "scope": scope,
+        }),
+        json!({
+            "id": "recall_strict_ungripped",
+            "description": "share of runtime-missed mutants ripr flagged ungripped (informational, no threshold)",
+            "threshold": null,
+            "observed": strict,
+            "status": "informational",
+            "scope": scope,
+        }),
+        json!({
+            "id": "scored_coverage",
+            "description": "share of recorded mutants that reach a canonical_precise seam join",
+            "threshold": SCORED_COVERAGE_THRESHOLD,
+            "threshold_source": COVERAGE_RATIONALE,
+            "direction": "at_least",
+            "observed": precise,
+            "status": threshold_status(precise, SCORED_COVERAGE_THRESHOLD, false),
+            "scope": scope,
+        }),
+        time_row,
+        json!({
+            "id": "python_typescript_real_mutant_agreement",
+            "description": "agreement with real mutants on Python and TypeScript",
+            "threshold": null,
+            "observed": null,
+            "status": "not_established",
+            "reason": "Python has no real-mutant corpus. TypeScript is measured only by the synthetic-diff verdict method (see synthetic_diff_verdict), which is not the span-join agreement this criterion is defined over; no figure is claimed here and the criterion fails closed",
+            "scope": ["python", "typescript"],
+        }),
+    ];
+    let verdict = replacement_verdict(&criteria);
+    json!({
+        "claim_boundary": "Advisory. Answers whether ripr usably replaces cargo-mutants on the recorded evidence. Precision and flagged-or-unknown recall use the R2 bars of the release ladder in docs/METRICS.md; scored coverage and the time ratio are agent-chosen technical bars whose rationale is recorded per criterion in threshold_source. A replaces verdict requires every thresholded criterion met and none not_established. It is fail-closed by design: `replaces` is currently unreachable because the Python/TypeScript criterion stays not_established: Python has no real-mutant corpus and TypeScript is measured only by the separate synthetic-diff method. The time criterion is met on one crate, one diff and one run; it is not a distribution or a general speed claim. It is not suite adequacy and does not mean ripr runs or substitutes for mutation testing. Scope is Rust on the recorded crates and checkout revisions only.",
+        "criteria": criteria,
+        "verdict": verdict["verdict"],
+        "not_met": verdict["not_met"],
+        "not_established": verdict["not_established"],
     })
 }
 
@@ -1301,9 +1632,49 @@ fn recall_of_missed(outcomes: &Value, language_outcomes: &BTreeMap<String, Value
         .chain(language_outcomes.keys().map(String::as_str))
     {
         let entry = match language_outcomes.get(language) {
-            Some(table) => {
+            Some(table) if language == HARNESS_LANGUAGE => {
                 let mut counts = recall_counts(table);
                 counts.insert("status".into(), json!("established"));
+                Value::Object(counts)
+            }
+            Some(table) => {
+                // A synthetic-diff language is established only on a sample
+                // large enough for a share to mean something.
+                let scored = sum_outcomes(table, |disposition, class, outcome| {
+                    disposition == CANONICAL_PRECISE
+                        && matches!(class, "strongly_gripped" | "ungripped")
+                        && SCOREABLE_OUTCOMES.contains(&outcome)
+                });
+                let mut counts = if scored >= MIN_SCORED_FOR_ESTABLISHED {
+                    let mut counts = recall_counts(table);
+                    counts.insert("status".into(), json!("established"));
+                    counts
+                } else {
+                    let mut counts = serde_json::Map::new();
+                    counts.insert("status".into(), json!("insufficient_sample"));
+                    counts.insert(
+                        "reason".into(),
+                        json!("too few scored synthetic-diff pairs for a recall figure; none is claimed"),
+                    );
+                    counts.insert(
+                        "canonical_precise".into(),
+                        json!(sum_outcomes(table, |d, _, _| d == CANONICAL_PRECISE)),
+                    );
+                    counts.insert(
+                        "missed_total".into(),
+                        json!(sum_outcomes(table, |_, _, o| o == "missed")),
+                    );
+                    counts
+                };
+                counts.insert("scored_claim_mutants".into(), json!(scored));
+                counts.insert(
+                    "minimum_scored_claim_mutants".into(),
+                    json!(MIN_SCORED_FOR_ESTABLISHED),
+                );
+                counts.insert(
+                    "agreement_method".into(),
+                    json!(synthetic_diff::AGREEMENT_METHOD),
+                );
                 Value::Object(counts)
             }
             None => json!({
@@ -1343,7 +1714,7 @@ fn seam_coverage(outcomes: &Value) -> Value {
 
 /// Offline path: recompute the derived summary rows of a recorded report from
 /// its own `outcomes_by_disposition_and_grip_class`, without re-running
-/// mutation testing. Only `recall_of_missed` and `seam_coverage` change.
+/// mutation testing. Only `recall_of_missed`, `seam_coverage` and `replacement_criterion` change.
 fn rederive_summaries(path: &Path) -> Result<(), String> {
     let text = fs::read_to_string(path).map_err(|err| format!("read {}: {err}", path.display()))?;
     let mut report: Value =
@@ -1365,8 +1736,16 @@ fn rederive_summaries(path: &Path) -> Result<(), String> {
             )
         })?;
     let language_outcomes = recorded_language_outcomes(&mut report, &outcomes, path)?;
-    report["recall_of_missed"] = recall_of_missed(&outcomes, &language_outcomes);
-    report["seam_coverage"] = seam_coverage(&outcomes);
+    let recall = recall_of_missed(&outcomes, &language_outcomes);
+    let coverage = seam_coverage(&outcomes);
+    report["replacement_criterion"] = replacement_criterion(
+        report.get("scored_families"),
+        &recall,
+        &coverage,
+        report.get("timing_observation"),
+    );
+    report["recall_of_missed"] = recall;
+    report["seam_coverage"] = coverage;
     let json_text = serde_json::to_string_pretty(&report)
         .map_err(|err| format!("serialize {}: {err}", path.display()))?;
     fs::write(path, format!("{json_text}\n"))
@@ -1418,7 +1797,7 @@ fn recorded_language_outcomes(
 }
 
 fn example(repo: &RepoRun, record: &Record) -> Value {
-    json!({
+    let mut row = json!({
         "repo": repo.name,
         "revision": repo.revision,
         "file": record.file,
@@ -1430,16 +1809,18 @@ fn example(repo: &RepoRun, record: &Record) -> Value {
         "grip_class": record.grip_class,
         "mutant": record.mutant,
         "runtime_outcome": record.outcome,
-    })
+    });
+    if !record.verdict_token.is_empty() {
+        row["verdict_token"] = json!(record.verdict_token);
+    }
+    row
 }
 
 /// The denominator stays every runtime record: `canonical_precise` plus every
 /// exclusion always equals `records_total`.
-fn pairing_counts(records: &[Record]) -> Value {
-    let mut by_join_method: BTreeMap<&str, usize> = CANONICAL_JOIN_METHODS
-        .iter()
-        .map(|method| (*method, 0))
-        .collect();
+fn pairing_counts(records: &[Record], methods: &[&'static str]) -> Value {
+    let mut by_join_method: BTreeMap<&str, usize> =
+        methods.iter().map(|method| (*method, 0)).collect();
     let mut excluded: BTreeMap<&str, usize> = BTreeMap::new();
     for record in records {
         if record.disposition == CANONICAL_PRECISE {
@@ -1471,12 +1852,15 @@ fn spot_check_markdown(report: &Value) -> String {
     if let Some(boundary) = report.get("claim_boundary").and_then(Value::as_str) {
         out.push_str(&format!("{boundary}\n\n"));
     }
+    // Synthetic-diff repos have their own section; the tables below are the
+    // Rust span join.
     let repos = || {
         report
             .get("repos")
             .and_then(Value::as_array)
             .into_iter()
             .flatten()
+            .filter(|repo| repo.get("agreement_method").is_none())
     };
     let name = |repo: &Value| {
         repo.get("name")
@@ -1630,7 +2014,81 @@ fn spot_check_markdown(report: &Value) -> String {
     {
         out.push_str(&format!("- **absent** {}\n", example_line(row)));
     }
+    out.push_str(&synthetic_markdown(report));
     out.push_str(&pilot::markdown(report));
+    out
+}
+
+fn synthetic_markdown(report: &Value) -> String {
+    let Some(section) = report.get("synthetic_diff_verdict") else {
+        return String::new();
+    };
+    let mut out = String::from("\n## Synthetic-diff verdicts (real mutants, TypeScript)\n\n");
+    if let Some(boundary) = section.get("claim_boundary").and_then(Value::as_str) {
+        out.push_str(&format!("{boundary}\n\n"));
+    }
+    let n = |pointer: &str| {
+        section
+            .pointer(pointer)
+            .and_then(Value::as_u64)
+            .unwrap_or(0)
+    };
+    out.push_str(&format!(
+        "{} mutants: {} canonical_precise, {} excluded.\n\n",
+        n("/records_total"),
+        n("/canonical_precise"),
+        n("/records_total") - n("/canonical_precise"),
+    ));
+    out.push_str("| Exclusion | Mutants |\n| --- | --- |\n");
+    for (reason, count) in section
+        .get("excluded")
+        .and_then(Value::as_object)
+        .into_iter()
+        .flatten()
+    {
+        out.push_str(&format!(
+            "| `{reason}` | {} |\n",
+            count.as_u64().unwrap_or(0)
+        ));
+    }
+    out.push_str("\n| Verdict family | Owners | Mutants | Agree | Overclaim | False gap | Agreement |\n| --- | --- | --- | --- | --- | --- | --- |\n");
+    for (family, row) in section
+        .get("scored_families")
+        .and_then(Value::as_object)
+        .into_iter()
+        .flatten()
+    {
+        let count = |key: &str| {
+            row.pointer(&format!("/counts/{key}"))
+                .and_then(Value::as_u64)
+                .unwrap_or(0)
+        };
+        out.push_str(&format!(
+            "| {family} | {} | {} | {} | {} | {} | {} |\n",
+            row.get("owners_scored")
+                .and_then(Value::as_u64)
+                .unwrap_or(0),
+            row.get("mutants_scored")
+                .and_then(Value::as_u64)
+                .unwrap_or(0),
+            count("agree"),
+            count("overclaim"),
+            count("false_gap"),
+            row.get("agreement_rate")
+                .and_then(Value::as_f64)
+                .map_or_else(|| "n/a".to_string(), |rate| format!("{:.1}%", rate * 100.0)),
+        ));
+    }
+    for (verdict, rows) in section
+        .get("disagreement_examples")
+        .and_then(Value::as_object)
+        .into_iter()
+        .flatten()
+    {
+        for row in rows.as_array().into_iter().flatten() {
+            out.push_str(&format!("- **{verdict}** {}\n", example_line(row)));
+        }
+    }
     out
 }
 
@@ -1706,6 +2164,85 @@ fn derived_summaries_markdown(report: &Value) -> String {
             n("no_containing_seam"),
             pct("no_containing_seam_share"),
         ));
+    }
+    if let Some(rc) = report.get("replacement_criterion") {
+        let text = |row: &Value, key: &str| {
+            row.get(key)
+                .map(|v| match v {
+                    Value::Null => "n/a".to_string(),
+                    Value::String(s) => s.clone(),
+                    other => other.to_string(),
+                })
+                .unwrap_or_else(|| "n/a".to_string())
+        };
+        let list = |key: &str| {
+            let ids = rc
+                .get(key)
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .collect::<Vec<_>>();
+            if ids.is_empty() {
+                "none".to_string()
+            } else {
+                ids.join(", ")
+            }
+        };
+        out.push_str(&format!(
+            "\n## Replaces cargo-mutants?\n\nVerdict: `{}`. Not met: {}. Not established: {}.\n\n| Criterion | Bar and source | Observed | Status | Scope |\n| --- | --- | --- | --- | --- |\n",
+            text(rc, "verdict"),
+            list("not_met"),
+            list("not_established"),
+        ));
+        for row in rc
+            .get("criteria")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            let scope = row
+                .get("scope")
+                .and_then(Value::as_array)
+                .map(|langs| {
+                    langs
+                        .iter()
+                        .filter_map(Value::as_str)
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                })
+                .unwrap_or_default();
+            let observed = match row.get("observed") {
+                Some(obs) if obs.is_object() => format!(
+                    "ripr {}s, cargo-mutants {}s, ratio {}",
+                    text(obs, "ripr_seconds"),
+                    text(obs, "cargo_mutants_seconds"),
+                    text(obs, "ratio"),
+                ),
+                _ => text(row, "observed"),
+            };
+            let observed = if row.get("id").and_then(Value::as_str)
+                == Some("time_vs_full_cargo_mutants")
+                && row.get("recorded").is_some_and(Value::is_object)
+            {
+                format!("{observed} (one crate, one diff, one run)")
+            } else {
+                observed
+            };
+            let bar = match row.get("threshold_source").and_then(Value::as_str) {
+                Some(source) => format!("{} ({source})", text(row, "threshold")),
+                None => text(row, "threshold"),
+            };
+            out.push_str(&format!(
+                "| `{}` | {} | {} | {} | {} |\n",
+                text(row, "id"),
+                bar,
+                observed,
+                text(row, "status"),
+                scope,
+            ));
+        }
+        out.push_str("\nBars: precision and recall from the R2 ladder rows in docs/METRICS.md, coverage and time ratio agent-chosen (see `threshold_source` in the JSON); a pass is not suite adequacy; scope is Rust on the recorded crates.\n");
     }
     out
 }
@@ -1951,13 +2488,19 @@ mod tests {
             out["recall_of_missed"]["by_language"]["rust"]["ungripped_missed"],
             2
         );
+        // A non-Rust language is exact in its split but needs the minimum
+        // scored sample before it is established.
         assert_eq!(
             out["recall_of_missed"]["by_language"]["python"]["status"],
-            "established"
+            "insufficient_sample"
         );
         assert_eq!(
-            out["recall_of_missed"]["by_language"]["python"]["flagged_or_unknown_missed"],
+            out["recall_of_missed"]["by_language"]["python"]["missed_total"],
             1
+        );
+        assert_eq!(
+            out["recall_of_missed"]["by_language"]["python"]["scored_claim_mutants"],
+            0
         );
         assert_eq!(
             out["recall_of_missed"]["by_language"]["typescript"]["status"],
@@ -2525,7 +3068,156 @@ mod tests {
             metrics: Value::Null,
             records,
             pilot: Ok(Vec::new()),
+            synthetic: None,
         }
+    }
+
+    fn synthetic_record(disposition: &str, token: &str, outcome: &str) -> Record {
+        Record {
+            disposition: disposition.to_string(),
+            join_method: synthetic_diff::AGREEMENT_METHOD.to_string(),
+            grip_class: if token.is_empty() {
+                String::new()
+            } else {
+                synthetic_diff::grip_class_for_token(token)
+            },
+            outcome: outcome.to_string(),
+            seam_id: "typescript:src/a.ts::f".to_string(),
+            seam_kind: String::new(),
+            file: "src/a.ts".to_string(),
+            line: 2,
+            expression: None,
+            mutant: format!("src/a.ts:2:1: M [{outcome}] id=1"),
+            operator_token: "not_applicable",
+            verdict_token: token.to_string(),
+        }
+    }
+
+    #[test]
+    fn synthetic_repos_stay_out_of_the_rust_aggregates() {
+        let mut ts = repo_run(vec![
+            synthetic_record(CANONICAL_PRECISE, "exposed", "caught"),
+            synthetic_record(CANONICAL_PRECISE, "exposed", "missed"),
+            synthetic_record(CANONICAL_PRECISE, "reachable_unrevealed", "missed"),
+            synthetic_record(CANONICAL_PRECISE, "reachable_unrevealed", "caught"),
+            synthetic_record(CANONICAL_PRECISE, "weakly_exposed", "missed"),
+            synthetic_record("no_finding_on_mutated_lines", "", "missed"),
+            synthetic_record("unscoreable_outcome", "", "timeout"),
+        ]);
+        ts.name = "pkg".to_string();
+        ts.language = "typescript".to_string();
+        ts.synthetic = Some(json!({"agreement_method": synthetic_diff::AGREEMENT_METHOD}));
+        ts.pilot = Err("n/a".to_string());
+        let report = build_report(&[ts], 5, "ripr test");
+        // No Rust span-join figure sees the TypeScript records.
+        assert_eq!(
+            report["scored_families"]["claims_discriminator"]["mutants_scored"],
+            0
+        );
+        assert_eq!(report["seam_coverage"]["mutants_total"], 0);
+        assert_eq!(report["recall_of_missed"]["missed_total"], 0);
+        assert_eq!(report["pilot_top_recommendations"]["unavailable_repos"], 0);
+        // The synthetic row scores them and keeps the bookkeeping identity.
+        let row = &report["synthetic_diff_verdict"];
+        assert_eq!(row["agreement_method"], "synthetic_diff_verdict");
+        assert_eq!(row["records_total"], 7);
+        assert_eq!(row["canonical_precise"], 5);
+        assert_eq!(row["excluded"]["no_finding_on_mutated_lines"], 1);
+        assert_eq!(row["excluded"]["unscoreable_outcome"], 1);
+        assert_eq!(
+            row["scored_families"]["claims_discriminator"]["counts"]["agree"],
+            1
+        );
+        assert_eq!(
+            row["scored_families"]["claims_discriminator"]["counts"]["overclaim"],
+            1
+        );
+        assert_eq!(
+            row["scored_families"]["claims_no_discriminator"]["counts"]["agree"],
+            1
+        );
+        assert_eq!(
+            row["scored_families"]["claims_no_discriminator"]["counts"]["false_gap"],
+            1
+        );
+        // Only the exposed and reachable_unrevealed pairs are scored.
+        assert_eq!(
+            row["scored_families"]["claims_discriminator"]["mutants_scored"],
+            2
+        );
+        let entry = &report["repos"][0];
+        assert_eq!(entry["language"], "typescript");
+        assert_eq!(entry["agreement_method"], "synthetic_diff_verdict");
+        assert_eq!(entry["pairings"]["records_total"], 7);
+        assert_eq!(entry["pairings"]["canonical_precise"], 5);
+        let by_language = &report["recall_of_missed"]["by_language"];
+        // Four scored claim pairs is below the minimum sample.
+        assert_eq!(by_language["typescript"]["status"], "insufficient_sample");
+        assert_eq!(
+            by_language["typescript"]["agreement_method"],
+            "synthetic_diff_verdict"
+        );
+        assert_eq!(by_language["typescript"]["scored_claim_mutants"], 4);
+        assert_eq!(
+            by_language["typescript"]["minimum_scored_claim_mutants"],
+            30
+        );
+        assert_eq!(by_language["typescript"]["canonical_precise"], 5);
+        assert_eq!(by_language["typescript"]["missed_total"], 4);
+        assert!(
+            by_language["typescript"]
+                .get("flagged_or_unknown_share_of_missed")
+                .is_none()
+        );
+        assert_eq!(by_language["python"]["status"], "not_established");
+        assert!(by_language["rust"].get("agreement_method").is_none());
+        let markdown = spot_check_markdown(&report);
+        assert!(markdown.contains("Synthetic-diff verdicts"));
+    }
+
+    fn typescript_recall(scored: usize) -> Value {
+        let mut records = Vec::new();
+        for _ in 0..scored {
+            records.push(synthetic_record(
+                CANONICAL_PRECISE,
+                "reachable_unrevealed",
+                "missed",
+            ));
+        }
+        // Unscored and excluded records never count toward the minimum.
+        records.push(synthetic_record(
+            CANONICAL_PRECISE,
+            "weakly_exposed",
+            "missed",
+        ));
+        records.push(synthetic_record(
+            "no_finding_on_mutated_lines",
+            "",
+            "missed",
+        ));
+        let mut ts = repo_run(records);
+        ts.language = "typescript".to_string();
+        ts.synthetic = Some(json!({"agreement_method": synthetic_diff::AGREEMENT_METHOD}));
+        let report = build_report(&[ts], 5, "ripr test");
+        report["recall_of_missed"]["by_language"]["typescript"].clone()
+    }
+
+    #[test]
+    fn typescript_recall_is_established_only_at_the_minimum_scored_sample() {
+        let below = typescript_recall(MIN_SCORED_FOR_ESTABLISHED - 1);
+        assert_eq!(below["status"], "insufficient_sample");
+        assert_eq!(
+            below["scored_claim_mutants"],
+            MIN_SCORED_FOR_ESTABLISHED - 1
+        );
+        assert_eq!(below["agreement_method"], "synthetic_diff_verdict");
+        assert!(below.get("ungripped_share_of_missed").is_none());
+        let at = typescript_recall(MIN_SCORED_FOR_ESTABLISHED);
+        assert_eq!(at["status"], "established");
+        assert_eq!(at["scored_claim_mutants"], MIN_SCORED_FOR_ESTABLISHED);
+        assert_eq!(at["agreement_method"], "synthetic_diff_verdict");
+        assert_eq!(at["missed_total"], MIN_SCORED_FOR_ESTABLISHED + 2);
+        assert!(at.get("ungripped_share_of_missed").is_some());
     }
 
     fn fixture(dir: &str, file: &str) -> Result<Value, String> {
@@ -2786,6 +3478,188 @@ mod tests {
             assert_eq!(report["scored_families"][family]["mutants_scored"], 0);
             assert!(report["scored_families"][family]["agreement_rate"].is_null());
         }
+        Ok(())
+    }
+
+    fn families(rate: f64) -> Value {
+        json!({"claims_discriminator": {"agreement_rate": rate}})
+    }
+
+    fn criterion(
+        precision: Option<f64>,
+        flagged: f64,
+        covered: f64,
+        timing: Option<Value>,
+    ) -> Value {
+        let families = precision.map(families);
+        replacement_criterion(
+            families.as_ref(),
+            &json!({"flagged_or_unknown_share_of_missed": flagged, "ungripped_share_of_missed": 0.1}),
+            &json!({"canonical_precise_share": covered}),
+            timing.as_ref(),
+        )
+    }
+
+    fn status_of<'a>(rc: &'a Value, id: &str) -> &'a str {
+        rc["criteria"]
+            .as_array()
+            .and_then(|rows| rows.iter().find(|row| row["id"] == id))
+            .and_then(|row| row["status"].as_str())
+            .unwrap_or("missing")
+    }
+
+    #[test]
+    fn replacement_criterion_is_not_yet_on_the_recorded_numbers() {
+        let rc = criterion(Some(0.968), 0.587, 0.283, None);
+        assert_eq!(rc["verdict"], "not_yet");
+        assert_eq!(
+            status_of(&rc, "precision_of_discriminator_claims"),
+            "not_met"
+        );
+        assert_eq!(status_of(&rc, "recall_flagged_or_unknown"), "not_met");
+        assert_eq!(status_of(&rc, "scored_coverage"), "not_met");
+        assert_eq!(status_of(&rc, "recall_strict_ungripped"), "informational");
+        assert_eq!(
+            status_of(&rc, "time_vs_full_cargo_mutants"),
+            "not_established"
+        );
+        assert_eq!(
+            status_of(&rc, "python_typescript_real_mutant_agreement"),
+            "not_established"
+        );
+        assert_eq!(
+            rc["not_met"],
+            json!([
+                "precision_of_discriminator_claims",
+                "recall_flagged_or_unknown",
+                "scored_coverage"
+            ])
+        );
+        assert_eq!(
+            rc["not_established"],
+            json!([
+                "time_vs_full_cargo_mutants",
+                "python_typescript_real_mutant_agreement"
+            ])
+        );
+    }
+
+    #[test]
+    fn replacement_verdict_needs_every_thresholded_criterion_met() {
+        let row = |id: &str, status: &str| json!({"id": id, "status": status});
+        let all_met = [row("a", "met"), row("b", "informational"), row("c", "met")];
+        assert_eq!(replacement_verdict(&all_met)["verdict"], "replaces");
+        // One not_established blocks even when every other criterion is met.
+        let one_unknown = [row("a", "met"), row("b", "not_established")];
+        let verdict = replacement_verdict(&one_unknown);
+        assert_eq!(verdict["verdict"], "not_yet");
+        assert_eq!(verdict["not_established"], json!(["b"]));
+        // A real timing observation clears the time criterion on its own.
+        let timing = json!({"ripr_seconds": 5.0, "cargo_mutants_seconds": 100.0});
+        let rc = criterion(Some(0.99), 0.9, 0.6, Some(timing));
+        assert_eq!(status_of(&rc, "time_vs_full_cargo_mutants"), "met");
+        assert_eq!(rc["criteria"][4]["observed"]["ratio"], 0.05);
+        assert_eq!(status_of(&rc, "precision_of_discriminator_claims"), "met");
+        // Python/TypeScript has no corpus, so the full verdict is still not_yet.
+        assert_eq!(rc["verdict"], "not_yet");
+        assert_eq!(
+            rc["not_established"],
+            json!(["python_typescript_real_mutant_agreement"])
+        );
+    }
+
+    #[test]
+    fn recorded_timing_flips_the_time_criterion_against_the_bar() {
+        let time_status = |ripr: f64, full: f64| {
+            let timing = json!({"ripr_seconds": ripr, "cargo_mutants_seconds": full});
+            let rc = criterion(Some(0.99), 0.9, 0.6, Some(timing));
+            status_of(&rc, "time_vs_full_cargo_mutants").to_string()
+        };
+        // Bar is a ratio of at most 0.10.
+        assert_eq!(time_status(10.0, 100.0), "met"); // exactly at the bar
+        assert_eq!(time_status(10.1, 100.0), "not_met");
+        assert_eq!(time_status(50.0, 100.0), "not_met");
+        // A true ratio just above the bar that rounds to 0.100 is still not met.
+        assert_eq!(time_status(10.0004, 100.0), "not_met");
+        // A zero full-run time cannot yield a ratio.
+        assert_eq!(time_status(1.0, 0.0), "not_established");
+    }
+
+    #[test]
+    fn markdown_time_row_carries_the_single_sample_caveat() {
+        let timing = json!({"ripr_seconds": 5.0, "cargo_mutants_seconds": 100.0, "crate": "demo"});
+        let rc = criterion(Some(0.99), 0.9, 0.6, Some(timing));
+        let markdown = derived_summaries_markdown(&json!({"replacement_criterion": rc}));
+        assert!(markdown.contains("ratio 0.05 (one crate, one diff, one run)"));
+        let unmeasured = criterion(Some(0.99), 0.9, 0.6, None);
+        let markdown = derived_summaries_markdown(&json!({"replacement_criterion": unmeasured}));
+        assert!(!markdown.contains("one crate, one diff, one run"));
+    }
+
+    #[test]
+    fn replacement_criterion_threshold_boundary_and_missing_inputs() {
+        let at = criterion(Some(0.97), 0.80, 0.50, None);
+        assert_eq!(status_of(&at, "precision_of_discriminator_claims"), "met");
+        assert_eq!(status_of(&at, "recall_flagged_or_unknown"), "met");
+        assert_eq!(status_of(&at, "scored_coverage"), "met");
+        let below = criterion(Some(0.969), 0.799, 0.499, None);
+        assert_eq!(
+            status_of(&below, "precision_of_discriminator_claims"),
+            "not_met"
+        );
+        assert_eq!(status_of(&below, "recall_flagged_or_unknown"), "not_met");
+        assert_eq!(status_of(&below, "scored_coverage"), "not_met");
+        // Missing inputs are not_established, never not_met.
+        let rc = replacement_criterion(None, &json!({}), &json!({}), None);
+        assert_eq!(
+            status_of(&rc, "precision_of_discriminator_claims"),
+            "not_established"
+        );
+        assert_eq!(
+            status_of(&rc, "recall_flagged_or_unknown"),
+            "not_established"
+        );
+        assert_eq!(status_of(&rc, "scored_coverage"), "not_established");
+        assert!(rc["not_met"].as_array().is_some_and(Vec::is_empty));
+        // A half-recorded timing is not a ratio.
+        let half = criterion(Some(0.99), 0.9, 0.6, Some(json!({"ripr_seconds": 3.0})));
+        assert_eq!(
+            status_of(&half, "time_vs_full_cargo_mutants"),
+            "not_established"
+        );
+    }
+
+    #[test]
+    fn rederive_adds_the_replacement_criterion_row() -> Result<(), String> {
+        let dir = std::env::temp_dir().join(format!("ripr-rederive-rc-{}", std::process::id()));
+        fs::create_dir_all(&dir).map_err(|err| err.to_string())?;
+        let path = dir.join("receipt.json");
+        let receipt = json!({
+            "schema_version": SCHEMA_VERSION,
+            "repos": [],
+            "scored_families": families(0.968),
+            "outcomes_by_disposition_and_grip_class": baseline_outcomes(),
+        });
+        fs::write(&path, receipt.to_string()).map_err(|err| err.to_string())?;
+        rederive_summaries(&path)?;
+        let out: Value =
+            serde_json::from_str(&fs::read_to_string(&path).map_err(|e| e.to_string())?)
+                .map_err(|err| err.to_string())?;
+        let _ = fs::remove_dir_all(&dir);
+        assert_eq!(out["replacement_criterion"]["verdict"], "not_yet");
+        assert_eq!(
+            out["replacement_criterion"]["criteria"][0]["observed"],
+            0.968
+        );
+        assert_eq!(
+            out["replacement_criterion"]["criteria"][3]["observed"],
+            0.283
+        );
+        let markdown = spot_check_markdown(&out);
+        assert!(markdown.contains("## Replaces cargo-mutants?"));
+        assert!(markdown.contains("0.97 (docs/METRICS.md release ladder R2)"));
+        assert!(markdown.contains("agent-chosen: a majority"));
+        assert!(!markdown.contains("one crate, one diff, one run"));
         Ok(())
     }
 }

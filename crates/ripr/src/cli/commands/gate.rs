@@ -7,7 +7,7 @@
 use crate::cli::CommandError;
 use crate::cli::commands_options::GateOptions;
 use crate::cli::help;
-use crate::cli::parse::expect_value;
+use crate::cli::parse::{expect_value, reconcile_root};
 use crate::cli::suggest::{unknown_argument, unknown_value};
 use crate::output;
 use std::io::IsTerminal;
@@ -110,6 +110,7 @@ pub(in crate::cli) fn gate(args: &[String]) -> Result<(), CommandError> {
 
 fn parse_gate_options(args: &[String]) -> Result<GateOptions, String> {
     let mut root = PathBuf::from(".");
+    let mut root_explicit = false;
     let mut repo_exposure = None;
     let mut pr_guidance = None;
     let mut gap_ledger = None;
@@ -122,6 +123,7 @@ fn parse_gate_options(args: &[String]) -> Result<GateOptions, String> {
     let mut mutation_calibration = None;
     let mut baseline = None;
     let mut exception_policy = None;
+    let mut acknowledgements = None;
     let mut mode = output::gate::GateMode::VisibleOnly;
     let mut mode_explicit = false;
     let mut acknowledgement_labels = Vec::new();
@@ -133,7 +135,10 @@ fn parse_gate_options(args: &[String]) -> Result<GateOptions, String> {
         match args[i].as_str() {
             "--root" => {
                 i += 1;
-                root = non_empty_path_arg(args, i, "--root", "gate")?;
+                let value = non_empty_string_arg(args, i, "--root", "gate")?;
+                let reconciled = reconcile_root(&root, root_explicit, &value, "gate")?;
+                root = reconciled;
+                root_explicit = true;
             }
             "--repo-exposure" => {
                 i += 1;
@@ -192,6 +197,10 @@ fn parse_gate_options(args: &[String]) -> Result<GateOptions, String> {
             "--exception-policy" => {
                 i += 1;
                 exception_policy = Some(non_empty_path_arg(args, i, "--exception-policy", "gate")?);
+            }
+            "--acknowledgements" => {
+                i += 1;
+                acknowledgements = Some(non_empty_path_arg(args, i, "--acknowledgements", "gate")?);
             }
             "--mode" => {
                 i += 1;
@@ -252,6 +261,7 @@ fn parse_gate_options(args: &[String]) -> Result<GateOptions, String> {
             mode,
             acknowledgement_labels,
             exception_policy,
+            acknowledgements,
         },
         out,
         out_md,
@@ -466,6 +476,7 @@ mod tests {
                     mode: output::gate::GateMode::CalibratedGate,
                     acknowledgement_labels: vec!["custom-waive".to_string()],
                     exception_policy: None,
+                    acknowledgements: None,
                 },
                 out: PathBuf::from("target/ripr/reports/gate-decision.json"),
                 out_md: PathBuf::from("target/ripr/reports/gate-decision.md"),
@@ -529,6 +540,7 @@ mod tests {
                     mode: output::gate::GateMode::VisibleOnly,
                     acknowledgement_labels: Vec::new(),
                     exception_policy: None,
+                    acknowledgements: None,
                 },
                 out: PathBuf::from(output::gate::DEFAULT_GATE_OUT),
                 out_md: PathBuf::from("target/ripr/reports/gate-decision.md"),

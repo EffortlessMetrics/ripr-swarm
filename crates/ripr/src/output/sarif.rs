@@ -7,7 +7,7 @@
 use crate::analysis::ClassifiedSeam;
 use crate::analysis::SeamLimitInfo;
 use crate::analysis::seams::SeamGripClass;
-use crate::analysis_outcome::AnalysisOutcome;
+use crate::analysis_outcome::{AnalysisLimitation, AnalysisOutcome};
 use crate::app::CheckOutput;
 use crate::config::{ConfigSeverity, RiprConfig};
 use crate::domain::{
@@ -115,7 +115,9 @@ fn bound_sarif_results(
     };
     let total = results.len();
     let mut kept: Vec<Value> = Vec::new();
-    let mut array_bytes = 0usize;
+    // Nonempty arrays add `[` + newline and newline + six spaces + `]`
+    // around the indented results. Count that framing before admitting rows.
+    let mut array_bytes = 10usize;
     for result in results {
         let payload_bytes = serde_json::to_string_pretty(&result)
             .map(|rendered| nested_result_bytes(&rendered))
@@ -309,6 +311,7 @@ fn fold_same_line_results(results: Vec<Value>) -> (Vec<Value>, usize) {
 pub(crate) fn render_repo_seams_sarif_with_budget(
     classified: &[ClassifiedSeam],
     limit_info: Option<&SeamLimitInfo>,
+    evidence_limitations: &[AnalysisLimitation],
     config: &RiprConfig,
     results_budget: Option<usize>,
 ) -> String {
@@ -322,13 +325,134 @@ pub(crate) fn render_repo_seams_sarif_with_budget(
         .filter_map(|(entry, ordinal)| seam_result(entry, ordinal, config))
         .collect::<Vec<_>>();
     let (results, results_bound) = bound_sarif_results(results, results_budget);
-    sarif_document_repo_seam(rules, results, limit_info, results_bound.as_ref())
+    sarif_document_repo_seam(
+        rules,
+        results,
+        limit_info,
+        evidence_limitations,
+        results_bound.as_ref(),
+    )
+}
+
+/// Render diff-scoped Findings as minified SARIF (#13195): the
+/// \RIPR_SARIF_RESULTS_BYTES\-bounded document (#13102) with insignificant
+/// whitespace removed, so parsed values match \--format sarif\ exactly,
+/// including its disclosed \limited_results_bound\ truncation.
+pub(crate) fn render_findings_sarif_compact(
+    output: &CheckOutput,
+    config: &RiprConfig,
+    suppressions: &[SuppressionEntry],
+) -> Result<String, String> {
+    Ok(render_findings_sarif_compact_with_budget(
+        output,
+        config,
+        suppressions,
+        sarif_results_byte_budget()?,
+    ))
+}
+
+fn render_findings_sarif_compact_with_budget(
+    output: &CheckOutput,
+    config: &RiprConfig,
+    suppressions: &[SuppressionEntry],
+    results_budget: Option<usize>,
+) -> String {
+    minify_sarif_document(&render_findings_sarif_with_budget(
+        output,
+        config,
+        suppressions,
+        results_budget,
+    ))
+}
+
+/// Render the refusal document minified for \sarif-compact\ (#13195), so a
+/// refused run stays uploadable to code scanning like \--format sarif\.
+pub(crate) fn render_refusal_sarif_compact(
+    notice: &crate::core_error::RefusalNotice,
+    root: &Path,
+    base: Option<&str>,
+) -> String {
+    minify_sarif_document(&render_refusal_sarif(notice, root, base))
+}
+
+/// Render repo-scoped classified seams as minified SARIF (#13195): the
+/// \RIPR_SARIF_RESULTS_BYTES\-bounded document (#13102) minified, so parsed
+/// values match \--format repo-sarif\ exactly.
+pub(crate) fn render_repo_seams_sarif_compact(
+    classified: &[ClassifiedSeam],
+    limit_info: Option<&SeamLimitInfo>,
+    evidence_limitations: &[AnalysisLimitation],
+    config: &RiprConfig,
+) -> Result<String, String> {
+    Ok(render_repo_seams_sarif_compact_with_budget(
+        classified,
+        limit_info,
+        evidence_limitations,
+        config,
+        sarif_results_byte_budget()?,
+    ))
+}
+
+fn render_repo_seams_sarif_compact_with_budget(
+    classified: &[ClassifiedSeam],
+    limit_info: Option<&SeamLimitInfo>,
+    evidence_limitations: &[AnalysisLimitation],
+    config: &RiprConfig,
+    results_budget: Option<usize>,
+) -> String {
+    minify_sarif_document(&render_repo_seams_sarif_with_budget(
+        classified,
+        limit_info,
+        evidence_limitations,
+        config,
+        results_budget,
+    ))
+}
+
+/// Minifies a rendered SARIF document: parses and re-serializes without
+/// insignificant whitespace, so the parsed value is identical to the pretty
+/// document. A document that does not parse is returned unchanged, so this
+/// step can never corrupt output.
+fn minify_sarif_document(pretty: &str) -> String {
+    match serde_json::from_str::<Value>(pretty) {
+        Ok(document) => {
+            let mut minified =
+                serde_json::to_string(&document).unwrap_or_else(|_| pretty.to_string());
+            minified.push('\n');
+            minified
+        }
+        Err(_) => pretty.to_string(),
+    }
+}
+
+/// Notification id the repo-seam SARIF declares and references when the
+/// shared seam-evidence warm failed (#13340). One declared id; the typed
+/// limitation rides in the notification's and the run's property bags.
+const SARIF_EVIDENCE_FAILED_NOTIFICATION_ID: &str = "seam_evidence_limited";
+
+fn evidence_limitation_value(limitation: &AnalysisLimitation) -> Value {
+    let mut entry = Map::new();
+    entry.insert("category".to_string(), json!(limitation.kind.as_str()));
+    entry.insert(
+        "producer_stage".to_string(),
+        json!(limitation.producer_stage.as_str()),
+    );
+    entry.insert("scope".to_string(), json!("pass_wide"));
+    if let Some(detail) = limitation.bounded_detail.as_deref() {
+        entry.insert("detail".to_string(), json!(detail));
+    }
+    entry.insert(
+        "repair_route".to_string(),
+        json!(limitation.recovery.detail),
+    );
+    Value::Object(entry)
 }
 
 fn sarif_document_repo_seam(
     rules: Vec<Value>,
     results: Vec<Value>,
     limit_info: Option<&SeamLimitInfo>,
+    evidence_limitations: &[AnalysisLimitation],
     results_bound: Option<&SarifResultsBound>,
 ) -> String {
     let mut props = Map::new();
@@ -338,45 +462,100 @@ fn sarif_document_repo_seam(
         json!(RIPR_SARIF_SCHEMA_VERSION),
     );
     props.insert("scope".to_string(), json!("repo_seam"));
+    // A failed evidence warm outranks the seam cut for `run_status` (the same
+    // precedence as repo-exposure JSON): every seam is an opaque stand-in, so
+    // no count read from the results is a complete answer.
+    let evidence_failed = !evidence_limitations.is_empty();
+    let mut limitations: Vec<Value> = Vec::new();
     match limit_info {
         None => {
-            props.insert("run_status".to_string(), json!("complete"));
+            if !evidence_failed {
+                props.insert("run_status".to_string(), json!("complete"));
+            }
         }
         Some(info) => {
-            props.insert("run_status".to_string(), json!("seam_limit_applied"));
-            let limitation = json!({
+            if !evidence_failed {
+                props.insert("run_status".to_string(), json!("seam_limit_applied"));
+            }
+            limitations.push(json!({
                 "category": "repo_seam_limit_applied",
                 "seams_analyzed": info.analyzed,
                 "seams_total": info.total,
                 "limit_source": info.source.as_str(),
                 "control": "RIPR_REPO_EXPOSURE_SEAM_LIMIT"
-            });
-            props.insert("limitations".to_string(), json!([limitation]));
+            }));
         }
+    }
+    if evidence_failed {
+        props.insert(
+            "run_status".to_string(),
+            json!(crate::output::repo_exposure::EVIDENCE_FAILED_RUN_STATUS),
+        );
+        limitations.extend(evidence_limitations.iter().map(evidence_limitation_value));
+    }
+    if !limitations.is_empty() {
+        props.insert("limitations".to_string(), Value::Array(limitations));
     }
     if let Some(bound) = results_bound {
         insert_sarif_bound_properties(&mut props, bound);
     }
-    let document = json!({
+    let mut run = json!({
+        "columnKind": SARIF_COLUMN_KIND,
+        "tool": {
+            "driver": {
+                "name": "ripr",
+                "semanticVersion": env!("CARGO_PKG_VERSION"),
+                "informationUri": "https://github.com/EffortlessMetrics/ripr",
+                "rules": rules
+            }
+        },
+        "results": results,
+        "properties": props
+    });
+    if evidence_failed {
+        insert_evidence_failed_notification(&mut run, evidence_limitations);
+    }
+    json_pretty(json!({
         "$schema": SARIF_SCHEMA,
         "version": SARIF_VERSION,
-        "runs": [
-            {
-                "columnKind": SARIF_COLUMN_KIND,
-                "tool": {
-                    "driver": {
-                        "name": "ripr",
-                        "semanticVersion": env!("CARGO_PKG_VERSION"),
-                        "informationUri": "https://github.com/EffortlessMetrics/ripr",
-                        "rules": rules
-                    }
-                },
-                "results": results,
-                "properties": props
+        "runs": [run]
+    }))
+}
+
+/// Declare the notification and attach a warning-level
+/// `toolExecutionNotifications` entry per failed-warm limitation, so a SARIF
+/// consumer that reads invocations (not ripr properties) still sees that the
+/// inventory is degraded. The run executed to completion, so
+/// `executionSuccessful` stays true; no result or rule is added.
+fn insert_evidence_failed_notification(run: &mut Value, limitations: &[AnalysisLimitation]) {
+    let notifications: Vec<Value> = limitations
+        .iter()
+        .map(|limitation| {
+            json!({
+                "level": "warning",
+                "descriptor": { "id": SARIF_EVIDENCE_FAILED_NOTIFICATION_ID },
+                "message": { "text": format!(
+                    "The seam-evidence pass failed; every seam is an opaque stand-in and this inventory is not a complete result. {}",
+                    limitation.recovery.detail
+                ) },
+                "properties": evidence_limitation_value(limitation)
+            })
+        })
+        .collect();
+    run["tool"]["driver"]["notifications"] = json!([
+        {
+            "id": SARIF_EVIDENCE_FAILED_NOTIFICATION_ID,
+            "shortDescription": {
+                "text": "The shared seam-evidence pass failed; the inventory is limited, not complete."
             }
-        ]
-    });
-    json_pretty(document)
+        }
+    ]);
+    run["invocations"] = json!([
+        {
+            "executionSuccessful": true,
+            "toolExecutionNotifications": notifications
+        }
+    ]);
 }
 
 fn sarif_document(
@@ -1644,6 +1823,7 @@ pub(crate) fn render_repo_seams_sarif(
     render_repo_seams_sarif_with_budget(
         classified,
         limit_info,
+        &[],
         config,
         Some(DEFAULT_SARIF_RESULTS_BYTES),
     )
@@ -1661,6 +1841,7 @@ mod tests {
         AnalysisOutcomeKind, AnalysisRecovery, AnalysisRecoveryKind, AnalysisStage,
     };
     use crate::app::{CheckOutput, Mode};
+    use crate::domain::DiscriminatorShape;
     use crate::domain::ValueFact;
     use crate::domain::{
         ActivationEvidence, Confidence, DeltaKind, FindingCanonicalGap, FlowSinkFact, FlowSinkKind,
@@ -1775,7 +1956,7 @@ mod tests {
     }
 
     #[test]
-    fn sarif_results_budget_is_a_hard_cap_after_the_first_result() {
+    fn sarif_results_budget_is_a_hard_cap_after_the_first_result() -> Result<(), String> {
         // Only the first result may cross the budget; a later result that
         // would cross it is omitted, so rendered bytes stay within budget
         // whenever more than one result renders.
@@ -1801,14 +1982,41 @@ mod tests {
         let pair: Vec<Value> = (0..3)
             .map(|index| json!({"id": index, "pad": "x".repeat(64)}))
             .collect();
-        let nested = |value: &Value| {
-            serde_json::to_string_pretty(value)
-                .map(|rendered| nested_result_bytes(&rendered))
-                .unwrap_or(0)
+        let render_results = |results: Vec<Value>| {
+            sarif_document(
+                "diff",
+                vec![],
+                results,
+                None,
+                None,
+                SarifRunDisclosures {
+                    omitted_not_current: 0,
+                    folded_same_line: 0,
+                    results_bound: None,
+                },
+            )
         };
-        let two_budget = nested(&pair[0]) + 2 + nested(&pair[1]);
+        let array_bytes = |document: &str| -> Result<usize, String> {
+            let start = document
+                .find("\"results\": [")
+                .ok_or("rendered results array opening delimiter missing")?
+                + "\"results\": ".len();
+            let end = document[start..]
+                .find("\n      ]")
+                .ok_or("rendered results array closing delimiter missing")?
+                + start
+                + 8;
+            Ok(end - start)
+        };
+        let two_budget = array_bytes(&render_results(pair[..2].to_vec()))?;
+        // The old per-result sum omits ten bytes of brackets/newlines.
+        let (one, bound) = bound_sarif_results(pair.clone(), Some(two_budget - 1));
+        assert_eq!(one.len(), 1);
+        assert!(bound.is_some());
         let (two, _) = bound_sarif_results(pair, Some(two_budget));
         assert_eq!(two.len(), 2);
+        assert_eq!(array_bytes(&render_results(two))?, two_budget);
+        Ok(())
     }
 
     #[test]
@@ -1909,6 +2117,27 @@ mod tests {
                 return Err(format!("{pointer}: expected {expected}, got {actual:?}"));
             }
         }
+        Ok(())
+    }
+
+    /// #13195: the compact refusal document carries the same typed
+    /// notification as the pretty one, minified.
+    #[test]
+    fn refusal_sarif_compact_keeps_the_typed_notification() -> Result<(), String> {
+        let notice = crate::core_error::CoreError::base_unresolvable(
+            "the base `deadbeef` does not resolve to a commit",
+        )
+        .refusal_notice(&crate::config::config_error_summary);
+        let pretty = render_refusal_sarif(&notice, std::path::Path::new("."), Some("deadbeef"));
+        let compact =
+            render_refusal_sarif_compact(&notice, std::path::Path::new("."), Some("deadbeef"));
+        assert_eq!(parse_json(&compact)?, parse_json(&pretty)?);
+        assert!(compact.len() < pretty.len(), "compact {compact}");
+        assert!(!compact.contains("\n  "), "compact {compact}");
+        assert_eq!(
+            parse_json(&compact)?["runs"][0]["properties"]["run_status"],
+            "refused"
+        );
         Ok(())
     }
 
@@ -2241,6 +2470,78 @@ mod tests {
         assert_eq!(
             props["analysis_outcome"]["limitations"][0]["kind"],
             "unresolved_conflict_markers"
+        );
+        Ok(())
+    }
+
+    /// #13195: an over-budget `sarif-compact` document stays valid SARIF
+    /// and carries the landed results-bound disclosure (#13102) unchanged:
+    /// it is the bounded pretty document, minified.
+    #[test]
+    fn sarif_compact_over_budget_stays_valid_and_discloses_the_bound() -> Result<(), String> {
+        let mut output = sample_output();
+        let finding = output.findings[0].clone();
+        output.findings = (0..12)
+            .map(|index| {
+                let mut finding = finding.clone();
+                finding.probe.location.line = index + 1;
+                finding
+            })
+            .collect();
+        let config = RiprConfig::default();
+        let unbounded = render_findings_sarif_compact_with_budget(&output, &config, &[], None);
+        let total = parse_json(&unbounded)?["runs"][0]["results"]
+            .as_array()
+            .map(Vec::len)
+            .ok_or("unbounded results missing")?;
+        assert_eq!(total, 12, "control: every finding renders unbounded");
+
+        let budget = Some(1);
+        let bounded = render_findings_sarif_compact_with_budget(&output, &config, &[], budget);
+        let pretty_bounded = render_findings_sarif_with_budget(&output, &config, &[], budget);
+        assert_eq!(
+            parse_json(&bounded)?,
+            parse_json(&pretty_bounded)?,
+            "compact is the bounded pretty document minified"
+        );
+        assert!(!bounded.contains("\n  "), "compact: {bounded}");
+        let doc = parse_json(&bounded)?;
+        assert_eq!(doc["version"], "2.1.0");
+        assert_eq!(
+            doc["$schema"],
+            "https://json.schemastore.org/sarif-2.1.0.json"
+        );
+        let run = &doc["runs"][0];
+        assert_eq!(run["tool"]["driver"]["name"], "ripr");
+        let retained = run["results"].as_array().map(Vec::len).ok_or("results")?;
+        assert!(
+            retained >= 1 && retained < total,
+            "retained {retained} of {total}"
+        );
+        let props = &run["properties"];
+        assert_eq!(props["limited_results_bound"], true);
+        assert_eq!(props["document_complete"], false);
+        assert_eq!(props["results_rendered"], retained);
+        assert_eq!(props["results_total"], total);
+        assert_eq!(props["results_omitted"], total - retained);
+        Ok(())
+    }
+
+    /// #13195: under budget, `sarif-compact` is the pretty document with
+    /// only insignificant whitespace removed.
+    #[test]
+    fn sarif_compact_under_budget_matches_the_pretty_document() -> Result<(), String> {
+        let output = sample_output();
+        let config = RiprConfig::default();
+        let pretty = render_findings_sarif(&output, &config, &[]);
+        let compact = render_findings_sarif_compact_with_budget(&output, &config, &[], None);
+        assert_eq!(parse_json(&compact)?, parse_json(&pretty)?);
+        assert!(compact.len() < pretty.len(), "compact {compact}");
+        assert!(
+            parse_json(&compact)?["runs"][0]["properties"]
+                .get("limited_results_bound")
+                .is_none(),
+            "no bound disclosure when nothing was bounded"
         );
         Ok(())
     }
@@ -2689,6 +2990,8 @@ mod tests {
             value: "resizable_array_buffer".to_string(),
             reason: "missing resizable ArrayBuffer discriminator".to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Other,
+            drafted_boundary: None,
         }];
 
         let rendered = render_findings_sarif(&output, &RiprConfig::default(), &[]);
@@ -2971,6 +3274,63 @@ weakly_gripped = "note"
         Ok(())
     }
 
+    /// #13340: a real seam cut and a failed evidence warm together keep BOTH
+    /// limitations in repo-sarif and repo-sarif-compact, with the failed warm
+    /// outranking the cut for `run_status`.
+    #[test]
+    fn sarif_repo_seams_keeps_the_seam_cut_beside_a_failed_evidence_warm() -> Result<(), String> {
+        use crate::analysis::{SeamLimitInfo, SeamLimitSource};
+        let info = SeamLimitInfo {
+            analyzed: 7,
+            total: 2000,
+            source: SeamLimitSource::Default,
+        };
+        let failure = [AnalysisLimitation::new(
+            AnalysisLimitationKind::ProducerFailure,
+            AnalysisStage::AnalysisPipeline,
+            AnalysisRecovery::new(AnalysisRecoveryKind::Retry, "Re-run the analysis.")?,
+        )];
+        let classified = [weakly_gripped_classified()];
+        let config = RiprConfig::default();
+        let full = render_repo_seams_sarif_with_budget(
+            &classified,
+            Some(&info),
+            &failure,
+            &config,
+            Some(DEFAULT_SARIF_RESULTS_BYTES),
+        );
+        let compact = render_repo_seams_sarif_compact_with_budget(
+            &classified,
+            Some(&info),
+            &failure,
+            &config,
+            Some(DEFAULT_SARIF_RESULTS_BYTES),
+        );
+        for (name, rendered) in [("repo-sarif", full), ("repo-sarif-compact", compact)] {
+            let sarif = parse_json(&rendered)?;
+            let props = &sarif["runs"][0]["properties"];
+            assert_eq!(props["run_status"], "limited_seam_evidence", "{name}");
+            let limitations = props["limitations"]
+                .as_array()
+                .ok_or_else(|| format!("{name}: limitations missing"))?;
+            assert_eq!(limitations.len(), 2, "{name}: {sarif}");
+            let cut = limitations
+                .iter()
+                .find(|entry| entry["category"] == "repo_seam_limit_applied")
+                .ok_or_else(|| format!("{name}: seam cut dropped: {sarif}"))?;
+            assert_eq!(cut["seams_analyzed"], 7, "{name}");
+            assert_eq!(cut["seams_total"], 2000, "{name}");
+            assert_eq!(cut["limit_source"], "default", "{name}");
+            assert_eq!(cut["control"], "RIPR_REPO_EXPOSURE_SEAM_LIMIT", "{name}");
+            let failed = limitations
+                .iter()
+                .find(|entry| entry["category"] == "producer_failure")
+                .ok_or_else(|| format!("{name}: producer failure dropped: {sarif}"))?;
+            assert_eq!(failed["scope"], "pass_wide", "{name}");
+        }
+        Ok(())
+    }
+
     #[test]
     fn sarif_repo_seams_shows_complete_run_status_when_no_cap() -> Result<(), String> {
         let rendered =
@@ -3236,6 +3596,8 @@ weakly_gripped = "note"
             reason: "Related Perl test reaches the owner but lacks an exact return discriminator"
                 .to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Other,
+            drafted_boundary: None,
         }];
         finding.related_tests = vec![RelatedTest {
             name: "discount_smoke".to_string(),
@@ -3376,6 +3738,8 @@ weakly_gripped = "note"
                     value: "amount == discount_threshold".to_string(),
                     reason: "no related test calls the equality boundary".to_string(),
                     flow_sink: None,
+                    shape: DiscriminatorShape::Boundary,
+                    drafted_boundary: None,
                 }],
             },
             stop_reasons: Vec::new(),
@@ -3664,6 +4028,8 @@ weakly_gripped = "note"
                 value: "amount == discount_threshold".to_string(),
                 reason: "observed values do not include equality boundary".to_string(),
                 flow_sink: None,
+                shape: DiscriminatorShape::Boundary,
+                drafted_boundary: None,
             }],
             new_test_target: None,
             statically_contradicted_related_tests: 0,

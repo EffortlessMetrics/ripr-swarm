@@ -24,6 +24,7 @@ mod workflow_catalog;
 pub(crate) use parse::expect_value;
 #[doc(hidden)]
 pub use parse::extract_global_verbose;
+pub(crate) use parse::reconcile_root;
 pub(crate) use suggest::unknown_argument;
 
 /// The command completed. Shared by `Ok(())` paths and by the
@@ -295,7 +296,9 @@ fn drive_before_phase_inner(
         .is_some()
         .then(|| GapWorkflowArtifactBackup::capture(&options.root));
     let published = match commands::run_before_repair_with_identity(options.clone(), &identity) {
-        Ok(()) => persist_before_repair_attempt(&options, &identity).map_err(Into::into),
+        Ok(()) => {
+            persist_before_repair_attempt(&options, &identity).map_err(BeforePhaseError::from)
+        }
         Err(error) => Err(error),
     };
     let stdout_document = match published {
@@ -548,9 +551,24 @@ fn persist_before_repair_attempt(
         crate::app::repair_attempt::RepairAttemptStoreAccess::Open,
     )?;
     // Recheck immediately before baseline capture so ignore-rule drift observed
-    // during preparation refuses attempt publication.
-    crate::edit_cage::validate_build_output_precondition(root, &policy)
-        .map_err(|error| format!("{error} No repair attempt was started. Fix the cause above and rerun the repair command."))?;
+    // during preparation stops attempt publication.
+    crate::edit_cage::check_build_output_precondition(root, &policy).map_err(|error| {
+        let rerun = if options.gap_id.is_some() {
+            "the same `ripr agent repair --phase before` command".to_string()
+        } else {
+            format!("`{}`", crate::app::task_first::repair_rerun_command(root, seam_id))
+        };
+        // #13452: this recheck runs after the before phase already rewrote
+        // shared workflow files, so it can never be the clean "nothing was
+        // started" refusal the early admission gives: the shared files may
+        // already differ from before. Both outcomes are operational failures
+        // that say so.
+        let detail = crate::app::task_first::build_output_precondition_detail(error);
+        format!(
+            "{} No repair attempt was started, but shared workflow files under target/ripr/workflow may already have been rewritten.\nnext: once the build directory is Git-ignored and inspectable, rerun {rerun}",
+            detail.trim_end()
+        )
+    })?;
     let edit_cage_baseline = root.join("target/ripr/workflow/attempt-baseline.json");
     crate::app::repair_attempt::write_edit_cage_baseline(root, &edit_cage_baseline, &policy)?;
 

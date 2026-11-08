@@ -18,6 +18,7 @@ fn baseline(store: &str) -> Result<AttemptBaseline, String> {
             ignored_build_output: None,
             untracked_build_lockfile: None,
             inline_test_module_target: false,
+            new_test_proposal: None,
         },
         paths: BTreeMap::new(),
         ambiguous: false,

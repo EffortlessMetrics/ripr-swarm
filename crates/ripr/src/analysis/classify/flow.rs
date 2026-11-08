@@ -1054,6 +1054,85 @@ fn nearest_return(owner_fn: Option<&FunctionSummary>, probe_line: usize) -> Opti
     })
 }
 
+/// The changed predicate's two branch values, read from the owner body
+/// with the same parser the tail-if sink models use: entry 0 is the arm a
+/// HOLDING equality boundary executes and entry 1 the arm a failing
+/// boundary executes, each `return_sink_text`-normalized. An arm the model
+/// cannot read as the block's plain tail value stays `None` — the caller
+/// refuses that branch instead of guessing, because a guessed value would
+/// draft a wrong expected value. Registered return facts (explicit
+/// `return` statements) are not read here; see
+/// [`returned_value_texts_at`].
+pub(in crate::analysis) fn predicate_branch_values(
+    owner_fn: &FunctionSummary,
+    predicate_line: usize,
+) -> Option<[Option<String>; 2]> {
+    use crate::analysis::syntax::parse_clean_source_file;
+    use ra_ap_syntax::{AstNode, ast};
+
+    let parse = parse_clean_source_file(&owner_fn.body)?;
+    let tree = parse.tree();
+    let mut items = tree.syntax().children().filter_map(ast::Item::cast);
+    let Some(ast::Item::Fn(function)) = items.next() else {
+        return None;
+    };
+    let body = function.body()?;
+    // The predicate owns the `if` that starts on its line.
+    let mut predicate_if = None;
+    for candidate in body.syntax().descendants().filter_map(ast::IfExpr::cast) {
+        let start = usize::from(candidate.syntax().text_range().start());
+        let line = owner_fn.start_line
+            + owner_fn
+                .body
+                .get(..start)?
+                .bytes()
+                .filter(|byte| *byte == b'\n')
+                .count();
+        if line == predicate_line {
+            predicate_if = Some(candidate);
+            break;
+        }
+    }
+    let predicate_if = predicate_if?;
+    let then_tail = predicate_if
+        .then_branch()?
+        .tail_expr()
+        .map(|expression| return_sink_text(&expression.syntax().text().to_string()));
+    let else_tail = predicate_if.else_branch().and_then(|branch| match branch {
+        ast::ElseBranch::Block(block) => block
+            .tail_expr()
+            .map(|expression| return_sink_text(&expression.syntax().text().to_string())),
+        // An `else if` chain makes the failing boundary's arm a nested
+        // condition, not one plain value; the model refuses it.
+        ast::ElseBranch::IfExpr(_) => None,
+    });
+    Some([then_tail, else_tail])
+}
+
+/// The owner's returned value expressions at or after `line`, in source
+/// order, as the flow model reads them (`return_sink_text`-normalized, for
+/// example `amount - 10`). Consumers that must pick the branch a pinned
+/// input actually takes read the first entry (the arm at or after the
+/// predicate) or the second (the following arm), and refuse when the model
+/// does not expose the branch they need — a guessed branch would draft a
+/// wrong expected value.
+pub(in crate::analysis) fn returned_value_texts_at(
+    owner_fn: Option<&FunctionSummary>,
+    line: usize,
+) -> Vec<String> {
+    let Some(function) = owner_fn else {
+        return Vec::new();
+    };
+    let mut texts: Vec<(usize, String)> = function
+        .returns
+        .iter()
+        .filter(|return_fact| return_fact.line >= line)
+        .map(|return_fact| (return_fact.line, return_sink_text(&return_fact.text)))
+        .collect();
+    texts.sort_by_key(|(return_line, _)| *return_line);
+    texts.into_iter().map(|(_, text)| text).collect()
+}
+
 /// Whether the value on `value_offset` is repeated by a later arm of the
 /// `} else if .. {` / `} else {` chain that follows it, line by line. An arm
 /// that returns what the first arm returns makes the choice between them

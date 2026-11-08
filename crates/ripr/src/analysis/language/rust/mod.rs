@@ -2747,7 +2747,7 @@ impl RustAdapter {
             let token = cancellation::current_token();
             let overlay = committed_source::current_overlay();
             let graph_counter = classify::InheritedGraphCounter::capture();
-            let classify_one = |(_, seeded): &(
+            let classify_one = |(changed, seeded): &(
                 &ChangedFile,
                 crate::analysis::probes::SeededProbe,
             )| {
@@ -2778,6 +2778,7 @@ impl RustAdapter {
                                             &transitive_reach,
                                             seeded.propagation_origin.as_ref(),
                                             Some(&value_origins),
+                                            Some(changed),
                                         )
                                     }));
                                 match contained {
@@ -3443,7 +3444,7 @@ fn lexical_fallback_limitations<'a>(
         let (reason, recovery) = if index.non_utf8_sources.contains(&facts.path) {
             (
                 crate::analysis::facts::RUST_SOURCE_NOT_UTF8_REASON.to_string(),
-                "Save the file as UTF-8, then re-run the analysis.",
+                crate::analysis_outcome::RUST_NOT_UTF8_RECOVERY,
             )
         } else {
             (
@@ -3451,7 +3452,7 @@ fn lexical_fallback_limitations<'a>(
                     "the Rust parser reported syntax errors, so the file was read lexically"
                         .to_string()
                 }),
-                "Fix the file so it parses as Rust, then re-run the analysis.",
+                crate::analysis_outcome::RUST_PARSE_FAILURE_RECOVERY,
             )
         };
         let limitation = AnalysisLimitation::new(
@@ -4038,52 +4039,59 @@ mod tests {
 
     #[test]
     fn repo_omits_generator_stimulus_but_keeps_product_gap() -> Result<(), String> {
-        let root = temp_root("generator-repo-gap")?;
-        write(
-            &root.join("Cargo.toml"),
-            "[package]\nname='generator'\nversion='0.1.0'\nedition='2024'\n[dependencies]\nquickcheck='1'\n",
-        )?;
-        write(
-            &root.join("src/lib.rs"),
-            "use quickcheck::Arbitrary;\nstruct Pair(u8);\nimpl quickcheck::Arbitrary for Pair {\n    fn arbitrary(g: &mut quickcheck::Gen) -> Self {\n        Pair(u8::arbitrary(g).wrapping_add(2))\n    }\n}\npub fn product(a: u8) -> u8 {\n    a.wrapping_add(2)\n}\n",
-        )?;
-        let result = RustAdapter.analyze_repo(&repo_options(&root), &OraclePolicy::default())?;
-        assert!(
-            result.findings.iter().all(|f| f.probe.location.line != 5),
-            "generator evidence is not a repo-wide production subject: {:?}",
-            result.findings
-        );
-        let product: Vec<_> = result
-            .findings
-            .iter()
-            .filter(|f| f.probe.location.line == 9)
-            .collect();
-        assert!(
-            !product.is_empty(),
-            "product subject must be seeded: {:?}",
-            result.findings
-        );
-        assert!(
-            product.iter().any(|f| f.canonical_gap.is_some()),
-            "ordinary product retains a canonical gap: {product:?}"
-        );
-        // The same source must be probeable when provider identity is not verified.
-        write(
-            &root.join("Cargo.toml"),
-            "[package]\nname='generator'\nversion='0.1.0'\nedition='2024'\n[dependencies]\nquickcheck={version='1',optional=true}\n",
-        )?;
-        let unverified =
-            RustAdapter.analyze_repo(&repo_options(&root), &OraclePolicy::default())?;
-        assert!(
-            unverified
-                .findings
-                .iter()
-                .any(|f| f.probe.location.line == 5),
-            "unverified generator expression must be probeable: {:?}",
-            unverified.findings
-        );
-        fs::remove_dir_all(root).map_err(|error| error.to_string())?;
-        Ok(())
+        crate::testing::compiler_environment::plain(
+            module_path!(),
+            "repo_omits_generator_stimulus_but_keeps_product_gap",
+            || {
+                let root = temp_root("generator-repo-gap")?;
+                write(
+                    &root.join("Cargo.toml"),
+                    "[package]\nname='generator'\nversion='0.1.0'\nedition='2024'\n[dependencies]\nquickcheck='1'\n",
+                )?;
+                write(
+                    &root.join("src/lib.rs"),
+                    "use quickcheck::Arbitrary;\nstruct Pair(u8);\nimpl quickcheck::Arbitrary for Pair {\n    fn arbitrary(g: &mut quickcheck::Gen) -> Self {\n        Pair(u8::arbitrary(g).wrapping_add(2))\n    }\n}\npub fn product(a: u8) -> u8 {\n    a.wrapping_add(2)\n}\n",
+                )?;
+                let result =
+                    RustAdapter.analyze_repo(&repo_options(&root), &OraclePolicy::default())?;
+                assert!(
+                    result.findings.iter().all(|f| f.probe.location.line != 5),
+                    "generator evidence is not a repo-wide production subject: {:?}",
+                    result.findings
+                );
+                let product: Vec<_> = result
+                    .findings
+                    .iter()
+                    .filter(|f| f.probe.location.line == 9)
+                    .collect();
+                assert!(
+                    !product.is_empty(),
+                    "product subject must be seeded: {:?}",
+                    result.findings
+                );
+                assert!(
+                    product.iter().any(|f| f.canonical_gap.is_some()),
+                    "ordinary product retains a canonical gap: {product:?}"
+                );
+                // The same source must be probeable when provider identity is not verified.
+                write(
+                    &root.join("Cargo.toml"),
+                    "[package]\nname='generator'\nversion='0.1.0'\nedition='2024'\n[dependencies]\nquickcheck={version='1',optional=true}\n",
+                )?;
+                let unverified =
+                    RustAdapter.analyze_repo(&repo_options(&root), &OraclePolicy::default())?;
+                assert!(
+                    unverified
+                        .findings
+                        .iter()
+                        .any(|f| f.probe.location.line == 5),
+                    "unverified generator expression must be probeable: {:?}",
+                    unverified.findings
+                );
+                fs::remove_dir_all(root).map_err(|error| error.to_string())?;
+                Ok(())
+            },
+        )
     }
 
     fn repo_options(root: &Path) -> AnalysisOptions {
@@ -5153,10 +5161,15 @@ mod tests {
                     assert!(test.oracle.is_none());
                     assert_eq!(test.oracle_kind, OracleKind::Unknown);
                     assert_eq!(test.oracle_strength, OracleStrength::None);
-                    assert_eq!(
-                        test.miss,
-                        Some(crate::domain::RelatedTestMiss::AssertionNotCredited)
-                    );
+                    // The full scope resolves the shadowing macro (inert); the
+                    // name-admitted scope cannot read it, an analyzer limit
+                    // (RIPR-SPEC-0221).
+                    let expected_miss = if std::ptr::eq(finding, &full) {
+                        crate::domain::RelatedTestMiss::AssertionInert
+                    } else {
+                        crate::domain::RelatedTestMiss::AssertionAdmissionUnproven
+                    };
+                    assert_eq!(test.miss, Some(expected_miss));
                 }
             } else {
                 for finding in [&full, &named] {

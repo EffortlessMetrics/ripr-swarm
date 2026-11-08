@@ -282,7 +282,7 @@ no changed paths, support-tier validation is not applicable.
 
 `xtask/tests/help_hierarchy.rs::check_fast_is_discoverable_with_its_local_proof_boundary`
 exercises the built binary's exhaustive and detailed help. It rejects an omitted
-command, a false CI-enforcement marker, and missing selector, report, build-cost,
+or duplicate command, a false CI-enforcement marker, and missing selector, report, build-cost,
 or broader-validation boundaries.
 
 Focused tests for `cargo xtask check-doc-artifacts` include:

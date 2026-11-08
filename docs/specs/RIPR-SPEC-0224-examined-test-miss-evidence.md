@@ -121,9 +121,9 @@ Three states stay distinct: a recognized assertion; established absence of any a
 construct after complete extraction; and an assertion-like, refused, custom or
 dynamic form whose admission is unresolved. An empty recognized-assertion
 vector is not by itself `no_assertion`. `assertion_not_credited` is not a
-bucket for unsupported syntax; only a typed established refusal (#5446) may use it. Rust's current
-emission on a refused row predates this rule and stays a documented exception
-until #5446 lands.
+bucket for unsupported syntax; only a typed established refusal (#5446) may use it. Rust splits
+every such row into `assertion_inert` or `assertion_admission_unproven` from its typed
+refusal (#5446), so the unsplit value is not left on a Rust refused row.
 
 ### Minimum evidence per miss
 
@@ -132,7 +132,7 @@ until #5446 lands.
 | `no_call_path` | no established path to the changed owner under the producer's relation model |
 | `no_assertion` | path established, extraction complete, no executable assertion-like construct |
 | `assertion_not_observing` | affirmative evidence the admitted assertion observes another owner, value or sink |
-| `assertion_not_credited` | a typed established refusal accepted by #5446 |
+| `assertion_not_credited` | a typed established refusal; the Rust adapter reports it as `assertion_inert` or `assertion_admission_unproven` (#5446) |
 | `weak_assertion` | an admitted, family-relevant oracle at a weak or smoke tier, below the producer's strong or exact threshold |
 | `missing_input` | a row-owned predicate-activation or boundary omission |
 | `missing_exact_assertion` | a row-owned observed-surface or exact-discriminator omission |
@@ -155,7 +155,7 @@ unsupported state as unknown and fabricates no reason conforms.
 | `no_call_path` | yes | yes (closed-body reach fact on a function owner, name-only rows; residual limits below) | no (absence unprovable from one file) | no |
 | `no_assertion` | yes | yes (extraction-complete admission, fail-closed; residual limits below) | no (admission blind spots) | no |
 | `assertion_not_observing` | yes | no (credit-only alignment; withheld pending #5491) | yes (affirmative other-sink only, #5528) | no (#3223) |
-| `assertion_not_credited` | yes, unsplit until #5446 | no (#5446) | no (#5446) | no |
+| `assertion_not_credited` | yes, split into `assertion_inert` and `assertion_admission_unproven` (#5446) | no (no typed refusal) | no (no typed refusal) | no |
 | `weak_assertion` | yes | yes (weak and smoke only) | yes (weak and smoke only) | no |
 | `missing_input` | yes | yes (predicate boundary, row-owned) | yes (row-owned `MissedBoundary` fact only, hedged "seen" wording, #10040) | no (#4061, perl-lsp-swarm#17237, #5562) |
 | `missing_exact_assertion` | yes | no (no row-owned fact) | no (no row-owned fact) | no |
@@ -686,8 +686,9 @@ actionability or rendered output.
 
 - Changing any verdict. Whether a self-contradicting gap should become an
   unknown is RIPR-SPEC-0221's admission rule.
-- Splitting `assertion_not_credited` into proven-inert and admission-unproven
-  cases; that needs the typed admission refusal tracked by #5446 (see #5359).
+- Splitting `assertion_not_credited` for the Python, TypeScript and Perl adapters; the
+  Rust split into proven-inert and admission-unproven cases landed with the typed
+  admission refusal (#5446, #5359), and those adapters have no typed refusal.
 - Per-adapter miss mappings: the capability table states which reasons each
   adapter writes, and each producer PR owns its own column. Richer Perl reasons that need row-owned facts (#5562).
 - Any producer implementation, parser, call-graph or oracle expansion,

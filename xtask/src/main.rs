@@ -45,6 +45,7 @@ mod fixture_contracts;
 mod generation_pins;
 mod kani_lane;
 mod public_proof;
+mod publish_rehearsal;
 // #4544: one definition of the gap `source_subject` contract, shared with the
 // ripr crate's LSP validator without widening ripr's public API.
 mod current_state;
@@ -61,6 +62,7 @@ mod issue_lifecycle_real_rows;
 mod native_libtest;
 mod no_panic;
 mod orchestration_attempt;
+mod outcome_page;
 mod output_enum_contracts;
 #[cfg(test)]
 mod output_properties;
@@ -70,6 +72,7 @@ mod policy;
 #[cfg(test)]
 mod portable_consumer;
 mod product_gate_plan;
+mod product_route_parity;
 mod provider_review_observations;
 mod public_api_surface;
 mod python_judged_panel;
@@ -114,6 +117,7 @@ mod verify_test_shards;
 mod version;
 mod windows_advisory;
 mod windows_advisory_acl_evidence;
+mod windows_advisory_file_policy_evidence;
 mod windows_advisory_run;
 
 use command::{
@@ -1799,7 +1803,7 @@ fn ci_full() -> Result<(), String> {
     check_pr()?;
     run_ci_full_evidence_gates(&ci_full_evidence_gates())?;
     run("cargo", &["package", "-p", "ripr", "--list"])?;
-    run("cargo", &["publish", "-p", "ripr", "--dry-run"]).map(|_| ())
+    publish_rehearsal::run()
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -6211,6 +6215,32 @@ fn collect_rust_conversion_candidates() -> Result<Vec<RustConversionCandidate>, 
 }
 
 fn non_rust_source_conversion_candidate(path: &str) -> Option<RustConversionCandidate> {
+    if matches!(
+        path,
+        "tools/provision-dev.cjs" | "tools/provision-dev.test.cjs"
+    ) {
+        return Some(RustConversionCandidate {
+            path: path.to_string(),
+            line: None,
+            kind: "retained_external_runtime".to_string(),
+            priority: "retained".to_string(),
+            current_surface: "explicit pre-compiler developer provisioning".to_string(),
+            recommendation: "Keep bootstrap installation in the dependency-free Node entrypoint; delegate requirements, activation and verification to their existing owners.".to_string(),
+            reason: "Provisioning must work before Rust or npm packages are installed (#13437).".to_string(),
+        });
+    }
+    if path == "editors/vscode/test/developerSetup.cjs" {
+        return Some(RustConversionCandidate {
+            path: path.to_string(),
+            line: None,
+            kind: "retained_external_runtime".to_string(),
+            priority: "retained".to_string(),
+            current_surface: "dependency-free Node editor setup entrypoint".to_string(),
+            recommendation: "Keep the pre-install checkout report in this Node entrypoint; delegate explicit validation to existing Rust and editor owners.".to_string(),
+            reason: "Setup diagnostics must run before a Rust build or npm dependency installation is available (#13201, #13212).".to_string(),
+        });
+    }
+
     if path.starts_with("editors/vscode/") && path.ends_with(".ts") {
         return Some(RustConversionCandidate {
             path: path.to_string(),
@@ -6247,6 +6277,13 @@ fn non_rust_source_conversion_candidate(path: &str) -> Option<RustConversionCand
         });
     }
 
+    // The generic fallback defers to the enforced retention owner instead of
+    // carrying its own list (#13290), so an approved runtime boundary can never
+    // be reported here as unapproved while `check-file-policy` retains it.
+    if let Some(reason) = non_rust_programming_retention_reason(path) {
+        return Some(retained_non_rust_source_candidate(path, reason));
+    }
+
     Some(RustConversionCandidate {
         path: path.to_string(),
         line: None,
@@ -6256,6 +6293,37 @@ fn non_rust_source_conversion_candidate(path: &str) -> Option<RustConversionCand
         recommendation: "Move this behavior into Rust under crates/ripr for product logic or xtask for repository automation.".to_string(),
         reason: "Rust is the default implementation surface, and this file has no approved external-runtime or fixture retention rule.".to_string(),
     })
+}
+
+/// Advisory retained-boundary row derived from the enforced
+/// `non_rust_programming_retention_reason` owner. The conversion inventory
+/// shares this single authority with `check-file-policy` instead of
+/// maintaining a second, incomplete allowlist; the report's reason is the
+/// enforced retention reason verbatim. Fixture inputs keep their own kind so
+/// the retained table keeps distinguishing analyzed inputs from runtime
+/// adapters.
+fn retained_non_rust_source_candidate(path: &str, reason: &str) -> RustConversionCandidate {
+    if path.starts_with("benchmarks/muse-plugin/fixtures/") {
+        return RustConversionCandidate {
+            path: path.to_string(),
+            line: None,
+            kind: "retained_fixture_input".to_string(),
+            priority: "retained".to_string(),
+            current_surface: "muse plugin evaluation fixture input".to_string(),
+            recommendation: "Keep as fixture input; move only reusable evaluation orchestration into Rust/xtask.".to_string(),
+            reason: reason.to_string(),
+        };
+    }
+
+    RustConversionCandidate {
+        path: path.to_string(),
+        line: None,
+        kind: "retained_external_runtime".to_string(),
+        priority: "retained".to_string(),
+        current_surface: "approved non-Rust runtime boundary".to_string(),
+        recommendation: "Keep this file on its approved external runtime; move only adjacent unretained behavior into Rust/xtask.".to_string(),
+        reason: reason.to_string(),
+    }
 }
 
 fn workflow_run_conversion_candidate(
@@ -19561,7 +19629,7 @@ const PROOF_PACK_RELEASE_REQUIRED_COMMANDS: &[&str] = &[
     "cargo clippy --workspace --all-targets -- -D warnings",
     "cargo xtask check-pr",
     "cargo package -p ripr --list",
-    "cargo publish -p ripr --dry-run",
+    "cargo xtask publish-dry-run",
     "cargo xtask release-readiness",
 ];
 
@@ -19577,7 +19645,7 @@ const PROOF_PACK_KNOWN_REPO_COMMANDS: &[&str] = &[
     "cargo clippy --workspace --all-targets -- -D warnings",
     "cargo doc --workspace --no-deps",
     "cargo package -p ripr --list",
-    "cargo publish -p ripr --dry-run",
+    "cargo xtask publish-dry-run",
 ];
 
 fn check_proof_packs_impl() -> Result<(), String> {
@@ -23811,6 +23879,29 @@ pub(crate) fn is_non_rust_programming_candidate(path: &str) -> bool {
 }
 
 pub(crate) fn non_rust_programming_retention_reason(path: &str) -> Option<&'static str> {
+    if matches!(
+        path,
+        "tools/provision-dev.cjs" | "tools/provision-dev.test.cjs"
+    ) {
+        return Some(
+            "Explicit Node provisioning must run before Rust or npm dependencies exist; its controlled tests run through the Rust-owned developer_provisioning integration target (#13437).",
+        );
+    }
+    if path.starts_with("benchmarks/agent-discrimination/") && path.ends_with(".sh") {
+        return Some(
+            "Agent A/B discrimination harness scripts must run under the solver's POSIX shell (Git Bash/WSL) beside cargo and git: they drive cargo phases, per-run clone materialization, and record writes that execute outside any cargo process, so an xtask port cannot host them (#13113).",
+        );
+    }
+    if path == "tools/activate-rust.sh" {
+        return Some(
+            "Sourced Bash must update the caller's environment before Cargo is available; a Rust subprocess cannot export into its parent shell (#13123).",
+        );
+    }
+    if path == "tools/test-activate-rust.sh" {
+        return Some(
+            "Bash controls directly inspect source-time caller options, arguments and variable attributes; the Rust-owned rust_activation integration test executes this exact harness (#13123).",
+        );
+    }
     if path == ".ci/contabo-result.sh" {
         return Some(
             "Pinned EM CI requires a Bash result script; this lightweight jq consumer accepts only centrally authenticated exact-subject product imports without compiling or executing product code (#4988).",
@@ -23828,9 +23919,26 @@ pub(crate) fn non_rust_programming_retention_reason(path: &str) -> Option<&'stat
     {
         return Some("npm launcher runtime and focused launcher contract tests");
     }
+    if path == "editors/vscode/test/developerSetup.cjs" {
+        return Some(
+            "Dependency-free Node setup entrypoint must inspect the editor checkout before Rust or npm dependencies are available; explicit verification delegates to existing validation owners (#13201, #13212).",
+        );
+    }
     if path.starts_with("editors/vscode/") && path.ends_with(".ts") {
         return Some(
             "VS Code extension source and tests must run in the VS Code Extension Host TypeScript API.",
+        );
+    }
+
+    if path.starts_with("benchmarks/agentic/cohort/harness/") && path.ends_with(".py") {
+        return Some(
+            "Opt-in agent cohort harness drives headless `claude -p` sessions and scores hidden mutants with stdlib Python; it is never on the default CI path (#12902).",
+        );
+    }
+
+    if path == "tools/python/installed-provider-recovery/run.py" {
+        return Some(
+            "Installed pip-wheel recovery control runs without a source checkout or xtask executable, using the consumer's stdlib Python and qualified installed payload (#10864).",
         );
     }
 
@@ -23931,6 +24039,10 @@ fn is_process_policy_candidate(path: &str) -> bool {
     path.ends_with(".rs")
         || path.ends_with(".ts")
         || (path.starts_with("tools/python/") && path.ends_with(".py"))
+        || matches!(
+            path,
+            "tools/provision-dev.cjs" | "tools/provision-dev.test.cjs"
+        )
 }
 
 fn is_network_policy_candidate(path: &str) -> bool {
@@ -23944,6 +24056,10 @@ fn is_network_policy_candidate(path: &str) -> bool {
         || path.ends_with(".ps1")
         || path.ends_with(".yml")
         || path.ends_with(".yaml")
+        || matches!(
+            path,
+            "tools/provision-dev.cjs" | "tools/provision-dev.test.cjs"
+        )
 }
 
 fn process_policy_patterns() -> Vec<String> {

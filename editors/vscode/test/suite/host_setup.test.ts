@@ -53,6 +53,10 @@ suite('VS Code test host setup', () => {
     hostCalls = [];
     exits = [];
     runtime = {
+      requireEditorDisplay: () => {},
+      verifyHostPrerequisites: async () => ({ schema_version: 1, check_id: 'editor_native_host', status: 'pass',
+        nonce: 'test-control', vscode_version: '1.91.0', electron_version: '30.0.0', platform: process.platform,
+        native_exit_code: 0, smoke_cases: 1, host_executable: vscodeExecutablePath, full_editor_suite: 'not_run' }),
       downloadVSCode: async (cachePath, extensionDevelopmentPath) => {
         assert.strictEqual(cachePath, path.join(artifactRoot, 'vscode-test-cache'));
         assert.strictEqual(extensionDevelopmentPath, path.resolve(__dirname, '../../..'));
@@ -98,6 +102,8 @@ suite('VS Code test host setup', () => {
   }
 
   test('a rejected host download invokes zero producers and retains the original failure', async () => {
+    fs.mkdirSync(artifactRoot);
+    fs.writeFileSync(path.join(artifactRoot, 'setup-editor-host.json'), '{"status":"pass","nonce":"old"}');
     runtime.downloadVSCode = async () => {
       events.push('download');
       throw new Error('host download blocked by test network policy');
@@ -109,7 +115,59 @@ suite('VS Code test host setup', () => {
     assert.strictEqual(producerCalls.length, 0);
     assert.strictEqual(hostCalls.length, 0);
     assert.strictEqual(process.env.RIPR_TEST_ACTIONABLE_QUEUE_ROOT, undefined);
+    assert.strictEqual(fs.existsSync(path.join(artifactRoot, 'setup-editor-host.json')), false);
     assertFailure('host download blocked by test network policy');
+  });
+
+  test('a native host prerequisite failure invokes zero producers and editor suites', async () => {
+    Object.assign(runtime, { verifyHostPrerequisites: async () => {
+      events.push('native-prerequisite');
+      throw new Error('native host could not open the display');
+    } });
+
+    await main(runtime);
+
+    assert.deepStrictEqual(events, ['download', 'native-prerequisite']);
+    assert.strictEqual(producerCalls.length, 0);
+    assert.strictEqual(hostCalls.length, 0);
+    assertFailure('native host could not open the display');
+  });
+
+  test('an absent display stops before acquisition producer and editor suites', async () => {
+    fs.mkdirSync(artifactRoot);
+    fs.writeFileSync(path.join(artifactRoot, 'setup-editor-host.json'), '{"status":"pass","nonce":"old"}');
+    runtime.requireEditorDisplay = () => {
+      events.push('display-check');
+      throw new Error('display prerequisite unavailable');
+    };
+    await main(runtime);
+    assert.deepStrictEqual(events, ['display-check']);
+    assert.strictEqual(producerCalls.length, 0);
+    assert.strictEqual(hostCalls.length, 0);
+    assert.strictEqual(fs.existsSync(path.join(artifactRoot, 'setup-editor-host.json')), false);
+    assertFailure('display prerequisite unavailable');
+  });
+
+  test('awaits the native host prerequisite before invoking the producer', async () => {
+    let release!: () => void;
+    const pending = new Promise<void>(resolve => { release = resolve; });
+    Object.assign(runtime, { verifyHostPrerequisites: async () => {
+      events.push('native-prerequisite-start');
+      await pending;
+      events.push('native-prerequisite-ready');
+    } });
+    const running = main(runtime);
+    try {
+      await new Promise(resolve => setImmediate(resolve));
+      assert.deepStrictEqual(events, ['download', 'native-prerequisite-start']);
+      assert.strictEqual(producerCalls.length, 0);
+      assert.strictEqual(hostCalls.length, 0);
+    } finally {
+      release();
+      await running;
+    }
+    assert.strictEqual(producerCalls.length, 1);
+    assert.ok(events.indexOf('native-prerequisite-ready') < events.indexOf('producer'));
   });
 
   test('awaits host acquisition before exactly one producer and reuses that host for both runs', async () => {

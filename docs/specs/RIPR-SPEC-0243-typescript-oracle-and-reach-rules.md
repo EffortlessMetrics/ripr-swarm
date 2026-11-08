@@ -378,6 +378,12 @@ shadows and uncalled function values remain separate from runner registrations.
   catches still withholds). The finalizer's own assertions, assertions
   outside the `try`, and benign finalizers keep collection. This is not
   general promise dataflow or runner semantics.
+  In particular, this rule does not detect a finalizer that fails through an
+  expression rather than an explicit jump, such as
+  `finally { await Promise.reject(error); }` or `finally { null.x; }`.
+  Those failures can replace the pending completion at runtime, but do not by
+  themselves trigger this rule's withholding of the try/catch assertions
+  (#8613).
 - An assertion inside a nested callback (`forEach`, `waitFor`, `act`, a
   subtest) or inside a declaration initializer is not collected, except
   the three forms RIPR-SPEC-0246 rule 2 names.
@@ -1772,8 +1778,9 @@ the masker.
     it withholds count and unrelated assertions from both oracle ranking and
     sink observation. An exact pin on index zero that distinguishes the
     literal from its uppercase form retains credit. The Jest extension requires
-    a plain `test(...)` registration; an unused import cannot authenticate
-    another registration. Existing Vitest registration readings remain unchanged.
+    a plain `test(...)` or `test.only(...)` registration on that imported binding;
+    an unused import cannot authenticate another registration, and a locally
+    replaced `only` member is refused. Existing Vitest registration readings remain unchanged.
     Mixed-framework pairs, global Jest bindings, renamed imports, added or multiple push arguments,
     aliases, mutation, shadowing and unrecognized forms retain their prior
     readings. This syntax-first preview assumes ordinary native
@@ -1888,6 +1895,9 @@ call-count oracle projection (#10174).
 
 ## Non-Goals
 
+- No general exception or promise-rejection analysis in finalizers. Implicit
+  expression failures and awaited rejections are outside the explicit
+  completion-replacement scan described above (#8613).
 - No collection of assertions inside nested callbacks or subtests,
   except the literal `forEach`, returned or awaited `.then` and awaited
   `t.test` forms of RIPR-SPEC-0246 rule 2.
