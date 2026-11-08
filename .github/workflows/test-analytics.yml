@@ -14,13 +14,28 @@ concurrency:
   cancel-in-progress: ${{ (github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name == 'merge-ready') }}
 
 jobs:
+  # #12916: this lane used to re-run the whole unsharded suite in one 40-minute
+  # job, duplicating the four required hash partitions. It now runs the same
+  # four `--partition hash:N/4` partitions as `rust-test-shards.yml` (same `ci`
+  # profile), keeping only its own selection difference: `--all-features`,
+  # which is the one place the `lang-perl` tests execute. No single job runs
+  # the whole suite. This lane is advisory analytics: the required shards in
+  # the routed Rust lane remain the blocking test enforcement, and nothing
+  # blocking moves here. The combine job below verifies the four partitions
+  # are a disjoint, complete, green cover (`verify-test-shards --all-features`)
+  # and publishes the combined JUnit the unsharded job used to produce.
   rust-tests:
     name: rust-tests-junit
     if: (github.event_name != 'pull_request' || (contains(github.event.pull_request.labels.*.name, 'merge-ready') && (github.event.action == 'labeled' && github.event.label.name == 'merge-ready'))) && (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'full-ci'))
     runs-on: ubuntu-latest
     # #7142: the measured all-features workload exhausted 30m before its last
     # subject and doctests; retain a bounded envelope with explicit variance.
+    # The cap is unchanged: each partition must fit inside it with headroom.
     timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     env:
       CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
@@ -37,14 +52,16 @@ jobs:
           toolchain: 1.95.0
           components: llvm-tools-preview
 
+      # One partition on main writes the cache, as in the required shards;
+      # four parallel saves of one key only race.
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
         with:
           shared-key: ripr-test-analytics-${{ runner.os }}
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          save-if: ${{ github.ref == 'refs/heads/main' && matrix.shard == 1 }}
 
       - uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
         with:
-          tool: nextest
+          tool: nextest@0.9.149
 
       - name: Prepare locked owner-return fixture dependencies
         run: cargo fetch --locked --manifest-path fixtures/owner_return_pin_fallible_literal/input/Cargo.toml
@@ -55,27 +72,187 @@ jobs:
       - name: Prepare locked proptest profile dependencies
         run: cargo fetch --locked --manifest-path crates/ripr/tests/fixtures/proptest_singleton/input/Cargo.toml
 
-      - name: Run Rust tests with JUnit output
+      # Same runner-loss guard as the required shards (#12719): the all-features
+      # test build peaks higher than the default-feature one, so give the
+      # runner swap headroom before building. This only adds memory.
+      - name: Add swap headroom for the test build
+        run: |
+          swapfile=/mnt/ci-swapfile-8g
+          if [ ! -d /mnt ]; then swapfile=/ci-swapfile-8g; fi
+          if sudo fallocate -l 8G "$swapfile" && sudo chmod 600 "$swapfile" && sudo mkswap "$swapfile" > /dev/null && sudo swapon "$swapfile"; then
+            echo "swap enabled:"; swapon --show
+          else
+            echo "::warning::could not enable swap; the build runs without extra headroom (#12719)"
+          fi
+          free -m
+
+      # Build the two memory-heavy test binaries one crate at a time, as the
+      # required shards do, so their rustc peaks never overlap. The test step
+      # below still runs the full unchanged partitioned nextest command.
+      - name: Build the test binaries one memory-heavy crate at a time
+        env:
+          CARGO_BUILD_JOBS: "3"
+        run: |
+          cargo test --no-run --locked --workspace --all-features --exclude xtask
+          cargo test --no-run --locked --workspace --all-features
+
+      # Hand the verifier its xtask binary from this same checkout, as the
+      # required shards do, so the combine job never compiles anything.
+      - name: Retain the xtask binary for the combine job
+        if: matrix.shard == 1
+        run: |
+          mkdir -p target/xtask-binary
+          strip --strip-debug -o target/xtask-binary/xtask target/debug/xtask
+
+      - name: Upload the xtask binary
+        if: matrix.shard == 1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: rust-junit-xtask-${{ github.run_attempt }}
+          path: target/xtask-binary/xtask
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Run Rust tests with JUnit output (shard ${{ matrix.shard }} of 4)
         env:
           # The suite binary is built --all-features; keep the fixture corpus's
           # default-feature build out of that target/debug/ripr (#11602).
           RIPR_FIXTURE_BINARY_ISOLATE: "1"
-        run: cargo nextest run --workspace --all-features --profile ci
+        run: |
+          mkdir -p target/nextest/ci
+          rm -f target/nextest/ci/junit.xml target/nextest/ci/run-context.txt target/nextest/ci/shard-*.status target/nextest/ci/list-*.txt
+          checkout_sha="$(git rev-parse HEAD)"
+          {
+            printf 'repository=%s\ncheckout_sha=%s\nrun_id=%s\nrun_attempt=%s\n' "$GITHUB_REPOSITORY" "$checkout_sha" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT"
+            printf 'profile=ci\nshard=%s/4\ncommand=cargo nextest run --workspace --all-features --profile ci --partition hash:%s/4\n' "${{ matrix.shard }}" "${{ matrix.shard }}"
+            cargo nextest --version
+            rustc --version
+            cargo --version
+            printf 'input_blobs (Cargo.lock, nextest.toml, rust-gates.yml, rust-test-shards.yml):\n'
+            git hash-object Cargo.lock .config/nextest.toml .github/workflows/rust-gates.yml .github/workflows/rust-test-shards.yml
+          } > target/nextest/ci/run-context.txt
+          set +e
+          cargo nextest run --workspace --all-features --profile ci --partition hash:${{ matrix.shard }}/4
+          test_exit=$?
+          set -e
+          printf 'nextest_exit=%s\n' "$test_exit" >> target/nextest/ci/run-context.txt
+          printf '%s\n' "$test_exit" > target/nextest/ci/shard-${{ matrix.shard }}.status
+          cargo nextest list --workspace --all-features --profile ci --partition hash:${{ matrix.shard }}/4 --color never --message-format oneline 2> /dev/null | sort > target/nextest/ci/list-${{ matrix.shard }}.txt
+          if [ "${{ matrix.shard }}" = 1 ]; then
+            cargo nextest list --workspace --all-features --profile ci --color never --message-format oneline 2> /dev/null | sort > target/nextest/ci/list-all.txt
+          fi
+          if [ "$test_exit" -eq 0 ] && ! grep -Eq '<testsuites [^>]*tests="[1-9][0-9]*"' target/nextest/ci/junit.xml; then
+            echo "::error::nextest shard ${{ matrix.shard }} succeeded without a fresh JUnit report naming at least one test"
+            exit 1
+          fi
+          exit "$test_exit"
 
-      - name: Run doc tests
+      # Doctests are preserved exactly once: shard 1 runs the same command the
+      # unsharded job ran. They remain a duplicate receipt; the blocking
+      # doctest owner is still `Required Rust doctests` in rust-gates.yml.
+      - name: Run doc tests (shard 1 only)
+        if: matrix.shard == 1
         run: cargo test --workspace --doc
 
-      - name: Upload test results artifact
-        if: always()
+      - name: Upload shard results
+        if: ${{ !cancelled() }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: rust-junit
-          path: target/nextest/ci/junit.xml
+          name: rust-junit-nextest-shard-${{ matrix.shard }}-${{ github.run_attempt }}
+          path: |
+            target/nextest/ci/junit.xml
+            target/nextest/ci/run-context.txt
+            target/nextest/ci/shard-${{ matrix.shard }}.status
+            target/nextest/ci/list-*.txt
           if-no-files-found: warn
           retention-days: 5
 
+  rust-tests-combine:
+    name: rust-tests-combine
+    needs: rust-tests
+    if: ${{ !cancelled() && needs.rust-tests.result != 'skipped' && (github.event_name != 'pull_request' || (github.event.action == 'labeled' && github.event.label.name == 'merge-ready')) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          pattern: rust-junit-nextest-shard-*
+          path: shards
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          pattern: rust-junit-xtask-*
+          path: xtask-binary
+
+      # The same conservation verdict as the required shards, with the
+      # all-features command variant: every partition green, its JUnit
+      # testcases exactly its partition list, and the four lists a disjoint
+      # cover of the full all-features workspace list. On success this writes
+      # the combined junit.xml the unsharded job used to upload.
+      - name: Check the shards are a complete, disjoint, green cover
+        id: verify-shards
+        run: |
+          xtask="$(find xtask-binary -type f -name xtask | sort -V | tail -n 1)"
+          test -n "$xtask" || { echo "::error::no xtask binary artifact from shard 1"; exit 1; }
+          chmod +x "$xtask"
+          "$xtask" verify-test-shards \
+            --dir shards \
+            --artifact rust-junit \
+            --attempt "${{ github.run_attempt }}" \
+            --repository "$GITHUB_REPOSITORY" \
+            --sha "$(git rev-parse HEAD)" \
+            --run-id "$GITHUB_RUN_ID" \
+            --shards 4 \
+            --all-features \
+            --out target/nextest/ci
+          cat target/nextest/ci/shards-summary.txt >> "$GITHUB_STEP_SUMMARY"
+
+      # The combined JUnit is the slow-test-report input, as the unsharded
+      # artifact was. The advisory budget report is published, never blocking:
+      # a report failure must not fail this lane or hide the combined JUnit.
+      - name: Publish the slow-test report
+        if: steps.verify-shards.outcome == 'success'
+        continue-on-error: true
+        run: |
+          xtask="$(find xtask-binary -type f -name xtask | sort -V | tail -n 1)"
+          "$xtask" slow-test-report --junit target/nextest/ci/junit.xml
+          cat target/ripr/reports/slow-tests.md >> "$GITHUB_STEP_SUMMARY"
+
+      # Same artifact name, file and retention as the unsharded job, now with
+      # the combined run context and shard-cover summary alongside.
+      - name: Upload test results artifact
+        if: ${{ !cancelled() && steps.verify-shards.outcome == 'success' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: rust-junit
+          path: |
+            target/nextest/ci/junit.xml
+            target/nextest/ci/run-context.txt
+            target/nextest/ci/shards-summary.txt
+          if-no-files-found: warn
+          retention-days: 5
+
+      - name: Upload slow-test report artifact
+        if: steps.verify-shards.outcome == 'success'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: slow-test-report
+          path: |
+            target/ripr/reports/slow-tests.json
+            target/ripr/reports/slow-tests.md
+          if-no-files-found: warn
+          retention-days: 5
+
+      # Same upload semantics as the unsharded job, now gated on a verified
+      # complete cover: a partial partition set publishes no combined file.
       - name: Upload test results to Codecov
-        if: ${{ !cancelled() && env.CODECOV_TOKEN != '' && (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) }}
+        if: ${{ !cancelled() && steps.verify-shards.outcome == 'success' && env.CODECOV_TOKEN != '' && (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) }}
         uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         with:
           files: target/nextest/ci/junit.xml
