@@ -10356,7 +10356,7 @@ pub(crate) fn no_static_path_missing(owner: &TypeScriptOwner) -> String {
             owner.name
         ),
         OwnerKind::ModuleFunction if owner.constructor_callback => format!(
-            "No statically linked test builds and exercises `{}`. The changed code sits inside a function passed to the call that initializes it, so it runs when a value built from `{}` is used rather than as a module-level constant; a constant observer such as `expect(IMPORTED_CONST)` cannot observe it.",
+            "No statically linked test builds and exercises `{}`. The changed code may sit inside a function passed to the call that initializes it; such code may run only when a value built from `{}` is used rather than as a module-level constant, which a constant observer such as `expect(IMPORTED_CONST)` cannot observe.",
             owner.name, owner.name
         ),
         OwnerKind::ModuleFunction => format!(
@@ -10380,7 +10380,7 @@ pub(crate) fn no_static_path_recommendation(owner: &TypeScriptOwner) -> String {
         }
         OwnerKind::ModuleFunction if owner.constructor_callback => {
             format!(
-                "TypeScript preview advisory: the changed code runs when a value built from `{}` is used, not at module load; call it through a test that builds a value from `{}` and exercises it (for a schema, parse a value), then assert the result. Keep the finding advisory until a test reaches it.",
+                "TypeScript preview advisory: the changed code may run only when a value built from `{}` is used, not at module load; if so, call it through a test that builds a value from `{}` and exercises it (for a schema, parse a value), then assert the result. Keep the finding advisory until a test reaches it.",
                 owner.name, owner.name
             )
         }

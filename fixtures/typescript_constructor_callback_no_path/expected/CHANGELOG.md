@@ -23,3 +23,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — typescript_constructor_callback_no_path (3)
+
+Reason:
+RIPR-SPEC-0243: soften constructor-callback wording to may-run-only-when-used (#13588)
+
+Command:
+`cargo xtask goldens bless typescript_constructor_callback_no_path --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

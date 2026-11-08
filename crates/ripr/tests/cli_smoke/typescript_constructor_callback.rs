@@ -77,7 +77,7 @@ fn constructor_callback_change_gets_per_use_wording_and_stays_no_static_path() -
         false
     );
     let missing = finding["missing"].to_string();
-    assert!(missing.contains("runs when a value built from `ZodTransform` is used"));
+    assert!(missing.contains("may run only when a value built from `ZodTransform` is used"));
     assert!(
         !missing.contains("module-initializer observer"),
         "{missing}"
@@ -110,6 +110,24 @@ fn plain_module_constant_keeps_the_module_initializer_advice() -> TestResult {
             .to_string()
             .contains("module-initializer observer for `stop`")
     );
+    let step = finding["recommended_next_step"]
+        .as_str()
+        .ok_or("missing next step")?;
+    assert!(step.contains("expect(IMPORTED_CONST).toBe"), "{step}");
+    assert!(!step.contains("builds a value"), "{step}");
+    Ok(())
+}
+
+#[test]
+fn eager_map_callback_keeps_the_module_initializer_advice() -> TestResult {
+    let root = unique_temp_workspace("ts-eager-map-control");
+    let _cleanup = DeclaredHunkScratch(root.clone());
+    let source = "const nums = [1, 2];\nexport const doubled = nums.map((n) => n * 3);\n";
+    let patch = "diff --git a/src/schema.ts b/src/schema.ts\n--- a/src/schema.ts\n+++ b/src/schema.ts\n@@ -1,2 +1,2 @@\n const nums = [1, 2];\n-export const doubled = nums.map((n) => n * 2);\n+export const doubled = nums.map((n) => n * 3);\n";
+    prepare(&root, source, patch)?;
+    let report: Value = serde_json::from_str(&check(&root, "json")?)?;
+    let finding = only_finding(&report)?;
+    assert_eq!(finding["classification"], "no_static_path");
     let step = finding["recommended_next_step"]
         .as_str()
         .ok_or("missing next step")?;

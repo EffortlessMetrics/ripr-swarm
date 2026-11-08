@@ -12837,6 +12837,14 @@ export const STOP = Symbol("stop");
 export const Wrapped = (factory("W", (inst) => {}));
 export const Mixed = [factory("W", (inst) => {})];
 export const NoCall = (inst) => inst;
+export const Doubled = nums.map((n) => n * 2);
+export const Each = nums.forEach(function (n) { sink(n); });
+export const Later = load().then((v) => v + 1);
+export const Caught = load().catch((e) => e);
+export const Eager = new Promise((resolve) => resolve(1));
+export const Copied = Array.from(nums, (n) => n + 1);
+export const Entries = Object.entries(obj).map(([k, v]) => v);
+export const Computed = reg["make"]("X", (inst) => {});
 "#,
     );
     let flag = |name: &str| {
@@ -12860,6 +12868,16 @@ export const NoCall = (inst) => inst;
     assert_eq!(flag("Mixed"), Some((OwnerKind::ModuleFunction, false)));
     // A plain arrow const is not a ModuleFunction owner at all.
     assert_eq!(flag("NoCall"), Some((OwnerKind::ArrowFunction, false)));
+    // Eagerly invoked callbacks run at module load: keep the old reading.
+    for name in [
+        "Doubled", "Each", "Later", "Caught", "Eager", "Copied", "Entries", "Computed",
+    ] {
+        assert_eq!(
+            flag(name),
+            Some((OwnerKind::ModuleFunction, false)),
+            "{name}"
+        );
+    }
 }
 
 /// #13588: the constructor-callback shape names per-use execution and never
@@ -12874,7 +12892,7 @@ fn constructor_callback_owner_gets_its_own_no_static_path_wording() {
     let step = no_static_path_recommendation(&callback);
     assert!(missing.contains("`ZodTransform`"), "got: {missing}");
     assert!(
-        missing.contains("runs when a value built from"),
+        missing.contains("may run only when a value built from"),
         "got: {missing}"
     );
     assert!(
