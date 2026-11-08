@@ -9008,6 +9008,14 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/tests.rs::tests::extract_tests_keeps_dynamic_object_tothrow_broad",
   "crates/ripr/src/analysis/language/typescript/tests.rs::tests::extract_tests_maps_class_rejects_tothrow_to_exact_error_variant_oracle",
   "crates/ripr/src/analysis/language/typescript/tests.rs::tests::extract_tests_maps_object_rejects_tothrow_to_exact_error_variant_oracle",
+  "crates/ripr/src/analysis/language/typescript/throw_boundary_tests.rs::throw_test_at_the_boundary_input_closes_the_gap",
+  "crates/ripr/src/analysis/language/typescript/throw_boundary_tests.rs::rejects_to_throw_at_the_boundary_input_closes_the_gap",
+  "crates/ripr/src/analysis/language/typescript/throw_boundary_tests.rs::throw_test_at_another_input_does_not_close_the_gap",
+  "crates/ripr/src/analysis/language/typescript/throw_boundary_tests.rs::throw_test_that_does_not_name_the_guard_error_does_not_close_the_gap",
+  "crates/ripr/src/analysis/language/typescript/throw_boundary_tests.rs::negated_throw_in_the_test_does_not_close_the_gap",
+  "crates/ripr/src/analysis/language/typescript/throw_boundary_tests.rs::computed_or_shadowed_call_does_not_close_the_gap",
+  "crates/ripr/src/analysis/language/typescript/throw_boundary_tests.rs::guard_that_is_not_one_plain_throw_line_does_not_close_the_gap",
+  "crates/ripr/src/analysis/language/typescript/throw_boundary_tests.rs::throw_test_does_not_close_a_guard_that_does_not_throw",
 ]
 fixtures = [
   "fixtures/benches_harness_evidence",
@@ -9017,6 +9025,7 @@ fixtures = [
 code = [
   "crates/ripr/src/analysis/language/typescript/oracle.rs",
   "crates/ripr/src/analysis/language/typescript/types.rs",
+  "crates/ripr/src/analysis/language/typescript/throw_boundary_guard.rs",
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0097-typescript-tothrow-exact-payload-oracle.md",
