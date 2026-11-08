@@ -730,23 +730,47 @@ fn test_patches_owner(test: &PythonTest, owner: &PythonOwner) -> bool {
         return false;
     }
     let body = &test.body_text;
-    if ["stop(", "stopall(", ".undo(", "monkeypatch.context("]
-        .iter()
-        .any(|undo| body.contains(undo))
+    if [
+        "stop(",
+        "stopall(",
+        ".undo(",
+        "monkeypatch.context(",
+        "reload(",
+    ]
+    .iter()
+    .any(|undo| body.contains(undo))
     {
         return false;
     }
     let module_paths = owner_module_paths(&owner.file);
-    let targets_owner = |line: &str| {
-        patch_string_targets(line).iter().any(|(_, target)| {
-            target.rsplit_once('.').is_some_and(|(prefix, name)| {
-                name == owner.name && module_paths.iter().any(|module| module == prefix)
-            })
+    let targets_owner_name = |target: &str| {
+        target.rsplit_once('.').is_some_and(|(prefix, name)| {
+            name == owner.name && module_paths.iter().any(|module| module == prefix)
         })
     };
+    let targets_owner = |line: &str| {
+        patch_string_targets(line)
+            .iter()
+            .any(|(_, target)| targets_owner_name(target))
+    };
+    // A second patch of the owner may restore it between calls.
+    if patch_string_targets(body)
+        .iter()
+        .filter(|(_, target)| targets_owner_name(target))
+        .count()
+        > 1
+    {
+        return false;
+    }
     let mut lines = body.lines();
-    // The `def` header, possibly over several lines, ends at its `:`.
-    if !lines.any(|line| line.trim_end().ends_with(':')) {
+    let def_indent = body.len() - body.trim_start().len();
+    // The `def` header, possibly over several lines, ends at its `:` (a
+    // trailing comment such as `# noqa: D103` is not part of it).
+    if !lines.any(|line| {
+        line.split('#')
+            .next()
+            .is_some_and(|code| code.trim_end().ends_with(':'))
+    }) {
         return false;
     }
     let mut base_indent = None;
@@ -757,7 +781,8 @@ fn test_patches_owner(test: &PythonTest, owner: &PythonOwner) -> bool {
             continue;
         }
         let indent = line.len() - line.trim_start().len();
-        if *base_indent.get_or_insert(indent) != indent {
+        // The run must sit directly in the test body, not a nested block.
+        if *base_indent.get_or_insert(indent) != indent || indent <= def_indent {
             break;
         }
         let applied = text.starts_with("monkeypatch.setattr(")
