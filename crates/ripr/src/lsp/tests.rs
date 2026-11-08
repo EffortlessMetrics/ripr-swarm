@@ -33287,7 +33287,9 @@ fn incomplete_outcome_with_no_rows_serves_a_passive_marker_and_nothing_else_does
         snapshot.analysis_outcome = Some(outcome.clone());
         let items = served(&snapshot);
         let [marker] = items.as_slice() else {
-            return Err(format!("{limitation_kind:?}: exactly one marker: {items:?}"));
+            return Err(format!(
+                "{limitation_kind:?}: exactly one marker: {items:?}"
+            ));
         };
         let data = marker.data.as_ref().ok_or("marker carries typed data")?;
         let sentence = outcome
@@ -33308,18 +33310,25 @@ fn incomplete_outcome_with_no_rows_serves_a_passive_marker_and_nothing_else_does
         {
             return Err(format!("{limitation_kind:?}: governed shape: {marker:?}"));
         }
-        if ["finding_id", "repair", "witness", "preview_actionability", "recovery"]
-            .iter()
-            .any(|key| data.get(*key).is_some())
+        if [
+            "finding_id",
+            "repair",
+            "witness",
+            "preview_actionability",
+            "recovery",
+        ]
+        .iter()
+        .any(|key| data.get(*key).is_some())
         {
             return Err(format!("marker must be passive typed data: {data:#}"));
         }
         let lowered = marker.message.to_lowercase();
-        // ripr-allow: static-language: negative guard lists the forbidden terms
-        for word in "passing covered safe proven adequate killed survived".split(' ') {
-            // ripr-allow: static-language: negative guard lists the forbidden terms
+        let forbidden = "passing covered safe proven adequate killed survived"; // ripr-allow: static-language: negative guard lists the forbidden terms
+        for word in forbidden.split(' ') {
             if lowered.contains(word) {
-                return Err(format!("marker wording must not contain {word:?}: {lowered}"));
+                return Err(format!(
+                    "marker wording must not contain {word:?}: {lowered}"
+                ));
             }
         }
         if super::diagnostics::scope_marker_payload(&snapshot).as_ref() != Some(marker) {
@@ -33371,7 +33380,9 @@ fn incomplete_outcome_with_no_rows_serves_a_passive_marker_and_nothing_else_does
     if bounded.message.matches("Limitation:").count() != 3
         || !bounded.message.contains("1 more limitation(s)")
     {
-        return Err(format!("marker must name three and count the rest: {bounded:?}"));
+        return Err(format!(
+            "marker must name three and count the rest: {bounded:?}"
+        ));
     }
 
     // Discriminating negatives.

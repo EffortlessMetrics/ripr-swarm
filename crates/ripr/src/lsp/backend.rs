@@ -18,8 +18,8 @@ use super::diagnostics::{
     AnalysisPendingRecovery, DiagnosticBatch, DiagnosticRefreshPlan, DiagnosticResultIdCache,
     WorkspaceDiagnostics, analysis_pending_diagnostics, analysis_pending_withdrawal_diagnostics,
     delivered_diagnostics_for_uri, delivery_omission_diagnostic, diagnostic_refresh_plan,
-    scope_marker_payload, is_scope_marker, snapshot_serves_scope_marker,
-    take_all_uris, withdrawn_quarantine_diagnostics,
+    is_scope_marker, scope_marker_payload, snapshot_serves_scope_marker, take_all_uris,
+    withdrawn_quarantine_diagnostics,
 };
 use super::hover::{
     NoEvidenceState, UnanalyzedFileCause, classify_unanalyzed_file, unanalyzed_file_hover_route,

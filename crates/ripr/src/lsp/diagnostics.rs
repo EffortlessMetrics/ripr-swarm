@@ -864,11 +864,7 @@ pub(super) fn delivered_diagnostics_for_uri(
 /// any kind in the snapshot), so a snapshot with findings, gap rows or other
 /// markers never carries it, and it disappears with the next real snapshot.
 /// No finding identity, repair data or actionability; never a Warning.
-fn push_scope_marker(
-    snapshot: &AnalysisSnapshot,
-    uri: &Uri,
-    diagnostics: &mut Vec<Diagnostic>,
-) {
+fn push_scope_marker(snapshot: &AnalysisSnapshot, uri: &Uri, diagnostics: &mut Vec<Diagnostic>) {
     if diagnostics.is_empty()
         && snapshot_serves_scope_marker(snapshot)
         && super::uri::file_uri_relative_to_root(&snapshot.root, uri).is_some()
@@ -904,9 +900,9 @@ pub(super) fn is_scope_marker(diagnostic: &Diagnostic) -> bool {
     diagnostic.data.as_ref().is_some_and(|data| {
         data["kind"] == EMPTY_SCOPE_MARKER_KIND || data["kind"] == INCOMPLETE_ANALYSIS_MARKER_KIND
     }) && diagnostic.code
-            == Some(NumberOrString::String(
-                super::diagnostic_catalog::DIAGNOSTIC_LANGUAGE_NOT_ANALYZED_CODE.to_string(),
-            ))
+        == Some(NumberOrString::String(
+            super::diagnostic_catalog::DIAGNOSTIC_LANGUAGE_NOT_ANALYZED_CODE.to_string(),
+        ))
 }
 
 /// The marker payload a snapshot would serve, or `None`. Comparing payloads
