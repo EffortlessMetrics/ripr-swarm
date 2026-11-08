@@ -67,6 +67,12 @@ impl Repo {
         )?;
         repo.write("src/lib.rs", "pub struct Marker;\n")?;
         repo.write("tools/x.py", "def f(x):\n    return x\n")?;
+        // Zero-config detection does not enable Python for `tools/x.py`
+        // (#13571); this fixture tests the enabled-language guidance.
+        repo.write(
+            "ripr.toml",
+            "[languages]\nenabled = [\"rust\", \"python\"]\n",
+        )?;
         repo.commit_base(form)?;
         repo.write("tools/x.py", "def f(x):\n    return x + 1\n")?;
         repo.land_change(form)?;
