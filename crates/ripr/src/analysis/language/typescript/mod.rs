@@ -203,6 +203,9 @@ mod suite_factory;
 mod tests_extract;
 #[cfg(test)]
 mod tests_extract_tests;
+mod throw_boundary_guard;
+#[cfg(test)]
+mod throw_boundary_tests;
 pub(crate) mod tsconfig;
 mod typed_loose_equality_guard;
 mod types;
@@ -289,6 +292,7 @@ pub(crate) use table_loop_rows::*;
 pub(crate) use table_rows::*;
 pub(crate) use ternary_arm_guard::*;
 pub(crate) use tests_extract::*;
+pub(crate) use throw_boundary_guard::*;
 #[cfg(test)]
 pub(crate) use tsconfig::load_alias_map;
 pub(crate) use tsconfig::{
@@ -336,7 +340,6 @@ fn source_type_for_extension(path: &Path) -> SourceType {
     }
 }
 
-/// First owner in source order whose span contains `line`, over a
 /// Owners whose cross-module callers were not followed because more than
 /// `MAX_CROSS_MODULE_ENTRIES` of them call it, keyed by owner identity (#13592).
 type FanInLimitedOwners = std::collections::HashSet<(PathBuf, String, usize)>;
@@ -365,6 +368,7 @@ fn changed_owner_line_context<'a>(
     context
 }
 
+/// First owner in source order whose span contains `line`, over a
 /// start-line-sorted slice and its prefix-max of end lines (#10021).
 /// `file_owners` must be sorted by `start_line` (stable, so equal start
 /// lines keep extraction order); `end_prefix_max[i]` is the maximum
@@ -1035,6 +1039,15 @@ impl TypeScriptAdapter {
         // it binds (RIPR-SPEC-0095).
         reexport_index.rewrite_namespace_reexport_imports(
             &mut all_tests,
+            alias_map_ref,
+            Some(&options.root),
+        );
+
+        // A named import of a class through a re-export barrel reads as the
+        // direct import of the declaring module (#13592 B3).
+        reexport_index.rewrite_class_barrel_imports(
+            &mut all_tests,
+            &related_tests::ExportedClasses::from_owners(&all_owners),
             alias_map_ref,
             Some(&options.root),
         );

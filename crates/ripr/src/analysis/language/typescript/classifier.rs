@@ -7607,6 +7607,14 @@ pub(crate) fn classify_resolved_owner(
         alias_map,
         workspace_root,
     ));
+    pin_facts.extend(ts_throw_boundary_pin_facts(
+        &probe_shape.family,
+        line_text,
+        owner,
+        related_candidates,
+        alias_map,
+        workspace_root,
+    ));
     pin_facts.extend(ts_close_to_pin_facts(
         &probe_shape.family,
         line,
