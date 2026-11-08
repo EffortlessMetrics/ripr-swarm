@@ -351,9 +351,18 @@ pub(crate) fn terminal_stdout_note(stdout_is_terminal: bool, quiet: bool) -> Opt
 }
 
 fn positional_selector_hint(arg: &str) -> String {
-    format!(
+    let message = format!(
         "unknown context argument {arg:?}: `ripr context` takes the finding selector via `--at` (or `--finding`); try `ripr context --at {arg}`. Run `ripr context --help`."
-    )
+    );
+    // #11584: a stray positional is the `unknown_argument` class. `next` is
+    // the fixed help route, never the `--at {arg}` retry, which would lift
+    // caller-controlled text into a command.
+    crate::cli::usage_refusal::note_unknown_argument(
+        arg,
+        &message,
+        &crate::cli::suggest::help_pointer("context"),
+    );
+    message
 }
 
 #[cfg(test)]

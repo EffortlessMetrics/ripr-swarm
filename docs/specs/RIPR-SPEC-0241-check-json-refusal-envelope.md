@@ -99,8 +99,13 @@ Without a JSON request stdout stays empty.
 
 - `ripr check --json --base definitely-not-a-real-ref` emits
   `base_unresolvable` with route `analysis/base-resolution`, exit 2.
-- `ripr check --json --bogus-flag` emits nothing on stdout (argv
-  carve-out), exit 2, cause on stderr.
+- `ripr check --json --bogus-flag` emits no analysis envelope: stdout
+  carries only the minimal `cli_refusal` document (`unknown_argument`,
+  token `--bogus-flag`, `next` the `ripr check --help --all` route), exit 2,
+  cause on stderr (#11584). The same holds for any JSON `--format`, such as
+  `json-terse`. Without a JSON request stdout stays empty.
+- `ripr check --json --base` (a flag missing its value) keeps empty stdout
+  even under the JSON request, exit 2, cause on stderr.
 - A malformed `ripr.toml` emits `config_invalid` with the redacted summary;
   a directory with no config entry at all falls back to `analysis_failed`.
 
@@ -122,7 +127,9 @@ Without a JSON request stdout stays empty.
 - `crates/ripr/tests/cli_smoke.rs::check_json_unmigrated_analysis_failure_emits_analysis_failed`
 - `crates/ripr/tests/cli_smoke.rs::check_json_timeout_and_bad_base_have_distinct_identities`
 - `crates/ripr/tests/cli_smoke.rs::check_json_success_carries_no_refusal_shape`
-- `crates/ripr/tests/cli_smoke.rs::check_json_argv_usage_errors_stay_prose_only`
+- `crates/ripr/tests/cli_smoke.rs::check_json_argv_usage_errors_emit_cli_refusal`
+- `crates/ripr/tests/cli_smoke.rs::check_unknown_flag_under_json_terse_format_emits_cli_refusal`
+- `crates/ripr/tests/cli_smoke.rs::argv_usage_errors_without_json_request_keep_stdout_empty`
 - `crates/ripr/tests/cli_smoke/check_artifact_stdin.rs::python_stdin_artifact_refusal_preserves_named_recovery`
 - `crates/ripr/tests/cli_smoke/check_artifact_stdin.rs::javascript_stdin_artifact_refusal_preserves_named_recovery`
 - `crates/ripr/src/cli/commands/check.rs::config_load_refusal_without_any_config_entry_falls_back`

@@ -4594,6 +4594,53 @@ fn check_json_argv_usage_errors_emit_cli_refusal() -> Result<(), String> {
     Ok(())
 }
 
+/// #11584 review: every JSON format `OutputFormat` accepts is a JSON request,
+/// including `json-terse`; SARIF stays outside the class.
+#[test]
+fn check_unknown_flag_under_json_terse_format_emits_cli_refusal() -> Result<(), String> {
+    let output = run_ripr(&["check", "--format", "json-terse", "--bogus-flag-6834"]);
+    assert_cli_refusal(
+        &output,
+        "unknown_argument",
+        "--bogus-flag-6834",
+        "--bogus-flag-6834",
+    )?;
+    let sarif = run_ripr(&["check", "--format", "sarif", "--bogus-flag-6834"]);
+    if sarif.status.code() != Some(2) || !sarif.stdout.is_empty() {
+        return Err(format!(
+            "sarif is not a JSON request: expected exit 2 and empty stdout, got {:?} and {} bytes",
+            sarif.status.code(),
+            sarif.stdout.len()
+        ));
+    }
+    Ok(())
+}
+
+/// #11584 review: a stray positional on `context` (the explain-habit paste)
+/// is the `unknown_argument` class. Its prose keeps the `--at` retry; the
+/// document's `next` is the fixed help route, never caller text.
+#[test]
+fn context_stray_positional_under_json_emits_cli_refusal() -> Result<(), String> {
+    let stray = "probe:stray-6834.rs:1";
+    let output = run_ripr(&["context", "--json", stray]);
+    let value = assert_cli_refusal(
+        &output,
+        "unknown_argument",
+        stray,
+        "try `ripr context --at probe:stray-6834.rs:1`",
+    )?;
+    if value["error"]["next"]["purpose"] != "list_valid_arguments"
+        || value["error"]["next"]["command"] != "ripr context --help"
+    {
+        return Err(format!("next must be the context help route: {value}"));
+    }
+    let plain = run_ripr(&["context", stray]);
+    if plain.status.code() != Some(2) || !plain.stdout.is_empty() {
+        return Err("stray positional without JSON request must keep stdout empty".to_string());
+    }
+    Ok(())
+}
+
 #[test]
 fn argv_usage_errors_without_json_request_keep_stdout_empty() -> Result<(), String> {
     for args in [

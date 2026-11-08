@@ -127,8 +127,12 @@ pub(super) fn json_requested(args: &[String]) -> bool {
     false
 }
 
+/// JSON-ness comes from the format owner (`OutputFormat`), not a second
+/// hand-kept list. Every other command's `--format` JSON spelling is `json`,
+/// which the owner also parses.
 fn is_json_format(value: &str) -> bool {
-    value == "json" || value == "json-compact" || value.ends_with("-json")
+    crate::output::format::OutputFormat::parse_cli_name(value)
+        .is_some_and(|format| format.is_json_request())
 }
 
 /// The first non-flag argv token, when it names a command with help.
@@ -190,6 +194,8 @@ mod tests {
             &["ripr", "check", "--json"][..],
             &["ripr", "check", "--format", "json"],
             &["ripr", "check", "--format=json-compact"],
+            &["ripr", "check", "--format", "json-terse"],
+            &["ripr", "check", "--format", "check-findings-json"],
             &["ripr", "check", "--format", "agent-seam-packets-json"],
             &["ripr", "--json", "chekc"],
         ] {
@@ -199,6 +205,8 @@ mod tests {
             &["ripr", "check"][..],
             &["ripr", "check", "--format", "human"],
             &["ripr", "check", "--format", "sarif"],
+            &["ripr", "check", "--format", "badge-shields"],
+            &["ripr", "check", "--format", "yaml-json"],
             &["ripr", "check", "--format"],
             &["ripr", "check", "--formatjson"],
         ] {
