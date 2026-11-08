@@ -4628,14 +4628,14 @@ suite('Extension Smoke', () => {
     }
   });
 
-  test('main status bar visibility hides disabled and serverUnavailable and keeps noWorkspace', () => {
+  test('main status bar visibility hides disabled and keeps serverUnavailable and noWorkspace', () => {
     const expectedVisible: Record<RiprStatusKind, boolean> = {
       disabled: false,
       noWorkspace: true,
       workspaceUntrusted: true,
       workspaceAmbiguous: true,
       resolvingServer: true,
-      serverUnavailable: false,
+      serverUnavailable: true,
       serverFailed: true,
       circuitOpen: true,
       starting: true,
@@ -4746,6 +4746,24 @@ suite('Extension Smoke', () => {
     }
   });
 
+  test('a stale unmanaged server warns once per session and still starts (#13638)', async () => {
+    const warning = 'ripr on PATH reports ripr 0.1.0, older than the expected ripr 0.10.0; some editor features may not work. Update it with cargo install ripr --locked, or set ripr.server.path to a current ripr.';
+    const context = createControllerTestContext({ serverVersionWarning: warning });
+    try {
+      await context.controller.start();
+      assert.strictEqual(context.client.startCalls, 1, 'a stale server is still used, not refused');
+      assert.deepStrictEqual(context.warningMessages, [warning]);
+      await context.controller.restart();
+      assert.deepStrictEqual(
+        context.warningMessages,
+        [warning],
+        'a restart must not repeat the same stale-server warning'
+      );
+    } finally {
+      await context.dispose();
+    }
+  });
+
   test('status bar reports unavailable server without hanging on modal UI', async () => {
     const context = createControllerTestContext({
       resolveFailure: {
@@ -4760,9 +4778,10 @@ suite('Extension Smoke', () => {
       assert.ok(context.status.text.includes('ripr: server missing'));
       assert.strictEqual(
         context.statusVisible(),
-        false,
-        'serverUnavailable must hide the main status-bar item'
+        true,
+        'serverUnavailable must keep the main status-bar item visible after the toast (#13638)'
       );
+      assert.strictEqual(context.status.command, 'ripr.showStatus');
       assert.ok(String(context.status.tooltip).includes('Missing configured ripr server path'));
       assert.ok(String(context.status.tooltip).includes('Workspace:'));
       assert.ok(String(context.status.tooltip).includes('Server: not resolved'));
@@ -6320,6 +6339,7 @@ suite('Start or Continue Repair shell (#2928 / #4647)', () => {
 
 interface ControllerTestOptions {
   enabled?: boolean;
+  serverVersionWarning?: string;
   includeUnchangedTests?: boolean;
   seamDiagnostics?: boolean;
   diagnosticProfile?: 'actionable' | 'full';
@@ -6796,7 +6816,8 @@ function createControllerTestContext(options: ControllerTestOptions) {
       detail: 'test ripr on PATH',
       binaryVersion: options.serverVersion ?? 'ripr 0.8.0-test',
       installationState: 'unmanaged',
-      compatibilityResult: compatibleLspEvidence
+      compatibilityResult: compatibleLspEvidence,
+      ...(options.serverVersionWarning ? { versionWarning: options.serverVersionWarning } : {})
     }),
     createLanguageClient: (_serverOptions, options, experimental) => {
       clientOptions = options;

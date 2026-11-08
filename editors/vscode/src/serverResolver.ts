@@ -51,6 +51,13 @@ export interface ResolvedServer {
    * same way the probe used to.
    */
   readonly needsShell?: boolean;
+  /**
+   * Set when an unmanaged server (ripr.server.path or PATH) reports a version
+   * older than the extension expects and was still selected, because it was
+   * configured explicitly or no managed server could be obtained (#13638).
+   * The client shows it once; resolution never blocks on it.
+   */
+  readonly versionWarning?: string;
 }
 
 /**
@@ -106,7 +113,14 @@ export async function resolveServer(
       'unmanaged'
     );
     if (isResolved(configuredResult)) {
-      return configuredResult;
+      // An explicit path is honored as-is; an old binary only earns a warning.
+      let expected: string | undefined;
+      try {
+        expected = requestedServerVersion(context, config);
+      } catch {
+        expected = undefined;
+      }
+      return expected ? withStaleVersionWarning(configuredResult, expected, output) : configuredResult;
     }
     return { ...configuredResult, remedy: CONFIGURED_PATH_REMEDY };
   }
@@ -159,10 +173,19 @@ export async function resolveServer(
     if (config.autoDownload && config.serverVersion.trim().length === 0) {
       earlyPathResult = await probePathServer(runtime);
       if (isResolved(earlyPathResult)) {
-        output.appendLine('Using ripr on PATH; skipping the managed server download.');
-        return earlyPathResult;
+        // A PATH binary older than the requested release must not silently
+        // win over the download that would replace it (#13638). It stays the
+        // fallback if the download cannot produce a server.
+        if (!serverVersionOlderThan(earlyPathResult.binaryVersion, version)) {
+          output.appendLine('Using ripr on PATH; skipping the managed server download.');
+          return earlyPathResult;
+        }
+        output.appendLine(
+          `ripr on PATH reports ${earlyPathResult.binaryVersion}, older than the expected ${version}; trying the managed download.`
+        );
+      } else {
+        output.appendLine(`ripr on PATH is not usable (${earlyPathResult.detail}); trying the managed download.`);
       }
-      output.appendLine(`ripr on PATH is not usable (${earlyPathResult.detail}); trying the managed download.`);
     }
 
     if (config.autoDownload) {
@@ -194,7 +217,7 @@ export async function resolveServer(
     if (downloadFailure) {
       output.appendLine(`Using PATH fallback after managed server resolution failed: ${downloadFailure}`);
     }
-    return pathResult;
+    return withStaleVersionWarning(pathResult, version, output);
   }
 
   const autoDownloadHint = config.autoDownload
@@ -217,6 +240,19 @@ export async function resolveServer(
       .join('\n'),
     kind
   };
+}
+
+function withStaleVersionWarning(
+  resolved: ResolvedServer,
+  expectedVersion: string,
+  output: vscode.OutputChannel
+): ResolvedServer {
+  const versionWarning = staleServerVersionWarning(resolved, expectedVersion);
+  if (!versionWarning) {
+    return resolved;
+  }
+  output.appendLine(versionWarning);
+  return { ...resolved, versionWarning };
 }
 
 async function probePathServer(
@@ -471,4 +507,92 @@ function firstOutputLine(stdoutChunks: Buffer[], stderrChunks: Buffer[]): string
         line !== '#< CLIXML' &&
         !line.startsWith('__RIPR_PROBE_EXIT_CODE__')
     );
+}
+
+/**
+ * Server version parse/compare helpers. They are the single owner of the
+ * "is this reported server older than the extension expects" comparison: the
+ * setup diagnosis (`ripr_version_too_old`) and resolution (#13638) both use
+ * them, so a PATH binary rejected here is the same one diagnosis calls old.
+ */
+export function parseVersion(value: string): [number, number, number] | undefined {
+  for (let index = 0; index < value.length; index += 1) {
+    if (!isAsciiDigit(value.charCodeAt(index))) {
+      continue;
+    }
+    const major = readVersionNumber(value, index);
+    if (!major || value.charAt(major.nextIndex) !== '.') {
+      continue;
+    }
+    const minor = readVersionNumber(value, major.nextIndex + 1);
+    if (!minor || value.charAt(minor.nextIndex) !== '.') {
+      continue;
+    }
+    const patch = readVersionNumber(value, minor.nextIndex + 1);
+    if (!patch) {
+      continue;
+    }
+    return [major.value, minor.value, patch.value];
+  }
+  return undefined;
+}
+
+function readVersionNumber(value: string, startIndex: number): { value: number; nextIndex: number } | undefined {
+  let nextIndex = startIndex;
+  while (nextIndex < value.length && isAsciiDigit(value.charCodeAt(nextIndex))) {
+    nextIndex += 1;
+  }
+  if (nextIndex === startIndex) {
+    return undefined;
+  }
+  return {
+    value: Number(value.slice(startIndex, nextIndex)),
+    nextIndex
+  };
+}
+
+function isAsciiDigit(code: number): boolean {
+  return code >= 48 && code <= 57;
+}
+
+export function compareVersions(left: [number, number, number], right: [number, number, number]): number {
+  for (let index = 0; index < left.length; index += 1) {
+    const diff = left[index] - right[index];
+    if (diff !== 0) {
+      return diff;
+    }
+  }
+  return 0;
+}
+
+/**
+ * A user-facing warning when a resolved unmanaged server reports a version
+ * older than the extension expects, or `undefined` when the version is current
+ * or cannot be compared. An unparseable version is not treated as old: the
+ * setup diagnosis already reports it as `ripr_version_unknown` (#13638).
+ */
+export function staleServerVersionWarning(
+  resolved: Pick<ResolvedServer, 'binaryVersion' | 'source' | 'command'>,
+  expectedVersion: string
+): string | undefined {
+  if (!serverVersionOlderThan(resolved.binaryVersion, expectedVersion)) {
+    return undefined;
+  }
+  const where = resolved.source === 'configured'
+    ? `ripr.server.path (${resolved.command})`
+    : 'ripr on PATH';
+  const update = resolved.source === 'configured'
+    ? 'Update that binary with cargo install ripr --locked, or point ripr.server.path at a current ripr.'
+    : 'Update it with cargo install ripr --locked, or set ripr.server.path to a current ripr.';
+  return `${where} reports ${resolved.binaryVersion}, older than the expected ripr ${expectedVersion}; some editor features may not work. ${update}`;
+}
+
+/** True only when both versions parse and `reported` is strictly older. */
+export function serverVersionOlderThan(reported: string | undefined, expected: string): boolean {
+  if (!reported) {
+    return false;
+  }
+  const actual = parseVersion(reported);
+  const wanted = parseVersion(expected);
+  return Boolean(actual && wanted && compareVersions(actual, wanted) < 0);
 }

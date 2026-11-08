@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- VS Code: a `ripr` on PATH older than the extension's expected server version no longer skips the managed download; if no managed server can be obtained (or `ripr.server.path` points at an older binary) the extension still uses it but warns once with the reported and expected versions and how to update. The `ripr: server missing` status item now stays visible after the missing-server notification is dismissed (#13638).
