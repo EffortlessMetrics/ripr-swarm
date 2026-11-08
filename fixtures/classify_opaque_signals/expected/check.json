@@ -1,0 +1,1329 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "fast",
+  "root": "fixtures/classify_opaque_signals/input",
+  "summary": {"changed_rust_files":1,"probes":14,"findings":14,"exposed":14,"weakly_exposed":0,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"rust","files":1}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":null,"input_identity":"sha256:972d6646c7939000f50db801bd5e9540acbfca0eeb8084fa578d9a51119a54f9","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":14,"candidate_line_count":7,"probe_count":14,"finding_count":14},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:src_lib.rs:predicate:074e14d6",
+      "canonical_gap_id": "gap:rust:src/lib.rs:case_one:predicate_boundary:predicate:value==10",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:case_one:predicate_boundary:predicate:value==10",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "case_one",
+        "behavior_kind": "predicate_boundary",
+        "probe_kind": "predicate",
+        "normalized_discriminator": "value==10"
+
+      },
+      "classification": "exposed",
+      "severity": "info",
+      "confidence": 1.00,
+      "probe": {
+        "id": "probe:src_lib.rs:predicate:074e14d6",
+        "family": "predicate",
+        "delta": "control",
+        "file": "./src/lib.rs",
+        "line": 1,
+        "expression": "value >= 10"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach case_one: test_case_one"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Detected related test input at the changed boundary"},
+        "propagate": {"state":"yes","confidence":"medium","summary":"Changed behavior appears to influence returned value: value >= 10"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact value or pattern assertion"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach case_one: test_case_one", "infection yes: Detected related test input at the changed boundary", "propagation yes: Changed behavior appears to influence returned value: value >= 10", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator yes: Strong oracle found: exact value or pattern assertion", "local flow reaches returned value: value >= 10 (line 1)", "related test tests/cases.rs:4 test_case_one uses strong relational check oracle: assert!(case_one(fixture));", "source function argument value value = 10 at line 4", "source function argument value value == 10 at line 4"],
+      "flow_sinks": [
+        {"kind":"return_value","text":"value >= 10","line":1}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Changed behavior appears to influence returned value: value >= 10", "Detected related test input at the changed boundary", "Related tests appear to reach case_one: test_case_one", "Strong oracle found: exact value or pattern assertion"],
+      "missing": [],
+      "assertion_texts": {
+        "4": "fn test_case_one() { let fixture = 10; assert!(case_one(fixture)); }"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 4,
+            "value": "value = 10",
+            "context": "function_argument"
+          },
+          {
+            "line": 4,
+            "value": "value == 10",
+            "context": "function_argument",
+            "provenance": "fn test_case_one() { let fixture = 10; assert!(case_one(fixture)); } | exact input value = 10; literal operand 10 = 10"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 4,
+          "value": "value = 10",
+          "context": "function_argument"
+        },
+        {
+          "line": 4,
+          "value": "value == 10",
+          "context": "function_argument",
+          "provenance": "fn test_case_one() { let fixture = 10; assert!(case_one(fixture)); } | exact input value = 10; literal operand 10 = 10"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "test_case_one",
+          "file": "tests/cases.rs",
+          "line": 4,
+          "oracle_strength": "strong",
+          "oracle_kind": "relational_check",
+          "oracle": "assert!(case_one(fixture));",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        }
+      ],
+      "stop_reasons": ["fixture_opaque"],
+      "oracle_kind": "relational_check",
+      "oracle_strength": "strong",
+      "recommended_next_step": "",
+      "suggested_next_action": "",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_lib.rs:return_value:014a6a43",
+      "canonical_gap_id": "gap:rust:src/lib.rs:case_one:return_value:return_value:value>=10",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:case_one:return_value:return_value:value>=10",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "case_one",
+        "behavior_kind": "return_value",
+        "probe_kind": "return_value",
+        "normalized_discriminator": "value>=10"
+
+      },
+      "classification": "exposed",
+      "severity": "info",
+      "confidence": 1.00,
+      "probe": {
+        "id": "probe:src_lib.rs:return_value:014a6a43",
+        "family": "return_value",
+        "delta": "value",
+        "file": "./src/lib.rs",
+        "line": 1,
+        "expression": "value >= 10"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach case_one: test_case_one"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"yes","confidence":"high","summary":"Complete propagation witness reaches returned value: value >= 10"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact value or pattern assertion"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach case_one: test_case_one", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: value >= 10", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator yes: Strong oracle found: exact value or pattern assertion", "local flow reaches returned value: value >= 10 (line 1)", "related test tests/cases.rs:4 test_case_one uses strong relational check oracle: assert!(case_one(fixture));", "source function argument value value = 10 at line 4", "source function argument value value == 10 at line 4"],
+      "flow_sinks": [
+        {"kind":"return_value","text":"value >= 10","line":1}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches returned value: value >= 10", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach case_one: test_case_one", "Strong oracle found: exact value or pattern assertion"],
+      "missing": [],
+      "assertion_texts": {
+        "4": "fn test_case_one() { let fixture = 10; assert!(case_one(fixture)); }"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 4,
+            "value": "value = 10",
+            "context": "function_argument"
+          },
+          {
+            "line": 4,
+            "value": "value == 10",
+            "context": "function_argument",
+            "provenance": "fn test_case_one() { let fixture = 10; assert!(case_one(fixture)); } | exact input value = 10; literal operand 10 = 10"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 4,
+          "value": "value = 10",
+          "context": "function_argument"
+        },
+        {
+          "line": 4,
+          "value": "value == 10",
+          "context": "function_argument",
+          "provenance": "fn test_case_one() { let fixture = 10; assert!(case_one(fixture)); } | exact input value = 10; literal operand 10 = 10"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "test_case_one",
+          "file": "tests/cases.rs",
+          "line": 4,
+          "oracle_strength": "strong",
+          "oracle_kind": "relational_check",
+          "oracle": "assert!(case_one(fixture));",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        }
+      ],
+      "stop_reasons": ["fixture_opaque"],
+      "oracle_kind": "relational_check",
+      "oracle_strength": "strong",
+      "recommended_next_step": "",
+      "suggested_next_action": "",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_lib.rs:predicate:5489cf7e",
+      "canonical_gap_id": "gap:rust:src/lib.rs:case_two:predicate_boundary:predicate:value==10",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:case_two:predicate_boundary:predicate:value==10",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "case_two",
+        "behavior_kind": "predicate_boundary",
+        "probe_kind": "predicate",
+        "normalized_discriminator": "value==10"
+
+      },
+      "classification": "exposed",
+      "severity": "info",
+      "confidence": 1.00,
+      "probe": {
+        "id": "probe:src_lib.rs:predicate:5489cf7e",
+        "family": "predicate",
+        "delta": "control",
+        "file": "./src/lib.rs",
+        "line": 2,
+        "expression": "value >= 10"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach case_two: test_case_two"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Detected related test input at the changed boundary"},
+        "propagate": {"state":"yes","confidence":"medium","summary":"Changed behavior appears to influence returned value: value >= 10"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact value or pattern assertion"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach case_two: test_case_two", "infection yes: Detected related test input at the changed boundary", "propagation yes: Changed behavior appears to influence returned value: value >= 10", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator yes: Strong oracle found: exact value or pattern assertion", "local flow reaches returned value: value >= 10 (line 2)", "related test tests/cases.rs:6 test_case_two uses strong relational check oracle: assert!(case_two(builder));", "source function argument value value = 10 at line 6", "source function argument value value == 10 at line 6"],
+      "flow_sinks": [
+        {"kind":"return_value","text":"value >= 10","line":2}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Changed behavior appears to influence returned value: value >= 10", "Detected related test input at the changed boundary", "Related tests appear to reach case_two: test_case_two", "Strong oracle found: exact value or pattern assertion"],
+      "missing": [],
+      "assertion_texts": {
+        "6": "fn test_case_two() { let builder = 10; assert!(case_two(builder)); }"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 6,
+            "value": "value = 10",
+            "context": "function_argument"
+          },
+          {
+            "line": 6,
+            "value": "value == 10",
+            "context": "function_argument",
+            "provenance": "fn test_case_two() { let builder = 10; assert!(case_two(builder)); } | exact input value = 10; literal operand 10 = 10"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 6,
+          "value": "value = 10",
+          "context": "function_argument"
+        },
+        {
+          "line": 6,
+          "value": "value == 10",
+          "context": "function_argument",
+          "provenance": "fn test_case_two() { let builder = 10; assert!(case_two(builder)); } | exact input value = 10; literal operand 10 = 10"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "test_case_two",
+          "file": "tests/cases.rs",
+          "line": 6,
+          "oracle_strength": "strong",
+          "oracle_kind": "relational_check",
+          "oracle": "assert!(case_two(builder));",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        }
+      ],
+      "stop_reasons": ["fixture_opaque"],
+      "oracle_kind": "relational_check",
+      "oracle_strength": "strong",
+      "recommended_next_step": "",
+      "suggested_next_action": "",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_lib.rs:return_value:1a5d4a37",
+      "canonical_gap_id": "gap:rust:src/lib.rs:case_two:return_value:return_value:value>=10",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:case_two:return_value:return_value:value>=10",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "case_two",
+        "behavior_kind": "return_value",
+        "probe_kind": "return_value",
+        "normalized_discriminator": "value>=10"
+
+      },
+      "classification": "exposed",
+      "severity": "info",
+      "confidence": 1.00,
+      "probe": {
+        "id": "probe:src_lib.rs:return_value:1a5d4a37",
+        "family": "return_value",
+        "delta": "value",
+        "file": "./src/lib.rs",
+        "line": 2,
+        "expression": "value >= 10"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach case_two: test_case_two"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"yes","confidence":"high","summary":"Complete propagation witness reaches returned value: value >= 10"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact value or pattern assertion"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach case_two: test_case_two", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: value >= 10", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator yes: Strong oracle found: exact value or pattern assertion", "local flow reaches returned value: value >= 10 (line 2)", "related test tests/cases.rs:6 test_case_two uses strong relational check oracle: assert!(case_two(builder));", "source function argument value value = 10 at line 6", "source function argument value value == 10 at line 6"],
+      "flow_sinks": [
+        {"kind":"return_value","text":"value >= 10","line":2}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches returned value: value >= 10", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach case_two: test_case_two", "Strong oracle found: exact value or pattern assertion"],
+      "missing": [],
+      "assertion_texts": {
+        "6": "fn test_case_two() { let builder = 10; assert!(case_two(builder)); }"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 6,
+            "value": "value = 10",
+            "context": "function_argument"
+          },
+          {
+            "line": 6,
+            "value": "value == 10",
+            "context": "function_argument",
+            "provenance": "fn test_case_two() { let builder = 10; assert!(case_two(builder)); } | exact input value = 10; literal operand 10 = 10"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 6,
+          "value": "value = 10",
+          "context": "function_argument"
+        },
+        {
+          "line": 6,
+          "value": "value == 10",
+          "context": "function_argument",
+          "provenance": "fn test_case_two() { let builder = 10; assert!(case_two(builder)); } | exact input value = 10; literal operand 10 = 10"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "test_case_two",
+          "file": "tests/cases.rs",
+          "line": 6,
+          "oracle_strength": "strong",
+          "oracle_kind": "relational_check",
+          "oracle": "assert!(case_two(builder));",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        }
+      ],
+      "stop_reasons": ["fixture_opaque"],
+      "oracle_kind": "relational_check",
+      "oracle_strength": "strong",
+      "recommended_next_step": "",
+      "suggested_next_action": "",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_lib.rs:predicate:34247caa",
+      "canonical_gap_id": "gap:rust:src/lib.rs:case_three:predicate_boundary:predicate:value==10",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:case_three:predicate_boundary:predicate:value==10",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "case_three",
+        "behavior_kind": "predicate_boundary",
+        "probe_kind": "predicate",
+        "normalized_discriminator": "value==10"
+
+      },
+      "classification": "exposed",
+      "severity": "info",
+      "confidence": 1.00,
+      "probe": {
+        "id": "probe:src_lib.rs:predicate:34247caa",
+        "family": "predicate",
+        "delta": "control",
+        "file": "./src/lib.rs",
+        "line": 3,
+        "expression": "value >= 10"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach case_three: test_case_three"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Detected related test input at the changed boundary"},
+        "propagate": {"state":"yes","confidence":"medium","summary":"Changed behavior appears to influence returned value: value >= 10"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact value or pattern assertion"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach case_three: test_case_three", "infection yes: Detected related test input at the changed boundary", "propagation yes: Changed behavior appears to influence returned value: value >= 10", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator yes: Strong oracle found: exact value or pattern assertion", "local flow reaches returned value: value >= 10 (line 3)", "related test tests/cases.rs:8 test_case_three uses strong relational check oracle: assert!(case_three(arb_value));", "source function argument value value = 10 at line 8", "source function argument value value == 10 at line 8"],
+      "flow_sinks": [
+        {"kind":"return_value","text":"value >= 10","line":3}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Changed behavior appears to influence returned value: value >= 10", "Detected related test input at the changed boundary", "Related tests appear to reach case_three: test_case_three", "Strong oracle found: exact value or pattern assertion"],
+      "missing": [],
+      "assertion_texts": {
+        "8": "fn test_case_three() { let arb_value = 10; assert!(case_three(arb_value)); }"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 8,
+            "value": "value = 10",
+            "context": "function_argument"
+          },
+          {
+            "line": 8,
+            "value": "value == 10",
+            "context": "function_argument",
+            "provenance": "fn test_case_three() { let arb_value = 10; assert!(case_three(arb_value)); } | exact input value = 10; literal operand 10 = 10"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 8,
+          "value": "value = 10",
+          "context": "function_argument"
+        },
+        {
+          "line": 8,
+          "value": "value == 10",
+          "context": "function_argument",
+          "provenance": "fn test_case_three() { let arb_value = 10; assert!(case_three(arb_value)); } | exact input value = 10; literal operand 10 = 10"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "test_case_three",
+          "file": "tests/cases.rs",
+          "line": 8,
+          "oracle_strength": "strong",
+          "oracle_kind": "relational_check",
+          "oracle": "assert!(case_three(arb_value));",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        }
+      ],
+      "stop_reasons": ["fixture_opaque"],
+      "oracle_kind": "relational_check",
+      "oracle_strength": "strong",
+      "recommended_next_step": "",
+      "suggested_next_action": "",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_lib.rs:return_value:15dd607d",
+      "canonical_gap_id": "gap:rust:src/lib.rs:case_three:return_value:return_value:value>=10",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:case_three:return_value:return_value:value>=10",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "case_three",
+        "behavior_kind": "return_value",
+        "probe_kind": "return_value",
+        "normalized_discriminator": "value>=10"
+
+      },
+      "classification": "exposed",
+      "severity": "info",
+      "confidence": 1.00,
+      "probe": {
+        "id": "probe:src_lib.rs:return_value:15dd607d",
+        "family": "return_value",
+        "delta": "value",
+        "file": "./src/lib.rs",
+        "line": 3,
+        "expression": "value >= 10"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach case_three: test_case_three"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"yes","confidence":"high","summary":"Complete propagation witness reaches returned value: value >= 10"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact value or pattern assertion"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach case_three: test_case_three", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: value >= 10", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator yes: Strong oracle found: exact value or pattern assertion", "local flow reaches returned value: value >= 10 (line 3)", "related test tests/cases.rs:8 test_case_three uses strong relational check oracle: assert!(case_three(arb_value));", "source function argument value value = 10 at line 8", "source function argument value value == 10 at line 8"],
+      "flow_sinks": [
+        {"kind":"return_value","text":"value >= 10","line":3}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches returned value: value >= 10", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach case_three: test_case_three", "Strong oracle found: exact value or pattern assertion"],
+      "missing": [],
+      "assertion_texts": {
+        "8": "fn test_case_three() { let arb_value = 10; assert!(case_three(arb_value)); }"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 8,
+            "value": "value = 10",
+            "context": "function_argument"
+          },
+          {
+            "line": 8,
+            "value": "value == 10",
+            "context": "function_argument",
+            "provenance": "fn test_case_three() { let arb_value = 10; assert!(case_three(arb_value)); } | exact input value = 10; literal operand 10 = 10"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 8,
+          "value": "value = 10",
+          "context": "function_argument"
+        },
+        {
+          "line": 8,
+          "value": "value == 10",
+          "context": "function_argument",
+          "provenance": "fn test_case_three() { let arb_value = 10; assert!(case_three(arb_value)); } | exact input value = 10; literal operand 10 = 10"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "test_case_three",
+          "file": "tests/cases.rs",
+          "line": 8,
+          "oracle_strength": "strong",
+          "oracle_kind": "relational_check",
+          "oracle": "assert!(case_three(arb_value));",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        }
+      ],
+      "stop_reasons": ["fixture_opaque"],
+      "oracle_kind": "relational_check",
+      "oracle_strength": "strong",
+      "recommended_next_step": "",
+      "suggested_next_action": "",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_lib.rs:predicate:a50d1313",
+      "canonical_gap_id": "gap:rust:src/lib.rs:case_four:predicate_boundary:predicate:value==10",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:case_four:predicate_boundary:predicate:value==10",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "case_four",
+        "behavior_kind": "predicate_boundary",
+        "probe_kind": "predicate",
+        "normalized_discriminator": "value==10"
+
+      },
+      "classification": "exposed",
+      "severity": "info",
+      "confidence": 1.00,
+      "probe": {
+        "id": "probe:src_lib.rs:predicate:a50d1313",
+        "family": "predicate",
+        "delta": "control",
+        "file": "./src/lib.rs",
+        "line": 4,
+        "expression": "value >= 10"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach case_four: test_case_four"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Detected related test input at the changed boundary"},
+        "propagate": {"state":"yes","confidence":"medium","summary":"Changed behavior appears to influence returned value: value >= 10"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact value or pattern assertion"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach case_four: test_case_four", "infection yes: Detected related test input at the changed boundary", "propagation yes: Changed behavior appears to influence returned value: value >= 10", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator yes: Strong oracle found: exact value or pattern assertion", "local flow reaches returned value: value >= 10 (line 4)", "related test tests/cases.rs:10 test_case_four uses strong relational check oracle: assert!(case_four(10));", "source function argument value value = 10 at line 10", "source function argument value value == 10 at line 10"],
+      "flow_sinks": [
+        {"kind":"return_value","text":"value >= 10","line":4}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Changed behavior appears to influence returned value: value >= 10", "Detected related test input at the changed boundary", "Related tests appear to reach case_four: test_case_four", "Strong oracle found: exact value or pattern assertion"],
+      "missing": [],
+      "assertion_texts": {
+        "10": "fn test_case_four() { assert!(case_four(10)); }"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 10,
+            "value": "value = 10",
+            "context": "function_argument"
+          },
+          {
+            "line": 10,
+            "value": "value == 10",
+            "context": "function_argument",
+            "provenance": "fn test_case_four() { assert!(case_four(10)); } | exact input value = 10; literal operand 10 = 10"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 10,
+          "value": "value = 10",
+          "context": "function_argument"
+        },
+        {
+          "line": 10,
+          "value": "value == 10",
+          "context": "function_argument",
+          "provenance": "fn test_case_four() { assert!(case_four(10)); } | exact input value = 10; literal operand 10 = 10"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "test_case_four",
+          "file": "tests/cases.rs",
+          "line": 10,
+          "oracle_strength": "strong",
+          "oracle_kind": "relational_check",
+          "oracle": "assert!(case_four(10));",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        }
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "relational_check",
+      "oracle_strength": "strong",
+      "recommended_next_step": "",
+      "suggested_next_action": "",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_lib.rs:return_value:195474b0",
+      "canonical_gap_id": "gap:rust:src/lib.rs:case_four:return_value:return_value:value>=10",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:case_four:return_value:return_value:value>=10",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "case_four",
+        "behavior_kind": "return_value",
+        "probe_kind": "return_value",
+        "normalized_discriminator": "value>=10"
+
+      },
+      "classification": "exposed",
+      "severity": "info",
+      "confidence": 1.00,
+      "probe": {
+        "id": "probe:src_lib.rs:return_value:195474b0",
+        "family": "return_value",
+        "delta": "value",
+        "file": "./src/lib.rs",
+        "line": 4,
+        "expression": "value >= 10"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach case_four: test_case_four"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"yes","confidence":"high","summary":"Complete propagation witness reaches returned value: value >= 10"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact value or pattern assertion"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach case_four: test_case_four", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: value >= 10", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator yes: Strong oracle found: exact value or pattern assertion", "local flow reaches returned value: value >= 10 (line 4)", "related test tests/cases.rs:10 test_case_four uses strong relational check oracle: assert!(case_four(10));", "source function argument value value = 10 at line 10", "source function argument value value == 10 at line 10"],
+      "flow_sinks": [
+        {"kind":"return_value","text":"value >= 10","line":4}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches returned value: value >= 10", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach case_four: test_case_four", "Strong oracle found: exact value or pattern assertion"],
+      "missing": [],
+      "assertion_texts": {
+        "10": "fn test_case_four() { assert!(case_four(10)); }"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 10,
+            "value": "value = 10",
+            "context": "function_argument"
+          },
+          {
+            "line": 10,
+            "value": "value == 10",
+            "context": "function_argument",
+            "provenance": "fn test_case_four() { assert!(case_four(10)); } | exact input value = 10; literal operand 10 = 10"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 10,
+          "value": "value = 10",
+          "context": "function_argument"
+        },
+        {
+          "line": 10,
+          "value": "value == 10",
+          "context": "function_argument",
+          "provenance": "fn test_case_four() { assert!(case_four(10)); } | exact input value = 10; literal operand 10 = 10"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "test_case_four",
+          "file": "tests/cases.rs",
+          "line": 10,
+          "oracle_strength": "strong",
+          "oracle_kind": "relational_check",
+          "oracle": "assert!(case_four(10));",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        }
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "relational_check",
+      "oracle_strength": "strong",
+      "recommended_next_step": "",
+      "suggested_next_action": "",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_lib.rs:predicate:2193c650",
+      "canonical_gap_id": "gap:rust:src/lib.rs:case_five:predicate_boundary:predicate:async_value==10",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:case_five:predicate_boundary:predicate:async_value==10",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "case_five",
+        "behavior_kind": "predicate_boundary",
+        "probe_kind": "predicate",
+        "normalized_discriminator": "async_value==10"
+
+      },
+      "classification": "exposed",
+      "severity": "info",
+      "confidence": 1.00,
+      "probe": {
+        "id": "probe:src_lib.rs:predicate:2193c650",
+        "family": "predicate",
+        "delta": "control",
+        "file": "./src/lib.rs",
+        "line": 5,
+        "expression": "async_value >= 10"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach case_five: test_case_five"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Detected related test input at the changed boundary"},
+        "propagate": {"state":"yes","confidence":"medium","summary":"Changed behavior appears to influence returned value: async_value >= 10"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact value or pattern assertion"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach case_five: test_case_five", "infection yes: Detected related test input at the changed boundary", "propagation yes: Changed behavior appears to influence returned value: async_value >= 10", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator yes: Strong oracle found: exact value or pattern assertion", "local flow reaches returned value: async_value >= 10 (line 5)", "related test tests/cases.rs:12 test_case_five uses strong relational check oracle: assert!(case_five(10));", "source function argument value async_value = 10 at line 12", "source function argument value async_value == 10 at line 12"],
+      "flow_sinks": [
+        {"kind":"return_value","text":"async_value >= 10","line":5}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Changed behavior appears to influence returned value: async_value >= 10", "Detected related test input at the changed boundary", "Related tests appear to reach case_five: test_case_five", "Strong oracle found: exact value or pattern assertion"],
+      "missing": [],
+      "assertion_texts": {
+        "12": "fn test_case_five() { assert!(case_five(10)); }"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 12,
+            "value": "async_value = 10",
+            "context": "function_argument"
+          },
+          {
+            "line": 12,
+            "value": "async_value == 10",
+            "context": "function_argument",
+            "provenance": "fn test_case_five() { assert!(case_five(10)); } | exact input async_value = 10; literal operand 10 = 10"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 12,
+          "value": "async_value = 10",
+          "context": "function_argument"
+        },
+        {
+          "line": 12,
+          "value": "async_value == 10",
+          "context": "function_argument",
+          "provenance": "fn test_case_five() { assert!(case_five(10)); } | exact input async_value = 10; literal operand 10 = 10"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "test_case_five",
+          "file": "tests/cases.rs",
+          "line": 12,
+          "oracle_strength": "strong",
+          "oracle_kind": "relational_check",
+          "oracle": "assert!(case_five(10));",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        }
+      ],
+      "stop_reasons": ["async_boundary_opaque"],
+      "oracle_kind": "relational_check",
+      "oracle_strength": "strong",
+      "recommended_next_step": "",
+      "suggested_next_action": "",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_lib.rs:return_value:234fdd01",
+      "canonical_gap_id": "gap:rust:src/lib.rs:case_five:return_value:return_value:async_value>=10",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:case_five:return_value:return_value:async_value>=10",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "case_five",
+        "behavior_kind": "return_value",
+        "probe_kind": "return_value",
+        "normalized_discriminator": "async_value>=10"
+
+      },
+      "classification": "exposed",
+      "severity": "info",
+      "confidence": 1.00,
+      "probe": {
+        "id": "probe:src_lib.rs:return_value:234fdd01",
+        "family": "return_value",
+        "delta": "value",
+        "file": "./src/lib.rs",
+        "line": 5,
+        "expression": "async_value >= 10"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach case_five: test_case_five"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"yes","confidence":"high","summary":"Complete propagation witness reaches returned value: async_value >= 10"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact value or pattern assertion"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach case_five: test_case_five", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: async_value >= 10", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator yes: Strong oracle found: exact value or pattern assertion", "local flow reaches returned value: async_value >= 10 (line 5)", "related test tests/cases.rs:12 test_case_five uses strong relational check oracle: assert!(case_five(10));", "source function argument value async_value = 10 at line 12", "source function argument value async_value == 10 at line 12"],
+      "flow_sinks": [
+        {"kind":"return_value","text":"async_value >= 10","line":5}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches returned value: async_value >= 10", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach case_five: test_case_five", "Strong oracle found: exact value or pattern assertion"],
+      "missing": [],
+      "assertion_texts": {
+        "12": "fn test_case_five() { assert!(case_five(10)); }"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 12,
+            "value": "async_value = 10",
+            "context": "function_argument"
+          },
+          {
+            "line": 12,
+            "value": "async_value == 10",
+            "context": "function_argument",
+            "provenance": "fn test_case_five() { assert!(case_five(10)); } | exact input async_value = 10; literal operand 10 = 10"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 12,
+          "value": "async_value = 10",
+          "context": "function_argument"
+        },
+        {
+          "line": 12,
+          "value": "async_value == 10",
+          "context": "function_argument",
+          "provenance": "fn test_case_five() { assert!(case_five(10)); } | exact input async_value = 10; literal operand 10 = 10"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "test_case_five",
+          "file": "tests/cases.rs",
+          "line": 12,
+          "oracle_strength": "strong",
+          "oracle_kind": "relational_check",
+          "oracle": "assert!(case_five(10));",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        }
+      ],
+      "stop_reasons": ["async_boundary_opaque"],
+      "oracle_kind": "relational_check",
+      "oracle_strength": "strong",
+      "recommended_next_step": "",
+      "suggested_next_action": "",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_lib.rs:predicate:d9c321f0",
+      "canonical_gap_id": "gap:rust:src/lib.rs:case_six:predicate_boundary:predicate:spawn_value==10",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:case_six:predicate_boundary:predicate:spawn_value==10",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "case_six",
+        "behavior_kind": "predicate_boundary",
+        "probe_kind": "predicate",
+        "normalized_discriminator": "spawn_value==10"
+
+      },
+      "classification": "exposed",
+      "severity": "info",
+      "confidence": 1.00,
+      "probe": {
+        "id": "probe:src_lib.rs:predicate:d9c321f0",
+        "family": "predicate",
+        "delta": "control",
+        "file": "./src/lib.rs",
+        "line": 6,
+        "expression": "spawn_value >= 10"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach case_six: test_case_six"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Detected related test input at the changed boundary"},
+        "propagate": {"state":"yes","confidence":"medium","summary":"Changed behavior appears to influence returned value: spawn_value >= 10"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact value or pattern assertion"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach case_six: test_case_six", "infection yes: Detected related test input at the changed boundary", "propagation yes: Changed behavior appears to influence returned value: spawn_value >= 10", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator yes: Strong oracle found: exact value or pattern assertion", "local flow reaches returned value: spawn_value >= 10 (line 6)", "related test tests/cases.rs:14 test_case_six uses strong relational check oracle: assert!(case_six(10));", "source function argument value spawn_value = 10 at line 14", "source function argument value spawn_value == 10 at line 14"],
+      "flow_sinks": [
+        {"kind":"return_value","text":"spawn_value >= 10","line":6}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Changed behavior appears to influence returned value: spawn_value >= 10", "Detected related test input at the changed boundary", "Related tests appear to reach case_six: test_case_six", "Strong oracle found: exact value or pattern assertion"],
+      "missing": [],
+      "assertion_texts": {
+        "14": "fn test_case_six() { assert!(case_six(10)); }"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 14,
+            "value": "spawn_value = 10",
+            "context": "function_argument"
+          },
+          {
+            "line": 14,
+            "value": "spawn_value == 10",
+            "context": "function_argument",
+            "provenance": "fn test_case_six() { assert!(case_six(10)); } | exact input spawn_value = 10; literal operand 10 = 10"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 14,
+          "value": "spawn_value = 10",
+          "context": "function_argument"
+        },
+        {
+          "line": 14,
+          "value": "spawn_value == 10",
+          "context": "function_argument",
+          "provenance": "fn test_case_six() { assert!(case_six(10)); } | exact input spawn_value = 10; literal operand 10 = 10"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "test_case_six",
+          "file": "tests/cases.rs",
+          "line": 14,
+          "oracle_strength": "strong",
+          "oracle_kind": "relational_check",
+          "oracle": "assert!(case_six(10));",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        }
+      ],
+      "stop_reasons": ["async_boundary_opaque"],
+      "oracle_kind": "relational_check",
+      "oracle_strength": "strong",
+      "recommended_next_step": "",
+      "suggested_next_action": "",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_lib.rs:return_value:3551dca4",
+      "canonical_gap_id": "gap:rust:src/lib.rs:case_six:return_value:return_value:spawn_value>=10",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:case_six:return_value:return_value:spawn_value>=10",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "case_six",
+        "behavior_kind": "return_value",
+        "probe_kind": "return_value",
+        "normalized_discriminator": "spawn_value>=10"
+
+      },
+      "classification": "exposed",
+      "severity": "info",
+      "confidence": 1.00,
+      "probe": {
+        "id": "probe:src_lib.rs:return_value:3551dca4",
+        "family": "return_value",
+        "delta": "value",
+        "file": "./src/lib.rs",
+        "line": 6,
+        "expression": "spawn_value >= 10"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach case_six: test_case_six"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"yes","confidence":"high","summary":"Complete propagation witness reaches returned value: spawn_value >= 10"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact value or pattern assertion"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach case_six: test_case_six", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: spawn_value >= 10", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator yes: Strong oracle found: exact value or pattern assertion", "local flow reaches returned value: spawn_value >= 10 (line 6)", "related test tests/cases.rs:14 test_case_six uses strong relational check oracle: assert!(case_six(10));", "source function argument value spawn_value = 10 at line 14", "source function argument value spawn_value == 10 at line 14"],
+      "flow_sinks": [
+        {"kind":"return_value","text":"spawn_value >= 10","line":6}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches returned value: spawn_value >= 10", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach case_six: test_case_six", "Strong oracle found: exact value or pattern assertion"],
+      "missing": [],
+      "assertion_texts": {
+        "14": "fn test_case_six() { assert!(case_six(10)); }"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 14,
+            "value": "spawn_value = 10",
+            "context": "function_argument"
+          },
+          {
+            "line": 14,
+            "value": "spawn_value == 10",
+            "context": "function_argument",
+            "provenance": "fn test_case_six() { assert!(case_six(10)); } | exact input spawn_value = 10; literal operand 10 = 10"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 14,
+          "value": "spawn_value = 10",
+          "context": "function_argument"
+        },
+        {
+          "line": 14,
+          "value": "spawn_value == 10",
+          "context": "function_argument",
+          "provenance": "fn test_case_six() { assert!(case_six(10)); } | exact input spawn_value = 10; literal operand 10 = 10"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "test_case_six",
+          "file": "tests/cases.rs",
+          "line": 14,
+          "oracle_strength": "strong",
+          "oracle_kind": "relational_check",
+          "oracle": "assert!(case_six(10));",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        }
+      ],
+      "stop_reasons": ["async_boundary_opaque"],
+      "oracle_kind": "relational_check",
+      "oracle_strength": "strong",
+      "recommended_next_step": "",
+      "suggested_next_action": "",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_lib.rs:predicate:596eda33",
+      "canonical_gap_id": "gap:rust:src/lib.rs:case_seven:predicate_boundary:predicate:await_value==10",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:case_seven:predicate_boundary:predicate:await_value==10",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "case_seven",
+        "behavior_kind": "predicate_boundary",
+        "probe_kind": "predicate",
+        "normalized_discriminator": "await_value==10"
+
+      },
+      "classification": "exposed",
+      "severity": "info",
+      "confidence": 1.00,
+      "probe": {
+        "id": "probe:src_lib.rs:predicate:596eda33",
+        "family": "predicate",
+        "delta": "control",
+        "file": "./src/lib.rs",
+        "line": 7,
+        "expression": "await_value >= 10"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach case_seven: test_case_seven"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Detected related test input at the changed boundary"},
+        "propagate": {"state":"yes","confidence":"medium","summary":"Changed behavior appears to influence returned value: await_value >= 10"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact value or pattern assertion"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach case_seven: test_case_seven", "infection yes: Detected related test input at the changed boundary", "propagation yes: Changed behavior appears to influence returned value: await_value >= 10", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator yes: Strong oracle found: exact value or pattern assertion", "local flow reaches returned value: await_value >= 10 (line 7)", "related test tests/cases.rs:16 test_case_seven uses strong relational check oracle: assert!(case_seven(10));", "source function argument value await_value = 10 at line 16", "source function argument value await_value == 10 at line 16"],
+      "flow_sinks": [
+        {"kind":"return_value","text":"await_value >= 10","line":7}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Changed behavior appears to influence returned value: await_value >= 10", "Detected related test input at the changed boundary", "Related tests appear to reach case_seven: test_case_seven", "Strong oracle found: exact value or pattern assertion"],
+      "missing": [],
+      "assertion_texts": {
+        "16": "fn test_case_seven() { assert!(case_seven(10)); }"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 16,
+            "value": "await_value = 10",
+            "context": "function_argument"
+          },
+          {
+            "line": 16,
+            "value": "await_value == 10",
+            "context": "function_argument",
+            "provenance": "fn test_case_seven() { assert!(case_seven(10)); } | exact input await_value = 10; literal operand 10 = 10"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 16,
+          "value": "await_value = 10",
+          "context": "function_argument"
+        },
+        {
+          "line": 16,
+          "value": "await_value == 10",
+          "context": "function_argument",
+          "provenance": "fn test_case_seven() { assert!(case_seven(10)); } | exact input await_value = 10; literal operand 10 = 10"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "test_case_seven",
+          "file": "tests/cases.rs",
+          "line": 16,
+          "oracle_strength": "strong",
+          "oracle_kind": "relational_check",
+          "oracle": "assert!(case_seven(10));",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        }
+      ],
+      "stop_reasons": ["async_boundary_opaque"],
+      "oracle_kind": "relational_check",
+      "oracle_strength": "strong",
+      "recommended_next_step": "",
+      "suggested_next_action": "",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_lib.rs:return_value:b2b99a3a",
+      "canonical_gap_id": "gap:rust:src/lib.rs:case_seven:return_value:return_value:await_value>=10",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:case_seven:return_value:return_value:await_value>=10",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "case_seven",
+        "behavior_kind": "return_value",
+        "probe_kind": "return_value",
+        "normalized_discriminator": "await_value>=10"
+
+      },
+      "classification": "exposed",
+      "severity": "info",
+      "confidence": 1.00,
+      "probe": {
+        "id": "probe:src_lib.rs:return_value:b2b99a3a",
+        "family": "return_value",
+        "delta": "value",
+        "file": "./src/lib.rs",
+        "line": 7,
+        "expression": "await_value >= 10"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach case_seven: test_case_seven"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"yes","confidence":"high","summary":"Complete propagation witness reaches returned value: await_value >= 10"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact value or pattern assertion"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach case_seven: test_case_seven", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: await_value >= 10", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator yes: Strong oracle found: exact value or pattern assertion", "local flow reaches returned value: await_value >= 10 (line 7)", "related test tests/cases.rs:16 test_case_seven uses strong relational check oracle: assert!(case_seven(10));", "source function argument value await_value = 10 at line 16", "source function argument value await_value == 10 at line 16"],
+      "flow_sinks": [
+        {"kind":"return_value","text":"await_value >= 10","line":7}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches returned value: await_value >= 10", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach case_seven: test_case_seven", "Strong oracle found: exact value or pattern assertion"],
+      "missing": [],
+      "assertion_texts": {
+        "16": "fn test_case_seven() { assert!(case_seven(10)); }"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 16,
+            "value": "await_value = 10",
+            "context": "function_argument"
+          },
+          {
+            "line": 16,
+            "value": "await_value == 10",
+            "context": "function_argument",
+            "provenance": "fn test_case_seven() { assert!(case_seven(10)); } | exact input await_value = 10; literal operand 10 = 10"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 16,
+          "value": "await_value = 10",
+          "context": "function_argument"
+        },
+        {
+          "line": 16,
+          "value": "await_value == 10",
+          "context": "function_argument",
+          "provenance": "fn test_case_seven() { assert!(case_seven(10)); } | exact input await_value = 10; literal operand 10 = 10"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "test_case_seven",
+          "file": "tests/cases.rs",
+          "line": 16,
+          "oracle_strength": "strong",
+          "oracle_kind": "relational_check",
+          "oracle": "assert!(case_seven(10));",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        }
+      ],
+      "stop_reasons": ["async_boundary_opaque"],
+      "oracle_kind": "relational_check",
+      "oracle_strength": "strong",
+      "recommended_next_step": "",
+      "suggested_next_action": "",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    }
+  ]
+}
