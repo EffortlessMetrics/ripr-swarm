@@ -408,9 +408,11 @@ fn limited_record_projects_missing(finding: &Finding) -> bool {
 
 /// The fail-closed terminal state for a run whose remaining findings are all
 /// static- or preview-limited. Bounded records name each limited finding that
-/// carries a concrete discriminator (location, id, strongest related test);
-/// all of them drill in with `ripr explain`, so an agent has a route to what ripr could not judge
-/// without reading the 57-110 KB JSON document (#13238). The terminal line
+/// carries a concrete discriminator (location, id, strongest related test),
+/// and `next=` drills in with `ripr explain` on the first printed record (or
+/// the first limited finding when none prints), so an agent has a route to
+/// what ripr could not judge without reading the 57-110 KB JSON document
+/// (#13238, #13594). The terminal line
 /// stays `stop=`: no test-side gap is offered, and the text must not claim
 /// nothing more is fixable when the human surface names the co-located-test
 /// route for the same finding.
@@ -449,8 +451,9 @@ fn render_limited_records(
     }
     out.push_str(terminal);
     push_limits(&mut out, considered, &[]);
-    if let Some(line) = limited
+    if let Some(line) = records
         .first()
+        .or(limited.first())
         .and_then(|first| explain_next_line(&first.id, output, drill_in))
     {
         out.push_str(&line);

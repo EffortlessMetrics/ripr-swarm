@@ -974,10 +974,24 @@ apply that policy. Context and other commands do not inherit the option (#13157)
 `--format json` is refused toward `ripr context`, which remains the JSON packet.
 The format adds no verdict and claims no runtime outcome.
 
+### Zero-gap limited records in `check --format agent` (#13594)
+
+When `check --format agent` stops with no test-side gap and no open-limited
+finding, it prints a record only for a limited finding that carries a concrete
+next step: preview-limited evidence with a producer-established discriminator
+that is not also static-limited. Records are capped at five, with the rest
+counted. A static-limited finding would print `missing=-`, so it gets no record;
+it stays counted in `limits=`. The `next=ripr explain` drill-in targets the
+first printed record, or the first limited finding when none is printed, so a
+report with zero records still carries its route.
+
 ## Test Mapping
 
 - `crates/ripr/src/output/human/agent_tests.rs::agent_explain_navigation_preserves_scope_format_and_policy_compatibility` — three branches, source scopes, quoting and explicit-policy fallback.
 - `crates/ripr/tests/agent_compact_navigation.rs::compact_check_explain_context_journey_preserves_the_selected_subject` — literal built-binary check, explain and context journeys.
+- `crates/ripr/src/output/human/agent_tests.rs::static_limited_run_stops_and_names_the_limit_instead_of_a_gap` — #13594 negative: no `missing=-` record, `limits=` and drill-in kept.
+- `crates/ripr/src/output/human/agent_tests.rs::preview_limited_records_with_discriminators_cap_and_count_the_rest` — #13594 positive: discriminator records capped and counted.
+- `crates/ripr/src/output/human/agent_tests.rs::mixed_limited_run_drills_into_the_printed_record` — #13594: `next=` follows the printed record.
 
 - `crates/ripr/src/output/human/agent_tests.rs::explain_agent_gap_is_one_record_one_test_open_terminal_and_context_next`
 - `crates/ripr/src/output/human/agent_tests.rs::explain_agent_exposed_finding_is_done_not_open`

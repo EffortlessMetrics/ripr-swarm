@@ -478,8 +478,8 @@ fn static_limited_run_stops_and_names_the_limit_instead_of_a_gap() {
     assert!(text.contains("co-located test"), "{text}");
     assert!(text.contains("\nlimits=no_static_path:1\n"), "{text}");
     assert!(text.contains(" gaps=0 "), "{text}");
-    // The all-limited run still carries a bounded route to the evidence:
-    // one record per counted finding plus the ripr explain drill-in.
+    // The all-limited run still carries a bounded route to the evidence: the
+    // ripr explain drill-in.
     // #13594: a `missing=-` record names nothing to fix, so it is omitted.
     assert!(!text.contains("no_static_path|src/lib.rs:7"), "{text}");
     assert!(!text.contains("missing=-"), "{text}");
@@ -1102,6 +1102,32 @@ fn preview_limited_records_with_discriminators_cap_and_count_the_rest() {
         text.contains("\n+2 more limited findings not shown; `--format json` lists all\n"),
         "{text}"
     );
+}
+
+/// #13594 review: with a static-limited finding beside a preview finding that
+/// carries a discriminator, `next=` drills into the printed record, not the
+/// unprinted static-limited one.
+#[test]
+fn mixed_limited_run_drills_into_the_printed_record() {
+    for order in [false, true] {
+        let mut findings = vec![
+            finding("probe:np", ExposureClass::NoStaticPath, 1),
+            preview_weak_gap("probe:pv", 2),
+        ];
+        if order {
+            findings.reverse();
+        }
+        let text = rendered(&output(findings));
+        assert!(text.contains(" gaps=0 "), "{text}");
+        assert!(text.contains("|missing=pct == 50|"), "{text}");
+        assert!(text.contains("|id=probe:pv"), "{text}");
+        assert!(!text.contains("|id=probe:np"), "{text}");
+        assert!(
+            text.lines()
+                .any(|line| line == "next=ripr explain --format agent probe:pv"),
+            "{text}"
+        );
+    }
 }
 
 /// #13339 review (thread 1): a preview finding can also be static-limited —
