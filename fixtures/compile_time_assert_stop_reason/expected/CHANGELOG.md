@@ -70,3 +70,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — compile_time_assert_stop_reason (7)
+
+Reason:
+RIPR-SPEC-0002: #12040 review: a guarded assertion line with a ruled-out reach is withheld as unknown too
+
+Command:
+`cargo xtask goldens bless compile_time_assert_stop_reason --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

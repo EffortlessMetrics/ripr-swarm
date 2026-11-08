@@ -89,7 +89,7 @@ pub(in crate::analysis) fn build_finding_with_origins(
         stop_reasons.retain(|reason| reason.as_str() != StopReason::NoChangedRustLine.as_str());
     }
     // #12040: a build-time check constrains this line; a violating edit fails
-    // to build. The class is untouched.
+    // to build. The classifier withholds a ruled-out reach separately.
     if context.compile_time_guarded
         && let Some(at) = stop_reasons
             .iter()

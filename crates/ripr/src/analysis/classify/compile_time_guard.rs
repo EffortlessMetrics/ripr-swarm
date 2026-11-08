@@ -4,7 +4,8 @@
 //! even when an item-level assertion in the same file names it
 //! (`const _: () = assert!(N <= 16);`): a violating edit fails to build, not a
 //! test. A changed continuation line of a multi-line assertion has the same
-//! shape. This only picks the stop reason; the class stays `static_unknown`.
+//! shape. The class never rises above `static_unknown`: a ruled-out reach is
+//! withheld as unknown by the classifier.
 //! Fail closed on anything not spelled plainly: the assertion must be an item
 //! in the probe's own file, and a name declared more than once is not linked.
 
@@ -40,7 +41,11 @@ pub(in crate::analysis) fn constrained_by_compile_time_assertion(
         .sum::<usize>();
     // A declaration inside a module may resolve differently from a same-named
     // import in a sibling scope; only top-level items are linked.
-    brace_depth(masked_source, declaration_offset) == 0
+    let line_rest = &masked_source[declaration_offset.min(masked_source.len())..];
+    let line = line_rest.lines().next().unwrap_or("");
+    // Braces earlier on the declaration's own line (`mod m { const N: ..`) count.
+    let at_name = declaration_offset + line.find(name).unwrap_or(0);
+    brace_depth(masked_source, at_name) == 0
         && declaration_count(masked_source, name) == 1
         && spans
             .iter()
@@ -216,6 +221,12 @@ mod tests {
         assert!(!guard(gated, 4, None));
         let imported = "mod changed {\n    pub const N: usize = 2;\n}\nmod check {\n    use external::N;\n    const _: () = assert!(N < 4);\n}\n";
         assert!(!guard(imported, 2, Some("N")));
+    }
+
+    #[test]
+    fn a_one_line_module_declaration_is_not_top_level() {
+        let src = "mod m { pub const N: usize = 2; }\nconst _: () = assert!(N <= 4);\n";
+        assert!(!guard(src, 1, Some("N")));
     }
 
     #[test]

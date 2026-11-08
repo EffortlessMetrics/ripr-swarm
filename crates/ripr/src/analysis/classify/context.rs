@@ -58,7 +58,9 @@ pub(in crate::analysis) struct ProbeContext<'a> {
     /// showed; `None` when any part was unreadable.
     pub binding_return_flow: Option<super::BindingReturnFlow>,
     /// #12040: the changed line is, or declares a constant named by, a
-    /// same-file compile-time assertion. Picks the stop reason only.
+    /// same-file compile-time assertion. Selects the `compile_time_invariant`
+    /// stop reason and withholds a ruled-out reach (`no_static_path`) as
+    /// `static_unknown`; never promotes.
     pub compile_time_guarded: bool,
     #[cfg(feature = "lang-rust")]
     pub tier_flow: Option<super::TierFlow>,

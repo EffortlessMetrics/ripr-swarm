@@ -318,11 +318,12 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index_and_origins_with_
             .probe_index_file(probe, index)
             .and_then(|file| find_file_facts(index, &file))
             .is_some_and(|facts| {
-                super::classify::constrained_by_compile_time_assertion(
-                    &crate::analysis::extract::mask_comments_and_strings(&facts.source),
-                    probe.location.line,
-                    probe.changed_const_name(),
-                )
+                facts.source.contains("assert")
+                    && super::classify::constrained_by_compile_time_assertion(
+                        &crate::analysis::extract::mask_comments_and_strings(&facts.source),
+                        probe.location.line,
+                        probe.changed_const_name(),
+                    )
             });
     context.unmounted_build_script =
         candidate_index.probe_in_unmounted_build_script(probe, owner_fn, index);
@@ -655,7 +656,12 @@ pub(in crate::analysis) fn withhold_proc_macro_no_path_as_unknown(
 /// the assertion's head line does. Only `no_static_path` is rewritten; nothing
 /// is promoted or credited.
 fn withhold_compile_time_guard_as_unknown(finding: &mut Finding) {
-    if finding.class != ExposureClass::NoStaticPath {
+    let reach_ruled_out = match finding.class {
+        ExposureClass::NoStaticPath => true,
+        ExposureClass::StaticUnknown => finding.ripr.reach.state == StageState::No,
+        _ => false,
+    };
+    if !reach_ruled_out {
         return;
     }
     finding.class = ExposureClass::StaticUnknown;
