@@ -2076,19 +2076,32 @@ impl Backend {
     }
 
     /// Health for answering "is the retained snapshot current right now?".
-    /// A changed save advances the workspace revision immediately, but the
-    /// attempt is only marked queued after the interactive debounce sleep.
-    /// While that window is open a `Succeeded` snapshot describes the
-    /// pre-save workspace, so it is projected as `Queued` (fail-closed, same
+    /// A changed save (or open/close) advances the workspace revision
+    /// immediately, but the attempt is only marked queued after the
+    /// interactive debounce sleep and the awaits around it. Until a refresh
+    /// for the new revision commits, a `Succeeded` snapshot describes an
+    /// older workspace, so it is projected as `Queued` (fail-closed, same
     /// wording as an in-flight refresh) instead of presented as current.
+    /// The projection keys on the committed snapshot's saved-workspace
+    /// revision, so no scheduling gap can reopen the window; the debounce
+    /// flag is kept as a second signal for snapshots without an identity.
     fn analysis_health_for_currentness(&self) -> AnalysisHealth {
         let mut health = self.analysis_health_snapshot();
-        if health.state == AnalysisAttemptState::Succeeded
-            && health.snapshot_id.is_some()
-            && self
-                .interactive_debounce_window_open
-                .load(Ordering::Acquire)
-        {
+        if health.state != AnalysisAttemptState::Succeeded || health.snapshot_id.is_none() {
+            return health;
+        }
+        let analyzed_revision = self.latest_analysis.lock().ok().and_then(|guard| {
+            guard
+                .as_ref()
+                .and_then(|snapshot| snapshot.input_identity.as_ref())
+                .map(|identity| identity.saved_workspace_revision)
+        });
+        let revision_moved =
+            analyzed_revision.is_some_and(|analyzed| analyzed < self.workspace_revision());
+        let debounce_open = self
+            .interactive_debounce_window_open
+            .load(Ordering::Acquire);
+        if revision_moved || debounce_open {
             health.state = AnalysisAttemptState::Queued;
         }
         health

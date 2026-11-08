@@ -3149,6 +3149,32 @@ fn hover_during_interactive_debounce_window_is_not_presented_as_current() -> Res
     );
     backend.set_interactive_debounce_open_for_test(false);
     assert!(!text()?.contains("retained evidence is not current"));
+    // The debounce claim drops before the attempt is marked queued, and the
+    // save awaits quarantine publication before claiming it. The committed
+    // snapshot's revision closes both gaps: once a save advances the
+    // workspace revision, the older snapshot stays non-current with the
+    // debounce flag closed until a refresh for the new revision commits.
+    advance_revision_past_snapshot(backend)?;
+    let moved = text()?;
+    assert!(
+        moved.starts_with("**ripr retained evidence is not current**"),
+        "advanced revision hover claimed currentness: {moved}"
+    );
+    assert!(moved.contains("Wait for saved-workspace analysis to complete"));
+    Ok(())
+}
+
+/// Advance the workspace revision past the committed snapshot's
+/// saved-workspace revision, as a changed save does after a commit.
+fn advance_revision_past_snapshot(backend: &Backend) -> Result<(), String> {
+    let analyzed = backend
+        .latest_analysis_snapshot()
+        .and_then(|snapshot| snapshot.input_identity)
+        .map(|identity| identity.saved_workspace_revision)
+        .ok_or_else(|| "snapshot must carry an input identity".to_string())?;
+    while backend.workspace_revision() <= analyzed {
+        backend.advance_workspace_revision();
+    }
     Ok(())
 }
 
@@ -21274,6 +21300,12 @@ fn execute_command_collect_repair_packet_withheld_during_debounce_window() -> Re
         backend.set_interactive_debounce_open_for_test(false);
         let after = repair_packet_sentinel_for(backend).await?;
         assert_eq!(after, before);
+        // A save that advanced the revision withholds the packet even after
+        // the debounce flag closes, until the new revision commits.
+        advance_revision_past_snapshot(backend)?;
+        let moved = repair_packet_sentinel_for(backend).await?;
+        assert_eq!(moved["reason"], "analysis_snapshot_stale");
+        assert_eq!(moved["refresh_state"], "in_flight");
         Ok(())
     })
 }
