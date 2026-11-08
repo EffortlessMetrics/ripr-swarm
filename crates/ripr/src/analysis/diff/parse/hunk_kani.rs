@@ -1,11 +1,15 @@
-//! Kani bounded-model-checking harnesses for unified-diff hunk-header
-//! arithmetic. They call the production parsers (`parse_hunk_number`
-//! and `parse_range`) on symbolic ASCII input; they do not
-//! re-implement them. Compiled only under `cargo kani`.
+//! Kani bounded-model-checking harnesses for unified-diff hunk arithmetic.
+//! They call the production functions; they do not re-implement them.
+//! Compiled only under `cargo kani`.
 //!
-//! Bounds: inputs are ASCII byte strings of a fixed small length. Longer or
-//! non-ASCII headers are outside the proof; a non-ASCII byte cannot be a
-//! digit, so it only ever reaches the rejection path.
+//! - Header: `parse_hunk_number` and `parse_range` on symbolic ASCII input.
+//!   Bounds: ASCII byte strings of a fixed small length. Longer or non-ASCII
+//!   headers are outside the proof; a non-ASCII byte cannot be a digit, so it
+//!   only ever reaches the rejection path.
+//! - Body (#13681): `hunk_step` (line coordinates) and `hunk_account`
+//!   (remaining header counts). Each harness states its own domain. How the
+//!   parser state machine records, skips or settles a hunk around these
+//!   functions is covered by ordinary parser tests, not by these proofs.
 
 use super::{BodyKind, HunkStep, hunk_account, hunk_step, parse_hunk_number, parse_range};
 
