@@ -184,6 +184,21 @@ fn validate_substrate_class_laws(
             "external helper requires required_fallback for syntax-only safe fallback",
         ));
     }
+    // The fallback is what the helper degrades to when it is unavailable, so it
+    // must name a syntax-only variant. A fallback such as `full_semantic` would
+    // let a missing helper keep a claim the syntax-only ceiling cannot carry.
+    if qualification.substrate_class == AdapterSubstrateClassV1::ExternalHelper
+        && let Some(fallback) = qualification.required_fallback.as_deref()
+        && !fallback
+            .trim()
+            .to_ascii_lowercase()
+            .starts_with("syntax_only")
+    {
+        return Err(error(
+            AdapterSubstrateQualificationErrorCodeV1::ImpossibleClaimCeiling,
+            "external helper required_fallback must name a syntax-only variant (syntax_only*)",
+        ));
+    }
     if qualification.substrate_class == AdapterSubstrateClassV1::PacketProducerConsumer
         && !matches!(
             qualification.claim_ceiling.ceiling,

@@ -165,6 +165,10 @@ pub(super) use reports::reports;
 mod capabilities;
 pub(super) use capabilities::capabilities;
 
+#[path = "commands/completions.rs"]
+mod completions;
+pub(super) use completions::completions;
+
 #[path = "commands/doctor.rs"]
 mod doctor;
 pub(super) use doctor::doctor;
