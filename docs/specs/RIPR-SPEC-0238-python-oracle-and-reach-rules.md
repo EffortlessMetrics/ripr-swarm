@@ -1203,8 +1203,9 @@ mutant calibrates the rule; ripr reports only the static shape.
     unestablished. Not modelled: `-p no:skipping` in `addopts` (which turns
     skip marks off) and `empty_parameter_set_mark = xfail` (which runs the
     body with `NOTSET` arguments, a call no exact assertion pins); both are
-    named limits, not claims that the tests run; neither is pytest before 7.2
-    applying only the first base's `pytestmark` under multiple inheritance. A
+    named limits, not claims that the tests run. Pytest before 7.2, which
+    applies only the first base's `pytestmark` under multiple inheritance, is
+    another named limit. A
     skip whose decorator root name the file also binds outside an import
     (`def skip(...)`, `skip = ...`, at any block depth) is not counted. Two things are decidable from the source and
     leave the test active: a condition that is itself the boolean literal
