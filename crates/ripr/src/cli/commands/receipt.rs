@@ -49,6 +49,11 @@ fn run_receipt_write(args: &[String]) -> Result<(), String> {
             .as_deref()
             .unwrap_or_else(|| std::path::Path::new(".")),
     )?;
+    // --root does not relocate the cwd-relative default receipt path. Check
+    // its actual output tree too; explicit --out keeps its existing semantics.
+    if opts.out.is_none() {
+        crate::atomic_file::ensure_relative_output_contained(&receipt_out_path(&opts))?;
+    }
     let rendered = write_receipt(&opts)?;
 
     if opts.json || opts.out.is_none() {

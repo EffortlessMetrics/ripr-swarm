@@ -1,2 +1,2 @@
 <!-- section: Fixed -->
-- `ripr check --format agent` and `--format github` no longer report `done=` or "No static exposure findings found" for an empty `--diff` or a diff with no analyzable source; they state that nothing was analyzed (#13658).
+- `ripr check --format agent` and `--format github` no longer report `done=` or "No static exposure findings found" for a diff with no analyzable source (for example docs-only); they state that nothing was analyzed, matching the human format (#13658).
