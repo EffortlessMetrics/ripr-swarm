@@ -3362,6 +3362,13 @@ name the force intent-to-add repair (`git add -f -N <path>`). The exclusion
 itself is unchanged: `target/` and other ignored paths stay excluded, only
 disclosed.
 
+Gitignored dependency and build-output trees are not listed (#13597): a path
+with a `node_modules`, `.venv`, `venv`, `site-packages`, `bower_components` or
+`vendor` component, or whose first component is `dist` or `build`, is omitted
+from this array and from the human and GitHub notes. The list is therefore
+not a complete inventory of ignored routed files; those trees are still
+excluded from analysis.
+
 Example:
 
 ```json

@@ -21,6 +21,9 @@ fn vendored_dependency_paths_are_not_user_sources() {
         "crates/alpha/target/bgen.rs",
         "pkg/build/gen.rs",
         "src/distance.rs",
+        "src/my_node_modules_helper.rs",
+        "build.rs",
+        "a/dist/x.rs",
     ] {
         assert!(!is_vendored_dependency_path(owned), "{owned}");
     }
