@@ -350,3 +350,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_adversarial_free_function_receiver (26)
+
+Reason:
+Unreferenced-in-workspace marker withheld: the owner carries an exporting attribute or its name appears elsewhere as a whole word (RIPR-SPEC-0219 review fix, #12766); class unchanged
+
+Command:
+`cargo xtask goldens bless rust_adversarial_free_function_receiver --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

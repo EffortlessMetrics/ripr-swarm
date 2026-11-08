@@ -164,6 +164,101 @@ pub(in crate::analysis) fn owner_may_be_reached_unseen(
         })
 }
 
+/// Attributes that never make a function callable without a source naming
+/// it. Any other attribute on the owner or its `impl` (`no_mangle`,
+/// `export_name`, `wasm_bindgen`, `ctor`, `proc_macro*`, `panic_handler`,
+/// registration macros, ...) may expose it to a caller ripr cannot see.
+const INERT_OWNER_ATTRS: &[&str] = &[
+    "inline",
+    "must_use",
+    "doc",
+    "allow",
+    "warn",
+    "deny",
+    "expect",
+    "deprecated",
+    "cold",
+    "track_caller",
+    "rustfmt",
+];
+
+/// RIPR-SPEC-0219: whether a ruled-out owner may be reported as
+/// `(unreferenced in workspace)`. Stricter than
+/// [`owner_may_be_reached_unseen`], and fail closed: the owner's file was
+/// parsed (not the lexical fallback, which records no attributes), it carries
+/// no attribute outside [`INERT_OWNER_ATTRS`], its signature declares no
+/// foreign ABI, and its name occurs as a whole word nowhere in the workspace
+/// outside its own definition, so a qualified call (`Self::pad(..)`) or any
+/// other spelling the naming scan does not model keeps the marker off.
+pub(in crate::analysis) fn owner_unreferenced_in_workspace(
+    owner: &FunctionSummary,
+    index: &RustIndex,
+) -> bool {
+    if owner.name.is_empty() || owner.name == "main" {
+        return false;
+    }
+    let inert = |attr: &String| {
+        if attr.trim_start().starts_with("//") {
+            return true;
+        }
+        let inner = attr
+            .trim()
+            .trim_start_matches("#!")
+            .trim_start_matches('#')
+            .trim_start_matches('[')
+            .trim_start();
+        let name: String = inner
+            .chars()
+            .take_while(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == ':')
+            .collect();
+        INERT_OWNER_ATTRS.contains(&name.as_str())
+    };
+    if !owner.attrs.iter().all(inert) || !owner.impl_attrs.iter().all(inert) {
+        return false;
+    }
+    let mut own_file_seen = false;
+    for file in index.files().values() {
+        let own_file = file.path == owner.file;
+        if own_file {
+            own_file_seen = true;
+            if file.used_lexical_fallback {
+                return false;
+            }
+        }
+        if !file.source.contains(owner.name.as_str()) {
+            continue;
+        }
+        let mut signature_open = true;
+        for (number, line) in file.source.lines().enumerate() {
+            let number = number + 1;
+            let inside_own = own_file && (owner.start_line..=owner.end_line).contains(&number);
+            if inside_own {
+                // A foreign ABI on the signature (`extern "C" fn`) is called
+                // from outside Rust.
+                if signature_open && line.contains("extern") {
+                    return false;
+                }
+                if line.contains('{') {
+                    signature_open = false;
+                }
+                continue;
+            }
+            if contains_word(line, &owner.name) {
+                return false;
+            }
+        }
+    }
+    own_file_seen
+}
+
+fn contains_word(line: &str, word: &str) -> bool {
+    let is_ident = |c: char| c.is_alphanumeric() || c == '_';
+    line.match_indices(word).any(|(at, _)| {
+        !line[..at].chars().next_back().is_some_and(is_ident)
+            && !line[at + word.len()..].chars().next().is_some_and(is_ident)
+    })
+}
+
 /// Whether the workspace names `owner` anywhere but inside its own body, given
 /// `total` namings across every source. A body count above the total cannot
 /// come from an indexed verbatim body, so it reads as named (fail closed).
@@ -2200,6 +2295,79 @@ mod tests {
                 "{not_reaching:?} must not reach a module-level owner"
             );
         }
+    }
+
+    fn unreferenced_fixture(source: &str, owner: &FunctionSummary, lexical: bool) -> bool {
+        let index = RustIndex::from_owned(OwnedRustIndex {
+            files: BTreeMap::from([(
+                PathBuf::from("src/lib.rs"),
+                FileFacts {
+                    path: PathBuf::from("src/lib.rs"),
+                    source: source.into(),
+                    used_lexical_fallback: lexical,
+                    ..FileFacts::default()
+                },
+            )]),
+            functions: vec![owner.clone()],
+            ..Default::default()
+        });
+        owner_unreferenced_in_workspace(owner, &index)
+    }
+
+    #[test]
+    fn unreferenced_marker_admits_only_a_parsed_unnamed_plain_owner() {
+        let lone = "pub fn as_eb(x: u64) -> u64 {\n    x / 8\n}\n#[test]\nfn other() { assert_eq!(1, 1); }\n";
+        let owner = function("as_eb");
+        assert!(
+            unreferenced_fixture(lone, &owner, false),
+            "plain unnamed owner"
+        );
+        assert!(
+            !unreferenced_fixture(lone, &owner, true),
+            "lexical fallback has no attributes"
+        );
+
+        // A qualified call the naming scan may not count still names it.
+        let qualified = format!("{lone}fn caller() -> u64 {{ Self::as_eb(1) }}\n");
+        assert!(
+            !unreferenced_fixture(&qualified, &owner, false),
+            "Self::as_eb"
+        );
+
+        // Inert attributes and doc comments keep the marker.
+        let mut inline = owner.clone();
+        inline.attrs = vec!["#[inline(always)]".into(), "/// Returns exabytes.".into()];
+        assert!(unreferenced_fixture(lone, &inline, false), "inline + doc");
+
+        // Attributes that export the owner to an unseen caller drop it.
+        for attr in [
+            "#[no_mangle]",
+            "#[export_name = \"x\"]",
+            "#[wasm_bindgen]",
+            "#[ctor::ctor]",
+            "#[proc_macro]",
+        ] {
+            let mut exported = owner.clone();
+            exported.attrs = vec![attr.into()];
+            assert!(!unreferenced_fixture(lone, &exported, false), "{attr}");
+        }
+        let mut impl_exported = owner.clone();
+        impl_exported.impl_attrs = vec!["#[wasm_bindgen]".into()];
+        assert!(
+            !unreferenced_fixture(lone, &impl_exported, false),
+            "impl attr"
+        );
+
+        // A foreign ABI on the signature.
+        let ffi = "pub extern \"C\" fn as_eb(x: u64) -> u64 {\n    x / 8\n}\n";
+        assert!(!unreferenced_fixture(ffi, &owner, false), "extern C");
+
+        // `main` is run by the build, never named.
+        let main = "fn main() {\n    run();\n}\n";
+        assert!(
+            !unreferenced_fixture(main, &function("main"), false),
+            "main"
+        );
     }
 
     fn function(name: &str) -> FunctionSummary {

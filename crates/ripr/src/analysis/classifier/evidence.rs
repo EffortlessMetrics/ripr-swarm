@@ -1739,9 +1739,9 @@ impl ClassifiedProbeEvidence {
         // reach stage; the verdict corpus reads this as a gap, not an
         // abstention.
         // Fail closed for programs a build or subprocess runs without any
-        // source naming them: `main`, build scripts and binary targets.
-        let entry_point = context.owner_fn.is_some_and(|owner| owner.name == "main")
-            || context.unmounted_build_script
+        // source naming them (`main`, build scripts, binary targets) and for
+        // owners the stricter unreferenced check does not admit.
+        let entry_point = context.unmounted_build_script
             || context
                 .probe
                 .location
@@ -1754,7 +1754,12 @@ impl ClassifiedProbeEvidence {
                 .file
                 .components()
                 .any(|part| part.as_os_str() == "bin");
-        let reach = if reach_ruled_out && !entry_point {
+        let unreferenced = reach_ruled_out
+            && !entry_point
+            && context.owner_fn.is_some_and(|owner| {
+                crate::analysis::classify::owner_unreferenced_in_workspace(owner, context.index)
+            });
+        let reach = if unreferenced {
             StageEvidence::new(
                 reach.state,
                 reach.confidence,

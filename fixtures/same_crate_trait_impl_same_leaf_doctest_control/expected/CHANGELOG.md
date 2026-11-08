@@ -154,3 +154,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — same_crate_trait_impl_same_leaf_doctest_control (13)
+
+Reason:
+Unreferenced-in-workspace marker withheld: the owner carries an exporting attribute or its name appears elsewhere as a whole word (RIPR-SPEC-0219 review fix, #12766); class unchanged
+
+Command:
+`cargo xtask goldens bless same_crate_trait_impl_same_leaf_doctest_control --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
