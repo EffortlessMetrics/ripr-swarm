@@ -10355,6 +10355,10 @@ pub(crate) fn no_static_path_missing(owner: &TypeScriptOwner) -> String {
             "No trusted TypeScript class-method relation for `{}`. Direct same-file or imported `Class.method(...)` calls are supported, but local shadows, mocked modules, namespace chains, dynamic member access, and missing class-name context stay ambiguous in preview.",
             owner.name
         ),
+        OwnerKind::ModuleFunction if owner.constructor_callback => format!(
+            "No statically linked test builds and exercises `{}`. The changed code sits inside a function passed to the call that initializes it, so it runs when a value built from `{}` is used rather than as a module-level constant; a constant observer such as `expect(IMPORTED_CONST)` cannot observe it.",
+            owner.name, owner.name
+        ),
         OwnerKind::ModuleFunction => format!(
             "No trusted TypeScript module-initializer observer for `{}`. Direct `expect(IMPORTED_CONST)...` and `expect(namespace.EXPORT)...` observers are supported, but helper-derived values, shadowed aliases, dynamic initialization, and non-expect references stay advisory in preview.",
             owner.name
@@ -10373,6 +10377,12 @@ pub(crate) fn no_static_path_recommendation(owner: &TypeScriptOwner) -> String {
         }
         OwnerKind::ClassMethod => {
             "TypeScript preview advisory: class-method relation is missing context; use a direct same-file or imported `Class.method(...)` observer when safe, and keep local shadows, mocked modules, namespace chains, dynamic member access, and missing class-name context advisory.".to_string()
+        }
+        OwnerKind::ModuleFunction if owner.constructor_callback => {
+            format!(
+                "TypeScript preview advisory: the changed code runs when a value built from `{}` is used, not at module load; call it through a test that builds a value from `{}` and exercises it (for a schema, parse a value), then assert the result. Keep the finding advisory until a test reaches it.",
+                owner.name, owner.name
+            )
         }
         OwnerKind::ModuleFunction => {
             "TypeScript preview advisory: module initializer observer is missing context; add a direct `expect(IMPORTED_CONST).toBe(...)` or `expect(namespace.EXPORT).toEqual(...)` observer when safe, and keep helper-derived or dynamic initialization evidence advisory.".to_string()

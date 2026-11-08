@@ -1,0 +1,12 @@
+# Registers the constructor-callback owner wording tests (#13588) under RIPR-SPEC-0243.
+[[extend]]
+id = "RIPR-SPEC-0243"
+tests = [
+  "crates/ripr/src/analysis/language/typescript/tests.rs::constructor_callback_owner_shape_is_closed",
+  "crates/ripr/src/analysis/language/typescript/tests.rs::constructor_callback_owner_gets_its_own_no_static_path_wording",
+  "crates/ripr/tests/cli_smoke/typescript_constructor_callback.rs::constructor_callback_change_gets_per_use_wording_and_stays_no_static_path",
+  "crates/ripr/tests/cli_smoke/typescript_constructor_callback.rs::plain_module_constant_keeps_the_module_initializer_advice",
+]
+fixtures = [
+  "fixtures/typescript_constructor_callback_no_path",
+]

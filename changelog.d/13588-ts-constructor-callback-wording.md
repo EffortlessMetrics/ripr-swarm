@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- A TypeScript change inside the callback of an exported const such as `export const ZodTransform = core.$constructor("ZodTransform", (inst, def) => { ... })` no longer gets the module-initializer advice to add `expect(IMPORTED_CONST)`. The missing check and next step now say the changed code runs when a value built from the export is used, and ask for a test that builds and exercises such a value (for a schema, parse one). The finding stays `no_static_path` and advisory; plain module constants keep the old advice (#13588).
