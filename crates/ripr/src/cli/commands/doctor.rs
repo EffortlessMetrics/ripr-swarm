@@ -6147,9 +6147,7 @@ mod tests {
         );
         // The `version` input is what CI installs: a hand-edited input
         // that leaves the tag behind is named, not hidden behind the tag.
-        let split = concat!(
-            "      - name: Install ripr\n        id: install\n        uses: EffortlessMetrics/ripr/.github/actions/ripr-check@v0.11.0\n        with:\n          version: 0.12.0\n          install-only: true\n\n      - name: Run RIPR\n        run: ripr reports ci-packet --root .\n"
-        );
+        let split = "      - name: Install ripr\n        id: install\n        uses: EffortlessMetrics/ripr/.github/actions/ripr-check@v0.11.0\n        with:\n          version: 0.12.0\n          install-only: true\n\n      - name: Run RIPR\n        run: ripr reports ci-packet --root .\n";
         let split_line = generated_workflow_line(Path::new("."), split, "0.11.0");
         assert!(
             split_line.as_deref().is_some_and(|line| line
