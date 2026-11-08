@@ -1753,14 +1753,19 @@ also applies to live guarded lines and only moves a verdict from `exposed` to
 
 A top-level helper that no test calls itself, reached by a test only through a
 function of another module that imports it, no longer reads `no_static_path`.
-The first `helper_owner_call` hop may also enter from a function or method of
+The first `helper_owner_call` hop may also enter from a top-level function of
 another module that binds the helper through `from <helper module> import
 <name>` (aliased or not) and bare-calls that binding; later hops stay in the
-file of the function they call, within the same three-hop bound. Such a
+file of the function they call, within the same three-hop bound, and past the
+module boundary only top-level functions are callers. A method of another
+module is never followed, because a test's bare call of its name is not shown
+to reach it. Such a
 test is related with the reach-only `cross_module_caller_call` relation: it
 carries no oracle, and when every related test is reached that way the finding
-is `static_unknown` under `missing_import_graph`, naming the caller and its
-file, with no repair card. A test that also reaches the helper through a
+is `static_unknown` with no repair card. Its limit is `missing_import_graph`,
+naming the caller and its file, unless a limit read from the changed line itself
+(for example `dynamic_dispatch`) applies first; either way the finding stays
+`static_unknown`. A test that also reaches the helper through a
 same-module caller keeps the existing `helper_owner_call` reading.
 
 The binding is read from the caller file's top-level import statements and
@@ -1774,7 +1779,7 @@ block is not seen, so it can still make an edge; that only moves
 `try`/`if` block makes no edge. A plain `import M` read as `M.helper(...)`, a star import, a parameter or
 local rebinding, a binding passed as a value rather than called, and a
 same-named function of another module make no edge. When more than 32
-functions of other modules call the helper, none of them is followed; with no
+top-level functions of other modules call the helper, none of them is followed; with no
 other related test the finding is `static_unknown` and says that reach through
 them was not checked, so a heavily imported helper never reads
 `no_static_path` on that account alone.

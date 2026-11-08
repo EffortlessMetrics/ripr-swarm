@@ -300,3 +300,27 @@ fn given_an_ambiguous_local_binding_then_no_edge_is_made() -> Result<(), String>
     }
     Ok(())
 }
+
+#[test]
+fn given_a_method_caller_in_another_module_then_a_same_named_bare_call_makes_no_edge()
+-> Result<(), String> {
+    // Devin review of #13890: `Checkout.checkout` imports and calls the owner,
+    // and the test calls an unrelated `checkout` from another module without
+    // ever building a `Checkout`. A method in another module is never a
+    // cross-module entry, so no test is linked and the owner keeps its reading.
+    let wrapper = "from wscore.core import discount\n\n\nclass Checkout:\n    def checkout(self, price):\n        return discount(price)\n";
+    let unrelated = "from other.lib import checkout\n\n\ndef test_checkout_at_boundary():\n    assert checkout(100) == 90\n";
+    let finding = finding_with(
+        &[
+            ("app/app.py", wrapper),
+            (
+                "other/lib.py",
+                "def checkout(price):\n    return price - 10\n",
+            ),
+        ],
+        unrelated,
+    )?;
+    assert_eq!(finding.class, ExposureClass::NoStaticPath, "{finding:?}");
+    assert!(finding.related_tests.is_empty(), "{finding:?}");
+    Ok(())
+}

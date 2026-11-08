@@ -326,7 +326,7 @@ pub(super) struct HelperOwnerCallCandidate<'a> {
 /// the relation never carries an oracle.
 ///
 /// A hop stays in the file of the function it calls, except the first hop may
-/// also enter from a function of another module that binds the owner through
+/// also enter from a top-level function of another module that binds the owner through
 /// `from <owner module> import <name>` and bare-calls that binding
 /// ([`cross_module_owner_binding`], #12955). A candidate reached that way is
 /// `cross_module_caller_call`, and same-module callers are scanned first so a
@@ -373,7 +373,12 @@ pub(super) fn helper_owner_call_candidates<'a>(
                 .min();
             if let Some(crossed) = same_file_edge {
                 if crossed {
-                    crossing.push((caller, true));
+                    // Past a module boundary only a top-level function is a
+                    // caller: a test's bare `name(` call is not shown to reach
+                    // a method of another module (Devin review of #13890).
+                    if top_level_function(caller) {
+                        crossing.push((caller, true));
+                    }
                 } else {
                     same_module.push((caller, false));
                 }
@@ -527,8 +532,9 @@ fn cross_module_owner_binding<'o>(
     (!rebound).then_some(local)
 }
 
-/// Functions and methods of other modules that bare-call an exact binding of
-/// the owner (#12955), in workspace order. Empty unless the owner is a unique
+/// Top-level functions of other modules that bare-call an exact binding of
+/// the owner (#12955), in workspace order. A method is not an entry: a test's
+/// bare call of its name is not shown to reach it. Empty unless the owner is a unique
 /// top-level function of its file.
 pub(super) fn cross_module_callers<'o>(
     owner: &PythonOwner,
@@ -540,8 +546,7 @@ pub(super) fn cross_module_callers<'o>(
     owners
         .iter()
         .filter(|caller| {
-            !caller.is_module_owner()
-                && caller.owner_kind.is_some()
+            top_level_function(caller)
                 && cross_module_owner_binding(caller, owner, owners)
                     .is_some_and(|local| caller.module_callees.iter().any(|callee| callee == local))
         })
