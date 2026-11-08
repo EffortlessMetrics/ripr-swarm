@@ -2056,9 +2056,104 @@ pub(crate) fn receiver_owner_call_relation(
         return receiver_names
             .iter()
             .any(|receiver| contains_member_read_name(&test.body_text, receiver, &owner.name))
+            || receiver_matcher_key_getter_read(test, &receiver_names, &owner.name)
             || factory_built_getter_read(test, owner, alias_map, workspace_root);
     }
     false
+}
+
+/// Getter owner (#13592-B4) observed only as a literal key of a property
+/// matcher on the constructed receiver itself: `expect(url).toMatchObject({
+/// origin: "https://host" })` reads `url.origin`, which runs the `get origin()`
+/// body, and so does `expect(url).toHaveProperty("origin", "https://host")`.
+///
+/// Allowlist, fail-closed. The receiver is one `receiver_names` already
+/// admitted through the identity, shadow and rebinding gates; the `expect(...)`
+/// subject is exactly that name; the matcher is un-negated (a negated matcher
+/// carries no expected value); `toMatchObject` carries a flat all-literal
+/// object whose top-level literal keys include the getter (nested values,
+/// spreads, computed keys and asymmetric matchers are not literal and leave the
+/// argument without an expected value); `toHaveProperty` names the getter as a
+/// plain identifier string with a value argument (dotted paths refuse). No spy,
+/// mock or member replacement in the file may name the getter. The oracle
+/// stays `relational_check` / weak, so the verdict is capped at
+/// `weakly_exposed` and no repair start follows (#11391).
+fn receiver_matcher_key_getter_read(
+    test: &TypeScriptTest,
+    receiver_names: &[String],
+    getter: &str,
+) -> bool {
+    if !is_safe_javascript_identifier(getter) {
+        return false;
+    }
+    let replaced = |name: &str| test.member_replacements_in_file.iter().any(|n| n == name);
+    if replaced(super::tests_extract::MEMBER_REPLACEMENT_ANY)
+        || replaced(getter)
+        || spies_on_member_named(&test.body_text, getter)
+    {
+        return false;
+    }
+    test.assertions.iter().any(|assertion| {
+        let Some(subject) = assertion.observed_expression.as_deref().map(str::trim) else {
+            return false;
+        };
+        if !receiver_names.iter().any(|receiver| receiver == subject)
+            // A receiver the body writes again (`url = {...}`) may no longer
+            // be the constructed instance at the assertion.
+            || receiver_written_after_declaration(&test.body_text, subject)
+        {
+            return false;
+        }
+        let Some(expected) = assertion.expected_value_or_variant.as_deref() else {
+            return false;
+        };
+        match assertion.matcher.as_str() {
+            "toMatchObject" => {
+                assertion.argument_count == 1
+                    && !assertion.has_dynamic_matcher_arg
+                    && flat_object_keys(expected)
+                        .is_some_and(|keys| keys.iter().any(|key| key == getter))
+            }
+            "toHaveProperty" => {
+                assertion.argument_count == 2
+                    && expected
+                        .strip_prefix('"')
+                        .and_then(|rest| rest.strip_suffix('"'))
+                        .or_else(|| {
+                            expected
+                                .strip_prefix('\'')
+                                .and_then(|rest| rest.strip_suffix('\''))
+                        })
+                        == Some(getter)
+            }
+            _ => false,
+        }
+    })
+}
+
+/// `true` when `body` writes `name` anywhere but its single `const`/`let`/`var`
+/// declaration (`url = other`, `url++`, a second declaration). A receiver
+/// declared outside the body has no write in it.
+fn receiver_written_after_declaration(body: &str, name: &str) -> bool {
+    let writes: Vec<usize> = super::tests_extract::identifier_writes(body)
+        .into_iter()
+        .filter(|(written, _)| written == name)
+        .map(|(_, at)| at)
+        .collect();
+    match writes.as_slice() {
+        [] => false,
+        [at] => {
+            let before = body[..*at].trim_end();
+            !["const", "let", "var"].iter().any(|keyword| {
+                before.strip_suffix(keyword).is_some_and(|head| {
+                    head.chars()
+                        .next_back()
+                        .is_none_or(|ch| !is_javascript_identifier_char(ch))
+                })
+            })
+        }
+        _ => true,
+    }
 }
 
 /// Getter owner reached through an exported factory that returns a fresh

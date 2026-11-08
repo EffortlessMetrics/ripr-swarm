@@ -137,6 +137,20 @@ the runner, so the assertion reads `unknown` / unknown, neither "too weak" nor
 (rule 1 and the literal-container reading), `.not.toMatchObject` and
 `.rejects.toMatchObject` are unchanged.
 
+**Getter key** (#13592, cause B4). A class getter that no test reads as
+`recv.getter` is still run by `expect(recv).toMatchObject({ getter: <literal> })`
+or `expect(recv).toHaveProperty("getter", <value>)`. The getter's relation
+holds when `recv` is a constructed receiver that already passes the
+identity, shadow and rebinding gates, the `expect(...)` subject is exactly
+that name and is never written again in the test body, the matcher is not negated, and the getter is a literal top-level
+key of a flat all-literal object (or the plain identifier string of a
+two-argument `toHaveProperty`). Computed or quoted-computed keys, spreads,
+nested objects or dotted paths, non-literal values, asymmetric matchers, a
+different subject and any spy, mock or member replacement naming the getter
+earn no relation. The row stays `relational_check` / weak, so the verdict is
+at most `weakly_exposed`; rule 1 does not apply (the subject is not an owner
+call result) and no repair start is offered.
+
 ### Decisions
 
 The owner delegated these choices on 2026-10-04 ("make reasonable
@@ -240,6 +254,13 @@ documented decisions and proceed"). Recorded on #6654.
    offers no repair start; `toMatchObject({ name: "bo" })` keeps its weak
    reading.
 
+8. `const url = new Url(...)` with `expect(url).toMatchObject({ origin: "https://host" })`
+   or `expect(url).toHaveProperty("origin", "https://host")` and a changed
+   `get origin()` body: the finding reads `weakly_exposed` (not
+   `no_static_path`, never `exposed`); a computed key, spread, nested key,
+   dotted path, non-literal value, asymmetric matcher, `.not`, a plain-object
+   subject or a shadowed receiver keeps `no_static_path`.
+
 ## Test Mapping
 
 - `crates/ripr/src/analysis/language/typescript/tests/match_object_tests.rs`
@@ -251,6 +272,11 @@ documented decisions and proceed"). Recorded on #6654.
   and `match_object_scalar_names_its_own_limitation_and_withholds_the_packet`
   pin example 7 (rule 4); `match_object_scalar_limitation_withholds_the_start_with_its_own_wording`
   in `crates/ripr/src/output/typescript_packet_projection.rs` pins its wording.
+- `crates/ripr/src/analysis/language/typescript/tests/getter_matcher_key_tests.rs`
+  (`literal_key_of_to_match_object_on_the_receiver_credits_the_getter`,
+  `keys_that_do_not_name_the_getter_literally_earn_no_credit`,
+  `a_key_of_a_different_object_earns_no_credit`,
+  `a_shadowed_or_rebound_receiver_earns_no_credit`) pin example 8.
 - `fixtures/typescript-verdict-corpus` pins example 1:
   `jest-mined-tomatchobject-field` reads `credited`; the amended example
   4: `jest-spec0250-ex04-normalized-result` reads `credited`; the amended
@@ -280,6 +306,11 @@ documented decisions and proceed"). Recorded on #6654.
   `attach_match_object_const`; a read argument no longer lists
   `typescript_dynamic_assertion_unresolved` in
   `crates/ripr/src/analysis/language/typescript/static_limit.rs`.
+
+- Amended 2026-11-08 (getter key):
+  `crates/ripr/src/analysis/language/typescript/related_tests.rs`:
+  `receiver_matcher_key_getter_read`, called from the getter branch of
+  `receiver_owner_call_relation`.
 
 ## Metrics
 
