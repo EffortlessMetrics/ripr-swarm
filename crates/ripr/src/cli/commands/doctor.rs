@@ -3318,8 +3318,9 @@ const GENERATED_WORKFLOW_MAX_BYTES: u64 = 1024 * 1024;
 /// version (#4738). The 0.10-and-earlier template installed ripr unpinned,
 /// so after a release CI ran the new binary against the old steps; later
 /// templates pin the generating version. Advisory only: a stale template is
-/// not a failed check. It recognizes the template's own `cargo install ripr`
-/// step, not every way a hand-written workflow could install ripr.
+/// not a failed check. It recognizes the template's own install step (the
+/// ripr-check action tag, or the older `cargo install ripr` line), not every
+/// way a hand-written workflow could install ripr.
 fn generated_workflow_advisory(root: &Path) -> Option<String> {
     let path = root.join(GENERATED_WORKFLOW_PATH);
     // A repository can commit this path as a symlink (to `/dev/zero`, say);
@@ -3333,22 +3334,41 @@ fn generated_workflow_advisory(root: &Path) -> Option<String> {
     generated_workflow_line(root, &workflow, env!("CARGO_PKG_VERSION"))
 }
 
-fn generated_workflow_line(root: &Path, workflow: &str, current_version: &str) -> Option<String> {
+/// The ripr-check action reference the generated workflow installs through
+/// (#5409); its tag names the pinned release.
+const GENERATED_INSTALL_ACTION: &str = "uses: EffortlessMetrics/ripr/.github/actions/ripr-check@v";
+
+/// The version the generated workflow's install step pins: `Some(Some(v))`
+/// for a pin, `Some(None)` for the unpinned 0.10-and-earlier `cargo install`,
+/// `None` when no generated install step is recognized.
+fn generated_workflow_pin(workflow: &str) -> Option<Option<&str>> {
+    if let Some(tag) = workflow.lines().find_map(|line| {
+        let rest = line.trim().strip_prefix(GENERATED_INSTALL_ACTION)?;
+        rest.split_whitespace().next()
+    }) {
+        return Some(Some(tag));
+    }
     let install = workflow.lines().find_map(|line| {
         let command = line.trim().trim_start_matches("run:").trim();
         let rest = command.strip_prefix("cargo install ripr")?;
         (rest.is_empty() || rest.starts_with(char::is_whitespace)).then_some(rest)
     })?;
     let words: Vec<&str> = install.split_whitespace().collect();
-    let pinned = words
-        .windows(2)
-        .find(|pair| pair[0] == "--version")
-        .map(|pair| pair[1])
-        .or_else(|| {
-            words
-                .iter()
-                .find_map(|word| word.strip_prefix("--version="))
-        });
+    Some(
+        words
+            .windows(2)
+            .find(|pair| pair[0] == "--version")
+            .map(|pair| pair[1])
+            .or_else(|| {
+                words
+                    .iter()
+                    .find_map(|word| word.strip_prefix("--version="))
+            }),
+    )
+}
+
+fn generated_workflow_line(root: &Path, workflow: &str, current_version: &str) -> Option<String> {
+    let pinned = generated_workflow_pin(workflow)?;
     let refresh =
         super::init::workflow_refresh_guidance(root, crate::cli::commands_options::InitCi::Github);
     match pinned {
@@ -6091,6 +6111,26 @@ mod tests {
         assert_eq!(
             generated_workflow_line(Path::new("."), "jobs: {}\n", "0.11.0"),
             None
+        );
+        // #5409: the template installs through the release's ripr-check
+        // action, so its tag is the pin doctor compares.
+        let action = |tag: &str| {
+            format!(
+                "      - name: Install ripr\n        id: install\n        uses: EffortlessMetrics/ripr/.github/actions/ripr-check@v{tag}\n        with:\n          version: {tag}\n"
+            )
+        };
+        assert_eq!(
+            generated_workflow_line(Path::new("."), &action("0.11.0"), "0.11.0"),
+            None
+        );
+        let stale_action = generated_workflow_line(Path::new("."), &action(stale), current);
+        assert!(
+            stale_action
+                .as_deref()
+                .is_some_and(|line| line.contains(&format!(
+                    "installs ripr {stale}, but this is ripr {current}"
+                ))),
+            "{stale_action:?}"
         );
         assert_eq!(
             generated_workflow_line(

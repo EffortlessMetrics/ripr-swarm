@@ -17662,7 +17662,7 @@ fn init_ci_github_dry_run_prints_config_and_workflow_without_writing() -> Result
         )
     );
     assert!(stdout.contains(
-        "  # Repository variables: Settings > Secrets and variables > Actions > Variables.\n  # RIPR_GATE_MODE: empty (advisory), visible-only, acknowledgeable, baseline-check or calibrated-gate.\n  RIPR_GATE_MODE: ${{ vars.RIPR_GATE_MODE || '' }}\n"
+        "  # Repository variables: Settings > Secrets and variables > Actions > Variables.\n  RIPR_GATE_MODE: ${{ vars.RIPR_GATE_MODE || '' }} # empty (advisory), visible-only, acknowledgeable, baseline-check or calibrated-gate\n"
     ));
     assert!(stdout.contains("continue-on-error: true"));
     assert!(stdout.contains("RIPR_UPLOAD_SARIF"));
@@ -17740,14 +17740,13 @@ fn init_ci_github_writes_non_blocking_report_workflow() -> Result<(), String> {
         "the adopter has no local CI guide; the generated header must give its public URL"
     );
     assert!(workflow.contains(
-        "  # Repository variables: Settings > Secrets and variables > Actions > Variables.\n  # RIPR_GATE_MODE: empty (advisory), visible-only, acknowledgeable, baseline-check or calibrated-gate.\n  RIPR_GATE_MODE: ${{ vars.RIPR_GATE_MODE || '' }}\n"
+        "  # Repository variables: Settings > Secrets and variables > Actions > Variables.\n  RIPR_GATE_MODE: ${{ vars.RIPR_GATE_MODE || '' }} # empty (advisory), visible-only, acknowledgeable, baseline-check or calibrated-gate\n"
     ));
     assert!(!workspace.join("docs/CI.md").exists());
     assert!(workflow.contains("pull_request:"));
     assert!(workflow.contains("workflow_dispatch:"));
     // #5208: the pin/warning pair must stay consistent in both release
-    // states, on both install routes (the prebuilt `version=` and the
-    // cargo fallback). A released generator self-pins silently; an
+    // states, on the action tag and its `version` input (#5409). A released generator self-pins silently; an
     // unreleased one pins an exact released version (its own would
     // neither download nor install) and warns on stderr. Branching on the
     // observed warning keeps this test valid when the package and release
@@ -17766,7 +17765,7 @@ fn init_ci_github_writes_non_blocking_report_workflow() -> Result<(), String> {
             upgrade_at.is_some(),
             "note must say to upgrade ripr first: {stderr}"
         );
-        // The warning names the fallback pin; both install routes must
+        // The warning names the fallback pin; the tag and the input must
         // carry exactly it (#5244 review: positive exact pins, not just
         // the absence of the generator version).
         let pinned = stderr
@@ -17775,24 +17774,17 @@ fn init_ci_github_writes_non_blocking_report_workflow() -> Result<(), String> {
             .and_then(|rest| rest.split(", the latest published release").next())
             .ok_or_else(|| format!("warning must name the fallback pin: {stderr}"))?;
         assert!(
-            workflow.contains(&format!("          version={pinned}\n")),
-            "a warned run must pin the fallback {pinned} on the prebuilt route"
+            workflow.contains(&format!("ripr/.github/actions/ripr-check@v{pinned}\n")),
+            "a warned run must pin the fallback {pinned} on the action tag"
         );
         assert!(
-            workflow.contains(&format!(
-                "            cargo install ripr --version {pinned} --locked\n"
-            )),
-            "a warned run must pin the fallback {pinned} on the cargo route"
+            workflow.contains(&format!("          version: {pinned}\n")),
+            "a warned run must pin the fallback {pinned} on the version input"
         );
         assert!(
-            !workflow.contains(&format!("          version={generator}\n")),
+            !workflow.contains(&format!("@v{generator}\n"))
+                && !workflow.contains(&format!("          version: {generator}\n")),
             "a warned run must not self-pin the unreleased generator"
-        );
-        assert!(
-            !workflow.contains(&format!(
-                "            cargo install ripr --version {generator} --locked\n"
-            )),
-            "a warned run must not self-pin the fallback either"
         );
         assert!(
             stderr.contains("the latest published release")
@@ -17801,17 +17793,15 @@ fn init_ci_github_writes_non_blocking_report_workflow() -> Result<(), String> {
         );
     } else {
         assert!(
-            workflow.contains(&format!("          version={generator}\n")),
+            workflow.contains(&format!("ripr/.github/actions/ripr-check@v{generator}\n")),
             "an unwarned run must self-pin the released generator"
         );
         assert!(
-            workflow.contains(&format!(
-                "            cargo install ripr --version {generator} --locked\n"
-            )),
-            "an unwarned run must self-pin the fallback too"
+            workflow.contains(&format!("          version: {generator}\n")),
+            "an unwarned run must self-pin the version input too"
         );
     }
-    assert!(!workflow.contains("cargo install ripr --locked"));
+    assert!(!workflow.contains("cargo install"));
     // A newer push cancels the older run of the same PR, so two runs never
     // publish the same inline cards (#4448).
     assert!(workflow.contains(

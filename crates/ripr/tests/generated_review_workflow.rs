@@ -34,14 +34,14 @@ fn generated_workflow_batches_compact_review_comments() -> Result<(), Box<dyn Er
     // against the repository only, and never builds a body in shell.
     let publish = workflow_step_block(&workflow, "Publish RIPR inline comments")
         .ok_or("missing publish step")?;
-    assert!(publish.contains("PR_NUMBER: ${{ github.event.pull_request.number }}"));
-    assert!(publish.contains("PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}"));
-    assert!(publish.contains("REPO: ${{ github.repository }}"));
+    assert!(workflow.contains(
+        "    env:\n      PR_NUMBER: ${{ github.event.pull_request.number }}\n      PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}\n"
+    ));
     assert!(publish.contains(
         "ripr pr-comments requests --root . --pull-request \"$PR_NUMBER\" --head-sha \"$PR_HEAD_SHA\""
     ));
     assert!(publish.contains(
-        "gh api --method \"$method\" \"repos/$REPO/$endpoint\" --input \"$request\" </dev/null >/dev/null"
+        "gh api --method \"$method\" \"repos/$GITHUB_REPOSITORY/$endpoint\" --input \"$request\" </dev/null >/dev/null"
     ));
     assert_no_github_expression_in_run_blocks(&workflow);
     assert!(!workflow.contains("jq "));
@@ -2440,6 +2440,10 @@ fn far_above_threshold_discounts() {
             ("GITHUB_ACTOR".to_string(), "ripr-test-user".to_string()),
             ("GITHUB_WORKSPACE".to_string(), root.display().to_string()),
             ("RUNNER_TEMP".to_string(), base.display().to_string()),
+            // #5409: the job-level `env:` of the generated workflow (pinned
+            // in `init_generated_github_workflow_matches_smoke_fixture`).
+            ("PR_NUMBER".to_string(), "1".to_string()),
+            ("PR_HEAD_SHA".to_string(), head_sha.clone()),
         ]);
         for (name, value) in overrides {
             env.insert((*name).to_string(), (*value).to_string());
@@ -2467,7 +2471,8 @@ fn far_above_threshold_discounts() {
                 if overrides.iter().any(|(overridden, _)| overridden == name) {
                     continue;
                 }
-                step_env.push((name.clone(), substitute(value, &head_sha)?));
+                let value = value.replace("${{ runner.temp }}", &base.display().to_string());
+                step_env.push((name.clone(), substitute(&value, &head_sha)?));
             }
             let output = bash(root, &script, &step_env)?;
             let run = StepRun {
@@ -3108,7 +3113,7 @@ fn generated_existing_comment_capture_reads_keys_with_spaces() -> Result<(), Box
         .parent()
         .ok_or("ripr binary has no directory")?;
     let script = format!(
-        "chmod +x '{bin}/gh'\nexport PAGES='{pages}' PATH='{bin}:{ripr}':\"$PATH\" REPO=ripr-test/pricing PR_NUMBER=1\n{script}",
+        "chmod +x '{bin}/gh'\nexport PAGES='{pages}' PATH='{bin}:{ripr}':\"$PATH\" GITHUB_REPOSITORY=ripr-test/pricing PR_NUMBER=1\n{script}",
         bin = bin.display(),
         pages = root.join("pages.json").display(),
         ripr = ripr_dir.display(),
@@ -3234,9 +3239,9 @@ fn existing_comment_capture_script(workflow: &str) -> Result<String, String> {
             "capture run: still interpolates a GitHub expression:\n{body}"
         ));
     }
-    if !body.contains("repos/$REPO/pulls/$PR_NUMBER/comments") {
+    if !body.contains("repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/comments") {
         return Err(format!(
-            "capture run: no longer uses step env REPO/PR_NUMBER:\n{body}"
+            "capture run: no longer uses GITHUB_REPOSITORY and env PR_NUMBER:\n{body}"
         ));
     }
     Ok(body.to_string())
@@ -3669,6 +3674,63 @@ fn between<'a>(haystack: &'a str, open: &str, close: &str) -> Option<&'a str> {
     rest.split_once(close).map(|(inside, _)| inside)
 }
 
+/// The composite action the generated workflow installs through (#5409).
+const RIPR_CHECK_ACTION: &str = include_str!("../../../.github/actions/ripr-check/action.yml");
+
+/// The version the generated `Install ripr` step pins. The action tag and
+/// its `version` input must name the same release, and the step runs no
+/// shell of its own (#5409).
+fn generated_install_pin(workflow: &str) -> Result<String, Box<dyn Error>> {
+    let install = workflow_step_block(workflow, "Install ripr").ok_or("no `Install ripr` step")?;
+    let tag = between(
+        &install,
+        "uses: EffortlessMetrics/ripr/.github/actions/ripr-check@v",
+        "\n",
+    )
+    .ok_or("the install step does not use the ripr-check action")?;
+    let input = between(&install, "          version: ", "\n")
+        .ok_or("the install step passes no version input")?;
+    assert_eq!(tag, input, "the action tag and version input must agree");
+    assert!(
+        install.contains("          install-only: true"),
+        "the install step must skip the action's check: {install}"
+    );
+    assert!(!install.contains("run:"), "{install}");
+    Ok(tag.to_string())
+}
+
+/// The action's `Install ripr` shell, de-indented, with the `version` the
+/// generated workflow passes in place of the input binding.
+fn action_install_script(version: &str) -> Result<String, Box<dyn Error>> {
+    let lines: Vec<&str> = RIPR_CHECK_ACTION.lines().collect();
+    let start = lines
+        .iter()
+        .position(|line| line.trim() == "- name: Install ripr")
+        .ok_or("the action has no Install ripr step")?;
+    let run = lines[start..]
+        .iter()
+        .position(|line| line.trim() == "run: |")
+        .ok_or("the action install step has no run block")?
+        + start;
+    let indent = lines[run + 1].len() - lines[run + 1].trim_start().len();
+    let mut body = Vec::new();
+    for line in &lines[run + 1..] {
+        if line.trim().is_empty() {
+            body.push("");
+        } else if line.len() - line.trim_start().len() >= indent {
+            body.push(&line[indent..]);
+        } else {
+            break;
+        }
+    }
+    let script = body.join("\n");
+    let binding = "version=\"$RIPR_INPUT_VERSION\"";
+    if !script.contains(binding) {
+        return Err("the action install step no longer binds version from its input".into());
+    }
+    Ok(script.replace(binding, &format!("version={version}")))
+}
+
 /// #5874: the executable twin of the unix bash replay below. It needs no
 /// shell, so it runs on Windows and Linux alike: it reads the generated
 /// Install-step and summary-step shell and evaluates only what the failure
@@ -3692,21 +3754,16 @@ fn generated_install_failure_explanation_is_consistent_on_every_host() -> Result
         String::from_utf8_lossy(&init.stderr)
     );
     let workflow = fs::read_to_string(base.join(".github/workflows/ripr.yml"))?;
-    let install = workflow_step_block(&workflow, "Install ripr").ok_or("no `Install ripr` step")?;
     let summary_step = workflow_step_block(&workflow, "Add RIPR advisory summary")
         .ok_or("no `Add RIPR advisory summary` step")?;
 
-    // Both install routes pin one version: the generated pin.
-    let version = between(&install, "version=", "\n")
-        .map(str::trim)
-        .filter(|v| !v.is_empty() && !v.contains(' '))
-        .ok_or("install step names no version pin")?
-        .to_string();
-    let cargo_pin = between(&install, "cargo install ripr --version ", " ")
-        .ok_or("install step names no cargo fallback pin")?;
-    assert_eq!(
-        cargo_pin, version,
-        "prebuilt and cargo routes must pin the same version"
+    // #5409: the step installs through the ripr-check action; both of its
+    // install routes use the one version the generated workflow passes.
+    let version = generated_install_pin(&workflow)?;
+    let install = action_install_script(&version)?;
+    assert!(
+        install.contains("cargo install ripr --version \"$version\" --locked"),
+        "prebuilt and cargo routes must pin the same version: {install}"
     );
 
     // #6245: Windows-X64 now maps to the contract's MSVC zip; Windows-ARM64 is
@@ -3761,7 +3818,7 @@ fn generated_install_failure_explanation_is_consistent_on_every_host() -> Result
     assert_eq!(
         render(error_template, &why),
         format!(
-            " no prebuilt ripr {version} for Linux-ARM, and this runner has no cargo to build it. Install Rust on the runner (https://rustup.rs) or add a Rust toolchain step before Install ripr."
+            " no prebuilt ripr {version} for Linux-ARM, and this runner has no cargo to build it. Add a Rust toolchain step before this action, or use a runner with a prebuilt archive."
         )
     );
     // The error path exits nonzero before any cargo invocation.
@@ -3784,11 +3841,6 @@ fn generated_install_failure_explanation_is_consistent_on_every_host() -> Result
         render(notice_template, &why),
         format!("no prebuilt ripr {version} for Linux-ARM; building it with cargo install")
     );
-    assert!(
-        install.contains(&format!("cargo install ripr --version {version} --locked")),
-        "{install}"
-    );
-
     // The summary step after the failed install.
     let format = between(&summary_step, "printf '", "' \"${RIPR_INSTALL_OUTCOME")
         .ok_or("no summary printf in the summary step")?;
@@ -3872,8 +3924,10 @@ fn generated_workflow_explains_a_failed_install() -> Result<(), Box<dyn Error>> 
             .and_then(|step| step.run.clone())
             .ok_or_else(|| format!("no `{name}` run step"))
     };
-    let install = script("Install ripr")?;
     let summary_step = script("Add RIPR advisory summary")?;
+    // #5409: the generated step runs the ripr-check action's installer.
+    let version = generated_install_pin(&workflow)?;
+    let install = action_install_script(&version)?;
 
     // A runner PATH with the coreutils the step needs, but no download tool, cargo,
     // or ripr.
@@ -3913,33 +3967,13 @@ fn generated_workflow_explains_a_failed_install() -> Result<(), Box<dyn Error>> 
             ("RIPR_INSTALL_OUTCOME".to_string(), "failure".to_string()),
         ]
     };
-    // #5208: the install step pins the generator itself when released, the
-    // latest release when the generator is unreleased. Expect the pin the
-    // generated workflow actually carries (parsed from both install routes,
-    // which must agree), not unconditionally the package version.
-    let version = install
-        .split("version=")
-        .nth(1)
-        .and_then(|rest| rest.split_whitespace().next())
-        .ok_or("install step names no version pin")?
-        .to_string();
-    let cargo_pin = install
-        .split("cargo install ripr --version ")
-        .nth(1)
-        .and_then(|rest| rest.split_whitespace().next())
-        .ok_or("install step names no cargo fallback pin")?;
-    assert_eq!(
-        cargo_pin, version,
-        "prebuilt and cargo routes must pin the same version"
-    );
-
     // No prebuilt archive for this runner shape (#6245: Windows-X64 is mapped now) and no cargo: fail and say both.
     let unmapped = replay::bash(&root, &install, &runner("Linux", "ARM", &bin))?;
     let unmapped_out = String::from_utf8_lossy(&unmapped.stdout);
     assert_eq!(unmapped.status.code(), Some(1), "{unmapped_out}");
     assert!(
         unmapped_out.contains(&format!(
-            "::error::Cannot install ripr: no prebuilt ripr {version} for Linux-ARM, and this runner has no cargo to build it. Install Rust on the runner (https://rustup.rs) or add a Rust toolchain step before Install ripr."
+            "::error::Cannot install ripr: no prebuilt ripr {version} for Linux-ARM, and this runner has no cargo to build it. Add a Rust toolchain step before this action, or use a runner with a prebuilt archive."
         )),
         "{unmapped_out}"
     );
@@ -3963,7 +3997,16 @@ fn generated_workflow_explains_a_failed_install() -> Result<(), Box<dyn Error>> 
     let cargo_args = base.join("cargo-args");
     for (name, body) in [
         ("cargo", format!("echo \"$@\" > '{}'", cargo_args.display())),
-        ("ripr", format!("echo ripr {version}")),
+        // Reports the pinned version only once cargo has built it, so the
+        // installer's reuse of a matching ripr on PATH does not short-cut
+        // the fallback under test.
+        (
+            "ripr",
+            format!(
+                "if [ -f '{}' ]; then echo ripr {version}; else echo ripr 0.0.0-stale; fi",
+                cargo_args.display()
+            ),
+        ),
     ] {
         let path = with_cargo.join(name);
         fs::write(&path, format!("#!/bin/sh\n{body}\n"))?;
@@ -4203,7 +4246,9 @@ mod archive_replay {
             for name in ["ripr", "ripr.exe"] {
                 script(
                     &case.ambient.join(name),
-                    &format!("echo 'ripr {version} AMBIENT-RIPR-WAS-RUN'"),
+                    // Not the pinned version: the ripr-check installer
+                    // reuses a ripr on PATH only when it reports that one.
+                    &format!("echo 'ripr {version}-ambient AMBIENT-RIPR-WAS-RUN'"),
                 )?;
             }
             // Test double for Windows' bsdtar: lists and extracts through
@@ -4287,6 +4332,10 @@ mod archive_replay {
 
     /// The `Install ripr` run script and the version it pins, from a freshly
     /// generated workflow.
+    /// #5409: the generated `Install ripr` step runs the release's
+    /// `ripr-check` action with `install-only`, so the script replayed here
+    /// is that action's `Install ripr` block with the version the generated
+    /// workflow passes as its input.
     pub(super) fn generated_install(label: &str) -> TestResult<(String, String, PathBuf)> {
         let base = super::replay::unique_temp_dir(label)?;
         let init = super::run_ripr_init(&base)?;
@@ -4296,17 +4345,8 @@ mod archive_replay {
             String::from_utf8_lossy(&init.stderr)
         );
         let workflow = fs::read_to_string(base.join(".github/workflows/ripr.yml"))?;
-        let install = super::replay::parse_steps(&workflow)
-            .into_iter()
-            .find(|step| step.name == "Install ripr")
-            .and_then(|step| step.run)
-            .ok_or("no `Install ripr` run step")?;
-        let version = install
-            .split("version=")
-            .nth(1)
-            .and_then(|rest| rest.split_whitespace().next())
-            .ok_or("install step names no version pin")?
-            .to_string();
+        let version = super::generated_install_pin(&workflow)?;
+        let install = super::action_install_script(&version)?;
         Ok((install, version, base))
     }
 
@@ -4832,7 +4872,7 @@ fn generated_publish_step_sends_every_request_in_order() -> Result<(), Box<dyn E
             .parent()
             .ok_or("ripr binary has no directory")?;
         let script = format!(
-            "chmod +x '{bin}/gh'\nexport PATH='{bin}:{ripr}':\"$PATH\" REPO=ripr-test/pricing PR_NUMBER=42 PR_HEAD_SHA=0123abcd\n{body}",
+            "chmod +x '{bin}/gh'\nexport PATH='{bin}:{ripr}':\"$PATH\" GITHUB_REPOSITORY=ripr-test/pricing PR_NUMBER=42 PR_HEAD_SHA=0123abcd\n{body}",
             bin = bin.display(),
             ripr = ripr_dir.display(),
         );
@@ -4933,7 +4973,7 @@ fn summary_step_updates_the_bot_comment_it_posted_before() -> Result<(), Box<dyn
             .parent()
             .ok_or("ripr binary has no directory")?;
         let script = format!(
-            "chmod +x '{bin}/gh'\nexport PATH='{bin}:{ripr}':\"$PATH\"\nexport GITHUB_SERVER_URL=https://github.com GITHUB_REPOSITORY=ripr-test/pricing GITHUB_RUN_ID=9 REPO=ripr-test/pricing PR_NUMBER=42 PR_HEAD_SHA=0123abcd\n{body}",
+            "chmod +x '{bin}/gh'\nexport PATH='{bin}:{ripr}':\"$PATH\"\nexport GITHUB_SERVER_URL=https://github.com GITHUB_REPOSITORY=ripr-test/pricing GITHUB_RUN_ID=9 PR_NUMBER=42 PR_HEAD_SHA=0123abcd\n{body}",
             bin = bin.display(),
             ripr = ripr_dir.display(),
         );
