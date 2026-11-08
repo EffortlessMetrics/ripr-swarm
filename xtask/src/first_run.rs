@@ -465,9 +465,6 @@ fn prepare_out_dir(out: &Path) -> Result<(), String> {
         .map_err(|err| format!("failed to mark {}: {err}", out.display()))
 }
 
-/// A bare name is a PATH lookup. A path is resolved against the invoking
-/// directory, because every step runs elsewhere and a relative path would
-/// otherwise fail as "No such file or directory" from the wrong directory.
 /// True when the walk uses whatever `ripr` the PATH resolves, not a build or
 /// install this command chose.
 fn uses_path_default(options: &Options) -> bool {
@@ -488,6 +485,9 @@ fn path_version_note(reported: &str, workspace: &str) -> Option<String> {
     ))
 }
 
+/// A bare name is a PATH lookup. A path is resolved against the invoking
+/// directory, because every step runs elsewhere and a relative path would
+/// otherwise fail as "No such file or directory" from the wrong directory.
 fn resolve_ripr(ripr: &str) -> Result<String, String> {
     let path = Path::new(ripr);
     // A Windows drive-relative name such as `C:ripr.exe` has no separator but
