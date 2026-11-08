@@ -1078,14 +1078,29 @@ pub(crate) fn nested_configs_fingerprint(root: &Path, files: &[PathBuf]) -> Opti
     for dir in dirs {
         for name in ["tsconfig.json", "jsconfig.json"] {
             let path = root.join(&dir).join(name);
-            if path.is_file()
-                && config_file_owns_paths(&path)
-                && let Ok(text) = read_config_capped(&path)
-            {
-                found = true;
-                dir.hash(&mut hasher);
-                name.hash(&mut hasher);
-                text.hash(&mut hasher);
+            if !path.is_file() || !config_file_owns_paths(&path) {
+                continue;
+            }
+            found = true;
+            dir.hash(&mut hasher);
+            name.hash(&mut hasher);
+            let Ok(text) = read_config_capped(&path) else {
+                // Unreadable configs fail closed in the resolver; they must
+                // still move the digest away from "no config".
+                "unreadable".hash(&mut hasher);
+                continue;
+            };
+            text.hash(&mut hasher);
+            // Hash the merged chain too: an edit to a same-directory
+            // `extends` base changes resolution without touching `text`.
+            match merge_compiler_options(&path, &text, &mut Vec::new(), 0) {
+                Ok(merged) => {
+                    merged.base_url.hash(&mut hasher);
+                    let mut paths: Vec<_> = merged.paths.unwrap_or_default().into_iter().collect();
+                    paths.sort();
+                    paths.hash(&mut hasher);
+                }
+                Err(_blocker) => "unmodeled".hash(&mut hasher),
             }
         }
     }
@@ -1214,6 +1229,36 @@ mod tests {
     }
 
     // ── load_alias_map ────────────────────────────────────────────────────
+
+    #[test]
+    fn nested_fingerprint_follows_extends_base_and_unreadable_configs() -> Result<(), String> {
+        let root = temp_dir("nested-fingerprint");
+        let files = vec![PathBuf::from("packages/a/src/x.ts")];
+        assert_eq!(nested_configs_fingerprint(&root, &files), None);
+        write(
+            &root,
+            "packages/a/tsconfig.json",
+            r#"{"extends":"./tsconfig.base.json"}"#,
+        );
+        write(
+            &root,
+            "packages/a/tsconfig.base.json",
+            r#"{"compilerOptions":{"baseUrl":".","paths":{"@/*":["src/*"]}}}"#,
+        );
+        let first = nested_configs_fingerprint(&root, &files).ok_or("base paths own")?;
+        write(
+            &root,
+            "packages/a/tsconfig.base.json",
+            r#"{"compilerOptions":{"baseUrl":".","paths":{"@/*":["lib/*"]}}}"#,
+        );
+        let second = nested_configs_fingerprint(&root, &files).ok_or("base paths own")?;
+        assert_ne!(
+            first, second,
+            "an extends-base edit must move the fingerprint"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
 
     #[test]
     fn returns_none_when_no_config_file_present() {
