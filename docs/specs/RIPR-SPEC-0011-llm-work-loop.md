@@ -193,9 +193,11 @@ refuses with `agent brief takes --max-seams once` instead of silently keeping
 the last cap, and `ripr agent verify --before a --before b --after c --json`
 refuses with `agent verify takes --before once` instead of comparing `b`
 against itself. Two deliberate exceptions keep their family contracts:
-`--root` stays last-win everywhere, including the pattern-setting parsers, so
-scripted double-root invocations keep working; and `agent receipt --command`
-stays a repeatable accumulator. An empty `agent verify --gap-id` is refused at
+`--root` absorbs an identical repeated value so scripted double-root
+invocations keep working; a conflicting repeated value refuses with exit 2
+and names both roots before execution (#9008, #13326). The first explicit
+`--root` still replaces the implicit default. `agent receipt --command` stays
+a repeatable accumulator. An empty `agent verify --gap-id` is refused at
 the parser with the same exit-2 usage-error shape, naming the empty flag
 instead of flowing the empty id into the artifact layer.
 
@@ -1021,6 +1023,21 @@ setter), says why it cannot write one and that the test is written by hand.
 Refusal text only: eligibility is unchanged, and starting a repair from a weak
 read of a written field stays #11870.
 
+## Amendment (#11584): task-first repair and continue print JSON on request
+
+`ripr repair --json` prints the repair packet with its `repair_attempt`
+block (the attempt id and after-phase command) on stdout instead of the
+summary and card; a repeated start that resumes an awaiting attempt prints
+that attempt's status document. `ripr continue --json` prints the after-phase
+document, or the attempt's status document when it is already complete; a
+typed after-phase refusal or failure prints its `repair_after_refusal`,
+`repair_after_failure` or verify document beside the same exit code and
+stderr prose. Repair refusals, continue selection refusals and operational
+errors before verify keep empty stdout. An unknown flag (or, for `continue`,
+a stray positional argument) under `--json` keeps exit 2 and its stderr prose
+and writes the standalone `cli_refusal` document to stdout (#6834 decision);
+other argv usage errors keep empty stdout.
+
 ## Test Mapping
 
 - `crates/ripr/tests/cli_help_hierarchy.rs::agent_help_and_missing_seam_refusal_agree_that_finding_ids_resolve` (agent group help, the missing-`--seam-id` refusal and the workflow catalog agree that `--phase before` resolves `ripr check` finding IDs)
@@ -1165,6 +1182,10 @@ read of a written field stays #11870.
 - `crates/ripr/tests/cli_smoke.rs::agent_packet_rejects_configured_off_seam`
 - `crates/ripr/src/lsp/tests.rs::agent_loop_command_payloads_stay_workspace_relative_for_platform_roots`
 - `xtask/src/reports/operator.rs::tests::operator_cockpit_matches_editor_agent_loop_fixture`
+- `crates/ripr/tests/task_first_facade.rs::repair_json_prints_the_packet_with_the_attempt_id` (#11584)
+- `crates/ripr/tests/task_first_facade.rs::continue_json_prints_its_after_phase_document` (#11584)
+- `crates/ripr/tests/task_first_facade.rs::continue_json_prints_the_typed_after_refusal_document` (#11584)
+- `crates/ripr/tests/task_first_facade.rs::repair_and_continue_json_keep_refusals_prose_and_usage_errors_cli_refusal` (#11584)
 
 ## Implementation Mapping
 

@@ -23,9 +23,12 @@
 //! so restricting the scan to the indexed candidates is a pre-filter, not a
 //! semantic change: every identity guard (#4102/#4103 shadowing, mock-module,
 //! fabrication, declaration anchors) still runs unchanged on the survivors.
-//! The module-entry and heuristic fallback passes only run when pass 1 found
-//! nothing and CAN credit name-less tests, so they keep scanning the full
-//! workspace slice exactly as before.
+//! The module-entry pass checks each entry's stand-in owner through the same
+//! `owner_call_relation` arms, so it pre-filters by each stand-in's keys the
+//! same way (#13592); `candidate_reached_entries` relies on that completeness
+//! when it recomputes over every entry. The heuristic fallback pass only runs
+//! when both found nothing and CAN credit name-less tests, so it keeps
+//! scanning the full workspace slice exactly as before.
 //!
 //! [`RelationIndex::empty`] (test-only) preserves the full scan so the 1527
 //! unit tests that call the pure functions directly need no fixture changes —
@@ -282,6 +285,7 @@ mod tests {
             default_object_member: false,
             commonjs_default_export: false,
             commonjs_whole_function: false,
+            constructor_callback: false,
             module_entries: Vec::new(),
             arity: None,
             source_text: None,
