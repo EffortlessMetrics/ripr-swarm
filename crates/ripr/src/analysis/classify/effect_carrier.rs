@@ -1053,6 +1053,7 @@ impl EffectStateCarrier {
                 binding,
                 &self.owner_name,
                 read_line,
+                None,
             ) {
                 bindings.insert(binding.to_string());
             }
@@ -1065,6 +1066,7 @@ impl EffectStateCarrier {
                 "self",
                 &self.owner_name,
                 read_line,
+                None,
             )
         {
             bindings.insert("self".to_string());

@@ -27697,11 +27697,24 @@ fn check_gitignored_files_are_disclosed_not_silent() -> Result<(), String> {
     .map_err(|err| format!("write alpha lib.rs: {err}"))?;
     std::fs::write(
         root.join(".gitignore"),
-        "target/\ncrates/alpha/src/ignored_gen.rs\n",
+        "target/\ncrates/alpha/src/ignored_gen.rs\nnode_modules/\n.venv/\n",
     )
     .map_err(|err| format!("write .gitignore: {err}"))?;
     run_git(&root, &["add", "."])?;
     run_git(&root, &["commit", "-m", "initial"])?;
+    // #13597: installed dependency trees are ignored but are not the user's
+    // sources; they must not be listed or drive the `git add -f` advice.
+    for (dir, file, body) in [
+        ("node_modules", "vendored.rs", "pub fn v() {}\n"),
+        ("node_modules/pkg/lib", "index.js", "module.exports = 1;\n"),
+        ("node_modules/pkg/src", "vendored.rs", "pub fn v() {}\n"),
+        (".venv/lib/site-packages/dep", "mod.py", "VALUE = 1\n"),
+    ] {
+        std::fs::create_dir_all(root.join(dir))
+            .map_err(|err| format!("create vendored dir {dir}: {err}"))?;
+        std::fs::write(root.join(dir).join(file), body)
+            .map_err(|err| format!("write vendored file {file}: {err}"))?;
+    }
     std::fs::create_dir_all(root.join("crates/alpha/target"))
         .map_err(|err| format!("create alpha target: {err}"))?;
     std::fs::write(
@@ -27776,6 +27789,14 @@ fn check_gitignored_files_are_disclosed_not_silent() -> Result<(), String> {
             "JSON must not name root target/ build output; got:\n{report}"
         ));
     }
+    if ignored.iter().any(|path| {
+        path.as_str()
+            .is_some_and(|p| p.contains("node_modules") || p.contains(".venv"))
+    }) {
+        return Err(format!(
+            "JSON must not name vendored dependency files; got:\n{report}"
+        ));
+    }
 
     // Human and human-full name the files and the force intent-to-add repair
     // (`git add -N` refuses ignored paths, verified against real git).
@@ -27797,6 +27818,11 @@ fn check_gitignored_files_are_disclosed_not_silent() -> Result<(), String> {
                     "{label} must disclose {expected:?}; got:\n{rendered}"
                 ));
             }
+        }
+        if rendered.contains("node_modules") || rendered.contains(".venv") {
+            return Err(format!(
+                "{label} must not name vendored dependency files; got:\n{rendered}"
+            ));
         }
         if rendered.contains("crunchy-x") {
             return Err(format!(
@@ -27824,6 +27850,38 @@ fn check_gitignored_files_are_disclosed_not_silent() -> Result<(), String> {
                 "worktree read must disclose {expected:?}; got:\n{dirty}"
             ));
         }
+    }
+    if dirty.contains("node_modules") || dirty.contains(".venv") {
+        return Err(format!(
+            "worktree read must not name vendored dependency files; got:\n{dirty}"
+        ));
+    }
+    let dirty_report = parse(&run_ripr(&[
+        "check",
+        "--root",
+        &root_str,
+        "--worktree",
+        "--json",
+    ]))?;
+    let dirty_ignored = dirty_report["ignored_working_tree_source_paths"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    if !dirty_ignored
+        .iter()
+        .any(|path| path == "crates/alpha/src/ignored_gen.rs")
+    {
+        return Err(format!(
+            "worktree JSON must name the ignored source; got:\n{dirty_report}"
+        ));
+    }
+    if dirty_ignored.iter().any(|path| {
+        path.as_str()
+            .is_some_and(|p| p.contains("node_modules") || p.contains(".venv"))
+    }) {
+        return Err(format!(
+            "worktree JSON must not name vendored dependency files; got:\n{dirty_report}"
+        ));
     }
 
     ignore_remove_dir_all(&root);

@@ -4617,6 +4617,7 @@ fn weak_assigned_field_read(
             &binding,
             call.name(),
             assertion.line,
+            call.impl_type(),
         )
         && super::reveal::binding_untouched_after_owner_call(
             &test.body,
@@ -4818,6 +4819,7 @@ pub(in crate::analysis) fn pushed_collection_compared_whole(
                     &read.binding,
                     call.name(),
                     assertion.line,
+                    call.impl_type(),
                 )
                 && super::reveal::binding_untouched_after_owner_call(
                     &test.body,
