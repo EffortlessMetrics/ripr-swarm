@@ -90,8 +90,42 @@ thread_local! {
 
 thread_local! {
     static CLEAN_PARSE_MEMO: std::cell::RefCell<
-        std::collections::HashMap<String, Option<Parse<SourceFile>>>,
-    > = std::cell::RefCell::new(std::collections::HashMap::new());
+        std::collections::HashMap<
+            String,
+            Option<Parse<SourceFile>>,
+            std::hash::BuildHasherDefault<WordHasher>,
+        >,
+    > = std::cell::RefCell::new(std::collections::HashMap::default());
+}
+
+/// Word-at-a-time multiplicative hasher for the per-thread parse memo.
+///
+/// The memo keys are whole test bodies and every lookup hashed the full text
+/// with the default SipHash (#13577: the shadow checks asked once per oracle).
+/// The memo is thread-local, bounded and holds only texts this process read, so
+/// DoS resistance buys nothing; a collision only costs an equality comparison.
+#[derive(Default)]
+struct WordHasher(u64);
+
+impl std::hash::Hasher for WordHasher {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+
+    fn write(&mut self, bytes: &[u8]) {
+        const K: u64 = 0x517c_c1b7_2722_0a95;
+        let mix = |hash: u64, word: u64| (hash.rotate_left(5) ^ word).wrapping_mul(K);
+        let mut chunks = bytes.chunks_exact(8);
+        for chunk in &mut chunks {
+            let mut word = [0u8; 8];
+            word.copy_from_slice(chunk);
+            self.0 = mix(self.0, u64::from_le_bytes(word));
+        }
+        let mut tail = [0u8; 8];
+        let rest = chunks.remainder();
+        tail[..rest.len()].copy_from_slice(rest);
+        self.0 = mix(self.0, u64::from_le_bytes(tail));
+    }
 }
 
 /// Parse with the current edition, retrying as Rust 2021 when that fails.
