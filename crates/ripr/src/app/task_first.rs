@@ -182,6 +182,7 @@ pub(crate) fn decide_repair_start(
         transition_to: offered.map(|_| command_effect_label(CommandRole::RepairStart).to_string()),
         restart_route,
         check_case: None,
+        check_repair_route: None,
         doctor_recovery: None,
         pilot_delegation: None,
         alternatives: Vec::new(),
@@ -3180,24 +3181,33 @@ pub(crate) fn non_rust_repair_guidance(
         .map(|entry| entry.language)
         .collect::<Vec<_>>()
         .join(" and ");
+    // #13790: short lines that say what is true. Only the seam flow behind
+    // `ripr repair` is Rust-only; a TypeScript or Python preview gap can still
+    // start the delegated loop by gap id, but only through the start `ripr
+    // check` prints, which that check prints only when the shared readiness
+    // owner accepts the gap. No start command is composed here.
     let head = format!(
-        "the changed code under {root_display} is {languages}, and `ripr repair` works from Rust gaps only"
+        "the changed code under {root_display} is {languages}.\nThe `ripr repair` seam flow is Rust only."
     );
+    let check = format!("`ripr check --root {root_display}`");
     if !changed.iter().any(|entry| entry.adds_code) {
         return format!(
-            "{head}. The change only removes code, so `ripr check --root {root_display}` names no gap for it; look at the tests of the remaining behavior by hand"
+            "{head}\nThe change only removes code, so {check} names no gap for it.\nLook at the tests of the remaining behavior by hand."
         );
     }
-    let start = if changed
+    let gap_bound = changed
         .iter()
-        .any(|entry| !gap_bound_start_pointer(entry.language).is_empty())
-    {
-        "; once it is committed and the repair packet is complete, `ripr check` also prints a `ripr agent repair --gap-id <gap> --base <base> --phase before` start"
-    } else {
-        ""
-    };
+        .filter(|entry| entry.adds_code && !gap_bound_start_pointer(entry.language).is_empty())
+        .map(|entry| entry.language)
+        .collect::<Vec<_>>();
+    if gap_bound.is_empty() {
+        return format!(
+            "{head}\nAdd the test by hand: {check} names the test and its verify command."
+        );
+    }
+    let gap_bound = gap_bound.join(" and ");
     format!(
-        "{head}. Run `ripr check --root {root_display}` for the test to add by hand and its verify command{start}"
+        "{head}\n{gap_bound} preview gaps start with the `ripr agent repair --gap-id ...` command that {check} prints when one is ready.\nOtherwise, add the test by hand: {check} names the test and its verify command."
     )
 }
 

@@ -166,10 +166,15 @@ remainder that does not exist:
   total first and then the mix — `T finding(s) omitted: L lower-priority, B
   base-side evidence (not candidate edit targets)` (a `U unresolved
   currentness` clause joins when present), so the leading count always
-  equals the number of listed bullets (#8389) — and an omitted set that is entirely
+  equals the number of findings the listed bullets represent (#8389) — and an omitted set that is entirely
   base-side or entirely unresolved currentness says so (`All N omitted
   finding(s) are base-side evidence, not candidate edit targets.`). Pure
   lower-priority omitted sets keep the single count clause.
+- Byte-identical consecutive hidden rows (same location, class, kind, reason
+  and any stub sub-block) collapse into one bullet ending ` (xN)`, where `N`
+  is the number of findings it stands for. The count line, the twenty-finding
+  listing cap and the `… and N more` continuation keep counting findings, not
+  bullets, so no finding disappears from the totals (#8389).
 - `N == 0` — the heading is `More:` and the count line is not rendered. The
   two format pointers still render, unchanged, because they remain useful
   when nothing was omitted.
@@ -943,6 +948,17 @@ unchanged, and the lines claim no runtime outcome.
   exhaustive human projection assertions while `expected/human.txt` stays the
   bounded default output.
 - Output-contract, static-language, traceability, and check-pr gates.
+
+### Agent related-test selection (#13603)
+
+The `tK` row an agent opens first is the contributing related test with the
+strongest relation confidence (the same `RelationConfidence` rank `ripr context`
+orders by), with oracle strength breaking ties. A direct owner caller is named
+ahead of a same-file neighbor even when the neighbor holds a stronger oracle,
+because the caller is the test an agent edits to grip the changed value. A
+`done=` line keeps oracle strength first: it names the test that notices the
+change, never a smoke-only caller. Rows without a recorded relation rank as
+`Opaque`, so their order falls back to oracle strength.
 
 ### `explain --format agent` (#12104)
 

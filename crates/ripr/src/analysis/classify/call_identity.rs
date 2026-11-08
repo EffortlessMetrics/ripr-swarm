@@ -160,6 +160,11 @@ pub(crate) struct CallIdentityMemos {
     /// from a crate outside the workspace. The answer depends on the file's
     /// syntax alone, so the per-(probe, test) receiver check reads it once.
     external_imports: Mutex<BTreeMap<(std::path::PathBuf, String), bool>>,
+    /// Per type name, the one indexed file that declares it (`None` when no
+    /// file or several files do). The answer depends only on the indexed
+    /// sources, so the per-(seam, test) enum-variant check reads it once
+    /// instead of masking every file that mentions the name each time.
+    sole_type_declarers: Mutex<BTreeMap<String, Option<std::path::PathBuf>>>,
     /// #12886: the cross-file resolver for assertion-forwarding workspace
     /// macros, built on first use by a gap that needs it.
     assertion_wrapper_visibility:
@@ -184,6 +189,25 @@ impl CallIdentityMemos {
         let answer = compute();
         if let Ok(mut cache) = self.external_imports.lock() {
             cache.insert(key, answer);
+        }
+        answer
+    }
+
+    /// The memoized sole declaring file for `name`, computed by `compute` on
+    /// first use (recomputed, not cached, if the lock is poisoned).
+    pub(super) fn sole_type_declarer(
+        &self,
+        name: &str,
+        compute: impl FnOnce() -> Option<std::path::PathBuf>,
+    ) -> Option<std::path::PathBuf> {
+        if let Ok(cache) = self.sole_type_declarers.lock()
+            && let Some(found) = cache.get(name)
+        {
+            return found.clone();
+        }
+        let answer = compute();
+        if let Ok(mut cache) = self.sole_type_declarers.lock() {
+            cache.insert(name.to_string(), answer.clone());
         }
         answer
     }

@@ -1,0 +1,9 @@
+use quickcheck_arbitrary_stimulus::{gap, Pair};
+
+#[test]
+fn gap_is_second_minus_first() {
+    fn property(pair: Pair) -> bool {
+        gap(&pair) == pair.1.wrapping_sub(pair.0)
+    }
+    quickcheck::quickcheck(property as fn(Pair) -> bool);
+}

@@ -9069,14 +9069,14 @@ mod tests {
             start_line: 1,
             end_line: 9,
             body: "pub fn split_after(input: &str, delim: char) -> &str {\n    let end = input.rfind(delim).map_or(1, |idx| idx);\n    let start = delim.len_utf8();\n    if end == start {\n        &input[..end]\n    } else {\n        input\n    }\n}".into(),
-            calls: Vec::new(),
+            calls: crate::analysis::facts::SharedFactSlice::empty(),
             returns: Vec::new(),
-            literals: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
             source_role: FunctionSourceRole::Production,
-            attrs: Vec::new(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
             impl_attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             item: Default::default(),
             impl_context: Default::default(),
         };
@@ -9090,12 +9090,13 @@ mod tests {
                 name: "split_after".to_string(),
                 line: 5,
                 text: "split_after(\"ab\", 'x');".to_string().into(),
-            }],
+            }]
+            .into(),
             assertions: Vec::new(),
-            literals: Vec::new(),
-            attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             generated: None,
         };
         let probe = Probe {
@@ -9468,12 +9469,13 @@ mod tests {
                 name: "score".to_string(),
                 line: call_line,
                 text: call.to_string().into(),
-            }],
+            }]
+            .into(),
             assertions: Vec::new(),
-            literals: Vec::new(),
-            attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             generated: None,
         }
     }
@@ -9537,7 +9539,8 @@ mod tests {
             "#[rstest]".to_string(),
             "#[case(10, false)]".to_string(),
             "#[case(11, true)]".to_string(),
-        ];
+        ]
+        .into();
         let activation = boundary_activation(&test);
 
         assert_eq!(owner_input_values(&activation), vec!["10", "11"]);
@@ -9556,9 +9559,9 @@ mod tests {
             "fn score_boundary(#[case] amount: i32) {\n    fn far(amount: i32) -> bool { score(amount) }\n    assert!(far(amount + 100));\n}",
         ] {
             let mut test = test_with_body_call(body, 12, "assert!(score(amount));");
-            test.attrs = vec!["#[rstest]".to_string(), "#[case(10)]".to_string()];
+            test.attrs = vec!["#[rstest]".to_string(), "#[case(10)]".to_string()].into();
             if body.contains("fn far") {
-                test.nested_fn_names = vec!["far".to_string()];
+                test.nested_fn_names = vec!["far".to_string()].into();
             }
             let activation = boundary_activation(&test);
 
@@ -10277,15 +10280,15 @@ mod tests {
 let input = Request::builder().amount(100).token("abc").build();
 assert_eq!(input.amount, 100);"#
                 .into(),
-            calls: Vec::new(),
+            calls: crate::analysis::facts::SharedFactSlice::empty(),
             assertions: vec![oracle_fact(
                 "assert_eq!(input.amount, 100);",
                 OracleKind::ExactValue,
             )],
-            literals: Vec::new(),
-            attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             generated: None,
         };
 
@@ -10329,12 +10332,12 @@ assert_eq!(input.amount, 100);"#
             start_line: 10,
             end_line: 12,
             body: assertion.to_string().into(),
-            calls: Vec::new(),
+            calls: crate::analysis::facts::SharedFactSlice::empty(),
             assertions: vec![oracle_fact(assertion, OracleKind::ExactValue)],
-            literals: Vec::new(),
-            attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             generated: None,
         };
 
@@ -10367,12 +10370,12 @@ assert_eq!(input.amount, 100);"#
             start_line: 1,
             end_line: 3,
             body: body.into(),
-            calls: crate::analysis::extract::extract_call_facts(body, 1),
+            calls: crate::analysis::extract::extract_call_facts(body, 1).into(),
             assertions: Vec::new(),
-            literals: Vec::new(),
-            attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             generated: None,
         };
 
@@ -10420,12 +10423,13 @@ assert_eq!(input.amount, 100);"#
                     name: "score".to_string(),
                     text: "score;".to_string().into(),
                 },
-            ],
+            ]
+            .into(),
             assertions: Vec::new(),
-            literals: Vec::new(),
-            attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             generated: None,
         };
 
@@ -10461,15 +10465,15 @@ assert_eq!(input.amount, 100);"#
             start_line: 10,
             end_line: 14,
             body: body.into(),
-            calls,
+            calls: calls.into(),
             assertions: vec![oracle_fact(
                 "assert_eq!(total, 100);",
                 OracleKind::ExactValue,
             )],
-            literals: Vec::new(),
-            attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             generated: None,
         };
         let index = crate::analysis::rust_index::RustIndex::from_owned(
@@ -10884,12 +10888,13 @@ assert_eq!(input.amount, 100);"#
                     name: "score".to_string(),
                     text: "score;".to_string().into(),
                 },
-            ],
+            ]
+            .into(),
             assertions: Vec::new(),
-            literals: Vec::new(),
-            attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             generated: None,
         };
 
@@ -11360,14 +11365,14 @@ assert_eq!(input.amount, 100);"#
             start_line: 1,
             end_line: 3,
             body: body.into(),
-            calls: Vec::new(),
+            calls: crate::analysis::facts::SharedFactSlice::empty(),
             returns: Vec::new(),
-            literals: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
             source_role: FunctionSourceRole::Production,
-            attrs: Vec::new(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
             impl_attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             item: Default::default(),
             impl_context: Default::default(),
         }
@@ -11479,12 +11484,13 @@ assert_eq!(input.amount, 100);"#
                 name: "score".to_string(),
                 line: 11,
                 text: call.to_string().into(),
-            }],
+            }]
+            .into(),
             assertions: Vec::new(),
-            literals: Vec::new(),
-            attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             generated: None,
         }
     }
@@ -11496,12 +11502,12 @@ assert_eq!(input.amount, 100);"#
             start_line: 10,
             end_line: 12,
             body: assertion.into(),
-            calls: Vec::new(),
+            calls: crate::analysis::facts::SharedFactSlice::empty(),
             assertions: vec![oracle_fact(assertion, kind)],
-            literals: Vec::new(),
-            attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             generated: None,
         }
     }
@@ -11560,10 +11566,10 @@ assert_eq!(input.amount, 100);"#
                 })
                 .collect(),
             assertions: Vec::new(),
-            literals: Vec::new(),
-            attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             generated: None,
         }
     }
@@ -11638,7 +11644,8 @@ assert_eq!(input.amount, 100);"#
             "#[rstest]".to_string(),
             "#[case(100, 7, true)]".to_string(),
             "#[case(LOW, 100, false)]".to_string(),
-        ];
+        ]
+        .into();
         assert_eq!(owner_argument_values(&cases, "amount"), vec!["100"]);
         assert_eq!(owner_argument_values(&cases, "limit"), vec!["7", "100"]);
         let rows = owner_call_parameter_values(
@@ -11673,7 +11680,8 @@ assert_eq!(input.amount, 100);"#
             "#[rstest]".to_string(),
             "#[case(100)]".to_string(),
             "#[case(99)]".to_string(),
-        ];
+        ]
+        .into();
         let rows = owner_call_parameter_values(
             &[&test],
             "eq",
@@ -11713,7 +11721,8 @@ assert_eq!(input.amount, 100);"#
             "#[rstest]".to_string(),
             "#[case(1, 2, true)]".to_string(),
             "#[case(2, 1, false)]".to_string(),
-        ];
+        ]
+        .into();
         let rows = owner_call_parameter_values(
             &[&test],
             "less",
@@ -11751,7 +11760,8 @@ assert_eq!(input.amount, 100);"#
             "#[case(UNKNOWN, 4)]".to_string(),
             "#[case(4, UNKNOWN)]".to_string(),
             "#[case(5, 6)]".to_string(),
-        ];
+        ]
+        .into();
         let rows = owner_call_parameter_values(
             &[&test],
             "eq",
@@ -12375,7 +12385,8 @@ assert_eq!(input.amount, 100);"#
         test.literals = vec![LiteralFact {
             line: 11,
             value: "10".to_string(),
-        }];
+        }]
+        .into();
         let probe = probe(ProbeFamily::Predicate, "amount > 10");
         let gathered = boundary_input(&owner, &probe, &[&test]);
         assert!(owner_input_values(&gathered.activation).is_empty());
@@ -13412,7 +13423,8 @@ assert_eq!(input.amount, 100);"#
         test.literals = vec![LiteralFact {
             line: 10,
             value: "16".to_string(),
-        }];
+        }]
+        .into();
         let gathered = boundary_input(&owner, &predicate, &[&test]);
         assert!(gathered.activation.missing_discriminators.is_empty());
         assert!(
@@ -13458,7 +13470,8 @@ assert_eq!(input.amount, 100);"#
         test.literals = vec![LiteralFact {
             line: 11,
             value: "10".to_string(),
-        }];
+        }]
+        .into();
         let probe = probe(ProbeFamily::Predicate, "amount > 10");
         let gathered = boundary_input(&owner, &probe, &[&test]);
         assert!(owner_input_values(&gathered.activation).is_empty());

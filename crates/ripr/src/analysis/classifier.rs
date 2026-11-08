@@ -4,6 +4,7 @@ mod owner;
 mod test_input_generator;
 
 pub(in crate::analysis) use evidence::OwnerCallerNames;
+pub(in crate::analysis) use evidence::assertion_text_with_local_initializers;
 pub(in crate::analysis) use finding::oracle_binds_sink_identity;
 
 use self::evidence::ClassifiedProbeEvidence;
@@ -269,12 +270,14 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index_and_origins_with_
         && let Some(facts) = find_file_facts(index, &owner.file)
     {
         let reader_tests: Vec<&TestSummary> = related_tests.iter().map(|(test, _)| *test).collect();
-        let import_owned: Vec<String> = std::iter::once(facts.source.to_string())
+        // Share the indexed source allocations: copying every related
+        // test file's text per probe held gigabytes across classify workers.
+        let import_owned: Vec<std::sync::Arc<str>> = std::iter::once(facts.source.clone())
             .chain(reader_tests.iter().filter_map(|test| {
-                find_file_facts(index, &test.file).map(|file| file.source.to_string())
+                find_file_facts(index, &test.file).map(|file| file.source.clone())
             }))
             .collect();
-        let import_sources: Vec<&str> = import_owned.iter().map(String::as_str).collect();
+        let import_sources: Vec<&str> = import_owned.iter().map(AsRef::as_ref).collect();
         binding_return_flow = evaluate_binding_return_flow(
             probe,
             owner,
@@ -860,7 +863,7 @@ pub(super) mod tests {
                     line: 1,
                     name: "token_label".to_string(),
                     text: "token_label(\"discount_threshold\")".to_string().into(),
-                }],
+                }].into(),
                 assertions: vec![oracle_fact(
                     "assert_eq!(token_label(\"discount_threshold\"), \"token:discount_threshold\");",
                     OracleKind::ExactValue,
@@ -869,10 +872,10 @@ pub(super) mod tests {
                 literals: vec![LiteralFact {
                     line: 1,
                     value: "\"discount_threshold\"".to_string(),
-                }],
-                attrs: vec![],
-                nested_fn_names: Vec::new(),
-                let_bindings: Vec::new(),
+                }].into(),
+                attrs: crate::analysis::facts::SharedFactSlice::empty(),
+                nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+                let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
                 generated: None,
             }],
             ..Default::default()
@@ -921,12 +924,13 @@ pub(super) mod tests {
                 line: 1,
                 name: callee.to_string(),
                 text: text.to_string().into(),
-            }],
+            }]
+            .into(),
             assertions: Vec::new(),
-            literals: Vec::new(),
-            attrs: vec![],
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             generated: None,
         }
     }
@@ -1347,7 +1351,7 @@ pub(super) mod tests {
             "parse",
             "parse(\">=1.0\")",
         );
-        local.nested_fn_names = vec!["parse".to_string()];
+        local.nested_fn_names = vec!["parse".to_string()].into();
         let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             functions: vec![
                 function("src/op.rs", "op"),
@@ -1777,7 +1781,8 @@ pub(super) mod tests {
                     line: 1,
                     name: "macro_tax_case".to_string(),
                     text: "macro_tax_case!(100)".to_string().into(),
-                }],
+                }]
+                .into(),
                 assertions: vec![oracle_fact(
                     "assert_eq!(macro_tax_case!(100), 120);",
                     OracleKind::ExactValue,
@@ -1786,10 +1791,11 @@ pub(super) mod tests {
                 literals: vec![LiteralFact {
                     line: 1,
                     value: "100".to_string(),
-                }],
-                attrs: vec![],
-                nested_fn_names: Vec::new(),
-                let_bindings: Vec::new(),
+                }]
+                .into(),
+                attrs: crate::analysis::facts::SharedFactSlice::empty(),
+                nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+                let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
                 generated: None,
             }],
             ..Default::default()
@@ -3592,7 +3598,8 @@ fn far_above_threshold_discounts() {
             line: 2,
             name: "check_invariants".to_string(),
             text: "check_invariants(value);".to_string().into(),
-        }];
+        }]
+        .into();
         let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             functions: vec![owner, production_caller],
             tests: vec![test(
@@ -4310,14 +4317,14 @@ fn far_above_threshold_discounts() {
             start_line: 1,
             end_line: 3,
             body: format!("pub fn {name}(input: i32) -> i32 {{ input }}").into(),
-            calls: vec![],
+            calls: crate::analysis::facts::SharedFactSlice::empty(),
             returns: vec![],
-            literals: vec![],
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
             source_role: FunctionSourceRole::Production,
-            attrs: vec![],
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
             impl_attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             item: Default::default(),
             impl_context: Default::default(),
         }
@@ -4515,15 +4522,17 @@ fn far_above_threshold_discounts() {
                 line: 1,
                 name: "score".to_string(),
                 text: call.to_string().into(),
-            }],
+            }]
+            .into(),
             assertions: vec![oracle],
             literals: vec![LiteralFact {
                 line: 1,
                 value: "1".to_string(),
-            }],
-            attrs: vec![],
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            }]
+            .into(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             generated: None,
         }
     }

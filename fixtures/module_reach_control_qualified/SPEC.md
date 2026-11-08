@@ -14,14 +14,14 @@ cargo xtask fixtures module_reach_control_qualified
 
 ## Then
 
-Related to the changed helper through the entry (control for the refusals).
+Related to the changed helper through the entry (control for the refusals). The qualified spelling classifies the same changed behavior as the bare-import control (`module_reach_bare_import_control`): both read `exposed`, because the exact assertions at inputs 10 and 9 pin the wrapper's whole boolean return (#13625).
 
 The expected static class per finding (machine-checked against
 `expected/check.json` by `check-fixture-contracts`, #12928):
 
 ```expected-classes
 probe:src_inner.rs:predicate:25dc8b63 -> exposed
-probe:src_inner.rs:return_value:438cae72 -> weakly_exposed
+probe:src_inner.rs:return_value:438cae72 -> exposed
 ```
 
 ## Must Not
