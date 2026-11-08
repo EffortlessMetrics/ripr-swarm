@@ -1602,6 +1602,7 @@ fn refresh_output_schema() -> Value {
                         "properties": {
                             "why": { "type": "string" },
                             "pass_base": { "type": "string" },
+                            "pass_base_last_commit": { "type": "string" },
                             "pass_source": { "type": "string" }
                         },
                         "required": ["why", "pass_base", "pass_source"],
@@ -1838,6 +1839,16 @@ fn repair_packet_output_schema() -> Value {
                     "changed_behavior": { "type": ["object", "null"] },
                     "discriminator": { "type": ["string", "null"] },
                     "fix_site": { "type": ["object", "null"] },
+                    "inline_test_module": {
+                        "type": ["object", "null"],
+                        "properties": {
+                            "file": { "type": "string" },
+                            "module": { "type": "string" },
+                            "boundary": { "type": "string" }
+                        },
+                        "required": ["file", "module", "boundary"],
+                        "additionalProperties": false
+                    },
                     "allowed_edit_surface": { "type": "array", "items": { "type": "string" } },
                     "must_not_change": { "type": "array", "items": { "type": "string" } },
                     "stop_conditions": { "type": "array", "items": { "type": "string" } },

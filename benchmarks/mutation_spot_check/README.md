@@ -61,17 +61,21 @@ cargo xtask mutation-spot-check --repo zola=../corpus/zola --run-mutants \
 ## Refreshing the corpus
 
 `.github/workflows/mutation-spot-check.yml` is the one place third-party crate
-build scripts and tests run for this harness. It clones the pinned checkouts in
+build scripts and tests run for this harness. A `plan` job turns
 `benchmarks/mutation_spot_check/corpus.json` (name, URL, revision, optional
-`mutants_args`), runs `cargo xtask mutation-spot-check --run-mutants` on a hosted
-runner with read-only permissions and no secrets, and uploads the receipt as the
-`mutation-spot-check` artifact. It runs weekly and on `workflow_dispatch`
-(optionally limited to a comma-separated `repos` list). It is advisory: it never
-writes the default branch, and its numbers gate nothing.
+`mutants_args`) into a per-crate matrix. Each `mutate` job pins one revision,
+runs `cargo xtask mutation-spot-check --run-mutants` on a hosted runner with
+read-only permissions and no secrets, and uploads that crate's receipt and
+`mutants.out` as `spot-<name>`; a lost or timed-out runner costs one crate
+(#13650). A final `score` job re-pins the crates whose `mutants.out` remained,
+scores them together through `--mutants-out`, and uploads the scoreboard receipt
+as the `mutation-spot-check` artifact (its `cargo_mutants_args` and
+`mutant_timeout_secs` read `null`, as for any supplied `--mutants-out`; the
+per-crate `spot-<name>` receipts keep them). It runs weekly and on
+`workflow_dispatch` (optionally limited to a comma-separated `repos` list). It is
+advisory: it never writes the default branch, and its numbers gate nothing.
 
-The harness writes the receipt only when the whole run finishes, and the job is
-capped at 350 minutes, so a run that times out uploads nothing. If the first
-full run does, split the manifest into smaller complete manifests and rerun each.
+A crate whose job times out, is lost, or fails before finishing is excluded from the final scoreboard receipt (only legs that wrote `LEG_COMPLETE` with full `outcomes.json` and `mutants.json` are scored) and is named in the `score` job's warnings; the others are still scored.
 A `repos` batch is for trying a crate, not for promotion: before promoting, check
 that the receipt's repository names and revisions exactly match `corpus.json`,
 and never promote a filtered receipt while the manifest still lists more crates.
@@ -98,8 +102,8 @@ other keys are unaffected):
   honest unknown rather than a confirmed gap), with `not_flagged_missed`
   (strongly_gripped and no_joined_seam) for the remainder. `by_language`
   splits the same figures: Rust is established; Python is `not_established`
-  until a real-mutant corpus exists and carries no numbers; TypeScript is
-  established only by a Stryker report (see below) and says so with its
+  until a real-mutant corpus exists and carries no numbers; TypeScript and Python are
+  established only by a Stryker report or a cosmic-ray dump (see below) and say so with their
   `agreement_method`.
 - `seam_coverage`: mutants total, caught and missed counts, `canonical_precise`
   and no-containing-seam counts, and their shares of all recorded mutants.
@@ -117,7 +121,7 @@ other keys are unaffected):
   top-level `timing_observation` (`ripr_seconds`, `cargo_mutants_seconds`,
   crate, revision, tool versions, machine); it stays `not_established` when
   absent. The recorded observation is one crate (rust-hex), one diff, one run.
-  Python/TypeScript agreement stays `not_established` in this criterion (Python has no corpus; TypeScript is scored separately), so `replaces` is unreachable until a corpus exists (fail-closed). A `replaces`
+  Python/TypeScript agreement stays `not_established` in this criterion (both are scored separately by the synthetic-diff method), so `replaces` is unreachable until a corpus exists (fail-closed). A `replaces`
   verdict is not suite adequacy; scope is Rust on the recorded crates.
 
 All are advisory, bound to the recorded revisions, and not suite adequacy. To
@@ -211,7 +215,7 @@ A pair is `canonical_precise` only when exactly one classification and owner
 lie on the mutated lines. Exclusions, so that `canonical_precise` plus them
 equals the mutant count: `non_target_language_file`, `source_mismatch`,
 `unscoreable_outcome`, `invalid_location`, `noop_mutant`, `over_mutant_cap`
-(`--stryker-max-mutants`, default 1500; when more mutants are eligible, an even
+(`--max-mutants`, alias `--stryker-max-mutants`, default 1500; when more mutants are eligible, an even
 deterministic stride across the sorted report is run and the rest are
 excluded; the receipt's `sampling` records `eligible` and `selected`),
 `ripr_check_failed`, `analysis_incomplete`, `no_finding_on_mutated_lines`,
@@ -230,21 +234,59 @@ both carry the same `agreement_method`), and
 are excluded from the Rust `scored_families`, `seam_coverage`,
 `replacement_criterion` and pilot rows. The
 `python_typescript_real_mutant_agreement` criterion stays `not_established`
-(Python has no corpus; TypeScript is measured only by the synthetic-diff
+(Python and TypeScript are measured only by the synthetic-diff
 method, not the span-join agreement it is defined over). A mutated line is not a seam and the TypeScript
 analysis is a syntax-first preview, so the figures say how often a diff-time
 verdict agrees with a real mutant, not suite adequacy.
 
 `.github/workflows/mutation-spot-check-typescript.yml` runs it weekly on the
-pinned packages of `corpus-typescript.json` (Stryker 8.7.1 with the vitest
+pinned packages of `corpus-typescript.json` (Stryker 9.6.1 with the vitest
 runner), uploads the receipt and a per-package Stryker exit-status file, and
 ends with a step that fails the job when the receipt is missing or a package
-failed. **That workflow and corpus have not run**: no package has been
-confirmed to install, pass its tests under Stryker or yield a report, and the
-Stryker version and its vitest runner were chosen without a registry check.
+failed. First hosted run (2026-11-08, Stryker 9.6.1): defu and ufo installed, ran
+under Stryker and were scored (1,107 mutants); scule was dropped because its
+vitest crashes the Stryker vitest runner. Figures bind to the recorded
+revisions and are not promoted to the public receipt yet.
 The join code (`xtask/src/reports/mutation_spot_check/synthetic_diff.rs`) is
 language-generic; another mutation tool only needs a report parser like
 `stryker.rs`.
+
+## Python: real cosmic-ray mutants (same join)
+
+`--cosmic-ray-dump <name>=<file>` (with the matching `--repo <name>=<checkout>`)
+scores Python through the same synthetic-diff join. The file is the output of
+`cosmic-ray dump <session.sqlite>`: one `[work_item, result]` JSON array per
+line. The parser (`cosmic_ray.rs`) reads `module_path`, `start_pos`/`end_pos`
+(`[line, column]`, 1-based line, 0-based code-point column) and the result's
+`worker_outcome`, `test_outcome` and `diff`. cosmic-ray records no replacement
+text, so the replacement is recovered from the diff's one removed/added line
+pair against the checkout's own file, and the columns are converted to the
+join's UTF-16 form. Every original-side line of the diff's hunk (context and
+removed, at the hunk header's line numbers) must match the checkout, so a dump
+from another revision is not scored. A dump does not name its producer, so
+`--cosmic-ray-version <v>` records the version in `mutation_tool.version`
+(null when omitted); the workflow passes the corpus pin. A mutant whose range does not reproduce its diff, or that
+spans several lines, is not guessed at: its outcome token is
+`unlocatable_diff` or `unlocatable_multiline`, so it lands in
+`unscoreable_outcome` and stays countable in the receipt.
+
+Runtime side: cosmic-ray reports a test timeout as a normal run with output `timeout`; that is `timeout`, never `caught`. A mutant that breaks import or collection also exits non-zero and reads as detected, so `caught` here is an upper bound on tests discriminating. A normal run whose tests detected the mutant is `caught` and a
+normal run whose tests did not is `missed`; incompetent (`unviable`), timeout,
+abnormal/exception (`runtime_error`), `no-test`, skipped and pending results
+are never scored. One run scores one synthetic language: `--stryker-report` and
+`--cosmic-ray-dump` together are refused, because the
+`synthetic_diff_verdict` row is a single aggregate. Everything else about the
+receipt, exclusions and claim boundary is as for TypeScript, with
+`language: "python"` and `recall_of_missed.by_language.python`.
+
+`.github/workflows/mutation-spot-check-python.yml` runs it on demand and
+weekly on the pinned packages of `corpus-python.json` (cosmic-ray 8.8.0, local
+distributor, pytest). Third-party code (the packages and cosmic-ray) runs only
+there, never in an agent sandbox. **That workflow and corpus have not run**:
+no package is confirmed to install, pass its baseline or finish a session, and
+the cosmic-ray dump field names were taken from its source, not from a real
+dump. The first run is the first evidence; it uploads the raw dumps beside the
+receipt so a parser mismatch can be diagnosed.
 
 ## Pilot top recommendations
 

@@ -56,6 +56,18 @@ public-copy boundary. Isolated marketplace install smoke remains useful
 post-release hygiene, but the 0.7.0 public availability claim is already
 verified by the release closeout.
 
+## Post-Publish Registry Proof
+
+After the maintainer publishes, dispatch the `Published install matrix`
+workflow with `release_version` set to the release (for example `0.11.0`). Every
+crates.io, PyPI and npm cell must install that exact version and report
+`ripr <version>`; PyPI and npm cells on non-Linux-x86-64 platforms remain
+documented gaps. Then run `cargo xtask install-receipt --cells <matrix-dir> --run-id
+<matrix-run> --cells <archive-dir> --run-id <archive-run> --write` (the archive
+cells come from a `first-run-archive.yml` run) and keep the receipt with the release closeout. This proves the
+registries serve the announced version; GitHub Release archives, the VSIX and
+the marketplaces are verified by the steps below.
+
 ## Next Release-Candidate Proof
 
 Use this section for the next unreleased line. Until the maintainer tags,

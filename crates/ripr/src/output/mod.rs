@@ -43,6 +43,7 @@ pub(crate) mod language_capabilities;
 pub(crate) mod language_view_agreement_tests;
 pub(crate) mod limited_check;
 pub(crate) mod markdown;
+pub(crate) mod missed_txt;
 pub(crate) mod mutation_calibration;
 pub(crate) mod oracle_phrase;
 #[cfg(test)]
@@ -80,6 +81,7 @@ pub(crate) mod python_env;
 pub(crate) mod python_repair_card;
 pub mod receipt_lifecycle;
 pub(crate) mod receipt_write;
+pub(crate) mod refusal;
 pub(crate) mod related_test_miss;
 pub(crate) mod render;
 pub(crate) mod repo_exposure;

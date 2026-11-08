@@ -85,6 +85,96 @@ surface, not the toolchain around it. The production filter excludes paths under
 `node_modules/`, test/example/bench trees, and `src/tests.rs`. Passing a fixture
 workspace itself as `--root` still analyzes that fixture normally.
 
+## `ripr.toml` reference
+
+Every key `ripr.toml` accepts. An unknown key fails the load and names the
+nearest valid key when one is close (``did you mean `mode`?``).
+A value of the wrong type or outside the listed values fails and names the
+key; most value errors also give the line and the accepted values. Check a
+file with `ripr config validate`.
+
+Editors can validate and complete the file with the published JSON schema,
+[`schemas/config/ripr-toml.schema.json`](../schemas/config/ripr-toml.schema.json).
+For Even Better TOML or Taplo, add `#:schema` pointing at it, or map it to
+`ripr.toml` in the extension's schema settings.
+
+A test keeps this table, the schema, and the parser's accepted keys identical.
+
+| Key | Type | Meaning |
+| --- | --- | --- |
+| `analysis.mode` | one of `instant`, `draft`, `fast`, `deep`, `ready` | Default analysis mode when CLI flags or LSP options do not set one. |
+| `analysis.include_unchanged_tests` | boolean | Also consider tests the diff did not touch. |
+| `analysis.production_like_targets` | array of string | Cargo targets treated as production-like. |
+| `analysis.test_harnesses[]` | array of tables | Exact custom test-harness registrations. Every field is required; `custom_harness` pairs with `libtest_mimic_v1` and `registered_attribute` with `exact_attribute_v1`. |
+| `analysis.test_harnesses[].registration_id` | string |  |
+| `analysis.test_harnesses[].target` | string | Repository-relative path. |
+| `analysis.test_harnesses[].kind` | one of `custom_harness`, `registered_attribute` |  |
+| `analysis.test_harnesses[].adapter` | one of `libtest_mimic_v1`, `exact_attribute_v1` |  |
+| `analysis.test_harnesses[].marker` | string | Exact identifier path, no wildcards. |
+| `oracles.snapshot_strength` | one of `strong`, `medium`, `weak`, `smoke`, `none`, `unknown` | Assumed strength of snapshot assertions. |
+| `oracles.mock_expectation_strength` | one of `strong`, `medium`, `weak`, `smoke`, `none`, `unknown` | Assumed strength of mock expectations. |
+| `oracles.broad_error_strength` | one of `strong`, `medium`, `weak`, `smoke`, `none`, `unknown` | Assumed strength of broad error assertions. |
+| `severity.findings.exposed` | one of `info`, `warning`, `note` | Severity for `exposed` findings. |
+| `severity.findings.weakly_exposed` | one of `info`, `warning`, `note` | Severity for `weakly_exposed` findings. |
+| `severity.findings.reachable_unrevealed` | one of `info`, `warning`, `note` | Severity for `reachable_unrevealed` findings. |
+| `severity.findings.no_static_path` | one of `info`, `warning`, `note` | Severity for `no_static_path` findings. |
+| `severity.findings.infection_unknown` | one of `info`, `warning`, `note` | Severity for `infection_unknown` findings. |
+| `severity.findings.propagation_unknown` | one of `info`, `warning`, `note` | Severity for `propagation_unknown` findings. |
+| `severity.findings.static_unknown` | one of `info`, `warning`, `note` | Severity for `static_unknown` findings. |
+| `severity.seams.strongly_gripped` | one of `info`, `warning`, `note`, `off` | Severity for `strongly_gripped` seams; `off` hides them. |
+| `severity.seams.weakly_gripped` | one of `info`, `warning`, `note`, `off` | Severity for `weakly_gripped` seams; `off` hides them. |
+| `severity.seams.ungripped` | one of `info`, `warning`, `note`, `off` | Severity for `ungripped` seams; `off` hides them. |
+| `severity.seams.reachable_unrevealed` | one of `info`, `warning`, `note`, `off` | Severity for `reachable_unrevealed` seams; `off` hides them. |
+| `severity.seams.activation_unknown` | one of `info`, `warning`, `note`, `off` | Severity for `activation_unknown` seams; `off` hides them. |
+| `severity.seams.propagation_unknown` | one of `info`, `warning`, `note`, `off` | Severity for `propagation_unknown` seams; `off` hides them. |
+| `severity.seams.observation_unknown` | one of `info`, `warning`, `note`, `off` | Severity for `observation_unknown` seams; `off` hides them. |
+| `severity.seams.discrimination_unknown` | one of `info`, `warning`, `note`, `off` | Severity for `discrimination_unknown` seams; `off` hides them. |
+| `severity.seams.opaque` | one of `info`, `warning`, `note`, `off` | Severity for `opaque` seams; `off` hides them. |
+| `severity.seams.intentional` | one of `info`, `warning`, `note`, `off` | Severity for `intentional` seams; `off` hides them. |
+| `severity.seams.suppressed` | one of `info`, `warning`, `note`, `off` | Severity for `suppressed` seams; `off` hides them. |
+| `lsp.seam_diagnostics` | boolean | Publish saved-workspace seam diagnostics. |
+| `lsp.diagnostic_profile` | one of `actionable`, `full` | Editor diagnostic profile. |
+| `reports.max_related_tests` | integer, at least 1 | Default related-test cap for context packets. |
+| `suppressions.path` | string | Repository-relative, slash-separated suppressions file. |
+| `languages.enabled` | array of `rust`, `typescript`, `javascript`, `python`, `perl` | Enabled languages. |
+| `languages.rust.generated_file_patterns` | array of string | Additive generated-source globs. |
+| `languages.rust.handwritten_files` | array of string | Exact paths exempt from generated-name conventions. |
+| `languages.python.handwritten_files` | array of string | Exact handwritten paths. |
+| `languages.python.excluded_file_patterns` | array of string | Globs excluded from preview indexing. |
+| `languages.typescript.handwritten_files` | array of string | Exact handwritten paths. |
+| `languages.typescript.excluded_file_patterns` | array of string | Globs excluded from preview indexing. |
+| `profiles.bun_ub.test_roots` | array of string, required in `[profiles.bun_ub]` | Test-root globs. |
+| `profiles.bun_ub.bridge_hints` | string, required in `[profiles.bun_ub]` | Repository-relative bridge hints file. |
+| `typescript.resolve_tsconfig_paths` | boolean | Resolve tsconfig `paths` aliases. |
+| `perl.producer` | one of `perl-ripr-facts`, `perllsp`, `perl-lsp` | Managed fact-packet exporter. |
+| `perl.executable` | string | Exporter path; honored only when RIPR_ALLOW_REPO_PERL_EXECUTABLE=1. |
+| `perl.timeout_ms` | integer, at least 1 | Per-invocation timeout. |
+| `perl.cache_dir` | string | Fact cache location. |
+| `overrides[]` | array of tables | Per-crate or per-path severity and oracle overrides. Each row sets exactly one of `crate` or `path`, plus a severity or oracles block. |
+| `overrides[].crate` | string | Cargo package name. |
+| `overrides[].path` | string | Repository-relative glob. |
+| `overrides[].severity.findings.exposed` | one of `info`, `warning`, `note` | Severity for `exposed` findings. |
+| `overrides[].severity.findings.weakly_exposed` | one of `info`, `warning`, `note` | Severity for `weakly_exposed` findings. |
+| `overrides[].severity.findings.reachable_unrevealed` | one of `info`, `warning`, `note` | Severity for `reachable_unrevealed` findings. |
+| `overrides[].severity.findings.no_static_path` | one of `info`, `warning`, `note` | Severity for `no_static_path` findings. |
+| `overrides[].severity.findings.infection_unknown` | one of `info`, `warning`, `note` | Severity for `infection_unknown` findings. |
+| `overrides[].severity.findings.propagation_unknown` | one of `info`, `warning`, `note` | Severity for `propagation_unknown` findings. |
+| `overrides[].severity.findings.static_unknown` | one of `info`, `warning`, `note` | Severity for `static_unknown` findings. |
+| `overrides[].severity.seams.strongly_gripped` | one of `info`, `warning`, `note`, `off` | Severity for `strongly_gripped` seams; `off` hides them. |
+| `overrides[].severity.seams.weakly_gripped` | one of `info`, `warning`, `note`, `off` | Severity for `weakly_gripped` seams; `off` hides them. |
+| `overrides[].severity.seams.ungripped` | one of `info`, `warning`, `note`, `off` | Severity for `ungripped` seams; `off` hides them. |
+| `overrides[].severity.seams.reachable_unrevealed` | one of `info`, `warning`, `note`, `off` | Severity for `reachable_unrevealed` seams; `off` hides them. |
+| `overrides[].severity.seams.activation_unknown` | one of `info`, `warning`, `note`, `off` | Severity for `activation_unknown` seams; `off` hides them. |
+| `overrides[].severity.seams.propagation_unknown` | one of `info`, `warning`, `note`, `off` | Severity for `propagation_unknown` seams; `off` hides them. |
+| `overrides[].severity.seams.observation_unknown` | one of `info`, `warning`, `note`, `off` | Severity for `observation_unknown` seams; `off` hides them. |
+| `overrides[].severity.seams.discrimination_unknown` | one of `info`, `warning`, `note`, `off` | Severity for `discrimination_unknown` seams; `off` hides them. |
+| `overrides[].severity.seams.opaque` | one of `info`, `warning`, `note`, `off` | Severity for `opaque` seams; `off` hides them. |
+| `overrides[].severity.seams.intentional` | one of `info`, `warning`, `note`, `off` | Severity for `intentional` seams; `off` hides them. |
+| `overrides[].severity.seams.suppressed` | one of `info`, `warning`, `note`, `off` | Severity for `suppressed` seams; `off` hides them. |
+| `overrides[].oracles.snapshot_strength` | one of `strong`, `medium`, `weak`, `smoke`, `none`, `unknown` | Assumed strength of snapshot assertions. |
+| `overrides[].oracles.mock_expectation_strength` | one of `strong`, `medium`, `weak`, `smoke`, `none`, `unknown` | Assumed strength of mock expectations. |
+| `overrides[].oracles.broad_error_strength` | one of `strong`, `medium`, `weak`, `smoke`, `none`, `unknown` | Assumed strength of broad error assertions. |
+
 ## CLI flags
 
 The CLI is the canonical, fully-supported configuration surface. All defaults
@@ -251,7 +341,7 @@ that needs the tuning.
 | `RIPR_PARTIAL_DIFF_LINE_BUDGET` | `1000` | Added plus removed changed lines a diff-scoped analysis inspects before returning `limited_partial_scope`. A later whole file that would exceed the remaining budget is excluded (never an overshoot); the first selected file is always analyzed even when it alone exceeds the budget (stop reason `line_budget_exceeded_on_first_file`). Values above the effective `RIPR_MAX_DIFF_CHANGED_RUST_LINES` limit (its env override when set, otherwise the `2000` default) are clamped to that effective limit with a disclosure — so a runner that raises the max limit accepts a line budget up to the same ceiling instead of silently truncating it back to the default. Must be a positive integer; invalid values fail closed as `partial_budget_invalid`. |
 | `RIPR_REPO_SEAM_CACHE_LIMIT` | `20000` | Secondary maximum classified seam *count* per single entry or shard in the full repo seam cache. Encoded bytes are the primary bound (`RIPR_CLASSIFIED_SEAM_CACHE_SHARD_BYTES`). Raise this to allow more records per shard only when those records still fit the byte ceiling and the machine has enough disk and time budget. Must be a positive integer. Invalid values fail with a diagnostic naming the variable. |
 | `RIPR_COMPACT_REPO_SEAM_CACHE_MAX_SEAMS` | `100000` | Secondary seam *count* cap per single entry or shard in the compact repo seam cache. Encoded bytes remain the primary bound (`RIPR_CLASSIFIED_SEAM_CACHE_SHARD_BYTES`). Raise this for large repos only when shards still fit the byte ceiling and the machine has enough disk and time budget. Must be a positive integer. Invalid values fail with a diagnostic naming the variable. |
-| `RIPR_CLASSIFIED_SEAM_CACHE_SHARD_BYTES` | `8388608` (8 MiB) | Primary encoded-byte ceiling for one classified-cache single entry or shard on both the full and compact store paths (RIPR-SPEC-0222). Record-count env vars are secondary. A single record that cannot fit is skipped with `skipped_oversized_record_index_*` (`skipped_oversized_metadata_ceiling_*` when the metadata overflows); analysis output stays usable, the cache is not claimed populated, and one stderr line names the record, its encoded size and the value that fits. Must be a positive integer. Invalid values fail with a diagnostic naming the variable. This is a store-path bound, not a process RSS guarantee or a load/decode bound. |
+| `RIPR_CLASSIFIED_SEAM_CACHE_SHARD_BYTES` | `8388608` (8 MiB) | Encoded-byte ceiling for a full or compact classified-cache entry, shard, or manifest on read, and for an entry or shard on write (RIPR-SPEC-0222). The reader also limits reconstructed related-test references per entry or shard to the ceiling divided by the larger of 8 and the size of one `Arc` slot (1,048,576 at the default on 64-bit hosts); an over-limit unit is ignored and recomputed. This slot bound excludes the encoded buffer, decoded index vectors, and final multi-shard payload, and is not a process RSS guarantee. Record-count env vars are secondary write limits. A single record that cannot fit is skipped with `skipped_oversized_record_index_*` (`skipped_oversized_metadata_ceiling_*` when the metadata overflows); analysis output stays usable and one stderr line names the record, its encoded size and the value that fits. Must be a positive integer for writes; an invalid read value falls back to the default ceiling. |
 | `RIPR_MODULE_TREE_SCAN_CACHE_BYTES` | `33554432` (32 MiB) | Load ceiling for the single module-tree scan bundle (`scans.json`). A bundle above the ceiling is never allocated whole; the load degrades to a cold rebuild, so analysis output stays correct and only the warm-run benefit is lost. Raise this only for workspaces whose legitimate bundle exceeds 32 MiB. Must be a positive integer; an invalid value falls back to the default ceiling rather than failing the load. This is a load-path bound, not a process RSS guarantee. |
 | `RIPR_QUIET` | unset | Silences the stderr `ripr progress:` stream exactly like `--quiet` for `ripr check`, `explain`, `context` and `pilot` (#11580), and the progress narration and `wrote <path>` lines of `ripr repair`, `ripr continue` and `ripr agent repair` (#11598). Unset, empty, `0` and `false` (any case) keep progress; any other value silences it. Stdout, exit codes, result lines and refusal/error prose are unchanged. Intended for agent harnesses that merge stderr into the model's view. |
 | `RIPR_PROGRESS` | unset | Keeps the stderr `ripr progress:` stream when a machine format (`--json`, `--format json`, `sarif`, `badge-*`, `agent` and the other document formats; `ripr context`; `ripr pilot --format json`) is selected and stderr is not a terminal, where progress is off by default (#11598). Unset, empty, `0` and `false` leave that default; any other value restores the stream. `--quiet` and `RIPR_QUIET` win over it. A terminal and the human formats always keep progress. |
