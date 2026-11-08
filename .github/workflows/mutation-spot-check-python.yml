@@ -29,7 +29,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: mutation-spot-check-python-${{ github.ref }}
+  group: mutation-spot-check-python-${{ github.ref }}-${{ inputs.packages }}
   cancel-in-progress: true
 
 jobs:
