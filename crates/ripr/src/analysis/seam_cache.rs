@@ -3414,14 +3414,6 @@ impl RepoFileFactCache {
     }
 
     pub(crate) fn load_file_facts(&self, key: &RepoFileFactCacheKey) -> CacheLoad<FileFacts> {
-        let load = self.load_file_facts_entry(key);
-        if matches!(load, CacheLoad::Hit(_)) {
-            self.note_build_use();
-        }
-        load
-    }
-
-    fn load_file_facts_entry(&self, key: &RepoFileFactCacheKey) -> CacheLoad<FileFacts> {
         // An unusable base fails every lookup the same way, but on Windows
         // that failure is indistinguishable from `NotFound` (#4918). The
         // positive base probe classifies the whole layer as corrupt-ignored
@@ -3620,9 +3612,12 @@ impl RepoFileFactCache {
     /// [`FILE_FACT_BUILD_USE_REFRESH`] per process. A warm run never writes an
     /// entry, so entry mtimes alone would make an editor server that only
     /// hits look abandoned to the prune; this marker is its "last used" time.
-    /// Production layout, usable base and a real (non-symlink) marker
-    /// directory only; the write is atomic and failures are ignored.
-    fn note_build_use(&self) {
+    /// Called by the fact build when it serves a hit, not by
+    /// `load_file_facts` itself, so read-only consumers (cache export
+    /// validation) never write. Production layout, usable base and a real
+    /// (non-symlink) marker directory only; the write is atomic and failures
+    /// are ignored.
+    pub(crate) fn note_build_use(&self) {
         let Some(layer_dir) = self.file_fact_schema_layer_dir() else {
             return;
         };
@@ -3719,7 +3714,13 @@ impl RepoFileFactCache {
     /// are left alone; nothing is removed through a symlinked directory.
     fn prune_stale_build_entries(&self) {
         let identity = crate::build_identity::cache_identity();
-        if !is_real_dir(&self.dir) {
+        // Both the layer and the schema directory must be real directories:
+        // containment is lexical, so a symlinked `repo-file-facts` would
+        // otherwise let the prune delete JSON outside the cache.
+        let Some(layer_dir) = self.file_fact_schema_layer_dir() else {
+            return;
+        };
+        if !is_real_dir(&layer_dir) || !is_real_dir(&self.dir) {
             return;
         }
         let Ok(entries) = std::fs::read_dir(&self.dir) else {
@@ -10684,6 +10685,7 @@ mod file_fact_stale_build_prune_tests {
             .store_file_facts(&key, &FileFacts::default())
             .map_err(|error| error.message)?;
         let hit = matches!(cache.load_file_facts(&key), CacheLoad::Hit(_));
+        cache.note_build_use();
         let outside_written = std::fs::read_dir(&outside)
             .map(|entries| entries.count())
             .unwrap_or(0);
@@ -10696,7 +10698,7 @@ mod file_fact_stale_build_prune_tests {
     }
 
     #[test]
-    fn a_cache_hit_records_this_builds_use_marker() -> Result<(), String> {
+    fn noting_a_hit_records_the_use_marker_and_a_plain_read_does_not() -> Result<(), String> {
         let base = scratch("build-prune-hit-marker")?;
         let cache = RepoFileFactCache::at_base(&base);
         let key = RepoFileFactCacheKey::new(Path::new("src/hit.rs"), b"pub fn hit() {}\n");
@@ -10709,14 +10711,49 @@ mod file_fact_stale_build_prune_tests {
             .join(FILE_FACT_BUILD_USE_DIR)
             .join(build_use_marker_name(identity));
         let before_hit = marker.exists();
+        let plain_read_wrote = {
+            let _ = cache.load_file_facts(&key);
+            marker.exists()
+        };
         let hit = matches!(cache.load_file_facts(&key), CacheLoad::Hit(_));
+        cache.note_build_use();
         let content = std::fs::read_to_string(&marker).unwrap_or_default();
         super::ignore_remove_dir_all(&base);
-        if before_hit || !hit || content != identity {
+        if before_hit || plain_read_wrote || !hit || content != identity {
             return Err(format!(
-                "before_hit={before_hit} hit={hit} marker_content_matches={}",
+                "before_hit={before_hit} plain_read_wrote={plain_read_wrote} hit={hit} marker_content_matches={}",
                 content == identity
             ));
+        }
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn prune_never_deletes_through_a_symlinked_layer_dir() -> Result<(), String> {
+        let template = current_entry_bytes("build-prune-template-6")?;
+        let base = scratch("build-prune-layer-symlink")?;
+        let outside = scratch("build-prune-layer-outside")?;
+        let outside_schema = outside.join(FILE_FACT_CACHE_SCHEMA_VERSION);
+        let mut planted = Vec::new();
+        for (index, age) in [40_u64, 30, 20].iter().enumerate() {
+            planted.push(plant_build_entry(
+                &outside_schema,
+                &template,
+                &format!("victim{index}.json"),
+                &format!("0.5.{index}+x"),
+                *age,
+            )?);
+        }
+        std::os::unix::fs::symlink(&outside, base.join(CacheLayer::FileFacts.name()))
+            .map_err(|error| format!("symlink: {error}"))?;
+        let cache = RepoFileFactCache::at_base(&base);
+        let _ = store_one(&cache);
+        let all_kept = planted.iter().all(|path| path.exists());
+        super::ignore_remove_dir_all(&base);
+        super::ignore_remove_dir_all(&outside);
+        if !all_kept {
+            return Err("prune deleted files through a symlinked layer dir".to_string());
         }
         Ok(())
     }
