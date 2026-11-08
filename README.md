@@ -130,8 +130,8 @@ Using a coding agent? `ripr init --agents claude|codex|cursor|all` adds a short
 find-gap, write-test, verify loop with an explicit done and stop rule to your
 agent's instruction file (see the [agent quickstart](docs/AGENT_QUICKSTART.md)).
 Or run `ripr check`, then run the follow-up commands it
-prints exactly as printed; their IDs belong to that run. For repairs,
-`ripr check` prints the `ripr repair` command when an eligible repair exists; `ripr pilot --root .` is optional broader exploration.
+prints exactly as printed; their IDs belong to that run. When an eligible
+repair exists, `ripr check` prints the `ripr repair` command.
 Add `--format json` for machine-readable results. Repair-attempt file rules,
 card handoff and exit codes are in the
 [agent repair details](docs/QUICKSTART.md#agent-repair-details),

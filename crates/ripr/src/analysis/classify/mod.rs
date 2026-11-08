@@ -60,6 +60,7 @@ mod stop_reason_contract;
 mod targeted_calls;
 mod text;
 mod transitive_reach;
+mod unpolled_future;
 mod value_transfer;
 mod variant_field_pattern;
 
@@ -144,6 +145,8 @@ pub(in crate::analysis) use indirect_owner::{
     oracle_owner_call_is_shadowed, related_tests_reach_owner_indirectly,
     withhold_indirect_owner_gap,
 };
+#[cfg(test)]
+pub(in crate::analysis) use indirect_owner::{owner_item_ask_count, owner_item_scan_count};
 pub(in crate::analysis) use infection::{
     OwnerInputs, exercised_bool_chain_return_sink, infection_evidence_for_owner,
 };
@@ -219,6 +222,7 @@ pub(in crate::analysis) use reveal::{
 pub(in crate::analysis) use reveal::{ReturnOracleAdmission, contains_as_whole_word};
 pub(in crate::analysis) use reveal::{only_proximity_oracles, reveal_outcome};
 pub(in crate::analysis) use slice_boundary::refine_slice_boundary;
+pub(in crate::analysis) use unpolled_future::withhold_unpolled_future_gap;
 // RIPR-SPEC-0106: re-export the variant parsers so test_grip_evidence.rs can
 // apply variant-binding without reaching into the private `text` submodule.
 pub(in crate::analysis) use text::{
