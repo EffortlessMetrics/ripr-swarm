@@ -53,7 +53,7 @@ Stop reasons:
 
 Static limitation
   unresolved_pytest_fixture — A pytest fixture could not be resolved, so ripr cannot statically connect the test setup to this change.
-  Next: Pass the input value inline in the test body. A fixture is read only when it is a plain no-parameter `@pytest.fixture` returning `OwnerClass(<literals>)`; defining it in a `conftest.py` does not clear this limit.
+  Next: Pass the input value inline in the test body. A fixture is read only when its whole body is one of the supported shapes (for example `return OwnerClass(<literals>)`); a fixture of another shape stays unread, including one defined in a `conftest.py`.
 Drill in:
   (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/python_one_line_def_body_fixture/input --diff <cwd>/fixtures/python_one_line_def_body_fixture/diff.patch --mode fast probe:discount.py:python_preview:5ee0ee5a

@@ -87,9 +87,10 @@ impl StaticLimitKind {
                  exact assertion; ripr cannot see the inputs a property test generates."
             }
             StaticLimitKind::UnresolvedPytestFixture => {
-                "Pass the input value inline in the test body. A fixture is read only when it is a plain \
-                 no-parameter `@pytest.fixture` returning `OwnerClass(<literals>)`; defining it in \
-                 a `conftest.py` does not clear this limit."
+                "Pass the input value inline in the test body. A fixture is read only when its \
+                 whole body is one of the supported shapes (for example \
+                 `return OwnerClass(<literals>)`); a fixture of another shape stays unread, \
+                 including one defined in a `conftest.py`."
             }
             StaticLimitKind::UnsupportedSyntax => {
                 "Move the changed logic into a plain function and test that function, or report \
@@ -433,7 +434,9 @@ mod tests {
         let step = StaticLimitKind::UnresolvedPytestFixture.next_step();
         assert!(!step.contains("Define the fixture"), "{step}");
         assert!(
-            step.contains("inline") && step.contains("conftest.py"),
+            step.contains("inline")
+                && step.contains("whole body")
+                && step.contains("another shape stays unread"),
             "{step}"
         );
     }

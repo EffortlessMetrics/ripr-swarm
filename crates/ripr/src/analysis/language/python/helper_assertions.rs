@@ -50,6 +50,109 @@ pub(super) struct PythonHelperModule {
     /// `try` whose every handler re-raises (RIPR-SPEC-0238 rule 27).
     reraisers: BTreeSet<String>,
     bound: BTreeSet<String>,
+    /// How many import statements bind each name anywhere in the module,
+    /// nested and conditional ones included (`bound` skips imports).
+    #[serde(default)]
+    import_bindings: BTreeMap<String, usize>,
+    /// Names (and attribute names) a `del` removes anywhere in the module.
+    #[serde(default)]
+    deleted: BTreeSet<String>,
+    /// Attribute names assigned anywhere in the module (`x.attr = ...`).
+    #[serde(default)]
+    assigned_attributes: BTreeSet<String>,
+}
+
+/// Counts every import binding and `del` target in `statements`, descending
+/// into every nested block, def and class.
+fn scan_import_rebinding(
+    statements: &[Stmt],
+    imports: &mut BTreeMap<String, usize>,
+    deleted: &mut BTreeSet<String>,
+) {
+    fn deleted_targets(target: &Expr, deleted: &mut BTreeSet<String>) {
+        match target {
+            Expr::Name(name) => {
+                deleted.insert(name.id.to_string());
+            }
+            Expr::Attribute(attribute) => {
+                deleted.insert(attribute.attr.to_string());
+            }
+            Expr::Tuple(tuple) => tuple.elts.iter().for_each(|e| deleted_targets(e, deleted)),
+            Expr::List(list) => list.elts.iter().for_each(|e| deleted_targets(e, deleted)),
+            _ => {}
+        }
+    }
+    fn handlers(
+        handlers: &[ast::ExceptHandler],
+        imports: &mut BTreeMap<String, usize>,
+        deleted: &mut BTreeSet<String>,
+    ) {
+        for handler in handlers {
+            let ast::ExceptHandler::ExceptHandler(handler) = handler;
+            scan_import_rebinding(&handler.body, imports, deleted);
+        }
+    }
+    for stmt in statements {
+        match stmt {
+            Stmt::Import(import) => {
+                for alias in &import.names {
+                    let name = match &alias.asname {
+                        Some(asname) => asname.to_string(),
+                        None => alias.name.split('.').next().unwrap_or_default().to_string(),
+                    };
+                    *imports.entry(name).or_default() += 1;
+                }
+            }
+            Stmt::ImportFrom(import) => {
+                for alias in &import.names {
+                    let name = alias.asname.as_ref().unwrap_or(&alias.name).to_string();
+                    *imports.entry(name).or_default() += 1;
+                }
+            }
+            Stmt::Delete(delete) => delete
+                .targets
+                .iter()
+                .for_each(|target| deleted_targets(target, deleted)),
+            Stmt::FunctionDef(f) => scan_import_rebinding(&f.body, imports, deleted),
+            Stmt::AsyncFunctionDef(f) => scan_import_rebinding(&f.body, imports, deleted),
+            Stmt::ClassDef(c) => scan_import_rebinding(&c.body, imports, deleted),
+            Stmt::For(f) => {
+                scan_import_rebinding(&f.body, imports, deleted);
+                scan_import_rebinding(&f.orelse, imports, deleted);
+            }
+            Stmt::AsyncFor(f) => {
+                scan_import_rebinding(&f.body, imports, deleted);
+                scan_import_rebinding(&f.orelse, imports, deleted);
+            }
+            Stmt::While(w) => {
+                scan_import_rebinding(&w.body, imports, deleted);
+                scan_import_rebinding(&w.orelse, imports, deleted);
+            }
+            Stmt::If(i) => {
+                scan_import_rebinding(&i.body, imports, deleted);
+                scan_import_rebinding(&i.orelse, imports, deleted);
+            }
+            Stmt::With(w) => scan_import_rebinding(&w.body, imports, deleted),
+            Stmt::AsyncWith(w) => scan_import_rebinding(&w.body, imports, deleted),
+            Stmt::Try(t) => {
+                scan_import_rebinding(&t.body, imports, deleted);
+                handlers(&t.handlers, imports, deleted);
+                scan_import_rebinding(&t.orelse, imports, deleted);
+                scan_import_rebinding(&t.finalbody, imports, deleted);
+            }
+            Stmt::TryStar(t) => {
+                scan_import_rebinding(&t.body, imports, deleted);
+                handlers(&t.handlers, imports, deleted);
+                scan_import_rebinding(&t.orelse, imports, deleted);
+                scan_import_rebinding(&t.finalbody, imports, deleted);
+            }
+            Stmt::Match(m) => m
+                .cases
+                .iter()
+                .for_each(|case| scan_import_rebinding(&case.body, imports, deleted)),
+            _ => {}
+        }
+    }
 }
 
 pub(super) fn collect_helper_module(
@@ -59,6 +162,10 @@ pub(super) fn collect_helper_module(
 ) -> PythonHelperModule {
     let mut module = PythonHelperModule::default();
     bound_names(statements, &mut module.bound);
+    scan_import_rebinding(statements, &mut module.import_bindings, &mut module.deleted);
+    module.assigned_attributes = super::module_constants::assigned_attribute_names(statements)
+        .into_iter()
+        .collect();
     let imports = collect_imports_from_statements(file, statements);
     // A star import may rebind any name, wrapper included.
     let star_import = imports.iter().any(|import| import.imported == "*");
@@ -507,7 +614,7 @@ fn resolve_helper<'a>(
             if own.is_some_and(|module| module.bound.contains(name)) {
                 return None;
             }
-            if import.source_module.is_empty() || import.imported == "*" {
+            if import.source_module.is_empty() {
                 return None;
             }
             (
@@ -539,20 +646,28 @@ fn resolve_module_helper<'a>(
         .iter()
         .filter(|import| import.alias == module_name);
     let import = matching.next()?;
+    let own = modules.get(&test.file)?;
     if matching.next().is_some()
-        || import.imported == "*"
-        || modules
-            .get(&test.file)
-            .is_some_and(|module| module.bound.contains(module_name))
+        // Any other import of the alias (nested, conditional, in the test
+        // body), or a `del` of it, makes the bound module order-dependent.
+        || own.import_bindings.get(module_name).copied() != Some(1)
+        || own.deleted.contains(module_name)
+        || own.deleted.contains(helper_name)
+        || own.bound.contains(module_name)
+        // The helper attribute replaced anywhere in the test file.
+        || own.assigned_attributes.contains(helper_name)
         || test.body_text.contains("setattr")
+        || test.body_text.contains("patch")
         || assigns_module_attribute(&test.body_text, module_name, helper_name)
     {
         return None;
     }
     let dotted = if import.source_module.is_empty() {
-        // `import pkg.helpers as helpers`; a bare unaliased `import helpers`
-        // resolves through `sys.path`, which this read does not model.
-        if import.imported == import.alias && !import.imported.contains('.') {
+        // `import pkg.helpers as helpers`. An undotted module (`import
+        // helpers`, `import helpers as h`) resolves through `sys.path`, and
+        // an empty source from `from ... import x` is a relative import that
+        // escaped the package; neither names a workspace module.
+        if !import.imported.contains('.') {
             return None;
         }
         import.imported.clone()
