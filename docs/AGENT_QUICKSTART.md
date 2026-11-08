@@ -109,8 +109,9 @@ Refresh explicitly after edits. For saved tracked changes, pass
 `source: "worktree"` to `ripr_refresh` and repeat any explicit `base` on each
 refresh. The server does not watch the worktree.
 
-The CLI loop above is cheaper. The default MCP tool list alone costs roughly
-11k tokens. Register it only if your agent prefers tools. `ripr` must be on
+The CLI loop above is cheaper. The default MCP tool list alone is about 12 KB
+(11,884 bytes on the wire) at every session start. Register it only if your
+agent prefers tools. `ripr` must be on
 `PATH`.
 
 | Agent | Register |

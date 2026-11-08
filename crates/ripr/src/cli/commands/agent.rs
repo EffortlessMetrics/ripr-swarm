@@ -4501,6 +4501,9 @@ pub(in crate::cli) fn before_phase_stdout_owns_start_result(
     json: bool,
     continuation: &output::agent_seam_packets::BeforePhaseAttemptContinuation,
 ) -> bool {
+    // `edit_directive: true` matches the stdout producer, which passes
+    // `!continuation.baseline_ambiguous`: this predicate already requires an
+    // unambiguous baseline, so both calls render the same summary.
     !json
         && !continuation.baseline_ambiguous
         && before_phase_summary(packet, "", true).is_some()
