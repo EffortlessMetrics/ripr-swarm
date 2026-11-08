@@ -213,15 +213,18 @@ impl ScipReferenceBindings {
             .get(&test_path)
             .copied()
             .unwrap_or_default();
-        let mut at_call =
-            self.reference_symbols
-                .iter()
-                .filter(|((path, reference_line, start, end), _)| {
-                    path == &test_path
-                        && *reference_line == line
-                        && character_to_byte(call_source_line, *start, encoding) == Some(call_start)
-                        && character_to_byte(call_source_line, *end, encoding) == Some(call_end)
-                });
+        // Bounded to this (path, line): the key order makes that one
+        // contiguous range, so a lookup never walks unrelated references.
+        let mut at_call = self
+            .reference_symbols
+            .range(
+                (test_path.clone(), line, i32::MIN, i32::MIN)
+                    ..=(test_path.clone(), line, i32::MAX, i32::MAX),
+            )
+            .filter(|((_, _, start, end), _)| {
+                character_to_byte(call_source_line, *start, encoding) == Some(call_start)
+                    && character_to_byte(call_source_line, *end, encoding) == Some(call_end)
+            });
         matches!((at_call.next(), at_call.next()), (Some((_, symbols)), None)
             if symbols.len() == 1 && symbols[0] == owner_symbol)
     }
