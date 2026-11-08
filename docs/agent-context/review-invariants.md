@@ -134,4 +134,6 @@ mention-triggered Actions wrapper. Do not restore either event subscriber or its
 CI lane entry. Useful provider review runs in the owning session under the
 existing review procedure. The scheduled security scan retains its separate
 purpose and safeguards. `check-droid-review-config` validates that retained
-security workflow and refuses restoration of the retired mention wrapper.
+security workflow and refuses the retired `.github/workflows/droid.yml` and
+`.github/workflows/droid.yaml` paths. The workflow lifecycle policy separately
+rejects development event subscriptions under other filenames.

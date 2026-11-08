@@ -47,8 +47,15 @@ jobs:
           QUESTION: ${{ inputs.question }}
         run: |
           set -euo pipefail
-          [[ "$INCIDENT" =~ [^[:space:]] && "$QUESTION" =~ [^[:space:]] ]]
-          printf '### Explicit main-health proof\n\n- Incident: %s\n- Question: %s\n- Subject: `%s`\n' "$INCIDENT" "$QUESTION" "$GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"
+          [[ "$INCIDENT" =~ [^[:space:]] && "$QUESTION" =~ [^[:space:]] ]] || { echo "::error::incident and question must contain non-whitespace text"; exit 1; }
+          python3 - <<'PY'
+          import html
+          import os
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as summary:
+              summary.write("### Explicit main-health proof\n\n")
+              for label, key in [("Incident", "INCIDENT"), ("Question", "QUESTION"), ("Subject", "GITHUB_SHA")]:
+                  summary.write(f"{label}:\n\n<pre>{html.escape(os.environ[key])}</pre>\n\n")
+          PY
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           persist-credentials: false
@@ -140,7 +147,7 @@ jobs:
             check_status="$(cat "$RUNNER_TEMP/main-health-sentinel/check.status" 2>/dev/null || echo 124)"
             smoke_status="$(cat "$RUNNER_TEMP/main-health-sentinel/smoke.status" 2>/dev/null || echo 124)"
             body="$marker
-          The scheduled main-health sentinel found main red at \`${GITHUB_SHA::7}\`.
+          The explicitly requested main-health probe found main red at \`${GITHUB_SHA::7}\`.
 
           - probe run: $run_url
           - \`cargo check --locked -p ripr\` exit $check_status; focused smoke exit $smoke_status
