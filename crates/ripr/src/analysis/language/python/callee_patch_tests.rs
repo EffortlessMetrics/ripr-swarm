@@ -190,6 +190,20 @@ fn a_change_inside_the_patched_callee_reads_reached_but_unrevealed() -> Result<(
     let foreign = caller_test("monkeypatch.setattr(\"other.rate_for\", lambda r: 2)", "20");
     let finding = classify(source, &foreign, 2, "    return 1", "    return 3")?;
     assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{finding:?}");
+    // A patch applied after the assertion, or a `with` patch whose scope ends
+    // before it, did not replace the owner when the assertion ran it.
+    let late = [
+        "from src.subject import tax_for\n\n\ndef test_tax_for(monkeypatch):\n    assert tax_for(10, \"x\") == 30\n    monkeypatch.setattr(\"src.subject.rate_for\", lambda r: 2)\n",
+        "from unittest import mock\n\nfrom src.subject import tax_for\n\n\ndef test_tax_for():\n    with mock.patch(\"src.subject.rate_for\", return_value=2):\n        pass\n    assert tax_for(10, \"x\") == 30\n",
+    ];
+    for tests in late {
+        let finding = classify(source, tests, 2, "    return 1", "    return 3")?;
+        assert_ne!(
+            finding.class,
+            ExposureClass::ReachableUnrevealed,
+            "{tests}\n{finding:?}"
+        );
+    }
     Ok(())
 }
 

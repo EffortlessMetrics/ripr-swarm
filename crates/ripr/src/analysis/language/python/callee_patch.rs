@@ -701,7 +701,7 @@ fn call_sites(text: &str) -> Vec<(Option<&str>, &str)> {
 /// `"a.b.c"` string literals that follow a `setattr(` or `patch(` opener in
 /// `body`. Read by text: it only decides how an already-uncredited finding is
 /// worded, never lifts a limit.
-fn patch_string_targets(body: &str) -> Vec<String> {
+fn patch_string_targets(body: &str) -> Vec<(usize, String)> {
     let mut found = Vec::new();
     for opener in ["setattr(", "patch(", "patch.object("] {
         for (index, _) in body.match_indices(opener) {
@@ -711,7 +711,7 @@ fn patch_string_targets(body: &str) -> Vec<String> {
             };
             let inner = &rest[1..];
             if let Some(end) = inner.find(quote) {
-                found.push(inner[..end].to_string());
+                found.push((index, inner[..end].to_string()));
             }
         }
     }
@@ -719,16 +719,28 @@ fn patch_string_targets(body: &str) -> Vec<String> {
 }
 
 /// Whether `test` replaces `owner` itself: a patch target whose last segment is
-/// the owner's name under one of the owner's module paths.
+/// the owner's name under one of the owner's module paths, applied before the
+/// test's first assertion and not as a `with` block, whose scope ends before
+/// later calls. A patch whose order or scope is unsure does not count.
 fn test_patches_owner(test: &PythonTest, owner: &PythonOwner) -> bool {
     if owner.is_module_owner() || !test_has_mocked_module(test) {
         return false;
     }
     let module_paths = owner_module_paths(&owner.file);
-    patch_string_targets(&test.body_text).iter().any(|target| {
-        target.rsplit_once('.').is_some_and(|(prefix, name)| {
-            name == owner.name && module_paths.iter().any(|module| module == prefix)
-        })
+    let body = &test.body_text;
+    let first_assert = body.find("assert").unwrap_or(body.len());
+    patch_string_targets(body).iter().any(|(index, target)| {
+        let line = body[..*index]
+            .rsplit('\n')
+            .next()
+            .unwrap_or("")
+            .trim_start();
+        let scoped = line.starts_with("with ") || line.starts_with("async with ");
+        *index < first_assert
+            && !scoped
+            && target.rsplit_once('.').is_some_and(|(prefix, name)| {
+                name == owner.name && module_paths.iter().any(|module| module == prefix)
+            })
     })
 }
 
