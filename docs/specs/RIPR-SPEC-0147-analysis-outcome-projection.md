@@ -129,8 +129,8 @@ their detail and navigation as advisory evidence beneath the incomplete state;
 they do not acquire a contradictory completion or stop claim. Complete outcomes
 retain their existing triage behavior (#13138).
 
-A run that analyzed nothing (an empty or unparseable diff, or one with no
-analyzable source) never emits `done=` in the agent format and never prints the
+A run that analyzed nothing (an empty diff, or one with no analyzable
+source) never emits `done=` in the agent format and never prints the
 clean GitHub notice; it states the not-established state instead (#13658).
 
 The diff-scoped `check` and `diff` CLI commands map the producer's

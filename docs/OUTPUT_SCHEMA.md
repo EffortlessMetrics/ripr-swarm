@@ -993,13 +993,14 @@ incomplete warning does not fire, on both the with-findings and the empty
 complete branches, and an empty complete stream still prints its
 `No static exposure findings found` notice (#10520).
 
-When nothing was analyzed (an empty or unparseable `--diff`, or no changed
+When nothing was analyzed (an empty `--diff`, or no changed
 source in a language ripr analyzes; the same `nothing to check` state the human
 format names), the stream carries a `ripr nothing analyzed` warning instead of
 the clean notice (#13658). `--format agent` likewise prints
 `stop=nothing was analyzed (no changed source in scope); not a clean result`
 instead of `done=`. A diff that changed analyzable source and found nothing
-keeps the clean notice and `done=`.
+keeps the clean notice and `done=`. A non-empty unparseable diff is the
+`unsupported_input` outcome and keeps its `analysis incomplete` handling.
 
 `ripr check --format agent` (#11580) is a compact, deterministic, line-oriented
 text report for coding agents. It is not JSON and carries no `schema_version`;
@@ -1086,8 +1087,8 @@ verify=complete|outcome=O|findings=N|exposed=N
   left to fix from the test side, or no changed behavior was found in scope),
   `stop=` (every finding is base-side or unresolved, all are suppressed by
   policy, ripr cannot tell from reading the code, preview-only evidence, or
-  nothing was analyzed because no scope was given or the diff was empty,
-  unparseable or held no analyzable source, #13658), or `open=` (no gap is
+  nothing was analyzed because no scope was given or the diff was empty
+  or held no analyzable source, #13658), or `open=` (no gap is
   listed, but a reach-only limitation still carries a weak or smoke related
   test; it replaces `stop=` as described above). `done=` is static advisory
   evidence, not runtime mutation outcome or test adequacy.

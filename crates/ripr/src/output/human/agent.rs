@@ -142,7 +142,7 @@ fn render_report(
         out.push_str(if incomplete {
             "stop=analysis incomplete; zero findings is not a clean result\n"
         } else if super::no_source_examined(output) {
-            // #13658: an empty or unparseable diff (or one with no analyzable
+            // #13658: an empty diff (or one with no analyzable
             // source) examined no behavior; the human format's "Nothing to
             // check" state must not read as `done` here.
             "stop=nothing was analyzed (no changed source in scope); not a clean result\n"

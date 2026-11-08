@@ -797,7 +797,7 @@ fn empty_scope_and_no_scope_are_distinct_terminal_states() {
     assert!(!stopped.contains("done="), "{stopped}");
 }
 
-/// #13658: an empty or unparseable `--diff` examined nothing, so the agent
+/// #13658: an empty `--diff` examined nothing, so the agent
 /// format stops (not established) instead of reporting `done=`. A diff that
 /// changed analyzable Rust source and found nothing keeps `done=`.
 #[test]
@@ -825,10 +825,18 @@ fn empty_diff_stops_while_a_valid_diff_without_findings_stays_done() -> Result<(
         "{stopped}"
     );
     assert!(!stopped.contains("done="), "{stopped}");
+    // The completion record must not contradict the stop: nothing analyzed is
+    // a refused verification (producer-owned `no_behavior_in_scope`).
+    assert!(
+        stopped.contains("\nverify=refused|outcome=no_scope|"),
+        "{stopped}"
+    );
+    assert!(!stopped.contains("verify=complete"), "{stopped}");
 
     // A docs-only diff changed files but none ripr analyzes: also nothing
     // examined, matching the human "Nothing to check" state.
     let mut docs_only = output(Vec::new());
+    docs_only.summary.changed_rust_files = 0;
     docs_only.analysis_outcome = Some(outcome(AnalysisOutcomeKind::NoBehavioralCandidates, 1)?);
     assert_eq!(docs_only.summary.changed_rust_files, 0);
     let docs_text = rendered(&docs_only);
@@ -837,6 +845,8 @@ fn empty_diff_stops_while_a_valid_diff_without_findings_stays_done() -> Result<(
         "{docs_text}"
     );
     assert!(!docs_text.contains("done="), "{docs_text}");
+    assert!(docs_text.contains("\nverify=refused|"), "{docs_text}");
+    assert!(!docs_text.contains("verify=complete"), "{docs_text}");
 
     let mut healthy = output(Vec::new());
     healthy.summary.changed_rust_files = 1;

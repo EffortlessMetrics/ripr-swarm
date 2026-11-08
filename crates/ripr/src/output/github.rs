@@ -258,7 +258,7 @@ pub(crate) fn render_with_config(output: &CheckOutput, config: &RiprConfig) -> S
             if crate::output::human::no_source_examined(output) {
                 // #13658: nothing was parsed or analyzable; not a clean result.
                 *per_level.entry("warning").or_default() += 1;
-                out.push_str("::warning title=ripr nothing analyzed::No changed source was analyzed (empty or unparseable diff, or no analyzable source in scope). This is NOT a clean result; no behavior was examined.\n");
+                out.push_str("::warning title=ripr nothing analyzed::No changed source was analyzed (empty diff, or no analyzable source in scope). This is NOT a clean result; no behavior was examined.\n");
             } else {
                 out.push_str("::notice title=ripr::No static exposure findings found\n");
             }
@@ -720,7 +720,7 @@ mod tests {
         );
     }
 
-    /// #13658: an empty or unparseable diff examined nothing, so the stream
+    /// #13658: an empty diff examined nothing, so the stream
     /// must warn instead of printing the clean notice. The negative control is
     /// a diff that did change an analyzable Rust file and found nothing.
     #[test]
