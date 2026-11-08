@@ -193,9 +193,11 @@ refuses with `agent brief takes --max-seams once` instead of silently keeping
 the last cap, and `ripr agent verify --before a --before b --after c --json`
 refuses with `agent verify takes --before once` instead of comparing `b`
 against itself. Two deliberate exceptions keep their family contracts:
-`--root` stays last-win everywhere, including the pattern-setting parsers, so
-scripted double-root invocations keep working; and `agent receipt --command`
-stays a repeatable accumulator. An empty `agent verify --gap-id` is refused at
+`--root` absorbs an identical repeated value so scripted double-root
+invocations keep working; a conflicting repeated value refuses with exit 2
+and names both roots before execution (#9008, #13326). The first explicit
+`--root` still replaces the implicit default. `agent receipt --command` stays
+a repeatable accumulator. An empty `agent verify --gap-id` is refused at
 the parser with the same exit-2 usage-error shape, naming the empty flag
 instead of flowing the empty id into the artifact layer.
 
