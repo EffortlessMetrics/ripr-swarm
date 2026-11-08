@@ -25,7 +25,7 @@ const REQUIRED_GATES: &[(&str, &str)] = &[
     ("network_policy", "cargo xtask check-network-policy"),
     (
         "all_features_check",
-        "cargo check -p ripr --all-targets --all-features",
+        "cargo clippy -p ripr --all-targets --all-features -- -D warnings",
     ),
     (
         "clippy",
@@ -279,16 +279,40 @@ fn rust_gate_workflow_rejects_local_convenience_clippy_composition() {
 }
 
 #[test]
+fn rust_gate_workflow_rejects_losing_optional_feature_lint_coverage() {
+    for command in [
+        "cargo check -p ripr --all-targets --all-features",
+        "cargo clippy -p ripr --all-targets -- -D warnings",
+        "cargo clippy -p ripr --all-features -- -D warnings",
+        "cargo clippy -p ripr --all-targets --all-features",
+        "cargo clippy -p ripr --all-targets -- -D warnings --all-features",
+    ] {
+        let changed = WORKFLOW.replace(
+            "cargo clippy -p ripr --all-targets --all-features -- -D warnings",
+            command,
+        );
+        assert_ne!(changed, WORKFLOW, "negative must change the live command");
+        assert!(
+            contract_violations(&changed)
+                .contains(&"all_features_check: exact command missing".to_owned())
+        );
+    }
+}
+
+#[test]
 fn rust_gate_workflow_rejects_narrowing_explicit_clippy_coverage() {
     for command in [
         "cargo clippy -p xtask --all-targets -- -D warnings",
         "cargo clippy --workspace -- -D warnings",
         "cargo clippy --workspace --all-targets",
+        // Enabling everything here drops cfg(not(feature = ...)) branches.
+        "cargo clippy --workspace --all-targets --all-features -- -D warnings",
     ] {
         let changed = WORKFLOW.replace(
             "cargo clippy --workspace --all-targets -- -D warnings",
             command,
         );
+        assert_ne!(changed, WORKFLOW, "negative must change the live command");
         assert!(
             contract_violations(&changed).contains(&"clippy: exact command missing".to_owned())
         );
