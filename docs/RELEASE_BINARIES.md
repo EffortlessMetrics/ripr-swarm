@@ -133,8 +133,8 @@ installed-channel parity, a compatibility floor or publication.
 
 ### Whole package family in the release rehearsal
 
-`release-server-binaries.yml` runs both producers for every target after the
-five archives qualify, so one dispatch yields the complete PyPI and npm family
+`release-server-binaries.yml` calls `package-family-qualification.yml`, which
+runs both producers for every target after the five archives qualify, so one dispatch yields the complete PyPI and npm family
 for the exact commit (#5378):
 
 ```bash
