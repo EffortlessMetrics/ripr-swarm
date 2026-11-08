@@ -30,6 +30,7 @@ mod execution_context;
 pub(crate) use build::CachedRustIndex;
 use build::MissAttribution;
 pub(crate) use build::SecondaryPassGuard;
+pub(in crate::analysis) use build::manifest_library_name;
 #[cfg(test)]
 pub(crate) use build::streamed_source_bytes;
 pub(crate) use build::{RUST_SOURCE_NOT_UTF8_REASON, rust_source_text};
