@@ -12,7 +12,7 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use zip::{CompressionMethod, DateTime, ZipArchive, ZipWriter, write::SimpleFileOptions};
 
-use super::npm_native::{promote_pair, verify_notices, verify_qualification};
+use super::npm_native::{self, promote_pair, verify_notices, verify_qualification};
 use super::{hex_lower, payload, producer, sha256_file};
 use crate::policy::distribution::{
     DistributionContract, load_distribution_contract, pep440_version,
@@ -559,7 +559,7 @@ pub(super) fn produce(
         );
     }
     let archive_hash = sha256_file(archive_path)?;
-    let expected_qualification = expected_qualification(
+    let expected_qualification = npm_native::expected_qualification(
         &identity,
         &identity_hash,
         &producer,
@@ -632,32 +632,6 @@ pub(super) fn produce(
     let cleanup =
         fs::remove_dir_all(&staging).map_err(|e| format!("remove wheel staging directory: {e}"));
     result.and(cleanup)
-}
-
-fn expected_qualification(
-    identity: &payload::FinalNativePayloadIdentity,
-    identity_hash: &str,
-    producer: &producer::ProducerBuildReceipt,
-    producer_hash: &str,
-    archive_name: &str,
-    archive_hash: &str,
-) -> Result<Value, String> {
-    Ok(json!({
-        "target": identity.target, "candidate_sha": identity.source.commit_sha,
-        "candidate_tree": identity.source.tree_sha, "version": identity.version,
-        "archive_file": archive_name, "archive_sha256": archive_hash,
-        "archive_readback_verified": true, "cargo_lock_sha256": identity.cargo_lock_sha256,
-        "qualification_workflow_sha256": sha256_file(Path::new(".github/workflows/server-archive-qualification.yml"))?,
-        "payload_identity_sha256": identity_hash, "producer_build_sha256": producer_hash,
-        "payload_aggregate_sha256": identity.payload_aggregate_sha256,
-        "payload_file_count": identity.files.len(), "selected_features": identity.selected_features,
-        "native_runtime_evidence": identity.native_runtime_evidence,
-        "producer_cargo_arguments": producer.cargo_arguments,
-        "producer_executable_sha256": producer.executable_sha256,
-        "producer_executable_version_line": producer.executable_version_line,
-        "rustc_verbose_version": identity.toolchain.rustc_verbose_version,
-        "cargo_verbose_version": identity.toolchain.cargo_verbose_version
-    }))
 }
 
 #[cfg(test)]

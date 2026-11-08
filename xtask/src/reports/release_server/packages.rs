@@ -192,9 +192,59 @@ pub(super) fn extract_flat_archive(archive: &Path, kind: &str, dir: &Path) -> Re
     Ok(())
 }
 
+const FAMILY_DIRS: [&str; 2] = ["npm", "wheels"];
+
+/// A fresh staging directory inside `out_dir` (same filesystem, so promotion
+/// is a rename). Refuses an `out_dir` that already holds a promoted family.
+fn family_staging(out_dir: &Path) -> Result<PathBuf, String> {
+    for name in FAMILY_DIRS {
+        let existing = out_dir.join(name);
+        if fs::symlink_metadata(&existing).is_ok() {
+            return Err(format!(
+                "{} already exists; package into a new output directory",
+                existing.display()
+            ));
+        }
+    }
+    fs::create_dir_all(out_dir).map_err(|e| format!("create {}: {e}", out_dir.display()))?;
+    let family = out_dir.join(format!(
+        ".family-staging-{}-{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|e| e.to_string())?
+            .as_nanos()
+    ));
+    fs::create_dir(&family).map_err(|e| format!("create {}: {e}", family.display()))?;
+    Ok(family)
+}
+
+/// Move the complete staged family into place, then drop the staging root.
+fn promote_family(family: &Path, out_dir: &Path) -> Result<(), String> {
+    for name in FAMILY_DIRS {
+        let from = family.join(name);
+        let to = out_dir.join(name);
+        if fs::symlink_metadata(&to).is_ok() {
+            return Err(format!("{} appeared while packaging", to.display()));
+        }
+        fs::rename(&from, &to)
+            .map_err(|e| format!("promote {} to {}: {e}", from.display(), to.display()))?;
+    }
+    fs::remove_dir(family).map_err(|e| format!("remove {}: {e}", family.display()))
+}
+
 pub(super) fn produce_family(artifacts: &Path, out_dir: &Path) -> Result<(), String> {
     let contract = load_distribution_contract()?;
     let version = super::payload::workspace_version()?;
+    produce_family_for(&contract.target, &version, artifacts, out_dir)
+}
+
+fn produce_family_for(
+    targets: &[TargetContract],
+    version: &str,
+    artifacts: &Path,
+    out_dir: &Path,
+) -> Result<(), String> {
     let staging = std::env::temp_dir().join(format!(
         "ripr-package-family-{}-{}",
         std::process::id(),
@@ -204,12 +254,16 @@ pub(super) fn produce_family(artifacts: &Path, out_dir: &Path) -> Result<(), Str
             .as_nanos()
     ));
     fs::create_dir(&staging).map_err(|e| format!("create {}: {e}", staging.display()))?;
-    let npm_out = out_dir.join("npm");
-    let wheel_out = out_dir.join("wheels");
+    // Producers write into a family staging directory beside the final
+    // output, which is promoted only when every target succeeded, so a failed
+    // run leaves nothing behind and a corrected retry starts clean.
+    let family = family_staging(out_dir)?;
+    let npm_out = family.join("npm");
+    let wheel_out = family.join("wheels");
     let mut failures = Vec::new();
-    for target in &contract.target {
+    for target in targets {
         let result = (|| {
-            let inputs = target_inputs(artifacts, &version, target)?;
+            let inputs = target_inputs(artifacts, version, target)?;
             let payload_dir = staging.join(&target.rust_target);
             fs::create_dir(&payload_dir)
                 .map_err(|e| format!("create {}: {e}", payload_dir.display()))?;
@@ -239,17 +293,22 @@ pub(super) fn produce_family(artifacts: &Path, out_dir: &Path) -> Result<(), Str
     let cleanup =
         fs::remove_dir_all(&staging).map_err(|e| format!("remove {}: {e}", staging.display()));
     if !failures.is_empty() {
+        let discard = fs::remove_dir_all(&family)
+            .map_err(|e| format!("; also failed to remove {}: {e}", family.display()))
+            .err()
+            .unwrap_or_default();
         return Err(format!(
-            "{} of {} targets failed to package:\n- {}",
+            "{} of {} targets failed to package; no packages were promoted{discard}:\n- {}",
             failures.len(),
-            contract.target.len(),
+            targets.len(),
             failures.join("\n- ")
         ));
     }
+    promote_family(&family, out_dir)?;
     cleanup?;
     eprintln!(
         "packaged all {} targets into {}",
-        contract.target.len(),
+        targets.len(),
         out_dir.display()
     );
     Ok(())
@@ -378,6 +437,48 @@ mod tests {
         };
         let Err(_) = extract_flat_archive(&empty, "rar", &out) else {
             return Err("unknown archive kind accepted".to_string());
+        };
+        fs::remove_dir_all(root).map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    #[test]
+    fn failed_family_promotes_nothing_and_a_retry_starts_clean() -> Result<(), String> {
+        let root = temp("family")?;
+        let artifacts = root.join("artifacts");
+        fs::create_dir(&artifacts).map_err(|e| e.to_string())?;
+        let out = root.join("out");
+        let contract = crate::policy::distribution::parse_distribution_contract(
+            "policy",
+            include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../policy/distribution.toml"
+            )),
+        )?;
+        let Err(error) = produce_family_for(&contract.target, "0.11.0", &artifacts, &out) else {
+            return Err("family without artifacts accepted".to_string());
+        };
+        assert!(error.contains("no packages were promoted"), "{error}");
+        let leftovers: Vec<_> = fs::read_dir(&out)
+            .map_err(|e| e.to_string())?
+            .collect::<Result<_, _>>()
+            .map_err(|e| e.to_string())?;
+        assert!(leftovers.is_empty(), "failed run left {leftovers:?}");
+
+        // Promotion moves both trees into place and refuses a second family.
+        let family = family_staging(&out)?;
+        for name in FAMILY_DIRS {
+            fs::create_dir(family.join(name)).map_err(|e| e.to_string())?;
+            fs::write(family.join(name).join("pkg"), name).map_err(|e| e.to_string())?;
+        }
+        promote_family(&family, &out)?;
+        assert!(!family.exists());
+        assert_eq!(
+            fs::read(out.join("wheels/pkg")).map_err(|e| e.to_string())?,
+            b"wheels"
+        );
+        let Err(_) = family_staging(&out) else {
+            return Err("second family into a promoted output accepted".to_string());
         };
         fs::remove_dir_all(root).map_err(|e| e.to_string())?;
         Ok(())
