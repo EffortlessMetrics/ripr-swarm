@@ -657,8 +657,9 @@ pub(super) const CONTEXT_HELP: &str = r#"Print one finding's changed code and re
 
 Use this when an agent or tool needs the facts behind one `ripr check`
 finding: the changed expression ripr examined, the tests that appear to
-reach it, the values they check, and the assertion that seems to be missing. Output is always JSON; `--json` is accepted and changes nothing. To
-read the same finding as prose, run `ripr explain` with the same selector.
+reach it, the values they check, and any assertion that seems to be missing.
+Output is always JSON; `--json` is accepted and changes nothing. To read the
+same finding as prose, run `ripr explain` with the same selector.
 
 Usage: ripr context [--root PATH] [--base REV] [--worktree|--committed|--diff PATH] [--from PATH] [--path GLOB] [--exclude GLOB] [--mode MODE] [--no-unchanged-tests] [--perl-facts PATH] [--suppression-policy PATH] --at <finding-id|file:line> [--max-related-tests N] [--json] [--quiet]
 

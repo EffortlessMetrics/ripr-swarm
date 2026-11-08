@@ -79,7 +79,7 @@ Run this after `ripr repair` has named a gap (changed behavior no current test
 appears to check) and you have edited the focused test it pointed at. ripr
 re-reads your tests, compares the evidence with what it recorded when the
 repair started, and writes a receipt: a JSON record of the before and after
-result. ripr does not run your tests and never edits files.
+result. ripr does not run your tests and never edits your source or test files.
 
 Usage: ripr continue [--attempt ID] [--root PATH] [--json] [--quiet]
 
@@ -123,8 +123,8 @@ Exit status:
   2  usage or operational error, or the edit check rejected the attempt:
      files outside the allowed test changed, HEAD moved, or the files could
      not be compared (that attempt is over; start again with `ripr repair`)
-  3  a named refusal, such as no edit yet (make it and rerun); stderr ends
-     with `ripr: refusal code=<code> disposition=<disposition>`
+  3  a named refusal, such as no edit yet (make it and rerun); for a coded
+     refusal, stderr ends with `ripr: refusal code=<code> disposition=<disposition>`
 
 The advanced spelling `ripr agent repair --attempt ID --phase after` runs the
 same step."#;

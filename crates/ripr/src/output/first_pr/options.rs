@@ -96,9 +96,9 @@ Summarize what to fix in one PR from existing ripr reports.
 
 Answers \"what should I do first on this PR?\" first-pr reads reports that
 earlier ripr commands wrote (check output, the gap list, review comments,
-receipts) and writes one start-here page, start-here.md and start-here.json,
-naming a single next step. A gap is changed behavior that no current test
-appears to check. By default first-pr runs no analysis: for a missing report
+receipts) and writes one start-here page (the start-here packet:
+start-here.md and start-here.json), naming a single next step. A gap is
+changed behavior that no current test appears to check. By default first-pr runs no analysis: for a missing report
 it prints the command that creates it. Pass --run-chain to run those commands.
 
 Usage: ripr first-pr|start-here [--root <path>] [--base <rev>] [--head <rev>] [--check-output <path>] [--gap-ledger <path>] [--first-action <path>] [--review-comments <path>] [--agent-packet <path>] [--gate-decision <path>] [--receipts-dir <path>] [--out-dir <path>] [--check] [--run-chain]
