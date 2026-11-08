@@ -543,6 +543,73 @@ mod tests {
             .ok_or_else(|| "no function in source".to_string())
     }
 
+    /// The receipt only reads a helper whose whole definition is a plain free
+    /// function: any attribute, container, generic, async, unsafe, extern or
+    /// duplicate definition refuses before its body is trusted.
+    #[test]
+    fn root_function_admits_only_a_plain_unique_free_function() -> Result<(), String> {
+        let resolves = |source: &str, name: &str| -> Result<bool, String> {
+            let parse = parse_clean_source_file(source).ok_or("source did not parse cleanly")?;
+            let facts = crate::analysis::rust_index::summarize_file(
+                PathBuf::from("src/lib.rs"),
+                source.to_owned(),
+            );
+            let fact = facts
+                .functions
+                .iter()
+                .find(|function| function.name == name)
+                .ok_or_else(|| format!("no fact for {name}"))?;
+            Ok(root_function(&parse.tree(), fact).is_some())
+        };
+        assert!(resolves("fn f(a: usize) -> usize { a }", "f")?);
+        for (source, name) in [
+            ("#[inline] fn f() -> usize { 1 }", "f"),
+            ("struct S; impl S { fn f() -> usize { 1 } }", "f"),
+            ("fn f<T>() -> usize { 1 }", "f"),
+            ("fn f() -> usize where usize: Copy { 1 }", "f"),
+            ("async fn f() -> usize { 1 }", "f"),
+            ("unsafe fn f() -> usize { 1 }", "f"),
+            ("extern \"C\" fn f() -> usize { 1 }", "f"),
+            ("fn f() -> usize { 1 } fn f() -> usize { 2 }", "f"),
+        ] {
+            assert!(!resolves(source, name)?, "{source}");
+        }
+        Ok(())
+    }
+
+    /// Only `usize` by-value identifier parameters are projection operands.
+    #[test]
+    fn usize_parameters_admit_only_plain_usize_identifiers() -> Result<(), String> {
+        let names = |signature: &str| -> Result<Option<Vec<String>>, String> {
+            Ok(usize_parameters(&first_fn(&format!(
+                "fn f{signature} -> usize {{ 0 }}"
+            ))?))
+        };
+        assert_eq!(names("()")?, Some(vec![]));
+        assert_eq!(
+            names("(a: usize, b: usize)")?,
+            Some(vec!["a".to_string(), "b".to_string()])
+        );
+        for signature in [
+            "(a: u32)",
+            "(a: &usize)",
+            "(a: usize, b: i64)",
+            "(mut a: usize)",
+            "(ref a: usize)",
+            "(a @ _: usize)",
+            "((a, b): usize)",
+            "(_: usize)",
+        ] {
+            assert_eq!(names(signature)?, None, "{signature}");
+        }
+        // A bare `self` parameter refuses.
+        let with_self = parse_clean_source_file("impl S { fn f(&self) -> usize { 0 } }")
+            .and_then(|parse| parse.tree().syntax().descendants().find_map(ast::Fn::cast))
+            .ok_or("method not found")?;
+        assert_eq!(usize_parameters(&with_self), None);
+        Ok(())
+    }
+
     #[test]
     fn integer_literal_accepts_only_plain_unsigned_decimal_digits() {
         let largest = usize::MAX.to_string();
