@@ -116,14 +116,22 @@ pub(in crate::analysis) fn name_forwarded_callback_limits(
     related_tests: &mut [RelatedTest],
 ) -> ForwardedCallbackLimits {
     let mut named = ForwardedCallbackLimits::default();
+    // Recorded by this producer loop as it rewrites, so the `only_limits`
+    // decision below reads these facts rather than re-reading the miss.
+    let mut rows_clear = true;
     for row in related_tests.iter_mut() {
-        if row.miss != Some(RelatedTestMiss::NoAssertion) || row.oracle.is_some() {
+        if row.oracle.is_some() {
+            rows_clear = false;
+            continue;
+        }
+        if row.miss != Some(RelatedTestMiss::NoAssertion) {
             continue;
         }
         let Some(limit) = context
             .index
             .forwarded_callback_limit(&row.file, row.line, &row.name)
         else {
+            rows_clear = false;
             continue;
         };
         row.miss = Some(RelatedTestMiss::AssertionAdmissionUnproven);
@@ -142,9 +150,7 @@ pub(in crate::analysis) fn name_forwarded_callback_limits(
     // anywhere keeps the finding's no-assertion wording.
     let credits = super::oracle_crediting_relations(&context.related_tests);
     named.only_limits = !named.evidence.is_empty()
-        && related_tests
-            .iter()
-            .all(|row| row.oracle.is_none() && row.miss != Some(RelatedTestMiss::NoAssertion))
+        && rows_clear
         && context
             .related_tests
             .iter()
