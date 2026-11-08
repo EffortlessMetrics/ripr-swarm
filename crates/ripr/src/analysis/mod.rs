@@ -927,6 +927,11 @@ pub struct PreviewLanguageAdvisory {
     /// `false` means the preview-language files were detected in scope but not
     /// analyzed because the adapter is not enabled in `ripr.toml`.
     pub enabled: bool,
+    /// Root-relative (forward-slash) Python package roots below an analysis
+    /// root that has no Python markers of its own, so a not-enabled Python
+    /// note can suggest `--root <package>` (#13618). Empty for every other
+    /// language and when the root is already a Python, Rust or TS/JS project.
+    pub nested_packages: Vec<String>,
 }
 
 /// Prose names `(adapter, files)` for a preview language (#4908). The

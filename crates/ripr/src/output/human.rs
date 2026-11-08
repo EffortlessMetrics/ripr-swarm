@@ -1255,21 +1255,8 @@ fn render_preview_language_advisories(out: &mut String, output: &CheckOutput) {
                 "\nNote: this diff contains {} {}. The {} adapter is preview and not enabled, so these files were not analyzed — this is NOT a clean Rust-grade result. Enable it in ripr.toml [languages] to analyze them.\n\nTo enable, add to ripr.toml:\n\n[languages]\n{enabled_line}\n",
                 advisory.file_count, file_label, language,
             ));
-            if advisory.language == "python" {
-                let packages = crate::config::nested_python_package_roots(&output.root);
-                if let Some(first) = packages.first() {
-                    let names = packages
-                        .iter()
-                        .map(|package| {
-                            format!("`{}`", package.display().to_string().replace('\\', "/"))
-                        })
-                        .collect::<Vec<_>>()
-                        .join(", ");
-                    out.push_str(&format!(
-                        "\nPython packages found below this root: {names}. Or analyze one package directly: `ripr check --root {}`.\n",
-                        first.display().to_string().replace('\\', "/")
-                    ));
-                }
+            if let Some(hint) = nested_python_root_hint(advisory, &output.root) {
+                out.push_str(&hint);
             }
             if advisory.language == "typescript" && advisory.javascript_file_count > 0 {
                 out.push_str("\n(\"typescript\" enables the adapter for JavaScript files too.)\n");
@@ -1299,6 +1286,48 @@ fn render_preview_language_advisories(out: &mut String, output: &CheckOutput) {
 
 /// Copy-paste `[languages] enabled` line for a not-enabled preview advisory.
 /// Names Rust only when the analyzed root actually has Rust markers (#7648).
+/// The `--root` hint for a not-enabled Python advisory at a monorepo root
+/// (#13618), from the typed `nested_packages` the pipeline computed. Picks the
+/// package that contains a changed sample path; otherwise lists the packages
+/// without choosing. The suggested path is the analysis root joined with the
+/// package, so it is correct from any working directory.
+fn nested_python_root_hint(
+    advisory: &crate::analysis::PreviewLanguageAdvisory,
+    root: &Path,
+) -> Option<String> {
+    if advisory.nested_packages.is_empty() {
+        return None;
+    }
+    let containing = advisory.nested_packages.iter().find(|package| {
+        advisory
+            .sample_paths
+            .iter()
+            .any(|path| path.starts_with(&format!("{package}/")))
+    });
+    let names = advisory
+        .nested_packages
+        .iter()
+        .map(|package| format!("`{package}`"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    Some(match containing {
+        Some(package) => {
+            let target = if root == Path::new(".") || root.as_os_str().is_empty() {
+                std::path::PathBuf::from(package)
+            } else {
+                root.join(package)
+            };
+            format!(
+                "\nPython packages found below this root: {names}. Or analyze the package with the changed files directly: `ripr check --root {}`.\n",
+                target.display().to_string().replace('\\', "/")
+            )
+        }
+        None => format!(
+            "\nPython packages found below this root: {names}. Pick the one with your changes and pass it as `ripr check --root <package>`.\n"
+        ),
+    })
+}
+
 fn preview_enablement_toml(root: &Path, language: &str) -> String {
     let rust_detected = crate::domain::rust_markers_at(root);
     let to_add = match crate::domain::LanguageId::from_wire(language) {
@@ -1858,6 +1887,7 @@ mod tests {
             sample_paths: vec!["src/a.ts".to_string()],
             javascript_file_count: 0,
             enabled: true,
+            nested_packages: Vec::new(),
         }];
         cases.push(("preview advisory", advisory));
         let mut run = empty_range_output(Some("main"), AnalysisOutcomeKind::NoScope, 0)?;
@@ -8992,6 +9022,7 @@ mod tests {
                 sample_paths: vec!["src/discount.ts".to_string(), "src/pricing.ts".to_string()],
                 javascript_file_count: 0,
                 enabled: true,
+                nested_packages: Vec::new(),
             }],
             language_runs: Vec::new(),
             no_scope_provided: false,
@@ -9021,44 +9052,33 @@ mod tests {
         );
     }
 
-    /// #13618: a not-enabled Python note at a monorepo root names the nested
-    /// packages and the `--root` form; a root without nested packages gets no
-    /// hint (negative control).
+    /// #13618: the not-enabled Python note renders the typed nested packages:
+    /// it picks the package holding the changed files, lists without picking
+    /// when none holds them, prints a path correct from the caller's cwd, and
+    /// adds nothing when the pipeline found no nested packages.
     #[test]
-    fn render_python_not_enabled_note_names_nested_packages_for_root_flag() -> Result<(), String> {
+    fn render_python_not_enabled_note_uses_typed_nested_packages() {
         if !cfg!(feature = "lang-python") {
-            return Ok(());
+            return;
         }
-        let base = std::env::temp_dir().join(format!(
-            "ripr-13618-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map_or(0, |elapsed| elapsed.as_nanos())
-        ));
-        std::fs::create_dir_all(base.join("services/a"))
-            .map_err(|err| format!("create package dir: {err}"))?;
-        std::fs::write(base.join("services/a/pyproject.toml"), "[project]\n")
-            .map_err(|err| format!("write marker: {err}"))?;
-        let bare = base.join("bare");
-        std::fs::create_dir_all(&bare).map_err(|err| format!("create bare dir: {err}"))?;
-        let render_at = |root: PathBuf| {
+        let render_with = |root: &str, packages: &[&str], sample: &str| {
             render(&CheckOutput {
                 value_origins: Default::default(),
                 harness_projections: Vec::new(),
                 schema_version: "0.1".to_string(),
                 tool: "ripr".to_string(),
                 mode: Mode::Draft,
-                root,
+                root: PathBuf::from(root),
                 base: None,
                 summary: Summary::default(),
                 findings: vec![],
                 preview_language_advisories: vec![PreviewLanguageAdvisory {
                     language: "python".to_string(),
-                    file_count: 2,
-                    sample_paths: vec!["services/a/calc.py".to_string()],
+                    file_count: 1,
+                    sample_paths: vec![sample.to_string()],
                     javascript_file_count: 0,
                     enabled: false,
+                    nested_packages: packages.iter().map(|p| p.to_string()).collect(),
                 }],
                 language_runs: Vec::new(),
                 no_scope_provided: false,
@@ -9072,18 +9092,27 @@ mod tests {
                 analyzed_revisions: None,
             })
         };
-        let monorepo = render_at(base.clone());
-        let flat = render_at(bare);
-        std::fs::remove_dir_all(&base).map_err(|err| format!("remove: {err}"))?;
+        let packages = ["services/a", "services/b"];
+        let picked = render_with(".", &packages, "services/b/src/calc.py");
         assert!(
-            monorepo.contains("`services/a`") && monorepo.contains("ripr check --root services/a"),
-            "expected --root hint; got:\n{monorepo}"
+            picked.contains("ripr check --root services/b`"),
+            "must pick the package with the changed file; got:\n{picked}"
         );
+        assert!(!picked.contains("--root services/a"), "got:\n{picked}");
+        let absolute = render_with("/work/mono", &packages, "services/a/x.py");
         assert!(
-            !flat.contains("--root"),
-            "no nested packages must mean no hint; got:\n{flat}"
+            absolute.contains("ripr check --root /work/mono/services/a`"),
+            "got:\n{absolute}"
         );
-        Ok(())
+        let unmatched = render_with(".", &packages, "tools/x.py");
+        assert!(
+            unmatched.contains("`services/a`, `services/b`")
+                && unmatched.contains("--root <package>")
+                && !unmatched.contains("--root services/"),
+            "got:\n{unmatched}"
+        );
+        let none = render_with(".", &[], "services/a/x.py");
+        assert!(!none.contains("--root"), "got:\n{none}");
     }
 
     #[test]
@@ -9104,6 +9133,7 @@ mod tests {
                 sample_paths: vec!["app/main.py".to_string()],
                 javascript_file_count: 0,
                 enabled: true,
+                nested_packages: Vec::new(),
             }],
             language_runs: Vec::new(),
             no_scope_provided: false,
@@ -9199,6 +9229,7 @@ mod tests {
                 sample_paths: vec!["src/lib.ts".to_string()],
                 javascript_file_count: 0,
                 enabled: true,
+                nested_packages: Vec::new(),
             }],
             language_runs: Vec::new(),
             no_scope_provided: false,
@@ -9241,6 +9272,7 @@ mod tests {
                 sample_paths: vec!["lib/Pricing.pm".to_string()],
                 javascript_file_count: 0,
                 enabled: false,
+                nested_packages: Vec::new(),
             }],
             language_runs: Vec::new(),
             no_scope_provided: false,
@@ -9336,6 +9368,7 @@ mod tests {
                 sample_paths: vec!["app/models.py".to_string()],
                 javascript_file_count: 0,
                 enabled: false,
+                nested_packages: Vec::new(),
             }],
             language_runs: Vec::new(),
             no_scope_provided: false,
@@ -9413,6 +9446,7 @@ mod tests {
                 sample_paths: vec!["app/models.py".to_string()],
                 javascript_file_count: 0,
                 enabled: false,
+                nested_packages: Vec::new(),
             }],
             language_runs: Vec::new(),
             no_scope_provided: false,
@@ -10433,6 +10467,7 @@ mod tests {
             sample_paths: Vec::new(),
             javascript_file_count: 0,
             enabled,
+            nested_packages: Vec::new(),
         };
         let output = CheckOutput {
             value_origins: Default::default(),
@@ -10503,6 +10538,7 @@ mod tests {
                 sample_paths: Vec::new(),
                 javascript_file_count,
                 enabled,
+                nested_packages: Vec::new(),
             }
         };
         let render_one = |advisory: PreviewLanguageAdvisory| {

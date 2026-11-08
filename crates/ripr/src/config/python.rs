@@ -154,7 +154,7 @@ const NESTED_PYTHON_PACKAGE_MAX_REPORTED: usize = 8;
 /// build directories are skipped, and a package root is not descended into.
 /// Empty when `root` itself is already a Python project, so the hint never
 /// competes with root detection. Presence-only: no file content is read.
-pub(crate) fn nested_python_package_roots(root: &Path) -> Vec<std::path::PathBuf> {
+pub(super) fn nested_python_package_roots(root: &Path) -> Vec<std::path::PathBuf> {
     if detect_python_project(root) {
         return Vec::new();
     }

@@ -1580,6 +1580,7 @@ mod tests {
             sample_paths: vec!["src/a.cobol".to_string(), "src/b.cobol".to_string()],
             javascript_file_count: 0,
             enabled: false,
+            nested_packages: Vec::new(),
         }];
 
         let rendered = render(&output);
@@ -1606,6 +1607,7 @@ mod tests {
             sample_paths: vec!["src/a.ts".to_string(), "src/b.ts".to_string()],
             javascript_file_count: 0,
             enabled: false,
+            nested_packages: Vec::new(),
         }];
 
         let rendered = render(&typescript);
@@ -1633,6 +1635,7 @@ mod tests {
             sample_paths: vec!["src/a.js".to_string()],
             javascript_file_count: 1,
             enabled: false,
+            nested_packages: Vec::new(),
         }];
 
         let rendered = render(&javascript);

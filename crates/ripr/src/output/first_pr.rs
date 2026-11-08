@@ -4636,6 +4636,42 @@ mod tests {
         cleanup(&repo)
     }
 
+    /// #13618: a nested Python package under a TypeScript root must not turn
+    /// the missing-marker refusal into `wrong_root`.
+    #[cfg(feature = "lang-typescript")]
+    #[test]
+    fn typescript_root_with_nested_python_package_still_names_the_missing_marker()
+    -> Result<(), String> {
+        let repo = write_temp_root(&env::temp_dir(), "first-pr-ts-nested-python")?;
+        fs::write(repo.join("package.json"), r#"{"devDependencies":{}}"#)
+            .map_err(|err| format!("write package.json: {err}"))?;
+        fs::create_dir_all(repo.join("lib")).map_err(|err| format!("create lib: {err}"))?;
+        fs::write(repo.join("lib/pricing.ts"), "export const p = 1;\n")
+            .map_err(|err| format!("write pricing.ts: {err}"))?;
+        fs::create_dir_all(repo.join("tools/py")).map_err(|err| format!("create py: {err}"))?;
+        fs::write(
+            repo.join("tools/py/pyproject.toml"),
+            "[project]\nname='t'\n",
+        )
+        .map_err(|err| format!("write pyproject: {err}"))?;
+        init_git_repo_with_initial_files(
+            &repo,
+            &["package.json", "lib/pricing.ts", "tools/py/pyproject.toml"],
+        )?;
+        let doctor_languages = crate::config::language_detection::detect_languages(&repo);
+        assert!(
+            !doctor_languages.contains(&LanguageId::Python),
+            "nested package under a TS root is not Python: {doctor_languages:?}"
+        );
+        write_first_pr(&repo, &FirstPrOptions::default())?;
+        let packet = read_packet(&repo.join(DEFAULT_OUT_DIR).join(START_HERE_JSON))?;
+        assert_eq!(
+            packet["selected"]["reason_code"], "typescript_project_marker_missing",
+            "{packet}"
+        );
+        cleanup(&repo)
+    }
+
     /// #10713: `doctor` detects a `package.json` + `.ts` repository as
     /// TypeScript, so first-pr must not call it a wrong root or send the
     /// reader back to `doctor`; it names the marker the config rules need.

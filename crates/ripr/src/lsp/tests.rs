@@ -24460,6 +24460,7 @@ fn python_disabled_adapter_coverage(
                 .collect(),
             javascript_file_count: 0,
             enabled: false,
+            nested_packages: Vec::new(),
         },
     ])
 }
@@ -25005,6 +25006,7 @@ async fn workspace_status_uncompiled_perl_recovery_does_not_claim_enablement() -
                 sample_paths: vec!["pricing.pl".to_string()],
                 javascript_file_count: 0,
                 enabled: false,
+                nested_packages: Vec::new(),
             },
         ]),
         language_view: Some(not_selected_language_view("perl")),

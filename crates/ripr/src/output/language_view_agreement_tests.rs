@@ -667,6 +667,7 @@ fn preview_advisory_readiness_agrees_with_the_view() -> Result<(), String> {
             sample_paths: Vec::new(),
             javascript_file_count: 0,
             enabled,
+            nested_packages: Vec::new(),
         };
         assert_eq!(advisory.analyzed(&view.public_runs), analyzed, "{name}");
     }
