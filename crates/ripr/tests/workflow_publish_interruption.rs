@@ -740,6 +740,10 @@ fn after_terminated_at_terminal_retention_stays_unknown() -> Result<(), String> 
 /// refused up front, before the receipt, verify or gap snapshot are published
 /// (a late refusal inside terminal retention would strand them), and the
 /// attempt still finishes with exactly its three gap roles and no focused role.
+/// This guards the up-front refusal. The manifest rule that accepts one
+/// optional `focused_test_result` role beside the three gap roles is covered by
+/// the `a_gap_attempt_accepts_one_optional_focused_result_but_no_other_extra_role`
+/// unit test, because no CLI route reaches it for a gap-bound attempt.
 #[test]
 fn a_gap_bound_attempt_refuses_a_rust_test_result_before_publishing_anything() -> Result<(), String>
 {
