@@ -162,20 +162,8 @@ fn observe(fixture: &Fixture, path: &str, diff_text: &str) -> Result<Observed, S
 
 /// Every `.rs` file of the fixture, indexed together as the run would.
 fn fixture_index(fixture: &Fixture) -> Result<crate::analysis::facts::RustIndex, String> {
-    let mut files = Vec::new();
-    let mut pending = vec![PathBuf::from("src")];
-    while let Some(directory) = pending.pop() {
-        for entry in fs::read_dir(fixture.0.join(&directory)).map_err(|e| e.to_string())? {
-            let name = entry.map_err(|e| e.to_string())?.file_name();
-            let relative = directory.join(&name);
-            if fixture.0.join(&relative).is_dir() {
-                pending.push(relative);
-            } else if relative.extension().is_some_and(|ext| ext == "rs") {
-                files.push(relative);
-            }
-        }
-    }
-    files.sort();
+    // The run's own discovery, so skipped directories and symlinks stay out.
+    let files = crate::analysis::workspace::discover_rust_files(&fixture.0)?;
     crate::analysis::facts::build_index(&fixture.0, &files)
 }
 
@@ -728,5 +716,99 @@ fn an_unindexed_package_file_refuses_only_when_it_could_own_the_child() -> Resul
         kani_only(&complete, "src/proofs.rs"),
         "complete index grants"
     );
+    Ok(())
+}
+
+fn discovered(fixture: &Fixture) -> Result<Vec<PathBuf>, String> {
+    crate::analysis::workspace::discover_rust_files(&fixture.0)
+}
+
+/// #13736 review round 3: a file in a discovery-skipped directory is neither
+/// discovered nor indexed, yet rustc compiles it when a visible declaration
+/// names it. Its `#[path]` owner of the child must refuse the verdict. Runs
+/// the real diff adapter and its discovery; nothing is injected by hand.
+#[test]
+fn an_owner_in_a_discovery_skipped_directory_keeps_production_probes() -> Result<(), String> {
+    let fixture = Fixture::new("skipped-dir-owner")?;
+    let path = "src/proofs.rs";
+    fixture.write(path, PROOF_FILE)?;
+    fixture.write(
+        "src/fixtures/mod.rs",
+        "#[path = \"../proofs.rs\"]\nmod p;\n",
+    )?;
+    // Control: the skipped directory exists but no visible declaration
+    // reaches it.
+    fixture.write("src/lib.rs", &parent_source("#[cfg(kani)]", "proofs"))?;
+    let files = discovered(&fixture)?;
+    assert!(
+        files.iter().any(|file| file == Path::new(path))
+            && !files.iter().any(|file| file.starts_with("src/fixtures")),
+        "discovery lists the child and skips src/fixtures: {files:?}"
+    );
+    let unreached = observe(&fixture, path, &helper_diff(path, "", 4))?;
+    assert!(
+        unreached.kani_module_file,
+        "an unreached skipped dir grants"
+    );
+    assert_verification_only(&unreached, "unreached src/fixtures");
+    // Production reaches src/fixtures/mod.rs, which owns proofs.rs.
+    fixture.write(
+        "src/lib.rs",
+        &format!("{}mod fixtures;\n", parent_source("#[cfg(kani)]", "proofs")),
+    )?;
+    let reached = observe(&fixture, path, &helper_diff(path, "", 4))?;
+    assert_production(&reached, "mod fixtures; reaching a #[path] owner");
+    // A captured `#[path]` into the skipped directory resolves exactly: an
+    // inert leaf there (inline module only) grants, an owner there refuses.
+    // ripr's own `tests/kani_guard_transition_inputs.rs` has the inert shape.
+    fixture.write(
+        "src/lib.rs",
+        &format!(
+            "{}#[path = \"fixtures/leaf.rs\"]\nmod leaf;\n",
+            parent_source("#[cfg(kani)]", "proofs")
+        ),
+    )?;
+    fixture.write(
+        "src/fixtures/leaf.rs",
+        "pub fn leaf() {}\n#[cfg(kani)]\nmod proofs {\n    fn p() {}\n}\n",
+    )?;
+    let inert = observe(&fixture, path, &helper_diff(path, "", 4))?;
+    assert!(inert.kani_module_file, "an inert reached leaf grants");
+    assert_verification_only(&inert, "#[path] to an inert leaf in src/fixtures");
+    fixture.write(
+        "src/fixtures/leaf.rs",
+        "#[path = \"../proofs.rs\"]\nmod p;\n",
+    )?;
+    let owner = observe(&fixture, path, &helper_diff(path, "", 4))?;
+    assert_production(&owner, "#[path] to an owning file in src/fixtures");
+    Ok(())
+}
+
+/// #13736 review round 3: discovery skips symlinked sources, but rustc
+/// follows a `mod alias;` through `src/alias.rs -> proofs.rs`.
+#[cfg(unix)]
+#[test]
+fn a_symlinked_owner_keeps_production_probes() -> Result<(), String> {
+    let fixture = Fixture::new("symlink-owner")?;
+    let path = "src/proofs.rs";
+    fixture.write(path, PROOF_FILE)?;
+    std::os::unix::fs::symlink("proofs.rs", fixture.0.join("src/alias.rs"))
+        .map_err(|error| error.to_string())?;
+    fixture.write("src/lib.rs", &parent_source("#[cfg(kani)]", "proofs"))?;
+    let files = discovered(&fixture)?;
+    assert!(
+        files.iter().any(|file| file == Path::new(path))
+            && !files.iter().any(|file| file == Path::new("src/alias.rs")),
+        "discovery lists the child and skips the symlink: {files:?}"
+    );
+    let unreached = observe(&fixture, path, &helper_diff(path, "", 4))?;
+    assert!(unreached.kani_module_file, "an undeclared symlink grants");
+    assert_verification_only(&unreached, "undeclared src/alias.rs");
+    fixture.write(
+        "src/lib.rs",
+        &format!("{}mod alias;\n", parent_source("#[cfg(kani)]", "proofs")),
+    )?;
+    let reached = observe(&fixture, path, &helper_diff(path, "", 4))?;
+    assert_production(&reached, "mod alias; through a symlink to proofs.rs");
     Ok(())
 }

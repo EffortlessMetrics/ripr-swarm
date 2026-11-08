@@ -17,6 +17,11 @@ const DEFAULT_IGNORED_DIRS: &[&str] = &[
     "node_modules",
 ];
 
+/// Whether the workspace walk never enters a directory with this name.
+pub(crate) fn is_ignored_dir_name(name: &str) -> bool {
+    DEFAULT_IGNORED_DIRS.contains(&name)
+}
+
 /// Whether any directory component of a repo-relative `/`-separated path is
 /// one the workspace walk never enters. The single owner of that rule, so a
 /// consumer deciding "would the producer have analyzed this file" cannot drift

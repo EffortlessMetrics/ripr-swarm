@@ -34,6 +34,9 @@ tests = [
   "crates/ripr/src/analysis/language/rust/cfg_kani_module_tests.rs::an_unindexed_package_file_refuses_only_when_it_could_own_the_child",
   "crates/ripr/src/analysis/facts/invisible_owners.rs::counts_out_of_line_declarations_and_path_literals",
   "crates/ripr/src/analysis/facts/invisible_owners.rs::unaccountable_shapes_fail_closed",
+  "crates/ripr/src/analysis/facts/invisible_owners.rs::hidden_entries_are_reached_by_location_and_literal",
+  "crates/ripr/src/analysis/language/rust/cfg_kani_module_tests.rs::an_owner_in_a_discovery_skipped_directory_keeps_production_probes",
+  "crates/ripr/src/analysis/language/rust/cfg_kani_module_tests.rs::a_symlinked_owner_keeps_production_probes",
 ]
 code = [
   "crates/ripr/src/analysis/probes/verification_erased.rs",
@@ -42,6 +45,7 @@ code = [
   "crates/ripr/src/analysis/facts/role_composition.rs",
   "crates/ripr/src/analysis/facts/index.rs",
   "crates/ripr/src/analysis/facts/invisible_owners.rs",
+  "crates/ripr/src/analysis/workspace/discover.rs",
 ]
 metrics = [
   "unit_test_pass_rate",

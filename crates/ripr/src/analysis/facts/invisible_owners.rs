@@ -31,6 +31,13 @@
 //!   equals that file's captured declarations of `name`, and the count of
 //!   `#[path]` literals naming the child's file equals the captured ones, so
 //!   one file's surplus can never cancel another's deficit;
+//! - entries discovery neither lists nor enters (ignored-name directories
+//!   such as `target`/`fixtures`, nested package directories, symlinks) are
+//!   found by listing the package tree without following links; a visible
+//!   `mod <name>` that could resolve to one, or a `#[path]` literal naming
+//!   one, refuses unless it is a captured literal whose exact target is an
+//!   inert regular leaf (no `mod <name>;`, no `#[path]`); any `#[path]` that
+//!   is absolute, not `.rs`, or leaves the package refuses;
 //! - every unresolved `include!` of the package is an inline-module include
 //!   of a literal `.rs` file of the package whose text declares no
 //!   `mod <name>;`.
@@ -58,6 +65,10 @@ struct FileText {
     out_of_line_modules: BTreeMap<String, usize>,
     /// `#[path = "..."]` literals by final path component.
     path_file_names: BTreeMap<String, usize>,
+    /// Every `mod <name>` token, inline or out-of-line.
+    module_names: BTreeSet<String>,
+    /// Every `#[path = "..."]` literal, verbatim.
+    path_literals: Vec<String>,
 }
 
 /// What one package allows, computed once per composition pass.
@@ -65,7 +76,7 @@ struct PackageOwners {
     /// The package's indexed files.
     files: Vec<PathBuf>,
     /// Masked text of discovered package files the index did not take in.
-    unindexed: Vec<FileText>,
+    unindexed: Vec<(PathBuf, FileText)>,
     /// Module names some unresolved nested-module include could declare.
     include_declared: BTreeSet<String>,
 }
@@ -111,7 +122,7 @@ impl<'index> InvisibleOwners<'index> {
         let files = match self.packages.get(&package) {
             Some(Some(owners))
                 if !owners.include_declared.contains(name)
-                    && !owners.unindexed.iter().any(|text| {
+                    && !owners.unindexed.iter().any(|(_, text)| {
                         text.out_of_line_modules.contains_key(name)
                             || text.path_file_names.contains_key(child_file_name)
                     }) =>
@@ -225,8 +236,10 @@ impl<'index> InvisibleOwners<'index> {
                 // Absent at the selected snapshot: not an owner there.
                 continue;
             };
-            unindexed.push(file_text(&String::from_utf8(bytes).ok()?)?);
+            unindexed.push((file.clone(), file_text(&String::from_utf8(bytes).ok()?)?));
         }
+        let hidden = hidden_entries(root, package)?;
+        let mut hidden_targets = Vec::new();
         for file in &files {
             let facts = index.files.get(file)?;
             if facts.used_lexical_fallback
@@ -240,18 +253,42 @@ impl<'index> InvisibleOwners<'index> {
             let source = &facts.source;
             let may_hide = (source.contains('$') && source.contains("mod"))
                 || (source.contains("cfg_attr") && source.contains("path"))
-                || source.contains("#[path");
+                || has_path_assignment(source)
+                || hidden
+                    .iter()
+                    .any(|(_, name)| source.contains(name.as_str()));
             if may_hide {
                 let source = source.clone();
-                if self
+                let text = self
                     .texts
                     .entry(file.clone())
                     .or_insert_with(|| file_text(&source))
-                    .is_none()
-                {
-                    return None;
-                }
+                    .as_ref()?;
+                let captured = facts
+                    .module_declarations
+                    .iter()
+                    .filter_map(|declaration| match &declaration.path_target {
+                        ModulePathTarget::Literal(literal) => Some(literal.clone()),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>();
+                hidden_targets.extend(reaches_hidden_entry(
+                    package,
+                    file,
+                    text,
+                    Some(&captured),
+                    &hidden,
+                )?);
             }
+        }
+        for (file, text) in &unindexed {
+            hidden_targets.extend(reaches_hidden_entry(package, file, text, None, &hidden)?);
+        }
+        if !hidden_targets
+            .iter()
+            .all(|target| hidden_leaf_is_inert(root, package, target))
+        {
+            return None;
         }
         let include_declared = self.include_declared(package)?;
         Some(PackageOwners {
@@ -296,6 +333,141 @@ impl<'index> InvisibleOwners<'index> {
         }
         Some(declared)
     }
+}
+
+/// Entries of the package tree the discovery walk does not enter or list but
+/// rustc can still compile when a declaration names them: directories with a
+/// discovery-ignored name (`target`, `fixtures`, ..), nested package
+/// directories, symlinks and other non-regular entries. Each is returned as
+/// (parent directory, name without a `.rs` extension). Only directory
+/// listings are read, never file bytes, so the walk can only add refusals.
+/// `None` when the tree cannot be listed completely.
+fn hidden_entries(workspace_root: &Path, package: &Path) -> Option<Vec<(PathBuf, String)>> {
+    let mut hidden = Vec::new();
+    let mut stack = vec![(package.to_path_buf(), 0usize)];
+    while let Some((directory, depth)) = stack.pop() {
+        for entry in std::fs::read_dir(workspace_root.join(&directory)).ok()? {
+            let entry = entry.ok()?;
+            let name = entry.file_name().into_string().ok()?;
+            let kind = entry.file_type().ok()?;
+            let relative = directory.join(&name);
+            if kind.is_dir() && !kind.is_symlink() {
+                if crate::analysis::workspace::is_ignored_dir_name(&name)
+                    || manifest_present(workspace_root, &relative)
+                {
+                    hidden.push((directory.clone(), name));
+                } else if depth < MAX_SCAN_DEPTH {
+                    stack.push((relative, depth + 1));
+                } else {
+                    return None;
+                }
+            } else if !kind.is_file() {
+                let stem = name.strip_suffix(".rs").unwrap_or(&name).to_string();
+                hidden.push((directory.clone(), stem));
+            }
+        }
+    }
+    Some(hidden)
+}
+
+/// Whether `source` holds `path` followed by `=`, the only shape that can
+/// start a `#[path = ".."]` attribute.
+fn has_path_assignment(source: &str) -> bool {
+    source
+        .match_indices("path")
+        .any(|(at, _)| source[at + 4..].trim_start().starts_with('='))
+}
+
+/// Hidden files one file's declarations reach, or `None` (refuse) when they
+/// could reach a hidden entry this check cannot follow or leave the package:
+///
+/// - a `mod <name>` token naming a hidden entry whose parent directory lies
+///   at or below the file's directory (where that file's modules, inline or
+///   out-of-line, resolve) refuses;
+/// - a `#[path]` literal that is absolute, does not end in `.rs`, or leaves
+///   the package from the file's directory refuses;
+/// - a `#[path]` literal with a component naming a hidden entry refuses
+///   unless every occurrence of it in the file is a declaration the parser
+///   captured (`captured`, `None` for a file outside the index), so it
+///   resolves from the file's directory exactly; that target is returned for
+///   [`hidden_leaf_is_inert`].
+fn reaches_hidden_entry(
+    package: &Path,
+    file: &Path,
+    text: &FileText,
+    captured: Option<&[String]>,
+    hidden: &[(PathBuf, String)],
+) -> Option<Vec<PathBuf>> {
+    let directory = file.parent().unwrap_or(Path::new(""));
+    let named = |name: &str| {
+        hidden
+            .iter()
+            .any(|(parent, hidden_name)| hidden_name == name && parent.starts_with(directory))
+    };
+    if text.module_names.iter().any(|name| named(name)) {
+        return None;
+    }
+    let mut targets = Vec::new();
+    for literal in &text.path_literals {
+        let normalized = literal.replace('\\', "/");
+        if normalized.starts_with('/') || normalized.contains(':') || !normalized.ends_with(".rs") {
+            return None;
+        }
+        let target = normalize_relative(&directory.join(&normalized))
+            .filter(|target| target.starts_with(package))?;
+        let names_hidden = normalized.split('/').any(|component| {
+            let component = component.strip_suffix(".rs").unwrap_or(component);
+            hidden.iter().any(|(_, name)| name == component)
+        });
+        if !names_hidden {
+            continue;
+        }
+        let textual = text
+            .path_literals
+            .iter()
+            .filter(|other| *other == literal)
+            .count();
+        let exact = captured.is_some_and(|captured| {
+            captured.iter().filter(|other| *other == literal).count() == textual
+        });
+        if !exact {
+            return None;
+        }
+        targets.push(target);
+    }
+    Some(targets)
+}
+
+/// Whether a hidden file reached by an exactly resolved `#[path]` literal is
+/// a leaf that cannot own another module file: a regular file at the
+/// snapshot, under real directories, whose masked text holds no
+/// `mod <name>;` and no `#[path]`. Inline modules without out-of-line
+/// declarations are allowed.
+fn hidden_leaf_is_inert(workspace_root: &Path, package: &Path, target: &Path) -> bool {
+    let Ok(below) = target.strip_prefix(package) else {
+        return false;
+    };
+    let mut cursor = package.to_path_buf();
+    for component in below.components() {
+        cursor.push(component);
+        let regular = std::fs::symlink_metadata(workspace_root.join(&cursor)).is_ok_and(|meta| {
+            if cursor == target {
+                meta.is_file()
+            } else {
+                meta.is_dir()
+            }
+        });
+        if !regular {
+            return false;
+        }
+    }
+    let Ok(Some(bytes)) = committed_source::read_source_bytes(workspace_root, target) else {
+        return false;
+    };
+    String::from_utf8(bytes)
+        .ok()
+        .and_then(|source| file_text(&source))
+        .is_some_and(|text| text.out_of_line_modules.is_empty() && text.path_literals.is_empty())
 }
 
 /// Whether `directory/Cargo.toml` exists at the snapshot.
@@ -371,10 +543,12 @@ fn record_declarations(source: &str, text: &mut FileText) -> Option<()> {
         if rest.starts_with('$') {
             return None;
         }
+        let rest = rest.strip_prefix("r#").unwrap_or(rest);
         let name_len = rest.bytes().take_while(|byte| ident(*byte)).count();
         if name_len == 0 {
             continue;
         }
+        text.module_names.insert(rest[..name_len].to_string());
         if rest[name_len..].trim_start().starts_with(';') {
             *text
                 .out_of_line_modules
@@ -402,6 +576,7 @@ fn record_declarations(source: &str, text: &mut FileText) -> Option<()> {
                 .trim_start();
             let literal = value.strip_prefix('"')?;
             let end = literal.find('"')?;
+            text.path_literals.push(literal[..end].to_string());
             *text
                 .path_file_names
                 .entry(final_component(&literal[..end]).to_string())
@@ -483,5 +658,66 @@ mod tests {
             record("fn f(p: &str) -> String { format!(\"{path}\", path = p) }\n").is_some(),
             "a named format argument is not a cfg_attr path"
         );
+    }
+
+    #[test]
+    fn hidden_entries_are_reached_by_location_and_literal() -> Result<(), String> {
+        let hidden = vec![
+            (PathBuf::from("p/src/app"), "fixtures".to_string()),
+            (PathBuf::from("p/src"), "alias".to_string()),
+        ];
+        let reaches = |file: &str, source: &str| -> Result<bool, String> {
+            let text = record(source).ok_or("fixture text is accountable")?;
+            // Refused, or not followable: no capture is offered here.
+            Ok(
+                reaches_hidden_entry(Path::new("p"), Path::new(file), &text, None, &hidden)
+                    .is_none(),
+            )
+        };
+        // `mod <name>` reaches a hidden entry at or below the file's directory.
+        assert!(reaches("p/src/lib.rs", "mod alias;\n")?);
+        assert!(reaches("p/src/lib.rs", "mod a { mod fixtures; }\n")?);
+        assert!(reaches("p/src/app/mod.rs", "pub mod r#fixtures;\n")?);
+        // A same-named module elsewhere resolves away from the hidden entry.
+        assert!(!reaches("p/src/other/mod.rs", "mod fixtures;\n")?);
+        assert!(!reaches("p/src/lib.rs", "mod helpers;\n")?);
+        // `#[path]` literals: a hidden component, a non-`.rs` target, an
+        // absolute path or one leaving the package all refuse.
+        assert!(reaches(
+            "p/tests/t.rs",
+            "#[path = \"../src/app/fixtures/x.rs\"]\nmod x;\n"
+        )?);
+        assert!(reaches(
+            "p/src/lib.rs",
+            "#[path = \"inner\"]\nmod inner { mod x; }\n"
+        )?);
+        assert!(reaches(
+            "p/src/lib.rs",
+            "#[path = \"/etc/x.rs\"]\nmod x;\n"
+        )?);
+        assert!(reaches(
+            "p/src/lib.rs",
+            "#[path = \"../../q/x.rs\"]\nmod x;\n"
+        )?);
+        assert!(!reaches(
+            "p/src/lib.rs",
+            "#[path = \"inner/x.rs\"]\nmod x;\n"
+        )?);
+        // A captured literal into a hidden directory resolves exactly and is
+        // handed to the leaf check instead of refusing.
+        let source = "#[path = \"../src/app/fixtures/x.rs\"]\nmod x;\n";
+        let text = record(source).ok_or("fixture text is accountable")?;
+        let captured = ["../src/app/fixtures/x.rs".to_string()];
+        assert_eq!(
+            reaches_hidden_entry(
+                Path::new("p"),
+                Path::new("p/tests/t.rs"),
+                &text,
+                Some(&captured),
+                &hidden,
+            ),
+            Some(vec![PathBuf::from("p/src/app/fixtures/x.rs")])
+        );
+        Ok(())
     }
 }

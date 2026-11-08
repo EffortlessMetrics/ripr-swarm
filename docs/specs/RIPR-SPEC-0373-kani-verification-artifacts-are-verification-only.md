@@ -104,6 +104,17 @@ are **Kani verification artifacts**, and their lines are verification-only
   it, or a `#[path]` literal naming the child's file, refuses the verdict
   (`build.rs` owning `src/build_commit_record.rs` through `#[path]` is this
   shape), and unreadable or unaccountable text refuses the whole package.
+  Entries discovery neither lists nor enters but rustc compiles when named
+  (directories with a discovery-ignored name such as `target` or `fixtures`,
+  nested package directories, symlinks and other non-regular entries) are
+  found by listing the package tree without following links. A `mod <name>`
+  token naming such an entry from a file at or above its parent directory
+  refuses; so does a `#[path]` literal that is absolute, not a `.rs` file,
+  leaves the package, or names such an entry, unless every occurrence is a
+  captured declaration whose exact target is a regular file under real
+  directories with no `mod <name>;` or `#[path]` of its own (an inert leaf,
+  the shape of `tests/kani_guard_transition_inputs.rs` reaching
+  `tests/fixtures/kani_guard_transitions/*.rs`).
   Function source roles are not
   changed: a helper there stays a plain function, and the file seeds no probe
   because it is verification source.
@@ -156,8 +167,14 @@ findings of its runtime lines.
   literals are matched by final file name, not by resolved path, which only
   over-refuses; a symlinked path that names the child under another file name
   is not matched.
-- Discovery skips `target`, `fixtures` and other ignored directories, like the
-  run itself; files there are neither indexed nor counted.
+- Discovery skips `target`, `fixtures` and other ignored directories and
+  symlinked entries, like the run itself; files there are neither indexed nor
+  counted. They are refused by name and location instead: any visible
+  `mod <name>` that could resolve to one, or `#[path]` naming one, refuses
+  unless it is an exactly resolved inert leaf. This over-refuses (a module
+  named like an ignored directory beside one), and the tree listing reads
+  working-tree directory entries, so in committed mode an extra worktree-only
+  entry can add a refusal but never remove one.
 - A file outside the index (an editor refresh over open files, Instant mode,
   a build script) is judged by its masked text alone: a declaration it holds
   of the module name refuses even when that declaration would resolve
@@ -167,7 +184,11 @@ findings of its runtime lines.
   read and masked pass per discovered file the index does not hold, one masked
   pass over each indexed file that could hide a declaration (`$` with `mod`,
   `cfg_attr` with `path`, `#[path`), and one per file that mentions the
-  module or child file name. Further edges reuse the cached results.
+  module or child file name, plus one listing of the package tree (not
+  entering ignored, nested-package or symlinked directories). Further edges
+  reuse the cached results, but nothing is cached across composition passes:
+  each LSP refresh or analysis run that recomposes the index repeats the
+  per-package discovery listing, tree listing and masked passes.
 - ripr does not run Kani or evaluate any proof; the disclosure is not a
   coverage or sufficiency claim.
 
