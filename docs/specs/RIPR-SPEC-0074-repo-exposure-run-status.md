@@ -234,8 +234,10 @@ refuse a failed warm through `ScopedClassifiedSeamInventory::
 require_complete_evidence`, which shares its `producer_failure` refusal text
 (pass-wide scope, bounded detail, repair route) with
 `ClassifiedSeamsReport::require_complete_evidence` (#13340): the canonical-gap
-`ripr rerun --gap` selection, the `--at` test stub and `ripr review-comments`.
-The stub's inventory class disclosure is omitted rather than read from a
+`ripr rerun --gap` selection, the `--at` test stub and `ripr review-comments`. The repo badge (`repo-badge-json`,
+`repo-badge-shields` and the repo arm of badge-plus) refuses the same failed warm
+through `ClassifiedSeamsReport::require_complete_evidence("repo badge")` instead
+of projecting a clean-looking zero. The stub's inventory class disclosure is omitted rather than read from a
 stand-in. `review-comments` records a `failed` run receipt at
 `canonical_analysis` with the pass-wide repair route and writes no review
 artifact; `BoundedAgentBrief` is only the streaming sink for that walk and its

@@ -659,6 +659,9 @@ fn ripr_repo_canonical_actionable_summary(
     config: &RiprConfig,
 ) -> Result<(badge::BadgeSummary, Option<analysis::SeamLimitInfo>), String> {
     let report = analysis::inventory_classified_seams_report_at_with_config(&output.root, config)?;
+    // #13340: a failed seam-evidence warm leaves every seam an opaque
+    // stand-in; refuse rather than project a clean-looking zero badge.
+    report.require_complete_evidence("repo badge")?;
     let policy = badge::BadgePolicy {
         suppressions_path: config.suppressions().display_path(),
         ..badge::BadgePolicy::default()
@@ -2464,6 +2467,45 @@ fn happy_path_passes() {
                     .is_some_and(|route| !route.is_empty()),
                 "point {point}: {document}"
             );
+            remove_temp_root(&output.root)?;
+        }
+        Ok(())
+    }
+
+    /// #13340: the repo badge entry points refuse a failed seam-evidence warm
+    /// instead of projecting a clean-looking zero badge; the healthy control
+    /// still renders.
+    #[test]
+    fn repo_badge_refuses_a_failed_evidence_warm() -> Result<(), String> {
+        use crate::analysis::test_grip_evidence::WarmPanicGuard;
+        let render = |output: &CheckOutput, format: &OutputFormat| {
+            render_check_with_config(output, format, &RiprConfig::default())
+        };
+
+        let control_output = check_output_with_temp_seam_workspace(Vec::new())?;
+        let control = render(&control_output, &OutputFormat::RepoBadgeJson)?;
+        assert!(!control.is_empty());
+        remove_temp_root(&control_output.root)?;
+
+        for (point, format) in [
+            (1u8, OutputFormat::RepoBadgeJson),
+            (2u8, OutputFormat::RepoBadgeShields),
+        ] {
+            let output = check_output_with_temp_seam_workspace(Vec::new())?;
+            let result = {
+                let _armed = WarmPanicGuard::arm(point);
+                render(&output, &format)
+            };
+            match result {
+                Ok(rendered) => {
+                    return Err(format!("point {point}: badge rendered: {rendered}"));
+                }
+                Err(error) => {
+                    assert!(error.contains("producer_failure"), "point {point}: {error}");
+                    assert!(error.contains("pass-wide"), "point {point}: {error}");
+                    assert!(error.contains("repo badge"), "point {point}: {error}");
+                }
+            }
             remove_temp_root(&output.root)?;
         }
         Ok(())
