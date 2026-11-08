@@ -78,6 +78,14 @@ pub(crate) struct TypeScriptOwner {
     /// import or member of such a module (`const { f } = require(...)`,
     /// `k.f`) is a property of the function, never the owner.
     pub(crate) commonjs_whole_function: bool,
+    /// `true` for a `ModuleFunction` owner whose declarator initializer is a
+    /// call with a function-valued argument (`export const X =
+    /// factory("X", (inst, def) => { ... })`). The callback body runs when the
+    /// constructed value is used, not as a module-level constant, so a
+    /// constant observer cannot reach it (#13588). Wording-only fact: it never
+    /// changes classification.
+    #[serde(default)]
+    pub(crate) constructor_callback: bool,
     /// Exported names of the owner's module whose code reaches this
     /// top-level function through a bounded same-module call graph (an
     /// exported wrapper, or a value a same-module factory built). Empty for

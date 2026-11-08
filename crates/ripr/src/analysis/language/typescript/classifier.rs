@@ -7583,6 +7583,14 @@ pub(crate) fn classify_resolved_owner(
         alias_map,
         workspace_root,
     ));
+    pin_facts.extend(ts_throw_boundary_pin_facts(
+        &probe_shape.family,
+        line_text,
+        owner,
+        related_candidates,
+        alias_map,
+        workspace_root,
+    ));
     pin_facts.extend(ts_close_to_pin_facts(
         &probe_shape.family,
         line,
@@ -8018,6 +8026,38 @@ pub(crate) fn classify_resolved_owner(
             owner.name
         )];
     }
+    // #9874: credit only an exact retry/count witness. All other counted
+    // loop shapes continue through the rule 8 abstention below.
+    let loop_count_credit = if context.single_line_replacement
+        && static_limit.is_none()
+        && matches!(verdict.class, ExposureClass::WeaklyExposed)
+        && strongest_strength >= OracleStrength::Strong.rank()
+    {
+        super::loop_count_credit::discriminates(
+            old_line_text,
+            line_text,
+            line,
+            owner,
+            related_candidates,
+            workspace_root,
+        )
+    } else {
+        None
+    };
+    if let Some(witness) = &loop_count_credit {
+        verdict.class = ExposureClass::Exposed;
+        verdict.observe_state = StageState::Yes;
+        verdict.discriminate_state = StageState::Yes;
+        verdict.missing = vec![format!(
+            "The related test `{}` ({}:{}) passes {} attempts and asserts {} calls; the modeled rejecting path gives {} calls after the change.",
+            witness.test_name,
+            witness.test_file.display(),
+            witness.assertion_line,
+            witness.input,
+            witness.before,
+            witness.after
+        )];
+    }
     // RIPR-SPEC-0246 rule 8: a counted-loop header change that a related test
     // reads only through a mock call count. The ladder's predicate-boundary
     // gap does not apply to a loop header, so the iteration count is unknown.
@@ -8245,7 +8285,12 @@ pub(crate) fn classify_resolved_owner(
         )
     };
     let observe = StageEvidence::new(observe_state, Confidence::Low, &observe_summary);
-    let discriminate_summary = if let Some(verdict) = &infection {
+    let discriminate_summary = if let Some(witness) = &loop_count_credit {
+        format!(
+            "For `{}`, the modeled rejecting path gives {} calls before the edit and {} after it for {} attempts.",
+            witness.test_name, witness.before, witness.after, witness.input
+        )
+    } else if let Some(verdict) = &infection {
         format!(
             "TypeScript preview adapter: infection is `{}` for this `{}` edit, so whether an assertion discriminates the change is not asked (#10704).",
             verdict.state.as_str(),
@@ -8414,11 +8459,22 @@ pub(crate) fn classify_resolved_owner(
             // established, not because the test has no exact assertion.
             strong_oracle_present: strongest_strength >= OracleStrength::Strong.rank()
                 || push_raw_eligible,
-            boundary_input_matched: boundary_witnessed,
+            boundary_input_matched: boundary_witnessed || loop_count_credit.is_some(),
         },
     );
 
     let mut evidence = vec![format!("owner: {}", owner.name)];
+    if let Some(witness) = &loop_count_credit {
+        evidence.push(format!(
+            "typescript_loop_count_witness: {} ({}:{}, input {}, old {}, new {})",
+            witness.test_name,
+            witness.test_file.display(),
+            witness.assertion_line,
+            witness.input,
+            witness.before,
+            witness.after
+        ));
+    }
     if !probe_shape.specific {
         evidence.push("probe_fact: ambiguous_fallback".to_string());
     }
@@ -10369,6 +10425,10 @@ pub(crate) fn no_static_path_missing(owner: &TypeScriptOwner) -> String {
             "No trusted TypeScript class-method relation for `{}`. Direct same-file or imported `Class.method(...)` calls are supported, but local shadows, mocked modules, namespace chains, dynamic member access, and missing class-name context stay ambiguous in preview.",
             owner.name
         ),
+        OwnerKind::ModuleFunction if owner.constructor_callback => format!(
+            "No statically linked test builds and exercises `{}`. The changed code may sit inside a function passed to the call that initializes it; such code may run only when a value built from `{}` is used rather than as a module-level constant, which a constant observer such as `expect(IMPORTED_CONST)` cannot observe.",
+            owner.name, owner.name
+        ),
         OwnerKind::ModuleFunction => format!(
             "No trusted TypeScript module-initializer observer for `{}`. Direct `expect(IMPORTED_CONST)...` and `expect(namespace.EXPORT)...` observers are supported, but helper-derived values, shadowed aliases, dynamic initialization, and non-expect references stay advisory in preview.",
             owner.name
@@ -10387,6 +10447,12 @@ pub(crate) fn no_static_path_recommendation(owner: &TypeScriptOwner) -> String {
         }
         OwnerKind::ClassMethod => {
             "TypeScript preview advisory: class-method relation is missing context; use a direct same-file or imported `Class.method(...)` observer when safe, and keep local shadows, mocked modules, namespace chains, dynamic member access, and missing class-name context advisory.".to_string()
+        }
+        OwnerKind::ModuleFunction if owner.constructor_callback => {
+            format!(
+                "TypeScript preview advisory: the changed code may run only when a value built from `{}` is used, not at module load; if so, call it through a test that builds a value from `{}` and exercises it (for a schema, parse a value), then assert the result. Keep the finding advisory until a test reaches it.",
+                owner.name, owner.name
+            )
         }
         OwnerKind::ModuleFunction => {
             "TypeScript preview advisory: module initializer observer is missing context; add a direct `expect(IMPORTED_CONST).toBe(...)` or `expect(namespace.EXPORT).toEqual(...)` observer when safe, and keep helper-derived or dynamic initialization evidence advisory.".to_string()

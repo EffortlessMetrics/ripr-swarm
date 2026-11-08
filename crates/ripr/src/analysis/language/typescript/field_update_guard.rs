@@ -566,6 +566,7 @@ mod tests {
             exported_as_default: false,
             commonjs_default_export: false,
             commonjs_whole_function: false,
+            constructor_callback: false,
             imports: Default::default(),
             method_kind: TypeScriptMethodKind::Ordinary,
             class_default_export: false,
