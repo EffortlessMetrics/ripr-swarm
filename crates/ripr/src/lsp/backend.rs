@@ -14419,6 +14419,10 @@ struct DiskContentStatKey {
     len: u64,
     modified: Option<(u64, u32)>,
     ino: u64,
+    /// Device of the file. A path that moves onto another mount (for example
+    /// a local tree replaced by a network mount) gets a new key even when the
+    /// inode number and timestamps happen to match (#12170).
+    dev: u64,
     /// Inode change time. Unlike mtime, no writer can set or restore it
     /// (#12046): an in-place same-length rewrite that puts the old mtime back
     /// still moves ctime. `None` where std exposes no change time (Windows).
@@ -14426,15 +14430,15 @@ struct DiskContentStatKey {
 }
 
 fn disk_content_stat_key(meta: &fs::Metadata) -> DiskContentStatKey {
-    let ino = {
+    let (ino, dev) = {
         #[cfg(unix)]
         {
             use std::os::unix::fs::MetadataExt;
-            meta.ino()
+            (meta.ino(), meta.dev())
         }
         #[cfg(not(unix))]
         {
-            0
+            (0, 0)
         }
     };
     let modified = meta.modified().ok().map(|instant| {
@@ -14458,6 +14462,7 @@ fn disk_content_stat_key(meta: &fs::Metadata) -> DiskContentStatKey {
         len: meta.len(),
         modified,
         ino,
+        dev,
         changed,
     }
 }
@@ -14596,7 +14601,11 @@ fn mountinfo_fstype_for(mountinfo: &str, path: &Path) -> Option<String> {
 }
 
 fn fstype_is_remote(fstype: &str) -> bool {
+    // Any FUSE subtype other than the block-device `fuseblk` (ntfs-3g, exfat)
+    // may be network-backed (ftpfs, gvfsd-fuse, ...), so it is treated as
+    // remote: an unneeded reread is only a cost.
     REMOTE_FILESYSTEM_TYPES.contains(&fstype)
+        || (fstype != "fuseblk" && (fstype == "fuse" || fstype.starts_with("fuse.")))
 }
 
 /// Whether the digest of `path` must not be cached because its timestamps may
@@ -14772,6 +14781,10 @@ mod disk_bytes_equal_text_tests {
         assert!(super::fstype_is_remote("cifs"));
         assert!(!super::fstype_is_remote("ext4"));
         assert!(!super::fstype_is_remote("tmpfs"));
+        assert!(super::fstype_is_remote("fuse.ftpfs"));
+        assert!(super::fstype_is_remote("fuse.gvfsd-fuse"));
+        assert!(super::fstype_is_remote("fuse"));
+        assert!(!super::fstype_is_remote("fuseblk"));
     }
 
     #[test]
