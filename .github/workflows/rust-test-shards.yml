@@ -63,32 +63,6 @@ jobs:
           cargo fetch --locked --manifest-path fixtures/owner_return_pin_json_real_literal/input/Cargo.toml
           cargo fetch --locked --manifest-path crates/ripr/tests/fixtures/proptest_singleton/input/Cargo.toml
 
-      # The policy tests spawn `cargo test --no-run -p xtask` themselves; warming it
-      # keeps that build off the clock, as the gates job's policy preflight does.
-      - name: Warm the cargo builds the policy tests spawn
-        timeout-minutes: 20
-        run: cargo xtask check-covered-by
-
-      # The verify job runs `cargo xtask verify-test-shards`. Compiling xtask there
-      # cost about 2.4 minutes after the last shard finished; the warm build above
-      # already produced the same binary from this checkout, so one shard hands it
-      # over (stripped of debug sections) and the verifier starts at once. The
-      # attempt suffix keeps a re-run from colliding with an earlier upload.
-      - name: Retain the xtask binary for the verify job
-        if: matrix.shard == 1
-        run: |
-          mkdir -p target/xtask-binary
-          strip --strip-debug -o target/xtask-binary/xtask target/debug/xtask
-
-      - name: Upload the xtask binary
-        if: matrix.shard == 1
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: ${{ inputs.artifact-name }}-xtask-${{ github.run_attempt }}
-          path: target/xtask-binary/xtask
-          if-no-files-found: error
-          retention-days: 1
-
       # Hosted shard losses ("runner received a shutdown signal", exit 143, or "lost
       # communication") happened inside the test-profile compile of
       # `cargo nextest run --workspace`, which builds the `ripr` lib test and the
@@ -165,6 +139,31 @@ jobs:
           }
           build_phase without-xtask cargo test --no-run --locked --workspace --exclude xtask
           build_phase workspace cargo test --no-run --locked --workspace
+
+      # Workspace test preparation builds normal xtask for its integration
+      # tests (CARGO_BIN_EXE_xtask). Reuse that exact-checkout binary for this
+      # static inventory check instead of compiling a separate dev graph first.
+      # Nested package-specific Cargo builds remain owned by their consumers.
+      - name: Check covered-by with the prepared workspace binary
+        timeout-minutes: 20
+        run: target/debug/xtask check-covered-by
+
+      # Shard 1 hands the prepared normal binary to the verifier. It needs no
+      # additional compilation there; the attempt suffix isolates reruns.
+      - name: Retain the xtask binary for the verify job
+        if: matrix.shard == 1
+        run: |
+          mkdir -p target/xtask-binary
+          strip --strip-debug -o target/xtask-binary/xtask target/debug/xtask
+
+      - name: Upload the xtask binary
+        if: matrix.shard == 1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ inputs.artifact-name }}-xtask-${{ github.run_attempt }}
+          path: target/xtask-binary/xtask
+          if-no-files-found: error
+          retention-days: 1
 
       - name: Required Rust tests (shard ${{ matrix.shard }} of 4)
         id: rust-test-shard
