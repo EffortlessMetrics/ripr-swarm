@@ -244,6 +244,7 @@ fn nested_observer_masking_and_far_call_orders_refuse_credit() -> Result<(), Str
         "assert_eq!(band(10), 2); assert_eq!(band /* outer */ (band(9)), 1);",
         "assert_eq!(band /* outer */ (band(9)), 1); assert_eq!(band(10), 2);",
         "assert_eq!((band(10), band(band(9))), (2, 1));",
+        "assert_eq!(\n        band(band(9)),\n        1\n    );",
     ] {
         let test = format!("use band::band;\n#[test]\nfn masking() {{ {calls} }}\n");
         let found = finding_with_before(owner, &test, "n >= 9")?;

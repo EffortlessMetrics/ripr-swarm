@@ -774,7 +774,8 @@ fn assertion_observes_boundary_owner_call(
     // Looking through a call argument or arithmetic can borrow an inner
     // boundary input even when the outer expression masks its result.
     let lists = if owner.impl_context == crate::analysis::facts::FunctionImplContext::Free
-        && line_owner_call_count(test, assertion.line, owner) > 1
+        && (line_owner_call_count(test, assertion.line, owner) > 1
+            || free_owner_calls_in_text(&subject, owner) > 1)
     {
         observed_free_owner_call_sites(&subject, owner, index)
     } else {
@@ -888,6 +889,19 @@ fn observed_free_owner_call_sites(
 /// distinct fact text once so per-line and per-call extraction agree. For
 /// a free owner a same-named `Type::name(..)` or `value.name(..)` spelling
 /// inside a fact text is not the owner's call (#6713).
+/// Counts free-function owner calls spelled in `text` itself. A multi-line
+/// assertion records only its opening line, so call facts keyed by physical
+/// line can miss calls on continuation lines (`assert_eq!(\n band(band(9)),
+/// 1\n)`); the assertion's own text is the authority there.
+fn free_owner_calls_in_text(text: &str, owner: &FunctionSummary) -> usize {
+    let name = owner.name.as_str();
+    let masked = crate::analysis::extract::mask_comments_and_strings(text);
+    masked
+        .match_indices(name)
+        .filter(|(at, _)| super::related_tests::is_free_function_call_at(&masked, *at, name))
+        .count()
+}
+
 fn line_owner_call_count(test: &TestSummary, line: usize, owner: &FunctionSummary) -> usize {
     let name = owner.name.as_str();
     let mut texts = test
