@@ -1,7 +1,7 @@
 {
   "schema_version": "ripr-mutation-spot-check-python-mutmut-corpus-v1",
   "status": "first_run_partial",
-  "note": "Pinned for the mutmut job of .github/workflows/mutation-spot-check-python.yml (#13842). Revisions are HEAD commits cloned on 2026-11-08; the packages' tests were not run in an agent sandbox (third-party code runs only in that workflow). cachetools is pinned at the cosmic-ray corpus revision so the two tools can be compared on one tree. First hosted run (42515371901): itsdangerous and cachetools finished; humanize was dropped because its unmutated suite fails under mutmut's trampoline (naturalsize(300) read '-300 Bytes'), and isodate replaces it.",
+  "note": "Pinned for the mutmut job of .github/workflows/mutation-spot-check-python.yml (#13842). Revisions are HEAD commits cloned on 2026-11-08; the packages' tests were not run in an agent sandbox (third-party code runs only in that workflow). cachetools is pinned at the cosmic-ray corpus revision so the two tools can be compared on one tree. First hosted run (42515371901): itsdangerous and cachetools finished; humanize was dropped because its unmutated suite fails under mutmut's trampoline (naturalsize(300) read '-300 Bytes'), and isodate replaces it. Run 42523543141 (mutmut show placement) scored 4204 of 4520 mutants over isodate, itsdangerous, python-slugify and cachetools; tomli failed its baseline on the second recursion-limit test, now deselected.",
   "mutmut": {
     "version": "3.8.1"
   },
@@ -31,8 +31,8 @@
       "module_path": "src/tomli",
       "tests_dir": "tests",
       "pip_extra": "",
-      "pytest_args": "-p no:cacheprovider -o addopts= --deselect=tests/test_misc.py::TestMiscellaneous::test_inline_array_recursion_limit",
-      "note": "The recursion-limit test is deselected: mutmut's trampoline adds stack frames, so the unmutated suite fails it."
+      "pytest_args": "-p no:cacheprovider -o addopts= --deselect=tests/test_misc.py::TestMiscellaneous::test_inline_array_recursion_limit --deselect=tests/test_misc.py::TestMiscellaneous::test_inline_table_recursion_limit",
+      "note": "The two recursion-limit tests (inline array and inline table) are deselected: mutmut's trampoline adds stack frames, so the unmutated suite overflows on them (hosted runs 42515371901 and 42523543141)."
     },
     {
       "name": "python-slugify",

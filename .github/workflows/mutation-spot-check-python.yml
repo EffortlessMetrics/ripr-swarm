@@ -118,6 +118,7 @@ jobs:
           path: |
             target/ripr/reports/mutation-spot-check.json
             target/ripr/reports/mutation-spot-check.md
+            target/ripr/reports/mutation-spot-check-records.jsonl
             target/ripr/reports/python-cosmic-ray-status.tsv
             target/ripr/reports/python-*-dump.jsonl
           if-no-files-found: error
@@ -227,6 +228,7 @@ jobs:
           path: |
             target/ripr/reports/mutation-spot-check.json
             target/ripr/reports/mutation-spot-check.md
+            target/ripr/reports/mutation-spot-check-records.jsonl
             target/ripr/reports/python-mutmut-status.tsv
             target/ripr/reports/python-mutmut-dump-check.tsv
             target/ripr/reports/python-mutmut-*-dump.jsonl

@@ -250,9 +250,40 @@ pub(crate) fn mutation_spot_check(args: &[String]) -> Result<(), String> {
         .map_err(|err| format!("serialize mutation spot check: {err}"))?;
     crate::write_report("mutation-spot-check.json", &format!("{json_text}\n"))?;
     crate::write_report("mutation-spot-check.md", &spot_check_markdown(&report))?;
+    crate::write_report("mutation-spot-check-records.jsonl", &records_jsonl(&repos))?;
     println!("Wrote target/ripr/reports/mutation-spot-check.json");
     println!("Wrote target/ripr/reports/mutation-spot-check.md");
+    println!("Wrote target/ripr/reports/mutation-spot-check-records.jsonl");
     Ok(())
+}
+
+/// One JSON line per mutant record, every disposition included, so a miss
+/// can be traced to its file, line, verdict and mutant without re-running
+/// the join. Audit data only: the receipt's figures come from the same
+/// records and this file adds no claim.
+fn records_jsonl(repos: &[RepoRun]) -> String {
+    let mut out = String::new();
+    for repo in repos {
+        for record in &repo.records {
+            let line = json!({
+                "repo": repo.name,
+                "language": repo.language,
+                "disposition": record.disposition,
+                "join_method": record.join_method,
+                "grip_class": record.grip_class,
+                "verdict_token": record.verdict_token,
+                "outcome": record.outcome,
+                "seam_id": record.seam_id,
+                "file": record.file,
+                "line": record.line,
+                "expression": record.expression,
+                "mutant": record.mutant,
+            });
+            out.push_str(&line.to_string());
+            out.push('\n');
+        }
+    }
+    out
 }
 
 #[derive(Clone, Debug)]
@@ -3244,6 +3275,28 @@ mod tests {
             pilot: Ok(Vec::new()),
             synthetic: None,
         }
+    }
+
+    #[test]
+    fn records_jsonl_keeps_one_line_per_record_with_its_verdict() -> Result<(), String> {
+        let run = repo_run(vec![
+            synthetic_record("canonical_precise", "no_static_path", "caught"),
+            synthetic_record("no_finding_on_mutated_lines", "", "missed"),
+        ]);
+        let text = records_jsonl(&[run]);
+        let lines: Vec<Value> = text
+            .lines()
+            .map(serde_json::from_str)
+            .collect::<Result<_, _>>()
+            .map_err(|err| err.to_string())?;
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0]["repo"], "demo");
+        assert_eq!(lines[0]["verdict_token"], "no_static_path");
+        assert_eq!(lines[0]["grip_class"], "ungripped");
+        assert_eq!(lines[0]["outcome"], "caught");
+        assert_eq!(lines[1]["disposition"], "no_finding_on_mutated_lines");
+        assert_eq!(lines[1]["mutant"], "src/a.ts:2:1: M [missed] id=1");
+        Ok(())
     }
 
     fn synthetic_record(disposition: &str, token: &str, outcome: &str) -> Record {

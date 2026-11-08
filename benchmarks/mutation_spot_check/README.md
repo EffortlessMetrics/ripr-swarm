@@ -328,10 +328,15 @@ weekly beside cosmic-ray (or alone with `tool=mutmut`) on the pinned packages of
 cachetools at the cosmic-ray revision for a cross-tool comparison). Each package
 must pass its own tests before mutmut runs, and mutmut must pass them again
 under its trampoline: humanize was dropped because it does not (see the corpus
-note), and tomli and python-slugify each skip one test that cannot run there. The recall figure the scoreboard
-reads is `recall_of_missed.by_language.python`: of the runtime-missed mutants with a
+note), tomli skips its two recursion-limit tests (the trampoline's extra
+frames overflow them) and python-slugify skips one test that cannot run there.
+The recall figure the scoreboard reads is
+`recall_of_missed.by_language.python`: of the runtime-missed mutants with a
 scoreable verdict, the strict share ripr calls a gap and the share it calls a
-gap, weak or unknown.
+gap, weak or unknown. Every spot-check run also writes
+`mutation-spot-check-records.jsonl`, one line per mutant with its disposition,
+verdict, outcome, file and line, so a miss can be traced without re-running
+the join.
 
 ## Pilot top recommendations
 
