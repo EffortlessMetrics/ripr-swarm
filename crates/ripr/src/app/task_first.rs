@@ -1341,9 +1341,11 @@ impl<T, F: Fn() -> Option<T>> RunOnce<T, F> {
 }
 
 /// The seam of the one repair start the default `ripr check` prints for the
-/// change, when it is among the eligible `candidates` and needs no commit
-/// first. `None` when check names no start or another seam (fail-closed: the
-/// caller keeps its selection prompt).
+/// change, when it is among the eligible `candidates` and holds no inline
+/// test target in an uncommitted production file. `None` when check names no
+/// start or another seam (fail-closed: the caller keeps its selection prompt).
+/// A dirty production premise (#13636) does not withhold the pick: the before
+/// phase refuses that start itself and names the commit to make.
 fn check_recommended_start(
     root: &Path,
     config: &crate::config::RiprConfig,
@@ -2965,10 +2967,23 @@ pub(crate) fn check_repair_route(
     // names that commit before the start; an unreadable premise offers no
     // start rather than one that may refuse.
     let Ok(uncommitted_files) = seam_start_uncommitted_files(root) else {
-        return CheckRepairRoute::Refused(RepairRouteRefusal::GapRouteUnavailable {
+        return CheckRepairRoute::Refused(RepairRouteRefusal::SeamRouteUnavailable {
             reason: "could not validate the prerequisites for the repair start",
         });
     };
+    // A committed-only run did not analyze those files, so a commit step
+    // naming them would vouch for unreviewed edits; refuse as the gap-bound
+    // route does for the same state.
+    if !uncommitted_files.is_empty()
+        && output
+            .analyzed_revisions
+            .as_ref()
+            .is_some_and(|revisions| !revisions.working_tree)
+    {
+        return CheckRepairRoute::Refused(RepairRouteRefusal::SeamRouteUnavailable {
+            reason: "the committed-only check excluded dirty tracked files; commit or restore them before rerunning",
+        });
+    }
     CheckRepairRoute::Route(crate::app::RepairRoute {
         finding_id: finding.id.clone(),
         seam_id: entry.seam.id().as_str().to_string(),
@@ -2978,18 +2993,30 @@ pub(crate) fn check_repair_route(
 }
 
 /// The dirty production files the seam start refuses today (#13636), from the
-/// shared before-phase preflight, respelled relative to `root` for the printed
-/// `git -C <root> commit`.
+/// shared before-phase preflight, narrowed to paths at or under the analyzed
+/// `root` and respelled relative to it for the printed `git -C <root> commit`.
+///
+/// The narrowing filters the preflight's answer; it never re-derives it. A
+/// non-empty list still means the start refuses. An empty list never promised
+/// a start (the before phase re-checks the whole repository), and it keeps
+/// `ripr check --root <subdir>` output independent of unrelated dirty files
+/// elsewhere in the enclosing checkout.
 fn seam_start_uncommitted_files(root: &Path) -> Result<Vec<String>, String> {
     let violations = crate::app::repair_attempt::seam_start_dirty_premise(root)?;
     if violations.is_empty() {
         return Ok(violations);
     }
     let prefix = repo_prefix(root)?;
-    Ok(violations
+    Ok(paths_under_prefix(&violations, &prefix))
+}
+
+/// Repository-root-relative `paths` at or under `prefix` (as `rev-parse
+/// --show-prefix` spells it), respelled relative to that prefix.
+fn paths_under_prefix(paths: &[String], prefix: &str) -> Vec<String> {
+    paths
         .iter()
-        .map(|path| relative_to_cwd_root(path, &prefix))
-        .collect())
+        .filter_map(|path| path.strip_prefix(prefix).map(str::to_string))
+        .collect()
 }
 
 fn ineligible_repair_item(root: &Path, item: &str, seam_id: &str, reason: &str) -> String {
@@ -4922,8 +4949,25 @@ pub(crate) mod tests {
         )
     }
 
+    /// #13636: the seam route's commit step keeps only dirty paths at or
+    /// under the analyzed root, respelled relative to it.
+    #[test]
+    fn seam_commit_step_paths_stay_under_the_analyzed_root() {
+        let dirty = vec![
+            "docs/X.md".to_string(),
+            "fixtures/a/input/src/lib.rs".to_string(),
+            "fixtures/ab/input/src/lib.rs".to_string(),
+        ];
+        assert_eq!(
+            paths_under_prefix(&dirty, "fixtures/a/input/"),
+            vec!["src/lib.rs".to_string()]
+        );
+        assert!(paths_under_prefix(&dirty, "crates/other/").is_empty());
+        assert_eq!(paths_under_prefix(&dirty, ""), dirty);
+    }
+
     /// #12831: check's pick narrows the choice only when it is an eligible
-    /// seam that needs no commit first.
+    /// seam with no held inline target.
     #[test]
     fn check_pick_narrows_only_when_eligible_and_committed() {
         use crate::app::{CheckRepairRoute, RepairRoute};

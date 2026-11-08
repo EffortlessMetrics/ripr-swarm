@@ -1049,9 +1049,19 @@ fn uncommitted_change_check_names_the_commit_step_before_the_repair_start() -> R
     );
 
     let json = dirty.ripr(&["check", "--base", "HEAD", "--format", "json"])?;
-    assert!(
-        json.contains("\"blocked_uncommitted\"") && json.contains("\"uncommitted_files\""),
+    let repair = json_repair_route(&json)?;
+    assert_eq!(
+        repair["status"], "blocked_uncommitted",
         "the JSON repair route must say the start is blocked:\n{json}"
+    );
+    assert_eq!(
+        repair["uncommitted_files"],
+        serde_json::json!(["src/lib.rs"]),
+        "the JSON repair route must name the uncommitted file:\n{json}"
+    );
+    assert!(
+        repair.get("command").is_none(),
+        "a blocked start must carry no runnable command:\n{json}"
     );
 
     let committed = Repo::create(CONST_OLD, CONST_NEW, CONST_TEST)?;
@@ -1060,5 +1070,90 @@ fn uncommitted_change_check_names_the_commit_step_before_the_repair_start() -> R
         check.contains("\n  ripr repair ") && !check.contains("Commit your production change"),
         "a committed change needs no commit step:\n{check}"
     );
+    Ok(())
+}
+
+/// The `finding_routes[0].repair` object of a `ripr check --format json`
+/// run. `text` is stdout followed by stderr; only the first JSON value is read.
+fn json_repair_route(text: &str) -> Result<serde_json::Value, String> {
+    let start = text
+        .find('{')
+        .ok_or_else(|| format!("no JSON document:\n{text}"))?;
+    let document: serde_json::Value = serde_json::Deserializer::from_str(&text[start..])
+        .into_iter()
+        .next()
+        .ok_or_else(|| format!("no JSON document:\n{text}"))?
+        .map_err(|error| format!("unparseable JSON ({error}):\n{text}"))?;
+    let routes = document["finding_routes"]
+        .as_array()
+        .ok_or_else(|| format!("finding_routes must be an array:\n{text}"))?;
+    let [route] = routes.as_slice() else {
+        return Err(format!("expected one finding route:\n{text}"));
+    };
+    route
+        .get("repair")
+        .cloned()
+        .ok_or_else(|| format!("the finding route must carry a repair entry:\n{text}"))
+}
+
+/// #13636 (A): the seam route names only dirty files at or under the analyzed
+/// root, so `ripr check --root <subdir>` (as the fixture runner does inside
+/// the ripr checkout) does not depend on unrelated dirty files elsewhere in
+/// the enclosing repository. The outside file here is the repository-level
+/// `src/lib.rs`, which the shared preflight does report for root `crate`
+/// (its content sniff resolves the repository-relative path under the root,
+/// where `crate/src/lib.rs` exists), so the narrowing is what keeps it off
+/// the screen. The under-root half is covered at the repository top by
+/// `uncommitted_change_check_names_the_commit_step_before_the_repair_start`.
+#[test]
+fn commit_step_ignores_dirty_files_outside_the_analyzed_root() -> Result<(), String> {
+    static SEQUENCE: AtomicU64 = AtomicU64::new(0);
+    let outer = std::env::temp_dir().join(format!(
+        "ripr-check-repair-agree-outer-{}-{}",
+        std::process::id(),
+        SEQUENCE.fetch_add(1, Ordering::Relaxed)
+    ));
+    let repo = Repo(outer);
+    for dir in ["src", "crate/src", "crate/tests"] {
+        std::fs::create_dir_all(repo.0.join(dir)).map_err(|e| e.to_string())?;
+    }
+    repo.write(".gitignore", "target/\n")?;
+    repo.write("src/lib.rs", "pub fn outer() -> u8 {\n    1\n}\n")?;
+    repo.write("crate/Cargo.toml", CARGO_TOML)?;
+    repo.write("crate/src/lib.rs", CONST_OLD)?;
+    repo.write("crate/tests/t.rs", CONST_TEST)?;
+    repo.git(&["-c", "init.templateDir=", "init", "-q"])?;
+    repo.git(&["config", "user.email", "t@example.com"])?;
+    repo.git(&["config", "user.name", "t"])?;
+    repo.git(&["config", "commit.gpgSign", "false"])?;
+    repo.git(&["add", "-A"])?;
+    repo.git(&["commit", "-q", "--no-gpg-sign", "-m", "base"])?;
+    repo.write("crate/src/lib.rs", CONST_NEW)?;
+    repo.git(&["commit", "-q", "--no-gpg-sign", "-am", "change"])?;
+    repo.write("src/lib.rs", "pub fn outer() -> u8 {\n    2\n}\n")?;
+
+    let check = repo.ripr(&["check", "--root", "crate", "--base", "HEAD~1"])?;
+    assert!(
+        !check.contains("Commit your production change") && !check.contains("../src/lib.rs"),
+        "a dirty file outside the root must not add a commit step:\n{check}"
+    );
+    let seam_id = check
+        .split("\n  ripr repair ")
+        .nth(1)
+        .and_then(|rest| rest.split_whitespace().next())
+        .ok_or_else(|| format!("check must still name the repair start:\n{check}"))?;
+    // Precondition: the start's own preflight refuses over the outside file,
+    // so the narrowing (not an empty preflight) keeps it off the check screen.
+    let (code, repair) = repo.ripr_status(&["repair", seam_id, "--root", "crate"])?;
+    assert!(
+        code != Some(0) && repair.contains("Uncommitted: src/lib.rs"),
+        "precondition, the start refuses over the outside file:\n{repair}"
+    );
+    let json = repo.ripr(&[
+        "check", "--root", "crate", "--base", "HEAD~1", "--format", "json",
+    ])?;
+    let route = json_repair_route(&json)?;
+    assert_eq!(route["status"], "ready", "{json}");
+    assert!(route.get("uncommitted_files").is_none(), "{json}");
     Ok(())
 }

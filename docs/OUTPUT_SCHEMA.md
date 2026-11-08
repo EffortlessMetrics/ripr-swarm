@@ -1471,7 +1471,10 @@ static-limited finding gets none). A blocked start names `uncommitted_file` or
 `uncommitted_files` and carries no `command`: a seam route names
 `uncommitted_file` for a held inline test target and `uncommitted_files` for the
 uncommitted production files `ripr repair` refuses to start over (#13636), and a
-gap route names `uncommitted_files`. An absent key means no route was offered, not
+gap route names `uncommitted_files`. The seam route lists only dirty files at or
+under the analyzed root, so a `ready` seam route does not promise the start
+begins when files outside the root are dirty; the start re-checks the whole
+repository and names them itself. An absent key means no route was offered, not
 that none exists. The member is present only on the navigation-aware CLI path
 (never on the generic renderer or `json-terse`), precedes
 `canonical_next_action`, and classification goldens strip it. The schema

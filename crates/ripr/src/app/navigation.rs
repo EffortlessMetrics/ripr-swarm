@@ -57,8 +57,11 @@ pub(crate) struct RepairRoute {
     /// Tracked production files that differ from HEAD and make the start
     /// refuse with "commit first" today (#13636), from the before phase's own
     /// dirty-premise preflight (`app::repair_attempt::seam_start_dirty_premise`),
-    /// spelled relative to the analyzed root. Empty on a clean tree; when
-    /// set, the check screen prints their commit before the repair start.
+    /// narrowed to paths at or under the analyzed root and spelled relative to
+    /// it. Dirty files outside the root are not listed, so an empty list does
+    /// not promise the start begins (the before phase re-checks the whole
+    /// repository); a non-empty one means it refuses. When set, the check
+    /// screen prints their commit before the repair start.
     pub(crate) uncommitted_files: Vec<String>,
 }
 
@@ -132,6 +135,12 @@ impl GapRepairRoute {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum RepairRouteRefusal {
     GapRouteUnavailable {
+        reason: &'static str,
+    },
+    /// The seam start's prerequisites could not be established (#13636): its
+    /// dirty-premise preflight was unreadable, or a committed-only run left
+    /// dirty tracked files under the root unanalyzed.
+    SeamRouteUnavailable {
         reason: &'static str,
     },
     /// The run's analysis is incomplete (#11136): the after phase refuses a
@@ -209,7 +218,7 @@ impl RepairRouteRefusal {
     pub(crate) fn advisory(&self, full_gate_command: &str) -> String {
         let gate = || format!("run `{full_gate_command}` for the full gate's answer");
         match self {
-            Self::GapRouteUnavailable { reason } => format!(
+            Self::GapRouteUnavailable { reason } | Self::SeamRouteUnavailable { reason } => format!(
                 "no repair start offered: {reason}; inspect the current workspace and rerun `ripr check`"
             ),
             Self::AnalysisIncomplete { limitation } => format!(
