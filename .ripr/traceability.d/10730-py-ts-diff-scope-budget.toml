@@ -35,6 +35,7 @@ tests = [
   "crates/ripr/src/analysis/pipeline.rs::tests::lowered_python_limit_leaves_an_over_limit_py_out_beside_rust",
   "crates/ripr/src/analysis/pipeline.rs::tests::raised_typescript_limit_never_runs_over_limit_files_as_full_scope",
   "crates/ripr/src/analysis/pipeline.rs::tests::generated_python_bulk_beside_rust_proceeds_and_is_never_over_limit",
+  "crates/ripr/src/analysis/pipeline.rs::tests::configured_python_exclusion_keeps_the_file_out_of_partial_selection",
   "crates/ripr/src/analysis/pipeline.rs::tests::javascript_diff_over_the_changed_line_guard_degrades_into_partial_scope",
   "crates/ripr/src/analysis/language/rust/mod.rs::tests::changed_rust_line_guard_measures_the_selected_partition",
   "crates/ripr/src/analysis/language/rust/mod.rs::tests::each_file_is_judged_against_its_own_language_limit",

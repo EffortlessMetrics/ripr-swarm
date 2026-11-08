@@ -10110,6 +10110,58 @@ index 0000000..1111111 100644
     }
 
     #[test]
+    fn configured_python_exclusion_keeps_the_file_out_of_partial_selection() -> Result<(), String> {
+        // #13641 review: partial selection must use the run's parsed
+        // `[languages]` configuration, not the default. `schema_dump.py` is
+        // admitted by default (2,100 lines, over the Python limit) but the
+        // repository excludes it via `excluded_file_patterns`, so the Python
+        // adapter never counts it and the partition must not name it over
+        // its limit. Both selection sites: the Rust adapter (Rust enabled)
+        // and the preview-only path (Python only, where the admitted bulk
+        // trips the guard).
+        let mut language_config = crate::config::LanguagesConfig::default();
+        language_config.python.excluded_file_patterns = vec!["schema_dump.py".to_string()];
+        let mut diff = oversized_preview_diff("pkg/schema_dump.py", "x =", 2_100);
+        diff.push_str(&multi_file_diff(
+            &["pkg/a.py", "pkg/b.py", "pkg/c.py"],
+            800,
+            |index| format!("v_{index} = {index}"),
+        ));
+        for (label, languages) in [
+            ("with-rust", vec![LanguageId::Rust, LanguageId::Python]),
+            ("python-only", vec![LanguageId::Python]),
+        ] {
+            let root = temp_root(&format!("py-configured-exclusion-{label}"))?;
+            let result = run_pipeline_for_diff_text_with_language_config(
+                &sample_rust_diff_options(root),
+                &OraclePolicy::default(),
+                &languages,
+                &crate::config::RustLanguageConfig::default(),
+                &language_config,
+                DiffIntake {
+                    perl_cache_dir: None,
+                    scope: &DiffScopeFilter::default(),
+                },
+                &diff,
+            )
+            .map_err(|error| format!("{label}: must degrade, not refuse: {error}"))?;
+            let scope = result
+                .partial_scope
+                .as_ref()
+                .ok_or_else(|| format!("{label}: the admitted bulk must be partial"))?;
+            assert_eq!(scope.selected_files, vec!["pkg/a.py"], "{label}");
+            assert!(scope.over_limit_files.is_empty(), "{label}: {scope:?}");
+            assert!(
+                !scope
+                    .unselected_files
+                    .contains(&"pkg/schema_dump.py".to_string()),
+                "{label}: {scope:?}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
     fn javascript_diff_over_the_changed_line_guard_degrades_into_partial_scope()
     -> Result<(), String> {
         // #13641 review (N2): JavaScript-only enablement. `route` maps `.js`
