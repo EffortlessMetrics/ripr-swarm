@@ -57,7 +57,8 @@ pub(in crate::analysis::language::python) struct PythonClassFacts {
     /// For a function owner: the names its own body binds (parameters, locals,
     /// walrus targets). None when unknown, which keeps every consumer closed.
     pub(in crate::analysis::language::python) bound_names: Option<Vec<String>>,
-    /// For a non-dunder method: the dunder methods of the same class (at most
+    /// For a non-dunder method: the protocol dunder methods of the same class
+    /// (constructor and finalizer dunders excluded; at most
     /// [`MAX_DUNDER_ENTRIES`]) from which a `self.` / `cls.` call path of at
     /// most [`MAX_DUNDER_CALL_DEPTH`] hops reaches it (`cache[key] = v` runs
     /// `__setitem__`, which calls `self.getsizeof(value)`; #13776). Empty when
@@ -70,6 +71,18 @@ pub(in crate::analysis::language::python) struct PythonClassFacts {
 const MAX_DUNDER_CALL_DEPTH: usize = 5;
 /// Most reaching dunders recorded per helper.
 const MAX_DUNDER_ENTRIES: usize = 8;
+
+/// Dunders that run on construction, class creation or finalization, never as
+/// a protocol a test exercises on an instance. They start no search: a helper
+/// called from `__init__` keeps its pre-#13776 reading, so constructing the
+/// class alone never relates it (RIPR-SPEC-0201).
+const NON_ENTRY_DUNDERS: [&str; 5] = [
+    "__init__",
+    "__new__",
+    "__post_init__",
+    "__init_subclass__",
+    "__del__",
+];
 
 /// Dunder methods of a class that reach each non-dunder method through
 /// same-class calls, keyed by (file, class) then method name. Forward search
@@ -96,7 +109,7 @@ fn dunder_entries_by_method(
             .entry(&owner.name)
             .or_default();
         callees.extend(owner.same_class_callees.iter().map(String::as_str));
-        if super::is_dunder_name(&owner.name) {
+        if super::is_dunder_name(&owner.name) && !NON_ENTRY_DUNDERS.contains(&owner.name.as_str()) {
             let names = dunders.entry(key).or_default();
             if !names.contains(&owner.name.as_str()) {
                 names.push(&owner.name);

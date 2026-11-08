@@ -550,8 +550,12 @@ comments, strings, and docstrings:
   `cls.` (at most five hops, keyed by file and class so name-mangled helpers
   never cross classes) reads `static_unknown` (`dynamic_dispatch`) only when a
   test both references the helper's class through an import of its module and
-  runs one of the reaching dunders by syntax (subscript, `in`, `len(`, `iter(`,
-  `for ... in`, `next(`, `with`, `==` / `!=`, `hash(`, `str(`); a test that only
+  uses the protocol syntax of one of the reaching dunders somewhere in its body
+  (subscript, `in`, `len(`, `iter(`, `for ... in`, `next(`, `with`, `==` /
+  `!=`, `hash(`, `str(`). The syntax is not tied to an instance of the class
+  (accepted: the limit only withdraws a confident claim). Constructor and
+  finalizer dunders (`__init__`, `__new__`, `__post_init__`,
+  `__init_subclass__`, `__del__`) never start the reach; a test that only
   constructs the class, or a dunder without a syntactic protocol, keeps
   `no_static_path`, and the reach never earns an oracle or `exposed`
   (RIPR-SPEC-0201, #13776). The one

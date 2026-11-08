@@ -1,6 +1,8 @@
 //! Whether a test body syntactically exercises the Python protocol of a dunder
 //! method (#13776). A helper that only a dunder of its own class calls through
-//! `self.` is reached by a test only when the test runs that dunder by syntax:
+//! `self.` may be reached by a test only when the test uses that dunder's
+//! protocol syntax somewhere in its body (not necessarily on an instance of
+//! the owner's class; the reading only withdraws a confident claim):
 //! `cache[key] = value` runs `__setitem__`, `len(cache)` runs `__len__`,
 //! `with cache:` runs `__enter__`. Constructing the class (`Cache()`) runs only
 //! `__init__`, which never reaches the helper through this rule, so a test that
@@ -223,19 +225,19 @@ mod tests {
 
     #[test]
     fn builtin_and_statement_protocols() {
-        assert!(hit("assert len(c) == 1\n", "__len__"));
-        assert!(!hit("assert self.len(c)\n", "__len__"));
-        assert!(hit("for k in c:\n    pass\n", "__iter__"));
-        assert!(!hit("for k in c:\n    pass\n", "__contains__"));
-        assert!(hit("assert 1 in c\n", "__contains__"));
-        assert!(!hit("assert 1 in c\n", "__iter__"));
-        assert!(hit("iter(c)\n", "__iter__"));
+        assert!(hit("assert len(cache) == 1\n", "__len__"));
+        assert!(!hit("assert self.len(cache)\n", "__len__"));
+        assert!(hit("for k in cache:\n    pass\n", "__iter__"));
+        assert!(!hit("for k in cache:\n    pass\n", "__contains__"));
+        assert!(hit("assert 1 in cache\n", "__contains__"));
+        assert!(!hit("assert 1 in cache\n", "__iter__"));
+        assert!(hit("iter(cache)\n", "__iter__"));
         assert!(hit("next(it)\n", "__next__"));
-        assert!(hit("with c:\n    pass\n", "__enter__"));
+        assert!(hit("with cache:\n    pass\n", "__enter__"));
         assert!(hit("assert a == b\n", "__eq__"));
         assert!(hit("assert a != b\n", "__ne__"));
         assert!(!hit("a = b\n", "__eq__"));
-        assert!(hit("hash(c)\n", "__hash__"));
-        assert!(hit("str(c)\n", "__str__"));
+        assert!(hit("hash(cache)\n", "__hash__"));
+        assert!(hit("str(cache)\n", "__str__"));
     }
 }

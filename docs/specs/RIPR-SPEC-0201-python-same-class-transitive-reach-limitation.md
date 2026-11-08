@@ -126,16 +126,22 @@ read as written below.
 7. A non-dunder helper that only a same-class dunder reaches through `self.`
    (`Cache.getsizeof` via `Cache.__setitem__`, `LFUCache.__touch` via
    `LFUCache.__getitem__`; #13776) and a test that references the class through
-   an import of the owner's module and runs one of those dunders by syntax
-   (`cache[key] = value`, `len(cache)`, `with cache:`, `a == b`, ...): the
-   finding reads `static_unknown` with `dynamic_dispatch` (or `weakly_exposed`
-   when the explicit dunder call relates the test), never `exposed`, and no
-   oracle credit. A test that only constructs the class (as in examples 1 and
-   2), imports a same-named class from another module, or exercises no
-   protocol of a reaching dunder stays `no_static_path`; a dunder with no
-   syntactic protocol (`__rich_console__`, `__init__`, `__new__`, `__repr__`,
-   `__call__`) never satisfies the rule, and dunders never reach another
-   class's helper (name mangling keys the helper to its own class).
+   an import of the owner's module and uses the protocol syntax of one of those
+   dunders somewhere in its body (`cache[key] = value`, `len(cache)`, `with
+   cache:`, `a == b`, ...). The syntax is not tied to an instance of the
+   owner's class (a dict subscript in the same test counts); that is accepted
+   because the reading only withdraws the confident claim and grants nothing:
+   the finding reads `static_unknown` with `dynamic_dispatch` (or
+   `weakly_exposed` when the explicit dunder call relates the test), never
+   `exposed`, and no oracle credit. A test that only constructs the class (as
+   in examples 1 and 2), imports a same-named class from another module, or
+   exercises no protocol of a reaching dunder stays `no_static_path`; a dunder
+   with no syntactic protocol (`__rich_console__`, `__repr__`, `__call__`)
+   never satisfies the rule, constructor and finalizer dunders (`__init__`,
+   `__new__`, `__post_init__`, `__init_subclass__`, `__del__`) never start the
+   reach, so a helper called only from `__init__` keeps its earlier reading,
+   and dunders never reach another class's helper (name mangling keys the
+   helper to its own class).
 
 ## Test Mapping
 
