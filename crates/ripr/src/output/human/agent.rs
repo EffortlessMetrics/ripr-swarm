@@ -18,6 +18,10 @@
 //! next=ripr explain --root /repo probe:...
 //! ```
 //!
+//! The last line is always `verify=complete|...` or `verify=refused|...|reason=`
+//! (#13516): the post-edit completion record, projected from the producer's
+//! outcome and full summary counts, never from the displayed subset.
+//!
 //! Terminal states are one explicit line: `done=` when nothing is left to fix
 //! from the test side, `stop=` when ripr cannot offer a test-side fix.
 //! Explain drill-ins keep this format unless an explicit suppression policy
@@ -53,6 +57,47 @@ pub(super) fn gap_line_budget(total: usize) -> usize {
 const FIELD_BUDGET: usize = 80;
 
 pub(super) fn render(
+    output: &CheckOutput,
+    config: &RiprConfig,
+    drill_in: Option<&FindingDrillIn>,
+    provenance: CheckDiffProvenance,
+) -> String {
+    let mut out = render_report(output, config, drill_in, provenance);
+    // #13516: the verification record is the last line, after every bounded
+    // section, so external truncation can never leave a leading success marker.
+    out.push_str(&verification_line(output));
+    out.push('\n');
+    out
+}
+
+/// The post-edit completion record for `ripr check --format agent` (#13516).
+///
+/// Formats [`CheckOutput::verification`], the app-owned completion verdict;
+/// this renderer adds no completeness decision of its own. It is independent
+/// of the triage `done=` terminal, which keeps its own meaning. Its counts are
+/// the full `summary`, which the producer derives from the same finding set
+/// as the header; they differ from the header only under a suppression
+/// policy, where the header omits suppressed findings.
+fn verification_line(output: &CheckOutput) -> String {
+    let verdict = output.verification();
+    let facts = format!(
+        "outcome={}|findings={}|exposed={}",
+        verdict.outcome.map_or("missing", |kind| kind.as_str()),
+        verdict.findings,
+        verdict.exposed
+    );
+    if verdict.is_complete() {
+        return format!("verify=complete|{facts}");
+    }
+    let reasons: Vec<&str> = verdict
+        .refusals
+        .iter()
+        .map(|refusal| refusal.as_str())
+        .collect();
+    format!("verify=refused|{facts}|reason={}", reasons.join(","))
+}
+
+fn render_report(
     output: &CheckOutput,
     config: &RiprConfig,
     drill_in: Option<&FindingDrillIn>,
