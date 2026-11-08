@@ -163,3 +163,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — owner_return_pin_pointer_invisible_input (14)
+
+Reason:
+RIPR-SPEC-0083: #13037 default missing-check line says no assertion was tied to the changed value when the next step says an exact assertion exists
+
+Command:
+`cargo xtask goldens bless owner_return_pin_pointer_invisible_input --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

@@ -1,0 +1,1 @@
+crates/ripr/src/cli/commands/review_comments.rs|Command::new|3|cli-tests|#5000: test-only re-execution of the current test binary exercises bounded stderr, real Git trace and stdout precedence; child-local environment and shared bounded collector, no production spawn site.

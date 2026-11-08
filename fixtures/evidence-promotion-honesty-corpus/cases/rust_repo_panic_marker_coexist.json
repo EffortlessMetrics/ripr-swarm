@@ -1,0 +1,52 @@
+{
+  "id": "rust_repo_panic_marker_coexist",
+  "language": "rust",
+  "tier": "pure",
+  "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-panic-marker-coexist.json",
+  "report_subject": "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/panic-marker-coexist",
+  "vector": "producer_owned_panic_marker_preserves_genuine_limits_and_ordinary_name_controls",
+  "assertions": [
+    {
+      "type": "expected_repo_seam_grip",
+      "owner": "src/lib.rs::make_record",
+      "expression": "items: items.iter().count()",
+      "grip_class": "reachable_unrevealed",
+      "reach": "yes"
+    },
+    {
+      "type": "expected_repo_seam_limitation",
+      "owner": "src/lib.rs::make_record",
+      "expression": "items: items.iter().count()",
+      "category": "rust_panic_outcome_unresolved",
+      "present": true
+    },
+    {
+      "type": "expected_repo_seam_limitation",
+      "owner": "src/lib.rs::make_record",
+      "expression": "items: items.iter().count()",
+      "category": "rust_framework_oracle_unresolved",
+      "present": false
+    },
+    {
+      "type": "expected_repo_seam_grip",
+      "owner": "src/lib.rs::make_record",
+      "expression": "record",
+      "grip_class": "reachable_unrevealed",
+      "reach": "yes"
+    },
+    {
+      "type": "expected_repo_seam_limitation",
+      "owner": "src/lib.rs::make_record",
+      "expression": "record",
+      "category": "rust_panic_outcome_unresolved",
+      "present": false
+    },
+    {
+      "type": "expected_repo_seam_limitation",
+      "owner": "src/lib.rs::make_record",
+      "expression": "record",
+      "category": "rust_framework_oracle_unresolved",
+      "present": false
+    }
+  ]
+}

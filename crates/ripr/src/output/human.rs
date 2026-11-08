@@ -24,8 +24,8 @@ const UNANALYZED_WORKING_TREE_NOTE: &str = "\nNote: uncommitted source and test 
 this run read each file as committed at HEAD; drop `--committed` (or pass `--worktree`) to \
 include staged and unstaged tracked edits (for example `ripr check --worktree`).\n";
 
-/// #5258: untracked files are invisible to the committed diff AND to
-/// `--worktree` (it diffs tracked edits only), so the note must name the
+/// #5258: untracked files are absent from the committed and working-tree
+/// diffs (the latter covers tracked edits only), so the note must name the
 /// real repair — staging — instead of sending the reader through a second
 /// empty `no_scope` run. Fires whenever untracked routed files exist in an
 /// unanalyzed working-tree state; it also states what `--worktree` does add,
@@ -47,7 +47,7 @@ fn unanalyzed_working_tree_note(output: &CheckOutput) -> String {
         return format!(
             "\nNote: uncommitted source and test changes were not analyzed; this run read each \
               file as committed at HEAD, and `--worktree` adds staged and unstaged tracked edits only. \
-              Untracked files ({listing}) are invisible to both; stage them first (`git add <paths>`, \
+              Untracked files ({listing}) are not in either diff yet; stage them first (`git add <paths>`, \
               or `git add -N <paths>` intent-to-add makes a new file visible to `--worktree`) and \
               rerun `ripr check --worktree`, or pass `--diff PATH`.\n"
         );
@@ -60,7 +60,7 @@ fn unanalyzed_working_tree_note(output: &CheckOutput) -> String {
         let listing =
             crate::output::analyzed_revisions::name_paths(untracked, escape_terminal_display);
         note.push_str(&format!(
-            "Untracked files ({listing}) are invisible to both; stage them first (`git add <paths>`, \
+            "Untracked files ({listing}) are not in either diff yet; stage them first (`git add <paths>`, \
              or `git add -N <paths>` intent-to-add makes a new file visible to `--worktree`) and \
              rerun `ripr check --worktree`, or pass `--diff PATH`. "
         ));
@@ -139,6 +139,15 @@ pub(crate) fn stub_route_subjects<'a>(
 ) -> (Option<&'a Finding>, Vec<&'a Finding>) {
     let triage = triage::select_human_triage(output, config);
     (triage.selected, triage::hidden_stub_route_findings(&triage))
+}
+
+/// The JSON `finding_routes` entry for one finding (#11976); see
+/// [`triage::finding_routes_json`].
+pub(crate) fn finding_routes_json(
+    navigation: &crate::app::FindingNavigation,
+    finding: &crate::domain::Finding,
+) -> serde_json::Value {
+    triage::finding_routes_json(navigation, finding)
 }
 
 /// Project the check producer's canonical next action for a navigation-aware
@@ -277,6 +286,48 @@ fn no_source_examined(output: &CheckOutput) -> bool {
     }
 }
 
+/// True when a base was compared and the range contained no changed files at
+/// all, as opposed to files that no language adapter analyzes.
+fn no_changed_files_in_range(output: &CheckOutput) -> bool {
+    // Producer-backed: a Git range whose base commit is HEAD itself is empty by
+    // construction. Deleted-only, submodule-only and `--diff <file>` runs do not
+    // establish that, so they keep the language wording.
+    let zero_files = output
+        .analysis_outcome
+        .as_ref()
+        .is_some_and(|outcome| outcome.counts.changed_file_count == 0);
+    zero_files
+        && output.analyzed_revisions.as_ref().is_some_and(|revisions| {
+            !crate::output::analyzed_revisions::is_working_tree_read(output)
+                && revisions.base_commit.is_some()
+                && revisions.base_commit == revisions.head_commit
+        })
+}
+
+/// #13036: a range with changed files but no checkable behavior is usually a
+/// tests-only diff (the agent committed its tests, then used the commit before
+/// them as the base). Say so and name the fix, without claiming which it is.
+fn no_behavior_base_hint(output: &CheckOutput) -> String {
+    use crate::analysis_outcome::AnalysisOutcomeKind::NoBehavioralCandidates;
+    let Some(base) = output.base.as_deref() else {
+        return String::new();
+    };
+    // Only for a real Git range that changed at least one analyzable file;
+    // docs-only diffs already say no analyzable language.
+    if output.analyzed_revisions.is_none() || no_source_examined(output) {
+        return String::new();
+    }
+    let applies = output.analysis_outcome.as_ref().is_some_and(|outcome| {
+        outcome.kind == NoBehavioralCandidates && outcome.counts.changed_file_count > 0
+    });
+    if !applies {
+        return String::new();
+    }
+    format!(
+        "Hint: if `{base}` already includes the production change (for example only tests changed after it), choose a base before that change, such as `ripr check --base <commit before the change>`.\n"
+    )
+}
+
 /// The empty-findings headline. An incomplete analysis checked less than it
 /// was asked to, so claiming it "checked no changed behavior" would contradict
 /// the `Analysis outcome` disclosure printed just above it.
@@ -287,6 +338,11 @@ fn no_findings_line(output: &CheckOutput) -> &'static str {
         }
         // #11396: nothing in scope, or only non-source files changed, examined
         // no behavior; say what was not checked instead of "No findings".
+        // #13036: an empty diff is a different cause from "no analyzable
+        // language"; name the real one so the reader looks at the base.
+        _ if no_source_examined(output) && no_changed_files_in_range(output) => {
+            "Nothing to check: the diff against the comparison base is empty (no changed files), so ripr examined no behavior.\n"
+        }
         _ if no_source_examined(output) => {
             "Nothing to check: no changed source file in a language ripr analyzes was available, so ripr examined no behavior.\n"
         }
@@ -307,6 +363,7 @@ pub(crate) fn render_bounded_with_config_and_navigation(
 
     if output.findings.is_empty() {
         out.push_str(no_findings_line(output));
+        out.push_str(&no_behavior_base_hint(output));
         if output.no_scope_provided {
             let triage = triage::select_human_triage(output, config);
             triage::render_human_triage(&mut out, &triage, output, config, drill_in, provenance);
@@ -363,6 +420,7 @@ pub(crate) fn render_full_with_config_and_navigation(
 
     if output.findings.is_empty() {
         out.push_str(no_findings_line(output));
+        out.push_str(&no_behavior_base_hint(output));
         // RIPR-SPEC-0083: disclose when no analysis scope was provided
         // (#4012: or when the established range is empty — the note then
         // names the compared base instead of claiming no scope).
@@ -419,7 +477,10 @@ pub(crate) fn render_full_with_config_and_navigation(
             output.source_value_files(finding),
             false,
         ));
-        if let Some(FindingDrillIn::Commands(navigation)) = drill_in {
+        // #13502: a candidate-tree subject cannot be replayed by `explain`.
+        if let Some(FindingDrillIn::Commands(navigation)) = drill_in
+            && !navigation.finding_routes_withheld()
+        {
             out.push_str("Drill in:\n");
             // #12431: the same finding-id label the bounded digest prints,
             // through the same shared helper so the two blocks cannot drift.
@@ -440,6 +501,7 @@ pub(crate) fn render_full_with_config_and_navigation(
     // route to the same run's ids without pointing at ids that are absent.
     if findings_rendered == 0
         && let Some(FindingDrillIn::Commands(navigation)) = drill_in
+        && !navigation.finding_routes_withheld()
     {
         out.push_str(&format!(
             "Drill in: every finding in this run is suppressed by policy, so none printed above. List this run's finding ids with:\n  {}\n\n",
@@ -591,6 +653,14 @@ fn render_header_summary(output: &CheckOutput, config: &RiprConfig, plain: bool)
             if unknown > 0 {
                 classes.push_str(&format!(", {unknown} unclear"));
             }
+            // #12921: "no test path" is not "no guard of any kind". Say how many of
+            // them are reached only by a verifier harness ripr does not evaluate.
+            if s.proof_harness_only > 0 {
+                classes.push_str(&format!(
+                    " ({} of the no test path only have a proof harness that ripr does not evaluate, which is not test coverage)",
+                    s.proof_harness_only
+                ));
+            }
             out.push_str(&format!(
                 "Summary: {} changed {} checked: {}. {} found, {} suppressed by your settings{base_side}\n\n",
                 s.probes,
@@ -604,7 +674,7 @@ fn render_header_summary(output: &CheckOutput, config: &RiprConfig, plain: bool)
         out.push_str(&format!(
             "Summary: {} changed behavior(s) checked: {} exposed, {} weakly_exposed, {} reachable_unrevealed, \
              {} no_static_path, {} infection_unknown, {} propagation_unknown, {} static_unknown; \
-             {} of {} finding(s) unsuppressed{base_side}\n",
+             {} of {} finding(s) unsuppressed{proof_only}{base_side}\n",
             output.summary.probes,
             output.summary.exposed,
             output.summary.weakly_exposed,
@@ -615,6 +685,7 @@ fn render_header_summary(output: &CheckOutput, config: &RiprConfig, plain: bool)
             output.summary.static_unknown,
             unsuppressed,
             output.summary.findings,
+            proof_only = proof_harness_only_note(&output.summary),
         ));
         // #10691: the stable tokens stay (they are the schema vocabulary);
         // each is glossed once so the line reads without the specs.
@@ -1085,6 +1156,18 @@ fn render_all_no_path_disclosure(out: &mut String, output: &CheckOutput) {
     out.push('\n');
 }
 
+/// #12921: the non-plain summary names findings reached only by an unevaluated
+/// proof harness (a subset of `no_static_path`; never test coverage).
+fn proof_harness_only_note(summary: &crate::domain::Summary) -> String {
+    if summary.proof_harness_only == 0 {
+        return String::new();
+    }
+    format!(
+        "; {} of the no_static_path finding(s) reached only by a proof harness ripr does not evaluate (proof_harness_only; not test coverage)",
+        summary.proof_harness_only
+    )
+}
+
 const HUMAN_PROSE_WRAP_COLUMN: usize = 100;
 
 pub(super) fn is_wrappable_advisory_prose(value: &str) -> bool {
@@ -1454,12 +1537,12 @@ mod tests {
     use crate::app::{CheckOutput, Mode};
     use crate::config::RiprConfig;
     use crate::domain::{
-        ActivationEvidence, CALLEE_ONLY_REACH_PREFIX, Confidence, DeltaKind, ExposureClass,
-        Finding, FindingCanonicalGap, FlowSinkFact, FlowSinkKind, LanguageFileCount, LanguageId,
-        LanguageStatus, MISSING_DISCRIMINATOR_VALUE_PREFIX, MissingDiscriminatorFact, OracleKind,
-        OracleStrength, Probe, ProbeFamily, ProbeId, RelatedTest, RevealEvidence, RiprEvidence,
-        SourceLocation, StageEvidence, StageState, StopReason, Summary, SymbolId, ValueContext,
-        ValueFact,
+        ActivationEvidence, CALLEE_ONLY_REACH_PREFIX, Confidence, DeltaKind, DiscriminatorShape,
+        ExposureClass, Finding, FindingCanonicalGap, FlowSinkFact, FlowSinkKind, LanguageFileCount,
+        LanguageId, LanguageStatus, MISSING_DISCRIMINATOR_VALUE_PREFIX, MissingDiscriminatorFact,
+        OracleKind, OracleStrength, Probe, ProbeFamily, ProbeId, RelatedTest, RevealEvidence,
+        RiprEvidence, SourceLocation, StageEvidence, StageState, StopReason, Summary, SymbolId,
+        ValueContext, ValueFact,
     };
     use std::path::{Path, PathBuf};
 
@@ -1635,13 +1718,17 @@ mod tests {
             (
                 &range,
                 "Note: `HEAD...HEAD` has no analyzable changed files, so there was nothing to analyze.",
+                // #13036: a Git range whose base commit is HEAD is empty by
+                // construction, so the headline names the empty diff.
+                "Nothing to check: the diff against the comparison base is empty",
             ),
             (
                 &worktree,
                 "Note: the working tree has no analyzable changed files against `HEAD`, so there was nothing to analyze.",
+                "Nothing to check: no changed source file in a language ripr analyzes was available",
             ),
         ];
-        for (output, expected) in cases {
+        for (output, expected, headline) in cases {
             for rendered in [
                 render_with_config(output, &config),
                 render_full_with_config(output, &config),
@@ -1649,12 +1736,7 @@ mod tests {
                 assert!(rendered.contains(expected), "{rendered}");
                 // #11396: the headline states what was not examined and does
                 // not open with an all-clear style "No findings".
-                assert!(
-                    rendered.contains(
-                        "Nothing to check: no changed source file in a language ripr analyzes was available"
-                    ),
-                    "{rendered}"
-                );
+                assert!(rendered.contains(headline), "{rendered}");
                 assert!(!rendered.contains("No findings:"), "{rendered}");
                 assert!(
                     rendered.contains("does NOT mean no behavior changed"),
@@ -1904,7 +1986,7 @@ mod tests {
 
         assert!(
             rendered.contains(
-                "Untracked files (src/new.rs, tests/new.rs, Cargo.toml and 1 more) are invisible to both"
+                "Untracked files (src/new.rs, tests/new.rs, Cargo.toml and 1 more) are not in either diff yet"
             ),
             "{rendered}"
         );
@@ -2081,7 +2163,7 @@ mod tests {
 
         assert!(
             rendered.contains(
-                "Untracked files (src/new.rs) are invisible to both; stage them first (`git add <paths>`"
+                "Untracked files (src/new.rs) are not in either diff yet; stage them first (`git add <paths>`"
             ),
             "{rendered}"
         );
@@ -4880,6 +4962,8 @@ mod tests {
             value: "end == start".to_string(),
             reason: "no related test call uses end equal to start".to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Boundary,
+            drafted_boundary: None,
         }];
         finding.missing = vec!["No strong discriminator was detected".to_string()];
         let digest = super::sections::render_finding_digest_with_config(
@@ -5016,6 +5100,45 @@ mod tests {
         assert!(
             digest.contains("  Missing check (1 of 2): No strong assertion was detected\n"),
             "prose entries must render unchanged; got:\n{digest}"
+        );
+    }
+
+    /// #13037: a weak finding whose next step says a related test already has
+    /// an exact assertion must not also say "No strong assertion was detected";
+    /// the default line names the missing link instead, while a finding with no
+    /// such next step keeps the fixed wording.
+    #[test]
+    fn digest_missing_line_does_not_contradict_an_exact_assertion_next_step() {
+        let mut finding = sample_finding();
+        finding.class = ExposureClass::WeaklyExposed;
+        finding.missing = vec!["No strong discriminator was detected".to_string()];
+        finding.recommended_next_step = Some(
+            "The related test `t` already has an exact assertion; this does not establish observation of the returned value."
+                .to_string(),
+        );
+        let digest = super::sections::render_finding_digest_with_config(
+            &finding,
+            &crate::config::RiprConfig::default(),
+            Path::new("."),
+        );
+        assert!(
+            digest.contains("No assertion was tied to the changed value"),
+            "{digest}"
+        );
+        assert!(
+            !digest.contains("No strong assertion was detected"),
+            "{digest}"
+        );
+
+        finding.recommended_next_step = Some("Add a boundary test.".to_string());
+        let plain = super::sections::render_finding_digest_with_config(
+            &finding,
+            &crate::config::RiprConfig::default(),
+            Path::new("."),
+        );
+        assert!(
+            plain.contains("No strong assertion was detected"),
+            "{plain}"
         );
     }
 
@@ -5474,6 +5597,8 @@ mod tests {
                 value: "amount == 100".to_string(),
                 reason: "boundary".to_string(),
                 flow_sink: None,
+                shape: DiscriminatorShape::Boundary,
+                drafted_boundary: None,
             }];
         assert!(crate::output::python_repair_card::python_repair_card(&diff).is_none());
         let scope_reason = "repo-mode findings have no repair routing (python/any/repo/repair_routing is not_proven)";
@@ -5496,6 +5621,8 @@ mod tests {
             value: "amount == 100".to_string(),
             reason: "boundary".to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Boundary,
+            drafted_boundary: None,
         }];
         assert!(render(&single_finding_output(placed)).contains(
             "has no repair card (its test placement or related-test evidence is incomplete)"
@@ -5657,6 +5784,8 @@ mod tests {
                     reason: "changed TypeScript equality-boundary lacks a concrete discriminator"
                         .to_string(),
                     flow_sink: None,
+                    shape: DiscriminatorShape::Boundary,
+                    drafted_boundary: None,
                 });
             finding.related_tests.push(RelatedTest {
                 name: "applies discount at threshold".to_string(),
@@ -7159,6 +7288,8 @@ mod tests {
             value: "amount >= threshold".to_string(),
             reason: "no related test call uses an amount at the threshold".to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Other,
+            drafted_boundary: None,
         }];
 
         let digest = super::sections::render_finding_digest_with_config(
@@ -8046,6 +8177,8 @@ mod tests {
             value: "not (x > 0)".to_string(),
             reason: "every observed input takes the unchanged if arm".to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Other,
+            drafted_boundary: None,
         }];
         let digest = super::sections::render_finding_digest_with_config(
             &finding,
@@ -8157,6 +8290,8 @@ mod tests {
             value: "amount == discount_threshold".to_string(),
             reason: "no related test call uses the boundary value".to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Boundary,
+            drafted_boundary: None,
         }];
 
         let digest = super::sections::render_finding_digest_with_config(
@@ -8191,6 +8326,8 @@ mod tests {
             value: "AuthError::RevokedToken".to_string(),
             reason: "No exact error variant assertion for AuthError::RevokedToken".to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Other,
+            drafted_boundary: None,
         }];
         let digest = super::sections::render_finding_digest_with_config(
             &finding,
@@ -8363,6 +8500,8 @@ mod tests {
             reason: "Related Perl test reaches the owner but lacks an exact return discriminator"
                 .to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Other,
+            drafted_boundary: None,
         }];
         finding.related_tests = vec![RelatedTest {
             name: "discount_smoke".to_string(),
@@ -8633,6 +8772,8 @@ mod tests {
             value: "observation_unverified".to_string(),
             reason: "r".to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Other,
+            drafted_boundary: None,
         }];
         let rendered = super::evidence_lines::evidence_path_lines(
             &finding,
@@ -8727,6 +8868,8 @@ mod tests {
                     value: "enabled == false".to_string(),
                     reason: "related tests do not use the changed value".to_string(),
                     flow_sink: None,
+                    shape: DiscriminatorShape::Boundary,
+                    drafted_boundary: None,
                 }],
             },
             stop_reasons: vec![],

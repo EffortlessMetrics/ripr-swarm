@@ -52,6 +52,7 @@ impl StaticLimitKind {
         StaticLimitKind::RustInherentReceiverUnestablished,
         StaticLimitKind::TypescriptWorkspaceDiscoveryTruncated,
         StaticLimitKind::RustDependentCrateReachUnresolved,
+        StaticLimitKind::TypescriptWorkspaceReadLimited,
     ];
 
     /// What to do so ripr can settle this limitation. One imperative
@@ -202,6 +203,10 @@ impl StaticLimitKind {
                 "Check the tests in crates that depend on this package: a test may reach this \
                  change through a trait or public API ripr does not follow, so do not treat the \
                  empty related-test list as showing that none exist."
+            }
+            StaticLimitKind::TypescriptWorkspaceReadLimited => {
+                "Run ripr from a narrower root, or raise RIPR_TS_MAX_FILE_READ_BYTES and/or \
+                 RIPR_TS_MAX_WORKSPACE_READ_BYTES to read the refused sources, then check again."
             }
         }
     }
@@ -368,9 +373,10 @@ mod tests {
                 StaticLimitKind::RustInherentReceiverUnestablished => 31,
                 StaticLimitKind::TypescriptWorkspaceDiscoveryTruncated => 32,
                 StaticLimitKind::RustDependentCrateReachUnresolved => 33,
+                StaticLimitKind::TypescriptWorkspaceReadLimited => 34,
             }
         }
-        const COUNT: usize = 34;
+        const COUNT: usize = 35;
         assert_eq!(StaticLimitKind::ALL.len(), COUNT);
         let ordinals: Vec<usize> = StaticLimitKind::ALL.iter().copied().map(ordinal).collect();
         assert_eq!(

@@ -3,6 +3,7 @@
 use crate::cli::commands_options::*;
 use crate::cli::commands_timestamps::generated_at_unix_ms;
 use crate::cli::help;
+use crate::cli::parse::reconcile_root;
 use crate::cli::suggest::{unknown_argument, unknown_value};
 use crate::output;
 use std::path::PathBuf;
@@ -158,6 +159,7 @@ fn parse_assistant_loop_proof_options(
     args: &[String],
 ) -> Result<AssistantLoopProofOptions, String> {
     let mut root = ".".to_string();
+    let mut root_explicit = false;
     let mut pr_guidance = None;
     let mut agent_packet = None;
     let mut before = None;
@@ -177,7 +179,15 @@ fn parse_assistant_loop_proof_options(
         match args[i].as_str() {
             "--root" => {
                 i += 1;
-                root = non_empty_string_arg(args, i, "--root", "assistant-loop proof")?;
+                let value = non_empty_string_arg(args, i, "--root", "assistant-loop proof")?;
+                let reconciled = reconcile_root(
+                    std::path::Path::new(&root),
+                    root_explicit,
+                    &value,
+                    "assistant-loop proof",
+                )?;
+                root = reconciled.display().to_string();
+                root_explicit = true;
             }
             "--pr-guidance" => {
                 i += 1;
@@ -272,7 +282,7 @@ fn parse_assistant_loop_proof_options(
         && ledger.is_none()
     {
         return Err(
-            "assistant-loop proof requires at least one explicit artifact input".to_string(),
+            "assistant-loop proof requires at least one explicit artifact input; pass one, for example `--pr-guidance PATH` (run `ripr help assistant-loop` for the list)".to_string(),
         );
     }
 
@@ -295,6 +305,7 @@ fn parse_assistant_loop_health_options(
     args: &[String],
 ) -> Result<AssistantLoopHealthOptions, String> {
     let mut root = ".".to_string();
+    let mut root_explicit = false;
     let mut proofs = Vec::new();
     let mut out = PathBuf::from(output::assistant_loop_health::DEFAULT_ASSISTANT_LOOP_HEALTH_OUT);
     let mut out_md =
@@ -305,7 +316,15 @@ fn parse_assistant_loop_health_options(
         match args[i].as_str() {
             "--root" => {
                 i += 1;
-                root = non_empty_string_arg(args, i, "--root", "assistant-loop health")?;
+                let value = non_empty_string_arg(args, i, "--root", "assistant-loop health")?;
+                let reconciled = reconcile_root(
+                    std::path::Path::new(&root),
+                    root_explicit,
+                    &value,
+                    "assistant-loop health",
+                )?;
+                root = reconciled.display().to_string();
+                root_explicit = true;
             }
             "--proof" => {
                 i += 1;
@@ -330,7 +349,7 @@ fn parse_assistant_loop_health_options(
     }
 
     if proofs.is_empty() {
-        return Err("assistant-loop health requires at least one --proof path".to_string());
+        return Err("assistant-loop health requires at least one --proof path; first run `ripr assistant-loop proof --pr-guidance PATH`, then pass its JSON as `--proof target/ripr/reports/test-oracle-assistant-proof.json`".to_string());
     }
 
     Ok(AssistantLoopHealthOptions {

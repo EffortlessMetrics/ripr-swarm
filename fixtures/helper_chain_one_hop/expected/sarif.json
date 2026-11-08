@@ -1,0 +1,275 @@
+{
+  "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+  "runs": [
+    {
+      "columnKind": "unicodeCodePoints",
+      "properties": {
+        "analysis_complete": true,
+        "analysis_outcome": {
+          "claim_boundary": "Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim.",
+          "counts": {
+            "candidate_line_count": 1,
+            "changed_file_count": 1,
+            "changed_line_count": 2,
+            "finding_count": 1,
+            "probe_count": 1
+          },
+          "identity": {
+            "base_revision": null,
+            "config_identity": null,
+            "git_candidate_subject": null,
+            "input_identity": "sha256:41e3f57851eebb624f2b38a3757631f44c6545ab7a1c3d3527c663193597f0b9",
+            "repository_identity": null,
+            "root_identity": null,
+            "snapshot_identity": null
+          },
+          "kind": "complete_with_findings",
+          "limitations": [],
+          "schema_version": "0.1"
+        },
+        "run_status": "complete",
+        "schema_version": "0.1",
+        "scope": "finding",
+        "tool": "ripr"
+      },
+      "results": [
+        {
+          "fingerprints": {
+            "riprFingerprintV1": "ripr.finding.infection_unknown|probe:src_lib.rs:predicate:ac178c7f|probe:src_lib.rs:predicate:ac178c7f|fixtures/helper_chain_one_hop/input/src/lib.rs"
+          },
+          "level": "warning",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "fixtures/helper_chain_one_hop/input/src/lib.rs"
+                },
+                "region": {
+                  "startColumn": 1,
+                  "startLine": 2
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "infection_unknown static exposure for predicate probe: c == ' '. Next step: Open the related test, check whether it reaches the changed code, and inspect other existing tests. Trace their inputs through the local or computed operand (including default and empty cases) to see which side of the changed condition they exercise, then name an input that would exercise the other side. ripr.toml does not support fixture/builder value mappings. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown."
+          },
+          "partialFingerprints": {
+            "riprFingerprintV1": "ripr.finding.infection_unknown|probe:src_lib.rs:predicate:ac178c7f|probe:src_lib.rs:predicate:ac178c7f|fixtures/helper_chain_one_hop/input/src/lib.rs"
+          },
+          "properties": {
+            "canonical_gap": {
+              "behavior_kind": "predicate_boundary",
+              "file": "src/lib.rs",
+              "id": "gap:rust:src/lib.rs:is_word_start:predicate_boundary:predicate:c==lit20",
+              "language": "rust",
+              "normalized_discriminator": "c==lit20",
+              "owner": "is_word_start",
+              "probe_kind": "predicate"
+            },
+            "canonical_gap_id": "gap:rust:src/lib.rs:is_word_start:predicate_boundary:predicate:c==lit20",
+            "changed_expression": "c == ' '",
+            "classification": "infection_unknown",
+            "confidence": 0.66,
+            "finding_id": "probe:src_lib.rs:predicate:ac178c7f",
+            "flow_sinks": [],
+            "kind": "finding",
+            "language": "rust",
+            "missing_discriminators": [],
+            "observed_values": [
+              {
+                "context": "assertion_argument",
+                "line": 5,
+                "text": "assert_eq!(classify(\" x\"), \"other\");",
+                "value": "\" x\""
+              },
+              {
+                "context": "assertion_argument",
+                "line": 5,
+                "text": "assert_eq!(classify(\" x\"), \"other\");",
+                "value": "\"other\""
+              },
+              {
+                "context": "assertion_argument",
+                "line": 10,
+                "text": "assert_eq!(classify(\"hello\"), \"word\");",
+                "value": "\"hello\""
+              },
+              {
+                "context": "assertion_argument",
+                "line": 10,
+                "text": "assert_eq!(classify(\"hello\"), \"word\");",
+                "value": "\"word\""
+              }
+            ],
+            "owner": "src/lib.rs::is_word_start",
+            "probe_delta": "control",
+            "probe_family": "predicate",
+            "probe_id": "probe:src_lib.rs:predicate:ac178c7f",
+            "related_tests": [
+              {
+                "file": "tests/classify.rs",
+                "line": 4,
+                "name": "leading_space_classifies_other",
+                "oracle": "assert_eq!(classify(\" x\"), \"other\");",
+                "oracle_kind": "exact_value",
+                "oracle_strength": "strong"
+              },
+              {
+                "file": "tests/classify.rs",
+                "line": 9,
+                "name": "letter_classifies_word",
+                "oracle": "assert_eq!(classify(\"hello\"), \"word\");",
+                "oracle_kind": "exact_value",
+                "oracle_strength": "strong"
+              }
+            ],
+            "related_tests_total": 2,
+            "ripr": {
+              "discriminate": {
+                "confidence": "medium",
+                "state": "yes",
+                "summary": "Strong oracle found: exact value or pattern assertion"
+              },
+              "infect": {
+                "confidence": "low",
+                "state": "unknown",
+                "summary": "Changed boundary input is unresolved: boundary operand `c` is a local or computed value ripr cannot map to the related tests' inputs, so it cannot tell which side of the boundary a test reaches; activation/infection is unknown; a related test that passes literal inputs on each side of the boundary would let ripr decide"
+              },
+              "observe": {
+                "confidence": "medium",
+                "state": "yes",
+                "summary": "A related test observes a value or effect near the changed behavior"
+              },
+              "propagate": {
+                "confidence": "low",
+                "state": "unknown",
+                "summary": "Propagation is not statically obvious from syntax-first analysis"
+              },
+              "reach": {
+                "confidence": "medium",
+                "state": "yes",
+                "summary": "Related tests appear to reach is_word_start: leading_space_classifies_other, letter_classifies_word"
+              }
+            },
+            "severity": "warning",
+            "stop_reasons": [
+              "infection_evidence_unknown"
+            ],
+            "suggested_next_action": "Open the related test, check whether it reaches the changed code, and inspect other existing tests. Trace their inputs through the local or computed operand (including default and empty cases) to see which side of the changed condition they exercise, then name an input that would exercise the other side. ripr.toml does not support fixture/builder value mappings. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown.",
+            "tool": "ripr"
+          },
+          "ruleId": "ripr.finding.infection_unknown"
+        }
+      ],
+      "tool": {
+        "driver": {
+          "informationUri": "https://github.com/EffortlessMetrics/ripr",
+          "name": "ripr",
+          "rules": [
+            {
+              "fullDescription": {
+                "text": "Static analysis found a complete path from the changed code to a test oracle strong enough to observe the changed behavior."
+              },
+              "help": {
+                "text": "This is static evidence, not a runtime verdict: ripr did not execute any test. Next step: run the linked related test and confirm it observes the changed sink."
+              },
+              "helpUri": "https://github.com/EffortlessMetrics/ripr-swarm/blob/main/docs/STATIC_EXPOSURE_MODEL.md#exposure-classes",
+              "id": "ripr.finding.exposed",
+              "name": "ripr exposed",
+              "shortDescription": {
+                "text": "Changed behavior appears covered by a strong test oracle"
+              }
+            },
+            {
+              "fullDescription": {
+                "text": "A static path from the change to a related test exists, but the infection or the oracle's discrimination looks weak, so the test could pass even when the behavior is wrong."
+              },
+              "help": {
+                "text": "Static evidence only; no test was executed. Next step: strengthen the nearest assertion so it observes the changed sink directly, then re-run ripr check."
+              },
+              "helpUri": "https://github.com/EffortlessMetrics/ripr-swarm/blob/main/docs/STATIC_EXPOSURE_MODEL.md#exposure-classes",
+              "id": "ripr.finding.weakly_exposed",
+              "name": "ripr weakly_exposed",
+              "shortDescription": {
+                "text": "Changed behavior may not be caught by the current tests"
+              }
+            },
+            {
+              "fullDescription": {
+                "text": "Related tests appear to reach the changed code, but no meaningful oracle was found that would notice a wrong result."
+              },
+              "help": {
+                "text": "Static evidence only; no test was executed. Next step: add or sharpen an assertion that discriminates the changed behavior."
+              },
+              "helpUri": "https://github.com/EffortlessMetrics/ripr-swarm/blob/main/docs/STATIC_EXPOSURE_MODEL.md#exposure-classes",
+              "id": "ripr.finding.reachable_unrevealed",
+              "name": "ripr reachable_unrevealed",
+              "shortDescription": {
+                "text": "Tests reach the changed code but no assertion appears to check it"
+              }
+            },
+            {
+              "fullDescription": {
+                "text": "No static test path to the changed owner was found; static analysis could not trace any related test to this behavior."
+              },
+              "help": {
+                "text": "This is a static reachability statement, not a runtime coverage measurement. Next step: add a focused test that exercises the changed behavior."
+              },
+              "helpUri": "https://github.com/EffortlessMetrics/ripr-swarm/blob/main/docs/STATIC_EXPOSURE_MODEL.md#exposure-classes",
+              "id": "ripr.finding.no_static_path",
+              "name": "ripr no_static_path",
+              "shortDescription": {
+                "text": "No test appears to reach the changed code"
+              }
+            },
+            {
+              "fullDescription": {
+                "text": "Tests may reach the change, but the input or fixture evidence is opaque, so static analysis cannot tell whether a wrong result would propagate."
+              },
+              "help": {
+                "text": "Static evidence only; no test was executed. Next step: make the decisive input or fixture value explicit, then re-run ripr check."
+              },
+              "helpUri": "https://github.com/EffortlessMetrics/ripr-swarm/blob/main/docs/STATIC_EXPOSURE_MODEL.md#exposure-classes",
+              "id": "ripr.finding.infection_unknown",
+              "name": "ripr infection_unknown",
+              "shortDescription": {
+                "text": "Tests may reach the change but their inputs are not visible to static analysis"
+              }
+            },
+            {
+              "fullDescription": {
+                "text": "The changed behavior crosses a boundary static analysis cannot see through, so it is unknown whether a wrong result would reach an observable sink."
+              },
+              "help": {
+                "text": "Static evidence only; no test was executed. Next step: add an assertion at an observable sink beyond the boundary."
+              },
+              "helpUri": "https://github.com/EffortlessMetrics/ripr-swarm/blob/main/docs/STATIC_EXPOSURE_MODEL.md#exposure-classes",
+              "id": "ripr.finding.propagation_unknown",
+              "name": "ripr propagation_unknown",
+              "shortDescription": {
+                "text": "Static analysis cannot tell whether a wrong result would reach an assertion"
+              }
+            },
+            {
+              "fullDescription": {
+                "text": "Syntax-first analysis could not make a credible judgment for this finding, usually because parsing or symbol resolution was incomplete."
+              },
+              "help": {
+                "text": "This is an analysis limitation disclosure, not a coverage verdict. Next step: re-run with fuller analysis settings or triage the finding manually."
+              },
+              "helpUri": "https://github.com/EffortlessMetrics/ripr-swarm/blob/main/docs/STATIC_EXPOSURE_MODEL.md#exposure-classes",
+              "id": "ripr.finding.static_unknown",
+              "name": "ripr static_unknown",
+              "shortDescription": {
+                "text": "Static analysis could not judge this change"
+              }
+            }
+          ],
+          "semanticVersion": "0.11.0"
+        }
+      }
+    }
+  ],
+  "version": "2.1.0"
+}

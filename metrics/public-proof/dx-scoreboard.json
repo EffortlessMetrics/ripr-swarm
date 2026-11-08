@@ -39,7 +39,7 @@
       "counts": {
         "below_target": 4,
         "failed": 0,
-        "meets_target": 4,
+        "meets_target": 5,
         "not_measured": 5,
         "regressed": 0
       },
@@ -53,6 +53,7 @@
         "trust.verdict_corpus_abstention",
         "trust.verdict_corpus_false_silent",
         "trust.verdict_corpus_false_exposed",
+        "trust.verdict_corpus_spec_example_coverage",
         "trust.discriminator_claim_agreement",
         "trust.gap_claim_agreement",
         "trust.pilot_top_recommendation_precision",
@@ -15165,6 +15166,32 @@
       "title": "Hand-checked edits the crate's tests miss that ripr credits as caught (false confidence; few credited cases so far, so read with its denominator)",
       "unit": "ratio",
       "value": 0.0124
+    },
+    {
+      "baseline": {
+        "comparable": false,
+        "reason": "no baseline supplied"
+      },
+      "board": "trust",
+      "direction": "higher_is_better",
+      "id": "trust.verdict_corpus_spec_example_coverage",
+      "partial": false,
+      "per_repo": false,
+      "runner_dependent": false,
+      "samples": [
+        {
+          "detail": "fixtures/rust-verdict-corpus spec_example_coverage.coverage: 330/330",
+          "repo": null,
+          "status": "meets_target",
+          "value": 1.0
+        }
+      ],
+      "source": "verdict-corpus:fixtures/rust-verdict-corpus#spec_example_coverage.coverage",
+      "status": "meets_target",
+      "target": 1.0,
+      "title": "In-scope numbered spec acceptance examples (minus waived) that a runtime-labeled verdict-corpus case cites",
+      "unit": "ratio",
+      "value": 1.0
     },
     {
       "baseline": {

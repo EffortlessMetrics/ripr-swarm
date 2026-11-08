@@ -693,7 +693,7 @@ mod tests {
         for release_command in [
             "cargo xtask check-pr",
             "cargo package -p ripr --list",
-            "cargo publish -p ripr --dry-run",
+            "cargo xtask publish-dry-run",
         ] {
             assert!(
                 !commands.contains(&release_command),
@@ -725,7 +725,7 @@ mod tests {
                 "cargo clippy --workspace --all-targets -- -D warnings",
                 "cargo xtask check-pr",
                 "cargo package -p ripr --list",
-                "cargo publish -p ripr --dry-run",
+                "cargo xtask publish-dry-run",
                 "cargo xtask release-readiness",
             ]
         );
@@ -758,7 +758,7 @@ mod tests {
             "cargo xtask check-output-contracts",
             "cargo test --workspace",
             "cargo xtask vscode-compile",
-            "cargo publish -p ripr --dry-run",
+            "cargo xtask publish-dry-run",
             "cargo xtask check-identity-registry",
         ] {
             assert!(

@@ -510,6 +510,11 @@ pub enum StaticLimitKind {
     /// is `static_unknown`: the missing test may be one of those dependent
     /// crates'. See RIPR-SPEC-0240 / #5395.
     RustDependentCrateReachUnresolved,
+    /// Workspace source reads refused one or more files under the per-file
+    /// or aggregate byte cap. Those files may contain tests or a call path
+    /// to the change, so a finding that would claim `no_static_path` is
+    /// withheld as `static_unknown`. See RIPR-SPEC-0240 / #11985.
+    TypescriptWorkspaceReadLimited,
 }
 
 impl StaticLimitKind {
@@ -590,6 +595,7 @@ impl StaticLimitKind {
             StaticLimitKind::RustDependentCrateReachUnresolved => {
                 "rust_dependent_crate_reach_unresolved"
             }
+            StaticLimitKind::TypescriptWorkspaceReadLimited => "typescript_workspace_read_limited",
         }
     }
 
@@ -790,6 +796,12 @@ impl StaticLimitKind {
                  tests, but ripr cannot follow a path through trait dispatch or a public API the \
                  package-prefix guard dropped. ripr cannot say that no test reaches this change, \
                  so it does not claim a gap; this is a named limitation, not a coverage claim."
+            }
+            StaticLimitKind::TypescriptWorkspaceReadLimited => {
+                "TypeScript workspace source files were not read because they exceeded the \
+                 per-file or aggregate byte limit. They may contain tests or a call path to \
+                 this change, so ripr does not claim that no test reaches it; this is a named \
+                 limitation, not a coverage claim."
             }
         }
     }
@@ -1162,6 +1174,10 @@ mod tests {
             StaticLimitKind::RustDependentCrateReachUnresolved.as_str(),
             "rust_dependent_crate_reach_unresolved"
         );
+        assert_eq!(
+            StaticLimitKind::TypescriptWorkspaceReadLimited.as_str(),
+            "typescript_workspace_read_limited"
+        );
     }
 
     #[test]
@@ -1201,6 +1217,7 @@ mod tests {
             StaticLimitKind::RustInherentReceiverUnestablished,
             StaticLimitKind::TypescriptWorkspaceDiscoveryTruncated,
             StaticLimitKind::RustDependentCrateReachUnresolved,
+            StaticLimitKind::TypescriptWorkspaceReadLimited,
         ];
         // Every variant has a non-empty, distinct explanation. Conservative
         // static-language vocabulary is enforced repo-wide by

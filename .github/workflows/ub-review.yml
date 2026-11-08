@@ -90,13 +90,15 @@ jobs:
       - name: Verify advisory receipt reporter
         if: always()
         continue-on-error: true
-        run: cargo test --locked -p xtask --example ub_review_evidence_report
+        # This example reads receipts with serde_json; keep its native tests
+        # without compiling the ordinary xtask product/parser dependency graph.
+        run: cargo test --locked -p xtask --no-default-features --example ub_review_evidence_report
 
       - name: Report advisory evidence dimensions
         if: always()
         continue-on-error: true
         run: |
-          cargo run --locked -p xtask --example ub_review_evidence_report -- target/ub-review || {
+          cargo run --locked -p xtask --no-default-features --example ub_review_evidence_report -- target/ub-review || {
             status=$?
             printf '%s\n' '## UB Review advisory evidence' '' 'MISSING EVIDENCE: consumer reporter did not complete; inspect this step log. No report pass is established.' >> "$GITHUB_STEP_SUMMARY"
             exit "$status"

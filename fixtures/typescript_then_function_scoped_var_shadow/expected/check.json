@@ -155,5 +155,6 @@
       "category": "preview_language_advisory",
       "why": "preview adapter; advisory; may be incomplete; empty result is not Rust-grade clean"
     }
-  ]
+  ],
+  "source_subject": {"digest_algorithm":"sha256","files":[{"path":"src/total.ts","digest":"sha256:b9bf05ba3bd98368ab8fd88c9a914612d75798ea0612d19c01fe293f64931f4d"}]}
 }
