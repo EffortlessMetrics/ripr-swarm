@@ -89,8 +89,9 @@ workspace itself as `--root` still analyzes that fixture normally.
 
 Every key `ripr.toml` accepts. An unknown key fails the load and names the
 nearest valid key when one is close (``did you mean `mode`?``).
-A value of the wrong type or outside the listed values fails with the key,
-line, and expected values. Check a file with `ripr config validate`.
+A value of the wrong type or outside the listed values fails and names the
+key; most value errors also give the line and the accepted values. Check a
+file with `ripr config validate`.
 
 Editors can validate and complete the file with the published JSON schema,
 [`schemas/ripr/ripr-config.schema.json`](../schemas/ripr/ripr-config.schema.json).
@@ -104,7 +105,7 @@ A test keeps this table, the schema, and the parser's accepted keys identical.
 | `analysis.mode` | one of `instant`, `draft`, `fast`, `deep`, `ready` | Default analysis mode when CLI flags or LSP options do not set one. |
 | `analysis.include_unchanged_tests` | boolean | Also consider tests the diff did not touch. |
 | `analysis.production_like_targets` | array of string | Cargo targets treated as production-like. |
-| `analysis.test_harnesses[]` | array of tables | Exact custom test-harness registrations. |
+| `analysis.test_harnesses[]` | array of tables | Exact custom test-harness registrations. Every field is required; `custom_harness` pairs with `libtest_mimic_v1` and `registered_attribute` with `exact_attribute_v1`. |
 | `analysis.test_harnesses[].registration_id` | string |  |
 | `analysis.test_harnesses[].target` | string | Repository-relative path. |
 | `analysis.test_harnesses[].kind` | one of `custom_harness`, `registered_attribute` |  |
@@ -142,8 +143,8 @@ A test keeps this table, the schema, and the parser's accepted keys identical.
 | `languages.python.excluded_file_patterns` | array of string | Globs excluded from preview indexing. |
 | `languages.typescript.handwritten_files` | array of string | Exact handwritten paths. |
 | `languages.typescript.excluded_file_patterns` | array of string | Globs excluded from preview indexing. |
-| `profiles.bun_ub.test_roots` | array of string | Test-root globs. |
-| `profiles.bun_ub.bridge_hints` | string | Repository-relative bridge hints file. |
+| `profiles.bun_ub.test_roots` | array of string, required in `[profiles.bun_ub]` | Test-root globs. |
+| `profiles.bun_ub.bridge_hints` | string, required in `[profiles.bun_ub]` | Repository-relative bridge hints file. |
 | `typescript.resolve_tsconfig_paths` | boolean | Resolve tsconfig `paths` aliases. |
 | `perl.producer` | one of `perl-ripr-facts`, `perllsp`, `perl-lsp` | Managed fact-packet exporter. |
 | `perl.executable` | string | Exporter path; honored only when RIPR_ALLOW_REPO_PERL_EXECUTABLE=1. |

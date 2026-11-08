@@ -71,7 +71,30 @@
               "kind",
               "adapter",
               "marker"
-            ]
+            ],
+            "oneOf": [
+              {
+                "properties": {
+                  "kind": {
+                    "const": "custom_harness"
+                  },
+                  "adapter": {
+                    "const": "libtest_mimic_v1"
+                  }
+                }
+              },
+              {
+                "properties": {
+                  "kind": {
+                    "const": "registered_attribute"
+                  },
+                  "adapter": {
+                    "const": "exact_attribute_v1"
+                  }
+                }
+              }
+            ],
+            "description": "One registration; `custom_harness` pairs with `libtest_mimic_v1` and `registered_attribute` with `exact_attribute_v1`."
           }
         }
       },
@@ -456,7 +479,11 @@
               "description": "Repository-relative bridge hints file."
             }
           },
-          "description": "Bun stable-byte UB advisory profile."
+          "description": "Bun stable-byte UB advisory profile.",
+          "required": [
+            "test_roots",
+            "bridge_hints"
+          ]
         }
       }
     },
@@ -752,7 +779,41 @@
             },
             "description": "Oracle strength policy."
           }
-        }
+        },
+        "oneOf": [
+          {
+            "required": [
+              "crate"
+            ],
+            "not": {
+              "required": [
+                "path"
+              ]
+            }
+          },
+          {
+            "required": [
+              "path"
+            ],
+            "not": {
+              "required": [
+                "crate"
+              ]
+            }
+          }
+        ],
+        "anyOf": [
+          {
+            "required": [
+              "severity"
+            ]
+          },
+          {
+            "required": [
+              "oracles"
+            ]
+          }
+        ]
       }
     }
   }

@@ -283,6 +283,82 @@ fn typo_in_a_key_suggests_the_nearest_key_in_the_same_table() {
         .err()
         .unwrap_or_default();
     assert!(error.contains("did you mean `weakly_exposed`?"), "{error}");
+    let error = parse_config("[analysis]\nmdoe = \"draft\"\n")
+        .err()
+        .unwrap_or_default();
+    assert!(error.contains("did you mean `mode`?"), "{error}");
+}
+
+#[test]
+fn transposition_counts_as_one_edit() {
+    assert_eq!(
+        suggest::did_you_mean("mdoe", &["mode", "zzzz"]),
+        Some("mode")
+    );
+    assert_eq!(suggest::did_you_mean("pahts", &["path"]), None);
+}
+
+/// Each leaf's schema `type` agrees with the parser: a value of a different
+/// TOML type is rejected as an invalid type.
+#[test]
+fn schema_types_match_the_parser_for_every_leaf() -> Result<(), String> {
+    let schema = schema()?;
+    let mut all = Vec::new();
+    tables("", &schema, &mut all)?;
+    let mut checked = 0;
+    for (header, node) in all {
+        if header.is_empty() || header.contains("[]") {
+            continue;
+        }
+        for (key, child) in node["properties"].as_object().into_iter().flatten() {
+            let wrong = match child["type"].as_str() {
+                Some("string" | "boolean") => "[1]",
+                Some("integer") => "\"zz\"",
+                Some("array") if child["items"]["type"] == "string" => "true",
+                _ => continue,
+            };
+            let error = parse_config(&format!("[{header}]\n{key} = {wrong}\n"))
+                .err()
+                .unwrap_or_default();
+            assert!(
+                error.contains("invalid type"),
+                "{header}.{key} = {wrong} was not rejected as an invalid type: {error}"
+            );
+            checked += 1;
+        }
+    }
+    assert!(checked >= 42, "only {checked} leaf types checked");
+    Ok(())
+}
+
+/// The schema's cross-field rules describe documents the parser rejects.
+#[test]
+fn schema_cross_field_rules_mirror_parser_refusals() -> Result<(), String> {
+    let schema = schema()?;
+    let overrides = &schema["properties"]["overrides"]["items"];
+    assert!(overrides["oneOf"].is_array() && overrides["anyOf"].is_array());
+    let bun = &schema["properties"]["profiles"]["properties"]["bun_ub"];
+    assert_eq!(
+        bun["required"],
+        serde_json::json!(["test_roots", "bridge_hints"])
+    );
+    let harness = &schema["properties"]["analysis"]["properties"]["test_harnesses"]["items"];
+    assert_eq!(harness["oneOf"].as_array().map(Vec::len), Some(2));
+    for refused in [
+        "[[overrides]]\n[overrides.oracles]\nsnapshot_strength = \"weak\"\n",
+        "[[overrides]]\ncrate = \"a\"\npath = \"b/**\"\n[overrides.oracles]\nsnapshot_strength = \"weak\"\n",
+        "[[overrides]]\ncrate = \"a\"\n",
+        "[profiles.bun_ub]\nbridge_hints = \"h.toml\"\n",
+        "[profiles.bun_ub]\ntest_roots = [\"t/**\"]\n",
+        "[[analysis.test_harnesses]]\nregistration_id = \"r\"\ntarget = \"tests/a.rs\"\nkind = \"custom_harness\"\nadapter = \"exact_attribute_v1\"\nmarker = \"m\"\n",
+    ] {
+        assert!(
+            parse_config(refused).is_err(),
+            "parser accepted:\n{refused}"
+        );
+    }
+    let accepted = "[[analysis.test_harnesses]]\nregistration_id = \"r\"\ntarget = \"tests/a.rs\"\nkind = \"custom_harness\"\nadapter = \"libtest_mimic_v1\"\nmarker = \"m\"\n";
+    parse_config(accepted).map(|_| ())
 }
 
 #[test]

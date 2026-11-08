@@ -112,18 +112,36 @@ pub(super) fn is_known_suggestion_line(line: &str) -> bool {
         .any(|candidate| line == suggestion_line(candidate))
 }
 
+/// Optimal string alignment distance: Levenshtein plus adjacent
+/// transposition as one edit, so `mdoe` is one edit from `mode`.
 fn edit_distance(left: &str, right: &str) -> usize {
-    let right_chars: Vec<char> = right.chars().collect();
-    let mut previous: Vec<usize> = (0..=right_chars.len()).collect();
-    for (row, left_char) in left.chars().enumerate() {
-        let mut current = vec![row + 1];
-        for (column, right_char) in right_chars.iter().enumerate() {
-            let substitution = previous[column] + usize::from(left_char != *right_char);
-            let insertion = current[column] + 1;
-            let deletion = previous[column + 1] + 1;
-            current.push(substitution.min(insertion).min(deletion));
+    let left: Vec<char> = left.chars().collect();
+    let right: Vec<char> = right.chars().collect();
+    let width = right.len() + 1;
+    let mut table = vec![0usize; (left.len() + 1) * width];
+    for (row, cells) in table.chunks_mut(width).enumerate() {
+        if let Some(first) = cells.first_mut() {
+            *first = row;
         }
-        previous = current;
     }
-    previous[right_chars.len()]
+    for (column, cell) in table.iter_mut().take(width).enumerate() {
+        *cell = column;
+    }
+    for row in 1..=left.len() {
+        for column in 1..=right.len() {
+            let cost = usize::from(left[row - 1] != right[column - 1]);
+            let mut best = (table[(row - 1) * width + column] + 1)
+                .min(table[row * width + column - 1] + 1)
+                .min(table[(row - 1) * width + column - 1] + cost);
+            if row > 1
+                && column > 1
+                && left[row - 1] == right[column - 2]
+                && left[row - 2] == right[column - 1]
+            {
+                best = best.min(table[(row - 2) * width + column - 2] + 1);
+            }
+            table[row * width + column] = best;
+        }
+    }
+    table[left.len() * width + right.len()]
 }
