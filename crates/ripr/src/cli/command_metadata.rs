@@ -1908,7 +1908,7 @@ const METADATA: &[CommandMetadata] = &[
     },
     CommandMetadata {
         id: "cmd:repair",
-        summary: "Pick one Rust gap to close with a new test and start tracking it.",
+        summary: "Pick one Rust gap to close with a focused test edit and start tracking it.",
         task: "Repair a selected Rust gap",
         workflows: &["repair-loop"],
         operation: CommandOperation::WritesArtifacts,
@@ -1941,7 +1941,7 @@ const METADATA: &[CommandMetadata] = &[
     },
     CommandMetadata {
         id: "cmd:continue",
-        summary: "After you add the test, check whether it closed the gap.",
+        summary: "After the test edit, check whether it closed the gap.",
         task: "Repair a selected Rust gap",
         workflows: &["repair-loop"],
         operation: CommandOperation::WritesArtifacts,
@@ -2349,7 +2349,7 @@ const METADATA: &[CommandMetadata] = &[
     },
     CommandMetadata {
         id: "cmd:context",
-        summary: "Print one finding's related tests and changed lines for an agent or script.",
+        summary: "Print one finding's probe and related tests for an agent or script.",
         task: "Hand off a finding",
         workflows: &["inspect-change"],
         operation: CommandOperation::WritesArtifacts,
@@ -2375,7 +2375,7 @@ const METADATA: &[CommandMetadata] = &[
     },
     CommandMetadata {
         id: "cmd:doctor",
-        summary: "Diagnose the local ripr setup when a run cannot complete.",
+        summary: "Check the local ripr setup and show what to fix.",
         task: "Diagnose setup",
         workflows: &["setup"],
         operation: CommandOperation::ReadOnly,

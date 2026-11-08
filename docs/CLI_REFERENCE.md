@@ -98,12 +98,12 @@ reports no runtime outcomes; a real mutation runner confirms later.
 | [`ripr completions`](#completions) | Print a tab-completion script for your shell. | public |
 | [`ripr config`](#config) | Show the configuration command surface. | public |
 | [`ripr config validate`](#config) | Validate ripr.toml without running analysis. | public |
-| [`ripr context`](#context) | Print one finding's related tests and changed lines for an agent or script. | public |
-| [`ripr continue`](#continue) | After you add the test, check whether it closed the gap. | public |
+| [`ripr context`](#context) | Print one finding's probe and related tests for an agent or script. | public |
+| [`ripr continue`](#continue) | After the test edit, check whether it closed the gap. | public |
 | [`ripr coverage-grip`](#coverage-grip) | Show the coverage-grip surface. | public |
 | [`ripr coverage-grip frontier`](#coverage-grip) | Project the coverage-grip frontier from ledger, delta, and zero-status artifacts. | public |
 | [`ripr diff`](#diff) | Analyze the diff between two revisions and write the JSON result to stdout. | public |
-| [`ripr doctor`](#doctor) | Diagnose the local ripr setup when a run cannot complete. | public |
+| [`ripr doctor`](#doctor) | Check the local ripr setup and show what to fix. | public |
 | [`ripr evidence-health`](#evidence-health) | Summarize how strong the current static evidence looks. | public |
 | [`ripr explain`](#explain) | Show why ripr flagged one change. | public |
 | [`ripr feedback`](#feedback) | Show the feedback surface. | public |
@@ -143,7 +143,7 @@ reports no runtime outcomes; a real mutation runner confirms later.
 | [`ripr receipt`](#receipt) | Show the receipt surface. | public |
 | [`ripr receipt check`](#receipt-check) | Validate a receipt JSON against structure and the live gap set. | public |
 | [`ripr receipt write`](#receipt-write) | Author the canonical repair receipt for one completed attempt. | public |
-| [`ripr repair`](#repair) | Pick one Rust gap to close with a new test and start tracking it. | public |
+| [`ripr repair`](#repair) | Pick one Rust gap to close with a focused test edit and start tracking it. | public |
 | [`ripr reports`](#reports) | Show the reports surface. | public |
 | [`ripr reports ci-packet`](#reports-ci-packet) | Run the generated CI workflow's RIPR steps and write its artifact packet. | public |
 | [`ripr reports ci-summary`](#reports-ci-summary) | Print the generated CI workflow's step summary from existing artifacts. | public |
