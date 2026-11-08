@@ -153,8 +153,11 @@ fn only_the_classifier_demotes_a_count_so_other_families_keep_it() {
 #[test]
 fn an_expression_that_is_not_a_plain_mock_count_is_left_alone() {
     for assertion in [
-        "assert.equal(counter.callCount(), 1);",
-        "assert.equal(fn.callCount(), 1);",
+        "assert.equal(counter.count(), 1);",
+        "assert.equal(fn.callCounts, 1);",
+        "assert.equal(fn.callCount.value, 1);",
+        "assert.equal(fn.callCount(1), 1);",
+        "assert.equal(fn.getCalls()[0].length, 1);",
         "assert.equal(fn.mock.callCount() + 1, 2);",
         "assert.equal(fn.mock.callCount[\"()\"], 1);",
         "assert.equal(fn.mock.calls[0].arguments.length, 1);",
@@ -503,6 +506,57 @@ fn unused_block_mock_call_count_alias_does_not_capture_an_outer_argument_pin() -
     assert_eq!(
         notify_class("block-alias-scope-refusal", source)?,
         ExposureClass::Exposed
+    );
+    Ok(())
+}
+
+#[test]
+fn sinon_style_call_counts_are_mock_counts() {
+    for assertion in [
+        "assert.equal(fn.callCount, 1);",
+        "assert.equal(fn.callCount(), 1);",
+        "assert.equal(fn?.callCount, 1);",
+        "assert.equal(fn[\"callCount\"], 1);",
+        "assert.equal(spies.send.callCount, 1);",
+        "assert.equal(fn.getCalls().length, 1);",
+        "const n = fn.callCount; assert.equal(n, 1);",
+    ] {
+        let tests = extract_tests(Path::new("tests/notify.test.ts"), &node_test(assertion));
+        let found: Vec<_> = tests
+            .iter()
+            .flat_map(|test| test.assertions.iter())
+            .collect();
+        assert_eq!(found.len(), 1, "{assertion}");
+        assert!(
+            mock_call_count_assertion(found[0], &tests[0]),
+            "{assertion}"
+        );
+    }
+}
+
+#[test]
+fn sinon_style_call_counts_do_not_credit_a_changed_side_effect() -> Result<(), String> {
+    for (index, assertion) in [
+        "assert.equal(fn.callCount, 1);",
+        "assert.equal(fn.callCount(), 1);",
+        "assert.equal(fn.getCalls().length, 1);",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        assert_eq!(
+            notify_class(&format!("sinon-count-{index}"), &node_test(assertion))?,
+            ExposureClass::WeaklyExposed,
+            "{assertion}"
+        );
+    }
+    // A non-count pin on the same call keeps its reading.
+    assert_ne!(
+        notify_class(
+            "sinon-count-pin",
+            &node_test("assert.equal(fn.mock.calls[0].arguments[0], 8);")
+        )?,
+        ExposureClass::WeaklyExposed
     );
     Ok(())
 }
