@@ -2516,6 +2516,7 @@ mod python_tests;
 
 #[cfg(test)]
 mod layout_tests;
+#[cfg(test)]
 mod reexport_tests;
 
 #[cfg(test)]
