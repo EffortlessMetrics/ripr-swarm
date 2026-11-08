@@ -225,7 +225,9 @@ fn forwarding_call_parts(expression: &ast::Expr) -> Option<(String, Option<Strin
 /// Argument positions at which any call to `helper` in `test_text`, reached or
 /// not, passes an argument that holds a call-making closure literal or a name
 /// bound earlier to one (the [`passes_call_making_closure`] reading, per
-/// position). The forwarding credit (#9981) requires this set to be exactly
+/// position). Unlike that reading, a closure whose body holds a macro call
+/// (`|| my_macro!(greet("bob"))`) also counts here: the macro may expand to the
+/// owner call, and counting it can only withhold credit. The forwarding credit (#9981) requires this set to be exactly
 /// the forwarded position, so a second closure the helper never runs cannot
 /// carry the owner call. `None` when the text does not parse cleanly.
 pub(crate) fn call_making_closure_positions(
@@ -245,9 +247,10 @@ pub(crate) fn call_making_closure_positions(
             continue;
         };
         for (position, argument) in arguments.args().enumerate() {
-            if holds_call_making_closure(argument.syntax())
-                || retained_callback_name(argument)
-                    .is_some_and(|name| bound_to_call_making_closure(&call, &name))
+            if holds_code_running_closure(argument.syntax(), CountsMacros::Yes)
+                || retained_callback_name(argument).is_some_and(|name| {
+                    bound_to_code_running_closure(&call, &name, CountsMacros::Yes)
+                })
             {
                 positions.insert(position);
             }
@@ -381,10 +384,25 @@ fn passes_call_making_closure_uncached(test_text: &str, helper: &str) -> bool {
         })
 }
 
+/// Whether a closure body's macro call counts as code that may call the owner.
+/// Only the forwarding-credit position check counts it (#9981); the #9997
+/// withholding reading is unchanged.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum CountsMacros {
+    Yes,
+    No,
+}
+
 /// Whether `node` holds a closure literal whose body has a call or method call.
 /// Any closure inside it counts, so `&|| ..`, `(|| ..)` and `Box::new(|| ..)`
 /// do; one inside a nested `fn` item within `node` does not.
 fn holds_call_making_closure(node: &ra_ap_syntax::SyntaxNode) -> bool {
+    holds_code_running_closure(node, CountsMacros::No)
+}
+
+/// [`holds_call_making_closure`], also counting a macro call in the closure
+/// body when `macros` is [`CountsMacros::Yes`].
+fn holds_code_running_closure(node: &ra_ap_syntax::SyntaxNode, macros: CountsMacros) -> bool {
     node.descendants()
         .filter_map(ast::ClosureExpr::cast)
         .filter(|closure| {
@@ -399,6 +417,7 @@ fn holds_call_making_closure(node: &ra_ap_syntax::SyntaxNode) -> bool {
                 body.syntax().descendants().any(|inner| {
                     ast::CallExpr::can_cast(inner.kind())
                         || ast::MethodCallExpr::can_cast(inner.kind())
+                        || (macros == CountsMacros::Yes && ast::MacroCall::can_cast(inner.kind()))
                 })
             })
         })
@@ -436,7 +455,19 @@ fn retained_callback_name(argument: ast::Expr) -> Option<String> {
 /// `new` of one, or a name retained through aliases/clones of either (depth cap
 /// four, then fail-closed withhold).
 fn bound_to_call_making_closure(call: &ast::CallExpr, name: &str) -> bool {
-    bound_to_call_making_closure_before(call.syntax().text_range().start(), call.syntax(), name, 0)
+    bound_to_code_running_closure(call, name, CountsMacros::No)
+}
+
+/// [`bound_to_call_making_closure`] with the macro reading of
+/// [`holds_code_running_closure`].
+fn bound_to_code_running_closure(call: &ast::CallExpr, name: &str, macros: CountsMacros) -> bool {
+    bound_to_call_making_closure_before(
+        call.syntax().text_range().start(),
+        call.syntax(),
+        name,
+        0,
+        macros,
+    )
 }
 
 const PLAIN_HELPER_NAMED_BINDING_DEPTH_CAP: u8 = 4;
@@ -446,6 +477,7 @@ fn bound_to_call_making_closure_before(
     context: &ra_ap_syntax::SyntaxNode,
     name: &str,
     depth: u8,
+    macros: CountsMacros,
 ) -> bool {
     if depth > PLAIN_HELPER_NAMED_BINDING_DEPTH_CAP {
         return true;
@@ -465,7 +497,7 @@ fn bound_to_call_making_closure_before(
         })
         .any(|binding| {
             binding.initializer().is_some_and(|initializer| {
-                call_making_closure_initializer(initializer, binding, depth)
+                call_making_closure_initializer(initializer, binding, depth, macros)
             })
         })
 }
@@ -474,11 +506,14 @@ fn call_making_closure_initializer(
     initializer: ast::Expr,
     binding: ast::LetStmt,
     depth: u8,
+    macros: CountsMacros,
 ) -> bool {
-    if closure_literal(initializer.clone()).is_some_and(closure_makes_call) {
+    if closure_literal(initializer.clone())
+        .is_some_and(|closure| holds_code_running_closure(closure.syntax(), macros))
+    {
         return true;
     }
-    if smart_pointer_new_with_call_making_closure(initializer.clone()) {
+    if smart_pointer_new_with_call_making_closure(initializer.clone(), macros) {
         return true;
     }
     let Some(alias) = retained_callback_name(initializer) else {
@@ -489,10 +524,11 @@ fn call_making_closure_initializer(
         binding.syntax(),
         &alias,
         depth.saturating_add(1),
+        macros,
     )
 }
 
-fn smart_pointer_new_with_call_making_closure(expression: ast::Expr) -> bool {
+fn smart_pointer_new_with_call_making_closure(expression: ast::Expr, macros: CountsMacros) -> bool {
     let expression = match expression {
         ast::Expr::ParenExpr(paren) => {
             let Some(inner) = paren.expr() else {
@@ -527,7 +563,8 @@ fn smart_pointer_new_with_call_making_closure(expression: ast::Expr) -> bool {
     if args.next().is_some() {
         return false;
     }
-    closure_literal(first).is_some_and(closure_makes_call)
+    closure_literal(first)
+        .is_some_and(|closure| holds_code_running_closure(closure.syntax(), macros))
 }
 
 fn smart_pointer_new_callee(expression: ast::Expr) -> bool {
@@ -571,10 +608,6 @@ fn closure_literal(expression: ast::Expr) -> Option<ast::ClosureExpr> {
         ast::Expr::ClosureExpr(closure) => Some(closure),
         _ => None,
     }
-}
-
-fn closure_makes_call(closure: ast::ClosureExpr) -> bool {
-    holds_call_making_closure(closure.syntax())
 }
 
 /// End of the statement that eagerly invokes `name`, when the function body

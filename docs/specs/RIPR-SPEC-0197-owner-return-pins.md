@@ -2406,7 +2406,18 @@ Forwarding grammar (`forwarded_callback_params`, fail-closed):
   there (the invocation rule's test side). Other parameters the helper
   forwards bare (tracing's `new_span(span)`, `let s = make(want);`) receive
   no call-making closure, so they are ordinary values and neither block nor
-  join the rule.
+  join the rule. For this position check only, a closure whose body holds a
+  macro call (`|| my_macro!(greet("bob"))`, literal or bound by `let`) also
+  counts, because the macro may expand to the owner call. So
+  `run_test(|| my_macro!(greet("bob")), || noop())` yields two positions and
+  earns nothing; the #9997 withholding reading is unchanged.
+
+Residual (pre-existing, not changed here): the direct-invocation rule above
+reads its test side through `closure_argument_positions`, which sees only
+call and method-call expressions in a closure body and does not inspect other
+argument positions. A closure the helper never invokes, whose owner call sits
+inside a macro, beside an invoked closure that makes some other call, can
+still lend the direct helper's assertion.
 
 Same-file forward (credited): the receiving call is a single-segment free
 function defined once in the file, an evidence-helper role item of the

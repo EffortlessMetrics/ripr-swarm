@@ -1589,6 +1589,11 @@ fn forwarded_closure_shapes_outside_the_grammar_grant_nothing_and_name_nothing()
             "        run_test(true, || gate(11));\n",
         ),
         (
+            "owner call hidden in a macro in a closure forwarded to an external sink",
+            "    fn invoke(g: impl FnOnce() -> bool) -> bool {\n        g()\n    }\n    fn run_test(f: impl FnOnce() -> bool, g: impl FnOnce() -> bool) {\n        with_default(f);\n        let _ = invoke(g);\n        assert_eq!(1, 1);\n    }\n".to_string(),
+            "        run_test(|| my_macro!(gate(11)), || true.then(|| ()).is_some());\n",
+        ),
+        (
             "async forwarding helper",
             format!(
                 "{SAME_FILE_INVOKER}    async fn run_test(want: bool, f: impl FnOnce() -> bool) {{\n        let _ = with_default(f);\n        assert_eq!(want, true);\n    }}\n"

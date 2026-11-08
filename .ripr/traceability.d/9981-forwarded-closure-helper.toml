@@ -2,6 +2,7 @@
 [[extend]]
 id = "RIPR-SPEC-0197"
 tests = [
+  "crates/ripr/src/analysis/syntax/ra/closure_callbacks/tests.rs::forwarding_positions_count_closures_whose_body_holds_a_macro",
   "crates/ripr/src/analysis/facts/test_helpers/tests.rs::plain_helper_forwarding_a_closure_to_a_same_file_invoker_lends_its_later_assertion",
   "crates/ripr/src/analysis/facts/test_helpers/tests.rs::forwarded_closure_is_credited_beside_a_non_closure_parameter_forwarded_bare",
   "crates/ripr/src/analysis/facts/test_helpers/tests.rs::forwarded_closure_credits_the_same_file_invokers_own_observing_assertion",
