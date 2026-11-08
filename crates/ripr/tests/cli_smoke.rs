@@ -29746,6 +29746,81 @@ fn check_with_a_diff_file_does_not_show_unanalyzed_working_tree_disclosure() -> 
     Ok(())
 }
 
+/// #13658: an explicit empty `--diff` is a producer-declared `NoScope`
+/// (nothing was parsed or analyzed), so the agent and GitHub formats must
+/// refuse the all-clear wording; the renderer unit tests inject the outcome,
+/// and this smoke pins the producer-to-output routing with a real empty diff.
+#[test]
+fn check_empty_diff_file_is_not_a_clean_result_in_agent_and_github() -> Result<(), String> {
+    let root = unique_temp_workspace("empty-diff-not-clean");
+    std::fs::create_dir_all(root.join("src")).map_err(|err| format!("create src: {err}"))?;
+    run_git(&root, &["init"])?;
+    run_git(&root, &["config", "user.email", "test@test.com"])?;
+    run_git(&root, &["config", "user.name", "Test"])?;
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "pub fn add(a: i32, b: i32) -> i32 { a + b }\n",
+    )
+    .map_err(|err| format!("write lib.rs: {err}"))?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"spec-0083-empty-diff-fixture\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|err| format!("write Cargo.toml: {err}"))?;
+    run_git(&root, &["add", "."])?;
+    run_git(&root, &["commit", "-m", "initial"])?;
+    let patch = root.join("empty.patch");
+    std::fs::write(&patch, "").map_err(|err| format!("write empty patch: {err}"))?;
+    let root_str = root.to_string_lossy().into_owned();
+    let patch_str = patch.to_string_lossy().into_owned();
+
+    // Fixture construction: the producer must actually report NoScope, so the
+    // renderer assertions below cannot pass on a routing regression alone.
+    let json_run = run_ripr(&["check", "--root", &root_str, "--diff", &patch_str, "--json"]);
+    assert_success(&json_run);
+    let json = String::from_utf8_lossy(&json_run.stdout).into_owned();
+    if !json.contains("\"kind\": \"no_scope\"") && !json.contains("\"kind\":\"no_scope\"") {
+        return Err(format!(
+            "fixture precondition: an empty --diff must produce a no_scope outcome:\n{json}"
+        ));
+    }
+
+    let agent_run = run_ripr(&[
+        "check", "--root", &root_str, "--diff", &patch_str, "--format", "agent",
+    ]);
+    assert_success(&agent_run);
+    let agent = String::from_utf8_lossy(&agent_run.stdout).into_owned();
+    if !agent.contains("stop=nothing was in scope; zero findings is not a clean result") {
+        return Err(format!(
+            "an empty --diff must not read as done in --format agent:\n{agent}"
+        ));
+    }
+    if agent.contains("done=no changed behavior found in scope") {
+        return Err(format!(
+            "an empty --diff must not claim done in --format agent:\n{agent}"
+        ));
+    }
+
+    let github_run = run_ripr(&[
+        "check", "--root", &root_str, "--diff", &patch_str, "--format", "github",
+    ]);
+    assert_success(&github_run);
+    let github = String::from_utf8_lossy(&github_run.stdout).into_owned();
+    if !github.contains("::warning title=ripr nothing analyzed") {
+        return Err(format!(
+            "an empty --diff must warn in --format github:\n{github}"
+        ));
+    }
+    if github.contains("No static exposure findings found") {
+        return Err(format!(
+            "an empty --diff must not emit the clean notice in --format github:\n{github}"
+        ));
+    }
+
+    ignore_remove_dir_all(&root);
+    Ok(())
+}
+
 /// RIPR-SPEC-0116: an empty `--worktree` result is honest when the working tree
 /// has no tracked changes against the requested base.
 #[test]

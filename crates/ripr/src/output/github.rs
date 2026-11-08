@@ -254,7 +254,15 @@ pub(crate) fn render_with_config(output: &CheckOutput, config: &RiprConfig) -> S
             *per_level.entry("notice").or_default() += 1;
             out.push_str(&complete_outcome_limitation_notice(outcome));
         }
-        if output.findings.is_empty() && state_warnings.is_empty() {
+        let no_scope = output.analysis_outcome.as_ref().is_some_and(|outcome| {
+            outcome.kind == crate::analysis_outcome::AnalysisOutcomeKind::NoScope
+        });
+        if output.findings.is_empty() && no_scope && state_warnings.is_empty() {
+            // #13658: nothing was in scope (empty or unparseable --diff);
+            // "No static exposure findings" would read as an all-clear.
+            *per_level.entry("warning").or_default() += 1;
+            out.push_str("::warning title=ripr nothing analyzed::Nothing was in scope, so zero findings is not a clean result. Check that the diff is a valid unified diff or pass --base REV.\n");
+        } else if output.findings.is_empty() && state_warnings.is_empty() {
             out.push_str("::notice title=ripr::No static exposure findings found\n");
         }
     }
@@ -886,6 +894,34 @@ mod tests {
         // Advisory, not scope-reducing: the incomplete warning must not fire.
         assert!(
             !rendered.contains("title=ripr analysis incomplete"),
+            "{rendered}"
+        );
+        Ok(())
+    }
+
+    /// #13658: a `no_scope` outcome (empty/unparseable --diff) must not emit
+    /// the "No static exposure findings" notice.
+    #[test]
+    fn render_no_scope_outcome_is_a_warning_not_a_clean_notice() -> Result<(), String> {
+        use crate::analysis_outcome::{
+            AnalysisIdentity, AnalysisOutcome, AnalysisOutcomeCounts, AnalysisOutcomeKind,
+        };
+        let outcome = AnalysisOutcome::new(
+            AnalysisOutcomeKind::NoScope,
+            AnalysisIdentity::default(),
+            AnalysisOutcomeCounts::default(),
+            Vec::new(),
+        )?;
+        let mut output = output_with_unknown_finding();
+        output.findings = Vec::new();
+        output.analysis_outcome = Some(outcome);
+        let rendered = render(&output);
+        assert!(
+            !rendered.contains("No static exposure findings"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("::warning title=ripr nothing analyzed"),
             "{rendered}"
         );
         Ok(())
