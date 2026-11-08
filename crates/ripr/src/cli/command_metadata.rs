@@ -455,7 +455,7 @@ const METADATA: &[CommandMetadata] = &[
     },
     CommandMetadata {
         id: "cmd:init",
-        summary: "Install the ripr.toml configuration (and, with --ci, an advisory workflow).",
+        summary: "Write an optional ripr.toml and, with --ci, a non-blocking CI workflow.",
         task: "Add advisory CI",
         workflows: &["setup"],
         operation: CommandOperation::StateChanging,
@@ -534,7 +534,7 @@ const METADATA: &[CommandMetadata] = &[
     },
     CommandMetadata {
         id: "cmd:pilot",
-        summary: "Find the top test gap and write an actionable pilot packet.",
+        summary: "Find the top test gap across the whole repository.",
         task: "Explore the repository",
         workflows: &["adoption", "inspect-change"],
         operation: CommandOperation::WritesArtifacts,
@@ -1364,7 +1364,7 @@ const METADATA: &[CommandMetadata] = &[
     },
     CommandMetadata {
         id: "cmd:first-pr",
-        summary: "Compose the start-here PR evidence bundle from existing artifacts.",
+        summary: "Summarize what to fix in one PR from existing ripr reports.",
         task: "Compose PR evidence",
         workflows: &["pr-evidence"],
         operation: CommandOperation::WritesArtifacts,
@@ -1908,7 +1908,7 @@ const METADATA: &[CommandMetadata] = &[
     },
     CommandMetadata {
         id: "cmd:repair",
-        summary: "Start a repair attempt for one gap, or select the gap to repair.",
+        summary: "Pick one Rust gap to close with a focused test edit and start tracking it.",
         task: "Repair a selected Rust gap",
         workflows: &["repair-loop"],
         operation: CommandOperation::WritesArtifacts,
@@ -1941,7 +1941,7 @@ const METADATA: &[CommandMetadata] = &[
     },
     CommandMetadata {
         id: "cmd:continue",
-        summary: "Continue the current repair attempt through its after phase.",
+        summary: "After the test edit, check whether it closed the gap.",
         task: "Repair a selected Rust gap",
         workflows: &["repair-loop"],
         operation: CommandOperation::WritesArtifacts,
@@ -1972,7 +1972,7 @@ const METADATA: &[CommandMetadata] = &[
     },
     CommandMetadata {
         id: "cmd:status",
-        summary: "Report the current repair state and the one next action.",
+        summary: "Show where the current repair stands and what to run next.",
         task: "Resume a repair",
         workflows: &["repair-loop"],
         operation: CommandOperation::ReadOnly,
@@ -2300,7 +2300,7 @@ const METADATA: &[CommandMetadata] = &[
     },
     CommandMetadata {
         id: "cmd:check",
-        summary: "Analyze the current diff and name the top actionable gap.",
+        summary: "Find changed behavior in your diff that your tests may not catch.",
         task: "Inspect one change",
         workflows: &["inspect-change"],
         operation: CommandOperation::WritesArtifacts,
@@ -2323,7 +2323,7 @@ const METADATA: &[CommandMetadata] = &[
     },
     CommandMetadata {
         id: "cmd:explain",
-        summary: "Explain one finding against the current diff.",
+        summary: "Show why ripr flagged one change.",
         task: "Inspect a finding",
         workflows: &["inspect-change"],
         operation: CommandOperation::WritesArtifacts,
@@ -2349,7 +2349,7 @@ const METADATA: &[CommandMetadata] = &[
     },
     CommandMetadata {
         id: "cmd:context",
-        summary: "Collect the tests and seams related to one finding.",
+        summary: "Print one finding's probe and related tests for an agent or script.",
         task: "Hand off a finding",
         workflows: &["inspect-change"],
         operation: CommandOperation::WritesArtifacts,
@@ -2375,7 +2375,7 @@ const METADATA: &[CommandMetadata] = &[
     },
     CommandMetadata {
         id: "cmd:doctor",
-        summary: "Probe the local tool versions and config this workspace needs.",
+        summary: "Check the local ripr setup and show what to fix.",
         task: "Diagnose setup",
         workflows: &["setup"],
         operation: CommandOperation::ReadOnly,
