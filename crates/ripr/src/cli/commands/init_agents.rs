@@ -42,14 +42,12 @@ Loop (max 3 rounds per gap):
 3. WRITE   One focused test next to the related test. Use assert_eq! on exact changed
            values: every changed field, branch and boundary (below, equal, above). Not
            `.is_some()`, `.is_empty()`, `<=`, or only whole-struct equality.
-4. VERIFY  `cargo test <your_test_name>` must pass. Then run `ripr check --quiet --format json-compact`
-           once on the same root, base and saved source (new files need `git add -N PATH`).
-           Check its exit status before reading the JSON; do not change inputs before DONE.
-5. DONE    Use that same report; require exit 0 and these fields:
-           `analysis_outcome.outcome.kind`: `complete_no_findings` or `complete_with_findings`;
-           `analysis_outcome.analysis_complete`: true; `summary.findings` = `summary.exposed`.
-           Missing required fields, `analysis_outcome.document_complete: false`, or
-           `unanalyzed_working_tree: true` mean STOP. Empty `.findings` alone is never enough.
+4. VERIFY  `cargo test <your_test_name>` must pass. Then run `ripr check --quiet --format agent`
+           once more on the same root, base and saved source (new files need `git add -N PATH`).
+           Check its exit status before reading it; do not change inputs before DONE.
+5. DONE    Use that same report; require exit 0 and its last line `verify=complete|...`.
+           `verify=refused`, a missing `verify=` line, or a cut-off report mean STOP.
+           `done=` or an empty gap list alone is never enough.
            If gaps remain, return to FIND; if inputs change, repeat VERIFY before DONE.
            Report tests and static result; this does not establish runtime bug detection.
 
@@ -529,20 +527,21 @@ mod tests {
         ));
         assert!(find.contains("keep it as printed"));
         assert_eq!(
-            verify
-                .matches("ripr check --quiet --format json-compact")
-                .count(),
+            verify.matches("ripr check --quiet --format agent").count(),
             1
+        );
+        assert!(
+            !AGENT_BLOCK.contains("json-compact"),
+            "ordinary verification must not require the full JSON document"
         );
         assert!(!done.contains("ripr check"));
         for condition in [
             "same report",
-            "complete_no_findings",
-            "complete_with_findings",
-            "analysis_outcome.analysis_complete",
-            "summary.findings` = `summary.exposed",
-            "analysis_outcome.document_complete: false",
-            "unanalyzed_working_tree: true",
+            "last line `verify=complete|...`",
+            "`verify=refused`",
+            "a missing `verify=` line",
+            "cut-off report",
+            "`done=` or an empty gap list alone is never enough",
             "if inputs change, repeat VERIFY",
         ] {
             assert!(done.contains(condition), "block lost {condition:?}");
