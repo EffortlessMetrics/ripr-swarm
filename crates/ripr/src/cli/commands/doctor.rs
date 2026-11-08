@@ -8237,6 +8237,42 @@ mod tests {
         enable_before_first_command_line(test_preview_enablement(root).as_ref())
     }
 
+    /// #13788: after `ripr init` writes its config for a root package.json
+    /// with TypeScript under `web/`, doctor has no TypeScript enablement tip
+    /// left to give. Before the fix init wrote `["rust", "python"]` and doctor
+    /// told the user to hand-edit the file init had just written.
+    #[cfg(feature = "lang-typescript")]
+    #[test]
+    fn doctor_has_no_typescript_tip_after_init_for_typescript_under_web() -> Result<(), String> {
+        let dir = unique_command_test_dir("init-then-doctor-ts-web");
+        std::fs::create_dir_all(dir.join("web")).map_err(|err| format!("create dir: {err}"))?;
+        for (path, text) in [
+            ("package.json", "{}\n"),
+            ("web/pricing.ts", "export const p = 1;\n"),
+            ("web/pricing.test.ts", "test(\"p\", () => {});\n"),
+        ] {
+            std::fs::write(dir.join(path), text).map_err(|err| format!("write {path}: {err}"))?;
+        }
+        // Control: with no config at all doctor does suggest TypeScript.
+        let before = test_enablement_suggestions(&dir);
+        std::fs::write(
+            dir.join(crate::config::CONFIG_FILE_NAME),
+            crate::config::generated_init_config_for_root(&dir),
+        )
+        .map_err(|err| format!("write config: {err}"))?;
+        let after = test_enablement_suggestions(&dir);
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(
+            before.iter().any(|line| line.contains("typescript")),
+            "control: {before:?}"
+        );
+        assert!(
+            !after.iter().any(|line| line.contains("typescript")),
+            "{after:?}"
+        );
+        Ok(())
+    }
+
     /// When TypeScript files are detected in a directory that has no ripr.toml
     /// (so the config defaults to `["rust"]`) AND the `lang-typescript` feature
     /// was compiled in, we expect a suggestion line containing the copy-paste

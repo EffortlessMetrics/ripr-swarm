@@ -1325,6 +1325,69 @@ mod tests {
         Ok(())
     }
 
+    /// #13788: TypeScript source directly under a child directory such as
+    /// `web/` is what `ripr doctor` detects, so the explicit config `init`
+    /// writes enables it, in a Python-led repo and beside a Rust crate alike.
+    #[cfg(feature = "lang-typescript")]
+    #[test]
+    fn generated_config_enables_typescript_source_under_a_child_directory() -> Result<(), String> {
+        for (label, rust) in [("ts-under-web-pyts", false), ("ts-under-web-mixed", true)] {
+            let root = temp_root(label)?;
+            write_nested(&root.join("pyproject.toml"), "[project]\nname = \"shop\"\n")?;
+            write_nested(&root.join("package.json"), "{}\n")?;
+            write_nested(&root.join("web/pricing.ts"), "export const p = 1;\n")?;
+            write_nested(
+                &root.join("web/pricing.test.ts"),
+                "test(\"p\", () => {});\n",
+            )?;
+            if rust {
+                write_nested(&root.join("Cargo.toml"), "[package]\nname = \"m\"\n")?;
+            }
+            // Premise: marker-based no-config detection misses this layout.
+            assert!(!crate::config::detect_typescript_project(&root), "{label}");
+            let body = generated_init_config_for_root(&root);
+            let parsed = crate::config::parse_config_diagnostic(&body)
+                .map_err(|err| format!("generated config must parse: {err:?}"))?;
+            assert!(
+                parsed
+                    .languages()
+                    .enabled()
+                    .contains(&LanguageId::TypeScript),
+                "{label}: {body}"
+            );
+            std::fs::remove_dir_all(&root).map_err(|err| format!("cleanup: {err}"))?;
+        }
+        Ok(())
+    }
+
+    /// The child-directory rule needs real, analyzable TypeScript source one
+    /// level down. A manifest alone, declarations, excluded, hidden or docs
+    /// trees, deeper nesting, and a Rust crate's `test/` fixtures leave the pin alone.
+    #[cfg(feature = "lang-typescript")]
+    #[test]
+    fn generated_config_keeps_typescript_off_without_child_directory_source() -> Result<(), String>
+    {
+        let cases: [(&str, &[&str]); 7] = [
+            ("ts-manifest-only", &["package.json"]),
+            ("ts-declarations-only", &["package.json", "web/types.d.ts"]),
+            ("ts-node-modules", &["package.json", "node_modules/x.ts"]),
+            ("ts-hidden", &["package.json", ".cache/x.ts"]),
+            ("ts-docs-site", &["package.json", "docs/site.ts"]),
+            ("ts-two-deep", &["package.json", "web/app/x.ts"]),
+            ("ts-rust-fixture", &["Cargo.toml", "test/fixture.ts"]),
+        ];
+        for (label, files) in cases {
+            let root = temp_root(label)?;
+            for file in files {
+                write_nested(&root.join(file), "{}\n")?;
+            }
+            let body = generated_init_config_for_root(&root);
+            assert!(body.contains("\nenabled = [\"rust\"]\n"), "{label}: {body}");
+            std::fs::remove_dir_all(&root).map_err(|err| format!("cleanup: {err}"))?;
+        }
+        Ok(())
+    }
+
     #[cfg(all(feature = "lang-python", feature = "lang-typescript"))]
     #[test]
     fn generated_config_enables_both_detected_languages() -> Result<(), String> {
@@ -1488,6 +1551,14 @@ mod tests {
 
     fn write(path: &Path, text: &str) -> Result<(), String> {
         std::fs::write(path, text).map_err(|err| format!("write {} failed: {err}", path.display()))
+    }
+
+    fn write_nested(path: &Path, text: &str) -> Result<(), String> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|err| format!("create {} failed: {err}", parent.display()))?;
+        }
+        write(path, text)
     }
 
     fn mcp_options(root: &Path, force: bool) -> InitOptions {
