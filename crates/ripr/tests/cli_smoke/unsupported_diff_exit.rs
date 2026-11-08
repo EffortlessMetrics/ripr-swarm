@@ -215,7 +215,10 @@ fn diff_human_unsupported_and_usage_keep_stream_contracts() -> TestResult {
         &["diff", "--json", "--unknown-diff-exit-option"],
     )?;
     assert_eq!(usage.status.code(), Some(2));
-    assert!(usage.stdout.is_empty());
+    // #11584: an explicit JSON request gets the minimal cli_refusal document.
+    let usage_doc: Value = serde_json::from_slice(&usage.stdout)?;
+    assert_eq!(usage_doc["status"], "refused");
+    assert_eq!(usage_doc["error"]["code"], "unknown_argument");
     assert!(!usage.stderr.is_empty());
     let refused = run_command(
         env!("CARGO_BIN_EXE_ripr"),

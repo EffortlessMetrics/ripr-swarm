@@ -411,7 +411,6 @@ const CONTRACTS: &[VerificationContract] = &[
         subject: ContractSubject::Document,
         doc_path: "docs/OUTPUT_SCHEMA.md",
         doc_markers: &["cli_refusal", "unknown_argument", "selector_miss"],
-        excluded: &[],
     },
     VerificationContract {
         schema_path: "schemas/ripr/check-timeout-refusal.schema.json",

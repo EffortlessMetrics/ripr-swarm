@@ -240,7 +240,7 @@ fn unsupported_check_keeps_rendered_formats_and_repo_scope() -> TestResult {
 }
 
 #[test]
-fn check_json_malformed_options_remain_empty_exit_two() -> TestResult {
+fn check_json_malformed_options_never_masquerade_as_analysis_exit_two() -> TestResult {
     for args in [
         vec!["check", "--json", "--unknown-option-7440"],
         vec!["check", "--json", "--format"],
@@ -248,10 +248,14 @@ fn check_json_malformed_options_remain_empty_exit_two() -> TestResult {
     ] {
         let output = run_command(env!("CARGO_BIN_EXE_ripr"), None, &args)?;
         assert_eq!(output.status.code(), Some(2), "{args:?}");
-        assert!(
-            output.stdout.is_empty(),
-            "{args:?}: usage must not masquerade as an analysis report"
-        );
+        // #11584: stdout is empty or the minimal cli_refusal document, never
+        // an analysis report.
+        if !output.stdout.is_empty() {
+            let document: Value = serde_json::from_slice(&output.stdout)?;
+            assert_eq!(document["status"], "refused", "{args:?}");
+            assert!(document.get("findings").is_none(), "{args:?}");
+            assert!(document.get("summary").is_none(), "{args:?}");
+        }
         assert!(!output.stderr.is_empty(), "{args:?}");
     }
     Ok(())
