@@ -277,9 +277,11 @@ pub(crate) enum SeamSelectionOrder {
     /// The canonical prefix, plus current-change seams the cap cut that pilot
     /// classified separately and appended (so the slice is not a pure prefix).
     CanonicalSortPrefixPlusCurrentChange,
-    /// The pilot artifact budget kept current-change seams first, then the
-    /// inventory-order prefix for the remaining slots.
+    /// The pilot budget prioritized actionable seams on changed lines, then
+    /// filled remaining slots from inventory order. Output retains that order.
     CurrentChangeThenInventoryOrderPrefix,
+    /// No change was available for prioritization; the budget kept inventory order.
+    InventoryOrderPrefix,
 }
 
 impl SeamSelectionOrder {
@@ -292,6 +294,7 @@ impl SeamSelectionOrder {
             Self::CurrentChangeThenInventoryOrderPrefix => {
                 "current_change_then_inventory_order_prefix"
             }
+            Self::InventoryOrderPrefix => "inventory_order_prefix",
         }
     }
 }
@@ -304,20 +307,23 @@ impl SeamSelectionOrder {
 /// - `Inventory`: inventory cap, canonical prefix.
 /// - `InventoryPlusChange`: inventory cap whose slice also holds appended
 ///   current-change seams.
-/// - `PilotBudget`: a real pilot budget cut (change-first).
+/// - `PilotBudget`: a real pilot budget cut with change priority.
+/// - `PilotBudgetWithoutChange`: a real cut without available changed lines.
 /// - `PilotDefaultCut`: the pilot-scoped default inventory cap, disclosed as
 ///   the budget it stands in for; the slice is the canonical prefix.
 /// - `PilotDefaultCutPlusChange`: the same, with appended current-change seams.
-/// - `Both` / `BothPlusChange`: a real budget over an explicit inventory cap
+/// - `Both` / `BothPlusChange` / `BothWithoutChange`: a real budget over an explicit inventory cap
 ///   (the second also had current-change seams appended past that cap).
 #[derive(Clone, Copy)]
 pub(crate) enum RepoExposureLimit<'a> {
     Inventory(&'a SeamLimitInfo),
     InventoryPlusChange(&'a SeamLimitInfo),
     PilotBudget(&'a SeamLimitInfo),
+    PilotBudgetWithoutChange(&'a SeamLimitInfo),
     PilotDefaultCut(&'a SeamLimitInfo),
     PilotDefaultCutPlusChange(&'a SeamLimitInfo),
     Both(&'a SeamLimitInfo, &'a SeamLimitInfo),
+    BothWithoutChange(&'a SeamLimitInfo, &'a SeamLimitInfo),
     BothPlusChange(&'a SeamLimitInfo, &'a SeamLimitInfo),
 }
 
@@ -327,15 +333,21 @@ impl<'a> RepoExposureLimit<'a> {
             Self::Inventory(info)
             | Self::InventoryPlusChange(info)
             | Self::PilotBudget(info)
+            | Self::PilotBudgetWithoutChange(info)
             | Self::PilotDefaultCut(info)
             | Self::PilotDefaultCutPlusChange(info)
             | Self::Both(info, _)
+            | Self::BothWithoutChange(info, _)
             | Self::BothPlusChange(info, _) => info,
         }
     }
 
     pub(crate) fn parts(self) -> [Option<Self>; 2] {
         match self {
+            Self::BothWithoutChange(budget, inventory) => [
+                Some(Self::PilotBudgetWithoutChange(budget)),
+                Some(Self::Inventory(inventory)),
+            ],
             Self::Both(budget, inventory) => [
                 Some(Self::PilotBudget(budget)),
                 Some(Self::Inventory(inventory)),
@@ -382,13 +394,24 @@ impl<'a> RepoExposureLimit<'a> {
             Self::PilotBudget(_) | Self::Both(_, _) | Self::BothPlusChange(_, _) => {
                 SeamSelectionOrder::CurrentChangeThenInventoryOrderPrefix
             }
+            Self::PilotBudgetWithoutChange(_) | Self::BothWithoutChange(_, _) => {
+                SeamSelectionOrder::InventoryOrderPrefix
+            }
         }
     }
 
     pub(crate) fn repair_route(self) -> &'static str {
         match self {
-            Self::Inventory(_) | Self::InventoryPlusChange(_) => repo_exposure_inventory_repair_route(&self.info().source),
-            Self::PilotBudget(_) | Self::PilotDefaultCut(_) | Self::PilotDefaultCutPlusChange(_) | Self::Both(_, _) | Self::BothPlusChange(_, _) => match self.info().source {
+            Self::Inventory(_) | Self::InventoryPlusChange(_) => {
+                repo_exposure_inventory_repair_route(&self.info().source)
+            }
+            Self::PilotBudget(_)
+            | Self::PilotBudgetWithoutChange(_)
+            | Self::BothWithoutChange(_, _)
+            | Self::PilotDefaultCut(_)
+            | Self::PilotDefaultCutPlusChange(_)
+            | Self::Both(_, _)
+            | Self::BothPlusChange(_, _) => match self.info().source {
                 SeamLimitSource::Default => {
                     "Set RIPR_PILOT_SEAM_BUDGET=0 to disable the pilot artifact budget."
                 }
@@ -404,7 +427,13 @@ impl<'a> RepoExposureLimit<'a> {
             Self::Inventory(_) | Self::InventoryPlusChange(_) => {
                 repo_exposure_inventory_markdown_repair_route(&self.info().source)
             }
-            Self::PilotBudget(_) | Self::PilotDefaultCut(_) | Self::PilotDefaultCutPlusChange(_) | Self::Both(_, _) | Self::BothPlusChange(_, _) => match self.info().source {
+            Self::PilotBudget(_)
+            | Self::PilotBudgetWithoutChange(_)
+            | Self::BothWithoutChange(_, _)
+            | Self::PilotDefaultCut(_)
+            | Self::PilotDefaultCutPlusChange(_)
+            | Self::Both(_, _)
+            | Self::BothPlusChange(_, _) => match self.info().source {
                 SeamLimitSource::Default => {
                     "set RIPR_PILOT_SEAM_BUDGET=0 to disable the pilot artifact budget"
                 }
@@ -2835,6 +2864,20 @@ pub fn surcharge(total: i32) -> Result<i32, String> {
         assert_eq!(
             order(RepoExposureLimit::PilotBudget(&info)),
             "current_change_then_inventory_order_prefix"
+        );
+        assert_eq!(
+            order(RepoExposureLimit::PilotBudgetWithoutChange(&info)),
+            "inventory_order_prefix"
+        );
+        let without_change: Vec<_> = RepoExposureLimit::BothWithoutChange(&info, &info)
+            .parts()
+            .into_iter()
+            .flatten()
+            .map(order)
+            .collect();
+        assert_eq!(
+            without_change,
+            ["inventory_order_prefix", "canonical_seam_sort_prefix"]
         );
         // A real budget over an explicit inventory cap emits two limitations,
         // each naming its own order; appended change seams show on the

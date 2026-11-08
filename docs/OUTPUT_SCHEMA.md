@@ -5398,7 +5398,10 @@ Field contract:
     `"canonical_seam_sort_prefix_plus_current_change"` (that prefix plus
     current-change seams pilot classified past the cap and appended), or
     `"current_change_then_inventory_order_prefix"` (a pilot budget cut kept
-    current-change seams first). Top gaps are risk-ranked within the analyzed
+    actionable seams on changed lines before filling from inventory order), or
+    `"inventory_order_prefix"` (the pilot budget had no current change or change information
+    was unavailable and selected from inventory order). Output retains inventory
+    order; prioritized seams may themselves exceed the budget. Top gaps are prioritized within the analyzed
     slice, not across the whole inventory. `limit_source` is
     `"default"` when the cap came from the built-in default
     (`DEFAULT_REPO_EXPOSURE_SEAM_LIMIT = 10_000`) and `"configured"` when

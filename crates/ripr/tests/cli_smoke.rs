@@ -19127,7 +19127,7 @@ fn pilot_snapshot_truncated_by_the_seam_budget_is_not_a_verify_baseline()
     let pilot = run_command_with_env(
         env!("CARGO_BIN_EXE_ripr"),
         &root,
-        &["pilot", "--root", ".", "--mode", "draft"],
+        &["pilot", "--root", ".", "--mode", "draft", "--base", "HEAD"],
         &[
             ("RIPR_PILOT_SEAM_BUDGET", "1"),
             ("RIPR_REPO_EXPOSURE_SEAM_LIMIT", "0"),
@@ -19194,7 +19194,7 @@ fn pilot_snapshot_truncated_by_the_seam_budget_is_not_a_verify_baseline()
             "{name}: {artifact}"
         );
         assert_eq!(
-            limit["selection_order"], "current_change_then_inventory_order_prefix",
+            limit["selection_order"], "inventory_order_prefix",
             "{name}: {artifact}"
         );
         assert_eq!(limit["seams_analyzed"], 1, "{name}: {artifact}");
@@ -19268,7 +19268,7 @@ fn pilot_snapshot_truncated_by_the_seam_budget_is_not_a_verify_baseline()
         "{summary_json}"
     );
     assert_eq!(
-        summary_json["seam_limit"]["selection_order"], "current_change_then_inventory_order_prefix",
+        summary_json["seam_limit"]["selection_order"], "inventory_order_prefix",
         "{summary_json}"
     );
     // When the inventory limit also cuts, the disclosed total is still the
@@ -19284,7 +19284,7 @@ fn pilot_snapshot_truncated_by_the_seam_budget_is_not_a_verify_baseline()
     let pilot = run_command_with_env(
         env!("CARGO_BIN_EXE_ripr"),
         &root,
-        &["pilot", "--root", ".", "--mode", "draft"],
+        &["pilot", "--root", ".", "--mode", "draft", "--base", "HEAD"],
         &[("RIPR_PILOT_SEAM_BUDGET", "1")],
     )?;
     assert_success(&pilot);
@@ -19309,7 +19309,7 @@ fn pilot_snapshot_truncated_by_the_seam_budget_is_not_a_verify_baseline()
     let pilot = run_command_with_env(
         env!("CARGO_BIN_EXE_ripr"),
         &root,
-        &["pilot", "--root", ".", "--mode", "draft"],
+        &["pilot", "--root", ".", "--mode", "draft", "--base", "HEAD"],
         &[
             ("RIPR_PILOT_SEAM_BUDGET", "1"),
             ("RIPR_REPO_EXPOSURE_SEAM_LIMIT", "2"),
@@ -19348,7 +19348,7 @@ fn pilot_snapshot_truncated_by_the_seam_budget_is_not_a_verify_baseline()
         // A real budget keeps the change first; the explicit inventory cap
         // under it kept the canonical prefix (#5371).
         assert_eq!(
-            limits[0]["selection_order"], "current_change_then_inventory_order_prefix",
+            limits[0]["selection_order"], "inventory_order_prefix",
             "{artifact}"
         );
         assert_eq!(
@@ -19382,7 +19382,7 @@ fn pilot_snapshot_truncated_by_the_seam_budget_is_not_a_verify_baseline()
     let inventory = run_command_with_env(
         env!("CARGO_BIN_EXE_ripr"),
         &root,
-        &["pilot", "--root", ".", "--mode", "draft"],
+        &["pilot", "--root", ".", "--mode", "draft", "--base", "HEAD"],
         &[
             ("RIPR_PILOT_SEAM_BUDGET", "999"),
             ("RIPR_REPO_EXPOSURE_SEAM_LIMIT", "2"),
@@ -19464,7 +19464,7 @@ fn pilot_snapshot_truncated_by_the_seam_budget_is_not_a_verify_baseline()
     let wrong_pilot_control = run_command_with_env(
         env!("CARGO_BIN_EXE_ripr"),
         &root,
-        &["pilot", "--root", ".", "--mode", "draft"],
+        &["pilot", "--root", ".", "--mode", "draft", "--base", "HEAD"],
         &[
             ("RIPR_PILOT_SEAM_BUDGET", "0"),
             ("RIPR_REPO_EXPOSURE_SEAM_LIMIT", "2"),
@@ -19492,7 +19492,7 @@ fn pilot_snapshot_truncated_by_the_seam_budget_is_not_a_verify_baseline()
     let wrong_control = run_command_with_env(
         env!("CARGO_BIN_EXE_ripr"),
         &root,
-        &["pilot", "--root", ".", "--mode", "draft"],
+        &["pilot", "--root", ".", "--mode", "draft", "--base", "HEAD"],
         &[
             ("RIPR_PILOT_SEAM_BUDGET", "1"),
             ("RIPR_REPO_EXPOSURE_SEAM_LIMIT", "0"),
@@ -19537,7 +19537,7 @@ fn pilot_snapshot_truncated_by_the_seam_budget_is_not_a_verify_baseline()
     let recovered = run_command_with_env(
         env!("CARGO_BIN_EXE_ripr"),
         &root,
-        &["pilot", "--root", ".", "--mode", "draft"],
+        &["pilot", "--root", ".", "--mode", "draft", "--base", "HEAD"],
         &[
             ("RIPR_PILOT_SEAM_BUDGET", "0"),
             ("RIPR_REPO_EXPOSURE_SEAM_LIMIT", "0"),
@@ -19601,7 +19601,7 @@ fn pilot_snapshot_truncated_by_the_seam_budget_is_not_a_verify_baseline()
     let repeated_inventory = run_command_with_env(
         env!("CARGO_BIN_EXE_ripr"),
         &root,
-        &["pilot", "--root", ".", "--mode", "draft"],
+        &["pilot", "--root", ".", "--mode", "draft", "--base", "HEAD"],
         &[
             ("RIPR_PILOT_SEAM_BUDGET", "999"),
             ("RIPR_REPO_EXPOSURE_SEAM_LIMIT", "2"),
@@ -19620,7 +19620,7 @@ fn pilot_snapshot_truncated_by_the_seam_budget_is_not_a_verify_baseline()
     let repeated = run_command_with_env(
         env!("CARGO_BIN_EXE_ripr"),
         &root,
-        &["pilot", "--root", ".", "--mode", "draft"],
+        &["pilot", "--root", ".", "--mode", "draft", "--base", "HEAD"],
         &[
             ("RIPR_PILOT_SEAM_BUDGET", "1"),
             ("RIPR_REPO_EXPOSURE_SEAM_LIMIT", "0"),
@@ -19739,7 +19739,7 @@ fn pilot_default_inventory_cap_follows_the_budget_without_moving_the_ranking()
         let pilot = run_command_with_env(
             env!("CARGO_BIN_EXE_ripr"),
             &root,
-            &["pilot", "--root", ".", "--mode", "draft"],
+            &["pilot", "--root", ".", "--mode", "draft", "--base", "HEAD"],
             &env,
         )?;
         assert_success(&pilot);
@@ -19836,7 +19836,7 @@ fn pilot_default_inventory_cap_follows_the_budget_without_moving_the_ranking()
         default.1
     );
     assert_eq!(
-        full.1["seam_limit"]["selection_order"], "current_change_then_inventory_order_prefix",
+        full.1["seam_limit"]["selection_order"], "inventory_order_prefix",
         "{}",
         full.1
     );
@@ -36631,4 +36631,72 @@ fn tree_entries(dir: &Path) -> Result<Vec<PathBuf>, String> {
         }
     }
     Ok(found)
+}
+
+#[test]
+fn pilot_budget_discloses_inventory_order_when_change_is_unavailable()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = unique_temp_workspace("pilot-budget-unavailable-order");
+    std::fs::create_dir_all(&root)?;
+    init_producer_fixture_repo(&root)?;
+    let mut lib = std::fs::read_to_string(root.join("src/lib.rs"))?;
+    lib.push_str("\npub fn extra_fee(weight: i32) -> i32 { if weight > 3 { 5 } else { 0 } }\n");
+    std::fs::write(root.join("src/lib.rs"), lib)?;
+    commit_repair_fixture(&root, &["-qam", "expanded fixture"])?;
+    let clean = run_command_with_env(
+        env!("CARGO_BIN_EXE_ripr"),
+        &root,
+        &["pilot", "--root", ".", "--mode", "draft", "--base", "HEAD"],
+        &[
+            ("RIPR_PILOT_SEAM_BUDGET", "1"),
+            ("RIPR_REPO_EXPOSURE_SEAM_LIMIT", "0"),
+        ],
+    )?;
+    assert_success(&clean);
+    let clean_summary: serde_json::Value = serde_json::from_slice(&std::fs::read(
+        root.join("target/ripr/pilot/pilot-summary.json"),
+    )?)?;
+    assert_eq!(
+        clean_summary["current_change"]["state"], "no_change",
+        "{clean_summary}"
+    );
+    assert_eq!(
+        clean_summary["seam_limit"]["selection_order"], "inventory_order_prefix",
+        "{clean_summary}"
+    );
+    std::fs::remove_dir_all(root.join(".git"))?;
+    let pilot = run_command_with_env(
+        env!("CARGO_BIN_EXE_ripr"),
+        &root,
+        &["pilot", "--root", ".", "--mode", "draft"],
+        &[
+            ("RIPR_PILOT_SEAM_BUDGET", "1"),
+            ("RIPR_REPO_EXPOSURE_SEAM_LIMIT", "0"),
+        ],
+    )?;
+    assert_success(&pilot);
+    let dir = root.join("target/ripr/pilot");
+    let summary: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(dir.join("pilot-summary.json"))?)?;
+    assert_eq!(
+        summary["current_change"]["state"], "unavailable",
+        "{summary}"
+    );
+    assert!(
+        summary["seam_limit"]["total"].as_u64() > summary["seam_limit"]["analyzed"].as_u64(),
+        "{summary}"
+    );
+    assert_eq!(
+        summary["seam_limit"]["selection_order"], "inventory_order_prefix",
+        "{summary}"
+    );
+    for name in ["repo-exposure.json", "agent-seam-packets.json"] {
+        let doc: serde_json::Value = serde_json::from_slice(&std::fs::read(dir.join(name))?)?;
+        assert_eq!(
+            doc["limitations"][0]["selection_order"], "inventory_order_prefix",
+            "{name}: {doc}"
+        );
+    }
+    ignore_remove_dir_all(&root);
+    Ok(())
 }

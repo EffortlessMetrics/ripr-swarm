@@ -111,7 +111,8 @@ When the pilot budget is applied, `repo-exposure.json` includes:
     "control": "RIPR_PILOT_SEAM_BUDGET",
     "selection_order": "current_change_then_inventory_order_prefix"
                      | "canonical_seam_sort_prefix"
-                     | "canonical_seam_sort_prefix_plus_current_change",
+                     | "canonical_seam_sort_prefix_plus_current_change"
+                     | "inventory_order_prefix",
     "repair_route": "Set RIPR_PILOT_SEAM_BUDGET=0 to disable the pilot artifact budget."
                   | "Set RIPR_PILOT_SEAM_BUDGET=0 to disable the pilot artifact budget, or raise it to render more seams in the pilot artifacts."
   }
@@ -120,7 +121,8 @@ When the pilot budget is applied, `repo-exposure.json` includes:
 
 For a pilot cut, `agent-seam-packets.json` uses the same `run_status`,
 limitation category, counts, `limit_source`, control, `selection_order` and
-repair route.
+repair route. When there is no current change or change information is unavailable, the real budget selects
+an inventory-order prefix instead of claiming change priority.
 Both renderers use the existing explicit cap context. The default and
 configured pilot routes describe disabling the pilot artifact budget only;
 they do not promise recovery from an independent inventory cut.

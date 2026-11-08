@@ -437,10 +437,8 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
         });
         inventory_limit_info = None;
     }
-    // #5371: how the analyzed slice was chosen. A real budget keeps the
-    // current change first; otherwise the slice is the canonical inventory
-    // prefix, plus any current-change seams `fold_classified_change`
-    // appended past that cap.
+    // #5371: distinguish a real budget from the scoped inventory default,
+    // and record whether supplemental current-change seams were appended.
     let change_appended = change_seams_added;
     timings.record("seam_budget", budget_started, Some(classified.len()));
     let pilot_budget_truncated = pilot_budget_info.is_some();
@@ -473,11 +471,30 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
         (budget, inventory) => budget.clone().or_else(|| inventory.clone()),
     };
     let repo_exposure_limit = match (&pilot_budget_info, &inventory_limit_info, &summary_limit) {
+        (Some(_), Some(inventory), Some(summary))
+            if matches!(
+                current_change,
+                output::pilot::PilotCurrentChange::Unavailable { .. }
+                    | output::pilot::PilotCurrentChange::NoChange { .. }
+            ) =>
+        {
+            Some(RepoExposureLimit::BothWithoutChange(summary, inventory))
+        }
         (Some(_), Some(inventory), Some(summary)) if change_appended => {
             Some(RepoExposureLimit::BothPlusChange(summary, inventory))
         }
         (Some(_), Some(inventory), Some(summary)) => {
             Some(RepoExposureLimit::Both(summary, inventory))
+        }
+        (Some(budget), None, _)
+            if real_budget_applied
+                && matches!(
+                    current_change,
+                    output::pilot::PilotCurrentChange::Unavailable { .. }
+                        | output::pilot::PilotCurrentChange::NoChange { .. }
+                ) =>
+        {
+            Some(RepoExposureLimit::PilotBudgetWithoutChange(budget))
         }
         (Some(budget), None, _) if real_budget_applied => {
             Some(RepoExposureLimit::PilotBudget(budget))
