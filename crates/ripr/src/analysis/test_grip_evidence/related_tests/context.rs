@@ -846,6 +846,7 @@ impl<'a> CompactGripContext<'a> {
     /// Innermost indexed function containing `line` of `file`; the same
     /// answer as [`rust_index::find_owner_function`], from a per-file sorted
     /// lookup built once.
+    #[cfg(test)]
     pub(in crate::analysis::test_grip_evidence) fn owner_function(
         &self,
         file: &Path,

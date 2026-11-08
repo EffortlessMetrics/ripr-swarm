@@ -957,6 +957,7 @@ impl<'a> FileOwnerLookup<'a> {
             .then_some(function)
     }
 
+    #[cfg(test)]
     pub(crate) fn owner(&self, line: usize) -> Option<&'a FunctionSummary> {
         let after = self
             .by_start
