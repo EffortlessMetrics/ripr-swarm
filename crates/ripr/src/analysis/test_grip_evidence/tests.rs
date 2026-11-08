@@ -13896,6 +13896,69 @@ fn proximity_test_pinning_another_function_lends_a_predicate_boundary_no_oracle(
     Ok(())
 }
 
+/// #12264: an assertion that reads a local bound to another function pins that
+/// function, the same attribution `ripr check` makes. The repo-seam gate reads
+/// the local's initializer, so `let r = reduce(3); assert_eq!(r, ..)` lends the
+/// owner's predicate boundary no oracle, while a local bound to the owner's own
+/// call keeps its credit.
+#[test]
+fn proximity_assertion_on_a_local_bound_to_another_function_lends_no_oracle() -> Result<(), String>
+{
+    let published_for = |extra_tests: &str| -> Result<Vec<OracleStrength>, String> {
+        let prod = format!(
+            "#[derive(Debug, PartialEq)]\npub enum Reduction {{ Failure, Over(u64) }}\n\
+             pub fn reduce(tokens: u64) -> Reduction {{\n    if tokens > 9 {{ Reduction::Failure }} else {{ Reduction::Over(tokens) }}\n}}\n\
+             pub fn consume(tokens: u64) -> bool {{\n    match reduce(tokens) {{\n        Reduction::Failure => false,\n        Reduction::Over(wait) => wait < 5,\n    }}\n}}\n\
+             #[cfg(test)]\nmod tests {{\n    use super::*;\n    {extra_tests}\n}}\n"
+        );
+        let files: Vec<(PathBuf, &str)> = vec![(PathBuf::from("src/lib.rs"), prod.as_str())];
+        let index = index_from_files(&files)?;
+        let seams = inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &index);
+        let boundary = seams
+            .iter()
+            .find(|s| {
+                s.kind() == SeamKind::PredicateBoundary && s.expression().contains("wait < 5")
+            })
+            .ok_or_else(|| "wait < 5 boundary seam present".to_string())?;
+        let context = CompactGripContext::new(&index);
+        let full = evidence_for_seam(boundary, &index);
+        let compact = compact_evidence_for_seam(boundary, &context);
+        assert_eq!(
+            full.observe.state, compact.observe.state,
+            "full and compact agree on observe"
+        );
+        assert_eq!(
+            full.discriminate.state, compact.discriminate.state,
+            "full and compact agree on discriminate"
+        );
+        Ok(full
+            .related_tests
+            .iter()
+            .map(|grip| grip.oracle_strength.clone())
+            .collect())
+    };
+    let runner = "#[test] fn consume_runs() { let _ = consume(3); }";
+    let direct = "#[test] fn reduce_over() { assert_eq!(reduce(3), Reduction::Over(3)); }";
+    let bound =
+        "#[test] fn reduce_over() { let r = reduce(3); assert_eq!(r, Reduction::Over(3)); }";
+    let owner_bound = "#[test] fn consume_pinned() { let c = consume(3); assert_eq!(c, true); }";
+    assert_eq!(
+        published_for(&format!("{direct} {runner}"))?,
+        vec![OracleStrength::None, OracleStrength::None],
+        "direct spelling: the other function lends none"
+    );
+    assert_eq!(
+        published_for(&format!("{bound} {runner}"))?,
+        vec![OracleStrength::None, OracleStrength::None],
+        "a local bound to the other function lends none"
+    );
+    assert!(
+        published_for(&format!("{owner_bound} {runner}"))?.contains(&OracleStrength::Strong),
+        "a local bound to the owner's own call keeps the oracle"
+    );
+    Ok(())
+}
+
 /// #12600/#12671: the same refusal for a returned value. `Ok(n)` in
 /// `parse_masked` is a value `parse_pinned` also returns, so a same-file test
 /// that pins `parse_pinned` lends it no oracle once a test that runs

@@ -1008,8 +1008,35 @@ tK=FILE:LINE TEST_NAME ORACLE_KIND `ORACLE TEXT` miss=MISS
 +M more gaps not shown; `--format json` lists all
 limits=CLASS:COUNT,...
 next=COMMAND
+verify=complete|outcome=O|findings=N|exposed=N
 ```
 
+- The last line is always the verification record (#13516):
+  `verify=complete|outcome=O|findings=N|exposed=N` or
+  `verify=refused|outcome=O|findings=N|exposed=N|reason=R,...`. It is projected
+  from the producer's `analysis_outcome` and the full `summary` counts, not the
+  displayed or triaged subset. Its `findings`/`exposed` equal the header's
+  `findings=`/`exposed=` except under `--suppression-policy`: the header
+  omits suppressed findings, while `summary.findings` keeps them and
+  `summary.exposed` drops suppressed exposed ones, so a suppressed finding
+  never reads as a closed gap. `complete` requires outcome
+  `complete_no_findings` or `complete_with_findings`, `findings` equal to
+  `exposed`, no unanalyzed working tree, no untracked source excluded from
+  the diff in a language enabled for the run (no
+  `untracked_working_tree_source_paths` entry that routes to a language in
+  the run's enabled set; when the enabled set is unknown, any entry refuses),
+  no partial scope and no missing scope; `outcome=missing` refuses. An
+  agent's new file is untracked until `git add -N`, which is the false-complete
+  case this guards; an untracked file in a disabled language would not be
+  analyzed even if staged, so it does not refuse. Gitignored source
+  (`ignored_working_tree_source_paths`) never refuses: the repository excludes
+  it on purpose (`node_modules/`, `.venv/`, generated output), it is almost
+  never the agent's edit, and the human/GitHub notes and this JSON field keep
+  disclosing it. Reasons: `outcome_missing`,
+  `no_behavior_in_scope`, `analysis_incomplete`, `gaps_remain`,
+  `unanalyzed_working_tree`, `untracked_source_excluded`,
+  `partial_scope`, `no_scope`. It is independent of `done=`, is static
+  evidence only, and does not replace running the tests.
 - Line 1 is always the header: `base` is `-` when no base applies, `gaps` counts
   every test-side gap (candidate-current, `weakly_exposed` or
   `reachable_unrevealed`, not static-limited, not preview-only), and the class
@@ -3098,7 +3125,8 @@ JSON fields:
   `proof_harness_not_evaluated`, or
   `rust_inherent_receiver_unestablished`, or
   `typescript_workspace_discovery_truncated`, or
-  `typescript_workspace_read_limited`.
+  `typescript_workspace_read_limited`, or
+  `rust_future_never_polled`.
 - `rust_field_match_selector_unresolved`: a plain owner-parameter field selects a changed statement-free tail match. A strong oracle in a directly calling test exists, but the field value at that invocation and whether an assertion observes that invocation's return are unresolved. The match header and unique direct-arm lines may carry this metadata; computed selectors, local bindings, nested matches, guarded arms and ambiguous same-line subjects are excluded. This does not establish an `Option` type, same-invocation proof, coverage, or absence of a test gap. Finding/probe IDs, classes, RIPR stages, missing discriminators and raw class counts are unchanged. The existing typed-limitation contract withholds canonical repair-gap projection and can change repair readiness and derived gate routing; this names uncertainty, not resolved test debt. Inspect the existing call/assertion before adding a test. The optional kind uses the existing wire shape/version; consumers still require their own producer compatibility qualification.
 - `static_limitation` is an additive optional per-finding object emitted only
   when a finding with `static_limit_kind` also carries a complete structured
@@ -3743,6 +3771,7 @@ fixtures/ts_static_limit and fixtures/typescript_mocked_module_limit).
 - `rust_inherent_receiver_unestablished` -- (RIPR-SPEC-0352, additive) A related test calls the changed inherent method inside a standard assertion macro and the receiver resolves to the owner's type if that macro is the standard one, but ripr cannot verify the macro binding because target-root placement is unavailable (an unresolved `include!` or `#[path]` in the workspace), so a `weakly_exposed` or `reachable_unrevealed` gap is withheld: classification is `static_unknown` with stop reason `gap_evidence_unresolved`. Nothing is credited, and a receiver that would not resolve even with the macro trusted keeps its gap; this is a named limitation, not a coverage claim.
 - `typescript_workspace_discovery_truncated` -- (RIPR-SPEC-0240, additive, #11767) TypeScript workspace discovery stopped at `RIPR_TS_MAX_WORKSPACE_FILES` (candidate source files) or its 5x total-entry backstop before covering the workspace, so the test universe is incomplete. A TypeScript or JavaScript finding that would be `no_static_path` is `static_unknown` instead, with this kind; findings that have a related test are unchanged. It names an incomplete walk, not a coverage claim; the existing typed-limitation contract withholds canonical repair-gap projection. The optional kind uses the existing wire shape/version.
 - `typescript_workspace_read_limited` -- (RIPR-SPEC-0240, additive, #11985) TypeScript workspace reads refused discovered source files under `RIPR_TS_MAX_FILE_READ_BYTES` or `RIPR_TS_MAX_WORKSPACE_READ_BYTES`, so a test or call path may be absent from the evidence index. A TypeScript or JavaScript finding that would be `no_static_path` with no earlier named limit becomes `static_unknown` with this kind and stop reason `gap_evidence_unresolved`. Findings with observed related tests and existing named limits are unchanged. Actionability names the same limit, and recovery names both byte settings or a narrower root. The read refusals still mark the run partial; no finding is invented for an unread changed source. The existing typed-limitation contract withholds canonical repair-gap and TypeScript repair-packet projection. The optional kind uses the existing wire shape/version and makes no coverage claim.
+- `rust_future_never_polled` -- (RIPR-SPEC-0240, additive, #13702) Every test that reaches the changed `async fn` owner is a plain synchronous `#[test]` (no async test attribute such as `#[tokio::test]` or `#[async_std::test]`) whose every owner call builds a future and drops it unpolled: a bare statement, the sole argument of `std::mem::drop(..)`/`core::mem::drop(..)` (or of a bare `drop(..)` when no user-defined `drop` is indexed or brought into the test's file), or a `let` initializer bound to `_` or to a name the test never mentions again, in a body with no `.await`, `async` block, `block_on`, `block_in_place`, `Runtime`, `Handle`, `spawn` or `poll` spelling. The owner's body never runs in those tests, so reach is not claimed: the reach stage becomes `unknown` ("future created but never polled"), infection becomes `unknown` when it reads `yes` or `weak` (propagation, read from the owner's own code, is kept), stale reach and infection evidence lines are dropped, and a `weakly_exposed`, `reachable_unrevealed`, `infection_unknown` or `propagation_unknown` finding becomes `static_unknown` with stop reason `gap_evidence_unresolved`. Every related test, whatever its relation, must be one of those direct-call tests, and every spelling of the owner's name in the indexed files must be its declaration, one of those test bodies or a plain `use` leaf. An awaited call, a call driven by an executor, an async test attribute, a mention inside a macro, a closure whose tail expression is the call, a `use … as …` alias or `macro_rules!` naming the owner, a user-defined `drop`, another function naming the owner, or a helper relation keeps today's reading; a closure whose body drops the call as a statement (`let c = || { fetch_len("abc"); }; c();`) still drops the future unpolled and is named. Nothing is credited and no runtime is chosen; repair does not start. The optional kind uses the existing wire shape/version and makes no coverage claim.
 
 Reserved `flow_sink` values:
 
