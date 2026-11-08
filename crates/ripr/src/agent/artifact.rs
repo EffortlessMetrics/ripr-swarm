@@ -946,7 +946,7 @@ fn python_assertion_form_hint(gap: &CheckFindingsGap) -> String {
     if !gap.file.ends_with(".py") || gap.missing_discriminator.is_none() {
         return String::new();
     }
-    "; if the edited test asserts a bool result, only these forms are credited: `assert f(x) == expected`, `assertEqual(f(x), expected)`, and, when `f` is a bool-returning function called with literal arguments, `assert f(x) is True`/`is False`, `assert f(x)`/`assert not f(x)`, `assertTrue`, `assertFalse` and `assertIs(f(x), True)`. Forms such as `is not None`, `isinstance` and a bare truthy check on a non-bool result are not credited; use `assert f(x) == expected`".to_string()
+    "; if the edited test asserts a bool result, only these forms are credited: `assert f(x) == expected`, `assertEqual(f(x), expected)`, and, when `f` is provably bool-returning (annotated `-> bool`, or a single `return <comparison>`) and called with literal arguments, `assert f(x) is True`/`is False`, `assert f(x)`/`assert not f(x)`, `assertTrue`, `assertFalse` and `assertIs(f(x), True)`. Forms such as `is not None`, `isinstance` and a bare truthy check on a non-bool result are not credited; use `assert f(x) == expected`".to_string()
 }
 
 /// Why an open gap did not close, from what the two artifacts already state
@@ -2692,6 +2692,7 @@ mod tests {
             return Err("accepted".to_string());
         };
         for fragment in [
+            "provably bool-returning",
             "assert f(x) == expected",
             "is True",
             "assertTrue",
