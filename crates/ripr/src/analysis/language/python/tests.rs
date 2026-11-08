@@ -4258,6 +4258,100 @@ fn real_body_change_in_same_function_still_classifies() -> Result<(), String> {
 }
 
 #[test]
+fn bracket_continuation_ranges_cover_lines_that_start_inside_a_bracket() -> Result<(), String> {
+    // #13875: lines 3-5 start inside `BadPayload(`; the brackets inside the
+    // string and the comment on line 7 are not brackets.
+    let source = concat!(
+        "def f(e):\n",
+        "    raise BadPayload(\n",
+        "        \"Could not load (the payload\"\n",
+        "        \" because\",\n",
+        "    ) from e\n",
+        "    x = [1, 2]\n",
+        "    # (not a bracket\n",
+        "    return x\n",
+    );
+    let ranges = super::no_behavior::bracket_continuation_line_ranges(source)
+        .ok_or_else(|| "a valid module must lex".to_string())?;
+    assert_eq!(ranges, vec![3..=5]);
+    // An unclosed bracket does not lex, so callers fail closed.
+    assert!(super::no_behavior::bracket_continuation_line_ranges("x = (\n").is_none());
+    Ok(())
+}
+
+#[test]
+fn a_bare_string_inside_brackets_is_behavior_but_comments_stay_no_ops() {
+    use super::no_behavior::is_python_no_behavior_line_at;
+    assert!(!is_python_no_behavior_line_at(
+        "        \"Could not load\"",
+        true
+    ));
+    assert!(is_python_no_behavior_line_at(
+        "        \"Could not load\"",
+        false
+    ));
+    assert!(is_python_no_behavior_line_at("        # a comment", true));
+    assert!(is_python_no_behavior_line_at("   ", true));
+}
+
+#[test]
+fn a_changed_message_string_on_a_continuation_line_gets_a_probe() -> Result<(), String> {
+    // #13875 (mutmut on itsdangerous 672971d6, serializer.py:266): the first
+    // part of an implicitly concatenated message argument changed. It is an
+    // argument, not a docstring, so it must not be dropped as a no-op.
+    let source = concat!(
+        "def load(payload):\n",
+        "    raise BadPayload(\n",
+        "        \"Could not load the payload\"\n",
+        "        \" because of an error.\",\n",
+        "    )\n",
+    );
+    let file = Path::new("src/serializer.py");
+    let owners = extract_owners(file, source);
+    let tests = extract_tests(
+        Path::new("tests/test_serializer.py"),
+        "from src.serializer import load\n\n\ndef test_load():\n    load(b\"x\")\n",
+    );
+    let context = |in_brackets: bool| PythonNoBehaviorContext {
+        new_line_in_brackets: in_brackets,
+        old_line_in_brackets: in_brackets,
+        ..PythonNoBehaviorContext::default()
+    };
+    let new = "        \"XXCould not load the payloadXX\"";
+    let old = Some("        \"Could not load the payload\"");
+    let inside = classify_change_with_context(
+        file,
+        3,
+        new,
+        old,
+        &owners,
+        &tests,
+        context(true),
+        Some(source),
+    );
+    assert!(
+        inside.is_some(),
+        "a changed argument string must carry a probe"
+    );
+    // Control: the same text as a standalone string statement stays a no-op.
+    let outside = classify_change_with_context(
+        file,
+        3,
+        new,
+        old,
+        &owners,
+        &tests,
+        context(false),
+        Some(source),
+    );
+    assert!(
+        outside.is_none(),
+        "a standalone string statement is still a no-op"
+    );
+    Ok(())
+}
+
+#[test]
 fn no_behavior_line_detection_is_conservative() {
     // No-op shapes:
     assert!(is_python_no_behavior_line("    \"\"\"A docstring.\"\"\""));

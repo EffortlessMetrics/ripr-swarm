@@ -21,7 +21,8 @@ use super::module_value::{ModuleConstantEvidence, ModuleEdit, module_constant_ev
 use super::no_behavior::{
     changed_default_overridden_params, format_param_name_list, is_annotation_only_def_change,
     is_annotation_only_var_change, is_comment_or_whitespace_only_change,
-    is_new_def_header_without_defaults, is_python_no_behavior_line, is_structural_def_header_text,
+    is_new_def_header_without_defaults, is_python_no_behavior_line_at,
+    is_structural_def_header_text,
 };
 use super::probe_shape::{
     canonical_python_gap_for, classify_probe_shape_with_old, python_flow_sink_for,
@@ -137,6 +138,12 @@ pub(super) struct PythonNoBehaviorContext {
     /// break, or the file could not be lexed to rule that out. A spacing or
     /// comment-looking change there edits the string (#10706).
     pub(super) new_line_in_multiline_string: bool,
+    /// The changed line starts inside an open bracket (or the file could not
+    /// be lexed to rule that out), so a bare string on it is an argument, not
+    /// a docstring (#13875).
+    pub(super) new_line_in_brackets: bool,
+    /// The same for the paired old line, against the reconstructed old source.
+    pub(super) old_line_in_brackets: bool,
     /// The changed line is the first line of its enclosing owner, and that
     /// owner's span carries at least one other added behavior line.
     pub(super) opens_owner_with_added_body: bool,
@@ -277,11 +284,11 @@ fn classify_change_full<'a>(
     // behavioral) keeps its probe.
     let new_is_noop = no_behavior.new_line_in_docstring
         || no_behavior.new_line_type_checking_only
-        || is_python_no_behavior_line(line_text);
+        || is_python_no_behavior_line_at(line_text, no_behavior.new_line_in_brackets);
     let old_is_noop = old_line_text.is_none_or(|old| {
         no_behavior.old_line_in_docstring
             || no_behavior.old_line_type_checking_only
-            || is_python_no_behavior_line(old)
+            || is_python_no_behavior_line_at(old, no_behavior.old_line_in_brackets)
     });
     if new_is_noop && old_is_noop {
         return None;

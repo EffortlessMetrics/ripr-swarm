@@ -1538,3 +1538,70 @@ fn stamping_changed_related_rows_is_exact_and_skips_a_changed_first_row() -> Res
     assert!(stamps(&empty).is_empty(), "no changed files");
     Ok(())
 }
+
+/// #13875: a deleted part of an implicitly concatenated message argument
+/// changes the raised message. Inside the open bracket it is an argument, not
+/// a docstring, so it is base-side evidence. Control: the same bare string as
+/// its own statement outside brackets still leaves no record.
+#[test]
+fn deleted_string_argument_inside_brackets_is_base_side_evidence() -> Result<(), String> {
+    let source = "CAP = 100\n\n\ndef capped_total(items):\n    raise ValueError(\n        \"items exceed the cap\"\n    )\n";
+    let findings = analyze(
+        "bracketed-string",
+        source,
+        &[],
+        vec![line(7, 7, "        \" for this cart\"")],
+    )?;
+    assert_eq!(
+        base_side_texts(&findings),
+        vec!["\" for this cart\"".to_string()],
+        "{findings:?}"
+    );
+
+    let statement =
+        "CAP = 100\n\n\ndef capped_total(items):\n    total = sum(items)\n    return total\n";
+    let findings = analyze(
+        "standalone-string",
+        statement,
+        &[],
+        vec![line(5, 5, "    \" for this cart\"")],
+    )?;
+    assert_eq!(base_side(&findings), Vec::new(), "{findings:?}");
+    Ok(())
+}
+
+/// #13875 through the whole adapter: a changed message string on a bracket
+/// continuation line gets a candidate finding, while the same edit to a real
+/// docstring stays quiet.
+#[test]
+fn changed_string_argument_inside_brackets_gets_a_finding() -> Result<(), String> {
+    let source = "CAP = 100\n\n\ndef capped_total(items):\n    raise ValueError(\n        \"XXitems exceed the capXX\"\n    )\n";
+    let findings = analyze(
+        "changed-bracketed-string",
+        source,
+        &[6],
+        vec![line(6, 6, "        \"items exceed the cap\"")],
+    )?;
+    assert!(
+        findings.iter().any(|finding| {
+            finding.source_currentness == SourceCurrentness::CandidateCurrent
+                && finding.probe.location.line == 6
+        }),
+        "{findings:?}"
+    );
+
+    let docstring = "CAP = 100\n\n\ndef capped_total(items):\n    \"XXSum the items.XX\"\n    return sum(items)\n";
+    let findings = analyze(
+        "changed-docstring",
+        docstring,
+        &[5],
+        vec![line(5, 5, "    \"Sum the items.\"")],
+    )?;
+    assert!(
+        findings
+            .iter()
+            .all(|finding| finding.probe.location.line != 5),
+        "{findings:?}"
+    );
+    Ok(())
+}

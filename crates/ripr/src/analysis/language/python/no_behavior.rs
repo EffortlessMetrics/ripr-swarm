@@ -23,9 +23,67 @@ use std::path::Path;
 /// `classify_change_with_old` (def headers via #1294; module-scope bare variables
 /// via #1289 — class-body variable annotations remain out of scope because
 /// `@dataclass`/Pydantic make them runtime-meaningful).
+/// Production callers know the line's position and use
+/// [`is_python_no_behavior_line_at`]; this is its statement-position reading.
+#[cfg(test)]
 pub(super) fn is_python_no_behavior_line(line: &str) -> bool {
+    is_python_no_behavior_line_at(line, false)
+}
+
+/// Whether a line is a comment, blank, or bare-string no-op, for a line whose
+/// position is known: a line
+/// that starts inside an open `(`, `[` or `{` is an argument or element, not a
+/// statement, so a bare string there (often one part of an implicit
+/// concatenation, `raise E(\n    "a"\n    " b")`) is a changed value and
+/// carries behavior (#13875). Blank and comment lines stay no-ops anywhere.
+pub(super) fn is_python_no_behavior_line_at(line: &str, inside_brackets: bool) -> bool {
     let trimmed = line.trim();
-    trimmed.is_empty() || trimmed.starts_with('#') || is_bare_string_literal_statement(trimmed)
+    trimmed.is_empty()
+        || trimmed.starts_with('#')
+        || (!inside_brackets && is_bare_string_literal_statement(trimmed))
+}
+
+/// One-based line spans of the lines that start inside an open bracket: for
+/// each outermost `(`/`[`/`{` that closes on a later line, the lines after
+/// the opening one through the closing one. Taken from a lex of the whole
+/// `source`, so brackets inside strings and comments do not count. `None`
+/// when the source does not lex, so the caller can fail closed (#13875).
+pub(super) fn bracket_continuation_line_ranges(
+    source: &str,
+) -> Option<Vec<std::ops::RangeInclusive<usize>>> {
+    use rustpython_parser::{Mode, Tok, lexer::lex};
+    let (mut line, mut scanned) = (1usize, 0usize);
+    let mut line_at = |offset: usize| {
+        line += source
+            .get(scanned..offset)
+            .map_or(0, |gap| gap.matches('\n').count());
+        scanned = scanned.max(offset);
+        line
+    };
+    let mut spans = Vec::new();
+    let (mut depth, mut open_line) = (0usize, 0usize);
+    for result in lex(source, Mode::Module) {
+        let (token, range) = result.ok()?;
+        match token {
+            Tok::Lpar | Tok::Lsqb | Tok::Lbrace => {
+                if depth == 0 {
+                    open_line = line_at(usize::from(range.start()));
+                }
+                depth += 1;
+            }
+            Tok::Rpar | Tok::Rsqb | Tok::Rbrace => {
+                depth = depth.checked_sub(1)?;
+                if depth == 0 {
+                    let close_line = line_at(usize::from(range.start()));
+                    if open_line < close_line {
+                        spans.push(open_line + 1..=close_line);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    Some(spans)
 }
 
 /// Whether `new` differs from `old` only in a trailing `#` comment or in
