@@ -75,11 +75,25 @@ fn type_set(value: &Value) -> BTreeSet<String> {
 /// Copy of `value` with annotation keywords removed at every depth, so
 /// verbatim comparisons ignore wording-only edits.
 fn strip_annotations(value: &Value) -> Value {
+    // Keys of `properties`-style maps are data names, not keywords: a
+    // property called `description` keeps its constraints.
+    const NAME_MAPS: &[&str] = &["properties", "patternProperties", "$defs", "definitions"];
     match value {
         Value::Object(map) => Value::Object(
             map.iter()
                 .filter(|(key, _)| !ANNOTATIONS.contains(&key.as_str()))
-                .map(|(key, value)| (key.clone(), strip_annotations(value)))
+                .map(|(key, value)| {
+                    let value = match value {
+                        Value::Object(names) if NAME_MAPS.contains(&key.as_str()) => Value::Object(
+                            names
+                                .iter()
+                                .map(|(name, schema)| (name.clone(), strip_annotations(schema)))
+                                .collect(),
+                        ),
+                        other => strip_annotations(other),
+                    };
+                    (key.clone(), value)
+                })
                 .collect(),
         ),
         Value::Array(items) => Value::Array(items.iter().map(strip_annotations).collect()),
