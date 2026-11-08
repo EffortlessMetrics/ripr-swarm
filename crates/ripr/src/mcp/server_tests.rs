@@ -2300,3 +2300,172 @@ async fn refresh_verify_route_follows_the_retained_snapshot_base() -> Result<(),
     let _ = std::fs::remove_dir_all(&root);
     Ok(())
 }
+
+fn invalid_params_data(error: &ErrorData) -> Result<&Value, String> {
+    assert_eq!(error.code, rmcp::model::ErrorCode::INVALID_PARAMS);
+    error
+        .data
+        .as_ref()
+        .ok_or_else(|| format!("refusal lost structured data: {error:?}"))
+}
+
+#[test]
+fn scalar_argument_parsers_refuse_coercion_and_name_the_argument() -> Result<(), String> {
+    let none: Option<serde_json::Map<String, Value>> = None;
+    let empty = argument_map(serde_json::json!({}));
+    for absent in [&none, &empty] {
+        assert_eq!(optional_string_argument(absent, "file"), Ok(None));
+        assert_eq!(optional_nonempty_string_argument(absent, "file"), Ok(None));
+        assert_eq!(optional_bool_argument(absent, "repair_ready"), Ok(None));
+    }
+
+    let text = argument_map(serde_json::json!({"file": "src/lib.rs", "empty": ""}));
+    assert_eq!(
+        optional_string_argument(&text, "file"),
+        Ok(Some("src/lib.rs".to_string()))
+    );
+    // A plain string accepts empty; the non-empty filter variant does not.
+    assert_eq!(
+        optional_string_argument(&text, "empty"),
+        Ok(Some(String::new()))
+    );
+    let error = optional_nonempty_string_argument(&text, "empty")
+        .err()
+        .ok_or("an empty filter string must be refused")?;
+    assert_eq!(error.message, "empty must be a non-empty string");
+    let data = invalid_params_data(&error)?;
+    assert_eq!(data["argument"], serde_json::json!("empty"));
+    assert_eq!(data["expected"], serde_json::json!("non-empty string"));
+
+    for wrong in [
+        serde_json::json!(7),
+        serde_json::json!(true),
+        serde_json::json!(null),
+        serde_json::json!(["a"]),
+    ] {
+        let arguments = argument_map(serde_json::json!({"file": wrong.clone()}));
+        let error = optional_string_argument(&arguments, "file")
+            .err()
+            .ok_or_else(|| format!("{wrong} must not coerce to a string"))?;
+        assert_eq!(error.message, "file must be a string");
+        assert_eq!(
+            invalid_params_data(&error)?["expected"],
+            serde_json::json!("string")
+        );
+    }
+
+    let flags = argument_map(serde_json::json!({"on": true, "off": false}));
+    assert_eq!(optional_bool_argument(&flags, "on"), Ok(Some(true)));
+    assert_eq!(optional_bool_argument(&flags, "off"), Ok(Some(false)));
+    for wrong in [
+        serde_json::json!("true"),
+        serde_json::json!(1),
+        serde_json::json!(0),
+        serde_json::json!(null),
+    ] {
+        let arguments = argument_map(serde_json::json!({"repair_ready": wrong.clone()}));
+        let error = optional_bool_argument(&arguments, "repair_ready")
+            .err()
+            .ok_or_else(|| format!("{wrong} must not coerce to a boolean"))?;
+        assert_eq!(error.message, "repair_ready must be a boolean");
+        assert_eq!(
+            invalid_params_data(&error)?["expected"],
+            serde_json::json!("boolean")
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn required_string_and_refresh_source_arguments_fail_closed() -> Result<(), String> {
+    let present = argument_map(serde_json::json!({"canonical_id": "gap:1"}));
+    assert_eq!(
+        required_string_argument(&present, "canonical_id"),
+        Ok("gap:1".to_string())
+    );
+    let none: Option<serde_json::Map<String, Value>> = None;
+    let empty = argument_map(serde_json::json!({"canonical_id": ""}));
+    let numeric = argument_map(serde_json::json!({"canonical_id": 5}));
+    for (arguments, message) in [
+        (
+            &none,
+            "canonical_id is required and must be a non-empty string",
+        ),
+        (
+            &empty,
+            "canonical_id is required and must be a non-empty string",
+        ),
+        (&numeric, "canonical_id must be a string"),
+    ] {
+        let error = required_string_argument(arguments, "canonical_id")
+            .err()
+            .ok_or("a missing, empty or non-string required argument must be refused")?;
+        assert_eq!(error.message, message);
+        assert_eq!(
+            invalid_params_data(&error)?["argument"],
+            serde_json::json!("canonical_id")
+        );
+    }
+
+    assert_eq!(
+        refresh_source_argument(&none),
+        Ok(workspace::RefreshSource::Committed)
+    );
+    for (value, expected) in [
+        ("committed", workspace::RefreshSource::Committed),
+        ("worktree", workspace::RefreshSource::Worktree),
+    ] {
+        let arguments = argument_map(serde_json::json!({"source": value}));
+        assert_eq!(refresh_source_argument(&arguments), Ok(expected));
+    }
+    for wrong in [
+        serde_json::json!(""),
+        serde_json::json!("Worktree"),
+        serde_json::json!("HEAD"),
+        serde_json::json!(1),
+    ] {
+        let arguments = argument_map(serde_json::json!({"source": wrong.clone()}));
+        assert!(
+            refresh_source_argument(&arguments).is_err(),
+            "{wrong} must not select a refresh source"
+        );
+    }
+    let arguments = argument_map(serde_json::json!({"source": "Worktree"}));
+    let error = refresh_source_argument(&arguments)
+        .err()
+        .ok_or("wrong-case source must be refused")?;
+    assert_eq!(error.message, "source must be one of: committed, worktree");
+    assert_eq!(
+        invalid_params_data(&error)?["expected"],
+        serde_json::json!(["committed", "worktree"])
+    );
+    Ok(())
+}
+
+#[test]
+fn list_cursors_are_refused_and_absent_cursors_pass() -> Result<(), String> {
+    assert_eq!(reject_pagination_cursor(None, "tools/list"), Ok(()));
+    let without: PaginatedRequestParams =
+        serde_json::from_value(serde_json::json!({})).map_err(|error| error.to_string())?;
+    assert_eq!(
+        reject_pagination_cursor(Some(without), "tools/list"),
+        Ok(())
+    );
+    let with: PaginatedRequestParams = serde_json::from_value(serde_json::json!({"cursor": "x"}))
+        .map_err(|error| error.to_string())?;
+    let error = reject_pagination_cursor(Some(with), "resources/list")
+        .err()
+        .ok_or("a client-supplied cursor must be refused")?;
+    assert!(
+        error
+            .message
+            .starts_with("resources/list does not paginate"),
+        "{}",
+        error.message
+    );
+    assert_eq!(
+        invalid_params_data(&error)?["argument"],
+        serde_json::json!("cursor")
+    );
+    Ok(())
+}
