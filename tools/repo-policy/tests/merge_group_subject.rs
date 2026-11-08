@@ -588,12 +588,12 @@ fn native_windows_selector_requires_a_passing_receipt() -> TestResult {
         "immutable_executable": {"write_open_refused": true},
         "literal_replays": 3, "siblings_retried": ["explain", "context"],
         "actual_listed_id": "local-fixture",
-        "cases": ["explain-literal-replay", "context-literal-replay", "literal-repeat",
+        "cases": (["explain-literal-replay", "context-literal-replay", "literal-repeat",
                   "explain-actual-id", "context-actual-id"]
-            .map(|label| json!({"label":label,"exit":0})),
-        "controls": ["wrong-digest-before-launch", "stale-source-receipt-before-launch",
+            .map(|label| json!({"label":label,"exit":0}))),
+        "controls": (["wrong-digest-before-launch", "stale-source-receipt-before-launch",
                      "wrong-listing-identity", "wrong-fixture-file-identity", "wrong-predicate-condition"]
-            .map(|name| json!({"name":name,"rejected":true,"processes_launched":0}))
+            .map(|name| json!({"name":name,"rejected":true,"processes_launched":0})))
     });
     let write_receipt = |value: &Value, status: &str| -> TestResult {
         let bytes = serde_json::to_vec(value)?;
