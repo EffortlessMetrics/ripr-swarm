@@ -31,7 +31,7 @@ fn unique_tempdir(label: &str) -> Result<PathBuf, String> {
 
 /// Writes `files`, analyzes one added line, removes the workspace, and
 /// returns the single finding for that line.
-fn analyze_one_line(
+pub(super) fn analyze_one_line(
     label: &str,
     files: &[(&str, &str)],
     changed: &str,

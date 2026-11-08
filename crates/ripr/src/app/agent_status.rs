@@ -5405,6 +5405,7 @@ mod tests {
             receipt_projection_predecessor: None,
             focused_result: None,
             packet_sha256: "sha256:fixture-packet".to_string(),
+            line_ending_only_paths: Vec::new(),
             current: true,
             verdict: EditCageVerdict {
                 status: EditCageVerdictStatus::Compliant,
@@ -5568,6 +5569,7 @@ mod tests {
                 receipt_projection_predecessor: None,
                 focused_result: None,
                 packet_sha256: "sha256:packet".to_string(),
+                line_ending_only_paths: Vec::new(),
                 current: true,
                 verdict: EditCageVerdict {
                     status: EditCageVerdictStatus::Compliant,

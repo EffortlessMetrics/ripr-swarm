@@ -81,6 +81,9 @@ fn control_names(file: &str, source: &str) -> Vec<String> {
 }
 
 const SWITCH: &str = "pytest.collection(__test__ = False)";
+/// A binding that is not provably `True` or `False`: collection is
+/// uncertain, so the control withholds credit without claiming a gap.
+const UNRESOLVED_SWITCH: &str = "pytest.collection(__test__ unresolved)";
 
 #[test]
 fn class_test_switch_false_withholds_credit() {
@@ -121,7 +124,7 @@ fn computed_or_branch_bound_test_switch_withholds_credit() {
         );
         assert_eq!(
             control_names("tests/test_calc.py", &source),
-            [SWITCH],
+            [UNRESOLVED_SWITCH],
             "{binding}"
         );
     }
@@ -138,7 +141,7 @@ fn match_arm_destructured_and_bare_annotation_test_switch_bindings() {
         let source = format!("{binding}\n\n{TEST_BODY}");
         assert_eq!(
             control_names("tests/test_calc.py", &source),
-            [SWITCH],
+            [UNRESOLVED_SWITCH],
             "{binding}"
         );
         let class_source = format!(
@@ -147,7 +150,7 @@ fn match_arm_destructured_and_bare_annotation_test_switch_bindings() {
         );
         assert_eq!(
             control_names("tests/test_calc.py", &class_source),
-            [SWITCH],
+            [UNRESOLVED_SWITCH],
             "{binding}"
         );
     }

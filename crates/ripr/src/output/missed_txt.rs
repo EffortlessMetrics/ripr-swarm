@@ -519,6 +519,7 @@ mod tests {
             sample_paths: vec!["src/a.cobol".to_string()],
             javascript_file_count: 0,
             enabled: false,
+            nested_packages: Vec::new(),
         }];
         let rendered = render_with_config(&out, &RiprConfig::default());
         assert_all_comments(&rendered);

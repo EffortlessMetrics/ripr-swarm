@@ -1858,6 +1858,9 @@ id = "RIPR-SPEC-0011"
 name = "LLM work loop"
 spec = "docs/specs/RIPR-SPEC-0011-llm-work-loop.md"
 tests = [
+  "crates/ripr/src/edit_cage/mod.rs::tests::eol_only_flip_of_a_forbidden_file_is_not_an_edit",
+  "crates/ripr/src/edit_cage/mod.rs::tests::eol_flip_without_git_normalization_remains_an_edit",
+  "crates/ripr/src/cli/commands/agent.rs::tests::line_ending_only_note_names_skipped_files_and_stays_silent_without_them",
   "crates/ripr/tests/task_first_facade.rs::repair_loop_projection_tracks_real_attempt_states",
   "crates/ripr/src/cli/commands/agent_refusal_tests.rs::verify_typed_refusal_classifier_matches_only_whole_or_leading_clauses",
   "crates/ripr/src/cli/commands/agent_refusal_tests.rs::after_refusal_json_is_one_versioned_document_with_trimmed_error",
@@ -1972,6 +1975,8 @@ tests = [
   "crates/ripr/tests/new_test_proposal_attempt.rs::edit_outside_the_proposals_cage_is_refused",
   "crates/ripr/src/output/agent_seam_packets.rs::tests::selected_proposal_reads_the_same_in_card_packet_and_mcp",
   "crates/ripr/tests/new_test_proposal_attempt.rs::a_proposal_attempt_says_no_test_exists_yet",
+  "crates/ripr/tests/proposal_only_repair_start.rs::inline_proposal_with_an_invalid_package_identity_leaves_no_attempt",
+  "crates/ripr/tests/proposal_only_repair_start.rs::package_name_preflight_agrees_with_cargo_metadata",
   "crates/ripr/tests/new_test_proposal_attempt.rs::an_existing_test_target_attempt_has_no_not_yet_disclosure",
   "crates/ripr/src/analysis/new_test_target/preflight_tests.rs::a_plain_integration_path_with_no_file_has_no_test_yet",
   "crates/ripr/src/analysis/new_test_target/preflight_tests.rs::a_member_package_is_named_for_its_own_tests_directory",
@@ -7987,10 +7992,16 @@ tests = [
   "crates/ripr/src/app/tests/preview_analyzed_outcome.rs::unrelated_python_refusal_does_not_degrade_a_rust_only_diff",
   "crates/ripr/src/analysis/pipeline.rs::tests::typescript_advisory_counts_javascript_family_files",
   "crates/ripr/src/analysis/pipeline.rs::tests::repo_typescript_advisory_counts_javascript_after_exclusion",
-  "crates/ripr/src/output/human.rs::tests::typescript_advisory_names_javascript_and_mixed_files"
+  "crates/ripr/src/output/human.rs::tests::typescript_advisory_names_javascript_and_mixed_files",
+  "crates/ripr/src/output/human.rs::tests::render_python_not_enabled_note_uses_typed_nested_packages",
+  "crates/ripr/src/config/language_detection.rs::nested_python_tests::nested_package_detects_python_only_when_no_other_language_claims_the_root",
+  "crates/ripr/src/config/python.rs::tests::nested_python_package_roots_name_monorepo_packages_only",
+  "crates/ripr/src/output/first_pr.rs::tests::typescript_root_with_nested_python_package_still_names_the_missing_marker"
 ]
 fixtures = []
 code = [
+  "crates/ripr/src/config/language_detection.rs",
+  "crates/ripr/src/config/python.rs",
   "crates/ripr/src/analysis/mod.rs",
   "crates/ripr/src/analysis/pipeline.rs",
   "crates/ripr/src/analysis/workspace/discover.rs",
@@ -11078,6 +11089,8 @@ tests = [
   "crates/ripr/src/output/human.rs::tests::human_evidence_spells_the_unconfirmed_observation_in_words",
   "crates/ripr/src/output/human.rs::tests::shared_evidence_rows_spell_the_unconfirmed_observation_in_words",
   "crates/ripr/src/output/human.rs::tests::weakness_list_drops_producer_marker_but_keeps_embedded_token_and_json",
+  "crates/ripr/src/output/human.rs::tests::long_gap_id_is_capped_in_the_default_view_and_short_ids_are_whole",
+  "crates/ripr/src/output/github.rs::tests::render_caps_a_huge_canonical_gap_id_in_the_annotation",
   "crates/ripr/src/lsp/tests.rs::finding_hover_spells_the_unconfirmed_observation_in_words",
   "crates/ripr/src/lsp/tests.rs::finding_hover_with_named_missing_discriminator_spells_markers_in_words",
   "crates/ripr/src/lsp/hover.rs::seam_hover_tests::seam_hover_spells_the_unconfirmed_observation_in_words",
@@ -20937,6 +20950,7 @@ tests = [
   "crates/ripr/tests/agent_stub_at_disclosure.rs::second_write_reports_already_written_instead_of_a_duplicate",
   "crates/ripr/tests/agent_stub_compiles.rs::at_kind_stub_discloses_strongly_gripped_classification",
   "crates/ripr/tests/agent_stub_at_disclosure.rs::off_line_predicate_note_precedes_the_grip_class_warning",
+  "crates/ripr/tests/cli_smoke/stub_closes_own_gap.rs::a_filled_return_value_stub_is_credited_with_observing_the_value",
 ]
 fixtures = []
 code = [
