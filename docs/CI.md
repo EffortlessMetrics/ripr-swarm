@@ -202,6 +202,33 @@ inventory. Inspect current source, exact head, review findings and native state
 before any consequential request. Do not infer readiness from a missing or
 skipped check, a quiet PR, or an earlier green result.
 
+### Exact-head native intake consumer (#4838)
+
+The staged `queue_intake.py` evaluator in the trusted admission bundle consumes
+the existing `hermes.queue-intake.v2` protocol from
+[Hermes PR #55](https://github.com/EffortlessMetrics/hermes-deploy/pull/55).
+It performs only bounded GitHub reads. Protected-base code and
+`policy/queue-publisher.toml` authenticate the configured numeric publisher App
+and check name; candidate JSON cannot select an issuer. The configuration is
+explicitly disabled until the real App binding is verified and installed through
+the coordinated activation transaction. This source does not activate Hermes,
+mint a token, publish a required result or change protections.
+
+The consumer joins an actual singleton native B/G entry to the current exact H,
+requires its unique completed App-authenticated enqueue receipt, validates its
+expiry and authority/producer generation, and verifies G's exact producer
+objects and modes. The admitted target may differ from protected B; H's earlier
+admission base need not equal G's later base. Native membership and the receipt
+are read again after source observation and compared with the initially frozen
+observation at finalization. Missing, changed or ambiguous intake refuses.
+
+`cargo test -p repo-policy --test queue_intake` exercises the shipped evaluator
+with fake API observations, including head/entry/issuer/source/expiry negatives
+and currentness changes. These tests establish consumer behavior, not a live
+publisher, installed capacity, native enqueue or protected landing. The cutover
+caller must run this control before any candidate checkout or shared-cache work;
+the support stage alone does not change event subscriptions or allocate jobs.
+
 ### Actual-G callable source preparation (#8082)
 
 The existing Rust, Windows subset, Python wheel, feature/release/MSRV/VS Code
