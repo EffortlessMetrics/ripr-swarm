@@ -1009,8 +1009,35 @@ tK=FILE:LINE TEST_NAME ORACLE_KIND `ORACLE TEXT` miss=MISS
 +M more gaps not shown; `--format json` lists all
 limits=CLASS:COUNT,...
 next=COMMAND
+verify=complete|outcome=O|findings=N|exposed=N
 ```
 
+- The last line is always the verification record (#13516):
+  `verify=complete|outcome=O|findings=N|exposed=N` or
+  `verify=refused|outcome=O|findings=N|exposed=N|reason=R,...`. It is projected
+  from the producer's `analysis_outcome` and the full `summary` counts, not the
+  displayed or triaged subset. Its `findings`/`exposed` equal the header's
+  `findings=`/`exposed=` except under `--suppression-policy`: the header
+  omits suppressed findings, while `summary.findings` keeps them and
+  `summary.exposed` drops suppressed exposed ones, so a suppressed finding
+  never reads as a closed gap. `complete` requires outcome
+  `complete_no_findings` or `complete_with_findings`, `findings` equal to
+  `exposed`, no unanalyzed working tree, no untracked source excluded from
+  the diff in a language enabled for the run (no
+  `untracked_working_tree_source_paths` entry that routes to a language in
+  the run's enabled set; when the enabled set is unknown, any entry refuses),
+  no partial scope and no missing scope; `outcome=missing` refuses. An
+  agent's new file is untracked until `git add -N`, which is the false-complete
+  case this guards; an untracked file in a disabled language would not be
+  analyzed even if staged, so it does not refuse. Gitignored source
+  (`ignored_working_tree_source_paths`) never refuses: the repository excludes
+  it on purpose (`node_modules/`, `.venv/`, generated output), it is almost
+  never the agent's edit, and the human/GitHub notes and this JSON field keep
+  disclosing it. Reasons: `outcome_missing`,
+  `no_behavior_in_scope`, `analysis_incomplete`, `gaps_remain`,
+  `unanalyzed_working_tree`, `untracked_source_excluded`,
+  `partial_scope`, `no_scope`. It is independent of `done=`, is static
+  evidence only, and does not replace running the tests.
 - Line 1 is always the header: `base` is `-` when no base applies, `gaps` counts
   every test-side gap (candidate-current, `weakly_exposed` or
   `reachable_unrevealed`, not static-limited, not preview-only), and the class
