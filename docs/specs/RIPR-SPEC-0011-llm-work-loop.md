@@ -913,7 +913,9 @@ phase without it is refused and leaves the attempt recoverable; status names
 that same-result retry for a recoverable finish and a new attempt otherwise
 (including a finish whose recorded recovery protocol is not durable-v1, and an
 accepted decision whose receipt and verify files are not present with the
-accepted digests). A finish that holds no focused claim keeps the ordinary
+accepted digests, or a trust-bound attempt whose apply-record compatibility path
+is already occupied, since the after phase recovers a trust-bound finish only
+while that path is absent). A finish that holds no focused claim keeps the ordinary
 pending-retention route. A stop before the
 marker allows the original claim to retry. A stop after the marker without a
 matching durable success and receipt is ambiguous: the attempt stays finished
@@ -1124,6 +1126,7 @@ other argv usage errors keep empty stdout.
 - `crates/ripr/tests/focused_test_result.rs::proposal_recovery_revalidates_reported_completion` (#13203)
 - `crates/ripr/tests/focused_test_result.rs::pending_promotion_rejects_an_interposed_receipt_replacement` (#13203)
 - `crates/ripr/tests/focused_test_result.rs::accepted_focused_finish_recovery_requires_the_same_result` (#13203)
+- `crates/ripr/src/app/agent_status.rs::tests::trust_bound_focused_retry_is_withheld_when_the_apply_record_path_is_occupied` (#13203)
 - `crates/ripr/tests/focused_test_result.rs::proposal_finish_without_a_result_is_retained_after_receipt_publication` (#13203)
 - `crates/ripr/tests/focused_test_result.rs::review_fifth_focused_refusal_requires_restart` (#13203)
 - `crates/ripr/src/app/repair_attempt/mod.rs::tests::focused_restore_refuses_another_finish_or_committed_evidence` (#13203)

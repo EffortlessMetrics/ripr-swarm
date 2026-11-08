@@ -2865,6 +2865,34 @@ pub(crate) fn focused_accepted_projection_present(
     )
 }
 
+/// Whether a trust-bound attempt's accepted focused finish is blocked from
+/// recovery by the apply-record compatibility path: the after phase promotes
+/// such a finish only while nothing exists at that path and its components
+/// are safe, so any entry there (an earlier attempt's record included), an
+/// unsafe component or an unreadable path leaves it unrecoverable. Attempts
+/// without a trust binding are never blocked by it.
+pub(crate) fn trust_apply_record_blocks_focused_recovery(
+    root: &Path,
+    manifest: &RepairAttemptManifest,
+) -> bool {
+    if find_manifest_artifact_by_role(
+        manifest,
+        crate::app::python_repair_binding::BINDING_ARTIFACT_ROLE,
+    )
+    .is_none()
+    {
+        return false;
+    }
+    let relative = Path::new(crate::app::python_repair_binding::APPLY_RECORD_COMPAT_PATH);
+    if !crate::edit_cage::workflow_path_components_are_safe(root, relative).unwrap_or(false) {
+        return true;
+    }
+    !matches!(
+        std::fs::symlink_metadata(root.join(relative)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound
+    )
+}
+
 /// `focused_claim_rechecked` means the caller re-validated the same
 /// caller-reported focused result (current HEAD, attempt and test file, and
 /// record-equal to the pending claim) and, for a trust-bound attempt, its

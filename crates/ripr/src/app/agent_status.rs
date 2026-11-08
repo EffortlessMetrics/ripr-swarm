@@ -3319,6 +3319,15 @@ pub(crate) fn focused_receipt_recovery(
                 "the focused receipt decision was committed but its receipt and verify files are not present with the accepted digests, so the after phase cannot recover it; if the after phase is no longer running, start a new attempt",
             )
         }
+        Some(crate::app::repair_attempt::FocusedReceiptEvaluation::Accepted { .. })
+            if crate::app::repair_attempt::trust_apply_record_blocks_focused_recovery(
+                root, manifest,
+            ) =>
+        {
+            new_attempt(
+                "the focused receipt decision was committed, but this trust-bound attempt's apply record path is already occupied, so the after phase cannot recover it; if the after phase is no longer running, start a new attempt",
+            )
+        }
         Some(crate::app::repair_attempt::FocusedReceiptEvaluation::Accepted { .. }) => retry(
             "the focused receipt decision was committed; if the after phase is no longer running, retry with the same --test-result FILE (an after phase without it is refused) and, for a trust-bound attempt, its original edit authority; recovery rechecks that result against the current HEAD, the attempt and its test file and the exact committed receipt and verify bytes",
         ),
@@ -5608,6 +5617,78 @@ mod tests {
         {
             return Err(format!("unexpected reason: {}", command.reason));
         }
+        Ok(())
+    }
+
+    /// #13203: an accepted, trust-bound focused finish is recoverable only while
+    /// nothing exists at the apply-record compatibility path, so status offers
+    /// the same-result retry only then and the new-attempt route otherwise.
+    #[test]
+    fn trust_bound_focused_retry_is_withheld_when_the_apply_record_path_is_occupied()
+    -> Result<(), String> {
+        use crate::app::repair_attempt::{FocusedReceiptEvaluation, PendingFocusedResult};
+        use sha2::{Digest, Sha256};
+        let digest = |bytes: &[u8]| {
+            let mut rendered = String::from("sha256:");
+            for byte in Sha256::digest(bytes) {
+                rendered.push_str(&format!("{byte:02x}"));
+            }
+            rendered
+        };
+        let root = unique_agent_status_test_dir("trust-apply-occupied");
+        let receipt = b"{\"receipt\":true}\n";
+        let verify = b"{\"verify\":true}\n";
+        write_file(
+            &root.join(crate::agent::loop_commands::WORKFLOW_AGENT_RECEIPT_ARTIFACT),
+            std::str::from_utf8(receipt).map_err(|error| error.to_string())?,
+        )?;
+        write_file(
+            &root.join(crate::agent::loop_commands::WORKFLOW_AGENT_VERIFY_ARTIFACT),
+            std::str::from_utf8(verify).map_err(|error| error.to_string())?,
+        )?;
+        let mut manifest = ready_to_finish_manifest()?;
+        if let Some(after) = manifest.after.as_mut() {
+            after.focused_result = Some(PendingFocusedResult {
+                record: "{}".to_string(),
+                custody: "test".to_string(),
+                receipt_protocol: Some("durable-v1".to_string()),
+            });
+        }
+        manifest.focused_receipt_evaluation = Some(FocusedReceiptEvaluation::Accepted {
+            receipt_sha256: digest(receipt),
+            verify_sha256: digest(verify),
+        });
+        // Without a trust binding the occupied path is irrelevant.
+        let apply = root.join(crate::app::python_repair_binding::APPLY_RECORD_COMPAT_PATH);
+        write_file(&apply, "{\"earlier\":true}\n")?;
+        let untrusted = focused_receipt_recovery(&root, &manifest);
+        assert!(
+            untrusted.is_some_and(|recovery| recovery.retry_same_result),
+            "{untrusted:?}"
+        );
+        manifest
+            .artifacts
+            .push(crate::app::repair_attempt::RepairAttemptArtifact {
+                role: crate::app::python_repair_binding::BINDING_ARTIFACT_ROLE.to_string(),
+                path: "target/ripr/repair-attempts/x/artifacts/binding.json".to_string(),
+                sha256: "sha256:binding".to_string(),
+                bytes: 1,
+            });
+        let occupied = focused_receipt_recovery(&root, &manifest);
+        assert!(
+            occupied.is_some_and(|recovery| !recovery.retry_same_result
+                && recovery
+                    .limitation
+                    .contains("apply record path is already occupied")),
+            "{occupied:?}"
+        );
+        std::fs::remove_file(&apply).map_err(|error| error.to_string())?;
+        let free = focused_receipt_recovery(&root, &manifest);
+        assert!(
+            free.is_some_and(|recovery| recovery.retry_same_result),
+            "{free:?}"
+        );
+        let _ = std::fs::remove_dir_all(&root);
         Ok(())
     }
 
