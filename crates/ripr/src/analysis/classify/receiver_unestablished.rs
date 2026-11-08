@@ -18,7 +18,7 @@
 
 use super::gap_admission::{is_ignored, withhold_gap};
 use super::related_tests::{
-    inherent_owner_call_resolves_if_macros_trusted,
+    inherent_owner_call_resolves_if_macros_trusted, inherent_owner_call_resolves_in_forwarded_body,
     inherent_owner_call_resolves_inside_unreadable_macro, requires_inherent_receiver_identity,
 };
 use crate::analysis::rust_index::{FunctionSummary, RustIndex, TestSummary};
@@ -82,6 +82,160 @@ fn blocked_tests(
         .collect()
 }
 
+/// Tests whose owner call sits inside a workspace assertion macro defined in
+/// another file (#12886). The macro's own definition must expand exactly to
+/// one `strong` std assertion over the call's operands (the bounded shape the
+/// same-file credit expands), so a macro that ignores its operand, has several
+/// arms or fragment kinds, or cannot be resolved keeps the gap. The call is
+/// read over a body where the macro call is replaced by its operands, under
+/// the direct relation's receiver rules; nothing is written to the index, so no
+/// credit follows.
+fn cross_file_wrapped_tests(
+    finding: &Finding,
+    owner: &FunctionSummary,
+    index: &RustIndex,
+) -> Vec<String> {
+    if !matches!(
+        finding.class,
+        ExposureClass::WeaklyExposed | ExposureClass::ReachableUnrevealed
+    ) || finding.static_limit_kind.is_some()
+        || !requires_inherent_receiver_identity(owner)
+    {
+        return Vec::new();
+    }
+    index
+        .tests()
+        .iter()
+        .filter(|test| {
+            finding
+                .related_tests
+                .iter()
+                .any(|row| is_test(&row.name, &row.file, row.line, test))
+                && !is_ignored(test)
+                && test.body.contains(owner.name.as_str())
+                && forwarded_macro_resolves_owner(test, owner, index)
+        })
+        .take(JUDGED_TEST_LIMIT)
+        .map(|test| {
+            format!(
+                "`{}` ({}:{})",
+                test.name,
+                test.file.display().to_string().replace('\\', "/"),
+                test.start_line
+            )
+        })
+        .collect()
+}
+
+fn forwarded_macro_resolves_owner(
+    test: &TestSummary,
+    owner: &FunctionSummary,
+    index: &RustIndex,
+) -> bool {
+    // Assertions the ordinary extractor already reads must not be what keeps
+    // the test weak: a non-strong one over the owner is a real gap.
+    if test.assertions.iter().any(|assertion| {
+        assertion.text.contains(owner.name.as_str()) && assertion.strength != OracleStrength::Strong
+    }) {
+        return false;
+    }
+    let Some(file) = index.files().get(&test.file) else {
+        return false;
+    };
+    let data = file.data();
+    if file.used_lexical_fallback {
+        return false;
+    }
+    let visibility = index.call_identity_memos.assertion_wrapper_visibility(|| {
+        crate::analysis::facts::macro_visibility::MacroVisibility::for_assertion_wrappers(
+            index
+                .files()
+                .iter()
+                .map(|(path, file)| (path.clone(), file.source.clone())),
+        )
+    });
+    let imported = visibility.imported_macros(&test.file);
+    let calls = crate::analysis::facts::imported_forwarding_calls(&data.source, &imported, test);
+    if calls.is_empty() {
+        return false;
+    }
+    let mut any = false;
+    for call in &calls {
+        if !call.call_text.contains(owner.name.as_str()) {
+            continue;
+        }
+        // One occurrence keeps the replaced text unambiguous.
+        if call.strength != OracleStrength::Strong
+            || test.body.matches(call.call_text.as_str()).count() != 1
+        {
+            return false;
+        }
+        let Some((_, operands)) = call.statement.split_once('!') else {
+            return false;
+        };
+        let operands = operands.trim();
+        if !operands.starts_with('(') || !operands.ends_with(')') {
+            return false;
+        }
+        // The expansion's operands must themselves evaluate the owner call: an
+        // operand the macro discards is not asserted on.
+        if !contains_word(operands, owner.name.as_str()) {
+            return false;
+        }
+        // Any other mention of the owner in the test is not this assertion's
+        // owner call, so it must not stand in for one.
+        let Some((before, after)) = test.body.split_once(call.call_text.as_str()) else {
+            return false;
+        };
+        let body = format!(
+            "{}{operands}{}",
+            blank_word(before, owner.name.as_str()),
+            blank_word(after, owner.name.as_str())
+        );
+        if !inherent_owner_call_resolves_in_forwarded_body(test, body, owner, index) {
+            return false;
+        }
+        any = true;
+    }
+    any
+}
+
+fn is_ident_char(character: char) -> bool {
+    character.is_alphanumeric() || character == '_'
+}
+
+/// Whether `word` appears in `text` as a whole identifier.
+fn contains_word(text: &str, word: &str) -> bool {
+    text.match_indices(word).any(|(at, _)| {
+        !text[..at].chars().next_back().is_some_and(is_ident_char)
+            && !text[at + word.len()..]
+                .chars()
+                .next()
+                .is_some_and(is_ident_char)
+    })
+}
+
+/// `text` with every whole-identifier `word` replaced by same-length filler,
+/// so byte offsets and line counts are unchanged.
+fn blank_word(text: &str, word: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut last = 0;
+    for (at, _) in text.match_indices(word) {
+        let end = at + word.len();
+        if at < last
+            || text[..at].chars().next_back().is_some_and(is_ident_char)
+            || text[end..].chars().next().is_some_and(is_ident_char)
+        {
+            continue;
+        }
+        out.push_str(&text[last..at]);
+        out.push_str(&"_".repeat(word.len()));
+        last = end;
+    }
+    out.push_str(&text[last..]);
+    out
+}
+
 /// Whether a related-test row names `test`. Name and file alone cannot tell
 /// two same-named tests in sibling modules apart, so the start line is part of
 /// the identity.
@@ -129,12 +283,15 @@ pub(in crate::analysis) fn mark_receiver_unestablished(
         ));
         return true;
     }
-    let judged = blocked_tests(
+    let mut judged = blocked_tests(
         finding,
         owner,
         index,
         inherent_owner_call_resolves_inside_unreadable_macro,
     );
+    if judged.is_empty() {
+        judged = cross_file_wrapped_tests(finding, owner, index);
+    }
     if judged.is_empty() {
         return false;
     }
