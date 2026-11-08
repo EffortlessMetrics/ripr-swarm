@@ -9611,6 +9611,88 @@ fn disable_ambient_git_excludes(root: &Path) -> Result<(), Box<dyn std::error::E
     Ok(())
 }
 
+/// #13452: a Git-ignore answer that flips between the early admission and the
+/// first shared workflow write must refuse before anything shared is written,
+/// not at the later attempt-publication recheck after the files were replaced.
+/// The shim passes the first `git check-ignore` through and answers "not
+/// ignored" afterwards, so the first call is the early admission and the
+/// second is the pre-write recheck.
+#[cfg(unix)]
+#[test]
+fn agent_repair_before_rechecks_build_ignore_before_the_first_shared_write()
+-> Result<(), Box<dyn std::error::Error>> {
+    use std::os::unix::fs::PermissionsExt;
+    let fixture = RepairBuildIgnoreFixture::new(unique_temp_workspace("agent-repair-late-ignore"))?;
+    let root = fixture.0.as_path();
+    init_producer_fixture_repo(root)?;
+    std::fs::write(root.join(".git/info/exclude"), "/target/\n")?;
+    disable_ambient_git_excludes(root)?;
+
+    let real_git = String::from_utf8(
+        std::process::Command::new("sh")
+            .args(["-c", "command -v git"])
+            .output()?
+            .stdout,
+    )?
+    .trim()
+    .to_string();
+    let shim_dir = unique_temp_workspace("agent-repair-late-ignore-shim");
+    std::fs::create_dir_all(&shim_dir)?;
+    let count = shim_dir.join("count");
+    let shim = shim_dir.join("git");
+    std::fs::write(
+        &shim,
+        format!(
+            "#!/bin/sh\nfor a in \"$@\"; do\n  if [ \"$a\" = check-ignore ]; then\n    n=$(cat '{count}' 2>/dev/null || echo 0)\n    n=$((n+1))\n    echo $n > '{count}'\n    if [ $n -gt 1 ]; then exit 1; fi\n  fi\ndone\nexec '{real_git}' \"$@\"\n",
+            count = count.display(),
+            real_git = real_git
+        ),
+    )?;
+    std::fs::set_permissions(&shim, std::fs::Permissions::from_mode(0o755))?;
+    let path = format!(
+        "{}:{}",
+        shim_dir.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+
+    let root_arg = root.display().to_string();
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_ripr"))
+        .env("PATH", &path)
+        .args([
+            "agent",
+            "repair",
+            "--json",
+            "--root",
+            root_arg.as_str(),
+            "--seam-id",
+            BOUNDARY_GAP_SEAM_ID,
+            "--phase",
+            "before",
+        ])
+        .output()?;
+    let _ = std::fs::remove_dir_all(&shim_dir);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if output.status.success() || !stderr.contains("Nothing was started.") {
+        return Err(format!("flipped ignore answer must refuse as not started: {output:?}").into());
+    }
+    if !stderr
+        .lines()
+        .any(|line| line == "ripr: refusal code=build_output_not_ignored disposition=not_started")
+    {
+        return Err(format!("refusal lacks the typed line: {stderr}").into());
+    }
+    for artifact in [
+        "target/ripr/workflow/workflow.json",
+        "target/ripr/workflow/agent-packet.json",
+        "target/ripr/workflow/before.repo-exposure.json",
+    ] {
+        if root.join(artifact).exists() {
+            return Err(format!("pre-write recheck refused after writing {artifact}").into());
+        }
+    }
+    Ok(())
+}
+
 #[test]
 fn agent_repair_before_requires_effective_cargo_build_directory_ignore()
 -> Result<(), Box<dyn std::error::Error>> {
