@@ -27,8 +27,10 @@ def test_base_unchanged():
 ```
 
 A plain local assignment (`total = base - bonus`) is not recognized by
-`classify_probe_shape`, so it previously fell to that function's **default**
-`(Predicate, Control)` arm. The empty-delta operand fallback (#1278) is keyed on a
+`classify_probe_shape`, so it falls to that function's **default**
+`(Predicate, Control)` arm for analysis. The finding presents itself as a value
+change (`return_value` family, `value` delta; #13587) because it tests no
+condition; analysis, gates and credit still use the default arm. The empty-delta operand fallback (#1278) is keyed on a
 control-flow change, so a default-`Control` assignment wrongly kept the fallback and
 credited `changed_sink_token` on the unchanged operand `base`. The test never
 observes `total`, so it cannot notice if the `+`/`-` change were wrong.
