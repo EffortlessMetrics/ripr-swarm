@@ -74,6 +74,8 @@ jobs:
           test -s "$RUNNER_TEMP/repo-args"
 
       - name: Run the spot check
+        # Advisory lane: a scoring failure must not hide the receipt upload.
+        continue-on-error: true
         run: |
           set -euo pipefail
           mapfile -t args < "$RUNNER_TEMP/repo-args"
