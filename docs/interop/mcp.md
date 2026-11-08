@@ -157,7 +157,11 @@ When a committed refresh analyzed nothing (`no_scope`, `no_changed_lines` or
 `empty_scope_hint` (`why`, `pass_base`, `pass_source`, #11213): the default base
 may have resolved to the analyzed commit (detached HEAD, `origin/HEAD` at HEAD),
 and `base` or `source: "worktree"` widen the diff. The hint never changes the
-outcome kind and an empty result is not an all-clear.
+outcome kind and an empty result is not an all-clear. For a base-less
+`no_scope` or `no_changed_lines` snapshot the hint also carries
+`pass_base_last_commit`, which names `{"base": "HEAD~1"}` as the retry when the
+change under review is the last commit (#13096); the server names it but never
+infers it.
 
 `ripr_refresh` is read-only with respect to source, but the shared analysis
 writes its warm cache under the root's `target/ripr/`. Cargo projects normally
