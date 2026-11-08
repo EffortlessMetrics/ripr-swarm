@@ -335,7 +335,7 @@ const LENS_LAYOUTS: [(&str, [&str; 4]); 4] = [
 ];
 
 fn lens_rows(uri: &Uri, snapshot: &AnalysisSnapshot) -> Vec<u32> {
-    code_lens_response(uri, Some(snapshot))
+    code_lens_response(uri, Some(snapshot), &ClientFeatureProfile::unsupported())
         .iter()
         .map(|lens| lens.range.start.line)
         .collect()

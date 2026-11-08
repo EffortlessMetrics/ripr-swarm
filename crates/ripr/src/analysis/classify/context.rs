@@ -62,6 +62,8 @@ pub(in crate::analysis) struct ProbeContext<'a> {
     /// When present, semantic reference edges may resolve ambiguous cross-package
     /// bare calls to the changed owner (#8116).
     pub scip_bindings: Option<&'a crate::analysis::scip::ScipReferenceBindings>,
+    #[cfg(feature = "lang-rust")]
+    pub tier_flow: Option<super::TierFlow>,
 }
 
 impl<'a> ProbeContext<'a> {
@@ -95,6 +97,8 @@ impl<'a> ProbeContext<'a> {
             binding_return_flow: None,
             workspace_root: None,
             scip_bindings: None,
+            #[cfg(feature = "lang-rust")]
+            tier_flow: None,
         }
     }
 

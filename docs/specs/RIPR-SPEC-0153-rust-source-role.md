@@ -483,6 +483,21 @@ pipeline and JSON/human rendering for a verified generator, a local trait
 lookalike, and an ordinary function named `arbitrary`. The Rust adapter repo-mode
 control pins generator omission and the adjacent production gap.
 
+The generator, repo-mode, and rendered fixtures execute their real assertions in
+the same compiled test executable under explicit plain compiler-admission
+variables (#13285). The child retains profiling variables and instrumentation;
+the parent environment is unchanged. A 30-second isolated process owner requires
+successful completion and an acknowledgement of the exact test identity after
+its assertions. Zero selected tests and another test's acknowledgement refuse.
+Unit and integration targets compile the same private child helper, selecting
+the original test identities within their own executables. The wrapper-refusal
+controls first replay the same fixture's plain positive, then inject one nonempty
+wrapper in a separate child and require ordinary production analysis, including
+JSON/human output for the rendered fixture. The existing compiler/configuration
+refusal controls also run in a plain child, so an ambient coverage wrapper cannot
+satisfy their negative assertions. Production provider admission and #11545's remaining
+source/configuration and corpus scope are unchanged.
+
 `analysis/workspace/source_role.rs` unit tests pin the layout rules,
 Cargo-autodiscovery shapes, override priority, windows normalization,
 the seeding/evidence partition, and the cargo-fuzz harness test-evidence

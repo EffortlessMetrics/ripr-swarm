@@ -194,6 +194,7 @@ impl RustAdapter {
                         Some(&value_origins),
                         scip_bindings.as_deref(),
                         &options.root,
+                        None,
                     );
                 finding.language = Some(LanguageId::Rust);
                 finding.source_currentness = SourceCurrentness::CandidateCurrent;

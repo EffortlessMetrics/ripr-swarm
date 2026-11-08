@@ -6,6 +6,264 @@ traceability without reconstructing intent from chat history.
 
 ## Local Setup
 
+### Provision a Linux cloud image
+
+Use the Node major selected by `.github/workflows/vscode-e2e.yml` in the base
+image, with Bash, Git, curl, tar and GNU timeout. Full editor provisioning also
+needs npm. The supported bootstrap hosts are glibc Linux x64 and arm64; this
+command does not install Node or replace the operating system. From a complete
+checkout, run the explicit provisioner:
+
+```bash
+node tools/provision-dev.cjs --install-system-deps
+```
+
+This command reads the current checkout's requirements through the existing
+setup report. It prepares the repository's pinned Rust SDK and stable, including
+`rustfmt`, Clippy, `rust-src`, and compiler-matched `llvm-tools-preview`; stable
+also gets an exact release/host installation for the activation helper. It
+prepares Nextest and locked Cargo dependencies, installs the editor's locked npm
+graph, and delegates one real editor-host smoke to `setup:verify-editor`.
+The delegated host download disables archive ownership restoration in its
+child environment so a container does not need to recreate the archive's user
+and group IDs. The parent shell's tar configuration is unchanged.
+The Rust pin and MSRV remain repository decisions; installing stable does not
+change either or update independently pinned CI workflows.
+
+The native-package option supports Debian/Ubuntu through root or noninteractive
+`sudo -n`. It installs the build and editor runtime prerequisites, including
+Xvfb and xauth. Omit the option when the base image already supplies them.
+Sudo policy must permit the APT command and its
+`DEBIAN_FRONTEND=noninteractive` assignment; a denial remains a native failure.
+A rootless image missing native dependencies must be rebuilt with those
+packages; the provisioner stops before expensive tool downloads and prints the
+recovery command. It never waits for an interactive sudo prompt or substitutes
+an unverified directory of extracted system libraries. A package-manager
+failure retains its native status even when the process reports UID 0.
+The native editor smoke also requires the environment to allow local display
+sockets. Installing Xvfb cannot establish editor readiness when the executor
+denies those sockets; retain the host failure and use an environment that
+supports the editor host.
+
+Rustup is bootstrapped from its official HTTPS distribution with a checked
+SHA-256 when absent. Existing absolute `CARGO_HOME` and `RUSTUP_HOME` selections
+are preserved. No shell profile, existing Rust default, repository pin, or cloud
+setting is changed. On a new Rustup home, Rustup may establish the first
+installed SDK as its initial default; task activation still selects the current
+checkout explicitly. Nextest selection uses its official stable release metadata
+and verifies the versioned archive's SHA-256 before installing it. Provisioning
+requires online access to the Rust distribution, Nextest's GitHub metadata and
+release assets, Cargo registry, npm registry, and the existing VS Code
+downloader's destinations; APT additionally needs the base image's configured
+repositories. Use the image's normal proxy and certificate configuration.
+
+For an explicitly limited Rust workflow, use `--rust-only`. For a fixed Nextest
+release, pass `--nextest-version X.Y.Z`; otherwise the provisioner records the
+version it actually executes. Rust-only completion does not establish editor
+readiness.
+
+### Cloud install and restored-task recipes
+
+Keep the environment's install command tied to the checkout instead of copying
+its current Rust version into environment settings:
+
+```bash
+node tools/provision-dev.cjs --install-system-deps
+```
+
+For an online task that must reconcile changed dependencies after restoration,
+use this explicit provisioning step before activating Rust in the task's shell:
+
+```bash
+node tools/provision-dev.cjs --ensure &&
+source tools/activate-rust.sh --pinned &&
+mkdir -p target
+```
+
+`--ensure` reads the pin again, repairs missing SDK components and a changed
+pin, and reuses installed stable instead of refreshing the rolling channel.
+It reuses the npm graph only when the recorded lock input and required compiler
+and downloader files still match. A changed lockfile or incomplete installation
+requires `npm ci` again. Ordinary explicit provisioning refreshes stable;
+`--ensure` does not silently turn every new task into a stable upgrade.
+Run in a fresh shell when deliberately changing compiler selection; conflicting
+explicit compiler overrides remain visible and must be resolved deliberately.
+
+This online recipe can install missing dependencies. For a prepared offline
+task, use only the non-installing activation and diagnostic path below; a new
+pin absent from the saved image then requires online provisioning. Keep the
+same persistent Cargo/Rustup homes in image preparation and restored tasks.
+After changing the managed draft, save/publish it through the environment
+settings and verify a genuinely fresh task there. A successful install or fresh
+shell here does not establish that managed restoration occurred.
+
+Provisioning and its editor smoke do not run full CI, the full editor suite,
+coverage qualification, or a complete `setup:verify-full` attempt. Use the
+explicit verification sections below for those separate outcomes.
+
+### Supported developer setup path
+
+Use one selected compiler and one checkout throughout setup. In Bash, ordinary
+startup activates an already installed compiler and refreshes cheap observations:
+
+```bash
+source tools/activate-rust.sh --pinned
+mkdir -p target
+node editors/vscode/test/developerSetup.cjs --json
+```
+
+The activation helper also accepts an installed exact release or `stable`; it
+records the exact resolved compiler and carries it into child and fixture
+directories. It does not install a toolchain. Keep conflicting explicit compiler
+selectors visible and resolve them deliberately. The checkout-local `target`
+directory is still needed for the forced linker temporary paths in
+`.cargo/config.toml`, even with a separate `CARGO_TARGET_DIR`.
+
+The source Node command needs no npm packages or RIPR/xtask build. Its human
+view omits `--json`; `npm run setup:check -- --json` from `editors/vscode` is
+the same diagnostic. It reads bounded source files and local environment/filesystem
+facts, performs no subprocess, network or write operation, and returns status 1
+for a known blocker. A configured display, proxy, compiler selector or existing
+file is an observation; executable identity, LLVM usability, host startup,
+the full suite and a fresh task remain explicitly unexecuted.
+
+The report derives requirements from the existing owners:
+
+| Requirement | Authority and execution boundary |
+| --- | --- |
+| Rust pin/components | `rust-toolchain.toml`; activation selects an installed compiler. An already built `ripr doctor --profile source-build --json` owns effective-compiler product diagnosis. |
+| Node and locked editor tools | `.github/workflows/vscode-e2e.yml`, `editors/vscode/package.json` and `package-lock.json`; install with `npm ci` explicitly. |
+| LLVM and Nextest | `.github/workflows/rust-gates.yml` and the selected compiler's sysroot. The current Nextest install input has no version pin; record the actual `cargo nextest --version` result during verification. |
+| Editor host/version and network | The locked `@vscode/test-electron` downloader owns VS Code version selection, cache and update/download redirects. A network permission or proxy/CA setting is not a successful download. |
+| Native editor dependencies/display | A real host smoke below establishes that the selected host starts with the current native libraries and display. Provision these in the environment before verification. |
+| Output locations | `.cargo/config.toml`, `CARGO_TARGET_DIR`, `RIPR_TEST_ARTIFACT_ROOT` and the existing editor runner; the report observes access without creating directories or claiming a full-build resource budget. |
+
+### Explicit setup verification
+
+On Linux, after coherent activation, run the small existing real-profile control
+before compiling the workspace. It uses PATH `rustc`; that must be the same
+compiler selected for Cargo and any explicit `RUSTC`. Install its matching
+`llvm-tools-preview` component during explicit provisioning. The existing
+[coverage instructions](docs/ci/coverage.md#validate-locally) own selection and
+diagnostic scope.
+
+```bash
+cargo test --locked -p repo-policy --lib coverage_diagnostics::linux::binary_ids::tests::real_rust_llvm_binary_id_matches_sparse_instrumented_elf_metadata -- --exact --nocapture
+```
+
+Require exactly one executed passing test and its raw-version/layout/build-ID
+record. This compiles and executes a tiny instrumented program with the active
+compiler's LLVM tools. Zero selected tests on another platform are not evidence.
+It is separate from the read-only report and from full coverage qualification.
+
+For editor development, install the locked npm graph, then verify the actual host
+before Rust/xtask compilation:
+
+```bash
+cd editors/vscode
+npm ci
+# Headless Linux, with Xvfb and native host libraries already provisioned:
+xvfb-run -a npm run setup:verify-editor
+```
+
+On a supported live desktop display, use `npm run setup:verify-editor` directly.
+This explicit action first invalidates only the prior `setup-editor-host.json`
+and `setup-editor-host.log`, then runs the cheap report, invokes the installed TypeScript
+compiler directly, uses the real downloader, and runs one empty extension-host
+sentinel under the existing process owner. There is no implicit npm installer.
+Missing display, acquisition failure, missing native libraries, a bad receipt,
+timeout or cancellation leave producer and e2e phases `not_run`. The smoke has a
+60-second process deadline; downloader retries retain test-electron's idle-timeout
+semantics. Timeout/cancellation terminate the owned process tree before cleanup.
+The receipt records the observed VS Code/Electron versions, native status and one
+smoke case in `target/ripr/setup-editor-host.json`; a native failure attempts to
+retain a bounded redacted `setup-editor-host.log`. A refused diagnostic write
+remains secondary to the original native error. `RIPR_TEST_ARTIFACT_ROOT`
+relocates both and the host cache. Report refusal or a missing/failing installed
+compiler cannot leave an earlier pass after the explicit preflight starts.
+The preflight output identifies its evidence reset; ordinary `setup:check` and
+the standalone report remain read-only and preserve existing receipts. Failure
+to start Node or to invalidate the named files is not a completed setup attempt.
+
+### Explicit full-development validation
+
+On a prepared Linux source checkout, the opt-in coordinator invokes the existing
+owners in order. Install the locked editor dependencies and provision Rust,
+compiler-matched LLVM, Nextest, Git, Bash, and the native display prerequisites
+first; this command installs none of them. Ordinary startup still stops at
+activation and `setup:check`.
+
+```bash
+cd editors/vscode
+xvfb-run -a npm run setup:verify-full
+```
+
+Use `npm run setup:verify-full` directly on a supported live desktop display.
+The selected Node major and dependency versions come from the checked workflow
+and lockfile. The activation helper validates an explicit `--toolchain SELECTOR`
+first, otherwise the inherited `RUSTUP_TOOLCHAIN`, otherwise the repository pin;
+an intentional compiler mismatch remains a refusal. For example,
+`npm run setup:verify-full -- --toolchain stable` explicitly chooses installed
+stable. Only the helper's eight activation fields are returned to the coordinator
+and merged into its child environment. The parent shell is unchanged.
+
+Before broad Cargo work, the preset checks source/runtime/dependency facts and
+writable work paths, observes actual tool versions, runs the small selected-compiler
+real-profile control, then invokes `setup:verify-editor`. It next runs `cargo policy
+preflight`, `cargo xtask ci-full`, one `npm run test:e2e`, and `npm run package`.
+Cargo work is serial. The canonical editor owner performs its normal server
+build/archive checks and required TypeScript compile, so a separate `npm run
+compile` is unnecessary; packaging uses those compiled outputs. Its later fresh
+host smoke remains distinct from the early prerequisite smoke after a potentially
+long Rust build. The earlier setup-only TypeScript compile and later full editor
+compile remain the separate requirements of their existing owners. Supplied servers/queues, filtered suites, alternative fixtures,
+untrusted-only or multiroot-only selections are refused before this work.
+
+`ci-full` retains its local review, workspace checks/tests, policy,
+fixture/golden/evidence and package-validation ownership. A failure in that
+aggregate stops the preset with an incomplete result. The first failed native
+command retains its status and cause; later stages remain `not_run`. Do not repeat
+the canonical suite through both `npm test` and `npm run test:e2e`: those are
+aliases. No full preset
+is added to the ordinary editor qualification job.
+
+Each explicit attempt first invalidates only
+`target/ripr/setup-full-development.json` (under `RIPR_TEST_ARTIFACT_ROOT` when
+selected), then writes a new bounded result and a unique `setup-full-*` evidence
+directory. Completed stage logs and the separate early/canonical host receipts
+survive a later failure. Stage transcripts merge stdout and stderr through a
+fixed literal-argv capture wrapper; activation metadata uses a separate
+allowlisted channel and is not retained wholesale. Logs are capped at 64 KiB per
+stage; failures retain a redacted error summary and the terminal output tail so
+build progress cannot displace the useful native error. Each native command has
+a 16 MiB output cap, and the result is capped at
+128 KiB. The attempt deadline defaults to two hours; use `--timeout-ms N` for an
+explicit budget of at most twelve hours. Timeout/cancellation still uses the
+existing process-tree owner. Artifact and test-time-budget configuration is
+preserved. Relative artifact overrides resolve from the invocation directory;
+the observed Cargo target is shared by the serial children.
+
+Malformed command syntax is a usage error and does not start a new attempt.
+Once a full attempt is parsed, semantic option refusals are recorded as current
+preflight failures, with prior full-result evidence invalidated.
+
+A passing result covers only the named Linux source-checkout workflows in that
+actual invocation. It records Git HEAD as an observation, not a clean-tree proof;
+tool output, requirement hashes, native outcomes, available counts and receipt
+paths retain their separate scopes. Existing hosted required gates retain their
+own nextest, feature and artifact contracts; this local preset does not substitute
+for protected PR qualification. Native macOS/full Windows GUI equivalence is not
+claimed by this Linux preset.
+
+Ordinary startup stops at activation and cheap observations. Cold provisioning,
+repeat provisioning reuse and a genuinely fresh saved task need their own
+execution receipts. A fresh shell, cached hosted run, successful tiny smoke or
+available tool does not establish those outcomes. Retain the checkout/source,
+resolved tool versions, selected capabilities, native status/counts and remaining
+blockers when performing that explicit verification.
+
+### Focused setup reference
+
 1. Install [`rustup`](https://rustup.rs/) if you don't already have it.
    `rust-toolchain.toml` pins the exact toolchain version and its
    `rustfmt` and `clippy` components with the minimal installation profile;

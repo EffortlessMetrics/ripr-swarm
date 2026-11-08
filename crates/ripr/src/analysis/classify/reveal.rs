@@ -5362,7 +5362,9 @@ pub(in crate::analysis) fn only_proximity_oracles(related: &[RelatedTest]) -> bo
         });
         if related.relation_reason.is_none() || direct {
             if related.oracle.is_some()
-                || related.miss == Some(RelatedTestMiss::AssertionNotCredited)
+                || related
+                    .miss
+                    .is_some_and(RelatedTestMiss::is_assertion_refusal_miss)
             {
                 return false;
             }
@@ -5633,7 +5635,7 @@ fn finalize_related_tests_with_direct_rows(
     (oracle_rows, matched_total, direct_rows)
 }
 
-const RELATED_TESTS_RENDER_CAP: usize = 8;
+pub(in crate::analysis) const RELATED_TESTS_RENDER_CAP: usize = 8;
 
 /// True for an extracted smoke row whose text is a bare `x.unwrap()` or
 /// `x.expect("..")` statement rather than an assertion macro. Such a row is

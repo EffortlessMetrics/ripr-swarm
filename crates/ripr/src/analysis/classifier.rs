@@ -92,6 +92,7 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index_and_origins(
         dependency_edges
             .map(|edges| edges.root)
             .unwrap_or_else(|| std::path::Path::new(".")),
+        None,
     )
     .0
 }
@@ -111,6 +112,7 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index_and_origins_with_
     value_origins: Option<&std::sync::Mutex<crate::value_origins::ValueOrigins>>,
     scip_bindings: Option<&crate::analysis::scip::ScipReferenceBindings>,
     workspace_root: &std::path::Path,
+    changed_file: Option<&crate::analysis::diff::ChangedFile>,
 ) -> (Finding, Option<bool>) {
     let read_trace = super::probe_read_trace::Scope::begin(probe);
     let owner_fn = resolve_owner_function(probe, index);
@@ -327,6 +329,39 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index_and_origins_with_
     .unwrap_or(&probe.expression);
     let mut evidence =
         ClassifiedProbeEvidence::gather(&context, reveal_expression, transitive_reach);
+    #[cfg(feature = "lang-rust")]
+    {
+        context.tier_flow = changed_file
+            .and_then(|changed| {
+                let owner = owner_fn?;
+                let tests: Vec<&TestSummary> = context
+                    .related_tests
+                    .iter()
+                    .map(|(test, _)| *test)
+                    .collect();
+                super::classify::evaluate_tier_flow(
+                    probe,
+                    owner,
+                    changed,
+                    &tests,
+                    index,
+                    candidate_index.owner_pin_syntax(),
+                    workspace_complete,
+                )
+            })
+            .filter(|flow| {
+                let matching = |row: &RelatedTest| {
+                    row.name == flow.test && row.file == flow.file && row.line == flow.line
+                };
+                evidence.related_tests.iter().any(|row| {
+                    matching(row) && row.oracle.as_deref() == Some(flow.assertion.as_str())
+                }) || (evidence.related_tests_matched_total == evidence.related_tests.len()
+                    && evidence.related_tests.len() < super::classify::RELATED_TESTS_RENDER_CAP
+                    && evidence.related_tests.iter().any(matching))
+            });
+    }
+    #[cfg(not(feature = "lang-rust"))]
+    let _ = changed_file;
     // RIPR-SPEC-0048: a changed constant decided by evaluation takes its class
     // from the evaluation; every other probe is classified as before.
     let class = match (
@@ -337,6 +372,11 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index_and_origins_with_
         (None, Some(flow)) => evidence.apply_binding_return_flow(flow),
         (None, None) => evidence.classify(context.probe),
     };
+    #[cfg(feature = "lang-rust")]
+    let class = context
+        .tier_flow
+        .as_ref()
+        .map_or(class, |flow| evidence.apply_tier_flow(flow));
     // #7532: `build_finding` rewrites a `no_static_path` finding's misses;
     // keep reveal's so a withheld finding can report them again.
     let reveal_misses: Vec<Option<RelatedTestMiss>> = evidence
@@ -348,6 +388,11 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index_and_origins_with_
     let complete_proximity_oracles_only = evidence.complete_proximity_oracles_only;
     let direct_rows = std::mem::take(&mut evidence.direct_rows);
     let mut finding = build_finding_with_origins(&context, class, evidence, value_origins);
+    #[cfg(feature = "lang-rust")]
+    if context.tier_flow.is_some() {
+        finding.probe.expected_sinks = vec!["return value".to_string()];
+        finding.probe.required_oracles = vec!["exact assertion on returned value".to_string()];
+    }
     if let Some(chain) = resolved_chain.as_ref() {
         withhold_helper_uniqueness_as_unknown(&mut finding, chain, index, &reveal_misses);
     }
