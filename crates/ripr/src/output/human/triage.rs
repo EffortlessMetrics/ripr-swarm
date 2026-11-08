@@ -399,19 +399,22 @@ pub(crate) fn render_human_triage(
             &output.root,
         ));
         if let Some(FindingDrillIn::Commands(navigation)) = drill_in {
-            out.push_str("\nNext: drill into the top finding:\n");
-            // #12431: the finding-id label names the selector domain of the
-            // explain/context pair, like the repair start's spot-id label
-            // below and the digest's `Gap ID (for scripts):`.
-            super::push_labeled_commands(
-                out,
-                "  ",
-                super::FINDING_ID_COMMAND_LABEL,
-                &[
-                    navigation.explain_command(&finding.id),
-                    navigation.context_command(&finding.id),
-                ],
-            );
+            // #13502: a candidate-tree subject cannot be replayed by `explain`.
+            if !navigation.finding_routes_withheld() {
+                out.push_str("\nNext: drill into the top finding:\n");
+                // #12431: the finding-id label names the selector domain of the
+                // explain/context pair, like the repair start's spot-id label
+                // below and the digest's `Gap ID (for scripts):`.
+                super::push_labeled_commands(
+                    out,
+                    "  ",
+                    super::FINDING_ID_COMMAND_LABEL,
+                    &[
+                        navigation.explain_command(&finding.id),
+                        navigation.context_command(&finding.id),
+                    ],
+                );
+            }
             let stub_eligible = offers_test_stub(finding);
             // The test route is mentioned beside a held repair start only
             // when a runnable stub is actually rendered below.
@@ -620,13 +623,19 @@ pub(crate) fn render_human_triage(
             }
             categories.len() > 1
         };
+        let mut stub_template: Option<String> = None;
+        // Identical consecutive rows (same location, class, kind and reason)
+        // collapse to one row with a repeat count so a diff with many
+        // equivalent base-side findings stays scannable.
+        let mut previous: Option<(String, usize)> = None;
         for finding in triage.omitted.iter().take(listed) {
             let currentness = if label_currentness {
                 format!(", {}", hidden_bullet_currentness(finding))
             } else {
                 String::new()
             };
-            out.push_str(&format!(
+            let mut row = String::new();
+            row.push_str(&format!(
                 "    - {}:{} ({}{}); kind: {}; reason: {}\n",
                 crate::analysis::finding_location_text(&output.root, &finding.probe.location.file),
                 finding.probe.location.line,
@@ -641,7 +650,7 @@ pub(crate) fn render_human_triage(
                 match navigation.stub_route_for(&finding.id) {
                     Some(StubRouteDecision::Ambiguous { reason, seam_ids }) => {
                         push_ambiguous_stub_choices(
-                            out,
+                            &mut row,
                             navigation,
                             &finding.id,
                             reason,
@@ -650,14 +659,31 @@ pub(crate) fn render_human_triage(
                         );
                     }
                     Some(StubRouteDecision::SeamStub { seam_id }) => {
-                        let command = navigation.stub_seam_command(seam_id);
-                        out.push_str("      Write a test for it:\n");
-                        out.push_str(&format!("        {command}\n"));
-                        super::push_powershell_variant(out, "        ", &command);
+                        // One command template below serves every listed row;
+                        // only the row's id repeats here.
+                        row.push_str(&format!("      Test id: {seam_id}\n"));
+                        stub_template = Some(navigation.stub_seam_command("TEST_ID"));
                     }
                     _ => {}
                 }
             }
+            match previous.as_mut() {
+                Some((prev, count)) if *prev == row => *count += 1,
+                _ => {
+                    if let Some((prev, count)) = previous.take() {
+                        push_hidden_row(out, &prev, count);
+                    }
+                    previous = Some((row, 1));
+                }
+            }
+        }
+        if let Some((prev, count)) = previous.take() {
+            push_hidden_row(out, &prev, count);
+        }
+        if let Some(command) = stub_template {
+            out.push_str("  Write a test for a listed row, replacing TEST_ID with its Test id:\n");
+            out.push_str(&format!("    {command}\n"));
+            super::push_powershell_variant(out, "    ", &command);
         }
         // #9373: gloss each class named by a listed row, once, in the plain
         // vocabulary, so a run with several classes needs no `human-full`
@@ -937,7 +963,16 @@ pub(crate) fn canonical_next_action_for_triage(
         .selected
         .map(|finding| finding.id.clone())
         .unwrap_or_else(|| scope.clone());
+    // #13464: a candidate-tree subject cannot be replayed by `explain`, so
+    // its commands would analyze the live checkout. Withhold the detail route
+    // (and the considered-finding alternatives that carry the same commands)
+    // exactly as the JSON `finding_routes` projection does.
+    let routes_withheld = matches!(
+        drill_in,
+        Some(FindingDrillIn::Commands(navigation)) if navigation.finding_routes_withheld()
+    );
     let detail_route = match (&triage.selected, drill_in) {
+        (Some(_), _) if routes_withheld => String::new(),
         (Some(finding), Some(FindingDrillIn::Commands(navigation))) => {
             navigation.explain_command(&finding.id)
         }
@@ -947,7 +982,7 @@ pub(crate) fn canonical_next_action_for_triage(
         (None, _) => String::new(),
     };
     let mut alternatives: Vec<NextActionAlternative> = Vec::new();
-    for omitted in triage.omitted.iter().take(2) {
+    for omitted in triage.omitted.iter().take(2).filter(|_| !routes_withheld) {
         let route = match drill_in {
             Some(FindingDrillIn::Commands(navigation)) => navigation.explain_command(&omitted.id),
             None => omitted.id.clone(),
@@ -1019,6 +1054,14 @@ pub(crate) fn canonical_next_action_for_triage(
             ),
         },
         check_case: Some(check_case_for_triage(triage, output)),
+        // #13599: the same validated decision the human `Next` block prints.
+        check_repair_route: if check_case_for_triage(triage, output)
+            == NextActionCheckCase::PreviewAdvisory
+        {
+            gap_repair_start(triage.selected, drill_in).and_then(|start| start.command)
+        } else {
+            None
+        },
         doctor_recovery: None,
         pilot_delegation: None,
         alternatives,
@@ -1375,16 +1418,34 @@ pub(super) fn recommends_gap_repair_start(
     finding: Option<&Finding>,
     drill_in: Option<&FindingDrillIn>,
 ) -> bool {
+    gap_repair_start(finding, drill_in).is_some()
+}
+
+/// The gap-bound `ripr agent repair` start the check pipeline validated for
+/// the selected finding (#13599). The human `Next` block, the compact agent
+/// terminal and the JSON `canonical_next_action` all read this one decision,
+/// so they cannot disagree about whether a guided repair can begin.
+pub(super) struct GapRepairStart {
+    /// The runnable start. `None` while tracked production files differ from
+    /// HEAD: the start refuses until they are committed.
+    pub(super) command: Option<String>,
+}
+
+pub(super) fn gap_repair_start(
+    finding: Option<&Finding>,
+    drill_in: Option<&FindingDrillIn>,
+) -> Option<GapRepairStart> {
     let (Some(finding), Some(FindingDrillIn::Commands(navigation))) = (finding, drill_in) else {
-        return false;
+        return None;
     };
-    if is_static_limited(finding) || navigation.gap_repair_route_for(&finding.id).is_none() {
-        return false;
+    let route = navigation.gap_repair_route_for(&finding.id)?;
+    if is_static_limited(finding) {
+        return None;
     }
     // Only the findings whose Safe next action line names the start: a ready
     // TypeScript/JavaScript preview packet (the shared validator's verdict) or
     // a Python finding with a repair card.
-    match finding.language {
+    let eligible = match finding.language {
         Some(LanguageId::Python) => {
             finding.class != ExposureClass::Exposed && python_repair_card(finding).is_some()
         }
@@ -1392,7 +1453,16 @@ pub(super) fn recommends_gap_repair_start(
             preview_actionability_for(finding).is_some_and(|a| a.repair_packet_ready)
         }
         _ => false,
+    };
+    if !eligible {
+        return None;
     }
+    Some(GapRepairStart {
+        command: navigation
+            .gap_repair_prerequisite(route)
+            .is_none()
+            .then(|| navigation.gap_repair_command(route)),
+    })
 }
 
 /// An exposed preview finding has nothing to repair, in any preview language.
@@ -1922,6 +1992,19 @@ pub(super) fn is_preview_limited(finding: &Finding) -> bool {
         .is_some_and(|status| status.as_str() == "preview")
 }
 
+/// Append a hidden-finding block, annotating its first line with a repeat
+/// count when identical consecutive rows were collapsed.
+fn push_hidden_row(out: &mut String, row: &str, count: usize) {
+    if count <= 1 {
+        out.push_str(row);
+        return;
+    }
+    match row.split_once('\n') {
+        Some((first, rest)) => out.push_str(&format!("{first} (x{count})\n{rest}")),
+        None => out.push_str(&format!("{row} (x{count})")),
+    }
+}
+
 #[cfg(test)]
 mod tests {
 
@@ -2031,6 +2114,26 @@ mod tests {
             partial_scope: None,
             analyzed_revisions: None,
         }
+    }
+
+    #[test]
+    fn agent_next_line_is_withheld_for_a_candidate_tree_subject() {
+        let output = test_output(Vec::new());
+        let live = FindingDrillIn::Commands(crate::app::FindingNavigation::legacy());
+        let line = super::super::agent::explain_next_line("finding:top", &output, Some(&live));
+        assert!(
+            line.as_deref()
+                .is_some_and(|line| line.starts_with("next=ripr explain")),
+            "control: a live subject names the explain route: {line:?}"
+        );
+        let withheld = FindingDrillIn::Commands(
+            crate::app::FindingNavigation::legacy().with_finding_routes_withheld(),
+        );
+        assert_eq!(
+            super::super::agent::explain_next_line("finding:top", &output, Some(&withheld)),
+            None,
+            "a candidate-tree subject cannot be replayed by explain"
+        );
     }
 
     #[test]
@@ -2462,9 +2565,9 @@ mod tests {
             return Err("omitted alternative lost its identity".to_string());
         }
         match action.stop() {
-            Some(NextActionStop::CheckTriage { case, detail_route })
-                if *case == NextActionCheckCase::TopGap =>
-            {
+            Some(NextActionStop::CheckTriage {
+                case, detail_route, ..
+            }) if *case == NextActionCheckCase::TopGap => {
                 if !detail_route.contains("finding:top") {
                     return Err(format!(
                         "top gap must carry the selected inspect route, got {detail_route}"
@@ -2544,9 +2647,9 @@ mod tests {
         }
         // No navigation: the restart route replays the bound root.
         match action.stop() {
-            Some(NextActionStop::CheckTriage { case, detail_route })
-                if *case == NextActionCheckCase::ScopeMissing =>
-            {
+            Some(NextActionStop::CheckTriage {
+                case, detail_route, ..
+            }) if *case == NextActionCheckCase::ScopeMissing => {
                 if !detail_route.is_empty() {
                     return Err(format!(
                         "missing scope must not publish a scope label as an inspect route, got {detail_route}"

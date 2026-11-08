@@ -792,7 +792,10 @@ fn run(root_dir: &std::path::Path, case: &Case, family: &str) -> Result<Outcome,
         .find(|f| f.probe.family.as_str() == family)
         .ok_or_else(|| format!("{}: no {family} finding", case.name))?;
     if family == "return_value"
-        && (case.body.contains("assert_ok_eq!") || case.body.contains("assert_some_eq!"))
+        && (case.body.contains("assert_ok_eq!")
+            || case.body.contains("assert_some_eq!")
+            || case.body.contains("assert_eq!(checked_div(")
+            || case.body.contains("assert_eq!(half("))
     {
         assert_audit_agrees(&root, case, finding.class.as_str())?;
     }
@@ -817,8 +820,10 @@ fn run(root_dir: &std::path::Path, case: &Case, family: &str) -> Result<Outcome,
 /// owner-pin decision as `ripr check`. For the owner's `Ok(..)` / `Some(..)`
 /// return-value seam the audit reads `strongly_gripped` exactly when the diff
 /// path reads `exposed`: a credited shape is not under-credited by the audit,
-/// and a refused shape is not credited by it either. Plain `assert_eq!` bodies
-/// are extracted oracles on both paths and are not part of this control.
+/// and a refused shape is not credited by it either. The plain `assert_eq!`
+/// cases on the same owners are part of the control (#13005): the audit
+/// credits them from the extracted oracle, so a literal the current owner
+/// does not return must still be withheld.
 fn assert_audit_agrees(
     root: &std::path::Path,
     case: &Case,

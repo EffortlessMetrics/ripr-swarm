@@ -147,6 +147,88 @@ fn return_ledger_limit(
 }
 
 impl ClassifiedProbeEvidence {
+    #[cfg(feature = "lang-rust")]
+    pub(in crate::analysis) fn apply_tier_flow(
+        &mut self,
+        flow: &crate::analysis::classify::TierFlow,
+    ) -> ExposureClass {
+        let stage =
+            |summary: String| StageEvidence::new(StageState::Yes, Confidence::Medium, summary);
+        self.reach = stage(format!("`{}` calls `{}`", flow.test, flow.owner));
+        self.infect = stage(format!(
+            "The selected branch contains the changed literal `{}`",
+            flow.literal
+        ));
+        self.propagate = stage(format!(
+            "The selected branch value reaches `{}`'s whole return",
+            flow.owner
+        ));
+        self.observe = stage(format!(
+            "`{}` compares that return to an exact value",
+            flow.assertion
+        ));
+        self.discriminate = stage(format!(
+            "`{}` distinguishes the selected tier value",
+            flow.assertion
+        ));
+        self.flow_sinks = vec![FlowSinkFact {
+            kind: FlowSinkKind::ReturnValue,
+            text: flow.sink.clone(),
+            line: flow.sink_line,
+            owner: None,
+        }];
+        // Add a verified assertion only when all earlier rows fit and the
+        // renderer has a free slot; the classifier checks those preconditions.
+        // Keep every existing assertion and its own evidence intact.
+        let matches_test = |row: &RelatedTest| {
+            row.name == flow.test && row.file == flow.file && row.line == flow.line
+        };
+        let mark = |row: &mut RelatedTest| {
+            row.oracle = Some(flow.assertion.clone());
+            row.oracle_kind = OracleKind::ExactValue;
+            row.oracle_strength = OracleStrength::Strong;
+            row.miss = None;
+            row.miss_support = None;
+            row.role = RelatedTestRole::Contributing;
+        };
+        if let Some(row) = self
+            .related_tests
+            .iter_mut()
+            .find(|row| matches_test(row) && row.oracle.as_deref() == Some(flow.assertion.as_str()))
+        {
+            mark(row);
+        } else if let Some(mut row) = self
+            .related_tests
+            .iter()
+            .find(|row| matches_test(row))
+            .cloned()
+        {
+            mark(&mut row);
+            self.related_tests.push(row);
+            self.related_tests_matched_total += 1;
+        }
+        if let Some(row) = self.direct_rows.iter_mut().find(|row| matches_test(row)) {
+            mark(row);
+        }
+        self.ripr = RiprEvidence {
+            reach: self.reach.clone(),
+            infect: self.infect.clone(),
+            propagate: self.propagate.clone(),
+            reveal: RevealEvidence {
+                observe: self.observe.clone(),
+                discriminate: self.discriminate.clone(),
+            },
+        };
+        self.evidence = evidence_summaries([
+            &self.reach,
+            &self.infect,
+            &self.propagate,
+            &self.observe,
+            &self.discriminate,
+        ]);
+        self.assertion_refusal = None;
+        ExposureClass::Exposed
+    }
     pub(in crate::analysis) fn gather(
         context: &ProbeContext<'_>,
         reveal_expression: &str,
@@ -181,6 +263,30 @@ impl ClassifiedProbeEvidence {
                 .owner_fn
                 .is_none_or(|owner| context.owner_may_be_reached_unseen(owner))
         });
+        // A method of a foreign trait (`Display::fmt`, `Add::add`) runs
+        // through formatting, operators and generic helpers that never spell
+        // its name, so no related test is not a ruled-out path: reach is
+        // undecided, as it already is when a proximity test is related.
+        let reach = match context.owner_fn {
+            Some(owner)
+                if reach.state == StageState::No
+                    && context.related_tests.is_empty()
+                    && crate::analysis::classify::owner_runs_through_language_dispatch(
+                        owner,
+                        context.index,
+                    ) =>
+            {
+                StageEvidence::new(
+                    StageState::Weak,
+                    Confidence::Low,
+                    format!(
+                        "No test is seen calling {}; a trait method can run through formatting, operators or generic code",
+                        owner.name
+                    ),
+                )
+            }
+            _ => reach,
+        };
         let reach = if context.const_readers.is_empty() {
             reach
         } else {
@@ -829,11 +935,12 @@ impl ClassifiedProbeEvidence {
         // RIPR-SPEC-0094 Part D: the state a deleted `self.callee(..)` writes,
         // established once per probe; `None` keeps the Part C reading.
         let effect_carrier = context.owner_fn.and_then(|owner| {
-            EffectStateCarrier::establish(
+            EffectStateCarrier::establish_with_names(
                 context.probe,
                 owner,
                 context.index,
                 context.workspace_complete,
+                &proximity_reach.effect_method_names,
             )
         });
         let package_defeats_by_file = FileDefeatMemo::default();
@@ -2617,7 +2724,7 @@ fn macro_rules_bodies(source: &str) -> Vec<String> {
 /// "pins another function" decision sees the call the local came from.
 /// A local with several bindings, a `mut` one or one the scan cannot read adds
 /// nothing, which leaves the assertion unattributed (credit stays as before).
-fn assertion_text_with_local_initializers(
+pub(in crate::analysis) fn assertion_text_with_local_initializers(
     index: &RustIndex,
     test: &TestSummary,
     assertion: &str,
@@ -2703,12 +2810,12 @@ mod tests {
             start_line: 1,
             end_line: 9,
             body: "match expect_response(&input, \"ready\") { .. }".into(),
-            calls: Vec::new(),
+            calls: crate::analysis::facts::SharedFactSlice::empty(),
             assertions: vec![guarded_oracle()],
-            literals: Vec::new(),
-            attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             generated: None,
         }
     }
@@ -2721,14 +2828,14 @@ mod tests {
             start_line: 1,
             end_line: 4,
             body: "fn expect_response() -> Result<u32, ParseError> { Ok(1) }".into(),
-            calls: Vec::new(),
+            calls: crate::analysis::facts::SharedFactSlice::empty(),
             returns: Vec::new(),
-            literals: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
             source_role: FunctionSourceRole::Production,
-            attrs: Vec::new(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
             impl_attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             item: Default::default(),
             impl_context: Default::default(),
         }
@@ -2761,17 +2868,17 @@ mod tests {
             start_line: 1,
             end_line: 20,
             body: "fn expect_response() -> Result<u32, ParseError> { Ok(1) }".into(),
-            calls: Vec::new(),
+            calls: crate::analysis::facts::SharedFactSlice::empty(),
             returns: vec![ReturnFact {
                 line: 14,
                 text: "Ok(amount)".to_string(),
             }],
-            literals: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
             source_role: FunctionSourceRole::Production,
-            attrs: Vec::new(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
             impl_attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             item: Default::default(),
             impl_context: Default::default(),
         };
@@ -3373,17 +3480,17 @@ mod tests {
             start_line: 1,
             end_line: 20,
             body: "fn calculate(amount: i32) -> Result<i32, Error> { Ok(amount) }".into(),
-            calls: Vec::new(),
+            calls: crate::analysis::facts::SharedFactSlice::empty(),
             returns: vec![ReturnFact {
                 line: 14,
                 text: "Ok(amount)".to_string(),
             }],
-            literals: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
             source_role: FunctionSourceRole::Production,
-            attrs: Vec::new(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
             impl_attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             item: Default::default(),
             impl_context: Default::default(),
         };
@@ -3424,17 +3531,17 @@ mod tests {
             start_line: 1,
             end_line: 20,
             body: "fn calculate(amount: i32) -> Result<i32, Error> { Ok(amount) }".into(),
-            calls: Vec::new(),
+            calls: crate::analysis::facts::SharedFactSlice::empty(),
             returns: vec![ReturnFact {
                 line: 14,
                 text: "Ok(amount)".to_string(),
             }],
-            literals: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
             source_role: FunctionSourceRole::Production,
-            attrs: Vec::new(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
             impl_attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             item: Default::default(),
             impl_context: Default::default(),
         };
@@ -3479,14 +3586,14 @@ mod tests {
             start_line: 1,
             end_line: 6,
             body: "fn from_rows(cache: &mut Cache, rows: Vec<u32>) -> Result<Table, String> {\n    let cache = cache;\n    let table = Table { rows };\n    table.validate()?;\n    Ok(table)\n}".into(),
-            calls: Vec::new(),
+            calls: crate::analysis::facts::SharedFactSlice::empty(),
             returns: Vec::new(),
-            literals: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
             source_role: FunctionSourceRole::Production,
-            attrs: Vec::new(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
             impl_attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: vec![binding("cache"), binding("table"), binding("table")],
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: vec![binding("cache"), binding("table"), binding("table")].into(),
             item: Default::default(),
             impl_context: Default::default(),
         };

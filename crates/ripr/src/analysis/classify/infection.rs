@@ -843,13 +843,22 @@ pub(in crate::analysis) fn infection_evidence_for_owner(
             } else if activation
                 .missing_discriminators
                 .iter()
-                .any(|fact| fact.value.contains("=="))
+                .any(|fact| fact.shape == DiscriminatorShape::Boundary)
             {
                 StageEvidence::new(
                     StageState::Weak,
                     Confidence::Medium,
                     "Related tests contain input values, but the equality-boundary check is missing",
                 )
+            } else if let Some(guard) = activation
+                .missing_discriminators
+                .iter()
+                .find(|fact| fact.shape == DiscriminatorShape::GuardDomain)
+            {
+                // #12414: the inserted guard's domain is the missing input;
+                // the SPEC-0263 wording the guard-entry route already emits
+                // names the values that stay outside it.
+                StageEvidence::new(StageState::Weak, Confidence::Medium, guard.reason.clone())
             } else if !owner_has_other_callers
                 && owner.is_some_and(|owner| {
                     changed_operands_are_never_evaluated(probe, activation, related_tests, owner)
@@ -1653,7 +1662,7 @@ mod tests {
             start_line: 1,
             end_line: 3,
             body: "assert_eq!(score(10), 11);".into(),
-            calls: Vec::new(),
+            calls: crate::analysis::facts::SharedFactSlice::empty(),
             assertions: Vec::new(),
             literals: values
                 .iter()
@@ -1662,9 +1671,9 @@ mod tests {
                     value: (*value).to_string(),
                 })
                 .collect(),
-            attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             generated: None,
         }
     }
@@ -1677,14 +1686,14 @@ mod tests {
             start_line: 1,
             end_line: body.lines().count(),
             body: body.into(),
-            calls: Vec::new(),
+            calls: crate::analysis::facts::SharedFactSlice::empty(),
             returns: Vec::new(),
-            literals: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
             source_role: crate::analysis::facts::FunctionSourceRole::Production,
-            attrs: Vec::new(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
             impl_attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             item: Default::default(),
             impl_context: Default::default(),
         }

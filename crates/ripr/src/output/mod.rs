@@ -43,6 +43,7 @@ pub(crate) mod language_capabilities;
 pub(crate) mod language_view_agreement_tests;
 pub(crate) mod limited_check;
 pub(crate) mod markdown;
+pub(crate) mod missed_txt;
 pub(crate) mod mutation_calibration;
 pub(crate) mod oracle_phrase;
 #[cfg(test)]
@@ -59,7 +60,6 @@ pub(crate) mod next_step;
 pub(crate) mod observed_values;
 pub(crate) mod outcome;
 pub(crate) mod path;
-mod path_unicode;
 #[cfg(all(test, feature = "lang-perl"))]
 mod perl_composition_tests;
 pub(crate) mod perl_gap_record_projection;

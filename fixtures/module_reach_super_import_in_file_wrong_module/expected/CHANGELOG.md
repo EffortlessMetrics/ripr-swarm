@@ -169,20 +169,7 @@ Updated:
 ## Pending — module_reach_super_import_in_file_wrong_module (14)
 
 Reason:
-RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; human rendering unchanged
-
-Command:
-`cargo xtask goldens bless module_reach_super_import_in_file_wrong_module --reason "..."`
-
-Updated:
-- `expected/check.json`
-- `expected/human.txt`
-- `expected/human-full.txt`
-
-## Pending — module_reach_super_import_in_file_wrong_module (15)
-
-Reason:
-RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; no test attribution; human rendering unchanged
+RIPR-SPEC-0001: evidence-first human output now states a repeated related-test miss sentence once per test and the explain verdict block references the Evidence row instead of re-listing the assertion and reason; every fact remains exactly once (agent-efficiency study, Nov 2-4)
 
 Command:
 `cargo xtask goldens bless module_reach_super_import_in_file_wrong_module --reason "..."`

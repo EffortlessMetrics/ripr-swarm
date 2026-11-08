@@ -194,7 +194,7 @@ Updated:
 ## Pending — module_reach_control_qualified (16)
 
 Reason:
-RIPR-SPEC-0083: #13037 default missing-check line says no assertion was tied to the changed value when the next step says an exact assertion exists
+RIPR-SPEC-0159 #13625: a module-path spelling of the wrapper entry settles through the shared call-identity authority, so the qualified control promotes to exposed exactly like the bare-import control
 
 Command:
 `cargo xtask goldens bless module_reach_control_qualified --reason "..."`

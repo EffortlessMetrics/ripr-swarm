@@ -1364,6 +1364,9 @@ fn apply_probe_and_oracle_limits(
     oracles::apply_cross_language_limit(finding, probe, index);
     // Existing FFI limits own their detail and guidance before this narrower annotation.
     probes::apply_rust_field_match_selector_limit(finding, probe, index);
+    // #13702: an async owner whose only reaching tests create its future and
+    // drop it unpolled is not reached; name that before any oracle-side limit.
+    classify::withhold_unpolled_future_gap(finding, index);
     // #7133: a captured log record the test asserts on is a named limit.
     classify::withhold_log_capture_gap(finding, index, owner_name.as_deref());
     // RIPR-SPEC-0240: a `#[should_panic]` test's panic outcome is an oracle
@@ -2173,7 +2176,20 @@ impl RustAdapter {
                 ..LanguageDiffResult::default()
             });
         }
-        let rust_files = workspace::discover_rust_files(&options.root)?;
+        let (rust_files, unreadable_dirs) =
+            workspace::discover_rust_files_tolerating_unreadable(&options.root)?;
+        let mut unreadable_unchanged_paths = unreadable_dirs
+            .into_iter()
+            .map(|(path, _)| path)
+            .collect::<Vec<_>>();
+        let changed_paths = changed_files
+            .iter()
+            .map(|file| file.path.clone())
+            .collect::<BTreeSet<_>>();
+        let (rust_files, unreadable_files) =
+            workspace::split_unreadable_unchanged_files(&options.root, rust_files, &changed_paths);
+        unreadable_unchanged_paths.extend(unreadable_files);
+        unreadable_unchanged_paths.sort();
         let analyzable_rust_files = rust_files
             .into_iter()
             .filter(|path| !generated_sources.contains(path))
@@ -2572,7 +2588,11 @@ impl RustAdapter {
         // to cover every analyzable file, the equality genuinely holds and
         // the index really does span the workspace; when an unrelated crate
         // stays out, the index stays partial and the bypass stays off.
-        let workspace_index_complete = index_files.len() == analyzable_rust_files.len();
+        let workspace_index_complete = workspace_index_spans_workspace(
+            index_files.len(),
+            analyzable_rust_files.len(),
+            !unreadable_unchanged_paths.is_empty(),
+        );
 
         // #2972: one path-dependency edge context per classification pass,
         // consumed by the cross-crate owner-call admit in
@@ -2747,7 +2767,7 @@ impl RustAdapter {
             let token = cancellation::current_token();
             let overlay = committed_source::current_overlay();
             let graph_counter = classify::InheritedGraphCounter::capture();
-            let classify_one = |(_, seeded): &(
+            let classify_one = |(changed, seeded): &(
                 &ChangedFile,
                 crate::analysis::probes::SeededProbe,
             )| {
@@ -2778,6 +2798,7 @@ impl RustAdapter {
                                             &transitive_reach,
                                             seeded.propagation_origin.as_ref(),
                                             Some(&value_origins),
+                                            Some(changed),
                                         )
                                     }));
                                 match contained {
@@ -3157,6 +3178,9 @@ impl RustAdapter {
             limitations: limitations
                 .into_iter()
                 .chain(limitations_for_absent_changed_files(&absent_changed_files)?)
+                .chain(workspace::limitations_for_unreadable_unchanged_paths(
+                    &unreadable_unchanged_paths,
+                )?)
                 .chain(unreached_module_limitations(
                     changed_rust_paths.iter().filter(|path| {
                         layout_seeded_rust_paths.contains(*path)
@@ -3177,6 +3201,17 @@ impl RustAdapter {
             preview_fact_cache: Default::default(),
         })
     }
+}
+
+/// Whether the index spans the whole workspace. A skipped unreadable path may
+/// hold a competing owner or a test, so the inventory is never complete then:
+/// the uniqueness-based related-test admits must stay off (fail closed).
+fn workspace_index_spans_workspace(
+    indexed: usize,
+    analyzable: usize,
+    skipped_unreadable: bool,
+) -> bool {
+    indexed == analyzable && !skipped_unreadable
 }
 
 /// Bounds a path to `max_chars` for a recovery sentence, whose length is
@@ -3588,6 +3623,14 @@ impl LanguageAdapter for RustAdapter {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn skipped_unreadable_path_keeps_the_workspace_index_incomplete() {
+        use super::workspace_index_spans_workspace as spans;
+        assert!(spans(3, 3, false));
+        assert!(!spans(3, 3, true), "an unreadable competitor may exist");
+        assert!(!spans(2, 3, false));
+    }
+
     use super::{
         DIFF_CHANGED_RUST_LINE_LIMIT, DIFF_INDEX_FILE_LIMIT, DIFF_INDEX_FILE_LIMIT_ENV,
         DIFF_NARROW_INDEX_FILES, DIFF_NARROW_INDEX_FILES_ENV, GeneratedRustSources,
@@ -8011,12 +8054,12 @@ fn absent_delimiter_boundary_returns_head() {
             start_line: 12,
             end_line: 18,
             body: r#"Command::new(env!("CARGO_BIN_EXE_worker")).output().unwrap();"#.into(),
-            calls: Vec::new(),
+            calls: crate::analysis::facts::SharedFactSlice::empty(),
             assertions: Vec::new(),
-            literals: Vec::new(),
-            attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             generated: None,
         });
         assert!(is_binary_source_path(Path::new("src/main.rs")));
@@ -10410,14 +10453,14 @@ fn absent_delimiter_boundary_returns_head() {
             start_line: 1,
             end_line: 5,
             body: "pub fn exported_fn(raw: &str) -> Result<(), Box<dyn std::error::Error>> { try_parse(raw).map_err(Into::into) }".into(),
-            calls: vec![],
+            calls: crate::analysis::facts::SharedFactSlice::empty(),
             returns: vec![],
-            literals: vec![],
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
             source_role: FunctionSourceRole::Production,
-            attrs: vec![],
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
             impl_attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             impl_context: Default::default(),
             item: Default::default(),
         };
@@ -10437,7 +10480,7 @@ fn absent_delimiter_boundary_returns_head() {
         ffi_finding.static_limit_kind = None;
         ffi_finding.evidence.clear();
         let mut ffi_owner = rust_owner;
-        ffi_owner.attrs = vec!["#[no_mangle]".to_string()];
+        ffi_owner.attrs = vec!["#[no_mangle]".to_string()].into();
         let ffi_index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             functions: vec![ffi_owner],
             ..Default::default()

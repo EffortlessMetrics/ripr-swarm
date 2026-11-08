@@ -27,7 +27,7 @@ fn strip_check_json_canonical_next_action(bytes: &[u8]) -> Vec<u8> {
     strip_evidence_stages_member(&strip_language_completeness_member(&stripped)).into_bytes()
 }
 
-/// The per-finding staged-evidence rows (RIPR-SPEC-0423) are additive to these
+/// The per-finding staged-evidence rows (RIPR-SPEC-0429) are additive to these
 /// historical captures: one `evidence_stages` array per finding, emitted beside
 /// the `ripr` object with a trailing comma. Dedicated unit, schema and golden
 /// tests own that field; here it projects out so the historical bytes stay exact.

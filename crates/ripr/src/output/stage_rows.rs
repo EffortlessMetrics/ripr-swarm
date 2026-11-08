@@ -1,4 +1,4 @@
-//! Structured staged-evidence rows (RIPR-SPEC-0423).
+//! Structured staged-evidence rows (RIPR-SPEC-0429).
 //!
 //! The staged evidence chain — reach, infection, propagation, observation,
 //! discrimination — has always had one producer: the finding's `ripr`
@@ -25,7 +25,7 @@
 
 use crate::domain::Finding;
 
-/// One machine-readable staged-evidence row (RIPR-SPEC-0423). `stage` uses
+/// One machine-readable staged-evidence row (RIPR-SPEC-0429). `stage` uses
 /// the `ripr` object's own keys, so a consumer joins rows to the typed stage
 /// objects by the same token. `basis` is present only when the finding's
 /// `confidence_basis` names this stage.

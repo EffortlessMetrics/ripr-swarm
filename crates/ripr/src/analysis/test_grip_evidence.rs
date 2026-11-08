@@ -63,8 +63,8 @@ use super::seams::{ExpectedSink, RepoSeam, SeamId, SeamKind};
 use crate::analysis::cancellation;
 use crate::{
     domain::{
-        Confidence, MissingDiscriminatorFact, OracleKind, OracleStrength, StageEvidence,
-        StageState, SymbolId, ValueContext,
+        Confidence, DiscriminatorShape, MissingDiscriminatorFact, OracleKind, OracleStrength,
+        StageEvidence, StageState, SymbolId, ValueContext,
     },
     value_origins::LocatedValueFact as ValueFact,
 };
@@ -305,6 +305,7 @@ pub(crate) struct OracleSemantics {
 /// A cancellation checkpoint can stop this non-fallible helper early, so a
 /// caller that runs under a cancellation context must checkpoint immediately
 /// after this function returns before using or publishing the vector.
+#[cfg(test)]
 pub(crate) fn evidence_for_seams(seams: &[RepoSeam], index: &RustIndex) -> Vec<TestGripEvidence> {
     EvidencePass::new(index).evidence_for(seams)
 }
@@ -794,20 +795,35 @@ fn credited_related_tests<'a>(
             })
         })
         .flatten();
+    // A local the assertion reads is the function that bound it, so its
+    // initializer joins the text, the same attribution `ripr check` makes
+    // (#12056, #12264).
+    let pins_other_function = |owner: &FunctionSummary, test: &TestSummary, oracle: &OracleFact| {
+        owner_reach.as_ref().is_some_and(|(_, reach)| {
+            let text = super::classifier::assertion_text_with_local_initializers(
+                context.index,
+                test,
+                &oracle.text,
+                owner,
+            );
+            reach.assertion_pins_other_function(owner, test, oracle, &text)
+        })
+    };
     related
         .iter()
         .map(|(test, reason)| {
             let mut view = std::borrow::Cow::Borrowed(*test);
-            if let Some((owner, owner_reach)) = owner_reach.as_ref()
+            if let Some((owner, _)) = owner_reach.as_ref()
                 && (reason.is_proximity_only()
                     || *reason == RelationReason::AssertionTargetAffinity)
-                && test.assertions.iter().any(|oracle| {
-                    owner_reach.assertion_pins_other_function(owner, test, oracle, &oracle.text)
-                })
+                && test
+                    .assertions
+                    .iter()
+                    .any(|oracle| pins_other_function(owner, test, oracle))
             {
-                view.to_mut().assertions.retain(|oracle| {
-                    !owner_reach.assertion_pins_other_function(owner, test, oracle, &oracle.text)
-                });
+                view.to_mut()
+                    .assertions
+                    .retain(|oracle| !pins_other_function(owner, test, oracle));
             }
             // #12394 item 3: the claims statements `ripr check` credits
             // through the owner pin join the view the stages read.
@@ -815,6 +831,16 @@ fn credited_related_tests<'a>(
                 let admitted = pin.admitted_oracles(&view, context.index, context.pin_syntax());
                 if !admitted.is_empty() {
                     view.to_mut().assertions.extend(admitted);
+                }
+                // #13005: a plain `assert_eq!` whose literal the current
+                // owner provably does not return fails at baseline.
+                let withheld = pin.literal_withheld(&view, context.index, context.pin_syntax());
+                if !withheld.is_empty() {
+                    let mut position = 0;
+                    view.to_mut().assertions.retain(|_| {
+                        position += 1;
+                        !withheld.contains(&(position - 1))
+                    });
                 }
             }
             view
@@ -1158,6 +1184,8 @@ fn return_value_missing_discriminator(
         value: description.clone(),
         reason: reason.to_string(),
         flow_sink: None,
+        shape: DiscriminatorShape::Other,
+        drafted_boundary: None,
     })
 }
 
@@ -2957,6 +2985,13 @@ fn activate_evidence(
         boundary_constant.as_ref(),
         boundary.as_ref(),
     );
+    attach_drafted_boundary_assertion(
+        seam,
+        owner_fn,
+        boundary.as_ref(),
+        &activation_credited,
+        &mut missing,
+    );
     let direct_value_insensitive_owner_call = !owner_name.is_empty()
         && !requires_concrete_activation_values(seam)
         && owner_fn.is_some_and(|owner_fn| {
@@ -3913,6 +3948,56 @@ fn compact_activate_evidence(
     (stage, Vec::new())
 }
 
+/// The concrete drafted boundary call (agent-efficiency study tweak #4):
+/// when the boundary operand's observed values pin ONE equality-boundary
+/// input from the related tests' own owner-call rows and the owner's branch
+/// value folds there, the fact carries the paste-ready arguments and the
+/// folded expected value. `expected: None` keeps the `/* expected */`
+/// placeholder while the concrete input side still emits. The draft is a
+/// static model of the current behavior; ripr has not run or verified it.
+fn attach_drafted_boundary_assertion(
+    seam: &RepoSeam,
+    owner_fn: Option<&FunctionSummary>,
+    boundary: Option<&PredicateBoundaryOperand>,
+    activation_credited: &[&CompactTest<'_>],
+    missing: &mut [MissingDiscriminatorFact],
+) {
+    let Some(owner_fn) = owner_fn else {
+        return;
+    };
+    let Some(boundary) = boundary else {
+        return;
+    };
+    let Some(fact) = missing.first_mut() else {
+        return;
+    };
+    let call_rows: Vec<Vec<String>> = activation_credited
+        .iter()
+        .flat_map(|indexed| {
+            indexed
+                .test
+                .calls
+                .iter()
+                .filter(|call| call.name == owner_fn.name)
+                .filter_map(|call| {
+                    owner_call_text(&call.text, owner_fn)
+                        .and_then(|text| call_arguments(text, &owner_fn.name))
+                })
+        })
+        .collect();
+    let drafted = super::classify::drafted_boundary::drafted_boundary_assertion(
+        owner_fn,
+        &boundary.tested,
+        &boundary.token,
+        seam.expression(),
+        seam.display_line(),
+        &call_rows,
+    );
+    if let Some(drafted) = drafted {
+        fact.drafted_boundary = Some(drafted);
+    }
+}
+
 fn missing_discriminators_for(
     seam: &RepoSeam,
     observed: &[ValueFact],
@@ -3943,6 +4028,8 @@ fn missing_discriminators_for(
                     value: format!("{boundary_token} (boundary value)"),
                     reason: "no observed activation values for boundary predicate".to_string(),
                     flow_sink: None,
+                    shape: DiscriminatorShape::Other,
+                    drafted_boundary: None,
                 }];
             }
             // We do not yet know the literal value of `boundary_token`,
@@ -3983,6 +4070,8 @@ fn missing_discriminators_for(
                     value: format!("{boundary_token} (equality boundary)"),
                     reason,
                     flow_sink: None,
+                    shape: DiscriminatorShape::Other,
+                    drafted_boundary: None,
                 }]
             }
         }
@@ -4071,6 +4160,9 @@ fn test_passes_boundary_constant(
 /// evaluator can say about it.
 struct PredicateBoundaryOperand {
     token: String,
+    /// The compared operand the boundary token is not: the tested input a
+    /// drafted boundary call varies (`amount` for `amount >= threshold`).
+    tested: String,
     local: super::classify::LocalBoundary,
 }
 
@@ -4102,12 +4194,21 @@ fn predicate_boundary_operand(
     let reversed = boundary_operand_argument(owner_fn, &parameters, &left).is_none()
         && left_is_boundary_value(owner_fn, &left, seam.display_line())
         && boundary_operand_argument(owner_fn, &parameters, &right).is_some();
-    let token = boundary_token(if reversed { &left } else { &right });
+    let (boundary_operand, tested_operand) = if reversed {
+        (&left, &right)
+    } else {
+        (&right, &left)
+    };
+    let token = boundary_token(boundary_operand);
     if token.is_empty() {
         return None;
     }
     let local = super::classify::local_boundary(owner_fn, &token, seam.display_line());
-    Some(PredicateBoundaryOperand { token, local })
+    Some(PredicateBoundaryOperand {
+        token,
+        tested: tested_operand.clone(),
+        local,
+    })
 }
 
 /// Whether the left operand of a predicate is a boundary value rather than

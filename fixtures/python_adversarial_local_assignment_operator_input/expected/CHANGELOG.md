@@ -478,20 +478,7 @@ Updated:
 ## Pending — python_adversarial_local_assignment_operator_input (38)
 
 Reason:
-RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; human rendering unchanged
-
-Command:
-`cargo xtask goldens bless python_adversarial_local_assignment_operator_input --reason "..."`
-
-Updated:
-- `expected/check.json`
-- `expected/human.txt`
-- `expected/human-full.txt`
-
-## Pending — python_adversarial_local_assignment_operator_input (39)
-
-Reason:
-RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; no test attribution; human rendering unchanged
+RIPR-SPEC-0028: a plain local value edit is presented as a value, not a predicate (#13587); gap id, family, delta and change-type label only, class and evidence unchanged
 
 Command:
 `cargo xtask goldens bless python_adversarial_local_assignment_operator_input --reason "..."`

@@ -4629,14 +4629,14 @@ fn producer_rejects_same_file_production_helper_as_test_target() -> Result<(), S
         start_line: 10,
         end_line: 12,
         body: "fn discounted_total_helper() {}".into(),
-        calls: Vec::new(),
+        calls: crate::analysis::facts::SharedFactSlice::empty(),
         returns: Vec::new(),
-        literals: Vec::new(),
+        literals: crate::analysis::facts::SharedFactSlice::empty(),
         source_role: FunctionSourceRole::Production,
-        attrs: Vec::new(),
+        attrs: crate::analysis::facts::SharedFactSlice::empty(),
         impl_attrs: Vec::new(),
-        nested_fn_names: Vec::new(),
-        let_bindings: Vec::new(),
+        nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+        let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
         item: Default::default(),
         impl_context: Default::default(),
     };
@@ -4646,12 +4646,12 @@ fn producer_rejects_same_file_production_helper_as_test_target() -> Result<(), S
         start_line: 10,
         end_line: 12,
         body: function.body.clone(),
-        calls: Vec::new(),
+        calls: crate::analysis::facts::SharedFactSlice::empty(),
         assertions: Vec::new(),
-        literals: Vec::new(),
-        attrs: Vec::new(),
-        nested_fn_names: Vec::new(),
-        let_bindings: Vec::new(),
+        literals: crate::analysis::facts::SharedFactSlice::empty(),
+        attrs: crate::analysis::facts::SharedFactSlice::empty(),
+        nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+        let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
         generated: None,
     };
     let mut index = RustIndex::default();
@@ -11396,6 +11396,7 @@ enum FlowSinkKind {
 
 struct MissingDiscriminatorFact {
     flow_sink: Option<FlowSinkFact>,
+drafted_boundary: None
 }
 
 fn activation_evidence(flow_sinks: &[FlowSinkFact]) -> Option<MissingDiscriminatorFact> {
@@ -11405,6 +11406,7 @@ fn activation_evidence(flow_sinks: &[FlowSinkFact]) -> Option<MissingDiscriminat
 fn missing_boundary_discriminator(flow_sinks: &[FlowSinkFact]) -> Option<MissingDiscriminatorFact> {
     Some(MissingDiscriminatorFact {
         flow_sink: first_visible_flow_sink(flow_sinks).cloned(),
+    drafted_boundary: None
     })
 }
 
@@ -13068,12 +13070,12 @@ fn assertion_targets_seam_returns_false_for_empty_token_list() {
         start_line: 1,
         end_line: 5,
         body: "assert_eq!(1, 1);".into(),
-        calls: Vec::new(),
+        calls: crate::analysis::facts::SharedFactSlice::empty(),
         assertions: Vec::new(),
-        literals: Vec::new(),
-        attrs: Vec::new(),
-        nested_fn_names: Vec::new(),
-        let_bindings: Vec::new(),
+        literals: crate::analysis::facts::SharedFactSlice::empty(),
+        attrs: crate::analysis::facts::SharedFactSlice::empty(),
+        nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+        let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
         generated: None,
     };
     assert!(!assertion_targets_seam(&test, &[]));
@@ -13894,6 +13896,69 @@ fn proximity_test_pinning_another_function_lends_a_predicate_boundary_no_oracle(
     Ok(())
 }
 
+/// #12264: an assertion that reads a local bound to another function pins that
+/// function, the same attribution `ripr check` makes. The repo-seam gate reads
+/// the local's initializer, so `let r = reduce(3); assert_eq!(r, ..)` lends the
+/// owner's predicate boundary no oracle, while a local bound to the owner's own
+/// call keeps its credit.
+#[test]
+fn proximity_assertion_on_a_local_bound_to_another_function_lends_no_oracle() -> Result<(), String>
+{
+    let published_for = |extra_tests: &str| -> Result<Vec<OracleStrength>, String> {
+        let prod = format!(
+            "#[derive(Debug, PartialEq)]\npub enum Reduction {{ Failure, Over(u64) }}\n\
+             pub fn reduce(tokens: u64) -> Reduction {{\n    if tokens > 9 {{ Reduction::Failure }} else {{ Reduction::Over(tokens) }}\n}}\n\
+             pub fn consume(tokens: u64) -> bool {{\n    match reduce(tokens) {{\n        Reduction::Failure => false,\n        Reduction::Over(wait) => wait < 5,\n    }}\n}}\n\
+             #[cfg(test)]\nmod tests {{\n    use super::*;\n    {extra_tests}\n}}\n"
+        );
+        let files: Vec<(PathBuf, &str)> = vec![(PathBuf::from("src/lib.rs"), prod.as_str())];
+        let index = index_from_files(&files)?;
+        let seams = inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &index);
+        let boundary = seams
+            .iter()
+            .find(|s| {
+                s.kind() == SeamKind::PredicateBoundary && s.expression().contains("wait < 5")
+            })
+            .ok_or_else(|| "wait < 5 boundary seam present".to_string())?;
+        let context = CompactGripContext::new(&index);
+        let full = evidence_for_seam(boundary, &index);
+        let compact = compact_evidence_for_seam(boundary, &context);
+        assert_eq!(
+            full.observe.state, compact.observe.state,
+            "full and compact agree on observe"
+        );
+        assert_eq!(
+            full.discriminate.state, compact.discriminate.state,
+            "full and compact agree on discriminate"
+        );
+        Ok(full
+            .related_tests
+            .iter()
+            .map(|grip| grip.oracle_strength.clone())
+            .collect())
+    };
+    let runner = "#[test] fn consume_runs() { let _ = consume(3); }";
+    let direct = "#[test] fn reduce_over() { assert_eq!(reduce(3), Reduction::Over(3)); }";
+    let bound =
+        "#[test] fn reduce_over() { let r = reduce(3); assert_eq!(r, Reduction::Over(3)); }";
+    let owner_bound = "#[test] fn consume_pinned() { let c = consume(3); assert_eq!(c, true); }";
+    assert_eq!(
+        published_for(&format!("{direct} {runner}"))?,
+        vec![OracleStrength::None, OracleStrength::None],
+        "direct spelling: the other function lends none"
+    );
+    assert_eq!(
+        published_for(&format!("{bound} {runner}"))?,
+        vec![OracleStrength::None, OracleStrength::None],
+        "a local bound to the other function lends none"
+    );
+    assert!(
+        published_for(&format!("{owner_bound} {runner}"))?.contains(&OracleStrength::Strong),
+        "a local bound to the owner's own call keeps the oracle"
+    );
+    Ok(())
+}
+
 /// #12600/#12671: the same refusal for a returned value. `Ok(n)` in
 /// `parse_masked` is a value `parse_pinned` also returns, so a same-file test
 /// that pins `parse_pinned` lends it no oracle once a test that runs
@@ -14379,14 +14444,14 @@ fn closure_boundary_operand_route_ignores_comment_only_closure_pattern() {
             start_line: 1,
             end_line: 5,
             body: "pub fn score(raw_amount: i32, threshold: i32) -> bool {\n    // values.iter().any(|amount| amount >= threshold)\n    let amount = raw_amount + 1;\n    amount >= threshold\n}".into(),
-            calls: Vec::new(),
+            calls: crate::analysis::facts::SharedFactSlice::empty(),
             returns: Vec::new(),
-            literals: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
             source_role: FunctionSourceRole::Production,
-            attrs: Vec::new(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
             impl_attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             item: Default::default(),
             impl_context: Default::default(),
         };
@@ -15434,14 +15499,14 @@ fn same_file_test_helper_call_counts_as_owner_call_evidence() {
                 start_line: 1,
                 end_line: 5,
                 body: "pub fn discounted_total(amount: i32, threshold: i32) -> i32 { if amount >= threshold { amount - 10 } else { amount } }".into(),
-                calls: Vec::new(),
+                calls: crate::analysis::facts::SharedFactSlice::empty(),
                 returns: Vec::new(),
-                literals: Vec::new(),
+                literals: crate::analysis::facts::SharedFactSlice::empty(),
                 source_role: FunctionSourceRole::Production,
-                attrs: Vec::new(),
+                attrs: crate::analysis::facts::SharedFactSlice::empty(),
                 impl_attrs: Vec::new(),
-                nested_fn_names: Vec::new(),
-                let_bindings: Vec::new(),
+                nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+                let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
                 item: Default::default(),
                 impl_context: Default::default(),
             }, FunctionSummary {
@@ -15455,14 +15520,14 @@ fn same_file_test_helper_call_counts_as_owner_call_evidence() {
                     line: 11,
                     name: "discounted_total".to_string(),
                     text: "discounted_total(100, 100)".to_string().into(),
-                }],
+                }].into(),
                 returns: Vec::new(),
-                literals: Vec::new(),
+                literals: crate::analysis::facts::SharedFactSlice::empty(),
                 source_role: FunctionSourceRole::Production,
-                attrs: Vec::new(),
+                attrs: crate::analysis::facts::SharedFactSlice::empty(),
                 impl_attrs: Vec::new(),
-                nested_fn_names: Vec::new(),
-                let_bindings: Vec::new(),
+                nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+                let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
                 item: Default::default(),
                 impl_context: Default::default(),
             }],
@@ -15476,7 +15541,7 @@ fn same_file_test_helper_call_counts_as_owner_call_evidence() {
                     line: 21,
                     name: "case_at_threshold".to_string(),
                     text: "case_at_threshold()".to_string().into(),
-                }],
+                }].into(),
                 assertions: vec![OracleFact {
                     line: 21,
                     kind: OracleKind::ExactValue,
@@ -15485,10 +15550,10 @@ fn same_file_test_helper_call_counts_as_owner_call_evidence() {
                     observed_tokens: Vec::new(),
                     ok_value_observed: None,
                 }],
-                literals: Vec::new(),
-                attrs: Vec::new(),
-                nested_fn_names: Vec::new(),
-                let_bindings: Vec::new(),
+                literals: crate::analysis::facts::SharedFactSlice::empty(),
+                attrs: crate::analysis::facts::SharedFactSlice::empty(),
+                nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+                let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
                 generated: None,
             }],
             ..Default::default()
@@ -22525,6 +22590,7 @@ fn inline_unwrap_err_equality_discriminates_an_error_variant_seam() -> Result<()
         let prod = format!(
             "#[derive(Debug, PartialEq)]\npub enum Fault {{ Odd, Bad }}\n\
              pub fn parse(text: &str) -> Result<u8, Fault> {{\n    if text.len() % 2 != 0 {{\n        return Err(Fault::Odd);\n    }}\n    Ok(1)\n}}\n\
+             fn id<T>(v: T) -> T {{ v }}\n\
              #[cfg(test)]\nmod tests {{\n    use super::*;\n    {test}\n}}\n"
         );
         let files: Vec<(PathBuf, &str)> = vec![(PathBuf::from("src/lib.rs"), prod.as_str())];
@@ -22602,6 +22668,36 @@ fn inline_unwrap_err_equality_discriminates_an_error_variant_seam() -> Result<()
             spaced.0,
             StageState::Yes,
             "an Err constructor spelled with spacing or a comment is still the test's own error: {spelled}"
+        );
+    }
+    for wrapper in [
+        "assert_eq!(parse(\"1\").or(Some(Err(Fault::Odd))).unwrap_err(), Fault::Odd);",
+        "assert_eq!(Result::or(parse(\"1\"), id(Err(Fault::Odd))).unwrap_err(), Fault::Odd);",
+        "assert_eq!(Err(Fault::Odd).unwrap_err(), Fault::Odd);",
+        "assert_eq!(Some(Err(Fault::Odd)).unwrap().unwrap_err(), Fault::Odd);",
+        "assert_eq!(std::mem::replace(&mut parse(\"1\"), Err(Fault::Odd)), Err(Fault::Odd));",
+    ] {
+        let wrapped = read(&format!("#[test] fn odd() {{ {wrapper} }}"))?;
+        assert_ne!(
+            wrapped.0,
+            StageState::Yes,
+            "a test-written Err wrapper must not discriminate the seam (#12474): {wrapper}"
+        );
+    }
+    // Positive controls for the allowlist (#12474): a direct `Err(..)` compare or
+    // match against the owner's own result still discriminates, including when a
+    // call wraps the whole assertion rather than the `Err(..)`.
+    for direct in [
+        "assert_eq!(parse(\"1\"), Err(Fault::Odd));",
+        "assert_eq!(Err(Fault::Odd), parse(\"1\"));",
+        "assert!(matches!(parse(\"1\"), Err(Fault::Odd)));",
+        "[1].iter().for_each(|_| assert_eq!(parse(\"1\"), Err(Fault::Odd)));",
+    ] {
+        let direct_pin = read(&format!("#[test] fn odd() {{ {direct} }}"))?;
+        assert_eq!(
+            direct_pin.0,
+            StageState::Yes,
+            "a direct Err(..) compare keeps its credit: {direct}"
         );
     }
     let grouped =

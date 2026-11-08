@@ -505,26 +505,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 
-## Pending — binding_value_family_matrix (35)
+## Pending — binding_value_family_matrix (#12118)
 
 Reason:
-RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; human rendering unchanged
+#12118: the `binding_predicate_relation` evidence on a finding retargeted from a changed `let` now names the changed `let` declaration line; only that evidence string in check.json changes, human output, classes and ids are unchanged.
 
-Command:
-`cargo xtask goldens bless binding_value_family_matrix --reason "..."`
+Operation:
+Manual edit: appended ` (changed `let <binding>` declared at line N)` to each `binding_predicate_relation` evidence string, N taken from the fixture diff.patch.
+
+Execution:
+Source-only edit; native `cargo xtask goldens bless` could not run because the local container is out of memory (SIGKILL compiling `ripr`); hosted `goldens check` is the proof.
 
 Updated:
 - `expected/check.json`
-- `expected/human.txt`
-
-## Pending — binding_value_family_matrix (36)
-
-Reason:
-RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; no test attribution; human rendering unchanged
-
-Command:
-`cargo xtask goldens bless binding_value_family_matrix --reason "..."`
-
-Updated:
-- `expected/check.json`
-- `expected/human.txt`

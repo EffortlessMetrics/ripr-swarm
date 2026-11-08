@@ -307,20 +307,7 @@ Updated:
 ## Pending — match_arm_tuple_terminal_generated_constructor (24)
 
 Reason:
-RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; human rendering unchanged
-
-Command:
-`cargo xtask goldens bless match_arm_tuple_terminal_generated_constructor --reason "..."`
-
-Updated:
-- `expected/check.json`
-- `expected/human.txt`
-- `expected/human-full.txt`
-
-## Pending — match_arm_tuple_terminal_generated_constructor (25)
-
-Reason:
-RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; no test attribution; human rendering unchanged
+RIPR-SPEC-0001: evidence-first human output now states a repeated related-test miss sentence once per test and the explain verdict block references the Evidence row instead of re-listing the assertion and reason; every fact remains exactly once (agent-efficiency study, Nov 2-4)
 
 Command:
 `cargo xtask goldens bless match_arm_tuple_terminal_generated_constructor --reason "..."`

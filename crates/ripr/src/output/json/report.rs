@@ -972,7 +972,7 @@ fn finding_json_with_config_and_counts(
         false,
     );
     out.push_str(&format!("{} }},\n", "  ".repeat(indent + 1)));
-    // RIPR-SPEC-0423: the staged-evidence rows, additive beside the `ripr`
+    // RIPR-SPEC-0429: the staged-evidence rows, additive beside the `ripr`
     // stages they project. The human Evidence block stays prose; this is the
     // row form machine consumers read instead of parsing `evidence_path`.
     crate::output::stage_rows::stage_rows_json(out, indent + 1, finding, true);

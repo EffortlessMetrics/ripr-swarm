@@ -56,8 +56,8 @@ mod tests {
     };
     use crate::app::{CheckOutput, Mode};
     use crate::domain::{
-        ActivationEvidence, Confidence, ConfidenceCap, DeltaKind, ExposureClass, Finding,
-        FindingCanonicalGap, FlowSinkFact, FlowSinkKind, LanguageId, LanguageStatus,
+        ActivationEvidence, Confidence, ConfidenceCap, DeltaKind, DiscriminatorShape, ExposureClass,
+        Finding, FindingCanonicalGap, FlowSinkFact, FlowSinkKind, LanguageId, LanguageStatus,
         MissingDiscriminatorFact, OracleKind, OracleStrength, OwnerKind, Probe, ProbeFamily,
         ProbeId, RelatedTest, RelatedTestMiss, RevealEvidence, RiprEvidence, SourceLocation,
         StageEvidence, StageState, StaticLimitKind, Summary, SymbolId, ValueContext, ValueFact,
@@ -130,7 +130,7 @@ mod tests {
         Ok(())
     }
 
-    /// RIPR-SPEC-0423: the staged-evidence row form sits beside the `ripr`
+    /// RIPR-SPEC-0429: the staged-evidence row form sits beside the `ripr`
     /// object — five rows in Evidence order with the stage tokens and wire
     /// values the typed stages hold. No row references a related test: the
     /// general decision-set role is not stage provenance (#13453).
@@ -239,6 +239,8 @@ mod tests {
                 value: "amount == discount_threshold".to_string(),
                 reason: "No related test calls the boundary value".to_string(),
                 flow_sink: None,
+                shape: DiscriminatorShape::Boundary,
+                drafted_boundary: None,
             });
         finding.related_tests.push(RelatedTest {
             name: "below_threshold_has_no_discount".to_string(),
@@ -2355,6 +2357,8 @@ mod tests {
             reason: "Related Perl test reaches the owner but lacks an exact return discriminator"
                 .to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Other,
+            drafted_boundary: None,
         }];
         finding.related_tests = vec![RelatedTest {
             name: "discount_smoke".to_string(),

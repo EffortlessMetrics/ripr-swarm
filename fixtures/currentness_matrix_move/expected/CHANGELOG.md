@@ -329,7 +329,7 @@ Updated:
 ## Pending — currentness_matrix_move (25)
 
 Reason:
-RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; human rendering unchanged
+RIPR-SPEC-0156: a pure-deletion hunk now anchors the removed predicate at the next new-side line (#13098)
 
 Command:
 `cargo xtask goldens bless currentness_matrix_move --reason "..."`
