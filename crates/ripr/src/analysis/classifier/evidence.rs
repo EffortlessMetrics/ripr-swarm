@@ -940,7 +940,7 @@ impl ClassifiedProbeEvidence {
         // from the workspace's indexed functions. Both package scopes must
         // resolve; an unscopable side (single-crate relative paths, absolute
         // paths) keeps today's behavior.
-        let cross_package_defeats = |test: &TestSummary, callee: &str| {
+        let cross_package_name_defeats = |test: &TestSummary, callee: &str| {
             memoized_file_defeat(&package_defeats_by_file, &test.file, callee, || {
                 let Some(test_package) = package_prefix(&test.file) else {
                     return false;
@@ -958,59 +958,68 @@ impl ClassifiedProbeEvidence {
                 if !same_name_in_test_package {
                     return false;
                 }
-                // #8116 (review 5783736897): the defeat lifts only when every
-                // same-named call in the test resolves to the owner, matching
-                // `scip_reference_admits_owner_call`. One call that binds a
-                // local function keeps the defeat, whatever order it appears.
-                if let (Some(bindings), Some(root), Some(owner)) = (
-                    context.scip_bindings,
-                    context.workspace_root,
-                    context.owner_fn,
-                ) && test.calls.iter().any(|call| call.name == callee)
-                    && test
-                        .calls
-                        .iter()
-                        .filter(|call| call.name == callee)
-                        .all(|call| {
-                            let Some(owner_range) = context
-                                .index
-                                .files()
-                                .get(&owner.file)
-                                .and_then(|facts| owner.body.range_in(&facts.data().source))
-                            else {
-                                return false;
-                            };
-                            let Some(source_line) =
-                                context.index.files().get(&test.file).and_then(|facts| {
-                                    call.line
-                                        .checked_sub(1)
-                                        .and_then(|line| facts.data().source.lines().nth(line))
-                                })
-                            else {
-                                return false;
-                            };
-                            let same_line_count = test
-                                .calls
-                                .iter()
-                                .filter(|other| other.name == callee && other.line == call.line)
-                                .count();
-                            bindings.call_resolves_to_owner(
-                                root,
-                                &test.file,
-                                call.line,
-                                source_line,
-                                callee,
-                                &owner.file,
-                                &owner.name,
-                                owner_range,
-                                same_line_count,
-                            )
-                        })
-                {
-                    return false;
-                }
                 true
             })
+        };
+        // #8116 (review 5817339252): the structural lookup above is shared per
+        // (file, callee), but the SCIP lift reads this test's own calls, so it
+        // is evaluated per test and never enters the file memo.
+        let cross_package_defeats = |test: &TestSummary, callee: &str| {
+            if !cross_package_name_defeats(test, callee) {
+                return false;
+            }
+            // #8116 (review 5783736897): the defeat lifts only when every
+            // same-named call in the test resolves to the owner, matching
+            // `scip_reference_admits_owner_call`. One call that binds a
+            // local function keeps the defeat, whatever order it appears.
+            if let (Some(bindings), Some(root), Some(owner)) = (
+                context.scip_bindings,
+                context.workspace_root,
+                context.owner_fn,
+            ) && test.calls.iter().any(|call| call.name == callee)
+                && test
+                    .calls
+                    .iter()
+                    .filter(|call| call.name == callee)
+                    .all(|call| {
+                        let Some(owner_range) = context
+                            .index
+                            .files()
+                            .get(&owner.file)
+                            .and_then(|facts| owner.body.range_in(&facts.data().source))
+                        else {
+                            return false;
+                        };
+                        let Some(source_line) =
+                            context.index.files().get(&test.file).and_then(|facts| {
+                                call.line
+                                    .checked_sub(1)
+                                    .and_then(|line| facts.data().source.lines().nth(line))
+                            })
+                        else {
+                            return false;
+                        };
+                        let same_line_count = test
+                            .calls
+                            .iter()
+                            .filter(|other| other.name == callee && other.line == call.line)
+                            .count();
+                        bindings.call_resolves_to_owner(
+                            root,
+                            &test.file,
+                            call.line,
+                            source_line,
+                            callee,
+                            &owner.file,
+                            &owner.name,
+                            owner_range,
+                            same_line_count,
+                        )
+                    })
+            {
+                return false;
+            }
+            true
         };
         let map_callback_pin_required = matches!(
             &propagation_witness,
@@ -3397,6 +3406,218 @@ mod tests {
              cross-package ambiguity: {:#?}",
             unscopable.discriminate
         );
+    }
+
+    /// #8116 (review 5817339252): the SCIP lift of the cross-package defeat
+    /// reads each test's own calls, so one test's answer must never stand in
+    /// for another test in the same file. `owner_only` has one call that SCIP
+    /// binds to the changed owner; `mixed` also calls a same-named function of
+    /// its own package. Whichever is classified first, the owner-only test
+    /// keeps the lifted defeat and a file of only mixed tests keeps the defeat.
+    #[test]
+    fn scip_defeat_lift_is_decided_per_test_in_either_order() -> Result<(), String> {
+        use crate::analysis::scip::{
+            ScipReferenceBindings,
+            generated::scip::{Document, Index, Occurrence, PositionEncoding, SymbolRole},
+        };
+        use prost::Message;
+        use sha2::{Digest, Sha256};
+
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_nanos())
+            .unwrap_or(0);
+        let root = std::env::temp_dir().join(format!("ripr-evidence-scip-lift-{stamp}"));
+        let write = |relative: &str, text: &str| -> Result<PathBuf, String> {
+            let full = root.join(relative);
+            if let Some(parent) = full.parent() {
+                std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+            }
+            std::fs::write(&full, text).map_err(|error| error.to_string())?;
+            Ok(PathBuf::from(relative))
+        };
+        std::fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname='scip-lift'\nversion='0.1.0'\nedition='2024'\n",
+        )
+        .map_err(|error| error.to_string())?;
+        let owner_source = "pub fn expect_response() -> Result<u32, ParseError> { Ok(1) }\n";
+        let beta_source = "pub fn expect_response() -> Result<u32, ParseError> { Ok(2) }\n";
+        let tests_source = "#[test]\nfn owner_only() {\n    let _ = expect_response();\n}\n\n#[test]\nfn mixed() {\n    let _ = expect_response();\n    let _ = expect_response();\n}\n";
+        let files = vec![
+            write("crates/alpha/src/lib.rs", owner_source)?,
+            write("crates/beta/src/lib.rs", beta_source)?,
+            write("crates/beta/tests/protocol.rs", tests_source)?,
+        ];
+        let index = crate::analysis::facts::build_index(&root, &files)?;
+        let owner = index
+            .functions()
+            .iter()
+            .find(|function| function.file == std::path::Path::new("crates/alpha/src/lib.rs"))
+            .ok_or("missing indexed alpha owner")?;
+        let by_name = |name: &str| -> Result<TestSummary, String> {
+            let mut test = index
+                .tests()
+                .iter()
+                .find(|test| test.name == name)
+                .cloned()
+                .ok_or_else(|| format!("missing indexed test {name}"))?;
+            // The guarded match makes the bare owner binding the only
+            // confirmation, so the defeat decides the discriminate stage.
+            test.assertions = vec![guarded_oracle()];
+            Ok(test)
+        };
+        let owner_only = by_name("owner_only")?;
+        let mixed = by_name("mixed")?;
+        assert_eq!(
+            owner_only
+                .calls
+                .iter()
+                .filter(|call| call.name == "expect_response")
+                .count(),
+            1,
+            "fixture must parse the single owner call"
+        );
+        assert_eq!(
+            mixed
+                .calls
+                .iter()
+                .filter(|call| call.name == "expect_response")
+                .count(),
+            2,
+            "fixture must parse both mixed calls"
+        );
+
+        let alpha = "scip rust-analyzer cargo alpha 0.1.0 alpha/expect_response().";
+        let beta = "scip rust-analyzer cargo beta 0.1.0 beta/expect_response().";
+        let call_at = |line: usize, symbol: &str| -> Result<Occurrence, String> {
+            let text = tests_source
+                .lines()
+                .nth(line)
+                .ok_or("missing fixture line")?;
+            let col = text.find("expect_response(").ok_or("missing call column")?;
+            let col = i32::try_from(col).map_err(|error| error.to_string())?;
+            Ok(Occurrence {
+                symbol: symbol.into(),
+                range: vec![
+                    i32::try_from(line).map_err(|e| e.to_string())?,
+                    col,
+                    col + 15,
+                ],
+                ..Occurrence::default()
+            })
+        };
+        let scip = Index {
+            documents: vec![
+                Document {
+                    relative_path: "crates/alpha/src/lib.rs".into(),
+                    position_encoding: PositionEncoding::Utf8CodeUnitOffsetFromLineStart as i32,
+                    occurrences: vec![Occurrence {
+                        symbol: alpha.into(),
+                        range: vec![0, 7, 22],
+                        symbol_roles: SymbolRole::Definition as i32,
+                        ..Occurrence::default()
+                    }],
+                    ..Document::default()
+                },
+                Document {
+                    relative_path: "crates/beta/tests/protocol.rs".into(),
+                    position_encoding: PositionEncoding::Utf8CodeUnitOffsetFromLineStart as i32,
+                    occurrences: vec![call_at(2, alpha)?, call_at(7, alpha)?, call_at(8, beta)?],
+                    ..Document::default()
+                },
+            ],
+            ..Index::default()
+        };
+        let bytes = scip.encode_to_vec();
+        let index_path = root.join("index.scip");
+        let manifest_path = root.join("manifest.json");
+        std::fs::write(&index_path, &bytes).map_err(|error| error.to_string())?;
+        let digest = |text: &str| format!("{:x}", Sha256::digest(text.as_bytes()));
+        let manifest = serde_json::json!({
+            "schema_version": "ripr-scip-admission-manifest-v1",
+            "index_sha256": format!("{:x}", Sha256::digest(&bytes)),
+            "producer": {"name": "synthetic-per-test-lift-regression", "version": "1"},
+            "project_root_relative": ".",
+            "source_files": [
+                {"relative_path": "crates/alpha/src/lib.rs", "source_sha256": digest(owner_source)},
+                {"relative_path": "crates/beta/tests/protocol.rs", "source_sha256": digest(tests_source)},
+            ]
+        });
+        std::fs::write(&manifest_path, manifest.to_string()).map_err(|error| error.to_string())?;
+        let mut consumed = crate::analysis::consumed_source::ConsumedRustSources::default();
+        consumed.record(
+            std::path::Path::new("crates/alpha/src/lib.rs"),
+            Some(owner_source.as_bytes()),
+        );
+        consumed.record(
+            std::path::Path::new("crates/beta/tests/protocol.rs"),
+            Some(tests_source.as_bytes()),
+        );
+        let bindings = ScipReferenceBindings::from_admitted_index(
+            &root,
+            &index_path,
+            &manifest_path,
+            &consumed,
+            index
+                .files()
+                .iter()
+                .map(|(path, facts)| (path.as_path(), facts.data().source.as_ref())),
+        )
+        .map_err(|error| error.reason())?;
+
+        let probe = Probe {
+            id: ProbeId("probe:alpha:expect_response".to_string()),
+            location: SourceLocation::new("crates/alpha/src/lib.rs", 1, 2),
+            owner: Some(owner.id.clone()),
+            family: ProbeFamily::ReturnValue,
+            delta: DeltaKind::Value,
+            before: Some("1".to_string()),
+            after: Some("2".to_string()),
+            // No token of this expression appears in the guarded oracle
+            // text, so only the owner binding can confirm.
+            expression: "if trimmed != Some(expected_id.trim()).as_str() {".to_string(),
+            expected_sinks: Vec::new(),
+            required_oracles: Vec::new(),
+        };
+        let discriminate = |tests: &[&TestSummary]| -> StageState {
+            let related = tests
+                .iter()
+                .map(|test| (*test, RelationReason::DirectOwnerCall))
+                .collect::<Vec<_>>();
+            let context = ProbeContext::new(&probe, Some(owner), related, false, &index, true)
+                .with_scip_authority(&root, Some(&bindings));
+            ClassifiedProbeEvidence::gather(
+                &context,
+                &probe.expression,
+                &crate::analysis::classify::TransitiveReachIndex::new(context.index),
+            )
+            .discriminate
+            .state
+        };
+        assert_eq!(
+            discriminate(&[&mixed]),
+            StageState::Weak,
+            "a test whose other same-named call binds its own package's function keeps the defeat"
+        );
+        assert_eq!(
+            discriminate(&[&owner_only]),
+            StageState::Yes,
+            "a test whose every same-named call resolves to the owner lifts the defeat"
+        );
+        assert_eq!(
+            discriminate(&[&mixed, &owner_only]),
+            StageState::Yes,
+            "the mixed test classified first must not withhold the owner-only test's authority"
+        );
+        assert_eq!(
+            discriminate(&[&owner_only, &mixed]),
+            StageState::Yes,
+            "the owner-only test classified first still confirms"
+        );
+        std::fs::remove_dir_all(root).map_err(|error| error.to_string())?;
+        Ok(())
     }
 
     #[test]
