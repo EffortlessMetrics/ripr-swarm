@@ -87,6 +87,7 @@ pub(crate) fn detect_languages(root: &Path) -> Vec<LanguageId> {
         || shallow_has_file(root, "setup.cfg")
         || shallow_has_file(root, "pytest.ini")
         || shallow_has_extension(root, "py")
+        || !super::nested_python_package_roots(root).is_empty()
     {
         found.push(LanguageId::Python);
     }

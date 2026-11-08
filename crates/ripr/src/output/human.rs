@@ -1255,6 +1255,22 @@ fn render_preview_language_advisories(out: &mut String, output: &CheckOutput) {
                 "\nNote: this diff contains {} {}. The {} adapter is preview and not enabled, so these files were not analyzed — this is NOT a clean Rust-grade result. Enable it in ripr.toml [languages] to analyze them.\n\nTo enable, add to ripr.toml:\n\n[languages]\n{enabled_line}\n",
                 advisory.file_count, file_label, language,
             ));
+            if advisory.language == "python" {
+                let packages = crate::config::nested_python_package_roots(&output.root);
+                if let Some(first) = packages.first() {
+                    let names = packages
+                        .iter()
+                        .map(|package| {
+                            format!("`{}`", package.display().to_string().replace('\\', "/"))
+                        })
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    out.push_str(&format!(
+                        "\nPython packages found below this root: {names}. Or analyze one package directly: `ripr check --root {}`.\n",
+                        first.display().to_string().replace('\\', "/")
+                    ));
+                }
+            }
             if advisory.language == "typescript" && advisory.javascript_file_count > 0 {
                 out.push_str("\n(\"typescript\" enables the adapter for JavaScript files too.)\n");
             }
@@ -9003,6 +9019,71 @@ mod tests {
             rendered.contains("NOT a clean Rust-grade result"),
             "expected honesty note; got:\n{rendered}"
         );
+    }
+
+    /// #13618: a not-enabled Python note at a monorepo root names the nested
+    /// packages and the `--root` form; a root without nested packages gets no
+    /// hint (negative control).
+    #[test]
+    fn render_python_not_enabled_note_names_nested_packages_for_root_flag() -> Result<(), String> {
+        if !cfg!(feature = "lang-python") {
+            return Ok(());
+        }
+        let base = std::env::temp_dir().join(format!(
+            "ripr-13618-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |elapsed| elapsed.as_nanos())
+        ));
+        std::fs::create_dir_all(base.join("services/a"))
+            .map_err(|err| format!("create package dir: {err}"))?;
+        std::fs::write(base.join("services/a/pyproject.toml"), "[project]\n")
+            .map_err(|err| format!("write marker: {err}"))?;
+        let bare = base.join("bare");
+        std::fs::create_dir_all(&bare).map_err(|err| format!("create bare dir: {err}"))?;
+        let render_at = |root: PathBuf| {
+            render(&CheckOutput {
+                value_origins: Default::default(),
+                harness_projections: Vec::new(),
+                schema_version: "0.1".to_string(),
+                tool: "ripr".to_string(),
+                mode: Mode::Draft,
+                root,
+                base: None,
+                summary: Summary::default(),
+                findings: vec![],
+                preview_language_advisories: vec![PreviewLanguageAdvisory {
+                    language: "python".to_string(),
+                    file_count: 2,
+                    sample_paths: vec!["services/a/calc.py".to_string()],
+                    javascript_file_count: 0,
+                    enabled: false,
+                }],
+                language_runs: Vec::new(),
+                no_scope_provided: false,
+                unanalyzed_working_tree: false,
+                untracked_working_tree_source_paths: Vec::new(),
+                ignored_working_tree_source_paths: Vec::new(),
+                unlinked_python_tests: None,
+                suppression: None,
+                analysis_outcome: None,
+                partial_scope: None,
+                analyzed_revisions: None,
+            })
+        };
+        let monorepo = render_at(base.clone());
+        let flat = render_at(bare);
+        std::fs::remove_dir_all(&base).map_err(|err| format!("remove: {err}"))?;
+        assert!(
+            monorepo.contains("`services/a`") && monorepo.contains("ripr check --root services/a"),
+            "expected --root hint; got:\n{monorepo}"
+        );
+        assert!(
+            !flat.contains("--root"),
+            "no nested packages must mean no hint; got:\n{flat}"
+        );
+        Ok(())
     }
 
     #[test]
