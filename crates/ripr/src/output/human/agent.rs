@@ -621,7 +621,19 @@ fn terminal_line(
                 .to_string()
         }
         NextActionCheckCase::SuppressedByPolicy => {
-            "stop=all findings are suppressed by policy\n".to_string()
+            // #13819: name the owner opt-out when it, not a policy, withheld
+            // findings.
+            match (output.suppression.is_some(), output.owner_opt_outs.is_empty()) {
+                (false, false) => {
+                    "stop=all findings are withheld by owner opt-out (owner_mutants_skip)\n"
+                        .to_string()
+                }
+                (true, false) => {
+                    "stop=all findings are suppressed by policy or withheld by owner opt-out (owner_mutants_skip)\n"
+                        .to_string()
+                }
+                _ => "stop=all findings are suppressed by policy\n".to_string(),
+            }
         }
         NextActionCheckCase::StaticLimited => {
             // #13238: the human surface's own Next step for this finding

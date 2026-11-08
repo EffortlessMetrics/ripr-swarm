@@ -111,6 +111,7 @@ fn output(findings: Vec<Finding>) -> CheckOutput {
         untracked_working_tree_source_paths: Vec::new(),
         ignored_working_tree_source_paths: Vec::new(),
         unlinked_python_tests: None,
+        owner_opt_outs: Vec::new(),
         suppression: None,
         analysis_outcome: None,
         partial_scope: None,
