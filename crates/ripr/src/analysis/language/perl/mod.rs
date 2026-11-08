@@ -320,6 +320,7 @@ impl LanguageAdapter for PerlAdapter {
             rust_diagnostic_origins: Default::default(),
             rust_consumed_sources: Default::default(),
             preview_fact_cache: Default::default(),
+            owner_opt_outs: Vec::new(),
         })
     }
 

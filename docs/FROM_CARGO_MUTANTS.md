@@ -43,7 +43,7 @@ result. See [Why ripr](WHY_RIPR.md).
 | `exclude_globs` / `examine_globs` | `--exclude` / `--path` flags ([Configuration](CONFIGURATION.md)) |
 | `exclude_re` / `examine_re` | none |
 | `additional_cargo_test_args`, `test_tool` | not applicable |
-| `#[mutants::skip]` | `.ripr/suppressions.toml` ([example](suppressions.example.toml)); applied to findings with `--suppression-policy` |
+| `#[mutants::skip]` | honored as-is on a changed function or method, including `#[cfg_attr(<predicate>, mutants::skip)]`: `ripr check` withholds that owner's findings and discloses them (count and `owner_mutants_skip`; see [Output schema](OUTPUT_SCHEMA.md#owner_opt_outs-and-withheld-findings-top-level-additive-13819)). A skip on an `impl` block or module is not read; use `.ripr/suppressions.toml` ([example](suppressions.example.toml)) with `--suppression-policy` for those |
 
 `ripr init` writes a `ripr.toml` with the built-in defaults. It is optional.
 

@@ -99,16 +99,8 @@ pub(crate) fn select_human_triage<'a>(
     config: &RiprConfig,
 ) -> HumanTriage<'a> {
     let role_context = triage_role_context(config);
-    let suppressed_ids: BTreeSet<&str> = output
-        .suppression
-        .iter()
-        .flat_map(|outcome| {
-            outcome
-                .suppressed
-                .iter()
-                .map(|entry| entry.finding_id.as_str())
-        })
-        .collect();
+    // #13819: owner opt-outs leave triage exactly like policy suppression.
+    let suppressed_ids: BTreeSet<&str> = output.withheld_finding_ids();
     // #9346 (same-owner): decisive production verdicts. An unknown
     // production probe is shadowed only by a decisive verdict that covers
     // the same changed behavior, or when the unknown carries no distinct
@@ -221,9 +213,19 @@ pub(crate) fn render_human_triage(
             out.push_str(&no_selection_safe_action_line(&triage.omitted));
         }
         NextActionCheckCase::SuppressedByPolicy => {
-            out.push_str(
-                "  Safe next action: all findings are suppressed by policy; review the suppression block before treating this run as actionable\n",
-            );
+            // #13819: a run whose findings an owner opt-out withheld names
+            // that block, not a policy it never loaded.
+            out.push_str(match (output.suppression.is_some(), output.owner_opt_outs.is_empty()) {
+                (false, false) => {
+                    "  Safe next action: all findings are withheld because the changed function carries #[mutants::skip]; review the owner opt-out block before treating this run as actionable\n"
+                }
+                (true, false) => {
+                    "  Safe next action: all findings are suppressed by policy or withheld by #[mutants::skip]; review the suppression and owner opt-out blocks before treating this run as actionable\n"
+                }
+                _ => {
+                    "  Safe next action: all findings are suppressed by policy; review the suppression block before treating this run as actionable\n"
+                }
+            });
         }
         NextActionCheckCase::NoDiffFinding => {
             out.push_str(
@@ -2103,6 +2105,7 @@ mod tests {
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
+            owner_opt_outs: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,

@@ -592,6 +592,7 @@ impl TypeScriptAdapter {
                 rust_diagnostic_origins: Default::default(),
                 rust_consumed_sources: Default::default(),
                 preview_fact_cache: Default::default(),
+                owner_opt_outs: Vec::new(),
             });
         }
         // Phase 1: discover and index every accepted file in the workspace
@@ -1880,6 +1881,7 @@ impl TypeScriptAdapter {
             rust_diagnostic_origins: Default::default(),
             rust_consumed_sources: Default::default(),
             preview_fact_cache: fact_cache_stats,
+            owner_opt_outs: Vec::new(),
         })
     }
 }

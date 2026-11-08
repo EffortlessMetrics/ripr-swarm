@@ -1958,3 +1958,43 @@ fn proof_harness_attribute_paths_are_exact_and_never_tests() {
         "proof-harness paths must stay out of the executable-test list"
     );
 }
+
+#[test]
+fn mutants_skip_attribute_path_is_exact_and_admits_cfg_attr() {
+    for attribute in [
+        "#[mutants::skip]",
+        "#[::mutants::skip]",
+        "#[mutants :: skip]",
+        "#[cfg_attr(test, mutants::skip)]",
+        "#[cfg_attr(not(test), mutants::skip)]",
+        "#[cfg_attr(feature = \"slow\", mutants::skip)]",
+        "#[cfg_attr(all(test, feature = \"a,b\"), inline, mutants::skip)]",
+    ] {
+        assert!(
+            attributes_define_mutants_skip([attribute]),
+            "should be a mutants skip: {attribute}"
+        );
+        assert!(
+            !attributes_define_test([attribute]),
+            "a mutants skip is never a test: {attribute}"
+        );
+    }
+    for attribute in [
+        "#[inline]",
+        "#[my::mutants::skip]",
+        "#[skip]",
+        "#[mutants::skipped]",
+        "#[mutants::exclude]",
+        "#[cfg_attr(test, inline)]",
+        "#[cfg_attr(mutants::skip, inline)]",
+        "#[cfg_attr(feature = \"x, mutants::skip\", inline)]",
+        "#[doc = \"mutants::skip\"]",
+        "#[cfg(test)]",
+        "#[test]",
+    ] {
+        assert!(
+            !attributes_define_mutants_skip([attribute]),
+            "should not be a mutants skip: {attribute}"
+        );
+    }
+}

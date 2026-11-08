@@ -347,6 +347,14 @@ pub struct CheckOutput {
     /// does not link Python tests to Rust changes. Never serialized; no
     /// verdict, class or gate reads it.
     pub(crate) unlinked_python_tests: Option<crate::analysis::UnlinkedPythonTests>,
+    /// Findings withheld because their changed owner opted out (#13819):
+    /// `#[mutants::skip]` on the owner function, directly or through
+    /// `cfg_attr`. Like suppressed findings, they stay in `findings` (marked
+    /// by renderers) while the per-class `summary` buckets count only
+    /// findings that are neither suppressed nor withheld. A finding already
+    /// suppressed by `--suppression-policy` is not listed again. Empty when
+    /// no owner opted out.
+    pub(crate) owner_opt_outs: Vec<crate::analysis::owner_opt_out::OwnerOptOut>,
     /// Suppression-policy application outcome (#1441). `Some` only when the
     /// caller passed `--suppression-policy`; findings named here stay in
     /// `findings` (visible, marked suppressed by renderers) while the
@@ -415,5 +423,26 @@ impl CheckOutput {
     /// ambiguous provenance. Unknown individual origins stay `None`.
     pub fn source_value_files(&self, finding: &Finding) -> Option<&[Option<PathBuf>]> {
         self.value_origins.files(finding)
+    }
+
+    /// Ids of every finding withheld from actionable output: those an
+    /// explicit `--suppression-policy` suppressed (#1441) and those whose
+    /// changed owner opted out (#13819). The one set every findings-based
+    /// renderer filters on, so the two sources cannot drift apart.
+    pub(crate) fn withheld_finding_ids(&self) -> std::collections::BTreeSet<&str> {
+        self.suppression
+            .iter()
+            .flat_map(|outcome| {
+                outcome
+                    .suppressed
+                    .iter()
+                    .map(|entry| entry.finding_id.as_str())
+            })
+            .chain(
+                self.owner_opt_outs
+                    .iter()
+                    .map(|opt_out| opt_out.finding_id.as_str()),
+            )
+            .collect()
     }
 }

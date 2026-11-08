@@ -1183,7 +1183,7 @@ additive output. The published `check.schema.json` sets
 `additionalProperties: false` for exhaustiveness at a pinned commit; it does
 not require consumers to hard-fail on unknown fields at runtime. Conditional
 top-level members already ship under `0.2` without a version bump, including
-`suppression_policy`, `language_runs`, `analysis_scope`, `scope_disclosures`,
+`suppression_policy`, `owner_opt_outs`, `language_runs`, `analysis_scope`, `scope_disclosures`,
 `unanalyzed_working_tree`, `preview_languages`, `finding_alignment`, and
 `test_harnesses`; nested `finding` and seam detail may grow additively within
 the pinned version the same way.
@@ -3528,6 +3528,50 @@ flag for those formats instead of silently ignoring it. Date-expiry
 enforcement beyond `expires` (review-after deadlines, required-active
 ledgers) belongs to the gate exception policy (#1442), not check
 suppression.
+
+### `owner_opt_outs` and withheld findings (top-level additive, #13819)
+
+Emitted only when a changed Rust owner function or method carries
+cargo-mutants' `#[mutants::skip]`, written directly or as
+`#[cfg_attr(<predicate>, mutants::skip)]` (the predicate is not evaluated).
+Absent otherwise, so runs without the attribute see byte-identical output.
+Does not bump `schema_version`. Only the owner's own attributes count: a skip
+on a sibling function, on the enclosing `impl` block or on a module does not
+withhold, and a file read through the lexical fallback (no parser-backed
+attributes) is never withheld. Diff-scoped `ripr check` only; repo scope
+reports every owner.
+
+The opt-out is the team's recorded intent, not static evidence. A withheld
+finding keeps its `classification` (it is never reclassified as `exposed`),
+and ripr makes no runtime claim about it. Three surfaces change:
+
+- `summary.withheld_by_owner_opt_out` — count of withheld findings. The
+  per-class buckets count only findings that are neither suppressed nor
+  withheld; buckets plus `suppressed_by_policy` plus
+  `withheld_by_owner_opt_out` add back up to `summary.findings`.
+- `findings[].withheld_by` — the reason token, `"owner_mutants_skip"`. The
+  finding stays fully rendered.
+- top-level `owner_opt_outs` object — `withheld` (count) and `reason`
+  (`"owner_mutants_skip"`).
+
+A finding an explicit `--suppression-policy` already suppressed is disclosed
+once, under `suppression_policy`, and is not listed again here.
+
+```json
+"summary": {"findings": 1, "no_static_path": 0, "withheld_by_owner_opt_out": 1},
+"findings": [
+  {"id": "probe:src_lib.rs:predicate:401600b6", "withheld_by": "owner_mutants_skip", "classification": "no_static_path", ...}
+],
+"owner_opt_outs": {"withheld": 1, "reason": "owner_mutants_skip"}
+```
+
+Human output prints a `Withheld by owner opt-out (owner_mutants_skip)` block
+with one line per withheld finding (location, class, owner) and names the
+count on the `Summary` line; the findings leave the triage selection the same
+way policy-suppressed findings do. GitHub output skips their annotations and
+counts them in the denominator `::notice`. The canonical next-action stop
+case for a run whose every finding is withheld stays `suppressed_by_policy`;
+the human `Safe next action` line names the owner opt-out.
 
 ### `run_limitations` (top-level additive, #5203)
 

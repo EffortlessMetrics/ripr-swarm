@@ -359,6 +359,7 @@ pub(crate) fn render_bounded_with_config_and_navigation(
     let mut out = render_header_summary(output, config, true);
     render_analysis_outcome_disclosure(&mut out, output, true);
     render_suppression_policy_block(&mut out, output);
+    render_owner_opt_out_block(&mut out, output);
     render_partial_scope_disclosure(&mut out, output);
 
     if output.findings.is_empty() {
@@ -416,6 +417,7 @@ pub(crate) fn render_full_with_config_and_navigation(
 
     render_analysis_outcome_disclosure(&mut out, output, false);
     render_suppression_policy_block(&mut out, output);
+    render_owner_opt_out_block(&mut out, output);
     render_partial_scope_disclosure(&mut out, output);
 
     if output.findings.is_empty() {
@@ -438,16 +440,8 @@ pub(crate) fn render_full_with_config_and_navigation(
         return out;
     }
 
-    let suppressed_ids: BTreeSet<&str> = output
-        .suppression
-        .iter()
-        .flat_map(|outcome| {
-            outcome
-                .suppressed
-                .iter()
-                .map(|entry| entry.finding_id.as_str())
-        })
-        .collect();
+    // #13819: owner opt-outs are withheld exactly like policy suppression.
+    let suppressed_ids: BTreeSet<&str> = output.withheld_finding_ids();
     let visible: Vec<_> = output
         .findings
         .iter()
@@ -618,8 +612,16 @@ fn render_header_summary(output: &CheckOutput, config: &RiprConfig, plain: bool)
         .suppression
         .as_ref()
         .map_or(0, |suppression| suppression.suppressed.len());
-    let unsuppressed = output.summary.findings.saturating_sub(suppressed);
+    // #13819: findings withheld by an owner opt-out are neither suppressed
+    // by the policy nor actionable; the Summary names them separately.
+    let withheld = output.owner_opt_outs.len();
+    let unsuppressed = output
+        .summary
+        .findings
+        .saturating_sub(suppressed)
+        .saturating_sub(withheld);
     let base_side = base_side_summary_note(output);
+    let owner_opt_out = owner_opt_out_summary_note(output, plain);
     if plain {
         // #8165 / #10691: plain words only, no schema tokens and no internal
         // nouns (probe, finding, unsuppressed). `found` (never `shown` or
@@ -662,7 +664,7 @@ fn render_header_summary(output: &CheckOutput, config: &RiprConfig, plain: bool)
                 ));
             }
             out.push_str(&format!(
-                "Summary: {} changed {} checked: {}. {} found, {} suppressed by your settings{base_side}\n\n",
+                "Summary: {} changed {} checked: {}. {} found, {} suppressed by your settings{owner_opt_out}{base_side}\n\n",
                 s.probes,
                 if s.probes == 1 { "behavior" } else { "behaviors" },
                 classes,
@@ -674,7 +676,7 @@ fn render_header_summary(output: &CheckOutput, config: &RiprConfig, plain: bool)
         out.push_str(&format!(
             "Summary: {} changed behavior(s) checked: {} exposed, {} weakly_exposed, {} reachable_unrevealed, \
              {} no_static_path, {} infection_unknown, {} propagation_unknown, {} static_unknown; \
-             {} of {} finding(s) unsuppressed{proof_only}{base_side}\n",
+             {} of {} finding(s) unsuppressed{owner_opt_out}{proof_only}{base_side}\n",
             output.summary.probes,
             output.summary.exposed,
             output.summary.weakly_exposed,
@@ -866,6 +868,60 @@ fn render_language_file_breakdown(out: &mut String, output: &CheckOutput) {
         .join(", ");
     // #7756: labelled field line — no trailing period.
     out.push_str(&format!("Changed file(s) by language: {parts}\n\n"));
+}
+
+/// The Summary clause naming findings withheld by an owner opt-out (#13819),
+/// with the stable reason token (plain mode names the attribute instead of the
+/// token). Empty when none are withheld, so default output is unchanged.
+fn owner_opt_out_summary_note(output: &CheckOutput, plain: bool) -> String {
+    let Some(first) = output.owner_opt_outs.first() else {
+        return String::new();
+    };
+    if plain {
+        return format!(
+            ", {} skipped because the changed function carries #[mutants::skip]",
+            output.owner_opt_outs.len()
+        );
+    }
+    format!(
+        ", {} withheld by owner opt-out ({})",
+        output.owner_opt_outs.len(),
+        first.reason.as_str()
+    )
+}
+
+/// Emit the owner opt-out block (#13819): how many findings were withheld
+/// because their changed owner carries `#[mutants::skip]`, under the stable
+/// reason token, and which ones (compact one-liners, so nothing goes silently
+/// missing). Static vocabulary only: the opt-out is the team's recorded
+/// intent, not a claim about what tests would catch. Emits nothing when no
+/// owner opted out.
+fn render_owner_opt_out_block(out: &mut String, output: &CheckOutput) {
+    let Some(first) = output.owner_opt_outs.first() else {
+        return;
+    };
+    out.push_str(&format!(
+        "Withheld by owner opt-out ({}): {} finding(s); the changed owner carries `#[mutants::skip]`, so ripr does not list it as a gap. Remove the attribute to see these findings.\n",
+        first.reason.as_str(),
+        output.owner_opt_outs.len()
+    ));
+    for opt_out in &output.owner_opt_outs {
+        if let Some(finding) = output
+            .findings
+            .iter()
+            .find(|finding| finding.id == opt_out.finding_id)
+        {
+            out.push_str(&format!(
+                "  - {}:{} {} (owner: {}, reason: {})\n",
+                crate::analysis::finding_location_text(&output.root, &finding.probe.location.file),
+                finding.probe.location.line,
+                finding.class.as_str(),
+                opt_out.owner,
+                opt_out.reason.as_str()
+            ));
+        }
+    }
+    out.push('\n');
 }
 
 /// Emit the `--suppression-policy` application block (#1441): which policy
@@ -1588,6 +1644,7 @@ mod tests {
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
+            owner_opt_outs: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -1642,6 +1699,7 @@ mod tests {
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
+            owner_opt_outs: Vec::new(),
             suppression: None,
             analysis_outcome: Some(outcome),
             partial_scope: None,
@@ -1887,6 +1945,7 @@ mod tests {
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
+            owner_opt_outs: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -1933,6 +1992,7 @@ mod tests {
                 untracked_working_tree_source_paths: Vec::new(),
                 ignored_working_tree_source_paths: Vec::new(),
                 unlinked_python_tests: None,
+                owner_opt_outs: Vec::new(),
                 suppression: None,
                 analysis_outcome: None,
                 partial_scope: None,
@@ -1977,6 +2037,7 @@ mod tests {
             ],
             ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
+            owner_opt_outs: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -2026,6 +2087,7 @@ mod tests {
             untracked_working_tree_source_paths: vec!["src/\u{1b}[31mevil.rs".to_string()],
             ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
+            owner_opt_outs: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -2065,6 +2127,7 @@ mod tests {
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
+            owner_opt_outs: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -2108,6 +2171,7 @@ mod tests {
                 "crates/alpha/target/bgen.rs".to_string(),
             ],
             unlinked_python_tests: None,
+            owner_opt_outs: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -2154,6 +2218,7 @@ mod tests {
             untracked_working_tree_source_paths: vec!["src/new.rs".to_string()],
             ignored_working_tree_source_paths: vec!["src/ignored_gen.rs".to_string()],
             unlinked_python_tests: None,
+            owner_opt_outs: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -2205,6 +2270,7 @@ mod tests {
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
+            owner_opt_outs: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -2265,6 +2331,7 @@ mod tests {
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
+            owner_opt_outs: Vec::new(),
             suppression: Some(CheckSuppressionOutcome {
                 policy_path: "policy/ripr-suppressions.toml".to_string(),
                 suppressed: vec![SuppressedCheckFinding {
@@ -2322,6 +2389,7 @@ mod tests {
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
+            owner_opt_outs: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -2421,6 +2489,7 @@ mod tests {
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
+            owner_opt_outs: Vec::new(),
             suppression: None,
             analysis_outcome: Some(outcome),
             partial_scope: None,
@@ -2693,6 +2762,7 @@ mod tests {
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
+            owner_opt_outs: Vec::new(),
             suppression: None,
             analysis_outcome: Some(outcome),
             partial_scope: None,
@@ -2769,6 +2839,7 @@ mod tests {
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
+            owner_opt_outs: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -2929,6 +3000,7 @@ mod tests {
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
+            owner_opt_outs: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -2977,6 +3049,7 @@ mod tests {
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
+            owner_opt_outs: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -3410,6 +3483,7 @@ mod tests {
                 untracked_working_tree_source_paths: Vec::new(),
                 ignored_working_tree_source_paths: Vec::new(),
                 unlinked_python_tests: None,
+                owner_opt_outs: Vec::new(),
                 suppression: None,
                 analysis_outcome: None,
                 partial_scope: None,
@@ -3458,6 +3532,7 @@ mod tests {
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
+            owner_opt_outs: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -3506,6 +3581,7 @@ mod tests {
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
+            owner_opt_outs: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -4178,6 +4254,7 @@ mod tests {
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
+            owner_opt_outs: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -4226,6 +4303,7 @@ mod tests {
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
+            owner_opt_outs: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -4299,6 +4377,7 @@ mod tests {
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
+            owner_opt_outs: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -4354,6 +4433,7 @@ mod tests {
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
+            owner_opt_outs: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -4387,6 +4467,7 @@ mod tests {
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
+            owner_opt_outs: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -4554,6 +4635,7 @@ mod tests {
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
+            owner_opt_outs: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -4748,6 +4830,7 @@ mod tests {
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
+            owner_opt_outs: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -5735,6 +5818,7 @@ mod tests {
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
+            owner_opt_outs: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -5842,6 +5926,7 @@ mod tests {
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
+            owner_opt_outs: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -5891,6 +5976,7 @@ mod tests {
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
+            owner_opt_outs: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -6011,6 +6097,7 @@ mod tests {
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
+            owner_opt_outs: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -6084,6 +6171,7 @@ mod tests {
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
+            owner_opt_outs: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -6141,6 +6229,7 @@ mod tests {
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
+            owner_opt_outs: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -6206,6 +6295,7 @@ mod tests {
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
+            owner_opt_outs: Vec::new(),
             suppression: Some(CheckSuppressionOutcome {
                 policy_path: "policy/ripr-suppressions.toml".to_string(),
                 suppressed: suppressed
@@ -6320,6 +6410,7 @@ mod tests {
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
+            owner_opt_outs: Vec::new(),
             suppression: Some(CheckSuppressionOutcome {
                 policy_path: "policy/ripr-suppressions.toml".to_string(),
                 suppressed: vec![SuppressedCheckFinding {
@@ -6374,6 +6465,7 @@ mod tests {
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
+            owner_opt_outs: Vec::new(),
             suppression: Some(CheckSuppressionOutcome {
                 policy_path: "policy/ripr-suppressions.toml".to_string(),
                 suppressed: vec![SuppressedCheckFinding {
@@ -6414,6 +6506,7 @@ mod tests {
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
+            owner_opt_outs: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: Some(crate::analysis::PartialDiffScope {
@@ -6505,6 +6598,7 @@ mod tests {
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
+            owner_opt_outs: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: Some(crate::analysis::PartialDiffScope {
@@ -6617,6 +6711,7 @@ mod tests {
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
+            owner_opt_outs: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: Some(crate::analysis::PartialDiffScope {
@@ -8813,6 +8908,7 @@ mod tests {
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
+            owner_opt_outs: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -8983,6 +9079,7 @@ mod tests {
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
+            owner_opt_outs: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -9030,6 +9127,7 @@ mod tests {
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
+            owner_opt_outs: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -9081,6 +9179,7 @@ mod tests {
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
+            owner_opt_outs: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -9125,6 +9224,7 @@ mod tests {
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
+            owner_opt_outs: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -9167,6 +9267,7 @@ mod tests {
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
+            owner_opt_outs: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -9262,6 +9363,7 @@ mod tests {
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
+            owner_opt_outs: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -9339,6 +9441,7 @@ mod tests {
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
+            owner_opt_outs: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -9414,6 +9517,7 @@ mod tests {
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
+            owner_opt_outs: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -9470,6 +9574,7 @@ mod tests {
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
+            owner_opt_outs: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -9511,6 +9616,7 @@ mod tests {
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
+            owner_opt_outs: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -9554,6 +9660,7 @@ mod tests {
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
+            owner_opt_outs: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -9600,6 +9707,7 @@ mod tests {
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
+            owner_opt_outs: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -9651,6 +9759,7 @@ mod tests {
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: python,
+            owner_opt_outs: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -9805,6 +9914,7 @@ mod tests {
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
+            owner_opt_outs: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -9871,6 +9981,7 @@ mod tests {
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
+            owner_opt_outs: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -9929,6 +10040,7 @@ mod tests {
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
+            owner_opt_outs: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -9973,6 +10085,7 @@ mod tests {
             value_origins: Default::default(),
             harness_projections: Vec::new(),
             unlinked_python_tests: None,
+            owner_opt_outs: Vec::new(),
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: Vec::new(),
             schema_version: "0.2".to_string(),
@@ -10085,6 +10198,7 @@ mod tests {
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
+            owner_opt_outs: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -10132,6 +10246,7 @@ mod tests {
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
+            owner_opt_outs: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -10173,6 +10288,7 @@ mod tests {
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
+            owner_opt_outs: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -10211,6 +10327,7 @@ mod tests {
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
+            owner_opt_outs: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -10246,6 +10363,7 @@ mod tests {
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
+            owner_opt_outs: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -10286,6 +10404,7 @@ mod tests {
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
+            owner_opt_outs: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -10325,6 +10444,7 @@ mod tests {
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
+            owner_opt_outs: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -10375,6 +10495,7 @@ mod tests {
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
+            owner_opt_outs: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -10442,6 +10563,7 @@ mod tests {
                 untracked_working_tree_source_paths: Vec::new(),
                 ignored_working_tree_source_paths: Vec::new(),
                 unlinked_python_tests: None,
+                owner_opt_outs: Vec::new(),
                 suppression: None,
                 analysis_outcome: None,
                 partial_scope: None,

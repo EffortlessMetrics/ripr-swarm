@@ -824,6 +824,13 @@ has agreed to carry as known debt. Suppressed findings remain visible in
 detailed reports — they only move from `unsuppressed_*` into `suppressed_*`
 in the badge counts.
 
+A changed function or method that already carries cargo-mutants'
+`#[mutants::skip]` (or `#[cfg_attr(<predicate>, mutants::skip)]`) needs no
+entry here: `ripr check` reads the attribute as an owner opt-out, withholds
+that owner's findings and discloses the count with the `owner_mutants_skip`
+reason (#13819; see [Output schema](OUTPUT_SCHEMA.md)). There is no setting to
+turn this off; remove the attribute to see the findings again.
+
 Validated by `ripr check --format badge-*` (loaded relative to `--root`).
 Schema:
 

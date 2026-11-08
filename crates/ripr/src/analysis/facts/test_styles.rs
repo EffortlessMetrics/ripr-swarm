@@ -649,11 +649,73 @@ pub(crate) fn attributes_define_proof_harness<'attribute>(
     })
 }
 
+/// The exact attribute path cargo-mutants reads as an owner opt-out (#13819).
+/// Matching is exact on the written path, so `my::mutants::skip` and an
+/// unimported `skip` do not match.
+pub(crate) const MUTANTS_SKIP_ATTRIBUTE_PATH: &str = "mutants::skip";
+
+/// Whether any attribute declares a cargo-mutants owner opt-out (#13819): a
+/// literal `#[mutants::skip]`, or the same path introduced by
+/// `#[cfg_attr(<predicate>, mutants::skip)]`. The predicate is not evaluated:
+/// cargo-mutants itself reads the attribute syntactically, and the opt-out
+/// records the team's intent, not whether a build compiles the attribute. A
+/// string literal inside the predicate (`feature = "x"`) is blanked before
+/// the split so a comma inside it cannot introduce a path.
+pub(crate) fn attributes_define_mutants_skip<'attribute>(
+    attributes: impl IntoIterator<Item = &'attribute str>,
+) -> bool {
+    attributes.into_iter().any(|attribute| {
+        normalized_test_attribute_path(attribute).as_deref() == Some(MUTANTS_SKIP_ATTRIBUTE_PATH)
+            || cfg_attr_introduced_paths_with(&blank_string_literals(attribute), true)
+                .iter()
+                .any(|path| path == MUTANTS_SKIP_ATTRIBUTE_PATH)
+    })
+}
+
+/// Replace the contents of every `"..."` literal with nothing, keeping the
+/// quotes, so a later top-level comma split cannot see inside a literal. An
+/// unterminated literal returns the input unchanged; the caller's balance
+/// and quote checks then fail closed.
+fn blank_string_literals(attribute: &str) -> String {
+    let mut out = String::with_capacity(attribute.len());
+    let mut in_literal = false;
+    let mut escaped = false;
+    for character in attribute.chars() {
+        if in_literal {
+            if escaped {
+                escaped = false;
+            } else if character == '\\' {
+                escaped = true;
+            } else if character == '"' {
+                in_literal = false;
+                out.push('"');
+            }
+            continue;
+        }
+        if character == '"' {
+            in_literal = true;
+        }
+        out.push(character);
+    }
+    if in_literal {
+        attribute.to_string()
+    } else {
+        out
+    }
+}
+
 /// The attribute paths a `#[cfg_attr(<predicate>, a, b(..))]` introduces,
 /// split at top-level commas. Empty for anything that is not a plain
 /// `cfg_attr` or that carries a string literal (fail closed rather than
 /// guess a comma inside a literal).
 fn cfg_attr_introduced_paths(attribute: &str) -> Vec<String> {
+    cfg_attr_introduced_paths_with(attribute, false)
+}
+
+/// [`cfg_attr_introduced_paths`], optionally admitting empty `""` literals
+/// that [`blank_string_literals`] left behind. Any literal with content
+/// still fails closed.
+fn cfg_attr_introduced_paths_with(attribute: &str, allow_blank_literals: bool) -> Vec<String> {
     let Some(body) = attribute.trim().strip_prefix("#[") else {
         return Vec::new();
     };
@@ -667,7 +729,12 @@ fn cfg_attr_introduced_paths(attribute: &str) -> Vec<String> {
     else {
         return Vec::new();
     };
-    if inner.contains('"') || !attribute_arguments_are_balanced(&format!("({inner})")) {
+    let has_literal = if allow_blank_literals {
+        inner.replace("\"\"", "").contains('"')
+    } else {
+        inner.contains('"')
+    };
+    if has_literal || !attribute_arguments_are_balanced(&format!("({inner})")) {
         return Vec::new();
     }
     let mut parts = Vec::new();
