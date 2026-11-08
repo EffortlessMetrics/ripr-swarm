@@ -1074,6 +1074,42 @@ fn check_agent_preview_only_run_projects_the_discriminator_and_stops_advisory() 
     assert!(!drill.contains("nothing more is fixable"), "{drill}");
 }
 
+/// A preview run whose only finding already reads exposed (the agent's new
+/// test closed it) ends with `done=`, not the advisory `stop=` that says a
+/// test-side improvement "may still be possible". Negative control: the weak
+/// preview gap above keeps its `stop=`.
+#[test]
+fn check_agent_exposed_preview_finding_reads_done_not_stop() {
+    let mut exposed = preview_weak_gap("probe:a", 2);
+    exposed.class = ExposureClass::Exposed;
+    exposed.activation.missing_discriminators.clear();
+    let text = rendered(&output(vec![exposed]));
+    assert!(text.contains(" exposed=1"), "{text}");
+    assert!(
+        text.contains(
+            "\ndone=preview-language evidence is advisory only; a related test appears to observe this change, so there is no test-side gap to fix"
+        ),
+        "{text}"
+    );
+    assert!(!text.contains("\nstop="), "{text}");
+    assert!(!text.contains("open="), "{text}");
+    assert!(!text.contains("may still be possible"), "{text}");
+    let weak = rendered(&output(vec![preview_weak_gap("probe:a", 2)]));
+    assert!(weak.contains("\nstop=preview-language"), "{weak}");
+    assert!(!weak.contains("\ndone="), "{weak}");
+    // The explain drill-in for the same exposed preview finding agrees.
+    let mut exposed = preview_weak_gap("probe:a", 2);
+    exposed.class = ExposureClass::Exposed;
+    exposed.activation.missing_discriminators.clear();
+    let drill = explained(&exposed);
+    assert!(
+        drill.contains("\ndone=preview-language evidence is advisory only; a related test appears to notice this change"),
+        "{drill}"
+    );
+    assert!(!drill.contains("\nstop="), "{drill}");
+    assert!(!drill.contains("co-located test"), "{drill}");
+}
+
 /// A preview finding without a producer-established discriminator has nothing
 /// to project: the record keeps `missing=-` and the terminal stays the honest
 /// advisory stop.

@@ -278,14 +278,17 @@ pub(super) fn render_finding(
             "open=preview-language evidence is advisory and offers no guided repair, but a related test asserts too weakly to notice this change; tests may still help; static advisory, not runtime proof",
             weak_row,
         )
-    } else if finding.class == ExposureClass::Exposed
-        && !triage::is_static_limited(finding)
-        && !triage::is_preview_limited(finding)
-    {
-        (
-            "done=a related test appears to notice this change; static advisory, not runtime proof",
-            strongest_test(finding),
-        )
+    } else if finding.class == ExposureClass::Exposed && !triage::is_static_limited(finding) {
+        // An exposed preview finding has no test-side gap either; it keeps
+        // the advisory qualifier instead of falling through to the
+        // "documented route is a co-located test" stop, which told agents to
+        // write another test after theirs closed the gap.
+        let terminal = if triage::is_preview_limited(finding) {
+            "done=preview-language evidence is advisory only; a related test appears to notice this change; verify the assertion independently; static advisory, not runtime proof"
+        } else {
+            "done=a related test appears to notice this change; static advisory, not runtime proof"
+        };
+        (terminal, strongest_test(finding))
     } else {
         (
             // #13238: same vocabulary as the check surface's terminal line —
@@ -572,6 +575,18 @@ fn terminal_line(
                 }
                 Some(_) => {
                     "open=preview-language evidence is advisory only, not a confirmed gap; ripr agent repair can start the repair for this gap once your uncommitted production change is committed; static advisory, not runtime proof\n"
+                        .to_string()
+                }
+                // The selected preview finding already reads exposed: there
+                // is no test-side gap to repair, matching the human `Safe next
+                // action` ("there is no repair to make"). A `stop=` saying an
+                // improvement "may still be possible" sent agents looking for
+                // work after their test closed the gap.
+                None if triage
+                    .selected
+                    .is_some_and(|finding| finding.class == ExposureClass::Exposed) =>
+                {
+                    "done=preview-language evidence is advisory only; a related test appears to observe this change, so there is no test-side gap to fix; verify the assertion independently; static advisory, not runtime proof\n"
                         .to_string()
                 }
                 None => {

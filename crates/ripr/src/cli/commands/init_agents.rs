@@ -200,7 +200,7 @@ Keep the same --base and source options for every check below.
 Loop (max 3 rounds per gap):
 1. FIND    `ripr check --quiet --format agent` (add `--base <branch>` if no origin/main|master).
            Read gap, test and next lines. Exit 0 can still mean gaps; 2/3 = stop (read stderr).
-           A `stop=` line about preview evidence is expected; it is not an error.
+           An `open=`, `stop=` or `done=` line saying preview evidence is advisory is expected.
 2. DETAIL  Follow the printed `ripr explain ...` command as printed, then the `ripr context ...`
            it names (JSON).
 3. WRITE   One focused test next to the related test. Assert exact changed values: every
