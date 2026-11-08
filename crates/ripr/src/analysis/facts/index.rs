@@ -813,29 +813,32 @@ impl RustIndex {
                 crate::analysis::cancellation::checkpoint()?;
             }
             fact.name.shrink_to_fit();
-            fact.calls.shrink_to_fit();
+            fact.calls.shrink_capacity_if_unique();
             fact.returns.shrink_to_fit();
-            fact.literals.shrink_to_fit();
-            fact.attrs.shrink_to_fit();
+            fact.literals.shrink_capacity_if_unique();
+            fact.attrs.shrink_capacity_if_unique();
             fact.impl_attrs.shrink_to_fit();
-            fact.nested_fn_names.shrink_to_fit();
-            fact.let_bindings.shrink_to_fit();
-            for call in &mut fact.calls {
+            fact.nested_fn_names.shrink_capacity_if_unique();
+            fact.let_bindings.shrink_capacity_if_unique();
+            for call in fact.calls.iter_mut_if_unique() {
                 call.name.shrink_to_fit();
             }
             for ret in &mut fact.returns {
                 ret.text.shrink_to_fit();
             }
-            for literal in &mut fact.literals {
+            for literal in fact.literals.iter_mut_if_unique() {
                 literal.value.shrink_to_fit();
             }
-            for attr in fact.attrs.iter_mut().chain(&mut fact.impl_attrs) {
+            for attr in fact.attrs.iter_mut_if_unique() {
                 attr.shrink_to_fit();
             }
-            for name in &mut fact.nested_fn_names {
+            for attr in &mut fact.impl_attrs {
+                attr.shrink_to_fit();
+            }
+            for name in fact.nested_fn_names.iter_mut_if_unique() {
                 name.shrink_to_fit();
             }
-            for binding in &mut fact.let_bindings {
+            for binding in fact.let_bindings.iter_mut_if_unique() {
                 binding.name.shrink_to_fit();
             }
         }
@@ -845,13 +848,13 @@ impl RustIndex {
                 crate::analysis::cancellation::checkpoint()?;
             }
             fact.name.shrink_to_fit();
-            fact.calls.shrink_to_fit();
+            fact.calls.shrink_capacity_if_unique();
             fact.assertions.shrink_to_fit();
-            fact.literals.shrink_to_fit();
-            fact.attrs.shrink_to_fit();
-            fact.nested_fn_names.shrink_to_fit();
-            fact.let_bindings.shrink_to_fit();
-            for call in &mut fact.calls {
+            fact.literals.shrink_capacity_if_unique();
+            fact.attrs.shrink_capacity_if_unique();
+            fact.nested_fn_names.shrink_capacity_if_unique();
+            fact.let_bindings.shrink_capacity_if_unique();
+            for call in fact.calls.iter_mut_if_unique() {
                 call.name.shrink_to_fit();
             }
             for assertion in &mut fact.assertions {
@@ -861,16 +864,16 @@ impl RustIndex {
                     token.shrink_to_fit();
                 }
             }
-            for literal in &mut fact.literals {
+            for literal in fact.literals.iter_mut_if_unique() {
                 literal.value.shrink_to_fit();
             }
-            for attr in &mut fact.attrs {
+            for attr in fact.attrs.iter_mut_if_unique() {
                 attr.shrink_to_fit();
             }
-            for name in &mut fact.nested_fn_names {
+            for name in fact.nested_fn_names.iter_mut_if_unique() {
                 name.shrink_to_fit();
             }
-            for binding in &mut fact.let_bindings {
+            for binding in fact.let_bindings.iter_mut_if_unique() {
                 binding.name.shrink_to_fit();
             }
         }
