@@ -15,14 +15,17 @@
 //! `format!` / `collect` rendering when these were proved through
 //! `select_canonical_next_action` (#13707). Each harness asserts that when the
 //! stop condition holds the decision is exactly that typed stop and is not
-//! executable, and that the admitted twin runs.
+//! executable, and that the admitted twin decides `Run` (rendering may still
+//! fail closed at mint, for example with no bound item).
 //!
 //! Not covered by Kani: the rendering step `render_decision` itself (labels,
 //! candidate lists, selector-added alternatives). Its link to the decision is
 //! structural (only `NextActionDecision::Run` reaches `running`; every other
 //! variant mints through `stopped`, which references no command) and is
 //! checked by the selector's unit tests, including the control-10 battery
-//! asserting decision and rendered executability agree for every gate.
+//! asserting decision and rendered executability agree for every gate that
+//! battery exercises (the CheckTriage, DoctorRecovery, PilotDelegated and
+//! InspectTarget tails are covered by their own unit tests).
 
 use super::*;
 use ripr_contract::domain::command_spec::{
@@ -635,7 +638,8 @@ fn restart_recommended_stop_decides_restart_and_never_runs() {
 /// Several-unranked-items stop. Symbolic: zero to three item candidates, each
 /// "a" or "b", with no single bound item and an otherwise admitted offer.
 /// More than one candidate decides exactly `SeveralItems` and never runs;
-/// zero or one candidate (one normalizes to the bound item) runs.
+/// zero or one candidate (one normalizes to the bound item) decides `Run`;
+/// with zero candidates and no item the render then fails closed at mint.
 #[kani::proof]
 #[kani::unwind(6)]
 fn several_items_stop_decides_selection_and_never_runs() {

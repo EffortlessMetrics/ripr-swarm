@@ -702,7 +702,7 @@ pub(crate) fn select_canonical_next_action(
 }
 
 /// The selector's typed gate decision for one input: which gate fired, with
-/// borrowed references to exactly the producer facts its stop renders from.
+/// borrowed references to the producer facts its stop renders from.
 /// Only [`Self::Run`] is executable; every other variant renders through
 /// `stopped`, which never references a command. Choosing the variant needs no
 /// label formatting or candidate collection, so the refusal side of the
