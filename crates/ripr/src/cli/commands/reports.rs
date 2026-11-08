@@ -1005,6 +1005,7 @@ mod tests {
                 None,
                 None,
                 None,
+                &[],
                 &context,
             )?;
         let repo_exposure = dir.join("repo-exposure.json");

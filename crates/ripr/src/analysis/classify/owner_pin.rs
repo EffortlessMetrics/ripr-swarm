@@ -166,6 +166,9 @@ pub(in crate::analysis) struct OwnerReturnPin {
     /// arithmetic subset, when both are and it is called by its bare name. It
     /// lets a pinned literal that neither version returns withhold the credit.
     closed_owner: Option<super::owner_value::ClosedChange>,
+    /// #13005: set only while [`Self::literal_check_withholds`] asks whether
+    /// the current-owner literal check is the one gate refusing an assertion.
+    skip_current_literal_check: Cell<bool>,
 }
 
 /// A file's `std`/`core`-rooted `assert_eq!` paths and, for each of the four
@@ -1662,7 +1665,17 @@ impl OwnerPinSyntax {
         let module_resolved = |file: &Path, line: usize, declaration: &str| {
             resolved_modules.contains(&(file.to_path_buf(), line, declaration.to_string()))
         };
-        let sites = scan_macro_sites(&files, index, self.target_roots(index), &module_resolved);
+        // Limit naming only (#12886): with placement unavailable, a drop-in
+        // assertion import the test file's own manifest verifies is a
+        // binding to a macro that evaluates its operands. This scan feeds
+        // only the unplaced limit pass; the credit path never reads it.
+        let sites = scan_macro_sites(
+            &files,
+            index,
+            self.target_roots(index),
+            &module_resolved,
+            true,
+        );
         let names: BTreeSet<String> = sites
             .ambiguities
             .into_iter()
@@ -3935,6 +3948,18 @@ fn macro_root_verified_in_contexts(
         })
 }
 
+/// Whether the file's own physical manifest resolves `krate` to the drop-in
+/// package, with no placement. Names a limit only; it never certifies a
+/// binding for credit (#12886). `std` and `core` roots keep their existing
+/// unplaced handling; only a drop-in crate name widens here.
+fn own_manifest_verifies_root(path: &Path, krate: &str, index: &RustIndex) -> bool {
+    if krate == "serde_json" {
+        index.drop_in_manifests.verified_literal_json(path)
+    } else {
+        index.drop_in_manifests.verified_root(path, krate)
+    }
+}
+
 /// Trusted macro names some workspace file may rebind for every test, and
 /// the scoped sites (an inline module or block) kept per file.
 ///
@@ -4029,6 +4054,7 @@ fn scan_macro_sites(
     index: &RustIndex,
     roots: &TargetRoots,
     module_resolved: &(dyn Fn(&Path, usize, &str) -> bool + Sync),
+    own_manifest_when_unplaced: bool,
 ) -> ScannedMacroSites {
     #[cfg(test)]
     {
@@ -4061,7 +4087,13 @@ fn scan_macro_sites(
                 &names,
                 &singleton_names,
                 &|line, declaration| module_resolved(path, line, declaration),
-                &|krate| macro_root_verified_in_contexts(path, krate, index, roots),
+                &|krate| {
+                    macro_root_verified_in_contexts(path, krate, index, roots)
+                        || (own_manifest_when_unplaced
+                            && roots.disabled
+                            && !matches!(krate, "std" | "core")
+                            && own_manifest_verifies_root(path, krate, index))
+                },
             );
             ((*path).clone(), union, singleton)
         })
@@ -4953,6 +4985,7 @@ impl OwnerReturnPin {
             trait_scope_by_file: SyncMemo::default(),
             identity,
             closed_owner,
+            skip_current_literal_check: Cell::new(false),
         })
     }
 
@@ -5077,6 +5110,7 @@ impl OwnerReturnPin {
             pointer_return_change: None,
             tuple_projection: None,
             closed_owner: None,
+            skip_current_literal_check: Cell::new(false),
             awaited: declares_async(owner, index),
             poll_helpers: if declares_async(owner, index) {
                 super::poll_helper::verified_helpers(index)
@@ -5188,6 +5222,7 @@ impl OwnerReturnPin {
             pointer_return_change: None,
             tuple_projection: None,
             closed_owner: None,
+            skip_current_literal_check: Cell::new(false),
             awaited: declares_async(owner, index),
             poll_helpers: if declares_async(owner, index) {
                 super::poll_helper::verified_helpers(index)
@@ -5291,6 +5326,7 @@ impl OwnerReturnPin {
             pointer_return_change: None,
             tuple_projection: None,
             closed_owner: None,
+            skip_current_literal_check: Cell::new(false),
             awaited: declares_async(owner, index),
             poll_helpers: if declares_async(owner, index) {
                 super::poll_helper::verified_helpers(index)
@@ -5467,6 +5503,40 @@ impl OwnerReturnPin {
             self.closed_owner = super::owner_value::ClosedChange::current(&owner.body, &self.name);
         }
         self
+    }
+
+    /// #13005: whether the closed subset can read `owner` as it stands. A cheap
+    /// pre-check on the owner's text alone, so the audit builds a pin for a
+    /// plain `assert_eq!` only where the literal check could ever withhold.
+    pub(in crate::analysis) fn owner_literal_readable(owner: &FunctionSummary) -> bool {
+        super::owner_value::ClosedChange::current(&owner.body, &owner.name).is_some()
+    }
+
+    /// #13005: whether the current-owner literal check (see
+    /// [`Self::with_current_owner_literal_check`]) is the one gate that
+    /// refuses `assertion`: [`Self::admits`] refuses it, and would admit it
+    /// without that check. The repo-wide audit credits a plain `assert_eq!`
+    /// from its extracted oracle, so it asks this to withhold a literal the
+    /// current owner provably does not return, the audit twin of the diff
+    /// path's neither-version check (#12716). Every other refusal reading is
+    /// left to the audit's existing credit.
+    pub(in crate::analysis) fn literal_check_withholds(
+        &self,
+        test: &TestSummary,
+        assertion: &OracleFact,
+        index: &RustIndex,
+        imports_foreign: ForeignImport<'_>,
+        syntax: &OwnerPinSyntax,
+    ) -> bool {
+        if self.closed_owner.is_none()
+            || self.admits(test, assertion, index, imports_foreign, syntax)
+        {
+            return false;
+        }
+        self.skip_current_literal_check.set(true);
+        let admitted_without = self.admits(test, assertion, index, imports_foreign, syntax);
+        self.skip_current_literal_check.set(false);
+        admitted_without
     }
 
     /// RIPR-SPEC-0197 claims payload equality: whether `assert_ok_eq!(call,
@@ -6188,6 +6258,7 @@ impl OwnerReturnPin {
         // above.
         if helper.is_none()
             && substituted.is_none()
+            && !self.skip_current_literal_check.get()
             && let Some(closed) = &self.closed_owner
             && let Some(call) = call_text
                 .map(str::to_string)

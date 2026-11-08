@@ -539,3 +539,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — wrapper_seam_callee_call_attribution (41)
+
+Reason:
+RIPR-SPEC-0001: evidence-first human output now states a repeated related-test miss sentence once per test and the explain verdict block references the Evidence row instead of re-listing the assertion and reason; every fact remains exactly once (agent-efficiency study, Nov 2-4)
+
+Command:
+`cargo xtask goldens bless wrapper_seam_callee_call_attribution --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

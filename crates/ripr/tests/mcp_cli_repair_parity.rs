@@ -9,6 +9,9 @@
 //!   `policy_omitted` (card / `agent card`), never `seam_not_found`;
 //! - a route-not-ready seam: `seam_gate_refused` (prepare / `repair`), never
 //!   the producer-side `fix_site_not_established`;
+//! - a gate-admitted weak repair target (named missing discriminator over a
+//!   weak direct test): ready on list, prepare, card and `ripr repair`, all
+//!   naming the one test file the repair extends;
 //! - an item no seam resolves (Python): `seam_not_found` carrying the CLI's
 //!   "covers Rust files only" cause on prepare and card alike.
 
@@ -395,6 +398,158 @@ fn route_not_ready_seam_is_seam_gate_refused_not_a_producer_gate() -> Result<(),
     Ok(())
 }
 
+/// A weakly exposed boundary change whose weak test the repair extends: the
+/// shared gate admits the seam, so every route must call the item ready, name
+/// the same single edit file, and carry no `fix_site_not_established` claim.
+/// Before this, `ripr_list_gaps` / `ripr_prepare_repair` demanded a strong test
+/// (which would make the item exposed) while the card and `ripr repair` were
+/// ready, and the recovery sent the agent to a `ripr_refresh` that could not
+/// change the verdict.
+#[test]
+fn weak_test_repair_target_is_ready_with_one_fix_site_on_every_route() -> Result<(), String> {
+    let lib = |op: &str| {
+        format!(
+            "pub fn discount(qty: u32) -> u32 {{\n    if qty {op} 10 {{ 5 }} else {{ 0 }}\n}}\n"
+        )
+    };
+    let fixture = Fixture::create(
+        "weak-extend",
+        &[
+            ("Cargo.toml", CARGO_TOML.to_string()),
+            ("src/lib.rs", lib(">=")),
+            (
+                "tests/discount.rs",
+                "use fx::discount;\n#[test]\nfn total_positive() {\n    assert!(discount(12) > 0);\n}\n".to_string(),
+            ),
+            (".gitignore", "target/\n.ripr/\n".to_string()),
+        ],
+        &[("src/lib.rs", lib(">"))],
+    )?;
+    let mut mcp = Mcp::spawn(&fixture.0)?;
+    let refresh = mcp.tool("ripr_refresh", json!({}))?;
+    if refresh["attempt"]["state"] != "completed" {
+        return Err(format!("refresh did not complete: {refresh}"));
+    }
+    let gaps = mcp.tool("ripr_list_gaps", json!({}))?;
+    let items = gaps["items"].as_array().ok_or("gap list omitted items")?;
+    let [item] = items.as_slice() else {
+        return Err(format!("fixture must yield exactly one item: {gaps}"));
+    };
+    assert_eq!(item["class"], "weakly_exposed", "{item}");
+    let canonical_id = item["canonical_id"].as_str().ok_or("item omitted id")?;
+    let finding_id = item["finding_id"].as_str().unwrap_or(canonical_id);
+    assert_eq!(item["repair_packet_ready"], true, "list_gaps: {item}");
+    assert!(item["repair_ineligibility"].is_null(), "list_gaps: {item}");
+
+    let prepare = mcp.tool(
+        "ripr_prepare_repair",
+        json!({ "canonical_id": canonical_id }),
+    )?;
+    assert_eq!(prepare["repair_packet_ready"], true, "prepare: {prepare}");
+    assert_eq!(
+        prepare["allowed_edit_surface"],
+        json!(["tests/discount.rs"]),
+        "{prepare}"
+    );
+    assert_eq!(prepare["fix_site"]["oracle_strength"], "weak", "{prepare}");
+
+    let card = mcp.tool(
+        "ripr_get_repair_card",
+        json!({ "canonical_id": canonical_id }),
+    )?;
+    assert!(card["failure"].is_null(), "card refused: {card}");
+    assert_eq!(
+        card["card"]["allowed_files"],
+        json!(["tests/discount.rs"]),
+        "{card}"
+    );
+
+    let output = ripr()
+        .current_dir(&fixture.0)
+        .args(["repair", finding_id, "--root", "."])
+        .output()
+        .map_err(|e| e.to_string())?;
+    let cli = String::from_utf8_lossy(&output.stdout).to_string();
+    assert!(
+        cli.contains("Ready to repair") && cli.contains("Files you may change: tests/discount.rs"),
+        "the CLI names the same ready item and edit file:\n{cli}"
+    );
+    Ok(())
+}
+
+/// With two weak direct tests the MCP edit surface must be the file the CLI
+/// names as the test to extend, not whichever related test sorts first.
+#[test]
+fn two_weak_tests_name_the_same_edit_file_on_every_route() -> Result<(), String> {
+    let lib = |op: &str| {
+        format!(
+            "pub fn discount(qty: u32) -> u32 {{\n    if qty {op} 10 {{ 5 }} else {{ 0 }}\n}}\n"
+        )
+    };
+    let fixture = Fixture::create(
+        "two-weak",
+        &[
+            ("Cargo.toml", CARGO_TOML.to_string()),
+            ("src/lib.rs", lib(">=")),
+            (
+                "tests/aaa_first.rs",
+                "use fx::discount;\n#[test]\nfn also_positive() {\n    assert!(discount(15) >= 1);\n}\n".to_string(),
+            ),
+            (
+                "tests/discount.rs",
+                "use fx::discount;\n#[test]\nfn total_positive() {\n    assert!(discount(12) > 0);\n}\n".to_string(),
+            ),
+            (".gitignore", "target/\n.ripr/\n".to_string()),
+        ],
+        &[("src/lib.rs", lib(">"))],
+    )?;
+    let mut mcp = Mcp::spawn(&fixture.0)?;
+    mcp.tool("ripr_refresh", json!({}))?;
+    let gaps = mcp.tool("ripr_list_gaps", json!({}))?;
+    let [item] = gaps["items"]
+        .as_array()
+        .map(Vec::as_slice)
+        .unwrap_or_default()
+    else {
+        return Err(format!("fixture must yield exactly one item: {gaps}"));
+    };
+    let canonical_id = item["canonical_id"].as_str().ok_or("item omitted id")?;
+    let finding_id = item["finding_id"].as_str().unwrap_or(canonical_id);
+    let output = ripr()
+        .current_dir(&fixture.0)
+        .args(["repair", finding_id, "--root", "."])
+        .output()
+        .map_err(|e| e.to_string())?;
+    let cli = String::from_utf8_lossy(&output.stdout).to_string();
+    let cli_file = cli
+        .split("Files you may change: ")
+        .nth(1)
+        .and_then(|rest| rest.lines().next())
+        .map(str::trim)
+        .ok_or_else(|| format!("CLI named no edit file:\n{cli}"))?
+        .to_string();
+    let prepare = mcp.tool(
+        "ripr_prepare_repair",
+        json!({ "canonical_id": canonical_id }),
+    )?;
+    let card = mcp.tool(
+        "ripr_get_repair_card",
+        json!({ "canonical_id": canonical_id }),
+    )?;
+    if prepare["repair_packet_ready"] == true {
+        assert_eq!(
+            prepare["allowed_edit_surface"],
+            json!([cli_file]),
+            "{prepare}"
+        );
+    } else {
+        // Fail-closed is acceptable; naming a different edit file is not.
+        assert!(prepare["allowed_edit_surface"].is_null(), "{prepare}");
+    }
+    assert_eq!(card["card"]["allowed_files"], json!([cli_file]), "{card}");
+    Ok(())
+}
+
 /// #11111 burn-down: `ripr agent stub` refuses an async owner, so neither
 /// surface may offer that stub command as the route. The MCP server reads the
 /// workspace sources like the CLI does and carries the same named refusal.
@@ -480,5 +635,168 @@ fn item_no_seam_resolves_carries_the_cli_cause_on_prepare_and_card() -> Result<(
             "{name}: the item must be a listed check class"
         );
     }
+    Ok(())
+}
+
+/// The first object tagged `"kind": "proposed"` anywhere in a card document.
+fn proposed_target(value: &Value) -> Option<&Value> {
+    match value {
+        Value::Object(map) => {
+            if map.get("kind").and_then(Value::as_str) == Some("proposed")
+                && map.contains_key("file")
+            {
+                return Some(value);
+            }
+            map.values().find_map(proposed_target)
+        }
+        Value::Array(items) => items.iter().find_map(proposed_target),
+        _ => None,
+    }
+}
+
+/// `ripr agent card --json` for the fixture's first repo-exposure seam. Both
+/// commands must exit successfully so a failed command cannot pass as "none".
+fn cli_card_for_first_seam(fixture: &Fixture) -> Result<(Option<i32>, Value), String> {
+    let seam_output = ripr()
+        .current_dir(&fixture.0)
+        .args([
+            "check",
+            "--root",
+            ".",
+            "--mode",
+            "draft",
+            "--format",
+            "repo-exposure-json",
+        ])
+        .output()
+        .map_err(|e| e.to_string())?;
+    if !seam_output.status.success() {
+        return Err(format!(
+            "repo-exposure failed: {}",
+            String::from_utf8_lossy(&seam_output.stderr)
+        ));
+    }
+    let seams: Value = serde_json::from_slice(&seam_output.stdout).map_err(|e| {
+        format!(
+            "repo-exposure is not JSON ({e}): {}",
+            String::from_utf8_lossy(&seam_output.stderr)
+                .chars()
+                .take(500)
+                .collect::<String>()
+        )
+    })?;
+    let seam_id = seams
+        .pointer("/seams/0/seam_id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| format!("fixture produced no seam: {seams}"))?;
+    let card_output = ripr()
+        .current_dir(&fixture.0)
+        .args([
+            "agent",
+            "card",
+            "--root",
+            ".",
+            "--seam-id",
+            seam_id,
+            "--json",
+        ])
+        .output()
+        .map_err(|e| e.to_string())?;
+    // A typed refusal (exit 3) legitimately carries its JSON envelope; any
+    // other status is an operational failure that must not read as "none".
+    let code = card_output.status.code();
+    if !matches!(code, Some(0 | 3)) {
+        return Err(format!(
+            "agent card failed ({code:?}): {}",
+            String::from_utf8_lossy(&card_output.stderr)
+                .chars()
+                .take(500)
+                .collect::<String>()
+        ));
+    }
+    let card = serde_json::from_slice(&card_output.stdout).map_err(|e| {
+        format!(
+            "card is not JSON ({e}): {}",
+            String::from_utf8_lossy(&card_output.stderr)
+        )
+    })?;
+    Ok((code, card))
+}
+
+/// #13204: a seam whose only repair target is the producer-owned new-test
+/// proposal. Through a real finding (real producer, real seam inventory, the
+/// MCP server over stdio), MCP discloses the same
+/// `proposed_new_test` kind and file the CLI `agent card` projects for the same
+/// seam; a seam with no test layout to propose into discloses none.
+#[test]
+fn proposed_new_test_is_disclosed_by_mcp_and_agrees_with_the_cli_card() -> Result<(), String> {
+    let base = [
+        ("Cargo.toml", CARGO_TOML.to_string()),
+        ("src/lib.rs", rust_source(">=")),
+        ("tests/smoke.rs", "#[test]\nfn smoke() {}\n".to_string()),
+        (".gitignore", "target/\n.ripr/\n".to_string()),
+    ];
+    let fixture = Fixture::create("proposed", &base, &[("src/lib.rs", rust_source(">"))])?;
+
+    let mut mcp = Mcp::spawn(&fixture.0)?;
+    let refresh = mcp.tool("ripr_refresh", json!({}))?;
+    if refresh["attempt"]["state"] != "completed" {
+        return Err(format!("refresh did not complete: {refresh}"));
+    }
+    let gaps = mcp.tool("ripr_list_gaps", json!({}))?;
+    let items = gaps["items"].as_array().ok_or("gap list omitted items")?;
+    if items.len() != 1 {
+        return Err(format!("fixture must yield exactly one item: {gaps}"));
+    }
+    let item = &items[0];
+    // The finding has no existing fix site, so MCP keeps the item held; the
+    // disclosure names the proposal without changing that readiness.
+    assert_eq!(
+        item["repair_packet_ready"], false,
+        "disclosure must not flip readiness: {item}"
+    );
+    assert_eq!(
+        item["repair_ineligibility"], "fix_site_not_established",
+        "{item}"
+    );
+    let disclosed = &item["proposed_new_test"];
+    assert_eq!(disclosed["kind"], "integration", "{item}");
+    let mcp_file = disclosed["file"]
+        .as_str()
+        .ok_or_else(|| format!("MCP disclosed no proposed file: {item}"))?;
+    assert_eq!(mcp_file, "tests/discounted_total.rs", "{item}");
+
+    // The CLI card for the same seam projects the same kind and file.
+    let (card_code, card) = cli_card_for_first_seam(&fixture)?;
+    assert_eq!(card_code, Some(0), "the proposal-only card starts: {card}");
+    let cli = proposed_target(&card)
+        .ok_or_else(|| format!("the CLI card projects no proposed target: {card}"))?;
+    assert_eq!(cli["file"].as_str(), Some(mcp_file), "{cli} vs {item}");
+    assert_eq!(cli["proposal_kind"], disclosed["kind"], "{cli} vs {item}");
+
+    // Negative: with no tests/ layout the producer admits no proposal to
+    // propose into, so the same item is still held and both surfaces name
+    // none (the fixture varies only the layout: the unrelated smoke test).
+    let no_layout = Fixture::rust("proposed-none", None)?;
+    let mut mcp = Mcp::spawn(&no_layout.0)?;
+    mcp.tool("ripr_refresh", json!({}))?;
+    let gaps = mcp.tool("ripr_list_gaps", json!({}))?;
+    let item = gaps["items"]
+        .as_array()
+        .and_then(|items| items.first())
+        .ok_or_else(|| format!("no-layout fixture listed no item: {gaps}"))?;
+    assert_eq!(
+        item["repair_packet_ready"], false,
+        "control stays held: {item}"
+    );
+    assert!(
+        item.get("proposed_new_test").is_none(),
+        "no proposal may be disclosed without one: {item}"
+    );
+    let (_, card) = cli_card_for_first_seam(&no_layout)?;
+    assert!(
+        proposed_target(&card).is_none(),
+        "the CLI card must also project no proposal: {card}"
+    );
     Ok(())
 }
