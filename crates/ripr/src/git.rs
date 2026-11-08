@@ -3728,8 +3728,26 @@ To add an exception for this directory, call:\n\n\tgit config --global --add saf
         ));
         std::fs::create_dir_all(root.join("cache"))
             .map_err(|err| format!("create probe repo: {err}"))?;
-        run_git(&root, &["init", "--quiet"]).map_err(|err| err.to_string())?;
+        fixture_git(&root, &["init", "--quiet"])?;
         Ok(root)
+    }
+
+    /// Fixture git that ignores inherited repository selectors, so a hook or
+    /// wrapper exporting `GIT_INDEX_FILE`/`GIT_DIR` cannot redirect staging
+    /// away from the index the probes under test read.
+    fn fixture_git(root: &Path, args: &[&str]) -> Result<(), String> {
+        let status = git_command(root, args)
+            .env_remove("GIT_DIR")
+            .env_remove("GIT_WORK_TREE")
+            .env_remove("GIT_COMMON_DIR")
+            .env_remove("GIT_INDEX_FILE")
+            .status()
+            .map_err(|err| format!("spawn git {args:?}: {err}"))?;
+        if status.success() {
+            Ok(())
+        } else {
+            Err(format!("git {args:?} failed: {status}"))
+        }
     }
 
     /// `tracked_files_under` must separate "the repository ships a file here"
@@ -3743,7 +3761,7 @@ To add an exception for this directory, call:\n\n\tgit config --global --add saf
             if tracked_files_under(&cache)? {
                 return Err("an untracked cache file must not read as repository-shipped".into());
             }
-            run_git(&root, &["add", "cache/entry.json"]).map_err(|err| err.to_string())?;
+            fixture_git(&root, &["add", "cache/entry.json"])?;
             if !tracked_files_under(&cache)? {
                 return Err("a tracked file under the directory must be reported".into());
             }
