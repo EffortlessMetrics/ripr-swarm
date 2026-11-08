@@ -1816,7 +1816,15 @@ mod tests {
 
 #[cfg(test)]
 mod facade_status_message_tests {
-    use super::facade_status_message;
+    use super::{
+        ContinueFacadeCommand, RepairFacadeCommand, StatusFacadeCommand, facade_status_message,
+        parse_continue_args, parse_repair_args, parse_status_args,
+    };
+    use std::path::Path;
+
+    fn args(words: &[&str]) -> Vec<String> {
+        words.iter().map(|word| word.to_string()).collect()
+    }
 
     #[test]
     fn status_facade_errors_name_the_status_command() {
@@ -1846,5 +1854,84 @@ mod facade_status_message_tests {
             facade_status_message("could not read store".to_string()),
             "could not read store"
         );
+    }
+
+    /// A second, different `--root` is refused with the owning command's name;
+    /// an identical repeat is absorbed. Each facade command names itself.
+    #[test]
+    fn conflicting_roots_are_refused_naming_the_command() -> Result<(), String> {
+        let conflict = |parse: Result<(), String>, command: &str| match parse {
+            Err(message) if message.contains(&format!("{command} takes --root once")) => Ok(()),
+            other => Err(format!(
+                "{command}: expected a --root conflict, got {other:?}"
+            )),
+        };
+        let argv = args(&["--root", "a", "--root", "b"]);
+        conflict(parse_repair_args(&argv).map(|_| ()), "repair")?;
+        conflict(parse_continue_args(&argv).map(|_| ()), "continue")?;
+        conflict(parse_status_args(&argv).map(|_| ()), "status")?;
+        let same = args(&["--root", "a", "--root", "a"]);
+        match parse_status_args(&same)? {
+            StatusFacadeCommand::Status(options) => {
+                assert_eq!(options.root, Path::new("a"));
+                assert!(options.root_explicit);
+            }
+            StatusFacadeCommand::Help => return Err("roots must not print help".to_string()),
+        }
+        Ok(())
+    }
+
+    /// Refusal prose names the offending input so the caller can correct it.
+    #[test]
+    fn repair_refusals_name_the_offending_input() {
+        let second = parse_repair_args(&args(&["one", "two"]));
+        assert!(
+            matches!(&second, Err(m) if m.contains("already selected `one`")),
+            "{second:?}"
+        );
+        let blank = parse_repair_args(&args(&["  "]));
+        assert!(
+            matches!(&blank, Err(m) if m.contains("non-empty item")),
+            "{blank:?}"
+        );
+        let blank_base = parse_repair_args(&args(&["--base", ""]));
+        assert!(
+            matches!(&blank_base, Err(m) if m.contains("non-empty --base")),
+            "{blank_base:?}"
+        );
+        let missing = parse_repair_args(&args(&["--root"]));
+        assert!(
+            matches!(&missing, Err(m) if m.contains("missing value for --root")),
+            "{missing:?}"
+        );
+        // Negative control: a single, well-formed item parses.
+        assert!(matches!(
+            parse_repair_args(&args(&["one"])),
+            Ok(RepairFacadeCommand::Repair(options)) if options.item.as_deref() == Some("one")
+        ));
+    }
+
+    /// A blank `--attempt` is refused with the owning command's name, and
+    /// `root_explicit` stays false until `--root` is typed.
+    #[test]
+    fn blank_attempt_and_default_root_flags() {
+        let blank = parse_status_args(&args(&["--attempt", "  "]));
+        assert!(
+            matches!(&blank, Err(m) if m.contains("status --attempt requires a non-empty ID")),
+            "{blank:?}"
+        );
+        let blank = parse_continue_args(&args(&["--attempt", ""]));
+        assert!(
+            matches!(&blank, Err(m) if m.contains("continue --attempt requires a non-empty ID")),
+            "{blank:?}"
+        );
+        assert!(matches!(
+            parse_status_args(&args(&[])),
+            Ok(StatusFacadeCommand::Status(o)) if !o.root_explicit && !o.json && o.attempt_id.is_none()
+        ));
+        assert!(matches!(
+            parse_continue_args(&args(&["--root", "."])),
+            Ok(ContinueFacadeCommand::Continue(o)) if o.root_explicit && !o.quiet
+        ));
     }
 }
