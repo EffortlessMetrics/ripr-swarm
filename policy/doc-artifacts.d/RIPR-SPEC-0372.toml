@@ -1,0 +1,7 @@
+[[artifact]]
+id = "RIPR-SPEC-0372"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0372-scoped-gate-acknowledgements.md"
+status = "proposed"
+owner = "repository-policy"
+standalone_reason = "Issue #1966: scoped structured gate acknowledgements with legacy label global_scope disclosure and fail-closed ledger admission."

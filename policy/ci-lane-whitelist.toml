@@ -160,6 +160,16 @@ artifact_families = []
 description = "Proof-stack artifact and support-tier claim map checks, plus the non-blocking spec maintenance digest (#3467): candidate counts never gate, and an instrument failure is a failed advisory observation."
 
 [[lane]]
+id = "workflow-lint"
+posture = "advisory"
+workflow = ".github/workflows/workflow-lint.yml"
+jobs = ["jactionlint"]
+commands = ["jactionlint --profile correctness --no-online --shellcheck= --pyflakes="]
+estimated_lem = 1
+artifact_families = []
+description = "Optional path-filtered workflow correctness check with a checksum-verified jactionlint 2.5.0 binary, no Rust build and no API access. Findings fail this job; it is not a new branch-protection requirement."
+
+[[lane]]
 id = "badge-endpoints"
 posture = "advisory"
 workflow = ".github/workflows/badge-endpoints.yml"

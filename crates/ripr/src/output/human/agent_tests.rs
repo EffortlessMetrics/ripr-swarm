@@ -4,10 +4,10 @@ use super::agent::{MAX_GAP_LINES, MIN_GAP_LINES, gap_line_budget, render, render
 use crate::app::{CheckDiffProvenance, CheckOutput, Mode};
 use crate::config::RiprConfig;
 use crate::domain::{
-    ActivationEvidence, Confidence, DeltaKind, ExposureClass, Finding, MissingDiscriminatorFact,
-    OracleKind, OracleStrength, Probe, ProbeFamily, ProbeId, RelatedTest, RelatedTestMiss,
-    RevealEvidence, RiprEvidence, SourceCurrentness, SourceLocation, StageEvidence, StageState,
-    StaticLimitKind, Summary,
+    ActivationEvidence, Confidence, DeltaKind, DiscriminatorShape, ExposureClass, Finding,
+    MissingDiscriminatorFact, OracleKind, OracleStrength, Probe, ProbeFamily, ProbeId, RelatedTest,
+    RelatedTestMiss, RevealEvidence, RiprEvidence, SourceCurrentness, SourceLocation,
+    StageEvidence, StageState, StaticLimitKind, Summary,
 };
 use std::path::PathBuf;
 
@@ -70,6 +70,8 @@ fn weak_gap(id: &str, line: usize) -> Finding {
         value: "pct == 50".to_string(),
         reason: "the boundary is never an input".to_string(),
         flow_sink: None,
+        shape: DiscriminatorShape::Boundary,
+        drafted_boundary: None,
     }];
     gap.related_tests = vec![RelatedTest {
         name: "discount_runs".to_string(),

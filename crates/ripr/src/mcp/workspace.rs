@@ -101,6 +101,8 @@ pub(crate) struct GapListWindow {
     /// time, so a large truncated selection cannot make the shell outgrow
     /// the wire bound.
     pub(crate) omitted_offset: usize,
+    /// Generate continuations that walk each axis without replaying the other.
+    pub(crate) independent_pages: bool,
 }
 
 /// Omitted identities disclosed inline per response. Each entry is a short
@@ -231,6 +233,7 @@ struct GapListScope<'a> {
 struct GapPage {
     /// Requested start of the omission window; see [`GapListWindow`].
     omitted_offset: usize,
+    independent_pages: bool,
     offset: usize,
     limit: Option<usize>,
     returned: usize,
@@ -889,6 +892,7 @@ impl WorkspaceSession {
         // zeroed page fields and the filled ones the caller receives.
         let shell_page = GapPage {
             omitted_offset: window.omitted_offset,
+            independent_pages: window.independent_pages,
             ..GapPage::default()
         };
         let shell = {
@@ -987,6 +991,7 @@ impl WorkspaceSession {
         // monotone continuation prefixes for the largest fitting page.
         let page_fields = |count: usize| GapPage {
             omitted_offset: window.omitted_offset,
+            independent_pages: window.independent_pages,
             // The window echoes the requested offset; a past-end request is
             // an empty disclosed page at that offset, not a renumbered one.
             offset: window.offset,
@@ -1127,10 +1132,9 @@ impl WorkspaceSession {
         }
         let omitted_end = omitted_start + omitted_window.len();
         let omitted_next = (omitted_end < selection.omitted.len()).then_some(omitted_end);
-        // Both continuation routes replay the caller's whole request and
-        // advance only their own axis: the snapshot pin, filters, and the
-        // limit carry over so following either route never silently changes
-        // the other window (#9360 review).
+        // By default each route keeps the other window for compatibility.
+        // The opt-in puts the other axis at its disclosed past-end offset;
+        // callers save and walk both routes to retain every identity.
         let replay_arguments = |offset: usize, omitted_offset: usize| {
             let mut arguments = json!({
                 "snapshot_id": snapshot.snapshot_id,
@@ -1138,6 +1142,9 @@ impl WorkspaceSession {
             });
             if omitted_offset > 0 {
                 arguments["omitted_offset"] = json!(omitted_offset);
+            }
+            if page.independent_pages {
+                arguments["independent_pages"] = json!(true);
             }
             for (name, value) in filter.arguments().as_object().cloned().unwrap_or_default() {
                 arguments[name] = value;
@@ -1150,16 +1157,26 @@ impl WorkspaceSession {
         if let Some(next_omitted) = omitted_next {
             continuation["next_omitted_page"] = json!({
                 "tool": "ripr_list_gaps",
-                "arguments": replay_arguments(page.offset, next_omitted),
+                "arguments": replay_arguments(
+                    if page.independent_pages { scope.filtered } else { page.offset },
+                    next_omitted,
+                ),
             });
         }
         if let Some(next_offset) = page.next_offset {
             // The generated route pins the snapshot identity and the caller
             // filters: a refresh between pages fails closed with
             // stale_snapshot instead of silently mixing snapshots, and the
-            // narrowed walk resumes narrowed (#6021 review, #7464). It also
-            // keeps the requested omission window (#9360 review).
-            let arguments = replay_arguments(next_offset, page.omitted_offset);
+            // narrowed walk resumes narrowed (#6021 review, #7464). The
+            // default keeps the requested omission window (#9360 review).
+            let arguments = replay_arguments(
+                next_offset,
+                if page.independent_pages {
+                    selection.omitted.len()
+                } else {
+                    page.omitted_offset
+                },
+            );
             continuation["next_page"] = json!({
                 "tool": "ripr_list_gaps",
                 "arguments": arguments,
@@ -3966,6 +3983,7 @@ mod tests {
                     offset: 1,
                     limit: Some(2),
                     omitted_offset: 5,
+                    ..GapListWindow::default()
                 },
                 &filter,
                 crate::mcp::MAX_RESPONSE_BYTES,
@@ -3986,6 +4004,221 @@ mod tests {
             return Err(format!(
                 "next_omitted_page lost the item window or filter: {next_omitted}"
             ));
+        }
+        Ok(())
+    }
+
+    /// Following both opt-in routes walks each axis once, with no cross-axis
+    /// inventory replay. The expected identities come from the stored selection.
+    #[test]
+    fn independent_continuations_cover_both_axes_without_replay() -> Result<(), String> {
+        use std::collections::BTreeSet;
+
+        let session = session_with_findings(700)?;
+        let snapshot = session
+            .active_snapshot(None)
+            .map_err(|failure| failure.detail)?;
+        let expected_items: BTreeSet<String> = snapshot
+            .selection
+            .selected_ids()
+            .map(str::to_string)
+            .collect();
+        let expected_omitted: BTreeSet<String> = snapshot
+            .selection
+            .omitted
+            .iter()
+            .map(|item| item.canonical_id.clone())
+            .collect();
+        if expected_items.len() < 3 || expected_omitted.len() <= OMITTED_WINDOW {
+            return Err("fixture must cover multiple item and omission pages".into());
+        }
+        let filter = GapListFilter {
+            file: Some("src".to_string()),
+            ..GapListFilter::default()
+        };
+        let list = |args: &Value| -> Result<Value, String> {
+            if args["snapshot_id"] != json!(snapshot.snapshot_id)
+                || args["file"] != json!("src")
+                || args["limit"] != json!(2)
+                || args["independent_pages"] != json!(true)
+            {
+                return Err(format!("continuation lost a binding: {args}"));
+            }
+            let offset = args["offset"].as_u64().ok_or("missing offset")? as usize;
+            let omitted_offset = args
+                .get("omitted_offset")
+                .and_then(Value::as_u64)
+                .unwrap_or(0) as usize;
+            session
+                .list_gaps(
+                    Some(&snapshot.snapshot_id),
+                    GapListWindow {
+                        offset,
+                        omitted_offset,
+                        limit: Some(2),
+                        independent_pages: true,
+                    },
+                    &filter,
+                    crate::mcp::MAX_RESPONSE_BYTES,
+                )
+                .map_err(|failure| failure.detail)
+        };
+        let first = list(&json!({
+            "snapshot_id": snapshot.snapshot_id,
+            "file": "src",
+            "limit": 2,
+            "offset": 0,
+            "independent_pages": true,
+        }))?;
+        let mut items = BTreeSet::new();
+        let mut omitted = BTreeSet::new();
+        let collect =
+            |document: &Value, key: &str, seen: &mut BTreeSet<String>| -> Result<(), String> {
+                for entry in document[key].as_array().ok_or("missing array")? {
+                    let id = entry["canonical_id"].as_str().ok_or("missing id")?;
+                    if !seen.insert(id.to_string()) {
+                        return Err(format!("repeated {key}: {id}"));
+                    }
+                }
+                Ok(())
+            };
+        collect(&first, "items", &mut items)?;
+        collect(&first, "omitted_items", &mut omitted)?;
+        let mut item_route = first.pointer("/continuation/next_page/arguments").cloned();
+        let mut omission_route = first
+            .pointer("/continuation/next_omitted_page/arguments")
+            .cloned();
+        let mut item_pages = 0;
+        while let Some(args) = item_route {
+            let doc = list(&args)?;
+            if doc["omitted_items"] != json!([]) || doc["omitted_page"]["has_more"] != json!(false)
+            {
+                return Err(format!("item continuation replayed omissions: {doc}"));
+            }
+            collect(&doc, "items", &mut items)?;
+            item_route = doc.pointer("/continuation/next_page/arguments").cloned();
+            item_pages += 1;
+            if item_pages > expected_items.len() {
+                return Err("item walk did not terminate".into());
+            }
+        }
+        let mut omission_pages = 0;
+        while let Some(args) = omission_route {
+            let doc = list(&args)?;
+            if doc["items"] != json!([]) || doc["page"]["has_more"] != json!(false) {
+                return Err(format!("omission continuation replayed items: {doc}"));
+            }
+            collect(&doc, "omitted_items", &mut omitted)?;
+            omission_route = doc
+                .pointer("/continuation/next_omitted_page/arguments")
+                .cloned();
+            omission_pages += 1;
+            if omission_pages > expected_omitted.len() {
+                return Err("omission walk did not terminate".into());
+            }
+        }
+        if item_pages == 0
+            || omission_pages == 0
+            || items != expected_items
+            || omitted != expected_omitted
+        {
+            return Err(format!(
+                "walk coverage mismatch: items {} / {}, omissions {} / {}",
+                items.len(),
+                expected_items.len(),
+                omitted.len(),
+                expected_omitted.len()
+            ));
+        }
+        let changed = session_with_findings(701)?;
+        let failure = changed
+            .list_gaps(
+                Some(&snapshot.snapshot_id),
+                GapListWindow {
+                    independent_pages: true,
+                    ..GapListWindow::default()
+                },
+                &filter,
+                crate::mcp::MAX_RESPONSE_BYTES,
+            )
+            .err()
+            .ok_or("stale pin accepted")?;
+        if failure.code != CODE_STALE_SNAPSHOT {
+            return Err(format!("wrong stale refusal: {failure:?}"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn independent_omission_route_uses_filtered_end_and_respects_envelope() -> Result<(), String> {
+        let session = session_with_findings(700)?;
+        let snapshot = session
+            .active_snapshot(None)
+            .map_err(|failure| failure.detail)?;
+        let selected: std::collections::BTreeSet<&str> =
+            snapshot.selection.selected_ids().collect();
+        let file = snapshot
+            .items
+            .iter()
+            .find(|item| selected.contains(item.canonical_id.as_str()))
+            .ok_or("no selected item")?
+            .file
+            .clone();
+        let filter = GapListFilter {
+            file: Some(file),
+            ..GapListFilter::default()
+        };
+        let window = GapListWindow {
+            limit: Some(1),
+            independent_pages: true,
+            ..GapListWindow::default()
+        };
+        let page = session
+            .list_gaps(
+                Some(&snapshot.snapshot_id),
+                window,
+                &filter,
+                crate::mcp::MAX_RESPONSE_BYTES,
+            )
+            .map_err(|failure| failure.detail)?;
+        let filtered = page["filtered"].as_u64().ok_or("missing filtered count")?;
+        if filtered == 0 || filtered >= selected.len() as u64 {
+            return Err(format!(
+                "fixture must select a strict nonempty subset: {page}"
+            ));
+        }
+        let args = &page["continuation"]["next_omitted_page"]["arguments"];
+        if args["offset"] != json!(filtered)
+            || args["file"] != json!(filter.file)
+            || args["snapshot_id"] != json!(snapshot.snapshot_id)
+            || args["independent_pages"] != json!(true)
+        {
+            return Err(format!(
+                "omission route lost filtered end or binding: {args}"
+            ));
+        }
+        let size = crate::mcp::protocol::structured_envelope_bytes(&page)?;
+        let fit = session
+            .list_gaps(Some(&snapshot.snapshot_id), window, &filter, size)
+            .map_err(|failure| format!("exact-fit envelope refused: {}", failure.detail))?;
+        let fitted_size = crate::mcp::protocol::structured_envelope_bytes(&fit)?;
+        if fitted_size > size {
+            return Err("fitted envelope exceeded budget".into());
+        }
+        match session.list_gaps(
+            Some(&snapshot.snapshot_id),
+            window,
+            &filter,
+            size.saturating_sub(1),
+        ) {
+            Ok(smaller) => {
+                let actual = crate::mcp::protocol::structured_envelope_bytes(&smaller)?;
+                if actual >= size {
+                    return Err("smaller budget admitted oversized envelope".into());
+                }
+            }
+            Err(failure) if failure.code == CODE_RESULT_TOO_LARGE => {}
+            Err(failure) => return Err(format!("unexpected boundary refusal: {failure:?}")),
         }
         Ok(())
     }

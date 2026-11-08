@@ -381,7 +381,7 @@ fn project_assertion_goal(input: &RepairCardInput<'_>) -> Option<RepairCardAsser
     None
 }
 
-fn project_target(selection: &RepairTargetSelection) -> Option<RepairCardTarget> {
+pub(crate) fn project_target(selection: &RepairTargetSelection) -> Option<RepairCardTarget> {
     match selection {
         RepairTargetSelection::Existing(target) => Some(RepairCardTarget::Existing {
             symbol_id: target.symbol_id().0.clone(),
@@ -398,18 +398,22 @@ fn project_target(selection: &RepairTargetSelection) -> Option<RepairCardTarget>
             relation: target.relation().as_str().to_string(),
             workspace_identity: target.workspace_identity().to_string(),
         }),
-        RepairTargetSelection::Proposed(proposal) => Some(RepairCardTarget::Proposed {
-            file: display_path(&proposal.file),
-            owner: proposal.owner.clone(),
-            proposal_kind: match proposal.kind {
-                crate::analysis::new_test_target::NewTestKind::InlineUnit => {
-                    RepairCardProposedTestKind::InlineUnit
-                }
-                crate::analysis::new_test_target::NewTestKind::Integration => {
-                    RepairCardProposedTestKind::Integration
-                }
-            },
-        }),
+        RepairTargetSelection::Proposed(proposal) => {
+            let selected =
+                crate::analysis::new_test_target::SelectedProposal::from_proposal(proposal);
+            Some(RepairCardTarget::Proposed {
+                file: selected.file,
+                owner: proposal.owner.clone(),
+                proposal_kind: match selected.kind {
+                    crate::analysis::new_test_target::NewTestKind::InlineUnit => {
+                        RepairCardProposedTestKind::InlineUnit
+                    }
+                    crate::analysis::new_test_target::NewTestKind::Integration => {
+                        RepairCardProposedTestKind::Integration
+                    }
+                },
+            })
+        }
         RepairTargetSelection::Missing => None,
     }
 }
