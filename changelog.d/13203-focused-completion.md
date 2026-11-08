@@ -1,2 +1,3 @@
 <!-- section: Fixed -->
 - Refuse incomplete or contradictory caller-reported focused test event sequences (a test reporting both `ok` and `failed`, a `started` test with no terminal event, or an unclosed or mismatched suite) before finishing a repair attempt. `--test-result` remains optional and does not gate finish (#13203).
+- An interrupted focused finish now recovers only the receipt and verify bytes its recorded outcome names, and refuses a different supplied claim. An interrupted proposal finish written by an earlier build needs the caller-reported result supplied again so the current validator can recheck it; older normalized records alone do not carry suite framing. A focused finish still does not gate on a passing result (#13203).

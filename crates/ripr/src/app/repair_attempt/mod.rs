@@ -2410,7 +2410,7 @@ fn read_bound_terminal_receipt(
     Ok((artifact.path.clone(), value))
 }
 
-fn read_terminal_artifact_bytes(
+pub(crate) fn read_terminal_artifact_bytes(
     root: &Path,
     manifest: &RepairAttemptManifest,
     artifact: &RepairAttemptArtifact,
@@ -2513,6 +2513,29 @@ pub(crate) fn retain_terminal_evidence_from(
 pub(crate) struct TerminalRetentionCustody {
     attempt_id: RepairAttemptId,
     committed_manifest: Vec<u8>,
+}
+
+/// Run a read-and-publish recovery against the same terminal manifest while
+/// its commit lock is held. The callback must not invoke a manifest writer.
+pub(crate) fn with_locked_terminal_manifest_from<T>(
+    root: &Path,
+    store: Option<&Path>,
+    attempt_id: &RepairAttemptId,
+    expected: &RepairAttemptManifest,
+    action: impl FnOnce() -> Result<T, String>,
+) -> Result<T, String> {
+    let (_, path, _, _) = open_attempt_with_bytes(root, store, attempt_id)?;
+    let attempt_dir = path
+        .parent()
+        .ok_or("repair attempt manifest path has no parent")?;
+    let _lock = lock_manifest_for_commit(attempt_dir, attempt_id)?;
+    let (_, _, _, current) = open_attempt_with_bytes(root, store, attempt_id)?;
+    if current != *expected {
+        return Err(
+            "repair attempt terminal evidence changed before apply-record recovery".to_string(),
+        );
+    }
+    action()
 }
 
 pub(crate) fn retain_terminal_evidence_with_custody_from(
@@ -2811,6 +2834,16 @@ pub(crate) fn complete_pending_terminal_retention_from(
     store: Option<&Path>,
     attempt_id: &str,
 ) -> Result<bool, String> {
+    complete_pending_terminal_retention_authorized_from(root, store, attempt_id, false)
+}
+
+/// `allow_trust` requires caller-side claim, authority and missing-projection checks.
+pub(crate) fn complete_pending_terminal_retention_authorized_from(
+    root: &Path,
+    store: Option<&Path>,
+    attempt_id: &str,
+    allow_trust: bool,
+) -> Result<bool, String> {
     let attempt_id = RepairAttemptId::parse(attempt_id.to_string())?;
     let locator = store;
     let Ok((store, _, manifest)) = open_attempt(root, locator, &attempt_id) else {
@@ -2822,14 +2855,20 @@ pub(crate) fn complete_pending_terminal_retention_from(
     {
         return Ok(false);
     }
-    // A focused finish carries a pending caller-reported claim that this
-    // generic promotion cannot retain or verify, so it never promotes one.
-    // An interrupted focused finish is inspected and restarted as a new
-    // attempt; recovering it with the original claim is a later change.
-    if manifest
-        .after
-        .as_ref()
-        .is_some_and(|after| after.focused_result.is_some())
+    // A focused trust-bound after phase still has an apply record to publish.
+    // A receipt alone must not turn an interrupted apply into a completed
+    // evidence set; the after command instead revalidates the supplied claim
+    // and retries the whole transaction under the workflow lock.
+    if !allow_trust
+        && manifest
+            .after
+            .as_ref()
+            .is_some_and(|after| after.focused_result.is_some())
+        && find_manifest_artifact_by_role(
+            &manifest,
+            crate::app::python_repair_binding::BINDING_ARTIFACT_ROLE,
+        )
+        .is_some()
     {
         return Ok(false);
     }
@@ -2847,6 +2886,13 @@ pub(crate) fn complete_pending_terminal_retention_from(
     let Some(after) = manifest.after.as_ref() else {
         return Ok(false);
     };
+    if after.focused_result.is_some() {
+        match &manifest.focused_receipt_evaluation {
+            Some(FocusedReceiptEvaluation::Accepted { receipt_sha256, .. })
+                if *receipt_sha256 == sha256_bytes(receipt_text.as_bytes()) => {}
+            _ => return Ok(false),
+        }
+    }
     let bound = |pointer: &str, expected: &str| {
         receipt.pointer(pointer).and_then(serde_json::Value::as_str) == Some(expected)
     };
@@ -2859,6 +2905,12 @@ pub(crate) fn complete_pending_terminal_retention_from(
     }
     let verify_bytes = std::fs::read(&verify_path)
         .map_err(|error| format!("read {} failed: {error}", verify_path.display()))?;
+    if let Some(FocusedReceiptEvaluation::Accepted { verify_sha256, .. }) =
+        &manifest.focused_receipt_evaluation
+        && *verify_sha256 != sha256_bytes(&verify_bytes)
+    {
+        return Ok(false);
+    }
     let Some(expected_verify) = receipt
         .pointer("/provenance/verify_artifact/sha256")
         .and_then(serde_json::Value::as_str)
@@ -2899,6 +2951,18 @@ pub(crate) fn complete_pending_terminal_retention_from(
         sources.push(BeforeArtifactSource {
             role: TERMINAL_GAP_AFTER_ROLE,
             path: &gap_after_path,
+        });
+    }
+    let focused_path = root
+        .join("target/ripr/workflow/focused-results")
+        .join(attempt_id.as_str())
+        .join(crate::app::focused_run::FOCUSED_RUN_ARTIFACT_FILE);
+    if let Some(pending) = after.focused_result.as_ref() {
+        crate::output::file_write::write(&focused_path, pending.record.as_bytes())
+            .map_err(|error| format!("publish {} failed: {error}", focused_path.display()))?;
+        sources.push(BeforeArtifactSource {
+            role: TERMINAL_FOCUSED_RUN_ROLE,
+            path: &focused_path,
         });
     }
     retain_terminal_evidence_from(&root, locator, &attempt_id, &sources)?;

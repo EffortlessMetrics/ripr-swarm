@@ -3240,13 +3240,13 @@ pub(crate) fn focused_receipt_recovery_limitation(
     }
     match &manifest.focused_receipt_evaluation {
         None => Some(
-            "no focused receipt evaluation is recorded yet; if the after phase is no longer running, inspect the attempt and start a new attempt",
+            "no focused receipt evaluation is recorded yet; if the after phase is no longer running, retry with the same --test-result FILE and, for a trust-bound attempt, its original edit authority",
         ),
         Some(crate::app::repair_attempt::FocusedReceiptEvaluation::Started) => Some(
             "focused receipt evaluation has started but no outcome is recorded; if the after phase is no longer running, inspect the attempt and start a new attempt",
         ),
         Some(crate::app::repair_attempt::FocusedReceiptEvaluation::Accepted { .. }) => Some(
-            "the focused receipt decision was committed; if the after phase is no longer running, inspect the attempt and start a new attempt",
+            "the focused receipt decision was committed; if the after phase is no longer running, retry with the same --test-result FILE and, for a trust-bound attempt, its original edit authority. Recovery requires current bound inputs and the exact committed receipt and verify bytes; if those are unavailable, start a new attempt",
         ),
     }
 }
