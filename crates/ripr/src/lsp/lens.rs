@@ -1723,6 +1723,36 @@ mod tests {
     }
 
     #[test]
+    fn nesting_budget_recovery_is_named_but_lookalike_text_is_not() -> Result<(), String> {
+        // #13660: the nesting-budget decline has its own recovery text; the
+        // editor still discloses the file, but only on exact producer text.
+        let limitation = |text: &str| -> Result<AnalysisLimitation, String> {
+            AnalysisLimitation::new(
+                AnalysisLimitationKind::ProducerFailure,
+                AnalysisStage::LanguageAdapter,
+                AnalysisRecovery::new(AnalysisRecoveryKind::InspectFailure, text)?,
+            )
+            .with_path("src/lib.rs")
+        };
+        let named = |text: &str| -> Result<bool, String> {
+            Ok(super::super::diagnostics::limitation_is_file_parse_failure(
+                &limitation(text)?,
+            ))
+        };
+        assert!(named(
+            crate::analysis_outcome::RUST_NESTING_BUDGET_RECOVERY
+        )?);
+        assert!(named(crate::analysis_outcome::RUST_PARSE_FAILURE_RECOVERY)?);
+        assert_ne!(
+            crate::analysis_outcome::RUST_NESTING_BUDGET_RECOVERY,
+            crate::analysis_outcome::RUST_PARSE_FAILURE_RECOVERY
+        );
+        assert!(!crate::analysis_outcome::RUST_NESTING_BUDGET_RECOVERY.contains("parses as Rust"));
+        assert!(!named("Split the expression below the nesting budget.")?);
+        Ok(())
+    }
+
+    #[test]
     fn per_file_producer_failure_that_is_not_a_parse_failure_keeps_the_lens() -> Result<(), String>
     {
         // `classification_incomplete`: a per-file language-adapter failure that

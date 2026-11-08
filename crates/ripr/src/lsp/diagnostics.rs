@@ -2227,6 +2227,7 @@ pub(super) fn limitation_is_file_parse_failure(
         AnalysisLimitationKind::ProducerFailure => matches!(
             recovery,
             crate::analysis_outcome::RUST_PARSE_FAILURE_RECOVERY
+                | crate::analysis_outcome::RUST_NESTING_BUDGET_RECOVERY
                 | crate::analysis_outcome::RUST_NOT_UTF8_RECOVERY
                 | crate::analysis_outcome::PYTHON_PARSE_FAILURE_RECOVERY
         ),

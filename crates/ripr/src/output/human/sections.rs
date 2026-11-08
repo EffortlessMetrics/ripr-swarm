@@ -209,7 +209,10 @@ pub(crate) fn render_finding_digest_with_config(
         }
     }
     if let Some(gap) = &finding.canonical_gap {
-        out.push_str(&format!("  Gap ID (for scripts): {}\n", gap.id));
+        out.push_str(&format!(
+            "  Gap ID (for scripts): {}\n",
+            crate::output::human::cap_rendered_identity(&gap.id)
+        ));
     }
     let changed = finding
         .probe

@@ -1385,7 +1385,14 @@ limitation names up to three files with their limit token and counts the rest in
 `affected_items`, so a declined file is never complete by omission (#9308,
 #4511). Plain syntax errors in unchanged files stay on the narrower
 `rust_lexical_test_index_partial` rule above. Changed declined files keep their
-own per-file #4722 limitation.
+own per-file #4722 limitation. A changed file that fails the Rust parser keeps
+the recovery "Fix the file so it parses as Rust, then re-run the analysis."; a
+changed file that is valid Rust but over the `rust_nesting_budget` carries its
+own recovery naming the budget (split or flatten the deeply nested expression,
+operator chain or `else if` chain), so it is never told to fix valid syntax
+(#13660). The human and GitHub reports cap an echoed canonical gap id (which
+embeds the changed expression) at 240 characters with a truncation marker; JSON
+and agent output keep the full id.
 
 When supported raw findings align to a canonical evidence item, `ripr check
 --json` also emits an additive `finding_alignment` section. The section is
