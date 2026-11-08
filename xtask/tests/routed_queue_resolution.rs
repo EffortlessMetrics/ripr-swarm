@@ -615,7 +615,11 @@ fn missing_or_invalid_pr_node_identity_refuses_without_admission_outputs() -> Re
     for node in [None, Some(json!(null)), Some(json!("")), Some(json!(42))] {
         let outcome = run_resolve_with_node(&world, &shell, &run, node.clone())?;
         assert!(!outcome.accepted, "invalid node {node:?} was admitted");
-        assert!(outcome.outputs.is_empty(), "refusal published {:?}", outcome.outputs);
+        assert!(
+            outcome.outputs.is_empty(),
+            "refusal published {:?}",
+            outcome.outputs
+        );
     }
     Ok(())
 }
