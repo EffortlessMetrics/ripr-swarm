@@ -1830,6 +1830,9 @@ fn check_inner(
     // leaves the slot empty — the early-timeout case.
     let input_facts_slot: crate::analysis::InputFactsSlot =
         std::sync::Arc::new(std::sync::Mutex::new(None));
+    // #13644: the last-commit fallback below spends only what remains of
+    // this budget.
+    let analysis_started = std::time::Instant::now();
     let output_result = if format.is_repo_seam_inventory() {
         // Repo seam-driven formats do not consume legacy repo `Findings`,
         // so skip `run_repo_analysis` and let `render_check` drive the
@@ -1917,18 +1920,43 @@ fn check_inner(
         && candidate_tree.is_none()
         && output_dir.is_none()
         && write_artifact.is_none()
-        && last_commit_fallback_applies(&output, &limited_check_input.root)
+        && last_commit_fallback_applies(
+            &output,
+            &limited_check_input.root,
+            limited_check_input.git_timeout,
+        )
     {
         let mut retry = limited_check_input.clone();
         retry.base = Some("HEAD~1".to_string());
         let retry_config = config.clone();
-        let retried = super::check_budget::run_with_budget(
-            check_timeout,
-            None,
-            || {},
-            move || app::check_with_progress_core(retry, &retry_config, progress_scope, None),
-        );
-        if let Ok(retried) = retried
+        let retry_sink = progress.clone();
+        let abandon_sink = progress.clone();
+        // A disabled budget stays disabled; an exhausted one keeps the
+        // original empty result instead of starting another worker.
+        let remaining =
+            check_timeout.map(|budget| budget.saturating_sub(analysis_started.elapsed()));
+        let retried = (remaining != Some(std::time::Duration::ZERO)).then(|| {
+            super::check_budget::run_with_budget(
+                remaining,
+                None,
+                move || {
+                    if let Some(sink) = &abandon_sink {
+                        sink.abandon();
+                    }
+                },
+                move || {
+                    app::check_with_progress_core(
+                        retry,
+                        &retry_config,
+                        progress_scope,
+                        retry_sink
+                            .as_ref()
+                            .map(|sink| &**sink as &dyn crate::app::AnalysisProgressSink),
+                    )
+                },
+            )
+        });
+        if let Some(Ok(retried)) = retried
             && retried
                 .analysis_outcome
                 .as_ref()
@@ -2316,10 +2344,15 @@ fn record_human_legend_seen(root: &Path, marker: &Path) {
 /// #13644: true when an unscoped check produced an empty range because HEAD
 /// is the checked-out comparison-base branch itself, the tree is clean and
 /// HEAD has a parent, so `--base HEAD~1` names the last commit.
-fn last_commit_fallback_applies(output: &crate::CheckOutput, root: &Path) -> bool {
+fn last_commit_fallback_applies(
+    output: &crate::CheckOutput,
+    root: &Path,
+    git_timeout: Option<std::time::Duration>,
+) -> bool {
     if !output.findings.is_empty()
         || output.unanalyzed_working_tree
         || !output.untracked_working_tree_source_paths.is_empty()
+        || !output.ignored_working_tree_source_paths.is_empty()
         || output
             .analysis_outcome
             .as_ref()
@@ -2339,14 +2372,13 @@ fn last_commit_fallback_applies(output: &crate::CheckOutput, root: &Path) -> boo
         .ok()
         .filter(|out| out.status.success())
     };
-    // A clone resolves the default base to `origin/main` while HEAD is
-    // `main`: accept the remote-tracking spelling of the checked-out branch,
-    // but only when it names HEAD's own commit (an empty range by
-    // construction, not a branch that is merely behind).
-    let on_base_branch = git(&["symbolic-ref", "--quiet", "--short", "HEAD"]).is_some_and(|out| {
-        let branch = String::from_utf8_lossy(&out.stdout).trim().to_string();
-        base == branch || base.strip_prefix("origin/") == Some(branch.as_str())
-    });
+    // Both spellings below require the base to name HEAD's own commit: an
+    // empty range by construction, not a branch that is merely behind.
+    let Some(branch) = git(&["symbolic-ref", "--quiet", "--short", "HEAD"])
+        .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_string())
+    else {
+        return false;
+    };
     let commit = |rev: &str| {
         git(&[
             "rev-parse",
@@ -2356,9 +2388,20 @@ fn last_commit_fallback_applies(output: &crate::CheckOutput, root: &Path) -> boo
         ])
         .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_string())
     };
-    on_base_branch
-        && commit(base).is_some_and(|base_commit| commit("HEAD") == Some(base_commit))
-        && commit("HEAD~1").is_some()
+    let same_commit = commit(base).is_some_and(|base_commit| commit("HEAD") == Some(base_commit));
+    if !same_commit || commit("HEAD~1").is_none() {
+        return false;
+    }
+    if base == branch {
+        return true;
+    }
+    // A clone resolves the default base to `origin/<branch>` while HEAD is
+    // `<branch>`. That is also the shape of a feature-branch clone whose
+    // `origin/HEAD` tracks the feature branch, where the real base is
+    // elsewhere and the existing hedge names it (#7644); only narrow to the
+    // last commit when no other base candidate exists.
+    base.strip_prefix("origin/") == Some(branch.as_str())
+        && crate::analysis::another_base_candidate(root, git_timeout).is_none()
 }
 
 /// The stderr warning for an empty default-base result when the default base

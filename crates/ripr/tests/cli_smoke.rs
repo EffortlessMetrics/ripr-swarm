@@ -27976,6 +27976,22 @@ fn check_clean_base_branch_with_parent_analyzes_last_commit_in_human_only() -> R
         return Err("an explicit --base must not be rescoped".to_string());
     }
 
+    // An ignored routed source file is not a clean checkout: keep the empty
+    // result and its disclosure.
+    std::fs::write(root.join(".git/info/exclude"), "src/generated.rs\n")
+        .map_err(|err| format!("write exclude: {err}"))?;
+    std::fs::write(root.join("src/generated.rs"), "pub fn g() -> u8 { 1 }\n")
+        .map_err(|err| format!("write ignored source: {err}"))?;
+    let ignored = run_ripr(&["check", "--root", &root_str]);
+    if String::from_utf8_lossy(&ignored.stderr).contains("analyzed the last commit") {
+        return Err(format!(
+            "an ignored source file must keep the empty-range result; got:\n{}",
+            String::from_utf8_lossy(&ignored.stdout)
+        ));
+    }
+    std::fs::remove_file(root.join("src/generated.rs"))
+        .map_err(|err| format!("remove ignored source: {err}"))?;
+
     // A clone resolves the default base to `origin/main` while HEAD is `main`.
     let clone = unique_temp_workspace("last-commit-fallback-clone");
     let clone_str = clone.to_string_lossy().into_owned();

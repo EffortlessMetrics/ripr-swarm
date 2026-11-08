@@ -319,6 +319,8 @@ a gitlink (#10648).
 - `crates/ripr/src/output/human.rs::tests::explicit_base_with_an_empty_range_explains_the_empty_result` (#9033: range and working-tree wording, bounded and full forms)
 - `crates/ripr/src/output/human.rs::tests::empty_range_note_is_suppressed_when_it_would_be_untrue_or_redundant` (#9033: off for other outcome kinds, changed file count alone, no base, unanalyzed working tree, preview advisories and language runs)
 
+- `crates/ripr/tests/cli_smoke.rs::check_clean_base_branch_with_parent_analyzes_last_commit_in_human_only` (#13644: human-only last-commit fallback, stderr label, drill-ins on `HEAD~1`, JSON unchanged, explicit `--base` not rescoped, clone with `origin/main`, ignored source keeps the empty result)
+
 ## Implementation Mapping
 
 - `crates/ripr/src/app.rs` — `CheckOutput::no_scope_provided` field (additive, default `false`).
@@ -358,7 +360,7 @@ a gitlink (#10648).
   (`--base HEAD~1`) and labels that on stderr (#13644). It applies only when
   HEAD is that branch (or `origin/<branch>` is the base) at the same commit,
   `HEAD~1` exists, no tracked source edit or untracked source file is
-  pending, and no scope, output directory or artifact was requested. Drill-in
+  pending (tracked, untracked or ignored), and no scope, output directory or artifact was requested. Drill-in
   commands then name `--base 'HEAD~1'`. Rationale (#13644): agents otherwise
   spend a dead-end call on "nothing in scope" before `--base HEAD~1`. Machine
   formats (JSON, SARIF, GitHub) keep the empty-range contract so CI runs on
