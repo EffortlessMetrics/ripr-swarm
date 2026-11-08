@@ -578,11 +578,6 @@ pub(crate) struct TypeScriptImport {
     pub(crate) imported: Option<String>,
     pub(crate) local: String,
     pub(crate) namespace: bool,
-    /// `true` when the re-export index rewrote this import from a barrel to
-    /// the class's declaring module (#13592 B3), so a relation through it
-    /// still discloses as `re_export_chain_followed` (RIPR-SPEC-0095).
-    #[serde(default)]
-    pub(crate) via_reexport: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

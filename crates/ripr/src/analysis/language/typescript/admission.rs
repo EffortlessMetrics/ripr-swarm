@@ -190,7 +190,6 @@ impl TypeScriptAdmissionContext {
                                     imported: Some(member.property.name.to_string()),
                                     local: local.to_string(),
                                     namespace: false,
-                                    via_reexport: false,
                                 });
                             }
                         }
@@ -619,7 +618,6 @@ fn verified_extended_registrations(
                     imported: Some("test".to_string()),
                     local: local.name.to_string(),
                     namespace: false,
-                    via_reexport: false,
                 });
             }
         }
@@ -813,7 +811,6 @@ fn verified_namespace_member_registrations(
                 imported: Some(member),
                 local,
                 namespace: false,
-                via_reexport: false,
             });
         }
     }

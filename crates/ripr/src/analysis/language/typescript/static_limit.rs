@@ -775,7 +775,6 @@ mod module_identity_tests {
                 imported: Some("cart".into()),
                 local: "cart".into(),
                 namespace: false,
-                via_reexport: false,
             };
             assert_eq!(
                 import_source_matches_owner_text(
