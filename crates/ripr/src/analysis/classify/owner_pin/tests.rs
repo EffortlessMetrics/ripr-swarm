@@ -784,6 +784,49 @@ fn imported_enum_variant_value_admits_only_the_single_unambiguous_import() {
     ));
 }
 
+/// The sole declaring file of the enum is decided once per index: repeated
+/// admissions on one index keep answering from the memo (including the
+/// ambiguous and absent answers) instead of masking every file that mentions
+/// the enum name again. Pilot on bevy re-masked those files per seam and test
+/// and timed out at 275 s.
+#[test]
+fn imported_enum_variant_value_reuses_the_declarer_decision_per_index() {
+    const ENUM: &str = "pub enum Rule {\n    Upper,\n}\n";
+    let glob = "use crate::Rule::*;\n#[test]\nfn t() { assert_eq!(Upper.apply(1), 1); }\n";
+    let one = index(&[(HELPERS, ENUM), (LIB, glob)]);
+    for _ in 0..3 {
+        assert!(imported_enum_variant_value(
+            "Upper",
+            "Rule",
+            Path::new(LIB),
+            &one
+        ));
+    }
+    let two = index(&[(HELPERS, ENUM), (LIB, glob), ("src/other.rs", ENUM)]);
+    for _ in 0..3 {
+        assert!(!imported_enum_variant_value(
+            "Upper",
+            "Rule",
+            Path::new(LIB),
+            &two
+        ));
+        assert!(!imported_enum_variant_value(
+            "Upper",
+            "Missing",
+            Path::new(LIB),
+            &two
+        ));
+    }
+    let stored = two
+        .call_identity_memos
+        .sole_type_declarer("Rule", || Some(PathBuf::from("recomputed")));
+    assert_eq!(stored, None, "the ambiguous answer must come from the memo");
+    let stored = one
+        .call_identity_memos
+        .sole_type_declarer("Rule", || Some(PathBuf::from("recomputed")));
+    assert_eq!(stored.as_deref(), Some(Path::new(HELPERS)));
+}
+
 /// #7172: per-assertion unit-struct pin admission must not rescan the
 /// workspace. `ASSERTIONS` admissions over one `FILLER_FILES`-file index
 /// share one run-scoped [`OwnerPinSyntax`], exactly as production shares

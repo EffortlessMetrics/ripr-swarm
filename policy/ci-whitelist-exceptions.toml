@@ -30,7 +30,7 @@ id = "test_analytics_label_gated_on_pull_requests"
 kind = "advisory_workflow"
 paths = [".github/workflows/test-analytics.yml"]
 lanes = ["test-analytics"]
-current_behavior = "The Test Analytics workflow runs on pushes to main or master, manual dispatch, and pull requests carrying the full-ci label; label events re-evaluate pull-request selection."
+current_behavior = "The Test Analytics workflow runs on a daily schedule on main, manual dispatch, and pull requests carrying the full-ci label; label events re-evaluate pull-request selection."
 target_behavior = "Keep the JUnit artifact advisory, selected explicitly for expensive pull-request verification, and eligible for future risk-pack selection."
 review_note = "Trusted selected runs may upload to Codecov Test Analytics when CODECOV_TOKEN is available; ordinary pull requests remain unselected."
 
