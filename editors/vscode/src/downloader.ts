@@ -560,7 +560,7 @@ export const ARCHIVE_MAX_MEMBERS = 1000;
  * (#13640): the post-extraction walk cannot undo writes made through a symlink
  * or `..` member, so those members must never reach `tar -x`.
  */
-async function inspectTarArchive(archivePath: string): Promise<void> {
+export async function inspectTarArchive(archivePath: string): Promise<void> {
   const names = await runProcess('tar', ['-tzf', archivePath]);
   const verbose = await runProcess('tar', ['-tvzf', archivePath]);
   assertSafeTarListing(names.split(/\r?\n/), verbose.split(/\r?\n/));

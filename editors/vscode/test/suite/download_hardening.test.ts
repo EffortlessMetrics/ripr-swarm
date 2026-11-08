@@ -9,6 +9,7 @@ import {
   ARCHIVE_MAX_BYTES,
   ARCHIVE_MAX_MEMBERS,
   assertSafeTarListing,
+  inspectTarArchive,
   MANIFEST_MAX_BYTES,
   fetchManifestBytesOverHttps,
   isAllowedHttpsRedirect
@@ -270,6 +271,38 @@ suite('VS Code download hardening (#11477 item 5)', () => {
     assert.throws(() => assertSafeTarListing([], ['hrwxr-xr-x u/g 0 2026-01-01 00:00 x link to y']), /unsupported type/);
     assert.throws(() => assertSafeTarListing([], ['-rwxr-xr-x u/g 0 2026-01-01 00:00 x link to y']), /hard link/);
     assert.throws(() => assertSafeTarListing(Array.from({ length: ARCHIVE_MAX_MEMBERS + 1 }, (_, i) => `f${i}`), []), /member limit/);
+  });
+
+  test('inspectTarArchive reads real tar listings and rejects symlink and traversal archives', async function () {
+    if (process.platform === 'win32') {
+      this.skip();
+    }
+    const cp = await import('child_process');
+    const root = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'ripr-tar-inspect-'));
+    const run = (args: string[], cwd: string): void => {
+      cp.execFileSync('tar', args, { cwd });
+    };
+    try {
+      const good = path.join(root, 'good');
+      await fs.promises.mkdir(good);
+      await fs.promises.writeFile(path.join(good, 'ripr'), 'binary');
+      run(['-czf', path.join(root, 'good.tgz'), '.'], good);
+      await inspectTarArchive(path.join(root, 'good.tgz'));
+
+      const linked = path.join(root, 'linked');
+      await fs.promises.mkdir(linked);
+      await fs.promises.symlink('/tmp', path.join(linked, 'escape'));
+      run(['-czf', path.join(root, 'linked.tgz'), '.'], linked);
+      await assert.rejects(inspectTarArchive(path.join(root, 'linked.tgz')), /unsupported type/);
+
+      const nested = path.join(root, 'nested', 'inner');
+      await fs.promises.mkdir(nested, { recursive: true });
+      await fs.promises.writeFile(path.join(root, 'nested', 'evil'), 'x');
+      run(['-czPf', path.join(root, 'trav.tgz'), '../evil'], nested);
+      await assert.rejects(inspectTarArchive(path.join(root, 'trav.tgz')), /unsafe path/);
+    } finally {
+      await fs.promises.rm(root, { recursive: true, force: true });
+    }
   });
 
   test('assertExtractedTreeContained rejects symlinks', async () => {
