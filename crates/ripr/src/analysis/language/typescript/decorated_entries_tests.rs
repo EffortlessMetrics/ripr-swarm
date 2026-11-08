@@ -465,6 +465,11 @@ fn memoizing_decorator_refuses_a_map_that_may_not_be_the_global() {
         "const M\\u0061p = FakeMap;\n",
         "eval(\"ca\" + \"che.set(4, 99)\");\n",
         "new Function(\"return 1\")();\n",
+        "(globalThis as any)[\"Ma\" + \"p\"] = FakeMap;\n",
+        "(globalThis as any)[\"\\x4dap\"].prototype.get = () => 99;\n",
+        "Reflect.set(window, String.fromCharCode(77, 97, 112), FakeMap);\n",
+        "self[`M${\"ap\"}`] = FakeMap;\n",
+        "global[\"\\115ap\"] = FakeMap;\n",
     ] {
         assert_no_decorated_entry(&format!("{prefix}{base}"));
     }
@@ -489,4 +494,11 @@ fn memoizing_decorator_refuses_a_map_that_may_not_be_the_global() {
     return cache.get(n) as number;",
     );
     assert_no_decorated_entry(&split);
+    // A sloppy-mode `arguments` passed to the original aliases the key.
+    let aliased = memo_source(
+        MEMO_CACHE,
+        "    if (!cache.has(n)) cache.set(n, original.call(this, arguments));
+    return cache.get(n) as number;",
+    );
+    assert_no_decorated_entry(&aliased);
 }

@@ -361,8 +361,24 @@ fn pass_through_return(
 /// reaches the decorated method's result. The cache must be a decorator-local
 /// `const` built by an argument-free `new Map()`, named nowhere else in the
 /// decorator, and the key one wrapper parameter used identically three times.
-/// `Map` must be named nowhere else in the file, the file may hold no `\u`
-/// escape, `eval` or `Function`, and the `set` statement sits on one line.
+/// `Map` must be named nowhere else in the file, the file may hold no
+/// backslash or any of [`MEMO_REFUSED_WORDS`], and the `set` statement sits
+/// on one line.
+/// Words that refuse the memo credit anywhere in the file: each can reach the
+/// global `Map`, rebind the key, or build a name the counts cannot see.
+const MEMO_REFUSED_WORDS: [&str; 10] = [
+    "eval",
+    "Function",
+    "globalThis",
+    "window",
+    "global",
+    "self",
+    "Reflect",
+    "fromCharCode",
+    "prototype",
+    "arguments",
+];
+
 fn memoized_flow(
     decorator: &Function<'_>,
     wrapper: &Function<'_>,
@@ -462,13 +478,16 @@ fn memoized_flow(
     }
     // `Map` must be the global constructor: the name appears nowhere else in
     // the file (no import, local class or binding, no `Map.prototype` patch),
-    // and the file holds no escape or dynamic evaluation that could spell a
-    // name the counts above do not see.
+    // and the file holds nothing that could reach the global or spell a name
+    // the counts do not see: no escape of any kind, no dynamic evaluation,
+    // no global-object or `Reflect` access, no computed character codes, no
+    // `.prototype` write, and no sloppy-mode `arguments` alias of the key.
     let file = source.text();
     if word_count(file, "Map") != 1
-        || file.contains("\\u")
-        || word_count(file, "eval") != 0
-        || word_count(file, "Function") != 0
+        || file.contains('\\')
+        || MEMO_REFUSED_WORDS
+            .iter()
+            .any(|word| word_count(file, word) != 0)
     {
         return None;
     }
