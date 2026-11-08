@@ -16,6 +16,10 @@ SUBJECT={'repository':m.REPOSITORY,'repository_node_id':'R_1','base_sha':B,'grou
          'head_ref':'refs/heads/gh-readonly-queue/main/pr-42-'+H,'request':'12-1'}
 MEMBER={'pull_number':42,'pr_id':'PR_42','head_sha':H,'entry_id':'MQE_42'}
 CLOSURE={k:{'kind':v,'mode':'040000' if v=='tree' else '100644','sha':'e'*40} for k,v in m.ROOTS.items()}
+# An optional nested closure preserves recursive-tree coverage even when its
+# containing tools tree is mandatory.
+CLOSURE['tools/repo-policy']={'kind':'tree','mode':'040000','sha':'e'*40}
+if 'tools' in CLOSURE:CLOSURE['tools']['sha']='8'*40
 DATA={'schema_id':'hermes.queue-intake.v2','schema_version':2,'repository':m.REPOSITORY,
       'pull_number':42,'head_sha':H,'entry_id':'MQE_42','admission_request_id':'admit-1',
       'enqueue_request_id':'enqueue-1','base_sha':'f'*40,'expires_at':'2026-11-09T00:00:00Z',
@@ -31,10 +35,12 @@ QUEUE={'data':{'repository':{'id':'R_1','nameWithOwner':m.REPOSITORY,'mergeQueue
 class API:
  def __init__(self):
   self.checks={'total_count':1,'check_runs':[copy.deepcopy(CHECK)]}; self.q=copy.deepcopy(QUEUE)
-  root=[{'path':k,'type':v['kind'],'mode':v['mode'],'sha':v['sha']} for k,v in CLOSURE.items() if '/' not in k]
+  root=[{'path':k,'type':v['kind'],'mode':v['mode'],'sha':v['sha']} for k,v in CLOSURE.items() if '/' not in k and k!='tools']
   root.append({'path':'tools','type':'tree','mode':'040000','sha':'8'*40})
+  root.append({'path':'editors','type':'tree','mode':'040000','sha':'7'*40})
   self.trees={T:{'sha':T,'truncated':False,'tree':root},'8'*40:{'sha':'8'*40,'truncated':False,'tree':[
-   {'path':'repo-policy','type':'tree','mode':'040000','sha':'e'*40}]}}
+   {'path':'repo-policy','type':'tree','mode':'040000','sha':'e'*40}]},'7'*40:{'sha':'7'*40,'truncated':False,'tree':[
+   {'path':'vscode','type':'tree','mode':'040000','sha':'e'*40}]}}
   self.reads=[];self.queue_count=0;self.check_count=0;self.change=None
  def queue(self):
   self.queue_count+=1
@@ -134,6 +140,18 @@ class Controls(unittest.TestCase):
       data=copy.deepcopy(DATA);data['producer_closure'].pop(path,None);api.checks['check_runs'][0]['output']['text']=m.canonical(data)
      else:next(entry for entry in api.trees[T]['tree'] if entry['path']==path)['sha']='9'*40
      self.refused(lambda:m.observe(api,SUBJECT,CONFIG,lambda:NOW))
+ def test_python_and_editor_proof_drivers_are_bound(self):
+  for path,tree,name in [('tools',T,'tools'),('editors/vscode','7'*40,'vscode')]:
+   with self.subTest(path=path):
+    self.assertEqual(m.ROOTS.get(path),'tree','required proof drivers must be bound')
+    api=API();data=copy.deepcopy(DATA);del data['producer_closure'][path]
+    api.checks['check_runs'][0]['output']['text']=m.canonical(data)
+    self.refused(lambda:m.observe(api,SUBJECT,CONFIG,lambda:NOW))
+    api=API();next(entry for entry in api.trees[tree]['tree'] if entry['path']==name)['sha']='9'*40
+    self.refused(lambda:m.observe(api,SUBJECT,CONFIG,lambda:NOW))
+ def test_optional_nested_closure_is_checked(self):
+  api=API();next(entry for entry in api.trees['8'*40]['tree'] if entry['path']=='repo-policy')['sha']='9'*40
+  self.refused(lambda:m.observe(api,SUBJECT,CONFIG,lambda:NOW))
  def test_native_join_rejects_incomplete_or_non_singleton_group(self):
   for mode in ['pagination','wrong_base','wrong_group','position','entry','draft']:
    with self.subTest(mode=mode):
