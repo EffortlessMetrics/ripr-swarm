@@ -29,6 +29,11 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+#[cfg(test)]
+thread_local! {
+    static ROW_KEY_SERIALIZATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 #[derive(Serialize)]
 struct TableRef<'a> {
     related_tests: Vec<&'a RelatedTestGrip>,
@@ -215,17 +220,29 @@ pub(super) fn serialize<S: Serializer>(
 ) -> Result<S::Ok, S::Error> {
     let mut related_tests: Vec<&RelatedTestGrip> = Vec::new();
     let mut index_of: HashMap<Vec<u8>, u32> = HashMap::new();
+    // Decoded table references share an Arc. Reuse their index before
+    // serializing a key, so validation work follows distinct rows rather than
+    // references times row size. Distinct Arcs still deduplicate by value.
+    let mut index_by_row: HashMap<*const RelatedTestGrip, u32> = HashMap::new();
     let mut seam_refs = Vec::with_capacity(seams.len());
     for classified in seams {
         let seam_tests = &classified.evidence.related_tests;
         let mut indices = Vec::with_capacity(seam_tests.len());
         for test in seam_tests {
+            let row = Arc::as_ptr(test);
+            if let Some(&index) = index_by_row.get(&row) {
+                indices.push(index);
+                continue;
+            }
+            #[cfg(test)]
+            ROW_KEY_SERIALIZATIONS.with(|count| count.set(count.get() + 1));
             let key = serde_json::to_vec(test).map_err(S::Error::custom)?;
             let next = u32::try_from(related_tests.len()).map_err(S::Error::custom)?;
             let index = *index_of.entry(key).or_insert_with(|| {
                 related_tests.push(test);
                 next
             });
+            index_by_row.insert(row, index);
             indices.push(index);
         }
         seam_refs.push(seam_ref(classified, indices));
@@ -586,6 +603,45 @@ pub(super) mod tests {
         assert!(Arc::ptr_eq(&tests(0)[0], &tests(3)[0]));
         assert!(Arc::ptr_eq(&tests(0)[1], &tests(1)[0]));
         assert!(!Arc::ptr_eq(&tests(0)[0], &tests(1)[2]));
+        Ok(())
+    }
+
+    #[test]
+    fn shared_rows_are_serialized_once_for_table_keys() -> Result<(), String> {
+        let mut large = related("large", RelationReason::SameModule);
+        large.evidence_summary = "x".repeat(64 * 1024);
+        let row = Arc::new(large);
+        let mut first = seam(1, Vec::new());
+        first.evidence.related_tests = vec![Arc::clone(&row); 1024];
+        let mut second = seam(2, Vec::new());
+        // A separately allocated, equal row must still deduplicate by value.
+        second.evidence.related_tests = vec![Arc::new((*row).clone()), Arc::clone(&row)];
+        ROW_KEY_SERIALIZATIONS.with(|count| count.set(0));
+        let encoded = serde_json::to_value(Body {
+            seams: vec![first, second],
+        })
+        .map_err(|err| err.to_string())?;
+        let count = ROW_KEY_SERIALIZATIONS.with(std::cell::Cell::get);
+        assert_eq!(count, 2, "one key serialization per distinct live row");
+        assert_eq!(
+            encoded["seams"]["related_tests"].as_array().map(Vec::len),
+            Some(1)
+        );
+        let indices = encoded["seams"]["seams"][0]["evidence"]["related_tests"]
+            .as_array()
+            .ok_or("missing indices")?;
+        assert_eq!(indices.len(), 1024);
+        assert!(indices.iter().all(|index| index == 0));
+        assert_eq!(
+            encoded["seams"]["seams"][1]["evidence"]["related_tests"],
+            serde_json::json!([0, 0])
+        );
+        let decoded: Body =
+            serde_json::from_value(encoded.clone()).map_err(|err| err.to_string())?;
+        ROW_KEY_SERIALIZATIONS.with(|count| count.set(0));
+        let reencoded = serde_json::to_value(decoded).map_err(|err| err.to_string())?;
+        assert_eq!(ROW_KEY_SERIALIZATIONS.with(std::cell::Cell::get), 1);
+        assert_eq!(reencoded, encoded);
         Ok(())
     }
 

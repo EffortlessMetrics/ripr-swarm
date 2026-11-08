@@ -106,6 +106,19 @@ pub(in crate::analysis) fn reach_evidence(
     )
 }
 
+/// Whether `owner` is a method of a trait the workspace does not declare
+/// (`Display`, `Add`, `Deref`). The language dispatches those through
+/// operators, formatting macros and generic code that never spell the method
+/// name, so an owner no test is related to still may run under a test. This
+/// is the trait-impl clause of [`owner_may_be_reached_unseen`] on its own,
+/// for a caller that must not widen to "named elsewhere".
+pub(in crate::analysis) fn owner_runs_through_language_dispatch(
+    owner: &FunctionSummary,
+    index: &RustIndex,
+) -> bool {
+    is_trait_impl_method(owner) && !implements_workspace_trait(owner, index)
+}
+
 /// Whether a test could run `owner` without any indexed test body calling it
 /// by name.
 ///

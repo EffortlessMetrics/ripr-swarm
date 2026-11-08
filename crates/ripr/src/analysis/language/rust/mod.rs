@@ -2747,7 +2747,7 @@ impl RustAdapter {
             let token = cancellation::current_token();
             let overlay = committed_source::current_overlay();
             let graph_counter = classify::InheritedGraphCounter::capture();
-            let classify_one = |(_, seeded): &(
+            let classify_one = |(changed, seeded): &(
                 &ChangedFile,
                 crate::analysis::probes::SeededProbe,
             )| {
@@ -2778,6 +2778,7 @@ impl RustAdapter {
                                             &transitive_reach,
                                             seeded.propagation_origin.as_ref(),
                                             Some(&value_origins),
+                                            Some(changed),
                                         )
                                     }));
                                 match contained {
@@ -3443,7 +3444,7 @@ fn lexical_fallback_limitations<'a>(
         let (reason, recovery) = if index.non_utf8_sources.contains(&facts.path) {
             (
                 crate::analysis::facts::RUST_SOURCE_NOT_UTF8_REASON.to_string(),
-                "Save the file as UTF-8, then re-run the analysis.",
+                crate::analysis_outcome::RUST_NOT_UTF8_RECOVERY,
             )
         } else {
             (
@@ -3451,7 +3452,7 @@ fn lexical_fallback_limitations<'a>(
                     "the Rust parser reported syntax errors, so the file was read lexically"
                         .to_string()
                 }),
-                "Fix the file so it parses as Rust, then re-run the analysis.",
+                crate::analysis_outcome::RUST_PARSE_FAILURE_RECOVERY,
             )
         };
         let limitation = AnalysisLimitation::new(
@@ -5160,10 +5161,15 @@ mod tests {
                     assert!(test.oracle.is_none());
                     assert_eq!(test.oracle_kind, OracleKind::Unknown);
                     assert_eq!(test.oracle_strength, OracleStrength::None);
-                    assert_eq!(
-                        test.miss,
-                        Some(crate::domain::RelatedTestMiss::AssertionNotCredited)
-                    );
+                    // The full scope resolves the shadowing macro (inert); the
+                    // name-admitted scope cannot read it, an analyzer limit
+                    // (RIPR-SPEC-0221).
+                    let expected_miss = if std::ptr::eq(finding, &full) {
+                        crate::domain::RelatedTestMiss::AssertionInert
+                    } else {
+                        crate::domain::RelatedTestMiss::AssertionAdmissionUnproven
+                    };
+                    assert_eq!(test.miss, Some(expected_miss));
                 }
             } else {
                 for finding in [&full, &named] {

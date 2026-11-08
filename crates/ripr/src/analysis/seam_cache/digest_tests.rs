@@ -126,7 +126,7 @@ fn digest_refuses_serialization_failure_after_partial_buffer_flush() {
 }
 
 #[test]
-fn real_file_facts_keep_original_cache_bytes_and_integrity() -> Result<(), String> {
+fn real_file_facts_keep_compact_cache_bytes_and_integrity() -> Result<(), String> {
     use crate::analysis::syntax::RustSyntaxAdapter as _;
     let path = Path::new("src/digest_fixture.rs");
     let mut source = String::new();
@@ -149,18 +149,19 @@ fn real_file_facts_keep_original_cache_bytes_and_integrity() -> Result<(), Strin
     assert_eq!(borrowed_digest, envelope.expected_digest()?);
     assert_eq!(borrowed_bytes, codec::encode_file_facts(&envelope)?);
     let digest = reference_digest("ripr-cache:FileFactCacheEnvelope:v1", &envelope)?;
-    let expected = serde_json::to_vec_pretty(&ChecksummedBody {
+    let expected = serde_json::to_vec(&ChecksummedBody {
         body: &envelope,
         payload_digest: digest,
     })
     .map_err(|error| error.to_string())?;
     let encoded = codec::encode_file_facts(&envelope)?;
     assert_eq!(encoded, expected);
-    // Bounded alternating pairs profile the actual file-fact encoding route;
+    // Both paths use compact encoding so this comparison still isolates
+    // digest buffering. Bounded alternating pairs profile the actual route;
     // duration is reported, never used as a flaky pass/fail threshold.
     for sample in 0..7 {
         let legacy = || -> Result<Vec<u8>, String> {
-            encode_integrity_body(
+            encode_integrity_body_compact(
                 &envelope,
                 legacy_digest("ripr-cache:FileFactCacheEnvelope:v1", &envelope)?,
             )

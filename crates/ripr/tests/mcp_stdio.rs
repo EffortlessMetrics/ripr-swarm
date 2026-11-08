@@ -791,9 +791,9 @@ fn malformed_catalog_cursors_preserve_protocol_validation_and_recover() -> Resul
     Ok(())
 }
 
-/// Optional tool fields may be omitted, but their advertised string/integer
-/// types do not accept explicit null. Pin the schemas and dispatch separately
-/// against literal expectations, through the actual stdio process (#7314).
+/// Optional tool fields may be omitted, but their advertised string, integer,
+/// and boolean types do not accept explicit null. Pin the schemas and dispatch
+/// separately against literal expectations through actual stdio (#7314).
 #[test]
 fn optional_tool_arguments_reject_null_and_recover_over_stdio() -> Result<(), String> {
     let root = workspace_root()?;
@@ -807,6 +807,13 @@ fn optional_tool_arguments_reject_null_and_recover_over_stdio() -> Result<(), St
         ),
         ("ripr_list_gaps", "offset", json!({}), json!(0), "integer"),
         ("ripr_list_gaps", "limit", json!({}), json!(1), "integer"),
+        (
+            "ripr_list_gaps",
+            "independent_pages",
+            json!({}),
+            json!(true),
+            "boolean",
+        ),
         (
             "ripr_list_gaps",
             "file",
@@ -969,7 +976,7 @@ fn optional_tool_arguments_reject_null_and_recover_over_stdio() -> Result<(), St
             if *kind == "integer" {
                 "whole JSON integer"
             } else {
-                "string"
+                *kind
             }
         );
         let message = rejected
@@ -3073,6 +3080,205 @@ fn install_gap_filter_fixture() -> Result<PathBuf, String> {
     }
     commit_fixture(&root, "narrow Rust and widen Python boundaries")?;
     Ok(root)
+}
+
+/// A real committed diff with enough same-file candidates to exceed the
+/// shared per-document selection budget and fill more than one omission page.
+#[cfg(feature = "lang-rust")]
+fn install_independent_pages_fixture() -> Result<PathBuf, String> {
+    let root = install_b4_repair_ready_fixture()?;
+    let mut source = String::new();
+    for index in 0..300 {
+        source.push_str(&format!(
+            "pub fn boundary_{index}(x: i32) -> i32 {{ if x >= 10 {{ 1 }} else {{ 0 }} }}\n"
+        ));
+    }
+    std::fs::write(root.join("src/lib.rs"), &source).map_err(|error| error.to_string())?;
+    std::fs::write(root.join("tests/pricing.rs"), "").map_err(|error| error.to_string())?;
+    commit_fixture(&root, "pagination baseline")?;
+    fixture_git_ok(&root, &["update-ref", "refs/heads/main", "HEAD"])?;
+    std::fs::write(root.join("src/lib.rs"), source.replace(">=", ">"))
+        .map_err(|error| error.to_string())?;
+    commit_fixture(&root, "pagination candidate")?;
+    Ok(root)
+}
+
+/// Real stdio continuation replay: both saved routes retain the snapshot and
+/// each other-axis window stays closed in every text mode. Complete structured
+/// documents and default continuations must agree across those modes.
+#[cfg(feature = "lang-rust")]
+#[test]
+fn independent_gap_pages_walk_both_axes_over_stdio() -> Result<(), String> {
+    let root = install_independent_pages_fixture()?;
+    let _guard = FixtureGuard { root: root.clone() };
+    let mut first_document = None;
+    for text_mode in ["full", "summary", "brief"] {
+        let first = walk_independent_gap_pages(&root, text_mode)?;
+        if let Some(expected) = &first_document {
+            if expected != &first {
+                return Err(format!(
+                    "{text_mode} changed the structured independent page"
+                ));
+            }
+        } else {
+            first_document = Some(first);
+        }
+    }
+    Ok(())
+}
+
+#[cfg(feature = "lang-rust")]
+fn walk_independent_gap_pages(root: &Path, text_mode: &str) -> Result<Value, String> {
+    use std::collections::BTreeSet;
+
+    let timeout = Duration::from_mins(1);
+    let mut session =
+        SequentialStdio::spawn_with_env(root, &[("RIPR_MCP_TEXT_CONTENT", text_mode)])?;
+    let refresh = session.call_tool(
+        "refresh-pages",
+        "ripr_refresh",
+        json!({}),
+        Duration::from_mins(3),
+    )?;
+    let refresh = structured_tool_success(&refresh, "pagination refresh")?;
+    if refresh["attempt"]["state"] != "completed" {
+        return Err(format!("pagination fixture did not refresh: {refresh}"));
+    }
+    let read = |doc: &Value, key: &str, seen: &mut BTreeSet<String>| -> Result<(), String> {
+        for entry in doc[key].as_array().ok_or("missing page array")? {
+            let id = entry["canonical_id"]
+                .as_str()
+                .ok_or("missing canonical id")?;
+            if !seen.insert(id.to_string()) {
+                return Err(format!("replayed {key} identity {id}"));
+            }
+        }
+        Ok(())
+    };
+    let reply = session.call_tool(
+        "first-independent",
+        "ripr_list_gaps",
+        json!({"limit": 1, "independent_pages": true}),
+        timeout,
+    )?;
+    let first = structured_tool_success(&reply, "first independent page")?;
+    let snapshot = first["snapshot_id"]
+        .as_str()
+        .ok_or("missing snapshot")?
+        .to_string();
+    let selected = first["filtered"].as_u64().ok_or("missing filtered")? as usize;
+    let omitted_count = first["omitted"].as_u64().ok_or("missing omitted")? as usize;
+    if selected < 2 || omitted_count < 201 {
+        return Err(format!(
+            "fixture did not populate both multipage axes: {selected} selected, {omitted_count} omitted"
+        ));
+    }
+    let mut items = BTreeSet::new();
+    let mut omissions = BTreeSet::new();
+    read(&first, "items", &mut items)?;
+    read(&first, "omitted_items", &mut omissions)?;
+    let first_item_route = first
+        .pointer("/continuation/next_page")
+        .cloned()
+        .ok_or("missing item route")?;
+    let first_omission_route = first
+        .pointer("/continuation/next_omitted_page")
+        .cloned()
+        .ok_or("missing omission route")?;
+    for (label, initial, page_key, other_key, route_key) in [
+        (
+            "items",
+            first_item_route,
+            "items",
+            "omitted_items",
+            "next_page",
+        ),
+        (
+            "omissions",
+            first_omission_route,
+            "omitted_items",
+            "items",
+            "next_omitted_page",
+        ),
+    ] {
+        let mut route = Some(initial);
+        let mut pages = 0usize;
+        while let Some(next) = route {
+            if next["tool"] != "ripr_list_gaps"
+                || next["arguments"]["snapshot_id"] != snapshot
+                || next["arguments"]["independent_pages"] != true
+                || next["arguments"]["limit"] != 1
+            {
+                return Err(format!("lost continuation bindings: {next}"));
+            }
+            let reply = session.call_tool(
+                "walk-page",
+                "ripr_list_gaps",
+                next["arguments"].clone(),
+                timeout,
+            )?;
+            let doc = structured_tool_success(&reply, "continued page")?;
+            let other_page = if label == "items" {
+                "omitted_page"
+            } else {
+                "page"
+            };
+            if doc[other_key] != json!([]) || doc[other_page]["has_more"] != false {
+                return Err(format!("{label} replayed opposite axis: {doc}"));
+            }
+            if label == "items" {
+                read(&doc, page_key, &mut items)?;
+            } else {
+                read(&doc, page_key, &mut omissions)?;
+            }
+            route = doc.pointer(&format!("/continuation/{route_key}")).cloned();
+            pages += 1;
+            if pages > selected + omitted_count {
+                return Err("page walk failed to terminate".into());
+            }
+        }
+    }
+    if items.len() != selected || omissions.len() != omitted_count {
+        return Err(format!(
+            "walk omitted identities: {} / {selected}, {} / {omitted_count}",
+            items.len(),
+            omissions.len()
+        ));
+    }
+    let legacy = session.call_tool(
+        "legacy-first",
+        "ripr_list_gaps",
+        json!({"limit": 1}),
+        timeout,
+    )?;
+    let legacy = structured_tool_success(&legacy, "legacy page")?;
+    let explicit_false = session.call_tool(
+        "explicit-false",
+        "ripr_list_gaps",
+        json!({"limit": 1, "independent_pages": false}),
+        timeout,
+    )?;
+    if structured_tool_success(&explicit_false, "explicit false page")? != legacy {
+        return Err("explicit false changed the default gap-list document".into());
+    }
+    let legacy_next = legacy
+        .pointer("/continuation/next_page/arguments")
+        .ok_or("missing legacy next")?;
+    if legacy_next.get("independent_pages").is_some() || legacy_next.get("omitted_offset").is_some()
+    {
+        return Err(format!("default continuation changed: {legacy_next}"));
+    }
+    let replay = session.call_tool(
+        "legacy-next",
+        "ripr_list_gaps",
+        legacy_next.clone(),
+        timeout,
+    )?;
+    let replay = structured_tool_success(&replay, "legacy continuation")?;
+    if replay["omitted_items"] != legacy["omitted_items"] {
+        return Err("legacy item continuation did not replay omission window".into());
+    }
+    Ok(first)
 }
 
 fn check_filtered_gap_page(
@@ -5898,6 +6104,10 @@ fn install_inline_test_fixture(second_module: bool) -> Result<PathBuf, String> {
 /// the wire (not `isError:false` with the failure buried in `attempt`), keeps
 /// the last-known-good pointer, and every refresh states top-level whether it
 /// is fresh for the working tree and how to re-check after editing tests.
+/// #13273: the retained zero-item snapshot's `empty_scope_hint.why` describes
+/// the base THAT snapshot analyzed, never a later failed request's base; the
+/// failed request stays honest through `requested_base` and the typed
+/// `attempt.failure`.
 #[cfg(feature = "lang-rust")]
 #[test]
 fn failed_refresh_is_an_error_and_refresh_states_freshness_and_verify_route() -> Result<(), String>
@@ -5906,6 +6116,15 @@ fn failed_refresh_is_an_error_and_refresh_states_freshness_and_verify_route() ->
     const REPLY_TIMEOUT: Duration = Duration::from_mins(1);
     let root = install_exposed_match_arm_fixture()?;
     let _guard = FixtureGuard { root: root.clone() };
+    // Point the default branch at HEAD so the default-base committed diff is
+    // empty: the good refresh commits a real zero-item `no_scope` snapshot
+    // whose hint names the default base (the source identity the failed
+    // requests below must not relabel).
+    fixture_git_ok(&root, &["update-ref", "refs/heads/main", "HEAD"])?;
+    let committed_diff = common::fixture_git::fixture_git_output(&root, &["diff", "main...HEAD"])?;
+    if !committed_diff.trim().is_empty() {
+        return Err("fixture must have an empty committed default-branch diff".to_string());
+    }
     let mut session = SequentialStdio::spawn(&root)?;
     session.call("discover", "server/discover", json!({}), REPLY_TIMEOUT)?;
 
@@ -5924,8 +6143,33 @@ fn failed_refresh_is_an_error_and_refresh_states_freshness_and_verify_route() ->
             "a clean committed refresh must state freshness and the verify route: {good}"
         ));
     }
+    // Non-vacuous source identity: the good refresh really is the default-base
+    // empty-scope snapshot, so the retained-hint assertions below have a real
+    // sentence to defend.
+    if good.pointer("/snapshot/outcome_kind") != Some(&json!("no_scope"))
+        || good.pointer("/snapshot/analysis_status") != Some(&json!("not_analyzed"))
+        || good.pointer("/snapshot/total_items") != Some(&json!(0))
+    {
+        return Err(format!(
+            "default-base refresh must commit a zero-item no_scope snapshot: {good}"
+        ));
+    }
+    let good_hint = good
+        .pointer("/empty_scope_hint/why")
+        .and_then(Value::as_str)
+        .ok_or_else(|| format!("default-base no_scope refresh must carry a hint: {good}"))?;
+    if !good_hint.contains("default base") || good_hint.contains("requested base") {
+        return Err(format!(
+            "default-base hint must name the default base, not a requested one: {good_hint}"
+        ));
+    }
     let snapshot_id = good["snapshot"]["snapshot_id"].clone();
+    let good_snapshot = good["snapshot"].clone();
+    let good_why = good["empty_scope_hint"]["why"].clone();
 
+    // A wrong base fails closed: the typed failure and the honest
+    // `requested_base` describe THIS request, while the retained snapshot and
+    // its hint stay byte-identical to the good refresh.
     let failed = session.call_tool(
         "failed",
         "ripr_refresh",
@@ -5946,6 +6190,69 @@ fn failed_refresh_is_an_error_and_refresh_states_freshness_and_verify_route() ->
     {
         return Err(format!(
             "a failed refresh keeps the typed failure and last-known-good and is not fresh: {failed}"
+        ));
+    }
+    if failed.get("requested_base") != Some(&json!("no-such-ref-for-the-audit")) {
+        return Err(format!(
+            "the failed request must stay honest about the base it asked for: {failed}"
+        ));
+    }
+    // #13273 removal control: deriving the retained hint from the request's
+    // base again names `no-such-ref-for-the-audit` here and fails this check.
+    if failed["snapshot"] != good_snapshot {
+        return Err(format!(
+            "a failed attempt must never replace the retained snapshot object: {failed}"
+        ));
+    }
+    let retained_why = &failed["empty_scope_hint"]["why"];
+    if retained_why != &good_why {
+        return Err(format!(
+            "retained hint inherited the failed request's base: good {good_why} vs failed {retained_why}"
+        ));
+    }
+
+    // The issue's literal repro: a malformed ripr.toml fails a nondefault-base
+    // request with `config_invalid` and still retains the default-base
+    // snapshot, unchanged and still explained by its own base.
+    std::fs::write(root.join("ripr.toml"), "not valid toml =\n")
+        .map_err(|error| error.to_string())?;
+    let invalid = session.call_tool(
+        "invalid-config",
+        "ripr_refresh",
+        json!({ "base": "HEAD~1" }),
+        REFRESH_TIMEOUT,
+    )?;
+    if invalid.pointer("/result/isError") != Some(&json!(true)) {
+        return Err(format!(
+            "a config_invalid refresh must be isError:true: {invalid}"
+        ));
+    }
+    let invalid = invalid
+        .pointer("/result/structuredContent")
+        .cloned()
+        .ok_or("config_invalid refresh omitted structuredContent")?;
+    if invalid.pointer("/attempt/failure/code") != Some(&json!("config_invalid"))
+        || invalid.get("requested_base") != Some(&json!("HEAD~1"))
+        || invalid.pointer("/last_known_good/snapshot_id") != Some(&snapshot_id)
+        || invalid["snapshot"] != good_snapshot
+        || invalid.get("empty_scope_hint") != good.get("empty_scope_hint")
+    {
+        return Err(format!(
+            "config_invalid must keep the typed failure, the honest requested_base and the unchanged retained hint: {invalid}"
+        ));
+    }
+    // Recovery: with the configuration fixed, the default-base refresh keeps
+    // the original no-scope identity and its default-base explanation.
+    std::fs::remove_file(root.join("ripr.toml")).map_err(|error| error.to_string())?;
+    let recovered = session.call_tool("recovered", "ripr_refresh", json!({}), REFRESH_TIMEOUT)?;
+    let recovered = structured_tool_success(&recovered, "recovered ripr_refresh")?;
+    if recovered.pointer("/snapshot/snapshot_id") != Some(&snapshot_id)
+        || recovered.pointer("/snapshot/outcome_kind") != Some(&json!("no_scope"))
+        || recovered.get("empty_scope_hint") != good.get("empty_scope_hint")
+        || recovered.get("requested_base").is_some()
+    {
+        return Err(format!(
+            "the recovered default-base refresh must keep the original no-scope identity and hint: {recovered}"
         ));
     }
     Ok(())
@@ -6064,9 +6371,12 @@ fn truncated_seam_inventory_refuses_repair_readiness_over_stdio() -> Result<(), 
     let _guard = FixtureGuard { root: root.clone() };
     std::fs::write(root.join(".gitignore"), "/target\n").map_err(|error| error.to_string())?;
     // A second seam makes `limit=1` a real truncation (analyzed 1 < total 2).
+    // It is private so the producer admits it no new-test proposal (#13538: a
+    // public proposal-only seam is now ready on a complete inventory), keeping
+    // the control's finding-level-unready item.
     let mut source =
         std::fs::read_to_string(root.join("src/lib.rs")).map_err(|error| error.to_string())?;
-    source.push_str("\npub fn sign(x: i32) -> i32 {\n    if x > 0 { 1 } else { 2 }\n}\n");
+    source.push_str("\nfn sign(x: i32) -> i32 {\n    if x > 0 { 1 } else { 2 }\n}\n");
     std::fs::write(root.join("src/lib.rs"), source).map_err(|error| error.to_string())?;
     commit_fixture(&root, "add a second seam")?;
 
