@@ -6,7 +6,7 @@ use super::{
     python_return_dict_field_discriminator,
 };
 use crate::domain::{
-    Confidence, DeltaKind, FindingCanonicalGap, FlowSinkFact, FlowSinkKind, ProbeFamily,
+    Confidence, DeltaKind, FindingCanonicalGap, FlowSinkFact, FlowSinkKind, OwnerKind, ProbeFamily,
     StageEvidence, StageState,
 };
 use std::path::Path;
@@ -125,6 +125,11 @@ pub(super) fn is_python_plain_local_value_assignment(line_text: &str) -> bool {
     let Some((lhs, rhs)) = trimmed.split_once('=') else {
         return false;
     };
+    // Assignment style puts a space on both sides of `=`; a bare `ident=value`
+    // is a keyword-argument or parameter continuation (`timeout=30`).
+    if !(lhs.ends_with(' ') && rhs.starts_with(' ')) {
+        return false;
+    }
     let rhs = rhs.trim();
     // `total: int = ...`: a clean annotation only. `else: x = 3`,
     // `try: x = 3`, `except E: x = 3` and similar one-line compound
@@ -163,8 +168,8 @@ pub(super) fn is_python_plain_local_value_assignment(line_text: &str) -> bool {
     // Only the right side's own keywords are checked as word-bounded text.
     let rhs_padded = format!(" {rhs} ");
     ![
-        "<", ">", "==", "!=", " if ", " else ", " and ", " or ", " not ", " in ", " is ", "lambda",
-        " yield ", " yield)", " await ",
+        "<", ">", "==", "!=", " if ", " else ", " and ", " or ", " not ", " in ", " is ", " and(",
+        " or(", " not(", "lambda", " yield ", " yield)", " await ",
     ]
     .iter()
     .any(|marker| rhs_padded.contains(marker))
@@ -184,7 +189,10 @@ pub(super) fn presented_python_shape(
 ) -> (ProbeFamily, DeltaKind) {
     if matches!(family, ProbeFamily::Predicate)
         && matches!(delta, DeltaKind::Control)
-        && !owner.is_module_owner()
+        && matches!(
+            owner.owner_kind,
+            Some(OwnerKind::Function | OwnerKind::Method | OwnerKind::ClassMethod)
+        )
         && line_text.starts_with([' ', '\t'])
         && is_python_plain_local_value_assignment(line_text)
     {

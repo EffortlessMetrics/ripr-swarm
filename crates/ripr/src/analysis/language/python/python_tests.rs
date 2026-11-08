@@ -4353,6 +4353,12 @@ fn plain_local_value_assignment_is_closed() {
         "    def f(): x = 3",
         "    lambda: x = 3",
         "    return = 3",
+        // Bare `ident=value` continuations and boolean-call right sides.
+        "        timeout=30",
+        "    retries=3",
+        "    flag = a and(b)",
+        "    flag = a or(b)",
+        "    flag = x not(y)",
         // Argument, parameter and dict continuations; joined statements.
         "        timeout=30,",
         "        flag=True,",
@@ -4389,6 +4395,24 @@ fn presented_shape_reads_a_guarded_body_value_edit_as_a_value_only_in_a_callable
     assert_eq!(present("        flag = text > 1"), predicate);
     // An unindented line is not a body statement.
     assert_eq!(present("text = text + 1"), predicate);
+    // A class body or module owner (no callable kind) never re-presents.
+    let class_owners = extract_owners(
+        Path::new("src/model.py"),
+        "class Model:\n    size = 1\n\n    def grow(self):\n        self.size = 2\n",
+    );
+    for class_owner in class_owners.iter().filter(|candidate| {
+        !matches!(
+            candidate.owner_kind,
+            Some(OwnerKind::Function | OwnerKind::Method | OwnerKind::ClassMethod)
+        )
+    }) {
+        assert_eq!(
+            presented_python_shape(class_owner, &predicate.0, &predicate.1, "    size = 2"),
+            predicate,
+            "{}",
+            class_owner.qualified_name
+        );
+    }
     // Only the predicate default is ever re-presented.
     assert_eq!(
         presented_python_shape(
