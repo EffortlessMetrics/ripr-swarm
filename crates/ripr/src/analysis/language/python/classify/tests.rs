@@ -4,7 +4,7 @@ use super::super::owners_tests::{extract_owners, extract_tests};
 use super::super::related_tests::TestLookup;
 use super::classify_change_with_old;
 use super::classify_change_with_source;
-use crate::domain::{ExposureClass, Finding, OracleStrength, StageState};
+use crate::domain::{ExposureClass, Finding, OracleStrength, ProbeFamily, StageState};
 use std::path::Path;
 
 // #7312: independently authored from CPython ebf955df7a89ed0c7968f79faec1de49f61ed7cb
@@ -1985,6 +1985,8 @@ fn guarded_field_value_no_input_enters_is_weakly_exposed() -> Result<(), String>
         missing_boundary(&finding, "total < 0").is_some(),
         "{finding:?}"
     );
+    assert_eq!(finding.probe.family, ProbeFamily::FieldConstruction);
+    assert!(observed(&finding, "total = 100"), "{finding:?}");
     Ok(())
 }
 
