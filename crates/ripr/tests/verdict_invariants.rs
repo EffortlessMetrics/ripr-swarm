@@ -225,7 +225,7 @@ fn comment_only_diff_has_no_findings(lang: &Lang) -> Result<(), String> {
     }
     let owner_texts: [String; 2] = texts
         .try_into()
-        .map_err(|_| "two owners expected".to_string())?;
+        .map_err(|v: Vec<String>| format!("two owners expected, got {}", v.len()))?;
     let rows = run(lang, &files_with(lang, lang.test_name, owner_texts), &diff)?;
     if rows.is_empty() {
         Ok(())
