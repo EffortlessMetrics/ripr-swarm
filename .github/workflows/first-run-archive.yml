@@ -61,6 +61,7 @@ jobs:
           echo "version=$v" >> "$GITHUB_OUTPUT"
 
       - name: Install with the documented snippet (Linux and macOS)
+        id: install_unix
         if: runner.os != 'Windows'
         shell: bash
         env:
@@ -70,9 +71,12 @@ jobs:
           mkdir bin-test && cd bin-test
           sed -E "s/^v=[0-9]+\.[0-9]+\.[0-9]+/v=$VERSION/" ../snippet.sh > snippet-version.sh
           grep -q "^v=$VERSION" snippet-version.sh || { echo "snippet does not pin a version"; exit 1; }
-          time bash -c "$(cat snippet-version.sh)"$'\n'"ripr --version"
+          start=$SECONDS
+          bash -c "$(cat snippet-version.sh)"$'\n'"set -o pipefail; ripr --version | tee \"\$RUNNER_TEMP/archive-version.txt\""
+          echo "install_seconds=$((SECONDS - start))" >> "$GITHUB_OUTPUT"
 
       - name: Install with the documented snippet (Windows)
+        id: install_windows
         if: runner.os == 'Windows'
         shell: pwsh
         env:
@@ -81,8 +85,40 @@ jobs:
           if ($env:VERSION -notmatch '^\d+\.\d+\.\d+$') { throw "bad version: $env:VERSION" }
           New-Item -ItemType Directory bin-test | Out-Null; Set-Location bin-test
           $n = (Get-Content ../snippet.ps1 -Raw) -replace '\$v=''\d+\.\d+\.\d+''', ('$$v=''' + $env:VERSION + ''''); if (-not $n.Contains('$v=''' + $env:VERSION + '''')) { throw 'snippet does not pin a version' }
-          $t = Measure-Command { Invoke-Expression $n; ripr --version | Write-Host }
+          $t = Measure-Command { Invoke-Expression $n; ripr --version | Out-File -Encoding utf8 "$env:RUNNER_TEMP/archive-version.txt" }
+          Get-Content "$env:RUNNER_TEMP/archive-version.txt" | Write-Host
           Write-Host "TotalSeconds: $($t.TotalSeconds)"; if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          "install_seconds=$([math]::Round($t.TotalSeconds, 1))" | Out-File -Append -Encoding utf8 $env:GITHUB_OUTPUT
+
+      - name: Record the archive cell for the install receipt
+        if: always()
+        shell: bash
+        env:
+          OS_LABEL: ${{ matrix.os }}
+          OUTCOME: ${{ runner.os == 'Windows' && steps.install_windows.outcome || steps.install_unix.outcome }}
+          SECONDS_TO_INSTALL: ${{ runner.os == 'Windows' && steps.install_windows.outputs.install_seconds || steps.install_unix.outputs.install_seconds }}
+          VERSION: ${{ steps.resolve.outputs.version }}
+        run: |
+          # One `install-cell-archive-<os>` file for `cargo xtask install-receipt`, in the
+          # same shape as published-install-matrix.yml's cells.
+          version=$(head -n1 "$RUNNER_TEMP/archive-version.txt" 2>/dev/null | tr -d '\r\357\273\277' | tr -cd '0-9A-Za-z.+ ()-' || true)
+          mkdir -p "$RUNNER_TEMP/cell"
+          # The binary must report the resolved release; only the build-commit suffix is allowed.
+          reported=$(printf '%s' "$version" | sed -E 's/ \([0-9a-f]{40}(-dirty)?\)$//')
+          if [ "$OUTCOME" = success ] && [ "$reported" = "ripr $VERSION" ] && [[ ${SECONDS_TO_INSTALL:-} =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+            printf '{"channel":"archive","os":"%s","status":"works","version":"%s","install_seconds":%s}\n' \
+              "$OS_LABEL" "$version" "$SECONDS_TO_INSTALL" > "$RUNNER_TEMP/cell/cell.json"
+          else
+            printf '{"channel":"archive","os":"%s","status":"failed"}\n' "$OS_LABEL" > "$RUNNER_TEMP/cell/cell.json"
+          fi
+          cat "$RUNNER_TEMP/cell/cell.json"
+
+      - name: Upload the archive cell
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: install-cell-archive-${{ matrix.os }}
+          path: ${{ runner.temp }}/cell/cell.json
 
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
