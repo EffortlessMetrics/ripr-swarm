@@ -98,6 +98,12 @@ pub(crate) const VERIFICATION_CORPUS_BINDINGS: &[Binding] = &[
             "tests/fixtures/verification/ripr/check-complete.valid.json",
             "tests/fixtures/verification/ripr/check-incomplete.valid.json",
             "tests/fixtures/verification/ripr/check-limited.valid.json",
+            // A bounded partial-scope run (RIPR-PROP-0019): a completed run
+            // whose analysis_scope carries run_status limited_partial_scope,
+            // captured from `RIPR_PARTIAL_DIFF_FILE_BUDGET=1 ripr check
+            // --root fixtures/helper_chain_controls/input --diff
+            // fixtures/helper_chain_controls/diff.patch --format json` (#11584).
+            "tests/fixtures/verification/ripr/check-partial-scope.valid.json",
             // Retained captures of past `ripr check` runs inside real-repo eval
             // fixtures. They validate against the schema, but they are not
             // bytes the candidate's build produced, so they stay edge fixtures.
@@ -128,6 +134,15 @@ pub(crate) const VERIFICATION_CORPUS_BINDINGS: &[Binding] = &[
             "narrower authority: timeout_refusal_with_stashed_context_renders_input_context_at_generation_0_3 in crates/ripr/src/output/limited_check.rs asserts the rendered document's generation, keys, and fact/recovery shapes at the renderer, and check_json_analysis_timeout_retains_requested_echo_and_bounded_recovery in crates/ripr/tests/cli_smoke.rs parses the real CLI bytes of a forced-deadline run; the committed fixture is hand-written (forced-deadline bytes only exist per run), so release replay still passes it with --artifact",
         ),
         edge_fixtures: &["tests/fixtures/verification/ripr/check-timeout-refusal.valid.json"],
+        excluded: &[],
+    },
+    Binding {
+        schema_path: "schemas/ripr/cli-refusal.schema.json",
+        pointer: None,
+        corpus: Corpus::Authority(
+            "narrower authority: check_json_argv_usage_errors_emit_cli_refusal and context_selector_miss_emits_cli_refusal_only_for_json_request in crates/ripr/tests/cli_smoke.rs parse the real CLI bytes of usage errors and selector misses, and the output::refusal unit tests pin the renderer; the committed fixture is hand-written",
+        ),
+        edge_fixtures: &["tests/fixtures/verification/ripr/cli-refusal.valid.json"],
         excluded: &[],
     },
     Binding {

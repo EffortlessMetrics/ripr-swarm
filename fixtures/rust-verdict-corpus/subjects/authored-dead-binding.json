@@ -1,0 +1,17 @@
+{
+  "subject_id": "authored-dead-binding",
+  "origin": "authored",
+  "version_label": "authored 2026-11-08 for a changed condition bound to a never-read local (#10875)",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "674c75283f421ef63fd1c2742602769c344cf5b1fab7996b1fb59d90e7d61d22"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "b93a4b24a2881f9172e4e4aa33b53ea5010f5da680433f2666e9a622bf26d238"
+    }
+  ]
+}

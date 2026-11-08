@@ -1793,7 +1793,9 @@ ripr review-comments \
 ```
 
 That renderer writes JSON and Markdown under `target/ripr/review/` and does
-not post to GitHub by itself. The generated workflow then:
+not post to GitHub by itself. Teams replacing a cargo-mutants exit-`2` CI gate
+can pair it with `ripr gate evaluate --mode acknowledgeable`; see
+[coming from cargo-mutants](FROM_CARGO_MUTANTS.md). The generated workflow then:
 
 - appends the Markdown summary to `$GITHUB_STEP_SUMMARY`;
 - emits check annotations from changed-line entries;
