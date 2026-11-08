@@ -579,3 +579,19 @@ fn dispositions_file_must_account_for_every_other_channel() -> Result<(), String
     assert!(result.err().is_some());
     Ok(())
 }
+
+#[test]
+fn runs_are_ordered_numerically_so_the_latest_run_names_the_version() -> Result<(), String> {
+    let mut cells = matrix(120.0, &["9", "10", "11"]);
+    for cell in cells.iter_mut().filter(|cell| cell.run_id == "11") {
+        cell.version = Some("ripr 0.11.0".to_string());
+    }
+    let receipt = build_receipt(&cells, &shipped())?;
+    assert_eq!(
+        receipt["source_run_ids"],
+        serde_json::json!(["9", "10", "11"])
+    );
+    assert_eq!(receipt["cells"][0]["version"], "ripr 0.11.0");
+    assert_eq!(receipt["cells"][0]["samples"][0]["run_id"], "9");
+    Ok(())
+}

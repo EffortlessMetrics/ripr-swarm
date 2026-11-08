@@ -72,7 +72,7 @@ jobs:
           sed -E "s/^v=[0-9]+\.[0-9]+\.[0-9]+/v=$VERSION/" ../snippet.sh > snippet-version.sh
           grep -q "^v=$VERSION" snippet-version.sh || { echo "snippet does not pin a version"; exit 1; }
           start=$SECONDS
-          bash -c "$(cat snippet-version.sh)"$'\n'"ripr --version | tee \"\$RUNNER_TEMP/archive-version.txt\""
+          bash -c "$(cat snippet-version.sh)"$'\n'"set -o pipefail; ripr --version | tee \"\$RUNNER_TEMP/archive-version.txt\""
           echo "install_seconds=$((SECONDS - start))" >> "$GITHUB_OUTPUT"
 
       - name: Install with the documented snippet (Windows)

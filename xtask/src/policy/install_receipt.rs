@@ -366,7 +366,8 @@ pub(super) fn build_receipt(cells: &[Cell], dispositions: &[Disposition]) -> Res
     let mut not_established = false;
     let mut rows = Vec::new();
     for ((channel, platform), samples) in &mut by_cell {
-        samples.sort_by(|a, b| a.run_id.cmp(&b.run_id));
+        // Run ids are all digits, so length then text is numeric order.
+        samples.sort_by(|a, b| (a.run_id.len(), &a.run_id).cmp(&(b.run_id.len(), &b.run_id)));
         let source_build = SOURCE_BUILD_CHANNELS.contains(&channel.as_str());
         let (threshold, min_samples) = if source_build {
             (SOURCE_BUILD_THRESHOLD_SECONDS, SOURCE_BUILD_MIN_SAMPLES)
@@ -451,10 +452,13 @@ pub(super) fn build_receipt(cells: &[Cell], dispositions: &[Disposition]) -> Res
     } else {
         "met"
     };
-    let runs: BTreeSet<&str> = cells.iter().map(|cell| cell.run_id.as_str()).collect();
+    let runs: BTreeSet<(usize, &str)> = cells
+        .iter()
+        .map(|cell| (cell.run_id.len(), cell.run_id.as_str()))
+        .collect();
     Ok(json!({
         "schema_version": SCHEMA,
-        "source_run_ids": runs.into_iter().collect::<Vec<_>>(),
+        "source_run_ids": runs.into_iter().map(|(_, run)| run).collect::<Vec<_>>(),
         "thresholds": {
             "prebuilt_seconds": PREBUILT_THRESHOLD_SECONDS,
             "source_build_seconds": SOURCE_BUILD_THRESHOLD_SECONDS,
