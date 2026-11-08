@@ -656,6 +656,12 @@ mod tests {
                 phase_two: super::super::owners::PhaseTwoFacts::default(),
             };
             assert_eq!(store.store(&key, &facts, None, None), Ok(true));
+            // The reader must recognize the entry the store really writes; if
+            // it did not, every real other-build entry would be skipped.
+            assert_eq!(
+                seam_cache::analyzer_version_from_entry_prefix(&store.entry_path(relative, source)),
+                Some(crate::build_identity::cache_identity().to_string())
+            );
             assert!(
                 newest.is_file() && middle.is_file(),
                 "two most recent other builds kept"

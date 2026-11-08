@@ -405,6 +405,12 @@ fn store_prunes_old_builds_and_schemas_and_a_hit_marks_this_build_used() -> Resu
             "a newer schema directory is never pruned"
         );
         assert!(store.entry_path(relative, PRODUCTION).is_file());
+        // The reader must recognize the entry the store really writes; if it
+        // did not, every real other-build entry would be skipped, not pruned.
+        assert_eq!(
+            seam_cache::analyzer_version_from_entry_prefix(&store.entry_path(relative, PRODUCTION)),
+            Some(crate::build_identity::cache_identity().to_string())
+        );
         assert_eq!(
             reclaimable_before.entry_count, 5,
             "three other-build entries and the two other-schema files were reclaimable"
