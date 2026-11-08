@@ -1040,9 +1040,22 @@ fn lifetime_only_impl_binds_the_subject_with_an_elided_lifetime() -> Result<(), 
             "{header}: {}",
             stub.text
         );
+        // `&mut self`: the call stays bound before `expected` (#13861 review)
+        // and is made exactly once.
         assert!(
             stub.text
-                .contains("assert_eq!(subject.parse_unit(start, end), expected);"),
+                .contains("let actual = subject.parse_unit(start, end);"),
+            "{header}: {}",
+            stub.text
+        );
+        assert!(
+            stub.text.contains("assert_eq!(actual, expected);"),
+            "{header}: {}",
+            stub.text
+        );
+        assert_eq!(
+            stub.text.matches("parse_unit(start, end)").count(),
+            1,
             "{header}: {}",
             stub.text
         );
@@ -1633,12 +1646,21 @@ fn unit_result_owner_asserts_the_mut_input_after_the_call() -> Result<(), String
     let stub = rust_test_stub(&seam, None, source, None).map_err(|refusal| refusal.as_str())?;
     for expected in [
         "let mut out: u64 = todo!(",
-        "assert_eq!(add_unit(unit, &mut out), expected);",
+        "let actual = add_unit(unit, &mut out);",
+        "assert_eq!(actual, expected);",
         "let expected_out: u64 = todo!(",
         "assert_eq!(out, expected_out);",
     ] {
         assert!(stub.text.contains(expected), "{expected}\n{}", stub.text);
     }
+    // A `&mut` argument keeps the call bound before `expected` and makes it
+    // exactly once (#13861 review).
+    assert_eq!(
+        stub.text.matches("add_unit(unit, &mut out)").count(),
+        1,
+        "{}",
+        stub.text
+    );
     assert!(
         stub.fill_ins
             .iter()

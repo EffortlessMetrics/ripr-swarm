@@ -996,8 +996,18 @@ fn stub_body(
     // (`assert_eq!(owner(..), expected)`), the shape the reveal stage ties to
     // the changed line; `let actual = owner(..); assert_eq!(actual, expected)`
     // left the stub's own gap open with `observation_unconfirmed`.
+    //
+    // Inlining moves the call after the `expected` initializer, so an owner
+    // that can mutate its inputs (`&mut self` or a `&mut` argument) keeps the
+    // binding: an `expected` the developer derives from post-call state must
+    // still read it after the call (#13861 review).
+    let mutates_inputs = matches!(signature.receiver, Some(OwnerReceiver::RefMut))
+        || arguments
+            .iter()
+            .any(|argument| argument.starts_with("&mut "));
     let inline_call = asserts_return
         && variant.is_none()
+        && !mutates_inputs
         && matches!(
             value_traits(&return_type, source),
             ValueTraits::PartialEqAndDebug
@@ -1040,7 +1050,8 @@ fn stub_body(
                         "let expected: {return_type} = todo!(\"{}\");",
                         escape(&label)
                     ));
-                    lines.push(format!("assert_eq!({call}, expected);"));
+                    let observed = if inline_call { call.as_str() } else { "actual" };
+                    lines.push(format!("assert_eq!({observed}, expected);"));
                 }
                 // `PartialEq` or `Debug` is not visible for the return
                 // type, so no generated comparison is sure to compile (a

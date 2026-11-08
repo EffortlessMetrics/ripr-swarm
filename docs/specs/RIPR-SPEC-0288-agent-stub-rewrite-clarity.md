@@ -119,6 +119,9 @@ let-bound `actual` carries none, so the filled stub's own assertion read as
 `miss=observation_unconfirmed` and the stub never closed the gap it was written
 for. Error-variant (`matches!`) and non-`PartialEq` shapes keep the
 `let actual` binding, because their assertion is not an equality on the call.
+An owner that can mutate its inputs (`&mut self` or a `&mut` argument) also
+keeps the binding, made once before `expected`, so an expected value derived
+from post-call state still reads that state after the call.
 This changes the emitted stub only; classifier credit rules are unchanged.
 
 ## Required Evidence
