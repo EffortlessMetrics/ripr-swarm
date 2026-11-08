@@ -149,22 +149,51 @@ pub fn candidate_binary() -> Result<PathBuf, String> {
         .get_or_init(|| {
             // CI shares one prepared binary across every nextest process
             // (nextest runs each test in its own process, so the OnceLock
-            // above cannot share a build). When the override is set it
-            // must name an existing file: a set-but-missing path is an
-            // error, never a silent fallback to a stale binary, so a
-            // miswired CI step fails loudly. Local runs leave it unset
-            // and take the private-target-dir build below.
+            // above cannot share a build). The prepared binary must be
+            // the one this workspace's private build produces: when the
+            // override is set it is accepted only when its canonical
+            // path equals the canonical expected path
+            // `guide_candidate_target_dir()/debug/ripr{EXE_SUFFIX}` for
+            // this workspace, and CI exports exactly that path. Any
+            // other existing file (stale or from another checkout) is
+            // rejected, never used. A set-but-missing path is an error,
+            // never a silent fallback, so a miswired CI step fails
+            // loudly. Local runs leave it unset and take the
+            // private-target-dir build below.
             if let Some(prepared) = std::env::var_os("RIPR_GUIDE_CANDIDATE_BINARY") {
                 let path = PathBuf::from(&prepared);
-                if path.is_file() {
-                    return path.canonicalize().map_err(|error| error.to_string());
+                if !path.is_file() {
+                    return Err(format!(
+                        "RIPR_GUIDE_CANDIDATE_BINARY is set to `{}` but that file does not exist; \
+                         build the candidate binary there first (target/guide-candidate/debug) \
+                         or unset the variable to build it here",
+                        path.display()
+                    ));
                 }
-                return Err(format!(
-                    "RIPR_GUIDE_CANDIDATE_BINARY is set to `{}` but that file does not exist; \
-                     build the candidate binary there first (target/guide-candidate/debug) \
-                     or unset the variable to build it here",
-                    path.display()
-                ));
+                let supplied = path.canonicalize().map_err(|error| error.to_string())?;
+                let expected_path = guide_candidate_target_dir()
+                    .join("debug")
+                    .join(format!("ripr{}", std::env::consts::EXE_SUFFIX));
+                let expected = expected_path.canonicalize().map_err(|_| {
+                    format!(
+                        "RIPR_GUIDE_CANDIDATE_BINARY is set to `{}` but the expected candidate \
+                         binary `{}` does not exist; build the candidate binary there first \
+                         (target/guide-candidate/debug) or unset the variable to build it here",
+                        supplied.display(),
+                        expected_path.display()
+                    )
+                })?;
+                if supplied != expected {
+                    return Err(format!(
+                        "RIPR_GUIDE_CANDIDATE_BINARY is set to `{}` but the expected candidate \
+                         binary for this workspace is `{}`; the prepared binary must be the one \
+                         this workspace's private build produces (target/guide-candidate/debug), \
+                         so build it there or unset the variable to build it here",
+                        supplied.display(),
+                        expected.display()
+                    ));
+                }
+                return Ok(supplied);
             }
             // Always ask Cargo to select/build the current candidate. An existing
             // target/debug/ripr or an ambient PATH binary is not identity evidence.
