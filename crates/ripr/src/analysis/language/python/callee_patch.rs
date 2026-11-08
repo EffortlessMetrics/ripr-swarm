@@ -718,30 +718,59 @@ fn patch_string_targets(body: &str) -> Vec<(usize, String)> {
     found
 }
 
-/// Whether `test` replaces `owner` itself: a patch target whose last segment is
-/// the owner's name under one of the owner's module paths, applied before the
-/// test's first assertion and not as a `with` block, whose scope ends before
-/// later calls. A patch whose order or scope is unsure does not count.
+/// Whether `test` replaces `owner` itself: the test body opens with a run of
+/// directly applied patches (`monkeypatch.setattr("m.f", ...)`, or
+/// `patch("m.f", ...).start()`), one per line at the body's base indent, and
+/// one of them targets the owner's name under one of its module paths. A
+/// patch after any other statement, inside a block or `with`, in a comment,
+/// or in a body that can stop or undo patches does not count: its order or
+/// scope is unsure, so the test keeps the ordinary heuristic reading.
 fn test_patches_owner(test: &PythonTest, owner: &PythonOwner) -> bool {
     if owner.is_module_owner() || !test_has_mocked_module(test) {
         return false;
     }
-    let module_paths = owner_module_paths(&owner.file);
     let body = &test.body_text;
-    let first_assert = body.find("assert").unwrap_or(body.len());
-    patch_string_targets(body).iter().any(|(index, target)| {
-        let line = body[..*index]
-            .rsplit('\n')
-            .next()
-            .unwrap_or("")
-            .trim_start();
-        let scoped = line.starts_with("with ") || line.starts_with("async with ");
-        *index < first_assert
-            && !scoped
-            && target.rsplit_once('.').is_some_and(|(prefix, name)| {
+    if ["stop(", "stopall(", ".undo(", "monkeypatch.context("]
+        .iter()
+        .any(|undo| body.contains(undo))
+    {
+        return false;
+    }
+    let module_paths = owner_module_paths(&owner.file);
+    let targets_owner = |line: &str| {
+        patch_string_targets(line).iter().any(|(_, target)| {
+            target.rsplit_once('.').is_some_and(|(prefix, name)| {
                 name == owner.name && module_paths.iter().any(|module| module == prefix)
             })
-    })
+        })
+    };
+    let mut lines = body.lines();
+    // The `def` header, possibly over several lines, ends at its `:`.
+    if !lines.any(|line| line.trim_end().ends_with(':')) {
+        return false;
+    }
+    let mut base_indent = None;
+    let mut found = false;
+    for line in lines {
+        let text = line.trim();
+        if text.is_empty() {
+            continue;
+        }
+        let indent = line.len() - line.trim_start().len();
+        if *base_indent.get_or_insert(indent) != indent {
+            break;
+        }
+        let applied = text.starts_with("monkeypatch.setattr(")
+            || ((text.starts_with("patch(")
+                || text.starts_with("mock.patch(")
+                || text.starts_with("unittest.mock.patch("))
+                && text.ends_with(".start()"));
+        if !applied || text.contains(';') || patch_string_targets(text).is_empty() {
+            break;
+        }
+        found |= targets_owner(text);
+    }
+    found
 }
 
 /// Whether there is at least one related test and every one of them replaces

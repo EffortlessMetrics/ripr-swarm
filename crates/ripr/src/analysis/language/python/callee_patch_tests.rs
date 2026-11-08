@@ -195,12 +195,20 @@ fn a_change_inside_the_patched_callee_reads_reached_but_unrevealed() -> Result<(
     let late = [
         "from src.subject import tax_for\n\n\ndef test_tax_for(monkeypatch):\n    assert tax_for(10, \"x\") == 30\n    monkeypatch.setattr(\"src.subject.rate_for\", lambda r: 2)\n",
         "from unittest import mock\n\nfrom src.subject import tax_for\n\n\ndef test_tax_for():\n    with mock.patch(\"src.subject.rate_for\", return_value=2):\n        pass\n    assert tax_for(10, \"x\") == 30\n",
+        // The call runs before the patch; the assertion only reads its result.
+        "from src.subject import tax_for\n\n\ndef test_tax_for(monkeypatch):\n    result = tax_for(10, \"x\")\n    monkeypatch.setattr(\"src.subject.rate_for\", lambda r: 2)\n    assert result == 30\n",
+        // A parenthesized `with` whose scope ends before the call.
+        "from unittest import mock\n\nfrom src.subject import tax_for\n\n\ndef test_tax_for():\n    with (\n        mock.patch(\"src.subject.rate_for\", return_value=2),\n    ):\n        pass\n    assert tax_for(10, \"x\") == 30\n",
+        // The patch is undone before the call.
+        "from src.subject import tax_for\n\n\ndef test_tax_for(monkeypatch):\n    monkeypatch.setattr(\"src.subject.rate_for\", lambda r: 2)\n    monkeypatch.undo()\n    assert tax_for(10, \"x\") == 30\n",
+        // Only a comment names the patch.
+        "from src.subject import tax_for\n\n\ndef test_tax_for(monkeypatch):\n    # monkeypatch.setattr(\"src.subject.rate_for\", lambda r: 2)\n    assert tax_for(10, \"x\") == 30\n",
     ];
     for tests in late {
         let finding = classify(source, tests, 2, "    return 1", "    return 3")?;
-        assert_ne!(
+        assert_eq!(
             finding.class,
-            ExposureClass::ReachableUnrevealed,
+            ExposureClass::WeaklyExposed,
             "{tests}\n{finding:?}"
         );
     }
