@@ -684,6 +684,119 @@ mod tests {
     }
 
     #[test]
+    fn agent_review_summary_fresh_repo_uses_plain_early_state_copy() -> Result<(), String> {
+        const EXPECTED: &str =
+            "Review incomplete: analysis outcome and repair receipt are unavailable.";
+
+        let root = unique_agent_review_summary_test_dir("fresh-plain")?;
+        std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+
+        let report = build_agent_review_summary_report(&root, Path::new("."));
+        let json = render_agent_review_summary_json(&report)?;
+        let value: Value = serde_json::from_str(&json)
+            .map_err(|err| format!("parse review summary JSON: {err}"))?;
+        assert_eq!(
+            value["reviewer_summary"]["headline"].as_str(),
+            Some(EXPECTED)
+        );
+        assert_eq!(
+            value["reviewer_summary"]["what_changed"].as_str(),
+            Some(EXPECTED)
+        );
+
+        let markdown = render_agent_review_summary_markdown(&report);
+        assert!(markdown.contains(EXPECTED), "{markdown}");
+        assert!(
+            !markdown.contains("producer analysis outcome is unavailable"),
+            "{markdown}"
+        );
+        assert!(
+            !markdown.contains("Movement: missing_artifact"),
+            "{markdown}"
+        );
+
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn unavailable_receipt_does_not_assert_no_repair_was_run() -> Result<(), String> {
+        let root = unique_agent_review_summary_test_dir("invalid-receipt")?;
+        write_file(&root.join(WORKFLOW_AGENT_RECEIPT_ARTIFACT), "not json")?;
+        let report = build_agent_review_summary_report(&root, Path::new("."));
+        let value: Value = serde_json::from_str(&render_agent_review_summary_json(&report)?)
+            .map_err(|err| format!("parse review summary JSON: {err}"))?;
+        let markdown = render_agent_review_summary_markdown(&report);
+        let expected = "Review incomplete: analysis outcome and repair receipt are unavailable.";
+        assert_eq!(value["status"], "incomplete");
+        assert_eq!(value["static_movement"]["state"], "missing_artifact");
+        assert_eq!(value["reviewer_summary"]["headline"], expected);
+        assert_eq!(value["reviewer_summary"]["what_changed"], expected);
+        assert!(markdown.contains(expected), "{markdown}");
+        assert!(
+            markdown.contains("Receipt: unavailable or invalid."),
+            "{markdown}"
+        );
+        assert!(!markdown.contains("no repair has been run"), "{markdown}");
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn missing_evidence_after_prior_work_does_not_claim_no_repair() -> Result<(), String> {
+        let root = unique_agent_review_summary_test_dir("prior-work")?;
+        write_complete_artifacts(&root)?;
+        std::fs::remove_file(root.join(WORKFLOW_AGENT_RECEIPT_ARTIFACT))
+            .map_err(|err| format!("remove receipt: {err}"))?;
+        std::fs::remove_file(root.join(WORKFLOW_ANALYSIS_OUTCOME_ARTIFACT))
+            .map_err(|err| format!("remove outcome: {err}"))?;
+        let report = build_agent_review_summary_report(&root, Path::new("."));
+        let value: Value = serde_json::from_str(&render_agent_review_summary_json(&report)?)
+            .map_err(|err| format!("parse review summary JSON: {err}"))?;
+        let markdown = render_agent_review_summary_markdown(&report);
+        let expected = "Review incomplete: analysis outcome and repair receipt are unavailable.";
+        assert_eq!(value["status"], "incomplete");
+        assert_eq!(value["reviewer_summary"]["headline"], expected);
+        assert_eq!(value["reviewer_summary"]["what_changed"], expected);
+        assert!(markdown.contains(expected), "{markdown}");
+        assert!(!markdown.contains("no repair has been run"), "{markdown}");
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn present_receipt_with_missing_movement_is_not_unavailable() -> Result<(), String> {
+        let root = unique_agent_review_summary_test_dir("present-missing-movement")?;
+        write_file(
+            &root.join(WORKFLOW_AGENT_RECEIPT_ARTIFACT),
+            r#"{"seam":{"seam_id":"s","change":"missing_artifact"}}"#,
+        )?;
+        let report = build_agent_review_summary_report(&root, Path::new("."));
+        let value: Value = serde_json::from_str(&render_agent_review_summary_json(&report)?)
+            .map_err(|err| format!("parse review summary JSON: {err}"))?;
+        let markdown = render_agent_review_summary_markdown(&report);
+        assert_eq!(value["static_movement"]["state"], "missing_artifact");
+        assert_eq!(
+            value["static_movement"]["evidence_artifact"],
+            WORKFLOW_AGENT_RECEIPT_ARTIFACT
+        );
+        assert_ne!(
+            value["reviewer_summary"]["headline"],
+            "Review incomplete: analysis outcome and repair receipt are unavailable."
+        );
+        assert!(
+            !markdown.contains("repair receipt are unavailable"),
+            "{markdown}"
+        );
+        assert!(
+            !markdown.contains("Receipt: unavailable or invalid"),
+            "{markdown}"
+        );
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+        Ok(())
+    }
+
+    #[test]
     fn agent_review_summary_markdown_names_review_focus_and_limits() -> Result<(), String> {
         let root = unique_agent_review_summary_test_dir("markdown")?;
         write_complete_artifacts(&root)?;
@@ -1008,7 +1121,9 @@ mod tests {
             "{rendered}"
         );
         assert!(
-            rendered.contains("No analysis yet. Run `ripr check` first."),
+            rendered.contains(
+                "Review incomplete: analysis outcome and repair receipt are unavailable."
+            ),
             "{rendered}"
         );
 
@@ -1122,6 +1237,7 @@ mod tests {
             state: "awaiting_edit",
             head_current: Some(true),
             disposition: "resumable",
+            baseline: crate::app::repair_attempt::RepairAttemptBaselineReading::Unambiguous,
             manifest: String::new(),
             command: None,
             start_withheld: false,

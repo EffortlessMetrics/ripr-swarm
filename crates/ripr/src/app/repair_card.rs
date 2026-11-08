@@ -179,32 +179,62 @@ pub(crate) fn build_repair_card(input: &RepairCardInput<'_>) -> Result<RepairCar
     Ok(card)
 }
 
-/// Project the card producer's canonical action. The card orders inspection
-/// of its packet: the attempt lifecycle gates only terminality for
-/// executable specs (a terminal repair cannot continue, but its results stay
-/// readable). Edit obligations and restarts belong to the status producer,
-/// which owns the attempt commands.
+/// Existing attempts project their recorded edit obligation or a status
+/// inspection. A finished after phase does not mean the gap is closed, so
+/// status, rather than a terminal-completion claim, owns that distinction.
 fn canonical_next_action_for_card(
     input: &RepairCardInput<'_>,
 ) -> Result<CanonicalNextActionV1, String> {
     let head = input.snapshot.repository_head.clone();
+    let continuation = input.attempt.and_then(|manifest| {
+        (manifest.state == crate::app::repair_attempt::RepairAttemptState::AwaitingEdit)
+            .then(|| {
+                crate::agent::human_after_phase_follow_up_for_display(&manifest.next_command, ".")
+            })
+            // The facade cannot carry trust-bound or explicit-store flags.
+            // Keep those obligations with status's existing advanced route.
+            .filter(|command| {
+                command
+                    == &format!(
+                        "ripr continue --root . --attempt {}",
+                        crate::agent::loop_commands::shell_arg(manifest.repair_attempt_id.as_str())
+                    )
+            })
+            .map(|command| command.replacen(" --root .", "", 1))
+    });
+    let attempt_route = input.attempt.map(|manifest| {
+        continuation.clone().unwrap_or_else(|| {
+            format!(
+                "ripr agent status{} --attempt {}",
+                crate::app::repair_attempt::quoted_store_flag_from_identity(
+                    manifest.store.as_ref()
+                ),
+                crate::agent::loop_commands::shell_arg(manifest.repair_attempt_id.as_str()),
+            )
+        })
+    });
+    // Only an edit obligation needs the selector's prerequisite arm. Ended
+    // and non-facade attempts use its ordinary read-only inspection arm;
+    // none offers an executable command or changes the manifest state.
     let attempts = input
         .attempt
+        .filter(|_| continuation.is_some())
         .map(|manifest| NextActionAttemptView {
             id: manifest.repair_attempt_id.as_str().to_string(),
-            terminal: manifest.state
-                == crate::app::repair_attempt::RepairAttemptState::ReadyToFinish,
-            awaits_edit: false,
+            terminal: false,
+            awaits_edit: true,
             restart_recommended: false,
             restart_route: String::new(),
-            receipt_ref: None,
+            receipt_ref: attempt_route.clone(),
         })
         .into_iter()
         .collect::<Vec<_>>();
     let route_admitted = input.packet_eligible
         && input.edit_cage_refusal.is_none()
         && repair_card_route_exposable(input.instruction.state, input.readiness.is_repair_ready());
-    let limitation = if input.instruction.state == FixInstructionState::FixSiteReady {
+    let limitation = if input.attempt.is_some()
+        || input.instruction.state == FixInstructionState::FixSiteReady
+    {
         None
     } else if input.instruction.state == FixInstructionState::Unavailable
         && input.readiness.is_repair_ready()
@@ -238,7 +268,7 @@ fn canonical_next_action_for_card(
             instruction_label(input.instruction.state)
         ))
     };
-    let missing_input = if route_admitted || limitation.is_some() {
+    let missing_input = if input.attempt.is_some() || route_admitted || limitation.is_some() {
         None
     } else if !input.packet_eligible {
         Some("repair-packet eligibility for this seam".to_string())
@@ -289,15 +319,20 @@ fn canonical_next_action_for_card(
             config_expected: None,
             config_observed: None,
         },
-        offered_command: input.next_command,
+        offered_command: input.next_command.filter(|_| input.attempt.is_none()),
         route_admitted,
         route_refusal: None,
         missing_input,
         platform: current_command_platform(),
         limitation,
         limitation_route: None,
-        detail_route: input.packet_route.clone(),
-        transition_from: instruction_label(input.instruction.state).to_string(),
+        detail_route: attempt_route.unwrap_or_else(|| input.packet_route.clone()),
+        transition_from: input.attempt.map_or_else(
+            || instruction_label(input.instruction.state).to_string(),
+            |manifest| {
+                crate::app::repair_attempt::repair_attempt_state_label(&manifest.state).to_string()
+            },
+        ),
         transition_to: input
             .next_command
             .map(|spec| command_effect_label(spec.role).to_string()),
@@ -346,7 +381,7 @@ fn project_assertion_goal(input: &RepairCardInput<'_>) -> Option<RepairCardAsser
     None
 }
 
-fn project_target(selection: &RepairTargetSelection) -> Option<RepairCardTarget> {
+pub(crate) fn project_target(selection: &RepairTargetSelection) -> Option<RepairCardTarget> {
     match selection {
         RepairTargetSelection::Existing(target) => Some(RepairCardTarget::Existing {
             symbol_id: target.symbol_id().0.clone(),
@@ -363,18 +398,22 @@ fn project_target(selection: &RepairTargetSelection) -> Option<RepairCardTarget>
             relation: target.relation().as_str().to_string(),
             workspace_identity: target.workspace_identity().to_string(),
         }),
-        RepairTargetSelection::Proposed(proposal) => Some(RepairCardTarget::Proposed {
-            file: display_path(&proposal.file),
-            owner: proposal.owner.clone(),
-            proposal_kind: match proposal.kind {
-                crate::analysis::new_test_target::NewTestKind::InlineUnit => {
-                    RepairCardProposedTestKind::InlineUnit
-                }
-                crate::analysis::new_test_target::NewTestKind::Integration => {
-                    RepairCardProposedTestKind::Integration
-                }
-            },
-        }),
+        RepairTargetSelection::Proposed(proposal) => {
+            let selected =
+                crate::analysis::new_test_target::SelectedProposal::from_proposal(proposal);
+            Some(RepairCardTarget::Proposed {
+                file: selected.file,
+                owner: proposal.owner.clone(),
+                proposal_kind: match selected.kind {
+                    crate::analysis::new_test_target::NewTestKind::InlineUnit => {
+                        RepairCardProposedTestKind::InlineUnit
+                    }
+                    crate::analysis::new_test_target::NewTestKind::Integration => {
+                        RepairCardProposedTestKind::Integration
+                    }
+                },
+            })
+        }
         RepairTargetSelection::Missing => None,
     }
 }
@@ -893,6 +932,7 @@ mod tests {
                 file: PathBuf::from("tests/new.rs"),
                 owner: "src/lib.rs".to_string(),
                 provenance: NewTestProposalProvenance::ProducerOwned,
+                workspace_identity: String::new(),
             }),
         );
         let instruction = instruction(FixInstructionState::FixSiteReady);
@@ -946,6 +986,7 @@ mod tests {
                 file: PathBuf::from("tests\\new.rs"),
                 owner: "src/lib.rs".to_string(),
                 provenance: NewTestProposalProvenance::ProducerOwned,
+                workspace_identity: String::new(),
             }),
         );
         let card = build_repair_card(&base_input(&instruction, &proposed))?;
@@ -1037,6 +1078,7 @@ mod tests {
             limitations: Vec::new(),
             non_claims: Vec::new(),
             after: None,
+            focused_receipt_evaluation: None,
             last_after_refusal: None,
             after_refusal_count: 0,
             after_refusal_history: Vec::new(),
@@ -1253,6 +1295,7 @@ mod tests {
             limitations: Vec::new(),
             non_claims: Vec::new(),
             after: None,
+            focused_receipt_evaluation: None,
             last_after_refusal: None,
             after_refusal_count: 0,
             after_refusal_history: Vec::new(),
@@ -1274,8 +1317,71 @@ mod tests {
             .canonical_next_action
             .as_ref()
             .ok_or_else(|| "terminal card minted no canonical next action".to_string())?;
-        if canonical.action_class() != NextActionClass::TerminalNoAction {
-            return Err("terminal card decision is not terminal".to_string());
+        let exact_status = matches!(canonical.stop(),
+            Some(crate::domain::NextActionStop::InspectTarget { detail_route })
+                if detail_route.contains("ripr agent status")
+                    && detail_route.contains(manifest.repair_attempt_id.as_str()));
+        if canonical.action_class() != NextActionClass::InspectDetails || !exact_status {
+            return Err(
+                "ended card must inspect its exact status without claiming completion".to_string(),
+            );
+        }
+        for state in [
+            RepairAttemptState::Prepared,
+            RepairAttemptState::AwaitingEdit,
+            RepairAttemptState::Stale,
+            RepairAttemptState::Incomparable,
+            RepairAttemptState::Failed,
+        ] {
+            let mut observed = manifest.clone();
+            observed.state = state.clone();
+            observed.next_command = format!(
+                "ripr agent repair --root . --attempt {} --phase after",
+                observed.repair_attempt_id.as_str()
+            );
+            let mut input = base_input(&instruction, &readiness);
+            input.next_command = Some(&command);
+            input.attempt = Some(&observed);
+            let card = build_repair_card(&input)?;
+            assert_eq!(
+                card.attempt.as_ref().map(|attempt| attempt.state.as_str()),
+                Some(serde_state(&state).as_str())
+            );
+            assert!(card.next_action.is_none());
+            let action =
+                serde_json::to_string(&card.canonical_next_action).map_err(|e| e.to_string())?;
+            assert!(
+                action.contains(if state == RepairAttemptState::AwaitingEdit {
+                    "ripr continue"
+                } else {
+                    "ripr agent status"
+                }),
+                "{action}"
+            );
+            assert!(
+                action.contains(observed.repair_attempt_id.as_str()),
+                "{action}"
+            );
+        }
+        for next in [
+            "ripr agent repair --root . --attempt repair-attempt-0123456789abcdef01234567 --phase after --edit-authorized --edit-authority operator",
+            "ripr agent repair --root . --store attempts --attempt repair-attempt-0123456789abcdef01234567 --phase after",
+            "ripr agent repair --root . --attempt repair-attempt-000000000000000000000000 --phase after",
+        ] {
+            let mut observed = manifest.clone();
+            observed.state = RepairAttemptState::AwaitingEdit;
+            observed.next_command = next.to_string();
+            let mut input = base_input(&instruction, &readiness);
+            input.attempt = Some(&observed);
+            let card = build_repair_card(&input)?;
+            let action =
+                serde_json::to_string(&card.canonical_next_action).map_err(|e| e.to_string())?;
+            assert!(
+                action.contains("ripr agent status")
+                    && action.contains(observed.repair_attempt_id.as_str()),
+                "{action}"
+            );
+            assert!(!action.contains("ripr continue"), "{action}");
         }
         Ok(())
     }

@@ -513,6 +513,17 @@ impl ClosedChange {
         })
     }
 
+    /// The owner as it stands, standing in for both versions when there is no
+    /// diff (the repo-wide audit, #12394 item 3): a literal the current owner
+    /// provably does not return is unpinned.
+    pub(super) fn current(definition: &str, name: &str) -> Option<Self> {
+        let owner = ClosedOwner::read(definition, name)?;
+        Some(Self {
+            before: owner.clone(),
+            after: owner,
+        })
+    }
+
     /// Whether `expected` is a value neither version provably returns for
     /// `call`. `false` is "no evidence", or a version agrees with the pin.
     pub(super) fn provably_unpinned(&self, name: &str, call: &str, expected: &str) -> bool {
