@@ -8168,6 +8168,95 @@ fn swarm_server_binary_rehearsal_cannot_publish() -> Result<(), String> {
     Ok(())
 }
 
+/// The package family the rehearsal builds (#5378) stays read-only: it is only
+/// reachable from the rehearsal, holds no write or OIDC permission, reads no
+/// secret, and has no registry upload, release or publish step.
+#[test]
+fn swarm_package_family_rehearsal_cannot_publish() -> Result<(), String> {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .ok_or_else(|| "xtask manifest should have a repository parent".to_string())?;
+    let path = root.join(".github/workflows/package-family-qualification.yml");
+    let workflow = fs::read_to_string(&path)
+        .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
+    let caller_path = root.join(".github/workflows/release-server-binaries.yml");
+    let caller = fs::read_to_string(&caller_path)
+        .map_err(|error| format!("failed to read {}: {error}", caller_path.display()))?;
+    // Only the `packages` job body (lines indented deeper than job keys).
+    let calls_after_archives = |candidate: &str| {
+        let job: String = candidate
+            .split("\n  packages:\n")
+            .nth(1)
+            .unwrap_or_default()
+            .lines()
+            .take_while(|line| line.is_empty() || line.starts_with("    "))
+            .map(|line| format!("{line}\n"))
+            .collect();
+        job.contains("uses: ./.github/workflows/package-family-qualification.yml")
+            && job.contains("needs: rehearse")
+    };
+    if !calls_after_archives(&caller) {
+        return Err("the rehearsal must call the package family after the archives".to_string());
+    }
+    if calls_after_archives(&caller.replace("    needs: rehearse\n", "")) {
+        return Err("package-family caller negative control was accepted".to_string());
+    }
+    let validate = |candidate: &str| -> Result<(), String> {
+        let on_block = candidate
+            .split("\non:\n")
+            .nth(1)
+            .and_then(|rest| rest.split("\npermissions:").next())
+            .unwrap_or_default();
+        if !candidate.contains("permissions:\n  contents: read")
+            || on_block
+                .lines()
+                .filter(|line| line.starts_with("  ") && !line.starts_with("   "))
+                .ne(["  workflow_call:"])
+            || candidate.contains(": write")
+            || candidate.contains("id-token")
+            || candidate.contains("secrets.")
+            || candidate.contains("GH_TOKEN")
+            || candidate.contains("NODE_AUTH_TOKEN")
+            || candidate.contains("github.token")
+            || candidate.contains("registry-url")
+            || candidate.contains("npm publish")
+            || candidate.contains("twine")
+            || candidate.contains("gh-action-pypi-publish")
+            || candidate.contains("gh release")
+            || candidate.contains("release-upload-assets")
+            || !candidate.contains("persist-credentials: false")
+        {
+            return Err(
+                "package-family qualification must stay a read-only, called-only build and install proof"
+                    .to_string(),
+            );
+        }
+        Ok(())
+    };
+    validate(&workflow)?;
+    for broken in [
+        workflow.replace("contents: read", "contents: write"),
+        workflow.replace("contents: read", "contents: read\n  id-token: write"),
+        workflow.replace(
+            "on:\n  workflow_call:",
+            "on:\n  workflow_dispatch:\n  workflow_call:",
+        ),
+        workflow.replace(
+            "on:\n  workflow_call:",
+            "on:\n  workflow_call:\n  schedule:\n    - cron: '0 0 * * *'",
+        ),
+        format!("{workflow}\n      - run: npm publish --tag next ./pkg.tgz\n"),
+        format!("{workflow}\n      - run: python -m twine upload wheels/*\n"),
+        format!("{workflow}\n        env:\n          TOKEN: ${{{{ secrets.NPM_TOKEN }}}}\n"),
+        workflow.replace("persist-credentials: false", "persist-credentials: true"),
+    ] {
+        if validate(&broken).is_ok() {
+            return Err("package-family publication negative control was accepted".to_string());
+        }
+    }
+    Ok(())
+}
+
 #[test]
 fn server_archive_qualification_workflow_is_sha_bound_and_credential_free() -> Result<(), String> {
     const QUALIFICATION_COMMIT_TYPE_COMMAND: &str = r#"git -C "${GITHUB_WORKSPACE}" cat-file -t"#;
@@ -52954,7 +53043,7 @@ does_not_prove = "It does not demonstrate compiled analyzer behavior."
 
 [[pack]]
 id = "release-package"
-paths = ["Cargo.toml", "Cargo.lock", "crates/ripr/Cargo.toml", "CHANGELOG.md", "editors/vscode/package.json", "editors/vscode/package-lock.json", ".github/workflows/publish-extension.yml", ".github/workflows/release-server-binaries.yml"]
+paths = ["Cargo.toml", "Cargo.lock", "crates/ripr/Cargo.toml", "CHANGELOG.md", "editors/vscode/package.json", "editors/vscode/package-lock.json", ".github/workflows/publish-extension.yml", ".github/workflows/release-server-binaries.yml", ".github/workflows/package-family-qualification.yml"]
 required_commands = ["cargo test --workspace", "cargo clippy --workspace --all-targets -- -D warnings", "cargo xtask check-pr", "cargo package -p ripr --list", "cargo xtask publish-dry-run", "cargo xtask release-readiness"]
 advisory_commands = []
 ci_lane = "release-readiness-proof"
