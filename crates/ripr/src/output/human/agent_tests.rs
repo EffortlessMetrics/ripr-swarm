@@ -825,11 +825,11 @@ fn empty_scope_and_no_scope_are_distinct_terminal_states() {
     assert!(!stopped.contains("done="), "{stopped}");
 }
 
-/// #13658: an empty `--diff` examined nothing, so the agent
-/// format stops (not established) instead of reporting `done=`. A diff that
+/// #13658: a no-scope or no-analyzable-source diff examined nothing, so the
+/// agent format stops with a refused `verify=` instead of `done=`; a diff that
 /// changed analyzable Rust source and found nothing keeps `done=`.
 #[test]
-fn empty_diff_stops_while_a_valid_diff_without_findings_stays_done() -> Result<(), String> {
+fn nothing_analyzed_stops_and_refuses_verify_while_a_valid_diff_stays_done() -> Result<(), String> {
     use crate::analysis_outcome::{
         AnalysisIdentity, AnalysisOutcome, AnalysisOutcomeCounts, AnalysisOutcomeKind,
     };
@@ -849,7 +849,7 @@ fn empty_diff_stops_while_a_valid_diff_without_findings_stays_done() -> Result<(
     empty.analysis_outcome = Some(outcome(AnalysisOutcomeKind::NoScope, 0)?);
     let stopped = rendered(&empty);
     assert!(
-        stopped.contains("\nstop=nothing was analyzed (no changed source in scope)"),
+        stopped.contains("\nstop=nothing was in scope;"),
         "{stopped}"
     );
     assert!(!stopped.contains("done="), "{stopped}");
