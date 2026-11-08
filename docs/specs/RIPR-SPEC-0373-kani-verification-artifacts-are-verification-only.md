@@ -89,13 +89,22 @@ are **Kani verification artifacts**, and their lines are verification-only
   answer "not Kani-only", and so does every module edge whose child could
   have an owner the parser producer does not capture
   (`facts/invisible_owners.rs`): a `mod name;` inside an inline module or a
-  macro token tree, in a lexical-fallback, non-UTF-8 or unindexed file, a
+  macro token tree, in a lexical-fallback or non-UTF-8 file, a
   macro-generated `mod $name;`, a non-literal or `cfg_attr` `#[path]`, or an
   unresolved `include!` in the child's package (except an inline-module
   include of a literal `.rs` file of the same package whose text declares no
-  `mod name;`, since that text is already scanned). The check compares masked
-  `mod name;` and `#[path]` text across every `.rs` file of the child's
-  package on disk with the captured declarations. Function source roles are not
+  `mod name;`, since that text is already scanned). The check compares, per
+  file, the masked `mod name;` and `#[path]` text of the source the index
+  holds (HEAD bytes for a dirty path in committed mode) with that file's
+  captured declarations, so counts in different files never cancel. Every
+  indexed file of the package must be parsed (no lexical fallback). A `.rs`
+  file the workspace discovery authority lists for the package but the index
+  did not take in (a build script, an example, a package-narrowed file) is
+  read through the committed-source snapshot and masked: any `mod name;` in
+  it, or a `#[path]` literal naming the child's file, refuses the verdict
+  (`build.rs` owning `src/build_commit_record.rs` through `#[path]` is this
+  shape), and unreadable or unaccountable text refuses the whole package.
+  Function source roles are not
   changed: a helper there stays a plain function, and the file seeds no probe
   because it is verification source.
 
@@ -140,10 +149,25 @@ findings of its runtime lines.
   that code was production before the change; a diff that removes the gate
   keeps the child's probes. A child file the diff deletes outright has no
   new-side entry and falls back to the whole-file lexical handling above.
-- The invisible-owner check scans only the child's own package (nested
-  packages excluded): a `#[path]` in another package that names the child is
-  not seen. A package over 20,000 `.rs` files, or any unreadable file in it,
-  answers "not Kani-only".
+- The invisible-owner check covers only the child's own package (nested
+  packages excluded): a `#[path]` in another package that names the child,
+  and a module declaration produced by a proc macro or a macro defined in
+  another crate (no `mod` text in this package), are not seen. `#[path]`
+  literals are matched by final file name, not by resolved path, which only
+  over-refuses; a symlinked path that names the child under another file name
+  is not matched.
+- Discovery skips `target`, `fixtures` and other ignored directories, like the
+  run itself; files there are neither indexed nor counted.
+- A file outside the index (an editor refresh over open files, Instant mode,
+  a build script) is judged by its masked text alone: a declaration it holds
+  of the module name refuses even when that declaration would resolve
+  elsewhere, which only over-refuses.
+- Cost: only packages holding a `#[cfg(kani)]` module edge are examined, once
+  per composition pass: one discovery listing of the package, one snapshot
+  read and masked pass per discovered file the index does not hold, one masked
+  pass over each indexed file that could hide a declaration (`$` with `mod`,
+  `cfg_attr` with `path`, `#[path`), and one per file that mentions the
+  module or child file name. Further edges reuse the cached results.
 - ripr does not run Kani or evaluate any proof; the disclosure is not a
   coverage or sufficiency claim.
 

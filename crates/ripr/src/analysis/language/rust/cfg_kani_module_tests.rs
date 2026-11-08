@@ -548,3 +548,185 @@ fn a_nested_include_blocks_the_verdict_only_when_it_could_declare_the_module() -
     }
     Ok(())
 }
+
+/// A binary root whose only owner of `proofs.rs` sits inside a macro token
+/// tree, where the parser producer captures nothing.
+const MACRO_OWNER_MAIN: &str = "macro_rules! declare { ($($item:item)*) => { $($item)* }; }\ndeclare! { mod proofs; }\nfn charge(total: u32) -> u32 { total }\nfn main() {}\n";
+
+/// The index the run builds: every fixture file's bytes read through the
+/// snapshot authority (`committed_source`), then the loaded-files build.
+fn loaded_index(fixture: &Fixture) -> Result<crate::analysis::facts::RustIndex, String> {
+    let paths = ["src/lib.rs", "src/main.rs", "src/proofs.rs"];
+    let mut loaded = Vec::new();
+    for path in paths {
+        let bytes =
+            crate::analysis::committed_source::read_source_bytes(&fixture.0, Path::new(path))
+                .map_err(|error| error.to_string())?
+                .ok_or_else(|| format!("{path} has no snapshot bytes"))?;
+        loaded.push((PathBuf::from(path), bytes));
+    }
+    Ok(
+        crate::analysis::rust_index::build_analysis_index_from_loaded_files(
+            &fixture.0,
+            &loaded,
+            &[],
+        )?
+        .index,
+    )
+}
+
+fn kani_only(index: &crate::analysis::facts::RustIndex, file: &str) -> bool {
+    index.cfg_kani_module_files.contains(Path::new(file))
+}
+
+/// #13736 review: in committed mode the index reads HEAD bytes, so the owner
+/// check must too. A dirty edit that deletes the macro-wrapped owner from the
+/// working tree must not make the HEAD file look owner-free.
+#[test]
+fn committed_mode_judges_owners_from_head_not_the_dirty_worktree() -> Result<(), String> {
+    use crate::analysis::committed_source::{CommittedSourceOverlay, with_overlay};
+    let fixture = Fixture::new("committed-owner")?;
+    fixture.write("src/lib.rs", &parent_source("#[cfg(kani)]", "proofs"))?;
+    fixture.write("src/proofs.rs", PROOF_FILE)?;
+    // Working tree: the invisible owner was deleted (uncommitted).
+    fixture.write(
+        "src/main.rs",
+        "fn charge(total: u32) -> u32 { total }\nfn main() {}\n",
+    )?;
+    let worktree = loaded_index(&fixture)?;
+    assert!(
+        kani_only(&worktree, "src/proofs.rs"),
+        "against the working tree alone the module is Kani-only"
+    );
+    let overlay = CommittedSourceOverlay::from_entries(
+        &fixture.0,
+        [("src/main.rs", Some(MACRO_OWNER_MAIN.as_bytes()))],
+    );
+    let committed = with_overlay(Some(std::sync::Arc::new(overlay)), || {
+        loaded_index(&fixture)
+    })?;
+    let main_source = committed
+        .files()
+        .get(Path::new("src/main.rs"))
+        .ok_or("fixture must index src/main.rs")?
+        .data()
+        .source
+        .clone();
+    assert!(
+        main_source.contains("declare! { mod proofs; }"),
+        "the committed index holds the HEAD bytes of main.rs"
+    );
+    assert!(
+        !kani_only(&committed, "src/proofs.rs"),
+        "the HEAD owner inside a macro token tree refuses the verdict"
+    );
+    Ok(())
+}
+
+/// #13736 review: counts are compared per file. A captured declaration in
+/// a file the discovery walk skips (`src/target/`) must not cancel the
+/// uncaptured owner in `lib.rs`.
+#[test]
+fn a_surplus_in_one_file_cannot_cancel_a_deficit_in_another() -> Result<(), String> {
+    let fixture = Fixture::new("offsetting-counts")?;
+    fixture.write(
+        "src/lib.rs",
+        &format!(
+            "{}macro_rules! declare {{ ($($item:item)*) => {{ $($item)* }}; }}\ndeclare! {{ mod proofs; }}\n",
+            parent_source("#[cfg(kani)]", "proofs")
+        ),
+    )?;
+    fixture.write("src/proofs.rs", PROOF_FILE)?;
+    fixture.write("src/target/mod.rs", "mod proofs;\n")?;
+    let files = ["src/lib.rs", "src/proofs.rs", "src/target/mod.rs"]
+        .map(PathBuf::from)
+        .to_vec();
+    let index = crate::analysis::facts::build_index(&fixture.0, &files)?;
+    let captured = |file: &str| -> Result<Vec<String>, String> {
+        Ok(index
+            .files()
+            .get(Path::new(file))
+            .ok_or_else(|| format!("fixture must index {file}"))?
+            .data()
+            .module_declarations
+            .iter()
+            .map(|declaration| declaration.name.clone())
+            .collect())
+    };
+    assert_eq!(
+        captured("src/lib.rs")?,
+        ["proofs"],
+        "the macro owner is not captured"
+    );
+    assert_eq!(captured("src/target/mod.rs")?, ["proofs"]);
+    assert!(
+        !kani_only(&index, "src/proofs.rs"),
+        "lib.rs holds two `mod proofs;` but one captured declaration"
+    );
+    Ok(())
+}
+
+/// A package file the index did not take in may hold an owner; the verdict
+/// waits for a complete package rather than reading the file behind the
+/// snapshot.
+#[test]
+fn an_unindexed_package_file_refuses_only_when_it_could_own_the_child() -> Result<(), String> {
+    let fixture = Fixture::new("unindexed-file")?;
+    fixture.write("src/lib.rs", &parent_source("#[cfg(kani)]", "proofs"))?;
+    fixture.write("src/proofs.rs", PROOF_FILE)?;
+    fixture.write("src/other.rs", "pub fn other() {}\n")?;
+    let partial = |fixture: &Fixture| {
+        crate::analysis::facts::build_index(
+            &fixture.0,
+            &["src/lib.rs", "src/proofs.rs"].map(PathBuf::from),
+        )
+    };
+    let cases = [
+        ("src/main.rs", "fn main() {}\n", true),
+        ("src/main.rs", "mod proofs;\nfn main() {}\n", false),
+        (
+            "src/main.rs",
+            "mod inner {\n    mod proofs;\n}\nfn main() {}\n",
+            false,
+        ),
+        (
+            "build.rs",
+            "#[path = \"src/other.rs\"]\nmod other;\nfn main() {}\n",
+            true,
+        ),
+        (
+            "build.rs",
+            "#[path = \"src/proofs.rs\"]\nmod helper;\nfn main() {}\n",
+            false,
+        ),
+        (
+            "build.rs",
+            "macro_rules! m { ($n:ident) => { mod $n; } }\nfn main() {}\n",
+            false,
+        ),
+    ];
+    for (file, source, grants) in cases {
+        fixture.write(file, source)?;
+        let index = partial(&fixture)?;
+        assert!(
+            index.files().get(Path::new(file)).is_none(),
+            "the partial index leaves {file} out"
+        );
+        assert!(
+            index.files().get(Path::new("src/proofs.rs")).is_some(),
+            "the partial index holds the child"
+        );
+        assert_eq!(
+            kani_only(&index, "src/proofs.rs"),
+            grants,
+            "unindexed {file} with {source:?}"
+        );
+        fs::remove_file(fixture.0.join(file)).map_err(|error| error.to_string())?;
+    }
+    let complete = fixture_index(&fixture)?;
+    assert!(
+        kani_only(&complete, "src/proofs.rs"),
+        "complete index grants"
+    );
+    Ok(())
+}
