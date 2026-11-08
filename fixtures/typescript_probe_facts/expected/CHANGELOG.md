@@ -881,7 +881,7 @@ Updated:
 ## Pending — typescript_probe_facts (40)
 
 Reason:
-RIPR-SPEC-0122: describe unestablished test reach without claiming owner invocation (#7330)
+RIPR-SPEC-0088: retain source-file provenance for advisory TypeScript-family unknown findings; verdicts and repair authority unchanged (#12930)
 
 Command:
 `cargo xtask goldens bless typescript_probe_facts --reason "..."`

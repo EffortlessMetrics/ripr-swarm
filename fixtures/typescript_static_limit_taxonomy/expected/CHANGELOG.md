@@ -844,7 +844,7 @@ Updated:
 ## Pending — typescript_static_limit_taxonomy (35)
 
 Reason:
-RIPR-SPEC-0122: describe unestablished test reach without claiming owner invocation (#7330)
+RIPR-SPEC-0088: retain source-file provenance for advisory TypeScript-family unknown findings; verdicts and repair authority unchanged (#12930)
 
 Command:
 `cargo xtask goldens bless typescript_static_limit_taxonomy --reason "..."`

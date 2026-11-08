@@ -58,6 +58,7 @@ pub fn qualify_legacy_ripr_plus_receipt(
 ) -> Result<serde_json::Value, String> {
     ripr_plus::qualify_legacy_receipt(receipt)
 }
+pub(crate) mod focused_run;
 mod selector;
 pub(crate) mod temp_diff;
 pub(crate) mod test_stub;

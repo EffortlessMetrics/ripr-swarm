@@ -169,7 +169,7 @@ Updated:
 ## Pending — module_reach_super_import_in_file_wrong_module (14)
 
 Reason:
-RIPR-SPEC-0122: describe unestablished test reach without claiming owner invocation (#7330)
+RIPR-SPEC-0001: evidence-first human output now states a repeated related-test miss sentence once per test and the explain verdict block references the Evidence row instead of re-listing the assertion and reason; every fact remains exactly once (agent-efficiency study, Nov 2-4)
 
 Command:
 `cargo xtask goldens bless module_reach_super_import_in_file_wrong_module --reason "..."`
