@@ -76,11 +76,12 @@ ripr can import a cargo-mutants run and show where the two disagree:
 
 ```bash
 cargo mutants --in-diff pr.diff
-ripr check --diff pr.diff --format repo-exposure-json > exposure.json
+ripr check --format repo-exposure-json > exposure.json
 ripr calibrate cargo-mutants --mutants-json mutants.out --repo-exposure-json exposure.json
 ```
 
-The import is advisory and does not change classifications
+The exposure snapshot covers the whole repository, not just the diff, so it
+costs more than a plain `ripr check`. The import is advisory and does not change classifications
 ([Integrations](INTEGRATIONS.md#cargo-mutants)).
 
 ## Where you will get stuck
