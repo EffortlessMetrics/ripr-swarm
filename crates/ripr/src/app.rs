@@ -10,6 +10,7 @@ pub(crate) mod annotations;
 pub(crate) mod causal_projection;
 mod check;
 pub(crate) mod check_artifact;
+pub(crate) mod check_verification;
 mod context;
 pub(crate) mod diff_source;
 mod explain;
