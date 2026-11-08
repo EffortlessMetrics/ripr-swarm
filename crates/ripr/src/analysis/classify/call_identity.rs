@@ -3587,6 +3587,27 @@ mod tests {
     use crate::analysis::rust_index::summarize_file;
 
     #[test]
+    fn std_impl_source_computes_each_trait_and_head_once() {
+        let memos = CallIdentityMemos::default();
+        let calls = std::cell::Cell::new(0);
+        let ask = |trait_name: &str, head: &str, answer: bool| {
+            memos.std_impl_source(trait_name, head, || {
+                calls.set(calls.get() + 1);
+                answer
+            })
+        };
+        assert!(ask("Display", "Widget", true));
+        // A repeat returns the stored answer without computing again, even
+        // when the new closure would answer differently.
+        assert!(ask("Display", "Widget", false));
+        assert_eq!(calls.get(), 1);
+        // Either half of the key changing is a separate question.
+        assert!(!ask("Display", "Gadget", false));
+        assert!(!ask("Debug", "Widget", false));
+        assert_eq!(calls.get(), 3);
+    }
+
+    #[test]
     fn a_non_ascii_qualifier_is_read_whole_without_slicing_inside_a_char() {
         assert_eq!(head_word("assert_eq!(crate::módulo"), "módulo");
         assert_eq!(

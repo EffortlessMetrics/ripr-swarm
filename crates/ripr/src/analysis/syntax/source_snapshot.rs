@@ -641,6 +641,52 @@ mod tests {
     }
 
     #[test]
+    fn evicted_file_snapshot_is_rebuilt_while_held_readers_keep_their_tree() -> Result<(), String> {
+        use crate::analysis::rust_index::FileFacts;
+        let padding = format!("// {}\n", "x".repeat(1024 * 1024));
+        let budget_files = FILE_SNAPSHOT_RESIDENT_SOURCE_BYTES / padding.len();
+        let path = |n: usize| PathBuf::from(format!("src/f{n}.rs"));
+        let mut index = RustIndex::default();
+        for n in 0..=budget_files {
+            let source = format!("{padding}fn f{n}() {{}}\n");
+            index.insert_file_only(
+                path(n),
+                FileFacts {
+                    path: path(n),
+                    source: source.into(),
+                    ..FileFacts::default()
+                },
+            );
+        }
+        let memos = SourceSyntaxMemos::default();
+        let held = memos.get(&index, &path(0)).ok_or("first snapshot")?;
+        let again = memos.get(&index, &path(0)).ok_or("memoized snapshot")?;
+        assert!(Arc::ptr_eq(&held, &again), "a resident snapshot is shared");
+        for n in 1..=budget_files {
+            memos.get(&index, &path(n)).ok_or("later snapshot")?;
+        }
+        let resident = memos.files.lock().map_err(|e| e.to_string())?;
+        assert!(!resident.entries.contains_key(&path(0)));
+        assert!(resident.resident_bytes <= FILE_SNAPSHOT_RESIDENT_SOURCE_BYTES);
+        drop(resident);
+        let rebuilt = memos.get(&index, &path(0)).ok_or("rebuilt snapshot")?;
+        assert!(
+            !Arc::ptr_eq(&held, &rebuilt),
+            "an evicted snapshot is rebuilt"
+        );
+        let held_text = held.tree().ok_or("held tree")?.syntax().text().to_string();
+        let rebuilt_text = rebuilt
+            .tree()
+            .ok_or("rebuilt tree")?
+            .syntax()
+            .text()
+            .to_string();
+        assert_eq!(held_text, rebuilt_text);
+        assert!(held_text.ends_with("fn f0() {}\n"));
+        Ok(())
+    }
+
+    #[test]
     fn root_impl_lines_cover_only_direct_root_impls() {
         // Lines: 1 impl A, 2-4 mod m (with a nested impl B on 3), 5-7 impl C
         // spanning three lines, 8 fn with a local impl D.
