@@ -309,6 +309,38 @@ exercised boundary from a missing one.
   in the function. Any other shape keeps the boundary operand unresolved
   (`infection_unknown`).
 
+### Bounded string-parse fold (#12771)
+
+An owner-call argument that is one whole call `helper("DIGITS")` reads as the
+integer the file's parse helper turns the literal into, exactly as the integer
+literal would have been, when every condition below holds. Anything else keeps
+the argument unread, so the boundary operand stays `infection_unknown`:
+
+- the argument is the helper name and one string literal of ASCII decimal digits
+  and nothing more: no sign, space, separator, escape, raw string, extra argument,
+  path, method or arithmetic around the call;
+- `helper` is declared exactly once in the test's own file, as a free function the
+  test can see (the module rule of the constant and nullary helper above): not
+  imported, not generic, not in an `impl` or `trait` block, no attribute, no
+  `async`/`const`/`unsafe`/`extern` qualifier, the test body binds no such name,
+  and no second `fn helper` exists anywhere in the file (a copy in a sibling
+  module or a nested `fn` makes the name ambiguous and refuses);
+- the function has exactly one `&str` parameter and a builtin integer return type
+  and its body is nothing but `param.parse().unwrap()`,
+  `param.parse::<T>().unwrap()` or the same with `.expect("..")`, `T` being the
+  return type. A `Result` or `Option` result, `trim`/`split`/`strip_*`, a default
+  through `unwrap_or`, a cast or arithmetic, a struct result or any second
+  statement refuses;
+- the parsed value fits the return type and stays below the evaluator's
+  `i32::MAX` bound; a literal the `unwrap` would panic on refuses.
+
+The step budget is this fixed shape: one parse, no loop, no recursion, no call
+into another function. The fold feeds the same owner row an integer literal
+would, so the existing boundary rules still decide the verdict: a row on each
+side without an equality row reads `weakly_exposed`, never credit. It resolves
+the helper in the test's own file only; a parser declared in another file or in
+the owner's crate, or one that returns a struct, is not read here.
+
 ### Literal-only integer folding for observation (#10479)
 
 A changed `return_value` expression made only of plain decimal literals, `+ - * / %`
@@ -508,10 +540,29 @@ only reaches the owner without a bound exact assertion stays below `exposed`.
     receiver) and `method-hop-field-read-second-ctor` (a constructor the reader
     declines) and `method-hop-multi-caller-both-reached` (two owner callers
     reached) stay `infection_unknown`.
+28. Accept: `classify_tier(tier_from("9"))` and `classify_tier(tier_from("10"))`
+    with the file's one `fn tier_from(text: &str) -> u32 { text.parse().unwrap() }`
+    fold to the rows `tier = 9` and `tier = 10`, so the boundary `tier < 10`
+    edited to `tier <= 10` is hit and the exact assertions credit it
+    (`parse-fold-pinned`).
+29. Accept without credit: inputs `grade_from("3")` and `grade_from("20")` fold,
+    both sides are seen and no row sits on the boundary, so the edit reads
+    `weakly_exposed` (`parse-fold-loose`).
+30. Reject: the helper name is declared twice in the test file (a top-level
+    identity `band_from` and, in the test's own `mod shifted` with `use
+    super::*`, a shadowing `band_from` that adds 5). Picking either one is a
+    guess, and the outer one places the inputs on the boundary the test never
+    reaches, so the argument stays unread and the row stays `infection_unknown`
+    (`parse-fold-ambiguous`); the other refusals (`Result` or struct result,
+    `trim`, `unwrap_or`, cast, attribute, `async`, import, signed or padded
+    literal, value out of range) are `parse_helper` unit tests.
 
 ## Test Mapping
 
 `analysis/classify/argument_fold.rs` `tests` (every fold and refusal above);
+`analysis/classify/argument_fold/parse_helper.rs` `tests` and `rust-verdict-corpus`
+cases `parse-fold-pinned`, `parse-fold-loose` and `parse-fold-ambiguous` (the
+string-parse fold);
 `rust-verdict-corpus` cases `spec0158-modfold-const-operand`,
 `spec0158-modfold-helper-call`, `spec0158-modfold-helper-shadowed`,
 `spec0158-modfold-helper-computes`, `spec0158-modfold-const-shadowed` and
@@ -568,6 +619,9 @@ the #3295 family fixtures.
   `FoldScope` (the test's own file, for `const` operands and nullary
   helpers); the row reader (`owner_row_argument_values`) and same-test
   pairing consume it.
+- `analysis/classify/argument_fold/parse_helper.rs` — the string-parse fold of
+  one whole `helper("DIGITS")` argument; the row reader reads it before the
+  call-result reading, so a folded call is a row and an unfolded one stays a call.
 - `analysis/classify/activation.rs` — exact operand resolution and the
   boundary/missing-discriminator wiring; char-literal extraction in
   `scalar_values`; the method hop's receiver cell and `self.<index>`

@@ -1,0 +1,24 @@
+use parse_fold::classify_band;
+
+fn band_from(text: &str) -> u32 {
+    text.parse().unwrap()
+}
+
+#[test]
+fn plain_band_parses_as_written() {
+    assert_eq!(band_from("1"), 1);
+}
+
+mod shifted {
+    use super::*;
+
+    fn band_from(text: &str) -> u32 {
+        text.parse::<u32>().unwrap() + 5
+    }
+
+    #[test]
+    fn shifted_bands_are_all_high() {
+        assert_eq!(classify_band(band_from("9")), "high");
+        assert_eq!(classify_band(band_from("10")), "high");
+    }
+}

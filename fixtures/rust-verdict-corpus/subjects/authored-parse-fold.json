@@ -1,0 +1,29 @@
+{
+  "subject_id": "authored-parse-fold",
+  "origin": "authored",
+  "version_label": "authored 2026-11-08; owner inputs a test spells as parsed string literals, with a pinned, a loose and an ambiguous-helper test (#12771)",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "47a59b2edfe36603873a17d100d35afd97e48e780d753006e0b98c9bc07cbc20"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "77a7e0da65d6d53012d074942741cbbc8e0efce2ed843c63e6ba51d82265a2b8"
+    },
+    {
+      "path": "tests/ambiguous.rs",
+      "sha256": "3f725e46cdbe3377f946d19c53bdf9059cd5cbb43ab21997ebaad0e2980f2d4a"
+    },
+    {
+      "path": "tests/loose.rs",
+      "sha256": "c590834b1a7fb227c86d771325893220df30f51e550f0e94508498203ebd3ada"
+    },
+    {
+      "path": "tests/pinned.rs",
+      "sha256": "fe4326094570a1feb9380f5761dd63df210b6fc99808216be8654ddf8a27a22b"
+    }
+  ]
+}
