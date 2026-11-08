@@ -1251,6 +1251,7 @@ fn check_agent_blocked_gap_start_says_commit_first_and_names_no_command() -> Res
     assert!(text.contains("\nopen="), "{text}");
     assert!(!text.contains("stop="), "{text}");
     assert!(!text.contains("next=ripr agent repair"), "{text}");
+    assert!(!text.contains("repairable="), "{text}");
 
     let triage = super::triage::select_human_triage(&check, &RiprConfig::default());
     let action = super::triage::canonical_next_action_for_triage(

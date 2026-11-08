@@ -439,17 +439,22 @@ fn render_stop(stop: &NextActionStop, bound: Option<&str>) -> Vec<String> {
             (format!("see {route}"), Some(route))
         }
         NextActionStop::CheckTriage {
-            case, detail_route, ..
+            case,
+            detail_route,
+            repair_route,
         } => {
             let route = bind_route_root(detail_route, bound);
-            if route.is_empty() {
-                (format!("check case {}", case.as_str()), None)
+            let mut line = if route.is_empty() {
+                format!("check case {}", case.as_str())
             } else {
-                (
-                    format!("check case {}; see {route}", case.as_str()),
-                    Some(route),
-                )
+                format!("check case {}; see {route}", case.as_str())
+            };
+            // The verbose view names the same guided start the plain view
+            // prints, so the two views never offer different follow-ups.
+            if !repair_route.is_empty() {
+                line.push_str(&format!("; guided repair: {repair_route}"));
             }
+            (line, (!route.is_empty()).then_some(route))
         }
         NextActionStop::DoctorRecovery {
             check_name,

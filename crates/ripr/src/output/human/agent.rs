@@ -84,7 +84,13 @@ pub(super) fn render(
             && triage::check_case_for_triage(&triage, output)
                 == NextActionCheckCase::PreviewAdvisory
     });
-    let mut out = header_line(output, &considered, gaps.len(), repair_start.is_some());
+    // `repairable=1` claims a start the agent can run now; a start blocked
+    // by uncommitted production edits keeps its commit-first terminal but
+    // does not set the token (#13599, fail-closed).
+    let startable = repair_start
+        .as_ref()
+        .is_some_and(|start| start.command.is_some());
+    let mut out = header_line(output, &considered, gaps.len(), startable);
     out.push_str(&incomplete_lines);
     let next = next_line(&triage, output, &gaps, drill_in, provenance);
     if output.findings.is_empty() && !output.no_scope_provided {

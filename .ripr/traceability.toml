@@ -20081,6 +20081,10 @@ tests = [
   "crates/ripr/src/output/human/triage.rs::tests::check_adapter_subject_root_uses_display_path_not_raw_display",
   "crates/ripr/src/repair_card_digest.rs::tests::canonical_decision_moves_remint_the_digest",
   "crates/ripr/tests/cli_smoke/next_action.rs::agent_card_json_embeds_the_canonical_decision",
+  "crates/ripr/tests/check_agent_repair_route_agree.rs::python_human_agent_and_json_agree_the_gap_can_start",
+  "crates/ripr/tests/check_agent_repair_route_agree.rs::typescript_human_agent_and_json_agree_the_gap_can_start",
+  "crates/ripr/tests/check_agent_repair_route_agree.rs::python_without_a_route_does_not_get_an_agent_repair_start",
+  "crates/ripr/src/output/human/agent_tests.rs::check_agent_blocked_gap_start_says_commit_first_and_names_no_command",
 ]
 code = [
   "crates/ripr/src/domain/next_action.rs",
@@ -20090,6 +20094,7 @@ code = [
   "crates/ripr/src/output/human/triage.rs",
   "crates/ripr/src/cli/commands/agent_card.rs",
   "crates/ripr/src/repair_card_digest.rs",
+  "crates/ripr/src/output/human/agent.rs",
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0242-canonical-next-action.md",
