@@ -338,6 +338,7 @@ fn canonical_next_action_for_card(
             .map(|spec| command_effect_label(spec.role).to_string()),
         restart_route: input.packet_route.clone(),
         check_case: None,
+        check_repair_route: None,
         doctor_recovery: None,
         pilot_delegation: None,
         alternatives: Vec::new(),

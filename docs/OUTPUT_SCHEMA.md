@@ -1005,6 +1005,14 @@ next=COMMAND
 - `limits=` counts the non-exposed findings that are not test-side gaps
   (`no_static_path`, `infection_unknown`, `propagation_unknown`,
   `static_unknown`, preview-only), so a short gap list never hides them.
+- `repairable=1` is added to the header (#13599) when the selected preview
+  finding (Python, TypeScript or JavaScript) has a gap that `ripr agent repair`
+  can start. It is not a counted gap, so `gaps=` stays 0, but the terminal is
+  then `open=` (never `stop=`) and `next=` is that `ripr agent repair --gap-id
+  ... --base ...` command, the same start the human `Next` block and JSON
+  `finding_routes[].repair.command` print. When uncommitted production edits
+  block the start, `open=` says to commit first and `next=` is absent. Without
+  a start, `stop=` says there is no guided repair route for this finding.
 - `next=` is the scope-bound `ripr explain` command for the top gap (it embeds
   `--root` and the diff or base selectors, because a finding id does not
   resolve outside its run). It is absent when no gap is listed unless the
@@ -1288,7 +1296,11 @@ identity even when `--root` was typed with native backslashes (#7730). An
 inspectable finding stays `inspect_details`; a guidance string is never
 upgraded into `run_command` without a producer-owned `CommandSpec`. JSON
 findings-array budgeting preserves this primary object and its
-`stop.detail_route` even when later findings are omitted. Classification
+`stop.detail_route` even when later findings are omitted. A
+`check_triage` stop for a preview finding whose gap `ripr agent repair` can
+start carries an additive `stop.repair_route` (#13599): the same command as
+`finding_routes[].repair.command`. The class stays `unsupported_or_limited`
+because naming the route does not run it; the field is omitted otherwise. Classification
 fixture goldens strip the member so analyzer contracts stay finding-shaped.
 
 For a candidate-tree subject (`--candidate-tree`), `explain` cannot replay the tree,

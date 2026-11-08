@@ -1031,6 +1031,14 @@ pub(crate) fn canonical_next_action_for_triage(
             ),
         },
         check_case: Some(check_case_for_triage(triage, output)),
+        // #13599: the same validated decision the human `Next` block prints.
+        check_repair_route: if check_case_for_triage(triage, output)
+            == NextActionCheckCase::PreviewAdvisory
+        {
+            gap_repair_start(triage.selected, drill_in).and_then(|start| start.command)
+        } else {
+            None
+        },
         doctor_recovery: None,
         pilot_delegation: None,
         alternatives,
@@ -1387,16 +1395,34 @@ pub(super) fn recommends_gap_repair_start(
     finding: Option<&Finding>,
     drill_in: Option<&FindingDrillIn>,
 ) -> bool {
+    gap_repair_start(finding, drill_in).is_some()
+}
+
+/// The gap-bound `ripr agent repair` start the check pipeline validated for
+/// the selected finding (#13599). The human `Next` block, the compact agent
+/// terminal and the JSON `canonical_next_action` all read this one decision,
+/// so they cannot disagree about whether a guided repair can begin.
+pub(super) struct GapRepairStart {
+    /// The runnable start. `None` while tracked production files differ from
+    /// HEAD: the start refuses until they are committed.
+    pub(super) command: Option<String>,
+}
+
+pub(super) fn gap_repair_start(
+    finding: Option<&Finding>,
+    drill_in: Option<&FindingDrillIn>,
+) -> Option<GapRepairStart> {
     let (Some(finding), Some(FindingDrillIn::Commands(navigation))) = (finding, drill_in) else {
-        return false;
+        return None;
     };
-    if is_static_limited(finding) || navigation.gap_repair_route_for(&finding.id).is_none() {
-        return false;
+    let route = navigation.gap_repair_route_for(&finding.id)?;
+    if is_static_limited(finding) {
+        return None;
     }
     // Only the findings whose Safe next action line names the start: a ready
     // TypeScript/JavaScript preview packet (the shared validator's verdict) or
     // a Python finding with a repair card.
-    match finding.language {
+    let eligible = match finding.language {
         Some(LanguageId::Python) => {
             finding.class != ExposureClass::Exposed && python_repair_card(finding).is_some()
         }
@@ -1404,7 +1430,16 @@ pub(super) fn recommends_gap_repair_start(
             preview_actionability_for(finding).is_some_and(|a| a.repair_packet_ready)
         }
         _ => false,
+    };
+    if !eligible {
+        return None;
     }
+    Some(GapRepairStart {
+        command: navigation
+            .gap_repair_prerequisite(route)
+            .is_none()
+            .then(|| navigation.gap_repair_command(route)),
+    })
 }
 
 /// An exposed preview finding has nothing to repair, in any preview language.
@@ -2494,9 +2529,9 @@ mod tests {
             return Err("omitted alternative lost its identity".to_string());
         }
         match action.stop() {
-            Some(NextActionStop::CheckTriage { case, detail_route })
-                if *case == NextActionCheckCase::TopGap =>
-            {
+            Some(NextActionStop::CheckTriage {
+                case, detail_route, ..
+            }) if *case == NextActionCheckCase::TopGap => {
                 if !detail_route.contains("finding:top") {
                     return Err(format!(
                         "top gap must carry the selected inspect route, got {detail_route}"
@@ -2576,9 +2611,9 @@ mod tests {
         }
         // No navigation: the restart route replays the bound root.
         match action.stop() {
-            Some(NextActionStop::CheckTriage { case, detail_route })
-                if *case == NextActionCheckCase::ScopeMissing =>
-            {
+            Some(NextActionStop::CheckTriage {
+                case, detail_route, ..
+            }) if *case == NextActionCheckCase::ScopeMissing => {
                 if !detail_route.is_empty() {
                     return Err(format!(
                         "missing scope must not publish a scope label as an inspect route, got {detail_route}"

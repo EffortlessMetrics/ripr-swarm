@@ -1181,10 +1181,22 @@ fn check_agent_preview_terminal_derives_the_route_claim_from_the_shared_decision
     );
     assert!(
         routed.contains(
-            "stop=preview-language evidence is advisory only; an independent test-side improvement may still be possible"
+            "open=preview-language evidence is advisory only, not a confirmed gap; ripr agent repair can start the repair for this gap"
         ),
         "{routed}"
     );
+    assert!(
+        routed
+            .lines()
+            .next()
+            .is_some_and(|h| h.contains(" repairable=1")),
+        "{routed}"
+    );
+    assert!(
+        routed.contains("next=ripr agent repair --gap-id "),
+        "{routed}"
+    );
+    assert!(!routed.contains("stop="), "{routed}");
     assert!(
         !routed.contains("offers no guided repair route"),
         "{routed}"

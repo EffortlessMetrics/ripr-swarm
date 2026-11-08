@@ -148,6 +148,9 @@ pub(crate) fn render_next_action_plain_at_root(
         Some(NextActionStop::InspectTarget { detail_route }) if !detail_route.is_empty() => {
             out.extend(route_line("look at the details first", detail_route));
         }
+        Some(NextActionStop::CheckTriage { repair_route, .. }) if !repair_route.is_empty() => {
+            out.extend(route_line("start the guided repair", repair_route));
+        }
         Some(NextActionStop::TerminalComplete { .. }) => {
             out.push("  Next: nothing; this repair is already complete.".to_string());
         }
@@ -435,7 +438,9 @@ fn render_stop(stop: &NextActionStop, bound: Option<&str>) -> Vec<String> {
             let route = bind_route_root(detail_route, bound);
             (format!("see {route}"), Some(route))
         }
-        NextActionStop::CheckTriage { case, detail_route } => {
+        NextActionStop::CheckTriage {
+            case, detail_route, ..
+        } => {
             let route = bind_route_root(detail_route, bound);
             if route.is_empty() {
                 (format!("check case {}", case.as_str()), None)
@@ -900,6 +905,7 @@ mod tests {
             NextActionStop::CheckTriage {
                 case: crate::domain::NextActionCheckCase::TopGap,
                 detail_route: "r".to_string(),
+                repair_route: String::new(),
             },
             NextActionStop::DoctorRecovery {
                 check_name: "c".to_string(),
@@ -980,6 +986,7 @@ mod tests {
         let action = stopped_action(NextActionStop::CheckTriage {
             case: crate::domain::NextActionCheckCase::TopGap,
             detail_route: "ripr explain finding:top".to_string(),
+            repair_route: String::new(),
         })?;
         let rendered = "{\n  \"schema_version\": \"0.2\",\n  \"findings\": []\n}\n".to_string();
         let attached = append_canonical_next_action_member(rendered, &action);
