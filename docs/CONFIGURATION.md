@@ -85,6 +85,95 @@ surface, not the toolchain around it. The production filter excludes paths under
 `node_modules/`, test/example/bench trees, and `src/tests.rs`. Passing a fixture
 workspace itself as `--root` still analyzes that fixture normally.
 
+## `ripr.toml` reference
+
+Every key `ripr.toml` accepts. An unknown key fails the load and names the
+nearest valid key when one is close (``did you mean `mode`?``).
+A value of the wrong type or outside the listed values fails with the key,
+line, and expected values. Check a file with `ripr config validate`.
+
+Editors can validate and complete the file with the published JSON schema,
+[`schemas/ripr/ripr-config.schema.json`](../schemas/ripr/ripr-config.schema.json).
+For Even Better TOML or Taplo, add `#:schema` pointing at it, or map it to
+`ripr.toml` in the extension's schema settings.
+
+A test keeps this table, the schema, and the parser's accepted keys identical.
+
+| Key | Type | Meaning |
+| --- | --- | --- |
+| `analysis.mode` | one of `instant`, `draft`, `fast`, `deep`, `ready` | Default analysis mode when CLI flags or LSP options do not set one. |
+| `analysis.include_unchanged_tests` | boolean | Also consider tests the diff did not touch. |
+| `analysis.production_like_targets` | array of string | Cargo targets treated as production-like. |
+| `analysis.test_harnesses[]` | array of tables | Exact custom test-harness registrations. |
+| `analysis.test_harnesses[].registration_id` | string |  |
+| `analysis.test_harnesses[].target` | string | Repository-relative path. |
+| `analysis.test_harnesses[].kind` | one of `custom_harness`, `registered_attribute` |  |
+| `analysis.test_harnesses[].adapter` | one of `libtest_mimic_v1`, `exact_attribute_v1` |  |
+| `analysis.test_harnesses[].marker` | string | Exact identifier path, no wildcards. |
+| `oracles.snapshot_strength` | one of `strong`, `medium`, `weak`, `smoke`, `none`, `unknown` | Assumed strength of snapshot assertions. |
+| `oracles.mock_expectation_strength` | one of `strong`, `medium`, `weak`, `smoke`, `none`, `unknown` | Assumed strength of mock expectations. |
+| `oracles.broad_error_strength` | one of `strong`, `medium`, `weak`, `smoke`, `none`, `unknown` | Assumed strength of broad error assertions. |
+| `severity.findings.exposed` | one of `info`, `warning`, `note` | Severity for `exposed` findings. |
+| `severity.findings.weakly_exposed` | one of `info`, `warning`, `note` | Severity for `weakly_exposed` findings. |
+| `severity.findings.reachable_unrevealed` | one of `info`, `warning`, `note` | Severity for `reachable_unrevealed` findings. |
+| `severity.findings.no_static_path` | one of `info`, `warning`, `note` | Severity for `no_static_path` findings. |
+| `severity.findings.infection_unknown` | one of `info`, `warning`, `note` | Severity for `infection_unknown` findings. |
+| `severity.findings.propagation_unknown` | one of `info`, `warning`, `note` | Severity for `propagation_unknown` findings. |
+| `severity.findings.static_unknown` | one of `info`, `warning`, `note` | Severity for `static_unknown` findings. |
+| `severity.seams.strongly_gripped` | one of `info`, `warning`, `note`, `off` | Severity for `strongly_gripped` seams; `off` hides them. |
+| `severity.seams.weakly_gripped` | one of `info`, `warning`, `note`, `off` | Severity for `weakly_gripped` seams; `off` hides them. |
+| `severity.seams.ungripped` | one of `info`, `warning`, `note`, `off` | Severity for `ungripped` seams; `off` hides them. |
+| `severity.seams.reachable_unrevealed` | one of `info`, `warning`, `note`, `off` | Severity for `reachable_unrevealed` seams; `off` hides them. |
+| `severity.seams.activation_unknown` | one of `info`, `warning`, `note`, `off` | Severity for `activation_unknown` seams; `off` hides them. |
+| `severity.seams.propagation_unknown` | one of `info`, `warning`, `note`, `off` | Severity for `propagation_unknown` seams; `off` hides them. |
+| `severity.seams.observation_unknown` | one of `info`, `warning`, `note`, `off` | Severity for `observation_unknown` seams; `off` hides them. |
+| `severity.seams.discrimination_unknown` | one of `info`, `warning`, `note`, `off` | Severity for `discrimination_unknown` seams; `off` hides them. |
+| `severity.seams.opaque` | one of `info`, `warning`, `note`, `off` | Severity for `opaque` seams; `off` hides them. |
+| `severity.seams.intentional` | one of `info`, `warning`, `note`, `off` | Severity for `intentional` seams; `off` hides them. |
+| `severity.seams.suppressed` | one of `info`, `warning`, `note`, `off` | Severity for `suppressed` seams; `off` hides them. |
+| `lsp.seam_diagnostics` | boolean | Publish saved-workspace seam diagnostics. |
+| `lsp.diagnostic_profile` | one of `actionable`, `full` | Editor diagnostic profile. |
+| `reports.max_related_tests` | integer | Default related-test cap for context packets. |
+| `suppressions.path` | string | Repository-relative, slash-separated suppressions file. |
+| `languages.enabled` | array of `rust`, `typescript`, `javascript`, `python`, `perl` | Enabled languages. |
+| `languages.rust.generated_file_patterns` | array of string | Additive generated-source globs. |
+| `languages.rust.handwritten_files` | array of string | Exact paths exempt from generated-name conventions. |
+| `languages.python.handwritten_files` | array of string | Exact handwritten paths. |
+| `languages.python.excluded_file_patterns` | array of string | Globs excluded from preview indexing. |
+| `languages.typescript.handwritten_files` | array of string | Exact handwritten paths. |
+| `languages.typescript.excluded_file_patterns` | array of string | Globs excluded from preview indexing. |
+| `profiles.bun_ub.test_roots` | array of string | Test-root globs. |
+| `profiles.bun_ub.bridge_hints` | string | Repository-relative bridge hints file. |
+| `typescript.resolve_tsconfig_paths` | boolean | Resolve tsconfig `paths` aliases. |
+| `perl.producer` | one of `perl-ripr-facts`, `perllsp`, `perl-lsp` | Managed fact-packet exporter. |
+| `perl.executable` | string | Exporter path; honored only when RIPR_ALLOW_REPO_PERL_EXECUTABLE=1. |
+| `perl.timeout_ms` | integer | Per-invocation timeout. |
+| `perl.cache_dir` | string | Fact cache location. |
+| `overrides[]` | array of tables | Per-crate or per-path severity and oracle overrides. |
+| `overrides[].crate` | string | Cargo package name. |
+| `overrides[].path` | string | Repository-relative glob. |
+| `overrides[].severity.findings.exposed` | one of `info`, `warning`, `note` | Severity for `exposed` findings. |
+| `overrides[].severity.findings.weakly_exposed` | one of `info`, `warning`, `note` | Severity for `weakly_exposed` findings. |
+| `overrides[].severity.findings.reachable_unrevealed` | one of `info`, `warning`, `note` | Severity for `reachable_unrevealed` findings. |
+| `overrides[].severity.findings.no_static_path` | one of `info`, `warning`, `note` | Severity for `no_static_path` findings. |
+| `overrides[].severity.findings.infection_unknown` | one of `info`, `warning`, `note` | Severity for `infection_unknown` findings. |
+| `overrides[].severity.findings.propagation_unknown` | one of `info`, `warning`, `note` | Severity for `propagation_unknown` findings. |
+| `overrides[].severity.findings.static_unknown` | one of `info`, `warning`, `note` | Severity for `static_unknown` findings. |
+| `overrides[].severity.seams.strongly_gripped` | one of `info`, `warning`, `note`, `off` | Severity for `strongly_gripped` seams; `off` hides them. |
+| `overrides[].severity.seams.weakly_gripped` | one of `info`, `warning`, `note`, `off` | Severity for `weakly_gripped` seams; `off` hides them. |
+| `overrides[].severity.seams.ungripped` | one of `info`, `warning`, `note`, `off` | Severity for `ungripped` seams; `off` hides them. |
+| `overrides[].severity.seams.reachable_unrevealed` | one of `info`, `warning`, `note`, `off` | Severity for `reachable_unrevealed` seams; `off` hides them. |
+| `overrides[].severity.seams.activation_unknown` | one of `info`, `warning`, `note`, `off` | Severity for `activation_unknown` seams; `off` hides them. |
+| `overrides[].severity.seams.propagation_unknown` | one of `info`, `warning`, `note`, `off` | Severity for `propagation_unknown` seams; `off` hides them. |
+| `overrides[].severity.seams.observation_unknown` | one of `info`, `warning`, `note`, `off` | Severity for `observation_unknown` seams; `off` hides them. |
+| `overrides[].severity.seams.discrimination_unknown` | one of `info`, `warning`, `note`, `off` | Severity for `discrimination_unknown` seams; `off` hides them. |
+| `overrides[].severity.seams.opaque` | one of `info`, `warning`, `note`, `off` | Severity for `opaque` seams; `off` hides them. |
+| `overrides[].severity.seams.intentional` | one of `info`, `warning`, `note`, `off` | Severity for `intentional` seams; `off` hides them. |
+| `overrides[].severity.seams.suppressed` | one of `info`, `warning`, `note`, `off` | Severity for `suppressed` seams; `off` hides them. |
+| `overrides[].oracles.snapshot_strength` | one of `strong`, `medium`, `weak`, `smoke`, `none`, `unknown` | Assumed strength of snapshot assertions. |
+| `overrides[].oracles.mock_expectation_strength` | one of `strong`, `medium`, `weak`, `smoke`, `none`, `unknown` | Assumed strength of mock expectations. |
+| `overrides[].oracles.broad_error_strength` | one of `strong`, `medium`, `weak`, `smoke`, `none`, `unknown` | Assumed strength of broad error assertions. |
+
 ## CLI flags
 
 The CLI is the canonical, fully-supported configuration surface. All defaults
