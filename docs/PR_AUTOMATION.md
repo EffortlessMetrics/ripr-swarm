@@ -128,7 +128,8 @@ or subject is verified; do not relabel that run as proof for the local tree or
 re-apply `merge-ready` merely to refresh it.
 
 For a future instrumented legacy pull-request Rust gate or shard job, the
-job-steps API is intended to expose a checkout observation immediately after checkout. The local
+job-steps API is intended to expose a checkout observation immediately after
+checkout. The local
 `.agents/skills/finish-pr/scripts/checkout_observation.py` reader verifies that
 observation against the selected PR, run, attempt and job, the GitHub commit
 object, and independently reviewed caller and leaf workflow blob identities.

@@ -1,2 +1,2 @@
 <!-- section: Internal / CI -->
-- Expose and verify checkout identity for future Rust qualification jobs. (#4836)
+- Expose checkout observations for legacy PR Rust jobs; queue verification remains unavailable. (#4836)
