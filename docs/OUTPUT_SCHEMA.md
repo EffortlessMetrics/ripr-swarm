@@ -261,6 +261,8 @@ src/pricing.rs:42:5: weakly_exposed predicate: amount >= threshold -> strong ora
 - `--suppression-policy` is accepted, like `github`. The format is
   machine-readable: stdout stays byte-clean and piped progress is off by
   default.
+- Migration from `mutants.out/missed.txt`, with an observed sample and the CI
+  gate equivalent: [coming from cargo-mutants](FROM_CARGO_MUTANTS.md).
 
 ### `json-terse`: semantically compacted check JSON
 
