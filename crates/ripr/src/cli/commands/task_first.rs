@@ -883,6 +883,26 @@ fn start_with_repair_clause(root: &std::path::Path, root_arg: &str) -> String {
     }
 }
 
+/// The selected root as a shell-quoted `--root` argument relative to the
+/// working directory (`.` for the working directory itself), or `None` when
+/// the root lies outside it or the working directory cannot be read, so the
+/// caller keeps the absolute spelling (#13790).
+fn cwd_relative_root_arg(root: &std::path::Path) -> Option<String> {
+    let cwd = std::env::current_dir().ok()?;
+    cwd_relative_root_arg_from(root, &cwd)
+}
+
+fn cwd_relative_root_arg_from(root: &std::path::Path, cwd: &std::path::Path) -> Option<String> {
+    use crate::agent::loop_commands::{bound_root_path, root_path_display, shell_arg};
+    let root = bound_root_path(root);
+    let cwd = bound_root_path(cwd);
+    let rest = root.strip_prefix(&cwd).ok()?;
+    if rest.as_os_str().is_empty() {
+        return Some(".".to_string());
+    }
+    Some(shell_arg(&root_path_display(rest)))
+}
+
 fn no_eligible_seam_message(
     root: &std::path::Path,
     base: Option<&str>,
@@ -915,9 +935,13 @@ fn no_eligible_seam_message(
     );
     if total_seams == 0 {
         if !changed_non_rust.is_empty() {
+            // #13790: the reader runs the printed `ripr check` from here, so
+            // name the root relative to the working directory when it is
+            // inside it.
+            let relative = cwd_relative_root_arg(root_path).unwrap_or_else(|| root.clone());
             return crate::app::task_first::non_rust_repair_guidance(
                 root_path,
-                &root,
+                &relative,
                 &changed_non_rust,
             );
         }
@@ -1107,6 +1131,35 @@ mod tests {
 
     fn args(words: &[&str]) -> Vec<String> {
         words.iter().map(|word| word.to_string()).collect()
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn cwd_relative_root_arg_is_relative_inside_and_absent_outside() {
+        // #13790: the working directory itself is `.`, a child is its
+        // relative path, and a root outside the working directory keeps the
+        // caller's absolute spelling.
+        let cwd = Path::new("/work/repo");
+        assert_eq!(
+            cwd_relative_root_arg_from(Path::new("/work/repo"), cwd),
+            Some(".".to_string())
+        );
+        assert_eq!(
+            cwd_relative_root_arg_from(Path::new("/work/repo/svc/shop"), cwd),
+            Some("svc/shop".to_string())
+        );
+        assert_eq!(
+            cwd_relative_root_arg_from(Path::new("/work/repo/my shop"), cwd),
+            Some("'my shop'".to_string())
+        );
+        assert_eq!(
+            cwd_relative_root_arg_from(Path::new("/elsewhere"), cwd),
+            None
+        );
+        assert_eq!(
+            cwd_relative_root_arg_from(Path::new("/work/repository"), cwd),
+            None
+        );
     }
 
     fn parsed_repair(words: &[&str]) -> Result<RepairFacadeOptions, String> {

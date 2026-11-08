@@ -261,6 +261,8 @@ src/pricing.rs:42:5: weakly_exposed predicate: amount >= threshold -> strong ora
 - `--suppression-policy` is accepted, like `github`. The format is
   machine-readable: stdout stays byte-clean and piped progress is off by
   default.
+- Migration from `mutants.out/missed.txt`, with an observed sample and the CI
+  gate equivalent: [coming from cargo-mutants](FROM_CARGO_MUTANTS.md).
 
 ### `json-terse`: semantically compacted check JSON
 
@@ -1118,8 +1120,10 @@ verify=complete|outcome=O|findings=N|exposed=N
   Fields are whitespace-collapsed, the changed expression and oracle text are
   clipped to 80 characters, and a literal `|` inside a field is written `\|`.
   `missing=` is the first missing discriminator value, or `-`.
-- `tK` rows are the strongest contributing related test of each listed gap,
-  written once however many gaps it grips.
+- `tK` rows name the first contributing related test of each listed gap,
+  ranked by relation confidence first (a direct owner call ahead of a test
+  linked only by file location), then by oracle strength (#13603), written
+  once however many gaps it grips.
 - `limits=` counts the non-exposed findings that are not test-side gaps
   (`no_static_path`, `infection_unknown`, `propagation_unknown`,
   `static_unknown`, preview-only), so a short gap list never hides them.
@@ -1178,9 +1182,12 @@ done=... | open=... | stop=...
 next=ripr context ... --at SELECTOR
 ```
 
-- Exactly one record; `tK` is the strongest contributing related test (the
-  weak-assertion row for the limited `open=` case) and is absent when none
-  exists. `limit=` appears only when the producer named a static limit.
+- Exactly one record; `tK` is the first contributing related test, ranked by
+  relation confidence first (a direct owner call ahead of a test linked only by
+  file location), then by oracle strength (#13603). A `done=` record instead
+  names the strongest-oracle test that notices the change, and the limited
+  `open=` case names its weak-assertion row. `tK` is absent when none exists.
+  `limit=` appears only when the producer named a static limit.
 - Exactly one terminal line: `open=` for a candidate-current test-side gap
   (`weakly_exposed` or `reachable_unrevealed`, not limited) or for a
   reach-only limit that still carries a weak related test (the `check` `open=`
@@ -20106,7 +20113,7 @@ top-level `source_subject`:
 
 - `digest_algorithm`: always `"sha256"`.
 - `corpus` (additive, full Rust inventory only): the analysis-owned
-  `{ "scope": "rust_workspace", "cache_schema_version": "1.174",
+  `{ "scope": "rust_workspace", "cache_schema_version": "1.175",
   "files_content_hash": "<16 lowercase hex digits>" }` from the actual
   classified inventory cache key, including both production and test Rust
   files after the existing generated-file exclusions. Repo-exposure producers
@@ -20891,7 +20898,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.174",
+      "schema_version": "1.175",
       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567+languages:rust=1,typescript=1,python=1,perl=0",
       "workspace_root_hash": "…",
       "files_content_hash": "…",
