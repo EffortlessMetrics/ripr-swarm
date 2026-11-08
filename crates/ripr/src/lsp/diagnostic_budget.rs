@@ -172,6 +172,72 @@ impl DiagnosticBudgetResult {
     }
 }
 
+/// Per-item outcome of the pure budget rule.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum BudgetDecision {
+    /// The item is omitted and `overflow` is recorded.
+    Omit {
+        reason: OmittedDiagnosticReason,
+        overflow: DiagnosticOverflowReason,
+    },
+    /// The item is selected. `byte_overflow` is set for the lone first item
+    /// that alone exceeds the byte budget.
+    Select {
+        byte_overflow: bool,
+        inline_detail_omitted: bool,
+    },
+}
+
+/// Running totals of the selection walk. Holds only scalars so the budget
+/// rule is a pure, formally checkable function (see `kani_proofs`).
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct BudgetCursor {
+    pub(crate) selected_len: usize,
+    pub(crate) selected_bytes: usize,
+}
+
+impl BudgetCursor {
+    /// Decide one eligible item given how many items of its document are
+    /// already selected.
+    pub(crate) fn decide(
+        &self,
+        budget: &DiagnosticBudget,
+        document_count: usize,
+        payload_bytes: usize,
+        inline_detail_bytes: usize,
+    ) -> BudgetDecision {
+        if document_count >= budget.max_items_per_document {
+            return BudgetDecision::Omit {
+                reason: OmittedDiagnosticReason::DocumentItemLimit,
+                overflow: DiagnosticOverflowReason::DocumentItemLimit,
+            };
+        }
+        if self.selected_len >= budget.max_items_per_workspace_response {
+            return BudgetDecision::Omit {
+                reason: OmittedDiagnosticReason::WorkspaceItemLimit,
+                overflow: DiagnosticOverflowReason::WorkspaceItemLimit,
+            };
+        }
+        let byte_overflow =
+            self.selected_bytes.saturating_add(payload_bytes) > budget.max_serialized_bytes;
+        if byte_overflow && self.selected_len != 0 {
+            return BudgetDecision::Omit {
+                reason: OmittedDiagnosticReason::SerializedByteLimit,
+                overflow: DiagnosticOverflowReason::SerializedByteLimit,
+            };
+        }
+        BudgetDecision::Select {
+            byte_overflow,
+            inline_detail_omitted: inline_detail_bytes > budget.max_inline_detail_bytes,
+        }
+    }
+
+    pub(crate) fn commit(&mut self, payload_bytes: usize) {
+        self.selected_len = self.selected_len.saturating_add(1);
+        self.selected_bytes = self.selected_bytes.saturating_add(payload_bytes);
+    }
+}
+
 pub fn evaluate_diagnostic_budget(
     items: impl IntoIterator<Item = DiagnosticBudgetItem>,
     budget: &DiagnosticBudget,
@@ -202,7 +268,7 @@ pub fn evaluate_diagnostic_budget(
     let mut omitted = Vec::new();
     let mut overflow_reasons = BTreeSet::new();
     let mut selected_per_document = std::collections::BTreeMap::<String, usize>::new();
-    let mut selected_bytes = 0usize;
+    let mut cursor = BudgetCursor::default();
 
     for item in items {
         if item.eligibility == DiagnosticBudgetEligibility::ProfileFiltered {
@@ -217,47 +283,43 @@ pub fn evaluate_diagnostic_budget(
             .get(&item.document)
             .copied()
             .unwrap_or(0);
-        if document_count >= budget.max_items_per_document {
-            overflow_reasons.insert(DiagnosticOverflowReason::DocumentItemLimit);
-            omitted.push(OmittedDiagnosticItem {
-                canonical_id: item.canonical_id,
-                reason: OmittedDiagnosticReason::DocumentItemLimit,
-            });
-            continue;
-        }
-        if selected.len() >= budget.max_items_per_workspace_response {
-            overflow_reasons.insert(DiagnosticOverflowReason::WorkspaceItemLimit);
-            omitted.push(OmittedDiagnosticItem {
-                canonical_id: item.canonical_id,
-                reason: OmittedDiagnosticReason::WorkspaceItemLimit,
-            });
-            continue;
-        }
-        if selected_bytes.saturating_add(item.payload_bytes) > budget.max_serialized_bytes {
-            overflow_reasons.insert(DiagnosticOverflowReason::SerializedByteLimit);
-            if !selected.is_empty() {
+        let decision = cursor.decide(
+            budget,
+            document_count,
+            item.payload_bytes,
+            item.inline_detail_bytes,
+        );
+        match decision {
+            BudgetDecision::Omit { reason, overflow } => {
+                overflow_reasons.insert(overflow);
                 omitted.push(OmittedDiagnosticItem {
                     canonical_id: item.canonical_id,
-                    reason: OmittedDiagnosticReason::SerializedByteLimit,
+                    reason,
                 });
                 continue;
             }
+            BudgetDecision::Select {
+                byte_overflow,
+                inline_detail_omitted,
+            } => {
+                if byte_overflow {
+                    overflow_reasons.insert(DiagnosticOverflowReason::SerializedByteLimit);
+                }
+                if inline_detail_omitted {
+                    overflow_reasons.insert(DiagnosticOverflowReason::InlineDetailLimit);
+                }
+                cursor.commit(item.payload_bytes);
+                *selected_per_document
+                    .entry(item.document.clone())
+                    .or_insert(0) += 1;
+                selected.push(SelectedDiagnosticItem {
+                    canonical_id: item.canonical_id,
+                    document: item.document,
+                    payload_bytes: item.payload_bytes,
+                    inline_detail_omitted,
+                });
+            }
         }
-
-        let inline_detail_omitted = item.inline_detail_bytes > budget.max_inline_detail_bytes;
-        if inline_detail_omitted {
-            overflow_reasons.insert(DiagnosticOverflowReason::InlineDetailLimit);
-        }
-        selected_bytes = selected_bytes.saturating_add(item.payload_bytes);
-        *selected_per_document
-            .entry(item.document.clone())
-            .or_insert(0) += 1;
-        selected.push(SelectedDiagnosticItem {
-            canonical_id: item.canonical_id,
-            document: item.document,
-            payload_bytes: item.payload_bytes,
-            inline_detail_omitted,
-        });
     }
 
     let budget_identity = format!(
@@ -278,7 +340,7 @@ pub fn evaluate_diagnostic_budget(
         eligible_items,
         selected,
         omitted,
-        selected_bytes,
+        selected_bytes: cursor.selected_bytes,
         complete_bytes,
         overflowed,
         overflow_reasons,
@@ -717,6 +779,9 @@ fn diagnostic_is_actionable(diagnostic: &tower_lsp_server::ls_types::Diagnostic)
         })
         .unwrap_or(false)
 }
+
+#[cfg(kani)]
+mod kani_proofs;
 
 #[cfg(test)]
 mod tests {

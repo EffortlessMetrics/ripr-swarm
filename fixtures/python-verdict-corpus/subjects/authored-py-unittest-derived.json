@@ -1,0 +1,65 @@
+{
+  "subject_id": "authored-py-unittest-derived",
+  "origin": "authored",
+  "version_label": "authored@derived",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "derived/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "derived/core.py",
+      "sha256": "1497aa98c4550c2157213fdce6a5b2a8634c8672b3ea2fa9644647260d382004"
+    },
+    {
+      "path": "pyproject.toml",
+      "sha256": "585c7f7a18695ce0f44ac769afffdebc6bbb9e4029264ae969958d8d56a44867"
+    },
+    {
+      "path": "tests/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "tests/test_cancel.py",
+      "sha256": "fd4d4bbd06858375f96031f3779af6744312976fbf714bf3cd49048a9bf7b25a"
+    },
+    {
+      "path": "tests/test_classattr.py",
+      "sha256": "3bc7154afbdfdb504f14a97f2e1599d3ed338308111cd2e2799f5814513b05bb"
+    },
+    {
+      "path": "tests/test_forwarder.py",
+      "sha256": "6a703ea4877b15ae785a27f7496218c410d8834ea8c11a65b2ab244b4cdfad28"
+    },
+    {
+      "path": "tests/test_input.py",
+      "sha256": "41160233432f5780c13c355ec7b582e39cd901f073cae54efd24d708ce691f1d"
+    },
+    {
+      "path": "tests/test_literal.py",
+      "sha256": "85786a5c35add9f228347d4906962bf604d3f19765e918d646bbf78a63b11081"
+    },
+    {
+      "path": "tests/test_local.py",
+      "sha256": "2fe8a1925a88017da5d0713cdbd4415fab0d34da37e363b5d79481af32a4311a"
+    },
+    {
+      "path": "tests/test_module.py",
+      "sha256": "9fb1b32be7150de2886d9a387b7c6602b9abf7f0dfd4d441e75aeff38fad2b47"
+    },
+    {
+      "path": "tests/test_pytest_local.py",
+      "sha256": "85429e9acc4dc28a51e1423a1f6922a74932ac88131c78ad54ae7fdbcf9cdb88"
+    },
+    {
+      "path": "tests/test_reference.py",
+      "sha256": "15b8cdee7709e5bc185598303c5b0d87003b314c41193d39c281d22a385ceac5"
+    },
+    {
+      "path": "tests/test_setup.py",
+      "sha256": "5329cd52eca8788af5e489abb1a3aeb93f2b3f72291e2f7de95d626ae4cf32b1"
+    }
+  ]
+}

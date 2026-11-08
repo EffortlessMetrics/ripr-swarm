@@ -37,25 +37,29 @@ fn an_imported_patch_name_does_not_unsettle_the_argnames() -> Result<(), String>
 
 #[test]
 fn a_call_or_an_alias_of_the_writer_keeps_the_limit() -> Result<(), String> {
-    for (case, prefix) in [
+    for (case, prefix, expected) in [
         (
             "alias",
             "from unittest.mock import patch as p\n\np(\"pytest.mark\", None)\n",
+            StaticLimitKind::UnresolvedPytestFixture,
         ),
         (
             "module-scope call",
             "from unittest.mock import patch\n\npatch(\"pytest.mark\", None)\n",
+            StaticLimitKind::MockedModule,
         ),
         (
             "module-scope setattr",
             "import os\n\nsetattr(os, \"x\", 1)\n",
+            StaticLimitKind::MockedModule,
         ),
     ] {
         let finding = classify_total(prefix)?;
         assert_eq!(
             finding.static_limit_kind,
-            Some(StaticLimitKind::UnresolvedPytestFixture),
-            "{case}: {:?}",
+            Some(expected),
+            "{case}: {:?} {:?}",
+            finding.static_limit_kind,
             finding.evidence
         );
     }

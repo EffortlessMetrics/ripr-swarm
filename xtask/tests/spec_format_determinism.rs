@@ -1,6 +1,9 @@
 use std::fs::{self, FileTimes};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+
+#[path = "common/xtask_bin.rs"]
+mod xtask_bin;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const VALID_SPEC: &str = r#"# RIPR-SPEC-9999: Time-independent fixture
@@ -115,11 +118,9 @@ fn backdate_spec(root: &Path) -> Result<(), String> {
 }
 
 fn run_check(root: &Path) -> Result<std::process::Output, String> {
-    Command::new(env!("CARGO_BIN_EXE_xtask"))
-        .arg("check-spec-format")
-        .current_dir(root)
-        .output()
-        .map_err(|error| error.to_string())
+    xtask_bin::output(|command| {
+        command.arg("check-spec-format").current_dir(root);
+    })
 }
 
 fn output_text(output: &std::process::Output) -> String {

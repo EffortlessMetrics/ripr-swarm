@@ -1,0 +1,7 @@
+[[artifact]]
+id = "RIPR-SPEC-0393"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0393-dotnet-shared-project-and-language-evidence-contracts.md"
+status = "accepted"
+owner = "product"
+standalone_reason = "Issue #5632 defines the normative .NET project substrate and separate C#/F#/VB evidence laws before adapter implementation (#5633–#5645)."

@@ -135,3 +135,15 @@ def wrapped_conditional(a, b):
 
 def wrapped_finally(a, b):
     return a * b
+
+
+def shadowed_test(a, b):
+    return a * b
+
+
+def exit_before_assert(a, b):
+    return a * b
+
+
+def conditional_exit(a, b):
+    return a * b

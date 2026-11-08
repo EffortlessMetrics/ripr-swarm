@@ -221,7 +221,7 @@ impl CompactTest<'_> {
             let file_scan = self
                 .file_value_scan
                 .get_or_init(|| FileValueScan::build(self.test, index));
-            ValueEnvFacts::build(self.test, file_scan)
+            ValueEnvFacts::build(self.test, file_scan, index)
         })
     }
 }
@@ -4257,6 +4257,7 @@ pub(in crate::analysis::test_grip_evidence) fn inherent_helper_path_reaches_owne
             attrs: helper.attrs.clone(),
             nested_fn_names: helper.nested_fn_names.clone(),
             let_bindings: helper.let_bindings.clone(),
+            generated: None,
         };
         if inherent_owner_call_resolves(&body, owner, index)
             || inherent_helper_path_reaches_owner(&body, owner, index, remaining - 1, visited)

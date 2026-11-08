@@ -19,7 +19,7 @@
 
 use super::decision::confidence_score;
 use super::reveal::ASSERTION_CONTEXT_UNESTABLISHED;
-use crate::analysis::facts::{FunctionContainer, TestFact, cfg_predicates};
+use crate::analysis::facts::{FunctionContainer, OracleFact, TestFact, cfg_predicates};
 use crate::analysis::rust_index::RustIndex;
 use crate::domain::*;
 
@@ -53,13 +53,16 @@ pub(in crate::analysis) fn withhold_unsupported_gap(finding: &mut Finding) -> bo
     } else {
         "assert_eq"
     };
-    let first_unresolved_edge =
-        format!("whether the refused related assertions run as the standard `{macro_name}!`");
+    let first_unresolved_edge = crate::domain::assertion_not_credited_reason(&finding.evidence)
+        .and_then(crate::domain::guard_refusal_limitation_edge)
+        .unwrap_or_else(|| {
+            format!("whether the refused related assertions run as the standard `{macro_name}!`")
+        });
     withhold_gap(
         finding,
         LIMIT,
         &first_unresolved_edge,
-        next_step(&judged, macro_name),
+        next_step(&judged, macro_name, finding),
         &judged,
     );
     true
@@ -67,23 +70,25 @@ pub(in crate::analysis) fn withhold_unsupported_gap(finding: &mut Finding) -> bo
 
 /// #11767: a TypeScript finding that says no test reaches the change rests on
 /// the workspace walk having read the tests. When discovery stopped at its
-/// entry cap, the missing test may be one the walk never reached, so the
-/// finding is withheld as `static_unknown` under a limit that names the cap.
+/// a limit (the candidate-source cap or the total directory-entry backstop),
+/// the missing test may be one the walk never reached, so the finding is
+/// withheld as `static_unknown` under a limit that names both bounds.
 /// Findings that have a related test, and findings another limit already
 /// withheld, are untouched. Returns `true` when rewritten.
 pub(in crate::analysis) fn withhold_truncated_discovery_gap(
     finding: &mut Finding,
-    entry_cap: usize,
+    source_cap: usize,
+    entry_backstop: usize,
     cap_env: &str,
 ) -> bool {
     if finding.class != ExposureClass::NoStaticPath || finding.static_limit_kind.is_some() {
         return false;
     }
     let first_unresolved_edge = format!(
-        "whether a test past the {entry_cap}-entry workspace discovery cap reaches the changed code"
+        "whether a test past the workspace discovery limits ({source_cap} TypeScript/JavaScript source files, {entry_backstop} directory entries) reaches the changed code"
     );
     let next_step = format!(
-        "Workspace discovery stopped at its {entry_cap}-entry cap, so tests past it were never read and ripr cannot say no test reaches this change. Raise {cap_env} (and RIPR_TS_MAX_WORKSPACE_READ_BYTES if the run then reports a read budget), or run ripr from a narrower root, then check again."
+        "Workspace discovery stopped at its limit of {source_cap} TypeScript/JavaScript source files or {entry_backstop} directory entries in total, so tests past it were never read and ripr cannot say no test reaches this change. Raise {cap_env} (and RIPR_TS_MAX_WORKSPACE_READ_BYTES if the run then reports a read budget), or run ripr from a narrower root, then check again."
     );
     withhold_gap(
         finding,
@@ -91,6 +96,48 @@ pub(in crate::analysis) fn withhold_truncated_discovery_gap(
         &first_unresolved_edge,
         next_step,
         &[],
+    );
+    true
+}
+
+/// #11985: a complete file walk is still an incomplete evidence index when
+/// workspace reads refuse sources under either byte cap. Preserve findings
+/// backed by observed tests and limits another producer already established.
+pub(in crate::analysis) fn withhold_read_limited_workspace_gap(
+    finding: &mut Finding,
+    unread_sources: usize,
+    file_cap: u64,
+    workspace_budget: u64,
+) -> bool {
+    if unread_sources == 0
+        || finding.class != ExposureClass::NoStaticPath
+        || finding.static_limit_kind.is_some()
+    {
+        return false;
+    }
+    let first_unresolved_edge = format!(
+        "whether any of {unread_sources} workspace source file(s) refused by the byte limits contains a test or call path to the changed code"
+    );
+    let next_step = format!(
+        "Workspace reads refused {unread_sources} source file(s) under the {file_cap}-byte per-file cap or {workspace_budget}-byte total budget, so ripr cannot say no test reaches this change. Raise RIPR_TS_MAX_FILE_READ_BYTES and/or RIPR_TS_MAX_WORKSPACE_READ_BYTES, or run ripr from a narrower root, then check again."
+    );
+    withhold_gap(
+        finding,
+        StaticLimitKind::TypescriptWorkspaceReadLimited,
+        &first_unresolved_edge,
+        next_step,
+        &[],
+    );
+    // The no-path confidence reason also claimed that no test reaches the
+    // owner. Re-derive it for the withheld class before any output or context
+    // packet consumes it; no related test or strong oracle was established.
+    finding.confidence_basis = ConfidenceCap::for_preview(
+        &finding.class,
+        &ConfidenceBasisInputs {
+            has_related_test: false,
+            strong_oracle_present: false,
+            boundary_input_matched: true,
+        },
     );
     true
 }
@@ -118,7 +165,7 @@ pub(in crate::analysis) fn withhold_mixed_refusal_gap(finding: &mut Finding) -> 
         finding,
         LIMIT,
         first_unresolved_edge,
-        next_step(&judged, "assert_eq"),
+        next_step(&judged, "assert_eq", finding),
         &judged,
     );
     true
@@ -264,7 +311,7 @@ pub(in crate::analysis) fn withhold_log_capture_gap(
 /// path only: a bare `info!` may be any macro. `tracing::` events reach a
 /// `log` logger only through tracing's `log` feature, which ripr does not
 /// read, so they keep their gap.
-fn is_qualified_log_macro(expression: &str) -> bool {
+pub(in crate::analysis) fn is_qualified_log_macro(expression: &str) -> bool {
     let trimmed = expression.trim();
     trimmed.strip_prefix("log::").is_some_and(|rest| {
         LOG_MACROS.iter().any(|level| {
@@ -352,26 +399,129 @@ fn captured_and_asserted_around(
     }
     stores.extend(read_from_store);
     test.assertions.iter().any(|assertion| {
-        // Only the compared operands count: a quoted diagnostic message
-        // (`assert_eq!(lines, Vec::new(), "empty")`) is not a record.
-        let Some(operands) = crate::analysis::extract::assertion_oracle_text(&assertion.text)
-        else {
-            return false;
-        };
-        let (masked_assertion, string_quotes) =
-            crate::analysis::extract::mask_with_string_delimiter_quotes(&operands);
-        assertion.line > call_line
-            && string_literal_contents(&operands)
-                .iter()
-                .any(|literal| template.matches(literal))
-            && matches!(
-                assertion.kind,
-                OracleKind::ExactValue | OracleKind::WholeObjectEquality
-            )
-            && string_quotes >= 2
-            && !has_count_or_status_projection(&masked_assertion)
-            && stores.iter().any(|store| names(&masked_assertion, store))
+        assertion_admits_captured_log_at_call(test, assertion, call_line, &stores, template)
     })
+}
+
+/// Whether `assertion` compares a value read from a captured logger store
+/// against the changed record's static template. Rule-7 exact `.any()`
+/// membership uses one compared literal (#6991); whole-object equalities
+/// still need two string delimiters so a diagnostic alone cannot forge a
+/// record match.
+fn assertion_admits_captured_log_at_call(
+    _test: &TestFact,
+    assertion: &OracleFact,
+    call_line: usize,
+    stores: &[String],
+    template: &LogTemplate,
+) -> bool {
+    let Some(operands) = crate::analysis::extract::assertion_oracle_text(&assertion.text) else {
+        return false;
+    };
+    let (masked_assertion, string_quotes) =
+        crate::analysis::extract::mask_with_string_delimiter_quotes(&operands);
+    assertion.line > call_line
+        && capture_assertion_matches_template(
+            assertion,
+            &operands,
+            &masked_assertion,
+            template,
+            string_quotes,
+        )
+        && stores.iter().any(|store| names(&masked_assertion, store))
+}
+
+fn capture_assertion_matches_template(
+    assertion: &OracleFact,
+    operands: &str,
+    masked_assertion: &str,
+    template: &LogTemplate,
+    string_quotes: usize,
+) -> bool {
+    let exact_membership =
+        crate::analysis::extract::is_exact_membership_any_assertion(&assertion.text);
+    let strong_oracle = matches!(
+        assertion.kind,
+        OracleKind::ExactValue | OracleKind::WholeObjectEquality
+    ) || exact_membership;
+    if !strong_oracle {
+        return false;
+    }
+    if !string_literal_contents(operands)
+        .iter()
+        .any(|literal| template.matches(literal))
+    {
+        return false;
+    }
+    let quotes_required = if exact_membership { 1 } else { 2 };
+    string_quotes >= quotes_required && !has_count_or_status_projection(masked_assertion)
+}
+
+/// #6991 / #7120: the same captured-log membership shape gap admission
+/// recognizes, for reveal observation confirmation on effect-family probes.
+pub(in crate::analysis) fn assertion_confirms_captured_log_exact_membership(
+    probe_expression: &str,
+    test: &TestFact,
+    assertion: &OracleFact,
+    owner: &str,
+    index: &RustIndex,
+) -> bool {
+    if !is_qualified_log_macro(probe_expression) {
+        return false;
+    }
+    let Some(template) = log_template(probe_expression) else {
+        return false;
+    };
+    let masked = crate::analysis::extract::mask_comments_and_strings(&test.body);
+    let same_file = || {
+        index
+            .functions()
+            .iter()
+            .filter(|function| function.file == test.file)
+    };
+    let logger_types: Vec<&str> = same_file()
+        .filter_map(|function| match &function.item.container {
+            FunctionContainer::TraitImpl {
+                trait_path,
+                self_ty,
+            } if matches!(trait_path.as_str(), "log::Log" | "Log") => Some(self_ty.as_str()),
+            _ => None,
+        })
+        .collect();
+    let helpers: Vec<&str> = same_file()
+        .filter(|function| returns_installed_logger(function.body.as_str(), &logger_types))
+        .map(|function| function.name.as_str())
+        .collect();
+    free_call_offsets(&masked, owner)
+        .into_iter()
+        .any(|call_at| {
+            let call_line = test.start_line + masked[..call_at].matches('\n').count();
+            let before = &masked[..call_at];
+            let mut stores: Vec<String> = install_arguments(before);
+            for helper in &helpers {
+                for at in free_call_offsets(before, helper) {
+                    stores.extend(let_binding_at(&masked, at));
+                }
+            }
+            if stores.is_empty() {
+                return false;
+            }
+            let mut read_from_store = Vec::new();
+            for statement in masked[call_at..].split(';') {
+                let Some(binding) = let_binding_at(statement, statement.len()) else {
+                    continue;
+                };
+                let initializer = statement.split_once('=').map_or("", |(_, rest)| rest);
+                let reads_store = stores.iter().any(|store| names(initializer, store));
+                stores.retain(|store| *store != binding);
+                read_from_store.retain(|read| *read != binding);
+                if reads_store && !has_count_or_status_projection(initializer) {
+                    read_from_store.push(binding);
+                }
+            }
+            stores.extend(read_from_store);
+            assertion_admits_captured_log_at_call(test, assertion, call_line, &stores, &template)
+        })
 }
 
 /// The values of the string literals in `code`, read by the shared lexical
@@ -1252,12 +1402,24 @@ fn last_established_edge(finding: &Finding, judged: &[String]) -> String {
     }
 }
 
-fn next_step(judged: &[String], macro_name: &str) -> String {
+fn next_step(judged: &[String], macro_name: &str, finding: &Finding) -> String {
     let tests = if judged.is_empty() {
         "the tests that call this code".to_string()
     } else {
         judged.join(", ")
     };
+    if let Some(reason) = crate::domain::assertion_not_credited_reason(&finding.evidence)
+        && let Some(kind) = crate::domain::guard_refusal_kind(reason)
+    {
+        return match kind {
+            crate::domain::GuardRefusalKind::ValueGuard => format!(
+                "ripr could not tell whether a conditional return skips the assertion in {tests}, because that depends on a value it does not evaluate, so it does not report a gap. Check that one of them compares the changed value; add a test only if none does."
+            ),
+            crate::domain::GuardRefusalKind::GuardedReturn => format!(
+                "ripr could not tell whether a conditional return skips the assertion in {tests} on the executed path, so it does not report a gap. Check that one of them compares the changed value; add a test only if none does."
+            ),
+        };
+    }
     format!(
         "ripr could not read whether the assertions in {tests} run as the standard `{macro_name}!`, so it does not report a gap. Check that one of them compares the changed value; add a test only if none does."
     )
@@ -1299,6 +1461,8 @@ mod tests {
                 value: "n == 100".to_string(),
                 reason: "predicate boundary equality is not asserted".to_string(),
                 flow_sink: None,
+                shape: DiscriminatorShape::Boundary,
+                drafted_boundary: None,
             });
         Finding {
             analysis_scope: crate::domain::AnalysisScope::Diff,
@@ -1352,6 +1516,24 @@ mod tests {
     }
 
     #[test]
+    fn value_guard_refusal_limitation_edge_does_not_name_standard_macro() -> Result<(), String> {
+        let mut finding = marked();
+        finding.evidence = vec![
+            "assertion not credited: `assert_eq!` in weighs at src/lib.rs:9: an earlier `if weight(2) > 1000 { return; }` spares the value the assertion expects, so whether the assertion runs depends on the value of `weight(2)`, which ripr does not evaluate".to_string(),
+            REFUSALS_ARE_ANALYZER_LIMITS.to_string(),
+        ];
+        assert!(withhold_unsupported_gap(&mut finding));
+        let edge = finding
+            .evidence
+            .iter()
+            .find_map(|line| line.strip_prefix(LIMITATION_FIRST_UNRESOLVED_EDGE_PREFIX))
+            .ok_or("missing limitation edge".to_string())?;
+        assert!(edge.contains("conditional return"), "{edge}");
+        assert!(!edge.contains("standard `assert_eq!`"), "{edge}");
+        Ok(())
+    }
+
+    #[test]
     fn analyzer_limit_refusals_withhold_the_gap_and_name_the_test() {
         let mut finding = marked();
         assert!(withhold_unsupported_gap(&mut finding));
@@ -1384,6 +1566,103 @@ mod tests {
                 "ripr could not read whether the assertions in `test_format_u8` (src/lib.rs:40) run as the standard `assert_eq!`, so it does not report a gap. Check that one of them compares the changed value; add a test only if none does."
             )
         );
+    }
+
+    #[test]
+    fn a_read_limit_withholds_only_untyped_no_path_findings() {
+        let mut finding = marked();
+        finding.class = ExposureClass::NoStaticPath;
+        finding.language = Some(LanguageId::TypeScript);
+        finding.related_tests.clear();
+        finding.confidence_basis = vec![
+            ConfidenceCap::PreviewStagesNotModeled,
+            ConfidenceCap::SyntaxFirstNoTypeResolution,
+            ConfidenceCap::NoRelatedTest,
+        ];
+        assert!(withhold_read_limited_workspace_gap(
+            &mut finding,
+            2,
+            512,
+            2048
+        ));
+        assert_eq!(finding.class, ExposureClass::StaticUnknown);
+        assert_eq!(
+            finding.confidence_basis,
+            vec![
+                ConfidenceCap::PreviewStagesNotModeled,
+                ConfidenceCap::SyntaxFirstNoTypeResolution,
+                ConfidenceCap::DiscriminatorNotEstablished,
+            ]
+        );
+        assert_eq!(
+            finding.static_limit_kind,
+            Some(StaticLimitKind::TypescriptWorkspaceReadLimited)
+        );
+        assert!(finding.activation.missing_discriminators.is_empty());
+        assert_eq!(
+            finding.stop_reasons,
+            vec![StopReason::GapEvidenceUnresolved]
+        );
+        assert!(
+            finding
+                .recommended_next_step
+                .as_deref()
+                .is_some_and(|step| {
+                    step.contains("512-byte")
+                        && step.contains("2048-byte")
+                        && step.contains("RIPR_TS_MAX_FILE_READ_BYTES")
+                        && step.contains("RIPR_TS_MAX_WORKSPACE_READ_BYTES")
+                })
+        );
+        let withheld = finding.clone();
+        assert!(!withhold_read_limited_workspace_gap(
+            &mut finding,
+            2,
+            512,
+            2048
+        ));
+        assert_eq!(finding, withheld);
+
+        for class in [
+            ExposureClass::Exposed,
+            ExposureClass::WeaklyExposed,
+            ExposureClass::ReachableUnrevealed,
+            ExposureClass::InfectionUnknown,
+            ExposureClass::PropagationUnknown,
+            ExposureClass::StaticUnknown,
+        ] {
+            let mut observed = marked();
+            observed.class = class;
+            let before = observed.clone();
+            assert!(!withhold_read_limited_workspace_gap(
+                &mut observed,
+                2,
+                512,
+                2048
+            ));
+            assert_eq!(observed, before);
+        }
+
+        for (unread_sources, existing_limit) in [
+            (0, None),
+            (2, Some(StaticLimitKind::MissingImportGraph)),
+            (
+                2,
+                Some(StaticLimitKind::TypescriptWorkspaceDiscoveryTruncated),
+            ),
+        ] {
+            let mut unchanged = marked();
+            unchanged.class = ExposureClass::NoStaticPath;
+            unchanged.static_limit_kind = existing_limit;
+            let before = unchanged.clone();
+            assert!(!withhold_read_limited_workspace_gap(
+                &mut unchanged,
+                unread_sources,
+                512,
+                2048,
+            ));
+            assert_eq!(unchanged, before);
+        }
     }
 
     #[test]
@@ -1807,6 +2086,62 @@ mod tests {
                 "{test}"
             );
         }
+    }
+
+    #[test]
+    fn exact_membership_any_on_captured_log_matches_template_with_one_literal() {
+        let index = log_index();
+        let mut confirmed = false;
+        for test in index
+            .tests()
+            .iter()
+            .filter(|test| test.name == "audit_through_once_lock")
+        {
+            for assertion in test
+                .assertions
+                .iter()
+                .filter(|assertion| assertion.text.contains(".iter().any("))
+            {
+                assert!(matches!(assertion.kind, OracleKind::ExactValue));
+                assert!(assertion_confirms_captured_log_exact_membership(
+                    AUDIT_LOG, test, assertion, "audit", &index,
+                ));
+                confirmed = true;
+            }
+        }
+        assert!(
+            confirmed,
+            "audit_through_once_lock membership fixture missing"
+        );
+    }
+
+    #[test]
+    fn relational_contains_on_captured_log_does_not_confirm_membership() {
+        let index = log_index();
+        let mut checked = false;
+        for test in index
+            .tests()
+            .iter()
+            .filter(|test| test.name == "audit_relational")
+        {
+            for assertion in test
+                .assertions
+                .iter()
+                .filter(|assertion| assertion.text.contains(".contains("))
+            {
+                assert!(!assertion_confirms_captured_log_exact_membership(
+                    AUDIT_LOG, test, assertion, "audit", &index,
+                ));
+                let mut finding = log_finding("audit_relational", AUDIT_LOG);
+                assert!(!withhold_log_capture_gap(
+                    &mut finding,
+                    &index,
+                    Some("audit")
+                ));
+                checked = true;
+            }
+        }
+        assert!(checked, "audit_relational contains fixture missing");
     }
 
     #[test]

@@ -27,6 +27,11 @@
       "classification": "exposed",
       "severity": "info",
       "confidence": 0.60,
+      "confidence_basis": [
+        {"code": "preview_stages_not_modeled", "summary": "preview adapter: infection/propagation not modeled (Python)"},
+        {"code": "syntax_first_no_type_resolution", "summary": "syntax-first, no type or import resolution"}
+      ],
+      "confidence_why_capped": "Why capped: preview adapter: infection/propagation not modeled (Python); syntax-first, no type or import resolution. Preview score, not on the same scale as Rust confidence.",
       "probe": {
         "id": "probe:src_cart.py:python_preview:83828e8d",
         "family": "side_effect",
@@ -48,7 +53,7 @@
         {"kind":"call_effect","text":"total = min(total, CAP)","line":7}
       ],
       "evidence": ["owner: capped_total", "owner_kind: function", "test_framework: pytest (test_capped_total_stops_at_the_cap)", "test_verify_command: python -m pytest tests/test_cart.py::test_capped_total_stops_at_the_cap (test_capped_total_stops_at_the_cap)", "related_test_relation: syntactic_call (test_capped_total_stops_at_the_cap)", "test_oracle: exact_value strong (test_capped_total_stops_at_the_cap)"],
-      "missing": ["Related Python test reaches `capped_total` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value discriminator."],
+      "missing": ["Related Python test reaches `capped_total` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value check."],
       "assertion_texts": {
       },
       "activation": {
@@ -75,8 +80,8 @@
       "stop_reasons": [],
       "oracle_kind": "exact_value",
       "oracle_strength": "strong",
-      "recommended_next_step": "Python preview: changed behavior is observed under a strong oracle; verify the assertion targets the changed behavior.",
-      "suggested_next_action": "Python preview: changed behavior is observed under a strong oracle; verify the assertion targets the changed behavior.",
+      "recommended_next_step": "Not a candidate edit target (base_deleted): the changed source is not current on the candidate side, so this finding recommends no test change.",
+      "suggested_next_action": "Not a candidate edit target (base_deleted): the changed source is not current on the candidate side, so this finding recommends no test change.",
       "language": "python",
       "language_status": "preview",
       "owner_kind": "function",
@@ -103,6 +108,11 @@
       "classification": "exposed",
       "severity": "info",
       "confidence": 0.60,
+      "confidence_basis": [
+        {"code": "preview_stages_not_modeled", "summary": "preview adapter: infection/propagation not modeled (Python)"},
+        {"code": "syntax_first_no_type_resolution", "summary": "syntax-first, no type or import resolution"}
+      ],
+      "confidence_why_capped": "Why capped: preview adapter: infection/propagation not modeled (Python); syntax-first, no type or import resolution. Preview score, not on the same scale as Rust confidence.",
       "probe": {
         "id": "probe:src_cart.py:python_preview:887653dc",
         "family": "side_effect",
@@ -124,7 +134,7 @@
         {"kind":"call_effect","text":"total = max(total, FLOOR)","line":13}
       ],
       "evidence": ["owner: floored_total", "owner_kind: function", "test_framework: pytest (test_floored_total_adds_the_items)", "test_verify_command: python -m pytest tests/test_cart.py::test_floored_total_adds_the_items (test_floored_total_adds_the_items)", "related_test_relation: syntactic_call (test_floored_total_adds_the_items)", "test_oracle: exact_value strong (test_floored_total_adds_the_items)"],
-      "missing": ["Related Python test reaches `floored_total` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value discriminator."],
+      "missing": ["Related Python test reaches `floored_total` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value check."],
       "assertion_texts": {
       },
       "activation": {
@@ -151,8 +161,8 @@
       "stop_reasons": [],
       "oracle_kind": "exact_value",
       "oracle_strength": "strong",
-      "recommended_next_step": "Python preview: changed behavior is observed under a strong oracle; verify the assertion targets the changed behavior.",
-      "suggested_next_action": "Python preview: changed behavior is observed under a strong oracle; verify the assertion targets the changed behavior.",
+      "recommended_next_step": "Not a candidate edit target (base_deleted): the changed source is not current on the candidate side, so this finding recommends no test change.",
+      "suggested_next_action": "Not a candidate edit target (base_deleted): the changed source is not current on the candidate side, so this finding recommends no test change.",
       "language": "python",
       "language_status": "preview",
       "owner_kind": "function",
@@ -179,6 +189,11 @@
       "classification": "exposed",
       "severity": "info",
       "confidence": 0.60,
+      "confidence_basis": [
+        {"code": "preview_stages_not_modeled", "summary": "preview adapter: infection/propagation not modeled (Python)"},
+        {"code": "syntax_first_no_type_resolution", "summary": "syntax-first, no type or import resolution"}
+      ],
+      "confidence_why_capped": "Why capped: preview adapter: infection/propagation not modeled (Python); syntax-first, no type or import resolution. Preview score, not on the same scale as Rust confidence.",
       "probe": {
         "id": "probe:src_cart.py:python_preview:30b8d627",
         "family": "return_value",
@@ -200,7 +215,7 @@
         {"kind":"return_value","text":"return x * 2","line":18}
       ],
       "evidence": ["owner: doubled", "owner_kind: function", "test_framework: pytest (test_doubled_doubles)", "test_verify_command: python -m pytest tests/test_cart.py::test_doubled_doubles (test_doubled_doubles)", "related_test_relation: syntactic_call (test_doubled_doubles)", "test_oracle: exact_value strong (test_doubled_doubles)"],
-      "missing": ["Related Python test reaches `doubled` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value discriminator."],
+      "missing": ["Related Python test reaches `doubled` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value check."],
       "assertion_texts": {
       },
       "activation": {

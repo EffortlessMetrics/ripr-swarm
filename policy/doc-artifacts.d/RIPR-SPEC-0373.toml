@@ -1,0 +1,7 @@
+[[artifact]]
+id = "RIPR-SPEC-0373"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0373-kani-verification-artifacts-are-verification-only.md"
+status = "proposed"
+owner = "product-analysis"
+standalone_reason = "SPEC-0367 and SPEC-0368 left deleted Kani harnesses, cfg(kani) modules and cfg_attr(kani, contract) attributes probed as production on a proofs-only commit (zerocopy 855c2378: 29 findings, no production change); the spec pins side-independent recognition and the fail-closed negatives."

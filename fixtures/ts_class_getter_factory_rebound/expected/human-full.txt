@@ -85,6 +85,7 @@ TypeScript repair packet (advisory)
 Next step
   TypeScript preview advisory: method receiver relation is missing context; use a direct `new ClassName(...)` receiver observer when safe, and keep factories, dependency injection, mocked modules, prototype aliases, and dynamic property access advisory
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/ts_class_getter_factory_rebound/input --diff <cwd>/fixtures/ts_class_getter_factory_rebound/diff.patch --mode fast probe:src_cache.ts:typescript_preview:c77a33fa
   ripr context --root <cwd>/fixtures/ts_class_getter_factory_rebound/input --diff <cwd>/fixtures/ts_class_getter_factory_rebound/diff.patch --mode fast --at probe:src_cache.ts:typescript_preview:c77a33fa
 

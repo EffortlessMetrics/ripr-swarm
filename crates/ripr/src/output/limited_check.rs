@@ -141,9 +141,10 @@ pub(crate) struct RefusalEnvelopeContext<'a> {
 /// [`CoreError::check_refusal`], matched structurally; this renderer never
 /// inspects message text.
 fn refusal_envelope_value(context: &RefusalEnvelopeContext<'_>, error: &CoreError) -> Value {
-    let notice = error.refusal_notice();
+    let notice = error.refusal_notice(&crate::config::config_error_summary);
     let identity = notice.identity;
     let repair_route = notice.repair_route;
+    let remedy = serde_json::to_value(&notice.remedy).unwrap_or(Value::Null);
     let message = notice.message;
 
     let mut value = json!({
@@ -179,7 +180,8 @@ fn refusal_envelope_value(context: &RefusalEnvelopeContext<'_>, error: &CoreErro
                 "basis": identity,
                 "downstream_consumable": false,
                 "message": message,
-                "repair_route": repair_route
+                "repair_route": repair_route,
+                "remedy": remedy
             }
         ]
     });
@@ -224,7 +226,9 @@ pub(crate) fn render_check_failure_json(
     input: &CheckInput,
     error: &CoreError,
 ) -> Result<String, String> {
-    let identity = error.refusal_notice().identity;
+    let identity = error
+        .refusal_notice(&crate::config::config_error_summary)
+        .identity;
     let timeout_context = (identity == "analysis_timeout")
         .then(crate::app::timeout_refusal::take_stashed)
         .flatten();
@@ -631,6 +635,40 @@ mod tests {
             value.get("base").is_none(),
             "base should be omitted when absent: {value}"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn refusal_envelope_carries_the_remedy_its_message_states() -> Result<(), String> {
+        use crate::core_error::CoreError;
+        // Positive: the message states a command, a placeholder and a retry.
+        let stated = CoreError::base_unresolvable(
+            "base `nope` does not resolve; run `ripr check --base <ref>` with a ref that exists, then rerun",
+        );
+        let rendered = render_check_failure_json(&input(), &stated)?;
+        let value: Value =
+            serde_json::from_str(&rendered).map_err(|err| format!("parse JSON: {err}"))?;
+        let remedy = value
+            .pointer("/run_limitations/0/remedy")
+            .ok_or_else(|| format!("run_limitations[0].remedy missing: {value}"))?;
+        assert_eq!(remedy["kind"], "command", "{remedy}");
+        assert_eq!(remedy["command"], "ripr check --base <ref>", "{remedy}");
+        assert_eq!(remedy["fill_in"], serde_json::json!(["<ref>"]), "{remedy}");
+        assert_eq!(remedy["retry_stated"], true, "{remedy}");
+
+        // Negative control: a message that states no step is an explicit
+        // `none`, never a guessed command.
+        let silent = CoreError::base_unresolvable("the base does not resolve");
+        let rendered = render_check_failure_json(&input(), &silent)?;
+        let value: Value =
+            serde_json::from_str(&rendered).map_err(|err| format!("parse JSON: {err}"))?;
+        let remedy = value
+            .pointer("/run_limitations/0/remedy")
+            .ok_or_else(|| format!("run_limitations[0].remedy missing: {value}"))?;
+        assert_eq!(remedy["kind"], "none", "{remedy}");
+        assert_eq!(remedy["command"], Value::Null, "{remedy}");
+        assert_eq!(remedy["retry_stated"], Value::Null, "{remedy}");
+        assert_eq!(remedy["flags"], serde_json::json!([]), "{remedy}");
         Ok(())
     }
 

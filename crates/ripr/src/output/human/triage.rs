@@ -3,7 +3,10 @@ use crate::analysis::test_stub::TestStubRefusal;
 use crate::analysis::{SourceRoleContext, classify_with, seeds_diff_probes};
 use crate::app::RepairRouteRefusal;
 use crate::app::test_stub::StubRouteDecision;
-use crate::app::{CheckDiffProvenance, CheckOutput, FindingDrillIn};
+use crate::app::{
+    CheckDiffProvenance, CheckOutput, FindingDrillIn, FindingNavigation, GapRepairRoute,
+    RepairRoute,
+};
 use crate::config::RiprConfig;
 use crate::domain::ProbeFamily;
 use crate::domain::{
@@ -335,9 +338,32 @@ pub(crate) fn render_human_triage(
             } else if let Some(base) = output.base.as_deref()
                 && head_is_on_branch(&output.root, base)
             {
-                out.push_str(&format!(
-                    "  Safe next action: you are on `{base}`, which is the comparison base; edit a tracked source file or switch to a feature branch\n"
-                ));
+                // #13036: when HEAD has a parent, the usual intent is "check the
+                // last commit", so print that command instead of leaving it to
+                // be guessed.
+                //
+                // A new file that was never `git add`ed is the usual first-run
+                // reason for this empty range: lead with the staging repair
+                // the header names, not with "edit a tracked file".
+                if output.unanalyzed_working_tree
+                    && !output.untracked_working_tree_source_paths.is_empty()
+                {
+                    let listing = crate::output::analyzed_revisions::name_paths(
+                        &output.untracked_working_tree_source_paths,
+                        super::escape_terminal_display,
+                    );
+                    out.push_str(&format!(
+                        "  Safe next action: ripr cannot see the untracked file(s) ({listing}); run `git add -N <paths>` (intent-to-add) then `ripr check --worktree`, or pass `--diff PATH`\n"
+                    ));
+                } else if head_has_parent(&output.root) {
+                    out.push_str(&format!(
+                        "  Safe next action: you are on `{base}`, which is the comparison base, so there is no diff; to check the last commit run `ripr check --base HEAD~1` (or edit a tracked source file, or switch to a feature branch)\n"
+                    ));
+                } else {
+                    out.push_str(&format!(
+                        "  Safe next action: you are on `{base}`, which is the comparison base; edit a tracked source file or switch to a feature branch\n"
+                    ));
+                }
             } else if let Some(base) = output.base.as_deref()
                 && let Some(candidate) = empty_diff_base_candidate(output, base)
             {
@@ -373,13 +399,21 @@ pub(crate) fn render_human_triage(
             &output.root,
         ));
         if let Some(FindingDrillIn::Commands(navigation)) = drill_in {
-            out.push_str("\nNext: drill into the top finding:\n");
-            for command in [
-                navigation.explain_command(&finding.id),
-                navigation.context_command(&finding.id),
-            ] {
-                out.push_str(&format!("  {command}\n"));
-                super::push_powershell_variant(out, "  ", &command);
+            // #13502: a candidate-tree subject cannot be replayed by `explain`.
+            if !navigation.finding_routes_withheld() {
+                out.push_str("\nNext: drill into the top finding:\n");
+                // #12431: the finding-id label names the selector domain of the
+                // explain/context pair, like the repair start's spot-id label
+                // below and the digest's `Gap ID (for scripts):`.
+                super::push_labeled_commands(
+                    out,
+                    "  ",
+                    super::FINDING_ID_COMMAND_LABEL,
+                    &[
+                        navigation.explain_command(&finding.id),
+                        navigation.context_command(&finding.id),
+                    ],
+                );
             }
             let stub_eligible = offers_test_stub(finding);
             // The test route is mentioned beside a held repair start only
@@ -410,9 +444,10 @@ pub(crate) fn render_human_triage(
             // #9103: a TypeScript finding with a validated repair packet gets
             // a gap-bound start in place of the seam-bound line. Computed by
             // the same pipeline step; static-limited findings never get one.
-            let gap_route = navigation.gap_repair_route_for(&finding.id);
-            if let Some(route) = gap_route {
-                if !is_static_limited(finding) {
+            // The selection is `printed_repair_route`, the one decision the
+            // JSON `finding_routes` projection also uses.
+            match printed_repair_route(navigation, finding) {
+                Some(PrintedRepairRoute::Gap(route)) => {
                     let command = navigation.gap_repair_command(route);
                     // #10698: the start refuses while tracked production
                     // files differ from HEAD, so name the commit first.
@@ -432,37 +467,44 @@ pub(crate) fn render_human_triage(
                     super::push_powershell_variant(out, "  ", &command);
                     repair_printed = true;
                 }
-            } else {
-                match navigation.repair_route_for(&finding.id) {
-                    Some(route) => {
-                        if !is_static_limited(finding) {
-                            repair_printed = true;
-                            let command = navigation.repair_command(&route.seam_id);
-                            if let Some(file) = route.uncommitted_target.as_deref() {
-                                // `ripr repair` would refuse this start: its
-                                // inline test module target begins from the
-                                // committed file. State the requirement instead
-                                // of a command that exits 2.
-                                let alternative = if stub_rendered {
-                                    ", or use the test route below"
-                                } else {
-                                    ""
-                                };
-                                out.push_str(&format!(
-                                "  Repair start (needs a committed `{file}`; it has uncommitted changes, so commit or stash it first{alternative}): {command}\n"
-                            ));
-                            } else {
-                                out.push_str(&format!("  {command}\n"));
-                                super::push_powershell_variant(out, "  ", &command);
-                            }
-                        }
+                Some(PrintedRepairRoute::Seam(route)) => {
+                    repair_printed = true;
+                    let command = navigation.repair_command(&route.seam_id);
+                    if let Some(file) = route.uncommitted_target.as_deref() {
+                        // `ripr repair` would refuse this start: its
+                        // inline test module target begins from the
+                        // committed file. State the requirement instead
+                        // of a command that exits 2.
+                        let alternative = if stub_rendered {
+                            ", or use the test route below"
+                        } else {
+                            ""
+                        };
+                        out.push_str(&format!(
+                            "  Repair start (needs a committed `{file}`; it has uncommitted changes, so commit or stash it first{alternative}): {command}\n"
+                        ));
+                    } else {
+                        // #12431: the repair start keys on the seam
+                        // identity, a different id domain from the
+                        // explain/context pair above; label it in
+                        // glossary-safe plain words.
+                        super::push_labeled_commands(
+                            out,
+                            "  ",
+                            super::SPOT_ID_COMMAND_LABEL,
+                            std::slice::from_ref(&command),
+                        );
                     }
-                    None => {
-                        if let Some(refusal) = navigation.repair_route_refusal() {
-                            let advisory =
-                                refusal.advisory(&navigation.repair_command(&finding.id));
-                            out.push_str(&format!("  {advisory}\n"));
-                        }
+                }
+                None => {
+                    // A route withheld for a static limitation prints nothing;
+                    // only a finding offered no route at all names the refusal.
+                    if navigation.gap_repair_route_for(&finding.id).is_none()
+                        && navigation.repair_route_for(&finding.id).is_none()
+                        && let Some(refusal) = navigation.repair_route_refusal()
+                    {
+                        let advisory = refusal.advisory(&navigation.repair_command(&finding.id));
+                        out.push_str(&format!("  {advisory}\n"));
                     }
                 }
             }
@@ -702,6 +744,18 @@ fn hand_written_test_step(finding: &Finding, stub_refusal: &str, no_route: bool)
         _ if stub_refusal == TestStubRefusal::FieldNotReturned.reason() => {
             "call the function and assert on what it returns: match the wrapper that carries the changed field (for example the `Err` variant) and check the field inside it, or compare the whole returned value"
         }
+        // #11398: the change writes a field of `self` in a method, so the
+        // value to check is the receiver after the call, not a struct
+        // literal. A by-value receiver cannot be confirmed yet (#11398
+        // review), so the step says so instead of promising credit.
+        // #12061: a by-value receiver writes a moved copy, so the value to
+        // check is what the call returns.
+        _ if stub_refusal == TestStubRefusal::FieldWrittenByValue.reason() => {
+            "call the method with an input for which the old and new code store different values, then assert the exact value of the changed field on the value the call returns; a by-value method writes a moved copy, so a read of the binding you called it on sees nothing"
+        }
+        _ if stub_refusal == TestStubRefusal::FieldWrittenInMethod.reason() => {
+            "call the method with an input for which the old and new code store different values, then assert the exact value of the changed field on the value you called it on"
+        }
         // A unit-returning owner has no result to compare.
         _ if stub_refusal == TestStubRefusal::NoReturnValue.reason() => {
             "call the function and assert what it changes (an argument it mutates, state it sets, or output it writes), or that it panics when the changed condition is hit, since it returns nothing to compare"
@@ -769,6 +823,16 @@ fn names_no_route(navigation: &crate::app::FindingNavigation) -> bool {
     )
 }
 
+/// The default screen says "spot" for the stub chooser's reason; the shared
+/// reason (`app::test_stub`, also printed by `ripr agent stub`) keeps its own
+/// wording, so only this render swaps the noun (#11619).
+fn plain_stub_reason(reason: &str) -> String {
+    reason.replace(
+        " seam, so --at cannot pick one",
+        " spot, so --at cannot pick one",
+    )
+}
+
 fn push_ambiguous_stub_choices(
     out: &mut String,
     navigation: &crate::app::FindingNavigation,
@@ -778,10 +842,11 @@ fn push_ambiguous_stub_choices(
     indent: &str,
 ) {
     out.push_str(&format!(
-        "{indent}Choose a test-stub seam for {finding_id}: {reason}\n"
+        "{indent}Choose a test-stub spot for {finding_id}: {}\n",
+        plain_stub_reason(reason)
     ));
     let child = format!("{indent}  ");
-    out.push_str(&format!("{child}Each command below produces a stub, but ripr could not tell which seam your change touches.\n"));
+    out.push_str(&format!("{child}Each command below produces a stub, but ripr could not tell which spot your change touches.\n"));
     out.push_str(&format!(
         "{child}They do not establish a repair binding or close a static limitation.\n"
     ));
@@ -793,9 +858,13 @@ fn push_ambiguous_stub_choices(
 }
 
 fn hidden_finding_reason(finding: &Finding) -> String {
-    let reason = finding
+    // The family-aware wording, so a hidden match-arm finding reads the same
+    // limit text as its hover, MCP and full CLI explanation (#11821).
+    let limit_reason = finding
         .static_limit_kind
-        .map(|kind| kind.describe())
+        .map(|kind| kind.describe_for_family(&finding.probe.family));
+    let reason: &str = limit_reason
+        .as_deref()
         .or_else(|| finding.missing.first().map(String::as_str))
         .unwrap_or_else(|| match finding.class {
             ExposureClass::NoStaticPath => &finding.ripr.reach.summary,
@@ -807,7 +876,9 @@ fn hidden_finding_reason(finding: &Finding) -> String {
             }
             ExposureClass::StaticUnknown => &finding.ripr.infect.summary,
         });
-    one_line(&super::evidence_lines::plain_default_missing(reason))
+    one_line(&super::evidence_lines::plain_default_missing_for(
+        finding, reason,
+    ))
 }
 
 /// The currentness mix of the omitted set. `unresolved_subject` is the
@@ -869,7 +940,16 @@ pub(crate) fn canonical_next_action_for_triage(
         .selected
         .map(|finding| finding.id.clone())
         .unwrap_or_else(|| scope.clone());
+    // #13464: a candidate-tree subject cannot be replayed by `explain`, so
+    // its commands would analyze the live checkout. Withhold the detail route
+    // (and the considered-finding alternatives that carry the same commands)
+    // exactly as the JSON `finding_routes` projection does.
+    let routes_withheld = matches!(
+        drill_in,
+        Some(FindingDrillIn::Commands(navigation)) if navigation.finding_routes_withheld()
+    );
     let detail_route = match (&triage.selected, drill_in) {
+        (Some(_), _) if routes_withheld => String::new(),
         (Some(finding), Some(FindingDrillIn::Commands(navigation))) => {
             navigation.explain_command(&finding.id)
         }
@@ -879,7 +959,7 @@ pub(crate) fn canonical_next_action_for_triage(
         (None, _) => String::new(),
     };
     let mut alternatives: Vec<NextActionAlternative> = Vec::new();
-    for omitted in triage.omitted.iter().take(2) {
+    for omitted in triage.omitted.iter().take(2).filter(|_| !routes_withheld) {
         let route = match drill_in {
             Some(FindingDrillIn::Commands(navigation)) => navigation.explain_command(&omitted.id),
             None => omitted.id.clone(),
@@ -921,6 +1001,7 @@ pub(crate) fn canonical_next_action_for_triage(
         check_item: triage.selected.map(|finding| finding.id.clone()),
         card_item: None,
         item_candidates: Vec::new(),
+        item_candidate_labels: Vec::new(),
         attempts: Vec::new(),
         // Finding currentness is enforced upstream by the triage candidate
         // filter; the check producer tracks no git-head axis here.
@@ -956,6 +1037,17 @@ pub(crate) fn canonical_next_action_for_triage(
         limitations,
     };
     select_canonical_next_action(&input)
+}
+
+/// True when `HEAD~1` resolves, so `--base HEAD~1` names a real range.
+fn head_has_parent(root: &std::path::Path) -> bool {
+    crate::git::run_git_output_with_deadline(
+        root,
+        &["rev-parse", "--verify", "--quiet", "HEAD~1"],
+        Some(std::time::Duration::from_secs(5)),
+    )
+    .ok()
+    .is_some_and(|output| output.status.success())
 }
 
 /// True when `HEAD` is the symbolic ref of local branch `base` (a detached
@@ -1285,11 +1377,13 @@ const GAP_REPAIR_START_RECOMMENDATION: &str =
     "start the repair with the `ripr agent repair` command under Next";
 
 /// Whether `Next` prints a gap-bound `ripr agent repair` start for the
-/// selected finding. The route exists only when the shared gap-bound
+/// selected finding. The compact agent surface's PreviewAdvisory terminal
+/// reads the same decision (#13277 review): when this is true the terminal
+/// must not deny that a guided route exists. The route exists only when the shared gap-bound
 /// validators accepted the packet and the run is complete
 /// (`app::task_first::gap_bound_route`), and a static-limited finding never
 /// prints one, so this reads that decision and forks nothing.
-fn recommends_gap_repair_start(
+pub(super) fn recommends_gap_repair_start(
     finding: Option<&Finding>,
     drill_in: Option<&FindingDrillIn>,
 ) -> bool {
@@ -1442,7 +1536,7 @@ fn python_preview_safe_action(finding: &Finding, recommend_repair_start: bool) -
             )
         } else {
             (
-                "static evidence names no concrete missing discriminator".to_string(),
+                "static evidence names no concrete missing check".to_string(),
                 "add or strengthen a test by hand",
             )
         }
@@ -1660,6 +1754,112 @@ fn has_repair_route(finding: &Finding) -> bool {
             .any(|line| line.starts_with("suggested_verify_command: "))
 }
 
+/// The one repair route the check screen prints for `finding`: the gap-bound
+/// route first, otherwise the seam route, and never for a static-limited
+/// finding (#8166 F3, #9103). The human renderer and the JSON
+/// `finding_routes` projection both decide through this, so a route the CLI
+/// declines to print is never offered as actionable in JSON.
+enum PrintedRepairRoute<'a> {
+    Gap(&'a GapRepairRoute),
+    Seam(&'a RepairRoute),
+}
+
+fn printed_repair_route<'a>(
+    navigation: &'a FindingNavigation,
+    finding: &Finding,
+) -> Option<PrintedRepairRoute<'a>> {
+    if is_static_limited(finding) {
+        return None;
+    }
+    if let Some(route) = navigation.gap_repair_route_for(&finding.id) {
+        return Some(PrintedRepairRoute::Gap(route));
+    }
+    navigation
+        .repair_route_for(&finding.id)
+        .map(PrintedRepairRoute::Seam)
+}
+
+/// Machine projection of one finding's follow-up routes for
+/// `check --format json` (#11976), built from the navigation's own commands
+/// and the same gates the human screen applies. `explain_command` is always
+/// present. `stub_command` appears for any carried finding whose resolved
+/// decision is a stub start (wider than the screen, which lists a stub only
+/// for the top finding and `SeamStub` among hidden ones); it is the same
+/// legitimate `ripr agent stub` command. `repair` appears only where the
+/// screen would print a repair route;
+/// a route held by uncommitted files names its blocker and carries no
+/// runnable `command`. An absent key means no route was offered. The whole
+/// member is withheld for a candidate-tree subject (see
+/// `FindingNavigation::finding_routes_withheld`).
+pub(crate) fn finding_routes_json(
+    navigation: &FindingNavigation,
+    finding: &Finding,
+) -> serde_json::Value {
+    let mut routes = serde_json::Map::new();
+    routes.insert("finding_id".to_string(), finding.id.clone().into());
+    routes.insert(
+        "explain_command".to_string(),
+        navigation.explain_command(&finding.id).into(),
+    );
+    if offers_test_stub(finding) {
+        match navigation.stub_route_for(&finding.id) {
+            Some(StubRouteDecision::Stub { file, line, kind }) => {
+                routes.insert(
+                    "stub_command".to_string(),
+                    navigation.stub_command(file, *line, kind).into(),
+                );
+            }
+            Some(StubRouteDecision::SeamStub { seam_id }) => {
+                routes.insert(
+                    "stub_command".to_string(),
+                    navigation.stub_seam_command(seam_id).into(),
+                );
+            }
+            _ => {}
+        }
+    }
+    let mut repair = serde_json::Map::new();
+    match printed_repair_route(navigation, finding) {
+        Some(PrintedRepairRoute::Gap(route)) => {
+            repair.insert("canonical_gap_id".to_string(), route.gap_id.clone().into());
+            if route.uncommitted_files.is_empty() {
+                repair.insert("status".to_string(), "ready".into());
+                repair.insert(
+                    "command".to_string(),
+                    navigation.gap_repair_command(route).into(),
+                );
+            } else {
+                repair.insert("status".to_string(), "blocked_uncommitted".into());
+                repair.insert(
+                    "uncommitted_files".to_string(),
+                    route.uncommitted_files.clone().into(),
+                );
+            }
+        }
+        Some(PrintedRepairRoute::Seam(route)) => {
+            repair.insert("seam_id".to_string(), route.seam_id.clone().into());
+            match &route.uncommitted_target {
+                None => {
+                    repair.insert("status".to_string(), "ready".into());
+                    repair.insert(
+                        "command".to_string(),
+                        navigation.repair_command(&route.seam_id).into(),
+                    );
+                }
+                Some(file) => {
+                    repair.insert("status".to_string(), "blocked_uncommitted".into());
+                    repair.insert("uncommitted_file".to_string(), file.clone().into());
+                }
+            }
+        }
+        None => {}
+    }
+    if !repair.is_empty() {
+        routes.insert("repair".to_string(), repair.into());
+    }
+    routes.into()
+}
+
 pub(super) fn is_static_limited(finding: &Finding) -> bool {
     // The producer's named limitation remains authoritative even when its
     // conservative class is reachable_unrevealed or weakly_exposed.
@@ -1673,6 +1873,61 @@ pub(super) fn is_static_limited(finding: &Finding) -> bool {
         )
 }
 
+/// A reach-only static limitation that still leaves a confirmed test-side
+/// weakness open (#11825).
+///
+/// `rust_transitive_reach_unresolved` says ripr cannot trace the call chain
+/// from a test to the changed owner. It says nothing about a related test whose
+/// own oracle is too weak to tell the old value from the new (`weak` or
+/// `smoke` strength, for example a smoke `is_ok()`).
+/// Such a finding is not a confirmed gap (reach is unresolved, so it stays out
+/// of `gaps=` and out of repair routing), but it is not "nothing is fixable
+/// from the test side" either. Terminal `stop=` projections must not claim it
+/// is. Other limitation kinds, and limits with no weak-assertion row, are
+/// unaffected.
+pub(super) fn limit_leaves_weak_assertion_open(finding: &Finding) -> bool {
+    finding.is_candidate_actionable()
+        && !is_preview_limited(finding)
+        && matches!(
+            finding.class,
+            ExposureClass::WeaklyExposed | ExposureClass::ReachableUnrevealed
+        )
+        && finding.static_limit_kind == Some(StaticLimitKind::RustTransitiveReachUnresolved)
+        && weak_assertion_row(finding).is_some()
+}
+
+/// The first contributing related-test row whose oracle is too weak to tell
+/// the old value from the new (`weak` or `smoke`). Selected on the row's oracle
+/// strength, never on `miss`, which is display-only. A row related to the
+/// finding by file or module proximity alone (`same_test_file`, `same_module`,
+/// `weak_token_substring`) is not bound to the changed owner, so an unrelated
+/// weak test beside a reach-limited finding does not make it open (#12058); a
+/// row with no recorded relation keeps the earlier behavior.
+///
+/// "Bound" here is deliberately narrower than
+/// [`crate::domain::RelationReason::establishes_reach`]. A finding behind
+/// `rust_transitive_reach_unresolved` is one whose reach the producer could not
+/// establish, while `establishes_reach` is true only for relations that capture
+/// a path to the owner (direct call, helper call, re-export chain, and
+/// `assertion_target_affinity` for a non-function owner). Keying on it would
+/// make `open=` fire for almost no reach-limited finding, defeating #11825. So
+/// only the three file/module proximity relations are excluded;
+/// `owner_named_test`, `import_path_affinity`, `fixture_owner_affinity`,
+/// `seam_callee_call` and `assertion_target_affinity` still count as bound to
+/// the owner here. This is a reasoned choice, not measured against a corpus.
+pub(super) fn weak_assertion_row(finding: &Finding) -> Option<&crate::domain::RelatedTest> {
+    finding.related_tests.iter().find(|test| {
+        test.is_contributing()
+            && !test
+                .relation_reason
+                .is_some_and(crate::domain::RelationReason::is_proximity_only)
+            && matches!(
+                test.oracle_strength,
+                crate::domain::OracleStrength::Weak | crate::domain::OracleStrength::Smoke
+            )
+    })
+}
+
 pub(super) fn is_preview_limited(finding: &Finding) -> bool {
     finding
         .language_status
@@ -1681,6 +1936,28 @@ pub(super) fn is_preview_limited(finding: &Finding) -> bool {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn hidden_finding_reason_words_a_match_arm_limit_like_hover_and_mcp() -> Result<(), String> {
+        // #11821: `describe()` and `describe_for_family()` differ only for this
+        // kind on a match arm; the hidden-finding line must use the family form.
+        let mut finding = crate::mcp::gaps::test_finding()?;
+        finding.probe.family = crate::domain::ProbeFamily::MatchArm;
+        finding.static_limit_kind =
+            Some(crate::domain::StaticLimitKind::RustAssertionContextUnresolved);
+        let reason = hidden_finding_reason(&finding);
+        assert!(
+            reason.contains("`assert!`") && !reason.contains("`assert_eq!`"),
+            "a hidden match-arm limit must read the family wording: {reason}"
+        );
+        finding.probe.family = crate::domain::ProbeFamily::Predicate;
+        let other = hidden_finding_reason(&finding);
+        assert!(
+            other.contains("`assert_eq!`"),
+            "a non-match-arm limit keeps the standard wording: {other}"
+        );
+        Ok(())
+    }
     use super::*;
     use crate::app::Mode;
     use crate::domain::{
@@ -1769,6 +2046,26 @@ mod tests {
     }
 
     #[test]
+    fn agent_next_line_is_withheld_for_a_candidate_tree_subject() {
+        let output = test_output(Vec::new());
+        let live = FindingDrillIn::Commands(crate::app::FindingNavigation::legacy());
+        let line = super::super::agent::explain_next_line("finding:top", &output, Some(&live));
+        assert!(
+            line.as_deref()
+                .is_some_and(|line| line.starts_with("next=ripr explain")),
+            "control: a live subject names the explain route: {line:?}"
+        );
+        let withheld = FindingDrillIn::Commands(
+            crate::app::FindingNavigation::legacy().with_finding_routes_withheld(),
+        );
+        assert_eq!(
+            super::super::agent::explain_next_line("finding:top", &output, Some(&withheld)),
+            None,
+            "a candidate-tree subject cannot be replayed by explain"
+        );
+    }
+
+    #[test]
     fn limited_journey_hidden_rows_name_kind_and_reason() {
         let top = super::super::tests::sample_finding();
         let mut hidden = test_finding("finding:hidden");
@@ -1844,11 +2141,18 @@ mod tests {
                 "fedcba9876543210".to_string(),
             ],
         });
-        assert!(ambiguous.contains("Choose a test-stub seam for finding:hidden-unique:"));
+        assert!(ambiguous.contains("Choose a test-stub spot for finding:hidden-unique:"));
         assert!(ambiguous.contains("--seam-id 0123456789abcdef"));
         assert!(ambiguous.contains("--seam-id fedcba9876543210"));
         assert!(ambiguous.contains("Each command below produces a stub"));
         assert!(!ambiguous.contains("may refuse"));
+        // The shared stub reason keeps `seam`; only this render swaps the noun.
+        assert_eq!(
+            plain_stub_reason(
+                "a.rs:3 holds more than one predicate_boundary seam, so --at cannot pick one"
+            ),
+            "a.rs:3 holds more than one predicate_boundary spot, so --at cannot pick one"
+        );
     }
 
     /// #10710 review: the hand-written step must not ask for something the
@@ -1864,6 +2168,31 @@ mod tests {
             "{not_returned}"
         );
         assert!(!not_returned.contains("changed field on what it returns"));
+        // #11398: a field write in a method names the receiver, not a wrapper.
+        let written = hand_written_test_step(
+            &finding,
+            TestStubRefusal::FieldWrittenInMethod.reason(),
+            true,
+        );
+        assert!(
+            written.contains("the value you called it on")
+                && !written.contains("`Err`")
+                && !written.contains("by value"),
+            "{written}"
+        );
+        // #12061: a by-value receiver writes a moved copy, so the step reads
+        // the call's result and never promises the called-on binding.
+        let by_value = hand_written_test_step(
+            &finding,
+            TestStubRefusal::FieldWrittenByValue.reason(),
+            true,
+        );
+        assert!(
+            by_value.contains("on the value the call returns")
+                && by_value.contains("moved copy")
+                && !by_value.contains("the value you called it on"),
+            "{by_value}"
+        );
 
         finding.probe.family = ProbeFamily::Predicate;
         let unit = hand_written_test_step(&finding, TestStubRefusal::NoReturnValue.reason(), true);
@@ -3306,7 +3635,7 @@ mod tests {
             "{action}"
         );
         assert!(
-            !action.contains("names no concrete missing discriminator"),
+            !action.contains("names no concrete missing check"),
             "{action}"
         );
         // #10990: the unresolved-call boundary decline gets its own plain
@@ -3323,7 +3652,7 @@ mod tests {
             "{unresolved_action}"
         );
         assert!(
-            !unresolved_action.contains("names no concrete missing discriminator"),
+            !unresolved_action.contains("names no concrete missing check"),
             "{unresolved_action}"
         );
         // A weak finding without the unresolved-operand shape keeps the
@@ -3334,7 +3663,7 @@ mod tests {
         generic.language_status = Some(LanguageStatus::Preview);
         let generic_action = python_preview_safe_action(&generic, false);
         assert!(
-            generic_action.contains("static evidence names no concrete missing discriminator"),
+            generic_action.contains("static evidence names no concrete missing check"),
             "{generic_action}"
         );
     }

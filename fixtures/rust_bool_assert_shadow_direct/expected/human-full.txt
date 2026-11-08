@@ -16,7 +16,7 @@ Shared evidence and guidance
   E1 [findings 1, 2]: reach yes: Related tests appear to reach can_ship: ships
   E2 [findings 1, 2]: propagation unknown: Propagation is not statically obvious from syntax-first analysis
   E3 [findings 1, 2]: observation no: No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)
-  E4 [findings 1, 2]: related test tests/api.rs:10 ships uses no oracle; misses: assertion not credited: ripr could not establish that this assertion counts here
+  E4 [findings 1, 2]: related test tests/api.rs:10 ships uses no oracle; misses: assertion inert: this test's assertion has a shape that can keep it from running as a standard check here
   E5 [findings 1, 2]: source assertion argument value true at line 11
   E6 [findings 1, 2]: source function argument value in_stock = true at line 11
   E7 [findings 1, 2]: source function argument value paid = true at line 11
@@ -57,6 +57,7 @@ Stop reasons:
 Next step
   - Open the related test, check whether it reaches the changed code, and inspect other existing tests. Trace their inputs through the local or computed operand (including default and empty cases) to see which side of the changed condition they exercise, then name an input that would exercise the other side. ripr.toml does not support fixture/builder value mappings. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/rust_bool_assert_shadow_direct/input --diff <cwd>/fixtures/rust_bool_assert_shadow_direct/diff.patch --mode fast probe:src_lib.rs:predicate:349c27df
   ripr context --root <cwd>/fixtures/rust_bool_assert_shadow_direct/input --diff <cwd>/fixtures/rust_bool_assert_shadow_direct/diff.patch --mode fast --at probe:src_lib.rs:predicate:349c27df
 
@@ -91,5 +92,6 @@ Stop reasons:
 Next step
   - Trace the changed value to its output or effect, and inspect what the related test actually checks. If it has an assertion, inspect exactly what that assertion observes. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/rust_bool_assert_shadow_direct/input --diff <cwd>/fixtures/rust_bool_assert_shadow_direct/diff.patch --mode fast probe:src_lib.rs:return_value:5a8195e8
   ripr context --root <cwd>/fixtures/rust_bool_assert_shadow_direct/input --diff <cwd>/fixtures/rust_bool_assert_shadow_direct/diff.patch --mode fast --at probe:src_lib.rs:return_value:5a8195e8

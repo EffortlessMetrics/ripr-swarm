@@ -200,6 +200,7 @@ fn render_one_screen_recommendation_markdown(report: &FirstUsefulActionReport, o
         "- Missing discriminator: {missing_discriminator}\n"
     ));
     out.push_str(&format!("- Focused proof intent: {focused_proof_intent}\n"));
+    crate::output::placeholder_assertion::push_fill_in_note(out, "  ", focused_proof_intent);
     // #3906: a carried repair start leads the command lines; its after phase
     // runs verify and writes the receipt, so the low-level verify and
     // receipt commands become the manual alternative.

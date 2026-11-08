@@ -1,0 +1,11 @@
+# RIPR-SPEC-0238 rule 31: a nested function's discarded result earns no direct return-value credit (#12182).
+[[extend]]
+id = "RIPR-SPEC-0238"
+tests = [
+  "crates/ripr/src/analysis/language/python/owners_tests/tests.rs::nested_owner_records_when_the_enclosing_body_discards_the_result",
+  "crates/ripr/src/analysis/language/python/nested_result_tests.rs::plain_returns_without_a_call_are_effect_free",
+  "crates/ripr/src/analysis/language/python/nested_result_tests.rs::returns_that_may_run_code_are_not_effect_free",
+]
+fixtures = [
+  "fixtures/python_nested_result_discarded",
+]

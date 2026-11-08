@@ -1,0 +1,66 @@
+// Small real Kani runs for the pinned schema 0.1.0 importer profile.
+// These examples exercise reporting behavior, not specification completeness.
+
+fn increment(x: u8) -> u8 {
+    x + 1
+}
+
+#[kani::proof]
+fn a_failure() {
+    let x: u8 = kani::any();
+    kani::assume(x < 10);
+    assert!(increment(x) == x);
+}
+
+#[kani::proof]
+fn b_success() {
+    let x: u8 = kani::any();
+    kani::assume(x < 10);
+    assert!(increment(x) > x);
+    kani::cover!(x == 0, "zero input is reachable");
+}
+
+#[kani::proof]
+fn c_vacuous() {
+    let x: u8 = kani::any();
+    kani::assume(x < 5);
+    kani::assume(x > 10);
+    assert!(x == 7);
+    kani::cover!(true, "assumptions permit reaching this location");
+}
+
+#[kani::proof]
+#[kani::should_panic]
+fn d_expected_panic() {
+    panic!("deliberate expected panic");
+}
+
+#[kani::proof]
+#[kani::should_panic]
+fn e_missing_expected_panic() {
+    assert!(true);
+}
+
+#[kani::proof]
+#[kani::unwind(3)]
+fn f_bounded_success() {
+    let x: u8 = kani::any();
+    kani::assume(x <= 2);
+    let mut total: u8 = 0;
+    for _ in 0..x {
+        total += 1;
+    }
+    assert_eq!(total, x);
+}
+
+#[kani::proof]
+#[kani::unwind(3)]
+fn g_insufficient_bound() {
+    let x: u8 = kani::any();
+    kani::assume(x <= 5);
+    let mut total: u8 = 0;
+    for _ in 0..x {
+        total += 1;
+    }
+    assert_eq!(total, x);
+}

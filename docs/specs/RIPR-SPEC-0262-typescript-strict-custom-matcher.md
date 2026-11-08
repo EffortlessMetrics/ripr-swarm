@@ -103,8 +103,11 @@ file may register or replace it:
   top-level calls, `<name>` is registered once, and `<name>` is not a
   matcher RIPR-SPEC-0243 already reads (a re-registered `toBeCloseTo`,
   which that spec reads as unknown, is read from its body);
-- the file reaches `expect` only by name: it holds no `\u` escape; every
-  mention of the word `expect` is `expect(`, `expect.` or a plain
+- the file reaches `expect` only by name: every `\u` escape outside a
+  string or comment must decode to an identifier that is not `extend`,
+  `eval`, `expect`, `Object`, `global`, or a name in the global-root list
+  below; every mention of the word `expect` is `expect(`, `expect.` (after
+  optional whitespace and block or line comments) or a plain
   `import { expect }`; it has no namespace import, no default import from
   `@jest/globals`, `@jest/expect`, `vitest` or `bun:test`, and no dynamic
   `import(` or `import` mention beyond its import declarations; no `[`

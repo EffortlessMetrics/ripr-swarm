@@ -7,9 +7,12 @@ on:
     branches: [main, master]
   # New RUSTSEC advisories and yanked crates appear without any repository
   # change; a weekly run on main surfaces them instead of waiting for the next
-  # merge. Advisory check only, so it stays cheap (#11529).
+  # merge. A scheduled run that goes red opens one `deny-red` tracking issue
+  # (below), so a new advisory is a single findable record instead of a red
+  # run nobody opens, before it turns every PR red (RUSTSEC-2026-0433).
+  # Daily, since the check is a few minutes of one cheap runner (#11529).
   schedule:
-    - cron: "17 6 * * 1"
+    - cron: "17 6 * * *"
   workflow_dispatch:
 
 permissions:
@@ -22,17 +25,55 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
           toolchain: stable
 
-      - uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # cargo-deny
+      - uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2.87.30
         with:
           tool: cargo-deny
 
       - run: cargo-deny check advisories licenses bans sources
+
+  # Scheduled runs on main only, in a separate job so the PR-facing cargo-deny
+  # job and its checkout never hold issue-write authority. The merge-ready
+  # clause is the repository's required job guard; a schedule event never
+  # reaches the pull_request branch of it. A red run opens (or
+  # comments on) one `deny-red` issue; a later green run comments and closes it.
+  # Detection only: nothing here gates a PR or changes what the PR check decides.
+  deny-tracker:
+    name: Reconcile the deny-red tracker
+    needs: cargo-deny
+    if: always() && github.event_name == 'schedule' && (github.event_name != 'pull_request' || (github.event.action == 'labeled' && github.event.label.name == 'merge-ready')) && github.ref == 'refs/heads/main' && github.repository == 'EffortlessMetrics/ripr-swarm' && (needs.cargo-deny.result == 'success' || needs.cargo-deny.result == 'failure')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Reconcile the deny-red tracker
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          OUTCOME: ${{ needs.cargo-deny.result }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          title="deny-red: scheduled cargo-deny found an advisory, license, ban or source failure on main"
+          number="$(gh api -X GET search/issues -f q="repo:$REPOSITORY is:issue is:open in:title deny-red" --jq "[.items[] | select(.title == \"$title\") | .number][0] // empty")"
+          if [ "$OUTCOME" = "failure" ]; then
+            body="The scheduled cargo-deny run failed on main at \`${GITHUB_SHA::7}\` ($RUN_URL). Read the job log for the RUSTSEC id and its fixed version, then land one dependency bump through the ordinary PR gate; do not add an ignore. This issue closes itself when a scheduled run passes."
+            if [ -z "$number" ]; then
+              gh api "repos/$REPOSITORY/issues" -f title="$title" -f body="$body" > /dev/null
+            else
+              gh api "repos/$REPOSITORY/issues/$number/comments" -f body="$body" > /dev/null
+            fi
+          elif [ -n "$number" ]; then
+            gh api "repos/$REPOSITORY/issues/$number/comments" -f body="Recovered: scheduled cargo-deny passed on main at \`${GITHUB_SHA::7}\` ($RUN_URL). Closing the tracker." > /dev/null
+            gh api -X PATCH "repos/$REPOSITORY/issues/$number" -f state=closed > /dev/null
+          fi
 
   dependency-review:
     name: dependency-review
@@ -43,11 +84,11 @@ jobs:
       contents: read
       pull-requests: read
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
       # TODO: upgrade when GitHub publishes a Node-24-backed Dependency Review
       # release. v4 remains the official hard security gate for dependency diffs.
-      - uses: actions/dependency-review-action@v4
+      - uses: actions/dependency-review-action@2031cfc080254a8a887f58cffee85186f0e49e48 # v4.9.0
         with:
           fail-on-severity: high
           deny-licenses: GPL-2.0, GPL-3.0, AGPL-1.0, AGPL-3.0

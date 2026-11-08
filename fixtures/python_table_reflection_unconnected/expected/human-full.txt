@@ -35,6 +35,7 @@ Language
 
 Static exposure
   exposed (info, confidence 0.60)
+  Why capped: preview adapter: infection/propagation not modeled (Python); syntax-first, no type or import resolution. Preview score, not on the same scale as Rust confidence.
 
 Evidence
   - reach yes: 1 related Python test(s) found for owner `<module>`
@@ -46,11 +47,12 @@ Evidence
   - related test tests/test_table.py:4 test_silver_price uses strong exact value oracle: assert price("silver") == 5
 
 Weakness
-  - Related Python test reaches `<module>` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value discriminator
+  - Related Python test reaches `<module>` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value check
 
 Next step
   Python preview: changed behavior is observed under a strong oracle; verify the assertion targets the changed behavior
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/python_table_reflection_unconnected/input --diff <cwd>/fixtures/python_table_reflection_unconnected/diff.patch --mode fast probe:rates_table.py:python_preview:742c3f98
   ripr context --root <cwd>/fixtures/python_table_reflection_unconnected/input --diff <cwd>/fixtures/python_table_reflection_unconnected/diff.patch --mode fast --at probe:rates_table.py:python_preview:742c3f98
 

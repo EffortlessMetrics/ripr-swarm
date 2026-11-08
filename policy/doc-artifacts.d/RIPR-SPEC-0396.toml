@@ -1,0 +1,7 @@
+[[artifact]]
+id = "RIPR-SPEC-0396"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0396-dart-preview-static-facts.md"
+status = "proposed"
+owner = "language-adapter"
+standalone_reason = "Issue #5839 defines the Dart/Flutter preview contract before parser or adapter work: separate package_test and flutter_test capability cells, distinct async and widget fact families, typed limits for generated/platform/state uncertainty, activation-before-oracle (#5542), shared witness reuse, and cross-language edges only through registered #5559 provenance."

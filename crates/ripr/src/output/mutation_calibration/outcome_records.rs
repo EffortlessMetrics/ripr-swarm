@@ -65,7 +65,7 @@ pub(super) fn parse_mutation_outcomes_json(
     json: &str,
 ) -> Result<Vec<MutationOutcomeRecord>, String> {
     let value: Value = serde_json::from_str(json)
-        .map_err(|err| format!("failed to parse cargo-mutants JSON: {err}"))?;
+        .map_err(|err| format!("failed to parse cargo-mutants JSON: {err}; regenerate the input with the command that wrote it, then rerun"))?;
     let mut records = Vec::new();
     collect_mutation_outcome_records(&value, &mut records);
     let mut records = super::merge_mutation_outcome_records(records);

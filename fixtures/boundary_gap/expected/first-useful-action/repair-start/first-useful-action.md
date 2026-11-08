@@ -15,6 +15,7 @@ Start the focused-test repair for this seam.
 - Current evidence strength: `Static evidence found related test context, but the current check is weak because the discriminator is missing.`
 - Missing discriminator: amount == discount_threshold
 - Focused proof intent: assert_eq!(discounted_total(/* boundary input where amount == discount_threshold */), /* expected */)
+  (replace each /* ... */ comment with a real value from your test before using it)
 - Repair start: `ripr agent repair --root . --seam-id 8f7fa8644fd12280 --phase before`
 - After the test edit: run the `--attempt ... --phase after` command the before phase prints; it verifies movement and writes the receipt.
 - Analysis outcome for the receipt: `ripr check --root . --base main --mode draft --format json > target/ripr/workflow/analysis-outcome.json`

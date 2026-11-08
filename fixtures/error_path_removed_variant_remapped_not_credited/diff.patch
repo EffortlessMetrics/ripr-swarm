@@ -1,0 +1,12 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -7,7 +7,7 @@
+ pub fn parse_unit(raw: &str) -> Result<u32, UnitError> {
+     let parsed = match raw {
+         "k" => Ok(1_000),
+-        _ => Err(UnitError::Unknown),
++        _ => Err(UnitError::Blank),
+     };
+     parsed.map_err(|_| UnitError::Unknown)
+ }

@@ -44,15 +44,16 @@ non-claims.
 authorities into one strict JSON document on `ripr help --json`. The
 document carries:
 
-- `schema_version` (integer, currently `3`; bumped on any material DTO shape
-  change, pinned by tests, and registered in `docs/OUTPUT_SCHEMA.md`),
+- `schema_version` (integer, currently `4`; bumped on any material DTO shape
+  change once per landed change, not per iteration within one PR (a version
+  no release has shipped is still open to shape edits), pinned by tests, and registered in `docs/OUTPUT_SCHEMA.md`),
   `product_version`, and `catalog_contract_version`;
 - `commands`: one row per C1 catalog entry joined to its C2 metadata row on
   the catalog identity — id, path, class, discovery posture, replacement or
   retirement relation (canonical, `alias_of` with its canonical target, or
   `retired` with an optional replacement), aliases, summary, task label,
   workflow tags, operation, cost, all six side-effect flags, primary inputs,
-  output roles, state target, JSON support, example, next routes, stop
+  output roles, state target, `accepts_json_flag` (the exact spelling that prints JSON on stdout, or null), `writes_json_artifacts` (the command writes JSON artifact files, independent of any flag and not exclusive of `accepts_json_flag`), a `flags` inventory parsed from the help body (name, `takes_value`, closed `values`, `required`, `repeatable`, `env`) with `flags_scope` (`own_help_body`; `shared_help_body` where one body documents several subcommands; `no_help_body` where the command has none, so empty `flags` is not evidence of no flags), example, next routes, stop
   states, a typed `exit` object (closed `kind` plus the implemented 0/2/3
   codes, and stdout-on-refusal disclosure where a command can exit 3),
   limitations, and the not-applicable reason;
@@ -152,8 +153,15 @@ command or workflow claim.
 
 ## Required Evidence
 
+Limits of the evidence: `accepts_json_flag` is checked against each own-body
+help row (shared-body rows and the documented gaps `help`, `context`,
+`outcome` and `calibrate cargo-mutants`, whose help bodies omit the flag or
+its typed value set, are exempt and rest on the metadata table, which was
+derived by probing the prior binary). `writes_json_artifacts` has no
+independent runtime oracle; it is a hand-maintained metadata fact.
+
 - Production document integrity is empty of violations and the document is
-  valid JSON with `schema_version` 3, non-empty `commands` and `workflows`,
+  valid JSON with `schema_version` 4, non-empty `commands` and `workflows`,
   and a 64-hex-character sha256 digest.
 - Determinism fixtures: reversing the source table order normalizes to the
   same digest; the rendered bytes are stable across builds of the same
@@ -202,7 +210,7 @@ command or workflow claim.
 
 ## Acceptance Examples
 
-1. `ripr help --json` prints one JSON line carrying `schema_version` 3,
+1. `ripr help --json` prints one JSON line carrying `schema_version` 4,
    every catalog command row, every workflow row, and the catalog digest;
    stderr is empty and the workspace is untouched. The `cmd:check` row's
    `exit` object names findings including `exposed` and

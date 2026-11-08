@@ -1,0 +1,12 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -2,7 +2,7 @@
+     if n < 3 {
+         return None;
+     }
+-    Some(n * 2)
++    Some(2 * n)
+ }
+ 
+ #[cfg(test)]

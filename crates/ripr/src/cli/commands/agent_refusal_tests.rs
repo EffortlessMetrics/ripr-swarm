@@ -32,6 +32,7 @@ fn sample_policy(inline_test_module_target: bool) -> Result<EditCagePolicy, Stri
         ignored_build_output: None,
         untracked_build_lockfile: None,
         inline_test_module_target,
+        new_test_proposal: None,
     })
 }
 
@@ -79,10 +80,10 @@ fn verify_typed_refusal_classifier_matches_only_whole_or_leading_clauses() {
 }
 
 #[test]
-fn after_refusal_reason_folds_narration_into_sentences() {
+fn after_refusal_reason_preserves_narration_case_and_lines() {
     assert_eq!(
         after_refusal_reason("  refused here.  ", &[]),
-        "refused here"
+        "refused here."
     );
     let narration = vec![
         "attempt `a` stays open.".to_string(),
@@ -92,7 +93,7 @@ fn after_refusal_reason_folds_narration_into_sentences() {
     ];
     assert_eq!(
         after_refusal_reason("refused here.", &narration),
-        "refused here. Attempt `a` stays open. To recover: rerun"
+        "refused here.\nattempt `a` stays open.\nto recover: rerun."
     );
 }
 
@@ -318,8 +319,10 @@ fn before_phase_refuses_dirty_production_premise_before_the_seam_inventory() -> 
                 authority: None,
             },
             verify_rollback: false,
+            test_result: None,
             store: None,
             json: false,
+            quiet: false,
         };
         let mut refusal = AfterPhaseRefusalContext::default();
         match run_agent_repair_phase(options, &mut refusal, Some(&identity)) {
@@ -347,7 +350,19 @@ fn gap_before_phase_refuses_dirty_production_premise_before_the_snapshot() -> Re
 
 fn gap_premise_exercise(root: &Path) -> Result<(), String> {
     let mut refusal = AfterPhaseRefusalContext::default();
-    match run_gap_bound_before_phase(root, "gap:0123456789abcdef", "HEAD", None, &mut refusal) {
+    let identity = crate::app::repair_attempt::BeforeRepairAttemptIdentity::prepare(
+        root,
+        "gap:0123456789abcdef",
+    )?;
+    match run_gap_bound_before_phase(
+        root,
+        "gap:0123456789abcdef",
+        "HEAD",
+        None,
+        false,
+        &mut refusal,
+        &identity,
+    ) {
         Err(error) => {
             require_contains(&error, &["Uncommitted: src/lib.rs", "Nothing was started."])
         }
@@ -371,7 +386,7 @@ fn seam_id_translation_passes_plain_ids_through_without_resolving() -> Result<()
 fn unknown_seam_hint_falls_back_to_the_pilot_listing_for_other_shapes() {
     let hint = unknown_seam_id_hint(Path::new("some-checkout"), "f3c9e4d21a0b7c88");
     assert!(hint.starts_with("Run `ripr pilot --root "), "{hint}");
-    assert!(hint.contains("current seam IDs"), "{hint}");
+    assert!(hint.contains("current repair IDs"), "{hint}");
     assert!(!hint.contains("finding ID"), "{hint}");
 }
 

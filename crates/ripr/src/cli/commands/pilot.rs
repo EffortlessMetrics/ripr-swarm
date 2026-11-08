@@ -4,7 +4,7 @@ use crate::app::{self, CheckInput, Mode, OutputFormat};
 use crate::cli::commands_numeric::{parse_positive_u64, parse_positive_usize};
 use crate::cli::commands_options::{PilotOptions, PilotStdoutFormat};
 use crate::cli::help;
-use crate::cli::parse::{expect_value, parse_mode};
+use crate::cli::parse::{expect_value, parse_mode, reconcile_root};
 use crate::cli::progress::{CliProgressSink, ProgressPolicy};
 use crate::cli::suggest::{unknown_argument, unknown_value};
 use crate::config::{CheckInputExplicit, RiprConfig, apply_to_check_input, load_for_root};
@@ -19,6 +19,13 @@ use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 const DEFAULT_PILOT_TIMEOUT_MS: u64 = 30_000;
+
+/// After the analysis budget fires, the worker gets this long to reach a
+/// cancellation checkpoint before pilot writes the timeout partial summary.
+const PILOT_CANCEL_GRACE: Duration = Duration::from_secs(5);
+
+/// Poll interval while waiting on the analysis worker under a deadline.
+const PILOT_DEADLINE_POLL: Duration = Duration::from_millis(250);
 
 /// Budget for the auto-retry when the default timeout fires (#2424).
 /// A cold fact cache on a multi-crate workspace can need ~155s; the
@@ -40,6 +47,10 @@ const PILOT_RETRY_TIMEOUT_MS: u64 = 240_000;
 /// rather than misreporting.
 /// Diff-bound generated-source selection also withholds identity whenever its
 /// source/evidence inputs differ from ordinary repo exposure.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the failed-evidence limitations travel beside the sibling disclosures this writer already takes; bundling them would hide which authority supplies each"
+)]
 fn write_pilot_repo_exposure_json(
     path: &Path,
     input: &CheckInput,
@@ -47,6 +58,8 @@ fn write_pilot_repo_exposure_json(
     limit_info: Option<RepoExposureLimit<'_>>,
     generated_skip: Option<&output::repo_exposure::GeneratedRustSkip>,
     context: Option<&crate::agent::artifact::RepoExposureArtifactContext>,
+    byte_bound: Option<&output::repo_exposure::RepoExposureByteBound>,
+    evidence_limitations: &[crate::analysis_outcome::AnalysisLimitation],
 ) -> Result<(), String> {
     let ts_guidance = output::render::detect_ts_full_repo_guidance_pub(&input.root, classified);
     let python_guidance =
@@ -55,12 +68,14 @@ fn write_pilot_repo_exposure_json(
     let Some(context) = context else {
         return write_pilot_file(
             path,
-            output::repo_exposure::render_repo_exposure_json_with_limit(
+            output::repo_exposure::render_repo_exposure_json_bounded(
                 classified,
                 limit_info,
                 ts_guidance.as_ref(),
                 python_guidance.as_ref(),
                 generated_skip,
+                byte_bound,
+                evidence_limitations,
             ),
         );
     };
@@ -73,6 +88,7 @@ fn write_pilot_repo_exposure_json(
             ts_guidance.as_ref(),
             python_guidance.as_ref(),
             generated_skip,
+            evidence_limitations,
             context,
             &mut writer,
         ) {
@@ -116,6 +132,8 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
     // it would bound, not after it.
     // The same guard bounds the built-in inventory cap by that budget (#10726).
     let _pilot_inventory_default = analysis::PilotInventoryDefault::enter()?;
+    // Refuse an invalid RIPR_PILOT_REPO_EXPOSURE_BYTES (#12108) the same way.
+    let repo_exposure_byte_budget = output::repo_exposure::pilot_repo_exposure_byte_budget()?;
     // RIPR_GIT_TIMEOUT bounds pilot's current-change git calls as it bounds
     // check's (#2613): seconds, `0` disables the deadline, and an invalid
     // value fails closed here rather than running with the default.
@@ -158,7 +176,8 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
         .enabled()
         .contains(&crate::domain::LanguageId::Rust);
     let extension_ms = pilot_deadline_extension_ms(&options);
-    let progress = pilot_progress_sink(options.quiet);
+    let deadline_extended = std::cell::Cell::new(false);
+    let progress = pilot_progress_sink(options.quiet, options.format == PilotStdoutFormat::Json);
     let analysis_started = Instant::now();
     let mut timings = PilotTimings::start();
     let analysis_result = if rust_enabled {
@@ -166,6 +185,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
             options.timeout_ms,
             extension_ms,
             || {
+                deadline_extended.set(true);
                 eprintln!(
                     "ripr: pilot still running after {}ms; extending the deadline by {}ms (a cold cache needs more time)...",
                     DEFAULT_PILOT_TIMEOUT_MS, PILOT_RETRY_TIMEOUT_MS
@@ -225,6 +245,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
                 skipped_generated: Vec::new(),
                 naming_only_skips: Vec::new(),
                 declined_rust_files: Vec::new(),
+                evidence_limitations: Vec::new(),
             },
             change,
             PilotStageTimes {
@@ -239,6 +260,8 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
     // (#5443). The printed retry also stays inside an interactive cap
     // instead of multiplying the spent budget by four (#7427).
     let spent_timeout_ms = options.timeout_ms.saturating_add(extension_ms.unwrap_or(0));
+    let (complete_timeout_ms, complete_timeout_extension_ms) =
+        pilot_complete_summary_timeout(options.timeout_ms, extension_ms, deadline_extended.get());
     let PilotAnalysisResult::Complete((report, current_change, stage_times)) = analysis_result
     else {
         // #7425: a timeout overwrites only the two summaries. Remove leftover
@@ -261,6 +284,8 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
                 language_routes: None,
                 current_change: None,
                 seam_limit: None,
+                repo_exposure_byte_bound: None,
+                inventory_evidence_limitations: &[],
             },
         )?;
         return Ok(());
@@ -299,6 +324,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
     let diff_bound_corpus = report.diff_bound_corpus;
     let mut inventory_limit_info = report.limit_info;
     let declined_rust_files = report.declined_rust_files.clone();
+    let inventory_evidence_limitations = report.evidence_limitations;
     let generated_skip = output::repo_exposure::GeneratedRustSkip::from_parts(
         report.skipped_generated,
         report.naming_only_skips,
@@ -383,6 +409,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
     };
     let current_change = current_change
         .with_absent_file_limitations(absent_file_limitations)
+        .with_evidence_limitations(folded.evidence_limitations)
         .with_seams_counted(&classified, folded.caveat_limit);
     let budget_started = Instant::now();
     let mut pilot_budget_info = analysis::apply_pilot_seam_budget(&mut classified, |entry| {
@@ -410,6 +437,23 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
     }
     timings.record("seam_budget", budget_started, Some(classified.len()));
     let pilot_budget_truncated = pilot_budget_info.is_some();
+    // #12108: the seam budget bounds the seam count, not bytes. Cut the
+    // `seams[]` entries of repo-exposure.json to the byte budget, disclosed in
+    // the file and pilot-summary.json. Markdown, packets and the summary keep
+    // the full classified population.
+    // The cut keeps the current change first, then the pilot ranking (#12152),
+    // so the ranked list is only built when a byte budget applies.
+    let ranked_for_byte_bound = if repo_exposure_byte_budget.is_some() {
+        output::pilot::top_actionable_seams(&classified, usize::MAX, Some(&current_change))
+    } else {
+        Vec::new()
+    };
+    let repo_exposure_byte_bound = output::repo_exposure::bound_repo_exposure_seams(
+        &classified,
+        repo_exposure_byte_budget,
+        |entry| current_change.keeps_past_budget(entry),
+        &ranked_for_byte_bound,
+    );
     // The summary's disclosure counts from the outermost population: when
     // both caps fired, the pilot budget's total is the already-capped
     // inventory, which would hide the seams the inventory limit dropped.
@@ -460,13 +504,15 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
         mode: &input.mode,
         config_path: config.source_path(),
         max_seams: options.max_seams,
-        timeout_ms: options.timeout_ms,
-        timeout_extension_ms: 0,
+        timeout_ms: complete_timeout_ms,
+        timeout_extension_ms: complete_timeout_extension_ms,
         artifacts: &artifacts,
         python_first_use: python_first_use.as_ref(),
         language_routes: Some(&language_routes),
         current_change: Some(&current_change),
         seam_limit: summary_limit.as_ref(),
+        repo_exposure_byte_bound: repo_exposure_byte_bound.as_ref(),
+        inventory_evidence_limitations: &inventory_evidence_limitations,
     };
 
     let ts_guidance = output::render::detect_ts_full_repo_guidance_pub(&input.root, &classified);
@@ -474,7 +520,11 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
         output::render::detect_python_repo_exposure_guidance_pub(&input.root, &classified);
     // The existing context is available only for the check-comparable full
     // population. Keep base None, matching pilot's printed after command.
-    let snapshot_context = if pilot_budget_truncated || change_seams_added || diff_bound_corpus {
+    let snapshot_context = if pilot_budget_truncated
+        || change_seams_added
+        || diff_bound_corpus
+        || repo_exposure_byte_bound.is_some()
+    {
         None
     } else {
         Some(
@@ -495,6 +545,8 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
         repo_exposure_limit,
         generated_skip.as_ref(),
         snapshot_context.as_ref(),
+        repo_exposure_byte_bound.as_ref(),
+        &inventory_evidence_limitations,
     )?;
     write_pilot_file(
         &artifacts.repo_exposure_md,
@@ -504,8 +556,11 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
             ts_guidance.as_ref(),
             python_guidance.as_ref(),
             generated_skip.as_ref(),
+            &inventory_evidence_limitations,
         ),
     )?;
+    let packet_bound = analysis::pilot_packet_budget()?
+        .map(|(max, source)| output::agent_seam_packets::PacketBound { max, source });
     write_pilot_file(
         &artifacts.agent_seam_packets_json,
         output::agent_seam_packets::render_agent_seam_packets_json_for_root(
@@ -514,6 +569,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
             causal_projection.as_ref(),
             &crate::agent::loop_commands::bound_root(&options.root.to_string_lossy()),
             &declined_rust_files,
+            packet_bound,
         ),
     )?;
 
@@ -681,7 +737,7 @@ fn classify_change_past_seam_limit(
         ) {
             Ok(PilotAnalysisResult::Complete(classified)) => Ok(classified),
             Ok(PilotAnalysisResult::TimedOut) => {
-                Err("it did not finish within pilot's deadline".to_string())
+                Err("it did not finish within pilot's deadline; raise `--timeout-ms`, or narrow the change".to_string())
             }
             Err(error) => Err(error),
         },
@@ -735,8 +791,8 @@ fn elapsed_ms(started: Instant) -> u64 {
 /// one-shot timeout notice and command errors still reach stderr. The
 /// sink is terminal-once, so a timed-out attempt (or its #2424 retry)
 /// needs a fresh one from `pilot_progress_sink`.
-fn pilot_progress_sink(quiet: bool) -> Option<Arc<CliProgressSink>> {
-    if crate::cli::progress::progress_silenced(quiet) {
+fn pilot_progress_sink(quiet: bool, machine_format: bool) -> Option<Arc<CliProgressSink>> {
+    if crate::cli::progress::progress_silenced(quiet, machine_format) {
         return None;
     }
     Some(Arc::new(CliProgressSink::for_stderr(
@@ -893,7 +949,13 @@ fn parse_pilot_options(args: &[String]) -> Result<PilotOptions, String> {
         match args[i].as_str() {
             "--root" => {
                 i += 1;
-                options.root = PathBuf::from(expect_value(args, i, "--root")?);
+                let reconciled = reconcile_root(
+                    &options.root,
+                    options.root_explicit,
+                    expect_value(args, i, "--root")?,
+                    "pilot",
+                )?;
+                options.root = reconciled;
                 options.root_explicit = true;
             }
             "--out" => {
@@ -994,6 +1056,20 @@ fn pilot_deadline_extension_ms(options: &PilotOptions) -> Option<u64> {
     (!options.timeout_explicit).then_some(PILOT_RETRY_TIMEOUT_MS)
 }
 
+/// Inspected timeout fields for a completed pilot summary (#5443).
+fn pilot_complete_summary_timeout(
+    base_timeout_ms: u64,
+    extension_ms: Option<u64>,
+    deadline_extended: bool,
+) -> (u64, u64) {
+    if deadline_extended {
+        let extension = extension_ms.unwrap_or(0);
+        (base_timeout_ms.saturating_add(extension), extension)
+    } else {
+        (base_timeout_ms, 0)
+    }
+}
+
 enum PilotAnalysisResult<T> {
     Complete(T),
     TimedOut,
@@ -1022,32 +1098,48 @@ where
         let _ignored = tx.send(result);
     });
 
-    let mut outcome = rx.recv_timeout(Duration::from_millis(timeout_ms));
-    if let (Err(mpsc::RecvTimeoutError::Timeout), Some(extension_ms)) = (&outcome, extension_ms) {
-        on_extend();
-        outcome = rx.recv_timeout(Duration::from_millis(extension_ms));
-    }
-    match outcome {
-        Ok(result) => result.map(PilotAnalysisResult::Complete),
-        Err(mpsc::RecvTimeoutError::Timeout) => {
-            cancellation_token
-                .cancel(crate::analysis::cancellation::AnalysisAbortKind::DeadlineExceeded);
-            // #5019: the detached worker owns its progress run's terminal
-            // (`cancelled`), and the caller exits soon after this return.
-            // Give the worker a bounded window to reach a cancellation
-            // checkpoint and finish, so the terminal is not lost to process
-            // exit. A worker stuck past the window cannot be forced (it is
-            // a detached thread): a known, bounded limitation.
-            let _ignored = rx.recv_timeout(Duration::from_secs(5));
-            Ok(PilotAnalysisResult::TimedOut)
+    let total_budget_ms = timeout_ms.saturating_add(extension_ms.unwrap_or(0));
+    let started = Instant::now();
+    let mut on_extend = Some(on_extend);
+    loop {
+        let elapsed = started.elapsed();
+        let remaining = Duration::from_millis(total_budget_ms).saturating_sub(elapsed);
+        if remaining.is_zero() {
+            break;
         }
-        Err(mpsc::RecvTimeoutError::Disconnected) => {
-            Err(super::check_budget::worker_stopped_detail(
-                "ripr pilot",
-                "lower --max-seams or narrow the scope",
-            ))
+        if extension_ms.is_some()
+            && elapsed >= Duration::from_millis(timeout_ms)
+            && let Some(callback) = on_extend.take()
+        {
+            callback();
+        }
+        let mut wait = remaining.min(PILOT_DEADLINE_POLL);
+        if on_extend.is_some() {
+            let until_extension = Duration::from_millis(timeout_ms).saturating_sub(elapsed);
+            if !until_extension.is_zero() {
+                wait = wait.min(until_extension);
+            }
+        }
+        match rx.recv_timeout(wait) {
+            Ok(result) => return result.map(PilotAnalysisResult::Complete),
+            Err(mpsc::RecvTimeoutError::Timeout) => continue,
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                return Err(super::check_budget::worker_stopped_detail(
+                    "ripr pilot",
+                    "lower --max-seams or narrow the scope",
+                ));
+            }
         }
     }
+    cancellation_token.cancel(crate::analysis::cancellation::AnalysisAbortKind::DeadlineExceeded);
+    // #5019: the detached worker owns its progress run's terminal
+    // (`cancelled`), and the caller exits soon after this return.
+    // Give the worker a bounded window to reach a cancellation
+    // checkpoint and finish, so the terminal is not lost to process
+    // exit. A worker stuck past the window cannot be forced (it is
+    // a detached thread): a known, bounded limitation.
+    let _ignored = rx.recv_timeout(PILOT_CANCEL_GRACE);
+    Ok(PilotAnalysisResult::TimedOut)
 }
 
 fn pilot_artifacts(out_dir: &Path) -> output::pilot::PilotArtifacts {
@@ -1063,8 +1155,12 @@ fn pilot_artifacts(out_dir: &Path) -> output::pilot::PilotArtifacts {
 /// Pilot artifacts default under the analyzed repository, which may commit a
 /// symlink at an artifact path; never write through it.
 fn write_pilot_file(path: &Path, contents: impl AsRef<[u8]>) -> Result<(), String> {
-    output::file_write::write(path, contents.as_ref())
-        .map_err(|err| format!("write output {} failed: {err}", path.display()))
+    output::file_write::write(path, contents.as_ref()).map_err(|err| {
+        format!(
+            "write output {} failed: {err}; check you can write to that path, then rerun",
+            path.display()
+        )
+    })
 }
 
 /// Drop leftover complete-run siblings so a timeout packet cannot be read as
@@ -1083,16 +1179,16 @@ fn remove_timeout_packet_sibling(path: &Path) -> Result<(), String> {
     match std::fs::symlink_metadata(path) {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(error) => Err(format!(
-            "inspect leftover timeout packet file {} failed: {error}",
+            "inspect leftover timeout packet file {} failed: {error}; check permissions on that path, then rerun",
             path.display()
         )),
         Ok(metadata) if metadata.file_type().is_dir() => Err(format!(
-            "leftover timeout packet path {} is a directory; refusing to leave it as if it were this run's output",
+            "leftover timeout packet path {} is a directory; refusing to leave it as if it were this run's output; remove that directory, then rerun",
             path.display()
         )),
         Ok(_) => std::fs::remove_file(path).map_err(|error| {
             format!(
-                "remove leftover timeout packet file {} failed: {error}",
+                "remove leftover timeout packet file {} failed: {error}; check you can write to that path, then rerun",
                 path.display()
             )
         }),
@@ -1396,27 +1492,27 @@ mod tests {
     fn pilot_requires_values_for_value_flags() {
         assert_eq!(
             pilot(&args(&["--root"])),
-            Err("missing value for --root".to_string())
+            Err("missing value for --root; pass a value right after it".to_string())
         );
         assert_eq!(
             pilot(&args(&["--out"])),
-            Err("missing value for --out".to_string())
+            Err("missing value for --out; pass a value right after it".to_string())
         );
         assert_eq!(
             pilot(&args(&["--mode"])),
-            Err("missing value for --mode".to_string())
+            Err("missing value for --mode; pass a value right after it".to_string())
         );
         assert_eq!(
             pilot(&args(&["--max-seams"])),
-            Err("missing value for --max-seams".to_string())
+            Err("missing value for --max-seams; pass a value right after it".to_string())
         );
         assert_eq!(
             pilot(&args(&["--timeout-ms"])),
-            Err("missing value for --timeout-ms".to_string())
+            Err("missing value for --timeout-ms; pass a value right after it".to_string())
         );
         assert_eq!(
             pilot(&args(&["--format"])),
-            Err("missing value for --format".to_string())
+            Err("missing value for --format; pass a value right after it".to_string())
         );
     }
 
@@ -1432,7 +1528,7 @@ mod tests {
     fn pilot_rejects_non_positive_max_seams() {
         assert_eq!(
             parse_pilot_options(&args(&["--max-seams", "0"])),
-            Err("--max-seams requires a positive integer; got \"0\"".to_string())
+            Err("--max-seams requires a positive integer; pass a whole number of 1 or more, got \"0\"".to_string())
         );
     }
 
@@ -1440,7 +1536,7 @@ mod tests {
     fn pilot_rejects_non_positive_timeout() {
         assert_eq!(
             parse_pilot_options(&args(&["--timeout-ms", "0"])),
-            Err("--timeout-ms requires a positive integer; got \"0\"".to_string())
+            Err("--timeout-ms requires a positive integer; pass a whole number of 1 or more, got \"0\"".to_string())
         );
     }
 
@@ -1619,6 +1715,7 @@ mod tests {
                     skipped_generated: Vec::new(),
                     naming_only_skips: Vec::new(),
                     declined_rust_files: Vec::new(),
+                    evidence_limitations: Vec::new(),
                 })
             },
         );
@@ -1633,6 +1730,98 @@ mod tests {
             1,
             "the analysis must run once, not restart"
         );
+    }
+
+    #[test]
+    fn pilot_complete_summary_timeout_reflects_an_automatic_extension() {
+        assert_eq!(
+            super::pilot_complete_summary_timeout(30_000, Some(240_000), false),
+            (30_000, 0),
+            "a run that finishes inside the default budget keeps the base timeout"
+        );
+        assert_eq!(
+            super::pilot_complete_summary_timeout(30_000, Some(240_000), true),
+            (270_000, 240_000),
+            "an extended-then-completed run must report the spent budget"
+        );
+        assert_eq!(
+            super::pilot_complete_summary_timeout(30_000, None, true),
+            (30_000, 0),
+            "an explicit hard limit never reports an automatic extension"
+        );
+    }
+
+    #[test]
+    fn pilot_default_extension_wall_clock_stays_within_total_budget() {
+        // #5322: the default-plus-extension path must honor the summed budget
+        // from the start of the run, not stall for multiples of it after cancel.
+        const FIRST_MS: u64 = 40;
+        const EXTENSION_MS: u64 = 60;
+        let started = Instant::now();
+        let (cancelled_tx, cancelled_rx) = mpsc::channel();
+        let extension_notice = std::cell::Cell::new(false);
+        let result = run_pilot_analysis_with_timeout::<(), _>(
+            FIRST_MS,
+            Some(EXTENSION_MS),
+            || extension_notice.set(true),
+            move || {
+                loop {
+                    if crate::analysis::cancellation::checkpoint().is_err() {
+                        let _ignored = cancelled_tx.send(());
+                        return Err("analysis cancelled".to_string());
+                    }
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+            },
+        );
+        assert!(matches!(result, Ok(PilotAnalysisResult::TimedOut)));
+        assert!(extension_notice.get());
+        assert_eq!(cancelled_rx.recv_timeout(Duration::from_secs(1)), Ok(()));
+        let ceiling = Duration::from_millis(FIRST_MS + EXTENSION_MS)
+            + PILOT_CANCEL_GRACE
+            + Duration::from_millis(750);
+        assert!(
+            started.elapsed() <= ceiling,
+            "pilot exceeded its total budget wall clock: {:?} > {ceiling:?}",
+            started.elapsed()
+        );
+    }
+
+    #[test]
+    fn pilot_extension_notice_fires_at_first_phase_boundary() -> Result<(), String> {
+        // Negative control for a single long recv through the whole budget:
+        // the extension callback must fire at the first-phase boundary, not
+        // only after the combined budget elapses (#5322).
+        const FIRST_MS: u64 = 40;
+        const EXTENSION_MS: u64 = 60;
+        let started = Instant::now();
+        let notice_at = std::cell::Cell::new(None::<Duration>);
+        let result = run_pilot_analysis_with_timeout::<(), _>(
+            FIRST_MS,
+            Some(EXTENSION_MS),
+            || notice_at.set(Some(started.elapsed())),
+            || {
+                loop {
+                    if crate::analysis::cancellation::checkpoint().is_err() {
+                        return Err("analysis cancelled".to_string());
+                    }
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+            },
+        );
+        assert!(matches!(result, Ok(PilotAnalysisResult::TimedOut)));
+        let notice = notice_at.get().ok_or_else(|| {
+            "default-plus-extension run must emit the extension notice".to_string()
+        })?;
+        assert!(
+            notice <= Duration::from_millis(FIRST_MS + 20),
+            "extension notice must fire at the first-phase boundary, not after the whole budget; got {notice:?}"
+        );
+        assert!(
+            notice >= Duration::from_millis(FIRST_MS.saturating_sub(20)),
+            "extension notice fired too early: {notice:?}"
+        );
+        Ok(())
     }
 
     #[test]
@@ -1762,10 +1951,10 @@ mod tests {
         // every stage and heartbeat line while the timeout machinery still
         // behaves identically.
         assert!(
-            pilot_progress_sink(true).is_none(),
+            pilot_progress_sink(true, false).is_none(),
             "--quiet must suppress the pilot progress sink"
         );
-        assert!(pilot_progress_sink(false).is_some());
+        assert!(pilot_progress_sink(false, false).is_some());
 
         let result = run_pilot_analysis_with_timeout(
             50,
@@ -1976,6 +2165,8 @@ mod tests {
                 language_routes: None,
                 current_change: None,
                 seam_limit: None,
+                repo_exposure_byte_bound: None,
+                inventory_evidence_limitations: &[],
             },
         )?;
 

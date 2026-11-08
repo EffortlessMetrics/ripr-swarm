@@ -1,3 +1,0 @@
-crates/ripr/src/cli/command.rs|usage: ripr help --all (this route accepts no other arguments)
-crates/ripr/src/cli/command.rs|usage: ripr help --json (this route accepts no other arguments)
-crates/ripr/src/cli/command.rs|usage: ripr help workflow [<workflow-name>] (this route accepts no flags)

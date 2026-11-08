@@ -1,1 +1,0 @@
-crates/ripr/src/output/ripr_zero_status.rs|failed to render RIPR Zero status JSON: {err}

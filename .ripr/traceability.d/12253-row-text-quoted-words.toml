@@ -1,0 +1,7 @@
+[[extend]]
+id = "RIPR-SPEC-0243"
+tests = [
+  "crates/ripr/src/analysis/language/typescript/table_rows.rs::row_text_guard_refuses_hidden_mutation_routes_outside_quotes",
+]
+fixtures = ["fixtures/ts_table_row_quoted_words_credited"]
+code = ["crates/ripr/src/analysis/language/typescript/table_rows.rs"]

@@ -35,7 +35,7 @@ Evidence
   - observation no: No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)
   - discriminator no: No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)
   - local flow reaches returned value: input * 3 (line 2)
-  - related test tests/weight_tests.rs:4 checks_weight uses no oracle; misses: assertion not credited: ripr could not establish that this assertion counts here
+  - related test tests/weight_tests.rs:4 checks_weight uses no oracle; misses: assertion admission unproven: ripr could not establish that this assertion counts here
   - source assertion argument value 12 at line 4
   - source function argument value input = 4 at line 4
 
@@ -58,5 +58,6 @@ Limitation detail
 Next step
   ripr could not read whether the assertions in `checks_weight` (tests/weight_tests.rs:4) run as the standard `assert_eq!`, so it does not report a gap. Check that one of them compares the changed value; add a test only if none does
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/owner_return_pin_rebound_test_attribute/input --diff <cwd>/fixtures/owner_return_pin_rebound_test_attribute/diff.patch --mode fast probe:src_lib.rs:return_value:6ea804bb
   ripr context --root <cwd>/fixtures/owner_return_pin_rebound_test_attribute/input --diff <cwd>/fixtures/owner_return_pin_rebound_test_attribute/diff.patch --mode fast --at probe:src_lib.rs:return_value:6ea804bb

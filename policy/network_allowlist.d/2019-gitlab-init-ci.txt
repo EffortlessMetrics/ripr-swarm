@@ -1,0 +1,1 @@
+crates/ripr/src/cli/commands/init_workflow/gitlab_ci.rs|curl|2|init/gitlab-ci|#2019: the generated GitLab merge-request preset downloads the pinned ripr release archive and its published SHA-256 from EffortlessMetrics/ripr GitHub Releases before extraction, matching the GitHub init installer route.

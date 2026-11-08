@@ -1,6 +1,6 @@
 //! `ripr reports ci-summary`: print the generated workflow's step summary.
 
-use crate::cli::parse::expect_value;
+use crate::cli::parse::{expect_value, reconcile_root};
 use crate::cli::suggest::unknown_argument;
 use crate::output::ci_summary::{CiSummaryInput, render_ci_summary};
 use std::io::Write;
@@ -40,7 +40,7 @@ pub(super) fn ci_summary(args: &[String]) -> Result<(), String> {
     stdout
         .write_all(&summary)
         .and_then(|()| stdout.flush())
-        .map_err(|err| format!("{COMMAND} could not write the summary: {err}"))
+        .map_err(|err| format!("{COMMAND} could not write the summary: {err}; check you can write to the summary path, then rerun"))
 }
 
 /// `RIPR_GATE_MODE` counts as set when it is non-empty, read raw as
@@ -94,12 +94,18 @@ pub(super) fn parse_ci_summary_options_with(
         gate_baseline: workflow.gate_baseline.clone(),
         comment_mode: workflow.comment_mode.clone(),
     };
+    let mut root_explicit = false;
     let mut i = 0usize;
     while i < args.len() {
         let flag = args[i].as_str();
         i += 1;
         match flag {
-            "--root" => options.root = PathBuf::from(non_empty_string_arg(args, i, flag, COMMAND)?),
+            "--root" => {
+                let value = non_empty_string_arg(args, i, flag, COMMAND)?;
+                let reconciled = reconcile_root(&options.root, root_explicit, &value, COMMAND)?;
+                options.root = reconciled;
+                root_explicit = true;
+            }
             "--base-ref" => options.base_ref = non_empty_string_arg(args, i, flag, COMMAND)?,
             "--upload-sarif" => options.upload_sarif = expect_value(args, i, flag)?.to_string(),
             "--gate-baseline" => options.gate_baseline = expect_value(args, i, flag)?.to_string(),
@@ -217,7 +223,9 @@ mod tests {
             assert!(parse(&[flag, "v"], &settings).is_ok(), "{flag}");
             assert_eq!(
                 parse(&[flag], &settings),
-                Err(format!("missing value for {flag}"))
+                Err(format!(
+                    "missing value for {flag}; pass a value right after it"
+                ))
             );
         }
     }

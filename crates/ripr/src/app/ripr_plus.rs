@@ -43,6 +43,8 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use super::subcommand::invocation_repo_root_with_directory_hint;
+
 const RIPR_PLUS_JSON: &str = "target/ripr/reports/ripr-plus.json";
 const RIPR_PLUS_MD: &str = "target/ripr/reports/ripr-plus.md";
 const RIPR_PLUS_LAST_GOOD_JSON: &str = "target/ripr/reports/ripr-plus.last-good.json";
@@ -75,7 +77,7 @@ pub(crate) fn run_ripr_plus(args: &[String]) -> Result<(), String> {
         return Ok(());
     }
     let options = parse_options(args)?;
-    let repo = repo_root()?;
+    let repo = invocation_repo_root_with_directory_hint()?;
     let head = git_head(&repo);
     compose_and_write_receipt(&repo, &options, &head)
 }
@@ -978,12 +980,6 @@ fn git_head_within(repo: &Path, deadline: std::time::Duration) -> String {
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
         .unwrap_or_else(|| "unknown".to_string())
-}
-
-fn repo_root() -> Result<PathBuf, String> {
-    std::env::current_dir().map_err(|err| {
-        format!("failed to determine working directory: {err}; run ripr from an existing directory")
-    })
 }
 
 fn write_parented_file(path: &Path, label: &str, contents: impl AsRef<[u8]>) -> Result<(), String> {

@@ -664,6 +664,8 @@ fn module_extraction_repair_card_keeps_indexed_unit_target() -> Result<(), Strin
             has_fix_site: false,
             has_suggested_assertion: false,
             limitation_kinds: Vec::new(),
+            instruction_semantic_id: None,
+            instruction_instance_id: None,
         };
         let input = RepairCardInput {
             snapshot: RepairCardSnapshot {

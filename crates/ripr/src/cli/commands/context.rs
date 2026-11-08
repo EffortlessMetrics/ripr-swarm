@@ -8,6 +8,7 @@ use crate::app::{self, CheckInput, OutputFormat};
 use crate::cli::help;
 use crate::cli::parse::{
     base_with_diff_conflict_error, disclose_attached_terminal_stdin_read, expect_value, parse_mode,
+    reconcile_root,
 };
 use crate::config::{CheckInputExplicit, apply_to_check_input, load_for_root};
 use std::path::PathBuf;
@@ -34,12 +35,20 @@ pub(in crate::cli) fn context(args: &[String]) -> Result<(), String> {
     let mut worktree = false;
     let mut committed = false;
     let mut root_explicitly_provided = false;
+    // #9340: same `--path`/`--exclude` narrowing `ripr check` binds, so a
+    // pasted drill-in from a scoped oversized-diff run re-analyzes the same
+    // files instead of tripping `diff_scope_oversized`.
+    let mut scope_include: Vec<String> = Vec::new();
+    let mut scope_exclude: Vec<String> = Vec::new();
     let mut i = 0usize;
     while i < args.len() {
         match args[i].as_str() {
             "--root" => {
                 i += 1;
-                input.root = PathBuf::from(expect_value(args, i, "--root")?);
+                let value = expect_value(args, i, "--root")?;
+                let reconciled =
+                    reconcile_root(&input.root, root_explicitly_provided, value, "context")?;
+                input.root = reconciled;
                 root_explicitly_provided = true;
             }
             "--base" => {
@@ -78,6 +87,14 @@ pub(in crate::cli) fn context(args: &[String]) -> Result<(), String> {
             }
             "--worktree" => worktree = true,
             "--committed" => committed = true,
+            "--path" => {
+                i += 1;
+                scope_include.push(expect_value(args, i, "--path")?.to_string());
+            }
+            "--exclude" => {
+                i += 1;
+                scope_exclude.push(expect_value(args, i, "--exclude")?.to_string());
+            }
             "--at" => {
                 i += 1;
                 selector = Some(expect_value(args, i, "--at")?.to_string());
@@ -114,6 +131,7 @@ pub(in crate::cli) fn context(args: &[String]) -> Result<(), String> {
         }
         i += 1;
     }
+    super::bind_diff_scope_flags(&mut input, scope_include, scope_exclude)?;
     // #4319: same parse-time `--base`+`--diff` conflict as `explain`. Only
     // the fresh path conflicts: beside `--from`, both flags are assertions
     // verified against the recording (RIPR-SPEC-0140), so that verification
@@ -255,7 +273,7 @@ pub(in crate::cli) fn context(args: &[String]) -> Result<(), String> {
     // stderr-only stage lines `ripr check` projects (throttled heartbeats
     // included) disclose the work without touching machine stdout. The
     // `--from` artifact path runs no pipeline and wires no sink.
-    let progress = (!crate::cli::progress::progress_silenced(quiet)).then(|| {
+    let progress = (!crate::cli::progress::progress_silenced(quiet, true)).then(|| {
         crate::cli::progress::CliProgressSink::for_stderr(
             std::io::IsTerminal::is_terminal(&std::io::stderr()),
             crate::cli::progress::ProgressPolicy::STANDARD,
@@ -499,23 +517,74 @@ mod tests {
     fn context_requires_values_for_value_flags() {
         assert_eq!(
             context(&args(&["--at"])),
-            Err("missing value for --at".to_string())
+            Err("missing value for --at; pass a value right after it".to_string())
         );
         assert_eq!(
             context(&args(&["--finding"])),
-            Err("missing value for --finding".to_string())
+            Err("missing value for --finding; pass a value right after it".to_string())
         );
         assert_eq!(
             context(&args(&["--root"])),
-            Err("missing value for --root".to_string())
+            Err("missing value for --root; pass a value right after it".to_string())
         );
         assert_eq!(
             context(&args(&["--perl-facts"])),
-            Err("missing value for --perl-facts".to_string())
+            Err("missing value for --perl-facts; pass a value right after it".to_string())
         );
         assert_eq!(
             context(&args(&["--suppression-policy"])),
-            Err("missing value for --suppression-policy".to_string())
+            Err("missing value for --suppression-policy; pass a value right after it".to_string())
+        );
+        assert_eq!(
+            context(&args(&["--path"])),
+            Err("missing value for --path; pass a value right after it".to_string())
+        );
+        assert_eq!(
+            context(&args(&["--exclude"])),
+            Err("missing value for --exclude; pass a value right after it".to_string())
+        );
+    }
+
+    /// #9340: the printed `ripr context --path/--exclude` line from a scoped
+    /// check must parse, and a pattern `check` would refuse must fail the
+    /// same way rather than as an unknown flag.
+    #[test]
+    fn context_accepts_path_and_exclude_and_rejects_a_dotdot_pattern() {
+        let missing_root = context(&args(&[
+            "--root",
+            "missing-ripr-root-for-context-scope",
+            "--path",
+            "src/lib.rs",
+            "--exclude",
+            "generated/**",
+            "--at",
+            "probe:src_lib.rs:error_path:abcd",
+        ]));
+        assert!(
+            matches!(
+                &missing_root,
+                Err(message)
+                    if !message.contains("unknown context argument \"--path\"")
+                        && !message.contains("unknown context argument \"--exclude\"")
+                        && message.contains("missing-ripr-root-for-context-scope")
+            ),
+            "`--path`/`--exclude` must parse and reach the root-dependent failure: {missing_root:?}"
+        );
+        let refusal = context(&args(&[
+            "--path",
+            "../escape",
+            "--at",
+            "probe:src_lib.rs:error_path:abcd",
+        ]));
+        assert!(refusal.is_err(), "dot-dot --path must fail: {refusal:?}");
+        let err = refusal.err().unwrap_or_default();
+        assert!(
+            err.contains("--path pattern \"../escape\"") && err.contains("`..` segment"),
+            "context must reuse check's pattern refusal, not an unknown-flag error: {err}"
+        );
+        assert!(
+            !err.contains("unknown context argument"),
+            "dot-dot --path must not look like an unknown flag: {err}"
         );
     }
 

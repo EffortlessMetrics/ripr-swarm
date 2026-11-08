@@ -15,6 +15,7 @@
 
 use super::tests::{consume, packet_test_options};
 use super::*;
+use std::collections::BTreeMap;
 
 const FIXTURE: &str = include_str!(
     "../../../../../../fixtures/perl_lsp_facts_exporter/expected/ripr-perl-source-test-oracle-facts-v1.json"
@@ -22,9 +23,9 @@ const FIXTURE: &str = include_str!(
 
 const CAP: usize = 10_000;
 
-const DISTRIBUTED_DIGEST: &str = "c6db3ddd678b1ab48f80c27af44de26202c07130133c2e51a684e31ae5ceb5dc";
-const STAR_DIGEST: &str = "55bf95ebed88770bac4a99926203b1ab8da9ef98c9cc76631fec20ea43d63f37";
-const DUPLICATES_DIGEST: &str = "f2b6c33177bbca62cf6f52b67fc0e392a037376512995d2a36857952b1b8d9bb";
+const DISTRIBUTED_DIGEST: &str = "9e46cf0bdd8a90bae7b9c8e9a53253fd5a4a7a1dcf918353fb09c256c6e84382";
+const STAR_DIGEST: &str = "3c5a917b57d1dad697d528ac58601eed5788a37e431bab21e7eb21bc228ebdc9";
+const DUPLICATES_DIGEST: &str = "184b6c0c43daaec058efaf722fdca36b352a4706bf22386a46651e0ad6324e94";
 
 fn digest(packet: &PerlFactPacket) -> (String, usize) {
     let findings = packet_to_findings_with_currentness(packet, &BTreeMap::new(), |_, _| {

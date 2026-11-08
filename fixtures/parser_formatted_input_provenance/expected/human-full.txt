@@ -38,7 +38,7 @@ Evidence
   - local flow reaches returned value: None (line 47)
   - related test src/lib.rs:62 unresolved_target_location_is_required_and_positive uses strong exact value oracle: assert_eq!( parse_note(&make("src/a.rs:12")), Some(vec![( "src/a.rs:12".into(), "rust_module_unresolved_target".into() )]) );
   - related test src/lib.rs:91 unrelated_plan_and_gate_oracles uses strong exact value oracle: assert_eq!(plan_reason, "rust_module_unresolved_target"); misses: no established call path to the changed code; linked by file location only
-  - related test src/lib.rs:91 unrelated_plan_and_gate_oracles uses weak relational check oracle: assert!(gate_passed); misses: no established call path to the changed code; linked by file location only
+  - related test src/lib.rs:91 unrelated_plan_and_gate_oracles uses weak relational check oracle: assert!(gate_passed); misses
   - related test src/lib.rs:85 other_parser_condition misses: asserts, but not on the changed value; checked `assert!(parse_note("ripr: 1 Rust module composition limitation(s): src/a.rs:rust_module_ambiguous_parent; affected module contexts remain fail-closed.").is_some())`
   - source assertion argument value "rust_module_unresolved_target" at line 66
   - source assertion argument value "src/a.rs:12" at line 66
@@ -58,5 +58,6 @@ Stop reasons:
 Next step
   Open the related test, check whether it reaches the changed code, and inspect other existing tests. Trace their inputs through the local or computed operand (including default and empty cases) to see which side of the changed condition they exercise, then name an input that would exercise the other side. ripr.toml does not support fixture/builder value mappings. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/parser_formatted_input_provenance/input --diff <cwd>/fixtures/parser_formatted_input_provenance/diff.patch --mode fast probe:src_lib.rs:predicate:7ed3887e
   ripr context --root <cwd>/fixtures/parser_formatted_input_provenance/input --diff <cwd>/fixtures/parser_formatted_input_provenance/diff.patch --mode fast --at probe:src_lib.rs:predicate:7ed3887e

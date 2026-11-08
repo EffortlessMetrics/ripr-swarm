@@ -1,0 +1,26 @@
+REVIEW_READY — native qualification and integration review complete for the selected hash-layout change.
+
+reviewed_head_sha: `60ccba6cf42efebceccec654e6c3a40beb7ecc6b`
+integration_basis: current main `ac0133758f5bdfa5575684500237083706444a8e`; local non-mutating merge-tree is `a422e7db43ac1ac8b436e9c3bee2cb57e7dbab0b`. The qualified execution subject remains `4b088e86b91697041bf437d8382c0ad5e055d141` (main `fe95ace8` + this head), tree `2992213f2e8940b2ed0065cd867c4bc08098ac82`. Those are different subjects, not a renamed run.
+claim_boundary: #12777 — stable native four-way hash assignment, exact accepted command/receipt contract, complete selected-suite conservation and actual runtime observation.
+
+changed_surfaces_and_semantic_owners_inspected: the complete eight-file workflow/verifier/test/docs/policy delta; actual run/list/context producers, exact verifier command and latest-attempt selection, native inventory/JUnit consumers and final Result. Prior source/oracle review and the exact formatter-only correction retain their original subjects. Current main's independent Windows allowance/docs, cache/CLI-exit guard and corpus changes compose without conflict; the hosted workflow and verifier blobs remain the qualified ones. Manual lanes, retries, full selection, gates-first order and doctests remain intact.
+
+blocking_findings: none.
+non_blocking_suggestions: the inherited effective-version-to-installer-pin enforcement gap remains tracked in [#8195](https://github.com/EffortlessMetrics/ripr-swarm/issues/8195#issuecomment-6605470756). The unchanged verifier checks reported presence/agreement, not equality with the installer pin. This candidate does not worsen that gap and the actual version for this run was independently verified.
+refuted_or_stale_findings: review 5753122959's missing native evidence is now supplied, not dismissed because CI is green. Its stronger suggestion that version identity is not recorded/checked was narrowed in the source-backed reply. CodeRabbit's quota response is still not a clean review.
+
+proof_and_ci_observed:
+- [Run 41642524201, attempt 1](https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/41642524201) completed successfully. Gate, four shards, verifier and Result bind the actual checkout above.
+- Five downloaded artifact sizes/digests match GitHub metadata; each receipt's Cargo.lock/nextest/gates/shards blobs resolve independently at the checkout. All receipts record cargo-nextest 0.9.149, full commit `3fe4ef31972f24e0c94cfe291718eab0fe678260`; Rust/Cargo are 1.95.0.
+- **26,918 selected identities passed once**, shard counts 6,826 / 6,756 / 6,667 / 6,669. Native lists, individual JUnit, unpartitioned list and combined JUnit agree; no duplicate, missing, failed, skipped or retry-failure testcase was accepted. Combined ZIP SHA-256 `a68088372a53cf1e247015e18efa2e13f2cca7e57e04b126fc485a27c5533048`.
+- Every actual assignment agrees with UTF-8 test-name XXH64, seed 0, mod 4. An additional independent implementation checked known vectors and all native identities; no mismatch.
+- All **22 verifier + 21 workflow-contract tests** occur exactly once in passing native JUnit. The new wrong-mode/mixed-mode/comment-decoy/version controls and the updated newest-wrong-attempt refusal ran. The parent independently mapped their committed names to the results.
+- Compared with the older count run: 26,841 common / 77 candidate-only / 25 baseline-only identities. Every baseline-only identity is accounted for by intervening main: 21 CLI relocations, one member-crate split/rename, three changed cross-crate contracts. This exact hash diff adds three test functions and removes/renames none.
+- Native formatting, policy, strict Clippy, all-features checking, corpora/goldens/fixtures and doctests passed. The canonical PR-evidence snapshots still timed out and report unavailable; their enclosing step is not successful canonical analysis.
+- Enclosing run: 3,935s versus 4,018s. The seven primary jobs total 7,521s versus 7,662s; gate +212s, critical shard -303s. Most of that critical-shard difference is compilation (-237s), not demonstrated hash savings. The longest policy-facade testcase still leaves about 245s of sole-test tail. No material whole-route regression was observed, but this is not controlled A/B evidence.
+
+proof_or_review_missing: local Rust tools remain unavailable; native evidence above supplies the required affected dimensions. This does not establish all features/platforms as executed tests, ignored-test execution, repeatable timing benefit, effective-version enforcement, or a release.
+affected_currentness_dimensions: actual native execution, test denominator/identity drift, public cost claims, latest review conversation, current main composition and candidate SHA refreshed. No behind-only restack or unrelated full rerun.
+residual_assumptions_and_non_claims: selected-inventory proof only; hashes bind bytes, not generic producer authenticity. No claim of compiler <=8GB, >=3GB headroom, 20-run stability, archive viability or completion of #8194/#11594/#12719/#12726. Reported command/waited-process RSS is not attributed compiler RSS.
+disposition: REVIEW_READY for the installed ordinary expected-head protected squash after the final fresh PR/check/review/thread snapshot. No admin bypass, settings change, release or auto-merge.

@@ -5,8 +5,13 @@ use crate::run::run_output_owned_with_envs;
 use std::path::Path;
 use std::sync::OnceLock;
 
-pub(super) const FIXTURE: &str = "owner_return_pin_fallible_literal";
-const MANIFEST: &str = "fixtures/owner_return_pin_fallible_literal/input/Cargo.toml";
+/// Locked manifests whose registry identities must be present in the effective
+/// `CARGO_HOME` before offline golden runs. Matches the rust-gates preparation
+/// step (`FALLIBLE_FETCH` + `JSON_FETCH` in `rust_gate_workflow_contract.rs`).
+const LOCKED_MANIFESTS: &[&str] = &[
+    "fixtures/owner_return_pin_fallible_literal/input/Cargo.toml",
+    "fixtures/owner_return_pin_json_real_literal/input/Cargo.toml",
+];
 static ENVIRONMENT: OnceLock<Result<Vec<(&'static str, String)>, String>> = OnceLock::new();
 static READY: OnceLock<Result<(), String>> = OnceLock::new();
 
@@ -173,11 +178,11 @@ fn binding(environment: &[(&str, String)]) -> String {
 
 fn preparation_error(binding: &str, error: &str) -> String {
     format!(
-        "fixture dependency preparation failed for {FIXTURE}\nenvironment: {binding}\n{error}\nnext: run `cargo xtask goldens prepare` with this same environment (or `cargo xtask goldens prepare --offline` with a seeded cache), then retry the fixture/golden check. The fixture requires its locked anyhow 1.0.100; fetching another Cargo home does not prepare this subprocess. If the pinned toolchain is missing, install it explicitly before retrying offline. Do not bless availability drift."
+        "fixture dependency preparation failed for locked owner-return golden fixtures\nenvironment: {binding}\n{error}\nnext: run `cargo xtask goldens prepare` with this same environment (or `cargo xtask goldens prepare --offline` with a seeded cache), then retry the fixture/golden check. Golden checks require locked anyhow 1.0.100 and serde_json 1.0.151 in this `CARGO_HOME`; fetching into another Cargo home does not prepare this subprocess. If the pinned toolchain is missing, install it explicitly before retrying offline. Do not bless availability drift."
     )
 }
 
-fn metadata_args() -> Vec<String> {
+fn metadata_args(manifest: &str) -> Vec<String> {
     [
         "metadata",
         "--locked",
@@ -185,7 +190,7 @@ fn metadata_args() -> Vec<String> {
         "--format-version",
         "1",
         "--manifest-path",
-        MANIFEST,
+        manifest,
     ]
     .map(String::from)
     .to_vec()
@@ -193,7 +198,12 @@ fn metadata_args() -> Vec<String> {
 
 pub(super) fn ensure_ready() -> Result<(), String> {
     READY
-        .get_or_init(|| proxy_output("cargo", &metadata_args(), true).map(|_| ()))
+        .get_or_init(|| {
+            for manifest in LOCKED_MANIFESTS {
+                proxy_output("cargo", &metadata_args(manifest), true)?;
+            }
+            Ok(())
+        })
         .clone()
 }
 
@@ -203,7 +213,8 @@ pub(super) fn prepare(args: &[String]) -> Result<(), String> {
     }
     let offline = offline_mode(!args.is_empty());
     println!(
-        "fixture: {FIXTURE}\nenvironment: {}",
+        "fixtures: locked owner-return manifests ({})\nenvironment: {}",
+        LOCKED_MANIFESTS.join(", "),
         binding(&proxy_environment(environment()?, offline))
     );
     for program in ["cargo", "rustc"] {
@@ -212,15 +223,19 @@ pub(super) fn prepare(args: &[String]) -> Result<(), String> {
             proxy_output(program, &["--version".into()], offline)?.trim()
         );
     }
-    let mut fetch = ["fetch", "--locked", "--manifest-path", MANIFEST]
-        .map(String::from)
-        .to_vec();
-    fetch.extend_from_slice(args);
-    proxy_output("cargo", &fetch, offline)?;
-    // A successful fetch alone is not readiness: verify locked resolution with
-    // the same offline metadata command the golden runner will use.
-    proxy_output("cargo", &metadata_args(), true)?;
-    println!("prepared {FIXTURE}; retry fixture/golden checks with the environment above");
+    for manifest in LOCKED_MANIFESTS {
+        let mut fetch = ["fetch", "--locked", "--manifest-path", manifest]
+            .map(String::from)
+            .to_vec();
+        fetch.extend_from_slice(args);
+        proxy_output("cargo", &fetch, offline)?;
+        // A successful fetch alone is not readiness: verify locked resolution with
+        // the same offline metadata command the golden runner will use.
+        proxy_output("cargo", &metadata_args(manifest), true)?;
+    }
+    println!(
+        "prepared locked owner-return fixture dependencies; retry fixture/golden checks with the environment above"
+    );
     Ok(())
 }
 

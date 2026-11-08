@@ -105,8 +105,8 @@
           "oracle": "",
           "relation_reason": "direct_owner_call",
           "relation_confidence": "high",
-          "miss": "assertion_not_credited",
-          "why": "assertion not credited: ripr could not establish that this assertion counts here"
+          "miss": "assertion_admission_unproven",
+          "why": "assertion admission unproven: ripr could not establish that this assertion counts here"
         }
       ],
       "stop_reasons": [],
@@ -213,15 +213,15 @@
           "oracle": "",
           "relation_reason": "direct_owner_call",
           "relation_confidence": "high",
-          "miss": "assertion_not_credited",
-          "why": "assertion not credited: ripr could not establish that this assertion counts here"
+          "miss": "assertion_admission_unproven",
+          "why": "assertion admission unproven: ripr could not establish that this assertion counts here"
         }
       ],
       "stop_reasons": [],
       "oracle_kind": "unknown",
       "oracle_strength": "none",
-      "recommended_next_step": "Establish that the test is collected and enabled, that the assertion runs on its executed path, and that it resolves to the intended standard macro, then check the changed returned value.",
-      "suggested_next_action": "Establish that the test is collected and enabled, that the assertion runs on its executed path, and that it resolves to the intended standard macro, then check the changed returned value.",
+      "recommended_next_step": "Not a candidate edit target (base_deleted): the changed source is not current on the candidate side, so this finding recommends no test change.",
+      "suggested_next_action": "Not a candidate edit target (base_deleted): the changed source is not current on the candidate side, so this finding recommends no test change.",
       "language": "rust",
       "source_currentness": "base_deleted"
     },
@@ -321,15 +321,15 @@
           "oracle": "",
           "relation_reason": "direct_owner_call",
           "relation_confidence": "high",
-          "miss": "assertion_not_credited",
-          "why": "assertion not credited: ripr could not establish that this assertion counts here"
+          "miss": "assertion_inert",
+          "why": "assertion inert: this test's assertion has a shape that can keep it from running as a standard check here"
         }
       ],
       "stop_reasons": [],
       "oracle_kind": "unknown",
       "oracle_strength": "none",
-      "recommended_next_step": "ripr did not credit the `assert_eq!` in selected at src/lib.rs:11; the \"not credited\" note says why. That shape can keep the assertion from checking the change, so this is not a static limit: make the check run on every default test run, as the standard `assert_eq!`, in a test expected to pass.",
-      "suggested_next_action": "ripr did not credit the `assert_eq!` in selected at src/lib.rs:11; the \"not credited\" note says why. That shape can keep the assertion from checking the change, so this is not a static limit: make the check run on every default test run, as the standard `assert_eq!`, in a test expected to pass.",
+      "recommended_next_step": "Not a candidate edit target (base_deleted): the changed source is not current on the candidate side, so this finding recommends no test change.",
+      "suggested_next_action": "Not a candidate edit target (base_deleted): the changed source is not current on the candidate side, so this finding recommends no test change.",
       "language": "rust",
       "source_currentness": "base_deleted"
     }

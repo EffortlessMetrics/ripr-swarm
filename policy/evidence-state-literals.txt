@@ -10,3 +10,5 @@ crates/ripr/src/output/perl_preview_card.rs|1
 crates/ripr/src/output/pr_evidence_ledger.rs|1
 crates/ripr/src/output/sarif.rs|1
 crates/ripr/src/output/typescript_false_actionable.rs|2
+crates/ripr/src/output/review_comments/publish_plan.rs|2
+crates/ripr/src/output/review_comments/render.rs|6

@@ -1,0 +1,7 @@
+[[artifact]]
+id = "RIPR-SPEC-0398"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0398-lua-preview-dialect-busted-host-contract.md"
+status = "proposed"
+owner = "product-swarm"
+standalone_reason = "Issue #5899 defines the Lua preview dialect/Busted/table/metatable/host/native contract before parser or adapter implementation; this artifact registers that normative spec only."

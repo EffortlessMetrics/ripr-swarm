@@ -11,16 +11,17 @@ use super::bool_operands::{
 use super::pattern_admission::{LocalDecls, pattern_assertion_classification_in};
 use super::patterns::{
     PatternPolarity, contains_negated_pattern, deciding_disjunction_conjunct_rest,
-    has_deciding_disjunction, has_top_level_exact_equality, inequality_has_struct_literal_operand,
-    is_broad_error_assertion, is_clear_exact_custom_assertion_helper,
-    is_comparison_shaped_custom_assertion, is_custom_assertion_helper, is_duplicative_comparison,
-    is_duplicative_equality_assertion, is_effect_observer_subject_assertion,
-    is_exact_error_variant_assertion, is_exact_membership_any_assertion, is_exact_value_assertion,
-    is_inequality_macro_assertion, is_inequality_named_assertion_helper,
-    is_inequality_named_assertion_macro, is_inequality_only_comparison, is_mock_expectation_line,
-    is_negated_pattern_assertion, is_observer_named_assertion_helper, is_smoke_check,
-    is_snapshot_assertion, is_whole_object_equality_assertion, negated_pattern_conjunct_rest,
-    pattern_comparison_polarity, pattern_conjunct_assertions, tests_both_sides,
+    err_constructor_feeds_value_adapter, has_deciding_disjunction, has_top_level_exact_equality,
+    inequality_has_struct_literal_operand, is_broad_error_assertion,
+    is_clear_exact_custom_assertion_helper, is_comparison_shaped_custom_assertion,
+    is_custom_assertion_helper, is_duplicative_comparison, is_duplicative_equality_assertion,
+    is_effect_observer_subject_assertion, is_exact_error_variant_assertion,
+    is_exact_membership_any_assertion, is_exact_value_assertion, is_inequality_macro_assertion,
+    is_inequality_named_assertion_helper, is_inequality_named_assertion_macro,
+    is_inequality_only_comparison, is_mock_expectation_line, is_negated_pattern_assertion,
+    is_observer_named_assertion_helper, is_smoke_check, is_snapshot_assertion,
+    is_whole_object_equality_assertion, negated_pattern_conjunct_rest, pattern_comparison_polarity,
+    pattern_conjunct_assertions, tests_both_sides,
 };
 
 /// A relation that pins no value (RIPR-SPEC-0231 rules 1 and 4).
@@ -308,6 +309,13 @@ fn classify_whole_condition(
     if let Some(classification) = classify_fallible_assertion(line) {
         return classification;
     }
+    // #12610: an `Err(..)` the test hands to a value-supplying adapter (`or`,
+    // `ok_or`, `map_err`, ..) is the test's own value, so equality with it
+    // passes whatever the owner returns. It pins no variant (#12359) and no
+    // value either, so no other kind may read it as exact.
+    if err_constructor_feeds_value_adapter(line) {
+        return RELATION;
+    }
     // RIPR-SPEC-0231 rule 1 (#7558): a boolean assertion decided by an `||`
     // passes whenever one arm does, so no `matches!`, error variant or
     // equality in one arm earns an exact kind.
@@ -538,6 +546,27 @@ fn classify_fallible_assertion(line: &str) -> Option<OracleClassification> {
 mod tests {
     use super::classify_assertion;
     use crate::domain::{OracleKind, OracleStrength};
+
+    #[test]
+    fn an_err_the_test_hands_to_a_value_adapter_pins_no_value_either() -> Result<(), String> {
+        // `parse_masked(1).or(Err(..))` returns the test's own `Err` whatever
+        // `parse_masked` does (#12610).
+        for line in [
+            r#"assert_eq!(parse_masked(1).or(Err(Fault::Odd)).unwrap_err(), Fault::Odd);"#,
+            r#"assert_eq!(parse("x").or(Err(ParseError::Empty)), Err(ParseError::Empty));"#,
+            r#"assert_eq!(Result::or(parse("x"), Err(ParseError::Empty)).unwrap_err(), ParseError::Empty);"#,
+        ] {
+            require_classification(line, OracleKind::RelationalCheck, OracleStrength::Weak)?;
+        }
+        // Controls: the owner's own error, compared to an `Err(..)` literal.
+        for line in [
+            r#"assert_eq!(parse("x"), Err(ParseError::Empty));"#,
+            r#"assert_matches!(parse("x"), Err(ParseError::Empty));"#,
+        ] {
+            require_classification(line, OracleKind::ExactErrorVariant, OracleStrength::Strong)?;
+        }
+        Ok(())
+    }
 
     fn require_classification(
         text: &str,

@@ -221,7 +221,45 @@ mock expectations, and custom `assert_*` helpers.
   - exception (#9542): a bare `assert f(lit, ..)` / `assert not f(lit, ..)` whose
     single resolved workspace function owner provably returns `bool` is an
     exact pin, read as `f(lit, ..) == True` / `== False`; any ambiguity, patching
-    or non-literal argument stays smoke
+    or non-literal argument stays smoke. The patch veto is narrowed
+    only to a closed allow-list (#10391): a test file keeps the credit when
+    every occurrence of a name containing `patch`, `mock`, `Mock`, `setattr`,
+    `delattr` or `monkey` is an exact `monkeypatch.setenv(` / `delenv(` /
+    `chdir(` call on an injected pytest test/fixture parameter (no default,
+    rebinding, or explicit supplying call), a directly assigned zero-argument constructor from an
+    unshadowed `unittest.mock` import (`Mock`, `MagicMock`, ..), an `import` /
+    `from .. import` statement without `as`, a formal parameter, a recognized
+    imported fixture type annotation, or an inert string statement, with no
+    argument naming the callee or owner. Inspection such as
+    `handle.assert_not_called()` remains allowed; marker-bearing inspection/reset
+    calls require a direct, unrebound zero-argument mock construction. Comprehension
+    bindings cannot borrow an import or constructor from a different scope.
+    Environment and mock calls admit only inert literal arguments: `chdir` may
+    invoke `__fspath__`, `setenv` may invoke `__str__`, and mock comparisons may
+    invoke `__eq__`. Mock configuration, escaping references, and retained call
+    results retain the veto; admitted mock calls are complete discarded expressions.
+    Constructor arguments can replace inspection methods, so they retain the veto. Arbitrary
+    receivers do not qualify by an `assert` prefix or constructor suffix. Defaults and annotations are executable expressions,
+    and all formatted strings retain the veto because their executable expressions
+    are hidden from this token scan. Non-ASCII identifiers also retain the veto:
+    this scan does not implement Python's NFKC identifier normalization. Patch-route
+    calls (`patch`, `setattr`, `delattr`, `patch.object`, `patch.dict`, `patch.multiple`,
+    and similar) fail closed only when their arguments name the callee or owner or hide
+    the target; the same call patching another symbol in the module does not withhold
+    credit. Everything else keeps the credit withheld: any other patch-like reference
+    or alias (`swap = ..`, unauthenticated environment/mock use, `monkeypatch.context()`,
+    `mocker.spy`, `partial(..)`, `yield from [swap := ..]`), any string outside a
+    docstring that contains `patch`, `mock`, `setattr`, `delattr`, `setitem`, `delitem`,
+    `spy` or `monkey`, any use of `getattr`, `__getattribute__`, `getfixturevalue`,
+    `__import__`, `__builtins__`, `builtins`, `__self__`, `partial`,
+    `setitem`, `delitem`, `spy`, `context` or `syspath_prepend`, a string
+    argument with a backslash, an f-string, adjacent literals, `*args` /
+    `**kwargs`, `autospec`, and file-wide `globals(`, `locals(`, `vars(`,
+    `exec(`, `eval(`, `__code__`, `__dict__`, `__globals__`, `sys.modules` and
+    `importlib`. Accepted residuals, not detected by this pass: conftest
+    autouse fixtures that patch the callee, a collaborator patched out of
+    sight, and a direct `rules.f = fake` assignment (caught by the binding
+    scan, not by patch reading).
 - `assert a == b` â†’ exact-value oracle; `assert a != b` and other
   non-equality comparisons â†’ relational check, weak
 - `assert isinstance(value, SomeType)` â†’ relational check, weak
@@ -258,6 +296,46 @@ mock expectations, and custom `assert_*` helpers.
   `assert_called_with`, `assert_called`, `assert_not_called`) â†’
   side-effect/call oracle
 - `unittest.mock` patches recognised syntactically as call-context only
+
+A class-only `pytest.raises(NewError)` can supply finding-specific
+`exact_error_variant` / strong evidence for a sole-line change from
+`raise OldError(...)` to `raise NewError(...)` (#12952). Both classes must be
+inert, distinct direct subclasses of the unshadowed builtin `Exception` in
+the owner's module. The test must import the new class and owner directly
+without aliases, using the same module spelling for both names, and its own
+context must call the owner with literal inputs
+that provably reach the exact changed raise. A complete current workspace
+scan must also establish that no source module, package initializer or
+compiled module at the bounded import roots shadows `pytest`; canonical
+import spelling alone supplies no framework identity. This admission fact is
+recomputed on each check, including when source facts come from the cache.
+The bounded reading and its refusals are specified in RIPR-SPEC-0238 rule 6.
+It preserves that assertion's context in sink alignment, including when
+another strong assertion exists in the test; it does not change the global
+grade of class-only exception tests.
+
+The bounded readings receive a separate, default-false module-import fact
+from the current workspace. It checks the raw foreign-module view before the
+legacy configured-path refusal is applied, then checks every admitted dotted
+spelling physically at every known root. Source modules, source prefixes,
+package initializers, compiled code, unreadable paths and parent symlinks can
+all withhold that fact, including files omitted from source discovery. Each
+path component must be one ASCII module identifier; a standard-library
+module spelling cannot identify a workspace replacement. Package initializers
+must be scanned, regular files containing only comments, docstrings or
+`pass`; namespace package parents are outside this reading, apart from the
+top-level `src` layout directory. The fact is kept only for the current run.
+
+The existing import-configuration refusal remains unchanged for legacy
+module-value passes. These bounded readings can additionally admit exactly
+the root `pyproject.toml`'s `[tool.pytest.ini_options] pythonpath = ["src"]`
+when that physical, non-symlink root is already scanned and contains the
+changed module. No other pytest/tox configuration file, path setting,
+`addopts`, path alias, extra entry or unread root is admitted by this
+exception. The configuration read is bounded to 64 KiB and initializer
+directory checks to 4096 entries. Unchecked bytecode remains a refusal.
+This admits the canonical `src/fx/core.py` benchmark without accepting a
+flat `fx/core.py` owner merely because an unrelated `src` directory exists.
 
 Related-test heuristics mirror the Rust and TypeScript adapters: changed
 owner name match, import-reference match, file-path proximity, and
@@ -351,8 +429,9 @@ parameter-shadowed name, a fixture with arguments or extra statements, an
 undecorated function make no edge. The relation is uncertain, carries no
 oracle and never reaches `exposed`: the command's output is not credited, and a
 helper reached through the command is reach-only too (the invoke may never run
-the body, e.g. `--help`). `import click as c` and `from click import command`
-are not recognised.
+the body, e.g. `--help`). `import click as c` is recognised when it is the
+module's only binding of stdlib `click` and the alias is not rebound from
+another module; `from click import command` is not recognised.
 A group subcommand gets the same weak relation by name (#9226): a top-level
 synchronous function bound once and decorated by one `@<group>.command`
 registration (plus `click.option` / `click.argument` only) is reached by a test
@@ -360,8 +439,8 @@ that passes the group, through the same provenance-checked import, as the first
 argument of `<runner>.invoke(` with a literal argument list (positional or
 `args=`) whose first element is the subcommand's name. The group must be a
 top-level function bound once in the same file, decorated only by `click.group`
-(without `cls=`), `click.option` and `click.argument`, with `import click` as
-the file's only binding of `click`. The name is a string literal given to the
+(without `cls=`), `click.option` and `click.argument`, with `import click` or a single provenance-checked `import click as <alias>` as
+the file's only binding of stdlib `click`. The name is a string literal given to the
 registration (positionally or as `name=`), or the function's own name lowered
 with `_` as `-`; a function name ending `_command`, `_cmd`, `_group` or `_grp`
 is refused, since click versions differ on stripping it. Every registration on
@@ -546,7 +625,17 @@ source read, not a complete import or reflective-execution graph. The assertion
 reads `NAME` itself or calls a module function with literal arguments whose
 body is one `return` expression over its parameters, literals and `NAME`; a
 name, call, operator or value kind outside that bounded evaluator decides
-nothing and the edit keeps the `missing_import_graph` abstention. A body-only edit of
+nothing and the edit keeps the `missing_import_graph` abstention. A module
+reader may use an f-string whose literal segments and interpolated
+expressions all evaluate to strings under the same bounded evaluator (#12950).
+Interpolation has no conversion (`!s`, `!r`, `!a`) or format specification,
+including an empty specification, and the resulting UTF-8 string is at most
+65,536 bytes on each evaluated side. Non-string values and custom formatting
+remain unresolved. This extends exact old-true/new-false credit only; a weak
+substring check, an old-failing/new-passing pin, or an unresolved consumer does
+not gain credit or a repair route. F-string text that merely spells the constant
+name is not a read. All existing binding, import, writer and activation guards
+remain required. A body-only edit of
 a top-level `NAME = lambda a, b: <body>` binding (#9619) credits the same way:
 the parameters are unchanged positional ones without defaults, `*args` or
 keywords, `NAME` is bound once in the old and new module, no file writes or
@@ -1203,6 +1292,11 @@ can show:
 - fixtures proving broad `pytest.raises` / `self.assertRaises` are recognised
   as weak error-path oracles while `pytest.raises(..., match=...)` /
   `self.assertRaisesRegex(...)` are recognised as exact exception observers
+- classifier regressions proving a specific sibling exception class can
+  distinguish a type-only raise edit, while a base class, wrong class,
+  alias, foreign or rebound class, unreachable changed raise and message-only
+  edit receive no finding-specific class credit; Unicode string lengths use
+  code points, and unrelated assertions cannot replace the selected context
 - a fixture proving unittest assertion argument shapes can identify field,
   output, and status-code oracles
 - a fixture proving pytest and unittest related tests produce
@@ -1420,6 +1514,39 @@ can show:
 
 ## Test Mapping
 
+Finding-specific exception-variant credit (#12952) is covered by the eight
+`specific_exception_variant_*` tests in
+`crates/ripr/src/analysis/language/python/exception_variant_tests.rs`.
+They exercise the public classifier through real owner/test extraction,
+including exact selected-context alignment, passing literal prefixes and
+blocked paths, import and class identity, builtin shadowing, Unicode length
+boundaries, explicit module/framework admission and the sole type-only edit
+requirement.
+The full `check_workspace_with_config` path is covered by
+`crates/ripr/src/app/tests/python_exception_variant.rs::check_output_python_exception_variant_preserves_import_environment_guards`:
+flat-layout imports retain credit with cold and warm file facts, Unicode
+inputs preserve the changed-raise boundary, and configuring an unrelated
+`src` import root refuses credit until the own-directory configuration is
+restored.
+The same module's
+`check_output_python_exception_variant_rejects_framework_shadows` checks
+source module/package and compiled-shadow presence at root, test and owner
+directories. Each shadow removes the credit without changing the canonical
+gap, and removing it restores credit through the real workspace pipeline.
+`check_output_python_exception_variant_admits_scanned_src_imports` covers
+the canonical src layout with cold and warm facts, configuration refusals,
+framework shadows under `src`, active initializers and mixed class/function
+module spellings. `check_output_python_import_identity_checks_excluded_module_sources`
+checks direct `core` and full `src.core` imports against excluded source
+shadows, with gap identity and removal/restoration controls.
+`check_output_python_import_identity_rejects_non_module_paths` refuses
+dotted file/directory components and a workspace `sys` shadow.
+The fixture `python_exception_framework_shadow_no_credit` and its
+RIPR-SPEC-0108 corpus fragment independently forbid promoting a local
+`pytest.py` context that suppresses both exception classes.
+`python_exception_dotted_module_no_credit` independently forbids treating
+the physical filename `fx.core.py` as the imported package module `fx.core`.
+
 Default-prefix regression cases live in
 `crates/ripr/src/analysis/language/python/owners_tests/tests.rs`. They exercise
 module functions, pytest methods, unittest methods, and async definitions;
@@ -1579,6 +1706,45 @@ and seen only through its call in the test body, a discriminating call under
 a non-strong oracle (`assert not pick(0, 3)`), and an owner doctest the
 reader does not see. The change is only `exposed` to `weakly_exposed`, the
 conservative direction.
+
+### Compound and `self.<attr>` operands (#11890)
+
+The same closed allow-list also reads a compound `and`/`or` condition when the
+joining operators match and exactly one operand differs between the old and the
+new condition, both differing operands being single-operand tests of the same
+name (`self.port and self.port != 80` to `self.port is not None and
+self.port != 80`). The tested name may be `self.<attr>` instead of a bare
+parameter when the owner's class `__init__` assigns `self.<attr> = <param>`
+exactly once, nothing else in the class writes `self.<attr>`, and every strong
+related call builds the receiver inline (`Addr("h", 8080).authority()`) with a
+scalar literal for that constructor parameter, an omitted default included.
+Anything else keeps the existing verdict: two differing operands, an unknown
+constructor keyword, a missing required constructor argument, a receiver built
+elsewhere, a later write to the attribute, a falsy constructor argument that
+separates the two tests (`Addr("h", 0)`), and every other shape the #9186 rule
+already refused. `setattr` and `__dict__` writes are not read (a known limit).
+
+## Deleted Guarded Line Amendment (2026-10-31, #11889)
+
+A deleted behavior line (a removed-only record, RIPR-SPEC-0156) inside a
+guarding `if`/`elif`/`else`/`while` arm is `weakly_exposed`, not `exposed`,
+when every strong related call provably fails the guard that enclosed the line
+in the old file: the line ran under no observed input, so no strong oracle can
+notice its removal. The guarded-arm reader is the one used for live lines
+(#7392); it is handed the old file text, the owner re-spanned there and the
+old line number. A removed block header is read at its first removed body line
+so its own condition is among the guards walked. The rule is a closed
+allow-list that keeps the existing verdict on anything unrecognized: the owner
+must be a single-line `def` whose header reads the same in the old and the new
+file, the nearest enclosing scope above the line in the old file must be that
+header, and the guard conditions must be comparisons over call arguments
+(`and` conjunctions only; `or`, `not`, bare names, `is None` operands, computed
+operands, rebound parameters and calls no row binds all fail open). A removed block whose body is only partly deleted (a kept line dedented out of the guard), and any diff that adds or removes a module-level assignment, also fail open.
+
+A conjunction is false when any conjunct is false, so a conjunct this reader
+cannot evaluate no longer hides a false one (`vip and total > 1000`); this
+also applies to live guarded lines and only moves a verdict from `exposed` to
+`weakly_exposed`.
 
 ## Metrics
 

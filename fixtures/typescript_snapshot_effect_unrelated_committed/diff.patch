@@ -1,0 +1,10 @@
+diff --git a/src/lib.ts b/src/lib.ts
+index 0000000..1111111 100644
+--- a/src/lib.ts
++++ b/src/lib.ts
+@@ -1,4 +1,4 @@
+ export function enqueue(queue: string[], id: number): string[] {
+-    queue.push("sent " + id);
++    queue.push("shipped " + id);
+     return queue;
+ }

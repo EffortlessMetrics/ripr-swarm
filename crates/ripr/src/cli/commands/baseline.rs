@@ -30,7 +30,7 @@ const GATE_DECISION_RECOVERY: &str = "Run `ripr gate evaluate --gap-ledger <gap-
 /// gate-decision file: create adopts it, update consumes the adoption.
 /// Recovery route for a missing `--from-check` artifact (#11206 item 3): the
 /// whole-repository producer is `ripr check` over the candidate tree.
-const CHECK_ARTIFACT_RECOVERY: &str = "Run `ripr check --candidate-tree HEAD^{tree} --format json > <check.json>` first, or pass the correct path";
+const CHECK_ARTIFACT_RECOVERY: &str = "Run `ripr check --candidate-tree $(git rev-parse HEAD^{tree}) --format json > <check.json>` first, or pass the correct path";
 
 type BaselineBuilder =
     fn(&str, &str, &str) -> Result<output::baseline::BaselineCreateReport, String>;
@@ -168,7 +168,7 @@ fn baseline_update(args: &[String]) -> Result<(), String> {
     let options = parse_baseline_update_options(args)?;
     if !options.remove_resolved && !options.migrate_legacy_identities {
         return Err(
-            "baseline update requires --remove-resolved or --migrate-legacy-identities; adopting new debt is not supported"
+            "baseline update requires --remove-resolved or --migrate-legacy-identities; adopting new debt is not supported; pass `--remove-resolved` or `--migrate-legacy-identities`"
                 .to_string(),
         );
     }
@@ -346,8 +346,14 @@ fn parse_baseline_diff_options(args: &[String]) -> Result<BaselineDiffOptions, S
     }
 
     Ok(BaselineDiffOptions {
-        baseline: baseline.ok_or_else(|| "baseline diff requires --baseline <path>".to_string())?,
-        current: current.ok_or_else(|| "baseline diff requires --current <path>".to_string())?,
+        baseline: baseline.ok_or_else(|| {
+            "baseline diff requires --baseline <path>; add `--baseline <path>` to the command"
+                .to_string()
+        })?,
+        current: current.ok_or_else(|| {
+            "baseline diff requires --current <path>; add `--current <path>` to the command"
+                .to_string()
+        })?,
         out,
         out_md,
     })
@@ -357,7 +363,9 @@ fn parse_baseline_diff_options(args: &[String]) -> Result<BaselineDiffOptions, S
 // Literal option-shaped filenames remain available as `./--name`.
 fn baseline_diff_path_arg(args: &[String], index: usize, flag: &str) -> Result<PathBuf, String> {
     if args.get(index).is_some_and(|value| value.starts_with("--")) {
-        return Err(format!("missing value for {flag}"));
+        return Err(format!(
+            "missing value for {flag}; pass a value right after it"
+        ));
     }
     non_empty_path_arg(args, index, flag, "baseline diff")
 }
@@ -397,9 +405,14 @@ fn parse_baseline_update_options(args: &[String]) -> Result<BaselineUpdateOption
     }
 
     Ok(BaselineUpdateOptions {
-        baseline: baseline
-            .ok_or_else(|| "baseline update requires --baseline <path>".to_string())?,
-        current: current.ok_or_else(|| "baseline update requires --current <path>".to_string())?,
+        baseline: baseline.ok_or_else(|| {
+            "baseline update requires --baseline <path>; add `--baseline <path>` to the command"
+                .to_string()
+        })?,
+        current: current.ok_or_else(|| {
+            "baseline update requires --current <path>; add `--current <path>` to the command"
+                .to_string()
+        })?,
         out,
         remove_resolved,
         migrate_legacy_identities,
@@ -746,11 +759,17 @@ mod tests {
     fn baseline_diff_requires_inputs_and_rejects_unknown_args() {
         assert_eq!(
             parse_baseline_diff_options(&args(&[])),
-            Err("baseline diff requires --baseline <path>".to_string())
+            Err(
+                "baseline diff requires --baseline <path>; add `--baseline <path>` to the command"
+                    .to_string()
+            )
         );
         assert_eq!(
             parse_baseline_diff_options(&args(&["--baseline", ".ripr/gate-baseline.json"])),
-            Err("baseline diff requires --current <path>".to_string())
+            Err(
+                "baseline diff requires --current <path>; add `--current <path>` to the command"
+                    .to_string()
+            )
         );
         assert_eq!(
             parse_baseline_diff_options(&args(&["--baseline", ""])),
@@ -822,11 +841,14 @@ mod tests {
     fn baseline_update_requires_inputs_remove_resolved_and_rejects_unknown_args() {
         assert_eq!(
             parse_baseline_update_options(&args(&[])),
-            Err("baseline update requires --baseline <path>".to_string())
+            Err("baseline update requires --baseline <path>; add `--baseline <path>` to the command".to_string())
         );
         assert_eq!(
             parse_baseline_update_options(&args(&["--baseline", ".ripr/gate-baseline.json"])),
-            Err("baseline update requires --current <path>".to_string())
+            Err(
+                "baseline update requires --current <path>; add `--current <path>` to the command"
+                    .to_string()
+            )
         );
         assert_eq!(
             parse_baseline_update_options(&args(&["--baseline", ""])),
@@ -852,7 +874,7 @@ mod tests {
                 "target/ripr/reports/gate-decision.json",
             ])),
             Err(
-                "baseline update requires --remove-resolved or --migrate-legacy-identities; adopting new debt is not supported"
+                "baseline update requires --remove-resolved or --migrate-legacy-identities; adopting new debt is not supported; pass `--remove-resolved` or `--migrate-legacy-identities`"
                     .to_string()
             )
         );

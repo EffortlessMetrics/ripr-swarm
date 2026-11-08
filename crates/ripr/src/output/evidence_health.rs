@@ -185,7 +185,7 @@ impl EvidenceHealthCalibration {
 
     pub(crate) fn from_json(source: String, contents: &str) -> Result<Self, String> {
         let value: Value = serde_json::from_str(contents)
-            .map_err(|err| format!("failed to parse mutation calibration context: {err}"))?;
+            .map_err(|err| format!("failed to parse mutation calibration context: {err}; regenerate the input with the command that wrote it, then rerun"))?;
         Ok(Self {
             status: "loaded".to_string(),
             source: Some(source),
@@ -199,6 +199,20 @@ impl EvidenceHealthCalibration {
             unmatched_runtime_total: calibration_total(&value, "unmatched_mutants_total"),
         })
     }
+}
+
+/// One-line terminal headline for the written report, so a first run shows
+/// the shape of the result and a next step instead of only file paths. Static
+/// evidence only; it does not change the written report.
+pub(crate) fn render_evidence_health_headline(report: &EvidenceHealthReport) -> String {
+    let metrics = &report.metrics;
+    format!(
+        "Evidence health (advisory, static evidence only): {} seams, {} weakly gripped, {} ungripped, {} missing discriminators. See the markdown report for the breakdown; `ripr repair` starts one fix.",
+        metrics.seams_total,
+        metrics.weakly_gripped_total,
+        metrics.ungripped_total,
+        metrics.missing_discriminators_total,
+    )
 }
 
 pub(crate) fn build_evidence_health_report(
@@ -694,6 +708,7 @@ fn usize_field(value: &Value, path: &[&str]) -> usize {
 
 #[cfg(test)]
 mod tests {
+    use crate::domain::DiscriminatorShape;
     use std::path::PathBuf;
 
     use serde_json::Value;
@@ -706,6 +721,23 @@ mod tests {
     use crate::domain::{
         Confidence, MissingDiscriminatorFact, StageEvidence, StageState, ValueContext, ValueFact,
     };
+
+    #[test]
+    fn evidence_health_headline_states_the_counts_and_a_next_step() {
+        let report = build_evidence_health_report(
+            &[
+                weak_boundary_seam(),
+                weak_boundary_seam_at_line(121),
+                opaque_call_seam(),
+            ],
+            ".".to_string(),
+            EvidenceHealthCalibration::not_provided(),
+        );
+        assert_eq!(
+            render_evidence_health_headline(&report),
+            "Evidence health (advisory, static evidence only): 3 seams, 2 weakly gripped, 1 ungripped, 2 missing discriminators. See the markdown report for the breakdown; `ripr repair` starts one fix."
+        );
+    }
 
     #[test]
     fn evidence_health_counts_core_metrics() -> Result<(), String> {
@@ -973,6 +1005,8 @@ mod tests {
                     value: "amount == threshold".to_string(),
                     reason: "equality boundary not observed".to_string(),
                     flow_sink: None,
+                    shape: DiscriminatorShape::Boundary,
+                    drafted_boundary: None,
                 }],
                 new_test_target: None,
                 statically_contradicted_related_tests: 0,

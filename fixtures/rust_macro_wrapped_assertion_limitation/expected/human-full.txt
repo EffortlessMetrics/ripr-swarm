@@ -30,7 +30,7 @@ Static exposure
 
 Evidence
   - reach yes: Related tests appear to reach inner: test_inner_with_custom_assertion_macro
-  - infection weak: Related tests contain input values, but the equality-boundary discriminator is missing
+  - infection weak: Related tests contain input values, but the equality-boundary check is missing
   - propagation yes: Changed behavior appears to influence returned value: a - b
   - observation no: Related tests were found, but no assertion appears to observe the changed value, error, field, or effect
   - discriminator no: No assertion found on related tests
@@ -65,5 +65,6 @@ Limitation detail
 Next step
   Inspect the custom assertion macro's definition and run the existing test; its spelling does not establish assertion semantics
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/rust_macro_wrapped_assertion_limitation/input --diff <cwd>/fixtures/rust_macro_wrapped_assertion_limitation/diff.patch --mode fast probe:src_internal.rs:predicate:114f2322
   ripr context --root <cwd>/fixtures/rust_macro_wrapped_assertion_limitation/input --diff <cwd>/fixtures/rust_macro_wrapped_assertion_limitation/diff.patch --mode fast --at probe:src_internal.rs:predicate:114f2322

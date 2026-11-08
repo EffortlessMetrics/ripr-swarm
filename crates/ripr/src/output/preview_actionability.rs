@@ -183,7 +183,9 @@ pub(crate) fn preview_actionability_for(finding: &Finding) -> Option<PreviewActi
 /// Typed-scope reason for a repo-scoped finding with no repair route (#5531).
 /// Reads `Finding::analysis_mode()`, never the evidence line.
 pub(crate) fn repo_scope_no_repair_reason(finding: &Finding) -> Option<String> {
-    use crate::domain::language_capability::{AnalysisMode, repo_mode_no_repair_routing_reason};
+    use ripr_contract::domain::language_capability::{
+        AnalysisMode, repo_mode_no_repair_routing_reason,
+    };
     if finding.analysis_mode() != Some(AnalysisMode::Repo) {
         return None;
     }
@@ -223,10 +225,10 @@ fn actionable_repair_route(packet: Option<&GapRecord>) -> String {
         {
             return match route.assertion_shape.as_deref().filter(|s| !s.is_empty()) {
                 Some(shape) => format!(
-                    "add a focused assertion for the missing discriminator `{disc}` in the related test, shaped like `{shape}`"
+                    "add a focused assertion for the missing check `{disc}` in the related test, shaped like `{shape}`"
                 ),
                 None => format!(
-                    "add a focused assertion for the missing discriminator `{disc}` in the related test"
+                    "add a focused assertion for the missing check `{disc}` in the related test"
                 ),
             };
         }
@@ -407,10 +409,10 @@ mod tests {
         projected_preview_actionability_missing,
     };
     use crate::domain::{
-        ActivationEvidence, Confidence, DeltaKind, ExposureClass, Finding, LanguageId,
-        LanguageStatus, MissingDiscriminatorFact, OracleKind, OracleStrength, Probe, ProbeFamily,
-        ProbeId, RelatedTest, RevealEvidence, RiprEvidence, SourceLocation, StageEvidence,
-        StageState, SymbolId,
+        ActivationEvidence, Confidence, DeltaKind, DiscriminatorShape, ExposureClass, Finding,
+        LanguageId, LanguageStatus, MissingDiscriminatorFact, OracleKind, OracleStrength, Probe,
+        ProbeFamily, ProbeId, RelatedTest, RevealEvidence, RiprEvidence, SourceLocation,
+        StageEvidence, StageState, SymbolId,
     };
     use crate::output::gap_decision_ledger::{GapRecord, GapRepairRoute};
     use std::path::PathBuf;
@@ -455,7 +457,7 @@ mod tests {
         };
         assert_eq!(
             actionable_repair_route(Some(&record)),
-            "add a focused assertion for the missing discriminator `throws TypeError matching 'invalid limit'` in the related test, shaped like `expect(parseLimit('x')).toThrow(expected)`"
+            "add a focused assertion for the missing check `throws TypeError matching 'invalid limit'` in the related test, shaped like `expect(parseLimit('x')).toThrow(expected)`"
         );
     }
 
@@ -567,6 +569,8 @@ mod tests {
                 reason: "changed TypeScript equality-boundary lacks a concrete discriminator"
                     .to_string(),
                 flow_sink: None,
+                shape: DiscriminatorShape::Boundary,
+                drafted_boundary: None,
             });
         finding.related_tests.push(RelatedTest {
             name: "applies discount at threshold".to_string(),
@@ -651,11 +655,9 @@ mod tests {
             "{projected:?}"
         );
         assert!(
-            projected
-                .iter()
-                .any(|line| line.starts_with(
-                    "repair_action: add a focused assertion for the missing discriminator `amount == threshold`"
-                )),
+            projected.iter().any(|line| line.starts_with(
+                "repair_action: add a focused assertion for the missing check `amount == threshold`"
+            )),
             "{projected:?}"
         );
         assert!(
@@ -710,7 +712,9 @@ mod tests {
                 value: "user.length == 3".to_string(),
                 reason: "changed TypeScript equality-boundary at line 2 lacks a concrete preview discriminator".to_string(),
                 flow_sink: None,
-            },
+                            shape: DiscriminatorShape::Boundary,
+                            drafted_boundary: None,
+},
         );
         finding.related_tests.push(RelatedTest {
             name: "login returns session".to_string(),

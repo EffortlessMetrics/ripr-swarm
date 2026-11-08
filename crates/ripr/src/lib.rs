@@ -58,12 +58,16 @@ mod stderr_guard;
 // deliberately carry the contract.
 mod analysis_outcome;
 mod atomic_file;
-mod value_origins;
+// Value-origin shells live in `ripr-contract` (ADR 0027); the crate-private
+// path `crate::value_origins` is preserved for existing consumers.
+pub(crate) use ripr_contract::value_origins;
 // Crate-internal typed error authority (#4859). Git invocation timeout is
 // the first migrated family; later slices extend this enum.
-mod core_error;
+pub(crate) use ripr_contract::core_error;
 // Bounded reads for user-named CLI file and stdin inputs (#4480).
 mod bounded_input;
+// Public application error boundary (#1986).
+mod ripr_error;
 // Commit record parser shared with build.rs; the crate only unit-tests it.
 #[cfg(test)]
 mod build_commit_record;
@@ -103,6 +107,7 @@ compile_error!(
 
 // Kept public for compatibility; prefer the crate-root re-exports for new
 // integrations.
+pub(crate) mod accepted_value;
 pub(crate) mod agent;
 #[doc(hidden)]
 pub mod analysis;
@@ -120,7 +125,10 @@ pub mod app;
 #[doc(hidden)]
 pub mod cli;
 mod command_spec_digest;
+// Bounded model-checking harnesses (RIPR-SPEC-0371); compiled only by `cargo kani`.
 pub mod config;
+#[cfg(kani)]
+mod kani_smoke;
 // Kept public for compatibility; prefer the crate-root domain type re-exports
 // for new integrations.
 #[doc(hidden)]
@@ -148,8 +156,9 @@ pub use analysis::PartialDiffStopReason;
 pub use analysis::PreviewLanguageAdvisory;
 /// Analyze a workspace diff using the default RIPR static pipeline.
 pub use app::{
-    CheckInput, CheckOutput, check_workspace, collect_context, explain_finding,
-    explain_finding_with_input, reject_pr_evidence_error_packet, render_check,
+    CheckInput, CheckOutput, check_workspace, check_workspace_with_config, collect_context,
+    explain_finding, explain_finding_with_input, reject_pr_evidence_error_packet, render_check,
+    try_check_workspace, try_check_workspace_with_config,
 };
 /// Field types of the public entrypoint types (#2112): every public field
 /// on `CheckInput` / `CheckOutput` is nameable from the crate root, so a
@@ -181,6 +190,7 @@ pub use provider_contract::{
     RiprProviderNativeStatusV1, RiprProviderResultClassV1, RiprRepositorySnapshotV1,
     RiprSourceViewV1,
 };
+pub use ripr_error::{RiprError, RiprErrorCategory};
 
 // #2610: global verbose flag. Set by the binary entry point before dispatch.
 use std::sync::atomic::{AtomicBool, Ordering};

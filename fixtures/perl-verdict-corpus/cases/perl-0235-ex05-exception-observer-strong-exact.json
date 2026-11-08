@@ -50,7 +50,7 @@
   },
   "perl_facts": {
     "packet": "packets/perl-0235-ex05-exception-observer-strong-exact.json",
-    "sha256": "3fb82a9a0ae36cdad9383f5e4446a664c8bbe09b97d52634c6c0451d249fe00e",
+    "sha256": "a66e09aff0dd8f6f4b14db216d68ec7038270a5af8877158b550f8d90f259980",
     "provenance": "edited_producer",
     "edits": "Started from the producer packet of perl-testexception-close-out-dies-ok, then in oracles where {\"target_owner_id\": \"$CHANGE_OWNER\"} set {\"strength\": \"strong_exact\"}; the packet fingerprint was recomputed."
   },

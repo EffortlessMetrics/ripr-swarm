@@ -7,7 +7,7 @@ use std::io::IsTerminal;
 
 pub(crate) use format::parse_format;
 pub(crate) use mode::parse_mode;
-pub(crate) use value::expect_value;
+pub(crate) use value::{expect_value, reconcile_root};
 
 /// The parse-time conflict error for a command whose synopsis offers
 /// `[--base REV|--diff PATH]` when both flags are given explicitly (#4319).
@@ -411,7 +411,7 @@ mod tests {
         let when_value_is_missing = expect_value(&values, 2, "--diff");
         assert_eq!(
             when_value_is_missing,
-            Err("missing value for --diff".to_string())
+            Err("missing value for --diff; pass a value right after it".to_string())
         );
     }
 

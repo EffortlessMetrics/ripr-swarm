@@ -47,5 +47,6 @@ Weakness
 Next step
   Strengthen the related assertion so it discriminates the changed behavior
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/same_name_sibling_file_test/input --diff <cwd>/fixtures/same_name_sibling_file_test/diff.patch --mode fast probe:src_heaters.rs:match_arm:fad9d7d9
   ripr context --root <cwd>/fixtures/same_name_sibling_file_test/input --diff <cwd>/fixtures/same_name_sibling_file_test/diff.patch --mode fast --at probe:src_heaters.rs:match_arm:fad9d7d9

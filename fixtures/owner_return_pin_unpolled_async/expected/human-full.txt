@@ -36,7 +36,7 @@ Evidence
   - observation no: No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)
   - discriminator no: No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)
   - local flow reaches returned value: input * 3 (line 2)
-  - related test tests/weight_tests.rs:3 checks_weight uses no oracle; misses: assertion not credited: ripr could not establish that this assertion counts here
+  - related test tests/weight_tests.rs:3 checks_weight uses no oracle; misses: assertion inert: this test's assertion has a shape that can keep it from running as a standard check here
   - source assertion argument value 12 at line 3
   - source function argument value input = 4 at line 3
 
@@ -47,5 +47,6 @@ Weakness
 Next step
   ripr did not credit the `assert_eq!` in checks_weight at tests/weight_tests.rs:3; the "not credited" note says why. That shape can keep the assertion from checking the change, so this is not a static limit: make the check run on every default test run, as the standard `assert_eq!`, in a test expected to pass
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/owner_return_pin_unpolled_async/input --diff <cwd>/fixtures/owner_return_pin_unpolled_async/diff.patch --mode fast probe:src_lib.rs:return_value:6ea804bb
   ripr context --root <cwd>/fixtures/owner_return_pin_unpolled_async/input --diff <cwd>/fixtures/owner_return_pin_unpolled_async/diff.patch --mode fast --at probe:src_lib.rs:return_value:6ea804bb

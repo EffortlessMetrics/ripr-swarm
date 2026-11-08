@@ -63,6 +63,7 @@ Limitation detail
 Next step
   Check whether `small_orders_are_not_bulk`, which may reach `bulk` through `check_small!`, asserts on the changed behavior; ripr does not trace that path, so this limitation does not establish a missing test
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/rust_macro_transcriber_own_call/input --diff <cwd>/fixtures/rust_macro_transcriber_own_call/diff.patch --mode fast probe:src_lib.rs:predicate:7ce86f3b
   ripr context --root <cwd>/fixtures/rust_macro_transcriber_own_call/input --diff <cwd>/fixtures/rust_macro_transcriber_own_call/diff.patch --mode fast --at probe:src_lib.rs:predicate:7ce86f3b
 
@@ -99,5 +100,6 @@ Weakness
 Next step
   The indexed related tests do not establish a call to the changed owner. Inspect existing tests, doctests and examples before changing assertions; they may already constrain the changed behavior. Add or strengthen a test only if that inspection finds a gap
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/rust_macro_transcriber_own_call/input --diff <cwd>/fixtures/rust_macro_transcriber_own_call/diff.patch --mode fast probe:src_lib.rs:return_value:6b389299
   ripr context --root <cwd>/fixtures/rust_macro_transcriber_own_call/input --diff <cwd>/fixtures/rust_macro_transcriber_own_call/diff.patch --mode fast --at probe:src_lib.rs:return_value:6b389299

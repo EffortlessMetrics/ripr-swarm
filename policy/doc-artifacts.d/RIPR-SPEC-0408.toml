@@ -1,0 +1,7 @@
+[[artifact]]
+id = "RIPR-SPEC-0408"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0408-verification-run-snapshot-binding.md"
+status = "proposed"
+owner = "product-analysis"
+standalone_reason = "Issue #6347 defines the passive VP25A requested/prepared snapshot binding law and its hostile corpus before cargo-proof integration consumes it."

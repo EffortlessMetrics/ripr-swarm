@@ -6,6 +6,8 @@
 //! compared value that is not the owner call's own return, and a guard over
 //! another function keep the certain gap.
 
+use ripr::app::render_check;
+use ripr::domain::RelatedTestMiss;
 use ripr::{CheckInput, ExposureClass, Finding, Mode, OutputFormat, check_workspace};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -140,5 +142,187 @@ fn a_guard_the_rule_does_not_cover_keeps_the_gap() -> Result<(), String> {
             "{body}"
         );
     }
+    Ok(())
+}
+
+fn finding_on_line_two(body: &str) -> Result<Finding, String> {
+    let findings = TempRepo::create(&source(body))?.findings()?;
+    let mut on_line = findings
+        .iter()
+        .filter(|finding| finding.probe.location.line == 2);
+    match (on_line.next(), on_line.next()) {
+        (Some(finding), None) => Ok(finding.clone()),
+        other => Err(format!(
+            "premise: exactly one finding on line 2 for {body}, got {other:?} in {findings:?}"
+        )),
+    }
+}
+
+fn not_credited_reason(finding: &Finding) -> Result<&str, String> {
+    const PREFIX: &str = "assertion not credited: ";
+    finding
+        .evidence
+        .iter()
+        .find_map(|entry| entry.strip_prefix(PREFIX))
+        .ok_or_else(|| format!("missing {PREFIX} evidence in {:?}", finding.evidence))
+}
+
+/// trap-tally-reached-assert-control twin (#6541, #6687).
+#[test]
+fn trap_tally_twin_not_credited_note_names_value_guard_not_standard_macro() -> Result<(), String> {
+    let body = "if weight(2) > 1000 { return; }\n        assert_eq!(weight(2), 18);";
+    let finding = finding_on_line_two(body)?;
+    assert_eq!(finding.class, ExposureClass::StaticUnknown, "{body}");
+    let reason = not_credited_reason(&finding)?;
+    assert!(
+        reason.contains("spares the value the assertion expects"),
+        "{reason}"
+    );
+    assert!(
+        !reason.contains("standard macro"),
+        "refusal must name the guard, not macro identity: {reason}"
+    );
+    Ok(())
+}
+
+/// trap-steps-early-return twin (#6541, #6687).
+#[test]
+fn trap_steps_twin_not_credited_note_names_guarded_return_not_standard_macro() -> Result<(), String>
+{
+    let body = "if weight(2) < 1000 { return; }\n        assert_eq!(weight(2), 18);";
+    let finding = finding_on_line_two(body)?;
+    assert_eq!(finding.class, ExposureClass::ReachableUnrevealed, "{body}");
+    let reason = not_credited_reason(&finding)?;
+    assert!(
+        reason.contains("earlier `if") && reason.contains("can skip"),
+        "{reason}"
+    );
+    assert!(
+        !reason.contains("standard macro"),
+        "refusal must name the guard, not macro identity: {reason}"
+    );
+    Ok(())
+}
+
+#[test]
+fn trap_twins_human_why_line_does_not_blame_standard_macro() -> Result<(), String> {
+    for body in [
+        "if weight(2) > 1000 { return; }\n        assert_eq!(weight(2), 18);",
+        "if weight(2) < 1000 { return; }\n        assert_eq!(weight(2), 18);",
+    ] {
+        let repo = TempRepo::create(&source(body))?;
+        let output = check_workspace(CheckInput {
+            root: repo.root.clone(),
+            base: None,
+            diff_file: Some(repo.root.join("diff.patch")),
+            mode: Mode::Ready,
+            format: OutputFormat::Json,
+            include_unchanged_tests: true,
+            ..CheckInput::default()
+        })?;
+        let human = render_check(&output, &OutputFormat::Human)?;
+        assert!(
+            !human.contains("standard `assert_eq!`"),
+            "human output must not blame macro identity for guard refusals: {human}"
+        );
+        assert!(
+            human.contains("conditional return"),
+            "human output should steer on the guard: {human}"
+        );
+    }
+    Ok(())
+}
+
+/// #12881: a row whose miss is split into `assertion_inert` or
+/// `assertion_admission_unproven` keeps the typed value-guard reason in the
+/// human `Related test` headline, not the generic split wording.
+#[test]
+fn split_misses_keep_the_typed_value_guard_reason_in_the_headline() -> Result<(), String> {
+    for (body, reason) in [
+        (
+            "if weight(2) > 1000 { return; }\n        assert_eq!(weight(2), 18);",
+            "spares the value the assertion expects",
+        ),
+        (
+            "if weight(2) < 1000 { return; }\n        assert_eq!(weight(2), 18);",
+            "can skip",
+        ),
+    ] {
+        let repo = TempRepo::create(&source(body))?;
+        let output = check_workspace(CheckInput {
+            root: repo.root.clone(),
+            base: None,
+            diff_file: Some(repo.root.join("diff.patch")),
+            mode: Mode::Ready,
+            format: OutputFormat::Json,
+            include_unchanged_tests: true,
+            ..CheckInput::default()
+        })?;
+        let finding = output
+            .findings
+            .iter()
+            .find(|finding| finding.probe.location.line == 2)
+            .ok_or_else(|| format!("premise: a finding on line 2 for {body}"))?;
+        // Premise: the row's miss is one of the split values, so the headline
+        // takes the typed-reason branch rather than the generic wording.
+        assert!(
+            finding.related_tests.iter().any(|test| matches!(
+                test.miss,
+                Some(RelatedTestMiss::AssertionInert | RelatedTestMiss::AssertionAdmissionUnproven)
+            )),
+            "premise: a split miss for {body}: {:?}",
+            finding.related_tests
+        );
+        let human = render_check(&output, &OutputFormat::Human)?;
+        let headline = human
+            .lines()
+            .find(|line| line.trim_start().starts_with("Related test"))
+            .ok_or_else(|| format!("premise: a Related test headline in {human}"))?;
+        assert!(
+            headline.contains("(assertion not credited: ") && headline.contains(reason),
+            "headline keeps the typed refusal reason ({reason}): {headline}"
+        );
+        assert!(
+            !headline.contains("assertion admission unproven")
+                && !headline.contains("assertion inert"),
+            "headline must not fall back to the split wording: {headline}"
+        );
+    }
+    Ok(())
+}
+
+/// #12881 negative control: an opaque macro ahead of the assertion can return
+/// normally, so ripr cannot settle whether the assertion runs. The inert
+/// wording says the shape *can* keep it from running; it never claims the
+/// assertion does not run, and no typed value-guard reason is invented.
+#[test]
+fn an_opaque_macro_before_the_assertion_never_claims_execution_is_settled() -> Result<(), String> {
+    let body = "checkpoint!();\n        assert_eq!(weight(2), 18);";
+    let repo = TempRepo::create(&source(body))?;
+    let output = check_workspace(CheckInput {
+        root: repo.root.clone(),
+        base: None,
+        diff_file: Some(repo.root.join("diff.patch")),
+        mode: Mode::Ready,
+        format: OutputFormat::Json,
+        include_unchanged_tests: true,
+        ..CheckInput::default()
+    })?;
+    let human = render_check(&output, &OutputFormat::Human)?;
+    let headline = human
+        .lines()
+        .find(|line| line.trim_start().starts_with("Related test"))
+        .unwrap_or("<none>");
+    assert!(
+        headline.contains("can keep it from running"),
+        "an opaque macro must be named as a shape that can keep the assertion from running: {headline}"
+    );
+    assert!(
+        !headline.contains("(assertion not credited: ")
+            && !headline.contains("spares the value")
+            && !headline.contains("does not run")
+            && !headline.contains("never runs"),
+        "the headline must not claim the assertion is settled as not running: {headline}"
+    );
     Ok(())
 }

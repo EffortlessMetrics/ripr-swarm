@@ -9,10 +9,12 @@ use serde_json::{Value, json};
 use std::collections::BTreeSet;
 use std::env;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use crate::cli::unknown_argument;
 use crate::output::markdown::{code_span, inline_prose, table_cell_text, table_code_span};
+
+use super::subcommand::{NonEmptyPlaceholder, invocation_repo_root, non_empty_arg};
 
 const DEFAULT_PR_EVIDENCE_JSON: &str = "target/ripr/pr/repo-exposure.json";
 const IMPACTED_JSON: &str = "target/xtask/impacted-evidence/latest.json";
@@ -36,7 +38,7 @@ impl Default for ImpactedEvidenceOptions {
 }
 
 pub(crate) fn run_impacted_evidence(args: &[String]) -> Result<(), String> {
-    run_impacted_evidence_at(&repo_root()?, args)
+    run_impacted_evidence_at(&invocation_repo_root()?, args)
 }
 
 /// Shared entry point for `ripr impacted-evidence` (rooted at the working
@@ -81,19 +83,37 @@ fn parse_options(args: &[String]) -> Result<ImpactedEvidenceOptions, String> {
         match args[i].as_str() {
             "--pr-evidence" => {
                 i += 1;
-                options.pr_evidence = non_empty_arg(args, i, "--pr-evidence")?.to_string();
+                options.pr_evidence = non_empty_arg(
+                    "impacted-evidence",
+                    args,
+                    i,
+                    "--pr-evidence",
+                    NonEmptyPlaceholder::Value,
+                )?
+                .to_string();
             }
             "--label" => {
                 i += 1;
-                options
-                    .labels
-                    .push(non_empty_arg(args, i, "--label")?.to_string());
+                options.labels.push(
+                    non_empty_arg(
+                        "impacted-evidence",
+                        args,
+                        i,
+                        "--label",
+                        NonEmptyPlaceholder::Value,
+                    )?
+                    .to_string(),
+                );
             }
             "--labels" => {
                 i += 1;
-                options
-                    .labels
-                    .extend(split_labels(non_empty_arg(args, i, "--labels")?));
+                options.labels.extend(split_labels(non_empty_arg(
+                    "impacted-evidence",
+                    args,
+                    i,
+                    "--labels",
+                    NonEmptyPlaceholder::Value,
+                )?));
             }
             "--check" => options.check = true,
             other => return Err(unknown_argument("impacted-evidence", other)),
@@ -102,18 +122,6 @@ fn parse_options(args: &[String]) -> Result<ImpactedEvidenceOptions, String> {
     }
     options.labels = normalize_labels(&options.labels);
     Ok(options)
-}
-
-fn non_empty_arg<'a>(args: &'a [String], index: usize, flag: &str) -> Result<&'a str, String> {
-    let Some(value) = args.get(index) else {
-        return Err(format!("missing value for {flag}; pass a value after it"));
-    };
-    if value.trim().is_empty() {
-        return Err(format!(
-            "impacted-evidence {flag} requires a non-empty value; pass `{flag} <value>`"
-        ));
-    }
-    Ok(value)
 }
 
 fn print_help() {
@@ -746,10 +754,6 @@ fn normalize_labels(labels: &[String]) -> Vec<String> {
 
 fn first_line(value: &str) -> String {
     value.lines().next().unwrap_or(value).trim().to_string()
-}
-
-fn repo_root() -> Result<PathBuf, String> {
-    std::env::current_dir().map_err(|err| format!("failed to determine working directory: {err}"))
 }
 
 #[cfg(test)]

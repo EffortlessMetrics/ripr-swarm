@@ -34,7 +34,7 @@ Language
 
 Preview actionability
   authority: preview_advisory_only
-  gap state: advisory
+  gap state: unknown
   category: private_member_reach_unknown
   repair packet ready: false
   why not actionable: reach into the private member through public callers is not established; no related-test path or missing assertion is inferred
@@ -45,7 +45,7 @@ Preview actionability
 
 Static exposure
   static_unknown (note, confidence 0.40)
-  Why capped: preview adapter: infection/propagation not modeled (TypeScript); syntax-first, no type or import resolution; whether a discriminator exists is not established. Preview score, not on the same scale as Rust confidence.
+  Why capped: preview adapter: infection/propagation not modeled (TypeScript); syntax-first, no type or import resolution; whether a test checks this behavior is not established. Preview score, not on the same scale as Rust confidence.
 
 Evidence
   - reach unknown: 0 related test(s) found for owner `#limit`
@@ -89,6 +89,7 @@ TypeScript repair packet (advisory)
 Next step
   TypeScript preview advisory: the changed owner is a `#private` class member, so no test can reference it directly and reach through a public method is not established; no new assertion is needed on that evidence, and no repair packet is emitted
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/typescript_private_method_unknown/input --diff <cwd>/fixtures/typescript_private_method_unknown/diff.patch --mode fast probe:src_counter.ts:typescript_preview:1aa358b1
   ripr context --root <cwd>/fixtures/typescript_private_method_unknown/input --diff <cwd>/fixtures/typescript_private_method_unknown/diff.patch --mode fast --at probe:src_counter.ts:typescript_preview:1aa358b1
 

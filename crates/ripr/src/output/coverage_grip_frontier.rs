@@ -172,7 +172,7 @@ pub(crate) fn render_coverage_grip_frontier_json(
         "warnings": report.warnings,
         "limits_note": LIMITS_NOTE,
     }))
-    .map_err(|err| format!("render coverage/grip frontier JSON failed: {err}"))
+    .map_err(|err| format!("render coverage/grip frontier JSON failed: {err}; this is a ripr bug, report it with the command you ran"))
 }
 
 pub(crate) fn render_coverage_grip_frontier_markdown(

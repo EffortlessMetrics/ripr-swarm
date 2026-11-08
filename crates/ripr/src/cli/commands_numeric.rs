@@ -10,11 +10,15 @@ fn parse_positive_integer<T>(value: &str, flag: &str) -> Result<T, String>
 where
     T: std::str::FromStr + Eq + From<u8>,
 {
-    let parsed = value
-        .parse::<T>()
-        .map_err(|_parse_err| format!("{flag} requires a positive integer; got {value:?}"))?;
+    let parsed = value.parse::<T>().map_err(|_parse_err| {
+        format!(
+            "{flag} requires a positive integer; pass a whole number of 1 or more, got {value:?}"
+        )
+    })?;
     if parsed == T::from(0) {
-        return Err(format!("{flag} requires a positive integer; got {value:?}"));
+        return Err(format!(
+            "{flag} requires a positive integer; pass a whole number of 1 or more, got {value:?}"
+        ));
     }
     Ok(parsed)
 }
@@ -33,7 +37,7 @@ pub(super) fn parse_positive_usize(value: &str, flag: &str) -> Result<usize, Str
 pub(super) fn parse_non_negative_usize(value: &str, flag: &str) -> Result<usize, String> {
     value
         .parse::<usize>()
-        .map_err(|_parse_err| format!("{flag} requires a non-negative integer; got {value:?}"))
+        .map_err(|_parse_err| format!("{flag} requires a non-negative integer; pass a whole number of 0 or more, got {value:?}"))
 }
 
 pub(super) fn parse_positive_u64(value: &str, flag: &str) -> Result<u64, String> {

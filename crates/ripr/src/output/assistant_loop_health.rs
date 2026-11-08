@@ -238,7 +238,7 @@ pub(crate) fn render_assistant_loop_health_json(
         repair_queue: &report.repair_queue,
         limits: LIMITS.to_vec(),
     })
-    .map_err(|err| format!("render assistant loop health JSON failed: {err}"))
+    .map_err(|err| format!("render assistant loop health JSON failed: {err}; this is a ripr bug, report it with the command you ran"))
 }
 
 pub(crate) fn render_assistant_loop_health_markdown(report: &AssistantLoopHealthReport) -> String {

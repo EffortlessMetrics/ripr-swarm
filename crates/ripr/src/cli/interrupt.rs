@@ -42,11 +42,11 @@ impl ServerInterrupts {
                 signal,
                 Arc::clone(&registration.interrupted),
             )
-            .map_err(|error| format!("cannot preserve native signal {signal}: {error}"))?;
+            .map_err(|error| format!("cannot preserve native signal {signal}: {error}; check the process may install signal handlers, or report this as a ripr bug with the command you ran"))?;
             registration.registrations.push(native);
             let cancellation =
                 signal_hook::flag::register(signal, Arc::clone(&registration.interrupted))
-                    .map_err(|error| format!("cannot observe signal {signal}: {error}"))?;
+                    .map_err(|error| format!("cannot observe signal {signal}: {error}; check the process may install signal handlers, or report this as a ripr bug with the command you ran"))?;
             registration.registrations.push(cancellation);
         }
         Ok(registration)
@@ -166,11 +166,13 @@ impl SignalRegistration {
         // Order matters: publication's store/checkpoint handshake relies on
         // cancellation being stored before the conditional native-action read.
         let cancellation = signal_hook::flag::register(signal, interrupted)
-            .map_err(|error| format!("check: cannot observe SIGINT: {error}"))?;
+            .map_err(|error| format!("check: cannot observe SIGINT: {error}; check the process may install signal handlers, or report this as a ripr bug with the command you ran"))?;
         if let Err(error) = signal_hook::flag::register_conditional_default(signal, native.clone())
         {
             signal_hook::low_level::unregister(cancellation);
-            return Err(format!("check: cannot preserve native SIGINT: {error}"));
+            return Err(format!(
+                "check: cannot preserve native SIGINT: {error}; check the process may install signal handlers, or report this as a ripr bug with the command you ran"
+            ));
         }
         // A second signal can escape blocked analysis I/O or stalled cleanup.
         // The first still requests cooperative settlement before arming this.
@@ -183,7 +185,9 @@ impl SignalRegistration {
             Err(error) => {
                 native.store(true, std::sync::atomic::Ordering::SeqCst);
                 signal_hook::low_level::unregister(cancellation);
-                Err(format!("check: cannot arm forced SIGINT: {error}"))
+                Err(format!(
+                    "check: cannot arm forced SIGINT: {error}; check the process may install signal handlers, or report this as a ripr bug with the command you ran"
+                ))
             }
         }
     }
@@ -201,7 +205,8 @@ impl Drop for SignalRegistration {
     }
 }
 
-#[cfg(all(test, unix))]
+#[cfg(test)]
+#[cfg(unix)]
 mod tests {
     use super::{
         InterruptFlags, SignalRegistration, check, install_server_interrupts,
@@ -297,6 +302,15 @@ mod tests {
     }
 
     fn run_isolated(case: &str, filter: &str, timeout: Duration) -> Result<ChildResult, String> {
+        run_isolated_with_launcher(case, filter, timeout, None)
+    }
+
+    fn run_isolated_with_launcher(
+        case: &str,
+        filter: &str,
+        timeout: Duration,
+        launcher: Option<&str>,
+    ) -> Result<ChildResult, String> {
         use std::sync::atomic::AtomicU64;
         static NEXT_LOG: AtomicU64 = AtomicU64::new(0);
         let directory = std::env::temp_dir();
@@ -324,7 +338,16 @@ mod tests {
         // libtest paths omit the crate-name segment of module_path!().
         let module = module_path!();
         let module = module.split_once("::").map_or(module, |(_, rest)| rest);
-        let mut child = std::process::Command::new(executable)
+        let mut command = if let Some(script) = launcher {
+            let mut command = std::process::Command::new("sh");
+            // The script is a test-authored literal. Pass the executable and
+            // libtest arguments separately so paths never become shell source.
+            command.args(["-c", script]).arg(executable);
+            command
+        } else {
+            std::process::Command::new(executable)
+        };
+        let mut child = command
             .arg(format!("{module}::{filter}"))
             .args(["--exact", "--nocapture", "--test-threads=1"])
             .env(CHILD_CASE, case)
@@ -533,7 +556,13 @@ mod tests {
         const CASE: &str = "isolated_child_signal_before_checkpoint_is_rejected";
         if in_child(CASE)? {
             mark(CASE, "started");
-            signal_hook::low_level::raise(signal_hook::consts::SIGINT)
+            // A bare `raise` is a no-op when the test process was started with
+            // SIGINT ignored or blocked (`nohup`, a detached background job,
+            // some CI and IDE runners), because both are inherited through
+            // spawn and exec (#12875). The default-handler emulation restores
+            // the default action, unblocks the signal and then raises it, so
+            // the child dies by SIGINT whatever it inherited.
+            signal_hook::low_level::emulate_default_handler(signal_hook::consts::SIGINT)
                 .map_err(|error| error.to_string())?;
             return Err("unregistered SIGINT unexpectedly returned".to_string());
         }
@@ -550,6 +579,20 @@ mod tests {
                 .is_err()
         );
         Ok(())
+    }
+
+    #[test]
+    fn isolated_child_inherited_ignored_sigint_takes_native_death() -> Result<(), String> {
+        // Reuse the retained child body so reverting its default-handler
+        // emulation to a bare raise makes this regression fail (#12887).
+        const CASE: &str = "isolated_child_signal_before_checkpoint_is_rejected";
+        let child = run_isolated_with_launcher(
+            CASE,
+            CASE,
+            CHILD_TIMEOUT,
+            Some(r#"trap "" INT; exec "$0" "$@""#),
+        )?;
+        child.require(CASE, "started", Some(signal_hook::consts::SIGINT))
     }
 
     #[test]

@@ -1,0 +1,17 @@
+{
+  "subject_id": "authored-closed-if-identical-arms",
+  "origin": "authored",
+  "version_label": "authored 2026-11-01 for #10880 (identical inline arms before a non-bare tail)",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "711232e730952b0743fa012f2539a50c430b5d3222563575e4d999a83e0f6277"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "c03e55d2554fa074c359199f1b233e8022bc48ae73b71e68e7ad2e6ae9f27232"
+    }
+  ]
+}

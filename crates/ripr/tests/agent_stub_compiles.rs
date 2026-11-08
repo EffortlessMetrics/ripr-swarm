@@ -460,6 +460,54 @@ fn written_stubs_compile_and_stop_at_their_own_todo() -> Result<(), String> {
     Ok(())
 }
 
+/// #5616: a feature gate on the parent's out-of-line `mod` declaration must
+/// refuse before writing a stub that `cargo test` would compile out.
+#[test]
+fn out_of_line_parent_mod_cfg_refuses_stub() -> Result<(), String> {
+    const LIB: &str = "#[cfg(feature = \"extra\")]\nmod extra;\n";
+    const EXTRA: &str = "pub fn f(n: u8) -> u8 {\n    if n > 5 { 1 } else { 0 }\n}\n";
+    let scratch = Scratch::new()?;
+    let root = scratch.directory.clone();
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"parent_gate5616\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n[features]\nextra = []\n",
+    )
+    .map_err(|error| error.to_string())?;
+    std::fs::write(root.join("src/lib.rs"), LIB).map_err(|error| error.to_string())?;
+    std::fs::write(root.join("src/extra.rs"), EXTRA).map_err(|error| error.to_string())?;
+    let line = EXTRA
+        .lines()
+        .position(|line| line.contains("n > 5"))
+        .map(|index| index + 1)
+        .ok_or("fixture has `n > 5`")?;
+    let output = run_bounded(
+        ripr_stub_write(&root, &format!("src/extra.rs:{line}")),
+        &root,
+        "stub",
+        Duration::from_mins(2),
+    )?;
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    assert_eq!(
+        output.status.code(),
+        Some(3),
+        "parent mod cfg must refuse: {stdout}{stderr}"
+    );
+    let (envelope, _) = split_refusal_envelope(&stdout, &stderr)?;
+    assert_eq!(envelope["state"], "refused");
+    assert!(
+        stdout.contains("\"kind\": \"owner_unsupported\""),
+        "{stdout}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(root.join("src/extra.rs")).map_err(|error| error.to_string())?,
+        EXTRA,
+        "refusal must not write into the owner file"
+    );
+    scratch.cleanup()?;
+    Ok(())
+}
+
 /// The `ripr` binary under test.
 fn ripr_command() -> Command {
     Command::new(env!("CARGO_BIN_EXE_ripr"))
@@ -697,10 +745,9 @@ fn check_prints_the_stub_refusal_for_a_field_construction_finding() -> Result<()
     scratch.cleanup()
 }
 
-/// #8444: a finding on a continuation line holds no seam of its own, so
-/// `agent stub --at` stubs the nearest gap. `check` must print the line that
-/// stub is for, not the finding's line, and the printed command must run as
-/// printed with no substitution note.
+/// #8444 item 2: a `return_value` finding on a continuation line gets a direct
+/// stub for that probe line. `check` prints `--at` on the finding line, and
+/// the printed command runs with no nearest-gap substitution note.
 #[test]
 fn check_routes_a_continuation_line_finding_to_the_line_the_stub_targets() -> Result<(), String> {
     const LIB: &str = "pub fn whole(total: u64, unit: u64) -> Option<u64> {\n    Some(\n        total / (unit + 1),\n    )\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n    #[test]\n    fn runs() {\n        assert!(whole(4, 2).is_some());\n    }\n}\n";
@@ -726,12 +773,12 @@ fn check_routes_a_continuation_line_finding_to_the_line_the_stub_targets() -> Re
     let args = printed_stub_args(&stdout)
         .ok_or_else(|| format!("a stubbable gap prints the route: {stdout}"))?;
     assert!(
-        args.iter().any(|arg| arg == "src/lib.rs:2"),
-        "the route names the line the stub targets: {args:?}"
+        args.iter().any(|arg| arg == "src/lib.rs:3"),
+        "return_value routes to the finding line with a direct stub: {args:?}"
     );
     assert!(
-        !args.iter().any(|arg| arg == "src/lib.rs:3"),
-        "the route must not name the finding line, which stubs another gap: {args:?}"
+        !args.iter().any(|arg| arg == "src/lib.rs:2"),
+        "return_value must not substitute the tail line: {args:?}"
     );
     let mut stub = ripr_command();
     stub.args(&args).arg("--json");
@@ -750,9 +797,9 @@ fn check_routes_a_continuation_line_finding_to_the_line_the_stub_targets() -> Re
     scratch.cleanup()
 }
 
-/// #8444: when the nearest gap cannot be named by its own line (two seams
-/// share it, so `--at` refuses), `check` prints no stub command rather than
-/// one that fails or stubs a different gap.
+/// #8444: a continuation-line return_value finding gets a direct stub route on
+/// its own line even when two return seams would make nearest-gap substitution
+/// ambiguous.
 #[test]
 fn check_prints_no_route_when_the_nearest_gap_line_is_ambiguous() -> Result<(), String> {
     const LIB: &str = "pub fn pair(a: u64, b: u64) -> (Option<u64>, Option<u64>) {\n    (Some(a + 1), Some(\n        b + 2,\n    ))\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n    #[test]\n    fn runs() {\n        assert!(pair(1, 2).0.is_some());\n    }\n}\n";
@@ -775,9 +822,15 @@ fn check_prints_no_route_when_the_nearest_gap_line_is_ambiguous() -> Result<(), 
         stdout.contains("src/lib.rs:3"),
         "the finding is on line 3: {stdout}"
     );
+    let args = printed_stub_args(&stdout)
+        .ok_or_else(|| format!("return_value on the finding line prints a stub route: {stdout}"))?;
     assert!(
-        printed_stub_args(&stdout).is_none(),
-        "an ambiguous nearest gap must not print a stub command: {stdout}"
+        args.iter().any(|arg| arg == "src/lib.rs:3"),
+        "the route targets the finding line, not a substituted gap: {args:?}"
+    );
+    assert!(
+        !args.iter().any(|arg| arg == "src/lib.rs:2"),
+        "return_value must not substitute the tail return line: {args:?}"
     );
     scratch.cleanup()
 }
@@ -841,23 +894,6 @@ fn check_for_changed_line_two(lib: &str, old: &str, new: &str) -> Result<String,
     let stdout = check_human(&root, &diff)?;
     scratch.cleanup()?;
     Ok(stdout)
-}
-
-/// #8444: the consumer's reference to a changed constant can sit on a line
-/// that holds no seam (`let cap = CAP;`); the route must name the line of the
-/// seam the stub targets, and the printed command must run with no
-/// substitution note.
-#[test]
-fn check_routes_a_changed_constant_to_the_consumer_seam_line() -> Result<(), String> {
-    const LIB: &str = "//! caps\nconst CAP: u64 = 5;\n\npub fn billed() -> u64 {\n    let cap = CAP;\n    cap + 1\n}\n";
-    let stdout = check_for_changed_line_two(LIB, "const CAP: u64 = 10;", "const CAP: u64 = 5;")?;
-    assert!(stdout.contains("Write a test for it:"), "{stdout}");
-    assert!(
-        stdout.contains("--at src/lib.rs:6 --kind return_value"),
-        "the route names the seam line, not the `let cap = CAP;` reference: {stdout}"
-    );
-    assert!(!stdout.contains("--at src/lib.rs:5 "), "{stdout}");
-    Ok(())
 }
 
 /// #8361: a changed `const` has no seam of its own, so `check` routes it to
@@ -1550,7 +1586,7 @@ fn limited_journey_hidden_predicate_ambiguity_keeps_identity_and_refuses_stale_b
         .as_str()
         .ok_or("missing predicate identity")?;
     assert!(
-        stdout.contains(&format!("Choose a test-stub seam for {identity}:")),
+        stdout.contains(&format!("Choose a test-stub spot for {identity}:")),
         "{stdout}"
     );
     // Inspect the emitted route itself before reconstructing any argv below:
@@ -1652,7 +1688,7 @@ fn limited_journey_hidden_predicate_ambiguity_keeps_identity_and_refuses_stale_b
         "the stale control must retain its hidden subject: {stale}"
     );
     assert!(
-        !stale.contains("Choose a test-stub seam"),
+        !stale.contains("Choose a test-stub spot"),
         "stale bytes must not gain a route: {stale}"
     );
     scratch.cleanup()

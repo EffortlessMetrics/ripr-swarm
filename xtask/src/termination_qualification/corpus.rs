@@ -14,7 +14,7 @@ pub(crate) const DIFF_FILE: &str = "change.diff";
 pub(crate) const SUPPRESSION_POLICY_FILE: &str = "policy/suppressions.toml";
 
 /// What the exact binary must show for a case.
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub(crate) enum Expect {
     /// Full analysis: the changed file reports a finding and no limitation
     /// token appears.
@@ -36,6 +36,9 @@ pub(crate) enum Expect {
     /// A malformed selector is a policy error (exit 2, typed limitation), not
     /// a matcher result and not a clean run.
     PolicyRefused,
+    /// Python preview uses pilot only as the canonical first-use route to
+    /// `ripr check`; parse-budget evidence stays on the check/sarif rows.
+    PilotPythonFirstUse,
 }
 
 impl Expect {
@@ -50,6 +53,9 @@ impl Expect {
             Self::PolicyRefused => {
                 "policy refused (exit 2, suppression_policy_invalid), no findings".to_string()
             }
+            Self::PilotPythonFirstUse => {
+                "pilot names the Python diff-first check route without aborting".to_string()
+            }
         }
     }
 }
@@ -58,6 +64,8 @@ impl Expect {
 pub(crate) enum Route {
     /// `ripr check --diff` with JSON output.
     Check,
+    /// `ripr check --diff` with SARIF output (gate/agent surface).
+    CheckSarif,
     /// `ripr pilot` whole-repository analysis (reads every Rust file; the
     /// decline is `declined_rust_files` in the summary and a limited
     /// `run_status` in the repo-exposure artifact).
@@ -84,9 +92,9 @@ pub(crate) struct Case {
     pub(crate) hostile: Option<String>,
 }
 
-fn check_args(extra: &[&str]) -> Vec<String> {
+fn check_args(extra: &[&str], format: &str) -> Vec<String> {
     let mut args: Vec<String> = [
-        "check", "--root", ".", "--diff", DIFF_FILE, "--format", "json",
+        "check", "--root", ".", "--diff", DIFF_FILE, "--format", format,
     ]
     .iter()
     .map(|arg| (*arg).to_string())
@@ -282,7 +290,8 @@ fn rust_case(
 
 fn route_parts(route: Route) -> (&'static str, Vec<String>, Option<String>) {
     match route {
-        Route::Check => ("check", check_args(&[]), None),
+        Route::Check => ("check", check_args(&[], "json"), None),
+        Route::CheckSarif => ("sarif", check_args(&[], "sarif"), None),
         Route::Pilot => (
             "pilot",
             ["pilot", "--root", ".", "--format", "json"]
@@ -338,17 +347,33 @@ pub(crate) fn python_shape(shape: &str, n: usize) -> String {
             text.push_str("    return -1\n");
             text
         }
+        "multiline_binary_run" => {
+            let mut text = String::from("value = (1");
+            for _ in 1..n {
+                text.push_str("\n + 1");
+            }
+            format!("{text})\n")
+        }
+        "backslash_continuation_run" => {
+            let mut text = String::from("value = 1");
+            for _ in 1..n {
+                text.push_str(" \\\n + 1");
+            }
+            format!("{text}\n")
+        }
         _ => String::new(),
     }
 }
 
-pub(crate) const PYTHON_SHAPES: [&str; 6] = [
+pub(crate) const PYTHON_SHAPES: [&str; 8] = [
     "binary_operator_run",
     "ternary_run",
     "unary_not_run",
     "unary_minus_run",
     "await_prefix_run",
     "elif_chain",
+    "multiline_binary_run",
+    "backslash_continuation_run",
 ];
 
 fn python_supported_source() -> String {
@@ -357,7 +382,10 @@ fn python_supported_source() -> String {
     let mut text = String::new();
     for shape in PYTHON_SHAPES {
         let n = match shape {
-            "binary_operator_run" | "elif_chain" => 100,
+            "binary_operator_run"
+            | "elif_chain"
+            | "multiline_binary_run"
+            | "backslash_continuation_run" => 100,
             _ => 50,
         };
         let source = python_shape(shape, n);
@@ -367,6 +395,8 @@ fn python_supported_source() -> String {
             "unary_not_run" => source.replacen("value", "not_value", 1),
             "unary_minus_run" => source.replacen("value", "minus_value", 1),
             "await_prefix_run" => source.replacen("deep", "deep_await", 1),
+            "multiline_binary_run" => source.replacen("value", "multiline_value", 1),
+            "backslash_continuation_run" => source.replacen("value", "continuation_value", 1),
             _ => source,
         });
     }
@@ -392,24 +422,32 @@ fn python_lookalike_source() -> String {
 }
 
 pub(crate) fn python_cases() -> Vec<Case> {
-    let mut cases = vec![
-        python_case(
-            "python-supported-control",
-            Role::Control,
-            "deep_but_supported",
-            &python_supported_source(),
-            Expect::Supported,
-        ),
-        python_case(
-            "python-comment-string-lookalike",
-            Role::Lookalike,
-            "comment_string_operator_elif_lookalikes",
-            &python_lookalike_source(),
-            Expect::Supported,
-        ),
-    ];
+    let mut cases = Vec::new();
+    let mut push = |id: &str, role: Role, shape: &'static str, hostile: &str, expect: Expect| {
+        for route in [Route::Check, Route::CheckSarif, Route::Pilot] {
+            let route_expect = match route {
+                Route::Pilot => Expect::PilotPythonFirstUse,
+                _ => expect,
+            };
+            cases.push(python_case(id, route, role, shape, hostile, route_expect));
+        }
+    };
+    push(
+        "python-supported-control",
+        Role::Control,
+        "deep_but_supported",
+        &python_supported_source(),
+        Expect::Supported,
+    );
+    push(
+        "python-comment-string-lookalike",
+        Role::Lookalike,
+        "comment_string_operator_elif_lookalikes",
+        &python_lookalike_source(),
+        Expect::Supported,
+    );
     for shape in PYTHON_SHAPES {
-        cases.push(python_case(
+        push(
             &format!("python-{}-over-budget", shape.replace('_', "-")),
             Role::Discriminator,
             shape,
@@ -418,21 +456,29 @@ pub(crate) fn python_cases() -> Vec<Case> {
                 token: "parse_budget",
                 language_class: Some("language_scope_unsupported"),
             },
-        ));
+        );
     }
     cases
 }
 
-fn python_case(id: &str, role: Role, shape: &'static str, hostile: &str, expect: Expect) -> Case {
+fn python_case(
+    id: &str,
+    route: Route,
+    role: Role,
+    shape: &'static str,
+    hostile: &str,
+    expect: Expect,
+) -> Case {
+    let (suffix, args, artifact) = route_parts(route);
     Case {
-        id: id.to_string(),
-        route: Route::Check,
-        artifact: None,
+        id: format!("{id}.{suffix}"),
+        route,
+        artifact,
         family: Family::PythonNesting,
         role,
         shape,
         files: python_workspace(hostile),
-        args: check_args(&[]),
+        args,
         expect,
         changed: PY_CHANGED.to_string(),
         hostile: Some(PY_HOSTILE.to_string()),
@@ -485,7 +531,12 @@ fn many_segment_pattern() -> String {
     format!("src/{}zzz.rs", "**/a/".repeat(16))
 }
 
+fn toml_double_quoted(value: &str) -> String {
+    value.replace('\\', "\\\\").replace('\"', "\\\"")
+}
+
 fn suppression_case(id: &str, role: Role, pattern: &str, changed: &str, expect: Expect) -> Case {
+    let pattern = toml_double_quoted(pattern);
     let policy = format!(
         "schema_version = 1\n\n[[suppressions]]\nkind = \"exposure_gap\"\npath = \"{pattern}\"\nreason = \"termination qualification selector\"\nowner = \"qualification\"\n"
     );
@@ -500,7 +551,7 @@ fn suppression_case(id: &str, role: Role, pattern: &str, changed: &str, expect: 
             changed,
             vec![(SUPPRESSION_POLICY_FILE.to_string(), policy.into_bytes())],
         ),
-        args: check_args(&["--suppression-policy", SUPPRESSION_POLICY_FILE]),
+        args: check_args(&["--suppression-policy", SUPPRESSION_POLICY_FILE], "json"),
         expect,
         changed: changed.to_string(),
         hostile: None,
@@ -508,6 +559,7 @@ fn suppression_case(id: &str, role: Role, pattern: &str, changed: &str, expect: 
 }
 
 fn generated_case(id: &str, role: Role, pattern: &str, changed: &str, expect: Expect) -> Case {
+    let pattern = toml_double_quoted(pattern);
     let config = format!(
         "[languages]\nenabled = [\"rust\"]\n\n[languages.rust]\ngenerated_file_patterns = [\"{pattern}\"]\n"
     );
@@ -522,7 +574,7 @@ fn generated_case(id: &str, role: Role, pattern: &str, changed: &str, expect: Ex
             changed,
             vec![("ripr.toml".to_string(), config.into_bytes())],
         ),
-        args: check_args(&[]),
+        args: check_args(&[], "json"),
         expect,
         changed: changed.to_string(),
         hostile: None,
@@ -531,11 +583,25 @@ fn generated_case(id: &str, role: Role, pattern: &str, changed: &str, expect: Ex
 
 /// Literal normalization expectations shared by both slash-containing dialects.
 /// Keep slashless generated-file patterns in their own consumer-specific rows.
-const NORMALIZATION_CASES: [(&str, &str, bool); 4] = [
+pub(crate) const NORMALIZATION_CASES: [(&str, &str, bool); 4] = [
     ("leading-dot-segment", "./src/lib.rs", true),
     ("inner-dot-segment", "src/./lib.rs", true),
     ("empty-segment", "src//lib.rs", true),
     ("normalized-nonmatch", "src/./other.rs", false),
+];
+
+/// Root-relative boundary rows with patterns both consumers accept.
+pub(crate) const BOUNDARY_CASES: [(&str, &str, &str, bool); 2] = [
+    ("root-relative-file", "lib.rs", "lib.rs", true),
+    ("root-relative-nonmatch", "tests/**", "lib.rs", false),
+];
+
+/// Selectors the shared matcher would understand but product configuration
+/// refuses before matching. Suppression policy only; generated-file patterns
+/// share the same relative-path contract but are exercised through valid rows.
+pub(crate) const POLICY_REFUSAL_PATTERNS: [(&str, &str); 2] = [
+    ("leading-slash-refused", "/src/lib.rs"),
+    (r"backslash-refused", r"src\lib.rs"),
 ];
 
 pub(crate) fn glob_cases() -> Vec<Case> {
@@ -723,7 +789,43 @@ pub(crate) fn glob_cases() -> Vec<Case> {
             &deep,
             GeneratedNotExcluded,
         ),
+        generated_case(
+            "adjacent-double-star",
+            Role::Control,
+            "src/**/**/lib.rs",
+            lib,
+            GeneratedExcluded,
+        ),
     ]);
+    for (id, pattern, changed, matches) in BOUNDARY_CASES {
+        cases.push(suppression_case(
+            id,
+            Role::Control,
+            pattern,
+            changed,
+            if matches { GlobMatch } else { GlobNonmatch },
+        ));
+        cases.push(generated_case(
+            id,
+            Role::Control,
+            pattern,
+            changed,
+            if matches {
+                GeneratedExcluded
+            } else {
+                GeneratedNotExcluded
+            },
+        ));
+    }
+    for (id, pattern) in POLICY_REFUSAL_PATTERNS {
+        cases.push(suppression_case(
+            id,
+            Role::Control,
+            pattern,
+            lib,
+            Expect::PolicyRefused,
+        ));
+    }
     for (id, pattern, matches) in NORMALIZATION_CASES {
         cases.push(suppression_case(
             id,

@@ -241,7 +241,7 @@ fn field_gap_with_two_seams_prints_only_the_stub_that_works() -> Result<(), Stri
     let repo = field_case()?;
     let check = repo.check()?;
     assert!(
-        !check.contains("Choose a test-stub seam"),
+        !check.contains("Choose a test-stub spot"),
         "the unchanged field's seam is not offered as a choice:\n{check}"
     );
     assert_eq!(
@@ -294,7 +294,7 @@ fn hidden_row_stub_command_runs_and_succeeds() -> Result<(), String> {
         .map(|(_, rest)| rest.to_string())
         .ok_or_else(|| format!("precondition, the fixture has a hidden row:\n{check}"))?;
     assert!(
-        hidden.contains("Choose a test-stub seam"),
+        hidden.contains("Choose a test-stub spot"),
         "precondition, the hidden row offers its one validated stub as a choice:\n{check}"
     );
     assert_eq!(

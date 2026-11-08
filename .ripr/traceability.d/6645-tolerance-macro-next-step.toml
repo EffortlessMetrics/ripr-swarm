@@ -1,0 +1,9 @@
+# Name the numeric open question for approx/float-cmp tolerance macros (#6645).
+[[extend]]
+id = "RIPR-SPEC-0120"
+tests = [
+  "crates/ripr/src/analysis/language/rust/oracles.rs::tests::a_tolerance_macro_gets_a_numeric_next_step_and_nothing_else_changes",
+]
+fixtures = [
+  "fixtures/rust_tolerance_assertion_macro_limitation",
+]

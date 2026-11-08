@@ -49,7 +49,7 @@ routes the missing producer proof to its owning issue.
 | `schemas/ripr/ripr-agent-request.schema.json` | `0.2` | same | reserved | none | none | none | **exempt — out of scope** | #3009. |
 | `schemas/ripr/ripr-agent-success.schema.json` | `0.2` | none — the live `ripr/listActionableItems` handler (`crates/ripr/src/lsp/backend.rs`) emits an interim response shape, NOT this full envelope | reserved | none for this schema; the interim shape is pinned by `list_actionable_items_interim_response_shape_is_closed` in `crates/ripr/src/lsp/backend.rs` and documented in `docs/OUTPUT_SCHEMA.md` | none | none | **exempt — out of scope (narrower authorities named)** | No live producer emits the full envelope, so a registered contract would resolve no subject; registration stays routed to #3009. The narrower authorities covering this schema today: the route-coherence conditionals are pinned by the resolver tests in `crates/ripr/src/lsp/agent_protocol.rs` (`readiness_must_agree_with_route_and_spec`, `schema_0_2_payload_omitting_route_field_is_rejected`, `command_spec_decoding_is_closed_to_the_published_shape`), and the envelope example in `fixtures/lsp_agent_protocol/success-envelope.json` tracks the producer-shaped contract. The live handler's interim response shape is separately pinned by the closed-shape test and the `docs/OUTPUT_SCHEMA.md` record. |
 | `schemas/ripr/ripr-agent-error.schema.json` | `0.2` | none for this envelope — the live handler's fail-closed error payloads are a three-field `error` object, NOT this full envelope | reserved | none | none | none | **exempt — out of scope** | #3009. The live fail-closed error shape (`{ "error": { "kind", "message", "recovery_route" } }`) is pinned by `list_actionable_items_interim_response_shape_is_closed` in `crates/ripr/src/lsp/backend.rs` and documented in `docs/OUTPUT_SCHEMA.md`. |
-| `schemas/ripr/executed-control.schema.json` | `1` | `crates/ripr/src/domain/executed_control.rs` validates; `crates/ripr/src/output/executed_control.rs` projects JSON/Markdown | live (library contract) | `fixtures/executed-control-contract/expected/valid-pass-after-repair.json` | `cargo xtask check-verification-contracts --check`; `cargo test -p ripr --lib domain::executed_control output::executed_control` | domain negatives: ordinary positive test, review prose, other head, unexercised subject, duplicate ids, unknown obligation | registered | Corpus negatives are advertised `invalid` and skipped by the schema contract; the domain validator is the satisfaction authority. #3858/#4063 is a `not_proven` documentation fixture, not pass. |
+| `schemas/ripr/executed-control.schema.json` | `1` | `crates/ripr-contract/src/domain/executed_control.rs` validates; `crates/ripr/src/output/executed_control.rs` projects JSON/Markdown | live (library contract) | `fixtures/executed-control-contract/expected/valid-pass-after-repair.json` | `cargo xtask check-verification-contracts --check`; `cargo test -p ripr --lib domain::executed_control output::executed_control` | domain negatives: ordinary positive test, review prose, other head, unexercised subject, duplicate ids, unknown obligation | registered | Corpus negatives are advertised `invalid` and skipped by the schema contract; the domain validator is the satisfaction authority. #3858/#4063 is a `not_proven` documentation fixture, not pass. |
 | `schemas/ripr/ripr-intervention-study.schema.json` | `ripr_intervention_study.v1` | `crates/ripr/src/output/intervention_study.rs` sealing `RiprInterventionStudyV1` | live | `fixtures/intervention-study/valid.json` | `cargo xtask check-verification-contracts --check` | domain study-law tests reject the ten #4649 falsifiers; `protocol_digest` mismatch is a separate projection check | registered | Preregistration-only. No producer executes agents, grades repairs, or emits an intervention-value conclusion. |
 
 ## What the registered contracts enforce
@@ -96,14 +96,17 @@ validates every committed producer document instead, so a qualification run does
 not depend on which subjects someone remembered to register (#3919, #3920):
 
 ```bash
-cargo xtask schema-producer-sweep [--rev REV] \
+cargo xtask schema-producer-sweep [--rev REV | --worktree] \
   [--artifact SCHEMA[#POINTER]=FILE[#POINTER]]...
 ```
 
 Every schema and document it validates is read from one commit (`--rev`,
 default `HEAD`) through `git archive`, never from the working tree, so
 uncommitted edits and untracked files such as live artifacts cannot change the
-result. It uses the same validator as the registered contracts and writes
+result. Release qualification always uses this commit-bound mode. `--worktree`
+is the local `precommit` mode only: it snapshots HEAD plus uncommitted and
+untracked non-ignored files through a private index, and cannot combine with
+`--rev` or `--live-replay`. It uses the same validator as the registered contracts and writes
 `target/ripr/reports/schema-producer-sweep.json`: per schema row, the schema
 digest, discovered and validated producer counts, edge fixtures, excluded
 stimulus, live artifacts, every subject's byte digest, the commit, and a `rows_sha256` digest over all
@@ -142,8 +145,8 @@ every run, and on pull requests and merge groups also `pr-evidence`
 unparseable artifact fails the step, so a producer that stops writing cannot
 turn a row into `not_run`. A producer that drifts from its published schema
 (for example renaming a `doctor` field) fails the gate with
-`missing required field` / `unexpected field`. Replacing the required gate's
-hand-picked subject selection is still #3919.
+`missing required field` / `unexpected field`. Replacing the required gate's hand-picked subject selection landed in #3919; the
+release sweep remains the commit-bound qualification replay (#3920).
 
 Reviewed narrower authority (#9561): `repair-attempt` and `execution_result`
 need an agent repair transaction, which is too heavy to add to the required

@@ -177,13 +177,45 @@ It is evaluated independently of a name-only call: an unrelated same-named
 method call (`other.sanitize_label()`) in the test neither blocks nor
 downgrades it.
 
-Named limit: the route does not look at how `fmt` uses the helper. A helper
-whose result is dropped (`let _ = sanitize_label(l);`) or called only in a
-conditional branch or loop body still reads as reached, because the existing
-helper-transfer chain records one call site and no control-flow condition. This
-is acceptable only because the route credits reach and nothing else: such a
-finding stays `propagation_unknown`, never `exposed`. A hop through a local
+Named limit: the route does not look at how `fmt` uses the helper beyond
+provably dead code. A helper whose result is dropped (`let _ = sanitize_label(l);`)
+still runs, and one called only in a conditional branch or loop body may run,
+so both read as reached, which is right for reach. A helper whose only call in
+`fmt`, or in any caller between it and `fmt`, sits in code a syntactic reading
+proves never runs (a literal `if false` block, statements after a top-level
+`return`; the same shapes as the live-code rule below) is not reached: formatting
+never runs that call. This is judged on the whole line: a line holding any live
+code, and a call with no recorded site, stay reached. The route credits reach
+and nothing else: such a finding stays `propagation_unknown`, never `exposed`.
+A hop through a local
 `macro_rules!` identifier argument carries no formatting reach.
+
+Live code only (#8999). A formatting call credits reach only when the test
+can run it. A `to_string()` or formatting macro whose result is dropped
+(`let _ = format!("{m}");`, `m.to_string();`) or that sits under an unknown
+condition (`if cond { .. }`, a `const` flag, a possibly empty `for`) still
+runs or may run, so it stays reached. The reader blanks, before any
+dispatch check, the code a syntactic reading proves never runs: the block of a
+literal `if false` / `while false` (an `else` branch stays live), the
+statement under `#[cfg(any())]` or `#[cfg(false)]`, a free nested `fn` whose name
+nothing else mentions (methods inside a local `impl`/`trait`/`mod` are called
+implicitly or by the harness and stay live), a `let name = |..| ..;` closure whose binding is never
+mentioned again (or is `_`), and the statements (not the hoisted items) after a top-level `return`.
+Shapes that do not match exactly stay live, so this only removes credit from
+dead code. It applies to the direct route and the helper-entry route alike
+because both go through `test_dispatches_to_fmt`.
+
+Dead code in `fmt` itself (#8999). The same live-code reading judges the `fmt`
+body. When the changed line is a line of the `Display`/`Debug` `fmt` body made
+wholly of dead code (a literal `if false` block, a statement after a top-level
+`return`, `#[cfg(any())]`), formatting a value of the impl's type does not run
+it, so the direct route gives it no reach. The shapes are exactly those of the
+live-code rule below, including a `let name = |..| ..;` closure never called and
+a nested `fn` nothing mentions. A line with any live code on it (`if
+false { a } else { b }` on one row), a blank or comment-only line, and a
+changed line in an `else`, a loop, or under an unknown condition stay reached.
+A name-only call of `fmt` is a separate signal and is unchanged. The judgment
+only removes reach; it never raises a class.
 
 Package scope (#8999). The helper-entry route is in-package only, with the same
 rule as the plain inherent method entry: a member-package owner admits only a
@@ -202,6 +234,18 @@ relates in either package.
   macros, associated const/factory, inherent `to_string`, turbofish/closure
   comma argument shifts.
 - Discriminator: Display and Debug impls of one type are told apart.
+- Live code (#8999): positive for a dropped `let _ = format!(..)`, a dropped
+  `m.to_string();`, an unknown condition, the `else` of a literal `if false`,
+  a called closure and a called nested fn; negative for a literal `if false`
+  or `while false` block, `#[cfg(any())]`, code after `return`, a never-called
+  closure and a never-called nested fn, on the direct route and on the
+  helper-entry route (`crates/ripr/tests/fmt_dispatch_live_reach.rs`).
+- Dead code in `fmt` (#8999): negative for a changed line in a literal
+  `if false` block or after a top-level `return` of `fmt`, and for a helper
+  whose only call in `fmt` sits there; positive for the `else` of a literal
+  `if false` and for an unknown condition (the controls that show the
+  negatives are the filter, not a missing chain)
+  (`crates/ripr/tests/fmt_body_dead_flow.rs`).
 - Package scope (#8999): positive for the owner's own package test (root
   unit and integration tests, member tests); negative for a dependent member
   package's test of a root owner, the root package's test of a member owner,
@@ -233,6 +277,12 @@ relates in either package.
 
 ## Test Mapping
 
+- `crates/ripr/tests/fmt_dispatch_live_reach.rs`: public-API controls for
+  dropped, conditional and provably dead formatting calls.
+- `crates/ripr/src/analysis/classify/related_tests/fmt_live.rs`: the `tests`
+  module, one test per dead-code shape and its live counterpart.
+- `crates/ripr/tests/fmt_body_dead_flow.rs`: public-API controls for dead
+  control flow inside the `fmt` body, direct and helper-entry routes.
 - `crates/ripr/tests/fmt_helper_entry_package_scope.rs`: multi-package
   workspaces for the in-package rule.
 - `crates/ripr/tests/fmt_helper_entry_dispatch.rs`: public-API controls for
@@ -250,6 +300,8 @@ relates in either package.
 
 ## Implementation Mapping
 
+- `crates/ripr/src/analysis/classify/related_tests/fmt_live.rs`: `live_body`,
+  `line_is_dead`, `calls_only_in_dead_code`.
 - `crates/ripr/src/analysis/classify/related_tests/fmt_dispatch.rs`:
   `FmtContext`, `test_dispatches_to_fmt`, `macro_dispatch`, `args_dispatch`,
   `expr_has_type`.

@@ -433,7 +433,7 @@ pub(crate) fn render_pr_review_front_panel_json(
         warnings: &report.warnings,
         limits: LIMITS.to_vec(),
     })
-    .map_err(|err| format!("render PR review front panel JSON failed: {err}"))
+    .map_err(|err| format!("render PR review front panel JSON failed: {err}; this is a ripr bug, report it with the command you ran"))
 }
 
 pub(crate) fn render_pr_review_front_panel_markdown(report: &PrReviewFrontPanelReport) -> String {
@@ -478,6 +478,7 @@ pub(crate) fn render_pr_review_front_panel_markdown(report: &PrReviewFrontPanelR
         }
         if let Some(intent) = &issue.focused_proof_intent {
             out.push_str(&format!("- Focused proof intent: {intent}\n"));
+            crate::output::placeholder_assertion::push_fill_in_note(&mut out, "  ", intent);
         }
         if let Some(suggested) = &issue.suggested_test {
             out.push_str(&format!(

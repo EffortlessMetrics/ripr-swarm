@@ -12,7 +12,7 @@ use crate::cli::commands_context::{
 };
 use crate::cli::help;
 use crate::cli::parse::{
-    disclose_attached_terminal_stdin_read, expect_value, parse_format, parse_mode,
+    disclose_attached_terminal_stdin_read, expect_value, parse_format, parse_mode, reconcile_root,
 };
 use crate::cli::suggest::unknown_argument;
 use crate::config::{CheckInputExplicit, RiprConfig, apply_to_check_input, load_for_root};
@@ -237,6 +237,61 @@ fn non_cargo_workspace_marker(dir: &Path) -> Option<ImplicitRootReason> {
     None
 }
 
+/// An ordinary package or project manifest at or above the current directory.
+/// `resolve_project_root` anchors on workspaces, Cargo packages and Git top
+/// levels only, so a standalone npm or Python project without Git still reads
+/// as unanchored there; it is a project, and the repair-lifecycle gate keeps
+/// its ordinary answers (#12417).
+pub(in crate::cli) fn package_manifest_above_current_dir() -> bool {
+    const MANIFESTS: [&str; 4] = ["package.json", "pyproject.toml", "setup.py", "setup.cfg"];
+    let Ok(start) = std::fs::canonicalize(".") else {
+        return true;
+    };
+    start
+        .ancestors()
+        .any(|dir| MANIFESTS.iter().any(|name| dir.join(name).is_file()))
+}
+
+/// The cause an implicit repair-lifecycle run refuses with (#12417): the
+/// current directory sits under no workspace, package or Git top level, and
+/// no ordinary package manifest excuses it, so the directory is not a project
+/// and there is no repair state to answer about. `None` when the run is
+/// anchored (or the walk failed, which the ordinary resolution reports).
+pub(in crate::cli) fn unanchored_implicit_root_cause() -> Option<String> {
+    if !matches!(resolve_project_root(Path::new(".")), Ok(None)) {
+        return None;
+    }
+    if package_manifest_above_current_dir() {
+        return None;
+    }
+    Some(
+        "no workspace, package or Git repository was found above the current directory, so ripr did not look for repair state; run from inside your project or pass `--root <dir>`"
+            .to_string(),
+    )
+}
+
+/// The repair-lifecycle root resolution (`repair`, `continue`, `status`, and
+/// the `agent` spellings): the same implicit root [`resolve_implicit_command_root`]
+/// resolves, but an implicit run that no project anchors refuses instead of
+/// silently retaining the current directory (#12417). Retaining it made the
+/// spellings read or answer about an unrelated tree as if it were a project —
+/// for `continue`, by scanning that whole tree for a repair start. `check`,
+/// `pilot`, `context`, `rerun`, `diff`, `explain` and `cache` keep
+/// [`resolve_implicit_command_root`] (retain-start); an explicit `--root`
+/// skips the gate.
+pub(in crate::cli) fn resolve_implicit_command_root_refusing(
+    root: &mut PathBuf,
+    root_explicit: bool,
+) -> Result<Option<String>, String> {
+    if root_explicit {
+        return resolve_implicit_command_root(root, root_explicit);
+    }
+    if let Some(cause) = unanchored_implicit_root_cause() {
+        return Err(cause);
+    }
+    resolve_implicit_command_root(root, root_explicit)
+}
+
 /// Shared by every command that takes `--root` and defaults to `.`: without a
 /// typed `--root`, resolve the workspace root exactly as `ripr check` does
 /// (#8767), with the same stderr disclosure. A typed `--root` is kept as given.
@@ -375,7 +430,7 @@ pub(super) fn resolve_implicit_workspace_root(input: &mut CheckInput) -> Result<
         return Ok(());
     };
     let current = std::fs::canonicalize(".")
-        .map_err(|error| format!("resolve current directory failed: {error}"))?;
+        .map_err(|error| format!("resolve current directory failed: {error}; run from a directory that still exists, or pass `--root <dir>`"))?;
     if root == current {
         return Ok(());
     }
@@ -478,7 +533,7 @@ fn parse_git_timeout_from(
     let timeout = std::time::Duration::from_secs(secs);
     if std::time::Instant::now().checked_add(timeout).is_none() {
         return Err(format!(
-            "{source} is too large for the platform deadline; got {secs} seconds"
+            "{source} is too large for the platform deadline; got {secs} seconds; pass a smaller number of seconds"
         ));
     }
     Ok((secs > 0).then_some(timeout))
@@ -505,7 +560,7 @@ fn check_timeout_from_env(
         Ok(value) => parse_check_timeout_from("RIPR_CHECK_TIMEOUT", &value).map(Some),
         Err(std::env::VarError::NotPresent) => Ok(None),
         Err(std::env::VarError::NotUnicode(_)) => {
-            Err("RIPR_CHECK_TIMEOUT must be valid UTF-8".to_string())
+            Err("RIPR_CHECK_TIMEOUT must be valid UTF-8; set it to a whole number of seconds, or unset it".to_string())
         }
     }
 }
@@ -588,7 +643,10 @@ pub(super) fn refuse_check(
 /// consumers get the requested echo, the published facts, and the bounded
 /// retry; every other failure keeps its unchanged prose.
 fn human_refusal_prose(error: &CoreError) -> String {
-    if error.refusal_notice().identity == "analysis_timeout"
+    if error
+        .refusal_notice(&crate::config::config_error_summary)
+        .identity
+        == "analysis_timeout"
         && let Some(projection) = app::timeout_refusal::take_stashed()
     {
         return format!("{error}\n{}", projection.human_recovery_text());
@@ -610,27 +668,29 @@ pub(super) fn machine_refusal_document(
     format: OutputFormat,
     error: &CoreError,
 ) -> Option<Result<String, String>> {
-    let notice = error.refusal_notice();
+    let notice = error.refusal_notice(&crate::config::config_error_summary);
     match format {
-        OutputFormat::Json => {
+        OutputFormat::Json | OutputFormat::JsonCompact => {
             let display = error.to_string();
-            Some(
-                match output::limited_check::render_diff_scope_limited_check_json(
-                    envelope_input,
-                    &display,
-                ) {
-                    Ok(Some(rendered)) => Ok(rendered),
-                    Ok(None) => {
-                        output::limited_check::render_check_failure_json(envelope_input, error)
-                    }
-                    Err(render) => Err(render),
-                },
-            )
+            let rendered = match output::limited_check::render_diff_scope_limited_check_json(
+                envelope_input,
+                &display,
+            ) {
+                Ok(Some(rendered)) => Ok(rendered),
+                Ok(None) => output::limited_check::render_check_failure_json(envelope_input, error),
+                Err(render) => Err(render),
+            };
+            Some(rendered.map(|document| output::compact_json::finish(document, &format)))
         }
         // SARIF: a schema-valid run whose only signal is a
         // tool-configuration notification — uploadable to code scanning,
         // which an empty stream is not.
         OutputFormat::Sarif => Some(Ok(output::sarif::render_refusal_sarif(
+            &notice,
+            &envelope_input.root,
+            envelope_input.base.as_deref(),
+        ))),
+        OutputFormat::SarifCompact => Some(Ok(output::sarif::render_refusal_sarif_compact(
             &notice,
             &envelope_input.root,
             envelope_input.base.as_deref(),
@@ -780,7 +840,10 @@ fn check_inner(
         match args[i].as_str() {
             "--root" => {
                 i += 1;
-                input.root = PathBuf::from(expect_value(args, i, "--root")?);
+                let value = expect_value(args, i, "--root")?;
+                let reconciled =
+                    reconcile_root(&input.root, root_explicitly_provided, value, "check")?;
+                input.root = reconciled;
                 root_explicitly_provided = true;
             }
             "--base" => {
@@ -928,7 +991,7 @@ fn check_inner(
             || write_artifact.is_some()
             || input.suppression_policy.is_some())
     {
-        return Err("--output-dir requires a named --diff file and cannot be combined with --format/--json, --worktree/--committed, --candidate-tree/--candidate-base, --gap-ledger, --write-artifact or --suppression-policy".into());
+        return Err("--output-dir requires a named --diff file and cannot be combined with --format/--json, --worktree/--committed, --candidate-tree/--candidate-base, --gap-ledger, --write-artifact or --suppression-policy; pass a named `--diff <file>` and drop the other flags".into());
     }
     // #6834: refusal-envelope context for every failure below. Argv usage
     // errors above return before this snapshot exists and stay prose-only.
@@ -1129,6 +1192,7 @@ fn check_inner(
             OutputFormat::Human
                 | OutputFormat::HumanFull
                 | OutputFormat::Json
+                | OutputFormat::JsonCompact
                 | OutputFormat::Github
         )
     {
@@ -1136,7 +1200,7 @@ fn check_inner(
             super::check_fanout::refusal_destination(fanout_custody.as_ref(), output_dir.as_deref()),
             &envelope_input,
             effective_format,
-            "--suppression-policy applies to the findings-based check formats (human, human-full, json, github); \
+            "--suppression-policy applies to the findings-based check formats (human, human-full, json, json-compact, github); \
              it is not yet supported for SARIF, badge, or repo formats"
                 .to_string(),
         ));
@@ -1593,12 +1657,20 @@ fn check_inner(
     // diff-scoped path promises (`ripr progress: <stage> [<scope>]`,
     // throttled heartbeats included). Both the audit-path disclosure and the
     // stage lines are stderr-only and cannot change machine stdout.
-    let progress = (!crate::cli::progress::progress_silenced(quiet)).then(|| {
-        std::sync::Arc::new(crate::cli::progress::CliProgressSink::for_stderr(
-            std::io::stderr().is_terminal(),
-            crate::cli::progress::ProgressPolicy::STANDARD,
-        ))
-    });
+    // #11879: a first `check` in a project whose git ignore rules do not cover
+    // ripr's artifact root says so once, with the exact entry; `doctor` gives
+    // the same verdict. stderr only, so stdout and machine formats are
+    // unchanged, and silent when `--quiet` or when git cannot establish it.
+    if !quiet && let Some(note) = super::doctor::first_check_artifact_ignore_note(&input.root) {
+        eprintln!("{}", terminal_safe(note));
+    }
+    let progress = (!crate::cli::progress::progress_silenced(quiet, format.is_machine_readable()))
+        .then(|| {
+            std::sync::Arc::new(crate::cli::progress::CliProgressSink::for_stderr(
+                std::io::stderr().is_terminal(),
+                crate::cli::progress::ProgressPolicy::STANDARD,
+            ))
+        });
     let progress_sink = progress
         .as_ref()
         .map(|sink| &**sink as &dyn crate::app::AnalysisProgressSink);
@@ -1608,7 +1680,18 @@ fn check_inner(
     // format — see `repo_audit_path_disclosure`) — like the repo-scope
     // --base/--diff warning above, this is an advisory notice, so it is not
     // part of the --quiet-suppressed progress stream.
-    if let Some(disclosure) = format.repo_audit_path_disclosure() {
+    if let Some(disclosure) = format.repo_audit_path_disclosure(&input.root) {
+        eprintln!("{disclosure}");
+        // The audit-path formats also say when the cache has no usable entry
+        // and the full walk runs (#12505).
+        crate::analysis::announce_seam_facts_cache_misses();
+    }
+    if check_timeout_explicitly_provided
+        && let Some(disclosure) = super::check_budget::explicit_check_timeout_disclosure(
+            check_timeout,
+            format.is_repo_seam_inventory(),
+        )
+    {
         eprintln!("{disclosure}");
     }
     if matches!(format, OutputFormat::RepoExposureJson) {
@@ -1647,17 +1730,30 @@ fn check_inner(
                         &report.analyzed_production_files,
                     );
                 analysis::cancellation::begin_cli_publication()?;
-                let stdout = std::io::stdout();
-                let mut handle = stdout.lock();
+                // Test builds buffer the document and publish it through the
+                // capture-aware `print!` path (see `write_stdout_chunked`):
+                // raw Write-handle bytes bypass libtest capture and interleave
+                // with concurrent `test NAME ... ok` rows, which the
+                // fail-closed windows-advisory summarizer rejects as an
+                // unrecognized observation (nightly 41778491177, #9272).
+                // Production keeps the streaming stdout handle: repo documents
+                // are bounded by the stream, not held in memory.
+                #[cfg(test)]
+                let mut handle = Vec::<u8>::new();
+                #[cfg(not(test))]
+                let mut handle = std::io::stdout().lock();
                 output::repo_exposure::write_repo_exposure_json_with_context(
                     &report.classified,
                     report.limit_info.as_ref(),
                     ts_guidance.as_ref(),
                     python_guidance.as_ref(),
                     generated_skip.as_ref(),
+                    &report.evidence_limitations,
                     &artifact_context,
                     &mut handle,
                 )?;
+                #[cfg(test)]
+                print!("{}", String::from_utf8_lossy(&handle));
                 Ok(())
             },
         )
@@ -1817,6 +1913,7 @@ fn check_inner(
             OutputFormat::Human
                 | OutputFormat::HumanFull
                 | OutputFormat::Json
+                | OutputFormat::JsonCompact
                 | OutputFormat::Github
         )
         && output
@@ -1965,6 +2062,14 @@ fn check_inner(
         explicit.mode,
         worktree_run,
     );
+    // #11976: `explain` cannot replay a candidate tree, so a command naming
+    // the live checkout would present the wrong subject. Withhold the JSON
+    // `finding_routes` projection for that subject.
+    let navigation = if candidate_tree.is_some() {
+        navigation.with_finding_routes_withheld()
+    } else {
+        navigation
+    };
     // #5471: only the default human render prints the `ripr agent stub`
     // route, and only as the stub resolver decides it for that finding. The
     // resolver reads the files on disk, so a check of other bytes (a
@@ -1974,12 +2079,24 @@ fn check_inner(
     let machine_drill_in = output_dir
         .as_ref()
         .map(|_| app::FindingDrillIn::Commands(navigation.clone()));
-    let navigation = if matches!(format, OutputFormat::Human) && analyzed_live_files {
+    // #11976: the JSON `finding_routes` projection reads the same decisions as
+    // the human screen, so the default JSON formats compute them under the
+    // same live-files gate. The output-directory members (`human.txt` and
+    // `detail.json`) share this one navigation, keeping fanout parity.
+    let routed_format = matches!(
+        format,
+        OutputFormat::Human | OutputFormat::Json | OutputFormat::JsonCompact
+    );
+    let navigation = if routed_format && analyzed_live_files {
         // #8547: both routes read seams of the selected finding's file
         // (the repair route adds its related-test evidence files); they
         // share a bounded seam index, repair first. Selected and listed
         // hidden stub subjects reuse covered files; an uncovered file may
         // replace the index. Hidden work is bounded by the displayed window.
+        // The analysis above already looked up (and, for a broken cache,
+        // reported) these cache entries once; the route passes below are
+        // secondary builds that must not repeat that warning.
+        let _secondary_pass = crate::analysis::SecondaryPassGuard::enter();
         let mut seam_index = None;
         let repair_route = crate::app::task_first::check_repair_route(
             &limited_check_input.root,
@@ -2032,10 +2149,12 @@ fn check_inner(
         })?;
         let mut documents = Vec::new();
         for (member_format, name) in super::check_fanout::MEMBERS {
-            let navigation = if member_format == OutputFormat::Human {
-                Some(&drill_in)
-            } else {
+            // Only the two members that read routes see the routed
+            // navigation; the badge keeps the unrouted next-step contract.
+            let navigation = if member_format == OutputFormat::BadgeJson {
                 machine_drill_in.as_ref()
+            } else {
+                Some(&drill_in)
             };
             let document = app::render_check_with_config_and_navigation_and_progress(
                 &output,
@@ -2260,7 +2379,7 @@ fn render_check_gap_ledger_badge(
         }
     };
     let text = crate::bounded_input::read_to_string(gap_ledger)
-        .map_err(|err| format!("failed to read gap ledger {}: {err}", gap_ledger.display()))?;
+        .map_err(|err| format!("failed to read gap ledger {}: {err}; check the path passed to `--gap-ledger` exists and you can read it", gap_ledger.display()))?;
     let policy = output::badge::BadgePolicy {
         suppressions_path: config.suppressions().display_path(),
         ..output::badge::BadgePolicy::default()
@@ -2307,6 +2426,10 @@ pub(super) fn gap_check_findings_snapshot(
 #[cfg(test)]
 #[path = "check_argv_refusal_tests.rs"]
 mod argv_refusal_tests;
+
+#[cfg(test)]
+#[path = "check_json_compact_tests.rs"]
+mod json_compact_tests;
 
 #[cfg(test)]
 #[path = "check_gap_ledger_legend_tests.rs"]
@@ -2671,7 +2794,22 @@ mod tests {
             ("hedge-rust-excluded-ts", vec![LanguageId::TypeScript]),
             ("hedge-rust-excluded-empty", Vec::new()),
         ] {
-            let (findings, outcome) = sample_diff_outcome(label, enabled)?;
+            let root = copy_sample_workspace_to_temp(label)?;
+            let mut config = RiprConfig::default();
+            config.languages.enabled = enabled;
+            let input = CheckInput {
+                root: root.clone(),
+                diff_file: Some(root.join("example.diff")),
+                ..CheckInput::default()
+            };
+            let result = app::check_workspace_with_config(input, &config);
+            if let Ok(()) = std::fs::remove_dir_all(&root) {}
+            let output = result?;
+            let findings = output.findings.len();
+            let outcome = output
+                .analysis_outcome
+                .as_ref()
+                .ok_or("diff pipeline must project an analysis outcome")?;
             assert_eq!(
                 findings, 0,
                 "fixture precondition: {label} must analyze nothing"
@@ -2685,7 +2823,7 @@ mod tests {
                 crate::analysis_outcome::AnalysisOutcomeKind::PartialWithLimitations,
                 "an excluded Rust adapter must not claim a complete analysis ({label})"
             );
-            let hedge = zero_findings_diff_hedge(Some(&outcome), false)
+            let hedge = zero_findings_diff_hedge(Some(outcome), false)
                 .ok_or_else(|| format!("{label}: a typed exclusion must be named on stderr"))?;
             assert!(
                 hedge.contains("rust is not in the effective [languages].enabled set"),
@@ -2695,6 +2833,25 @@ mod tests {
                 !hedge.contains("not a valid unified diff"),
                 "{label}: {hedge}"
             );
+            // #13138: the real incomplete zero-finding check result must not
+            // become done= when the compact Agent renderer projects it.
+            assert!(!output.no_scope_provided);
+            let text =
+                output::render::render_check_with_config(&output, &OutputFormat::Agent, &config)?;
+            assert!(
+                text.contains("analysis=incomplete|outcome=partial_with_limitations\n"),
+                "{text}"
+            );
+            assert!(
+                text.contains("limitation=language_adapter_unavailable|"),
+                "{text}"
+            );
+            assert!(text.contains("|recovery="), "{text}");
+            assert!(
+                text.contains("\nstop=analysis incomplete; zero findings is not a clean result\n"),
+                "{text}"
+            );
+            assert!(!text.contains("\ndone="), "{text}");
         }
         Ok(())
     }
@@ -3318,11 +3475,11 @@ mod tests {
     fn check_requires_values_for_value_flags() {
         assert_eq!(
             check(&args(&["--diff"])),
-            Err("missing value for --diff".to_string())
+            Err("missing value for --diff; pass a value right after it".to_string())
         );
         assert_eq!(
             check(&args(&["--mode"])),
-            Err("missing value for --mode".to_string())
+            Err("missing value for --mode; pass a value right after it".to_string())
         );
     }
 
@@ -3411,15 +3568,15 @@ mod tests {
     fn check_requires_values_for_all_value_flags() {
         assert_eq!(
             check(&args(&["--root"])),
-            Err("missing value for --root".to_string())
+            Err("missing value for --root; pass a value right after it".to_string())
         );
         assert_eq!(
             check(&args(&["--base"])),
-            Err("missing value for --base".to_string())
+            Err("missing value for --base; pass a value right after it".to_string())
         );
         assert_eq!(
             check(&args(&["--format"])),
-            Err("missing value for --format".to_string())
+            Err("missing value for --format; pass a value right after it".to_string())
         );
     }
 }

@@ -1,12 +1,10 @@
 //! Sweep of committed producer documents against every published
 //! schema (#3920).
 //!
-//! `check-verification-contracts` validates one hand-picked subject per
-//! contract row. That denominator is kept by hand, and #3919 records why that
-//! is not enough on its own: #3894's second commit exists because its first
-//! commit's chosen golden missed two producer shapes. Replacing the required
-//! gate's subject selection is deferred past the 0.11 cut, so this command is
-//! the compensating release proof instead. It discovers every committed
+//! `check-verification-contracts` now validates committed producer documents
+//! through the binding table below (#3919), using the same discovery rules as
+//! this sweep on the working tree. This command remains the commit-bound release
+//! proof (#3920). It discovers every committed
 //! producer document by an explicit binding rule, validates each one with the
 //! same validator the gate uses, and reports discovered and validated counts
 //! separately so a qualification run can replay it on the frozen candidate.
@@ -39,13 +37,13 @@ use crate::verification_contracts::{
 };
 
 const REPORT_PATH: &str = "target/ripr/reports/schema-producer-sweep.json";
-const USAGE: &str = "usage: cargo xtask schema-producer-sweep [--rev REV] [--live-replay [--ripr BINARY]] [--artifact SCHEMA[#POINTER]=FILE[#POINTER]]...";
+const USAGE: &str = "usage: cargo xtask schema-producer-sweep [--rev REV | --worktree] [--live-replay [--ripr BINARY]] [--artifact SCHEMA[#POINTER]=FILE[#POINTER]]...";
 /// Every JSON file under this directory is a published schema, the same rule
 /// `check-verification-contracts` applies to the working tree.
 const SCHEMAS_PREFIX: &str = "schemas/";
 
 /// Which committed documents a binding validates.
-enum Corpus {
+pub(crate) enum Corpus {
     /// Every document with this file name, anywhere in the repository.
     FileName(&'static str),
     /// Exactly these repository-relative paths.
@@ -70,7 +68,7 @@ enum Corpus {
     Exempt(&'static str),
 }
 
-struct Binding {
+pub(crate) struct Binding {
     schema_path: &'static str,
     /// JSON pointer to the subschema the subjects must match, or `None` for
     /// the whole schema.
@@ -84,7 +82,7 @@ struct Binding {
     excluded: &'static [(&'static str, &'static str)],
 }
 
-const BINDINGS: &[Binding] = &[
+pub(crate) const VERIFICATION_CORPUS_BINDINGS: &[Binding] = &[
     Binding {
         schema_path: "schemas/badges/shields-endpoint.schema.json",
         pointer: None,
@@ -300,7 +298,11 @@ struct Artifact {
 pub(crate) fn schema_producer_sweep(args: &[String]) -> Result<(), String> {
     let mut options = parse_args(args)?;
     let root = crate::repo_root()?;
-    let tree = load_tree(&root, &options.rev)?;
+    let tree = if options.worktree {
+        load_worktree(&root)?
+    } else {
+        load_tree(&root, &options.rev)?
+    };
     if options.live_replay {
         // Exact-cut replay: run every live producer against the fixture from
         // this commit, then validate their bytes alongside the corpus.
@@ -313,7 +315,7 @@ pub(crate) fn schema_producer_sweep(args: &[String]) -> Result<(), String> {
             options.artifacts.push(parse_artifact(spec)?);
         }
     }
-    let report = sweep(&tree, BINDINGS, &options.artifacts)?;
+    let report = sweep(&tree, VERIFICATION_CORPUS_BINDINGS, &options.artifacts)?;
     let text = serde_json::to_string_pretty(&report.packet)
         .map_err(|error| format!("serialize schema producer sweep: {error}"))?;
     let path = root.join(REPORT_PATH);
@@ -345,8 +347,58 @@ pub(crate) fn schema_producer_sweep(args: &[String]) -> Result<(), String> {
     }
 }
 
+/// The sweep's own source and the validators whose behaviour decides its verdict.
+const SWEEP_SOURCES: &[&str] = &[
+    "xtask/src/schema_producer_sweep.rs",
+    "xtask/src/verification_contracts.rs",
+    "xtask/src/exact_schema_json.rs",
+];
+
+/// The changed path that makes `precommit` run the sweep (#12219): a schema, a
+/// committed JSON document (producer goldens and corpora), or the sweep source
+/// and validators. Anything else cannot move a sweep verdict.
+pub(crate) fn sweep_trigger(changed: &[String]) -> Option<&str> {
+    changed.iter().map(String::as_str).find(|path| {
+        path.starts_with("schemas/") || path.ends_with(".json") || SWEEP_SOURCES.contains(path)
+    })
+}
+
+/// Run the committed-document sweep over the working tree when the diff can
+/// move its verdict. Hosted gates run it on the exact commit; this closes the
+/// gap that let a golden gain a member its schema lacked (#12209 -> #12219).
+pub(crate) fn precommit_schema_sweep(changed: &[String]) -> Result<(), String> {
+    // `git diff` never lists a new untracked file, yet the worktree snapshot
+    // includes it: a fresh invalid golden must trigger the sweep too.
+    let mut changed = changed.to_vec();
+    changed.extend(untracked_paths(&crate::repo_root()?)?);
+    let changed = changed.as_slice();
+    let Some(trigger) = sweep_trigger(changed) else {
+        println!(
+            "schema-producer-sweep: skipped, no schema or JSON document changed vs origin/main"
+        );
+        return Ok(());
+    };
+    println!(
+        "schema-producer-sweep: running on the working tree because `{trigger}` changed vs origin/main"
+    );
+    schema_producer_sweep(&["--worktree".to_string()])
+}
+
+/// New, non-ignored, untracked paths (NUL-delimited, so exotic names survive).
+fn untracked_paths(root: &Path) -> Result<Vec<String>, String> {
+    let out = git(root, &["ls-files", "-z", "--others", "--exclude-standard"])?;
+    Ok(String::from_utf8_lossy(&out)
+        .split('\0')
+        .filter(|path| !path.is_empty())
+        .map(str::to_string)
+        .collect())
+}
+
 struct Options {
     rev: String,
+    /// Sweep the working tree (tracked plus untracked, not ignored) instead of a
+    /// commit, so `precommit` sees an uncommitted schema/golden edit (#12219).
+    worktree: bool,
     artifacts: Vec<Artifact>,
     live_replay: bool,
     ripr: Option<PathBuf>,
@@ -356,6 +408,8 @@ fn parse_args(args: &[String]) -> Result<Options, String> {
     let mut rev = "HEAD".to_string();
     let mut artifacts = Vec::new();
     let mut live_replay = false;
+    let mut worktree = false;
+    let mut rev_given = false;
     let mut ripr = None;
     let mut remaining = args.iter();
     while let Some(arg) = remaining.next() {
@@ -363,9 +417,16 @@ fn parse_args(args: &[String]) -> Result<Options, String> {
             live_replay = true;
             continue;
         }
+        if arg == "--worktree" {
+            worktree = true;
+            continue;
+        }
         let value = remaining.next().ok_or_else(|| USAGE.to_string())?;
         match arg.as_str() {
-            "--rev" if !value.is_empty() => rev = value.clone(),
+            "--rev" if !value.is_empty() => {
+                rev = value.clone();
+                rev_given = true;
+            }
             "--ripr" if !value.is_empty() => ripr = Some(PathBuf::from(value)),
             "--artifact" => artifacts.push(parse_artifact(value)?),
             _ => return Err(USAGE.to_string()),
@@ -374,8 +435,15 @@ fn parse_args(args: &[String]) -> Result<Options, String> {
     if ripr.is_some() && !live_replay {
         return Err("--ripr only applies with --live-replay".to_string());
     }
+    if worktree && (rev_given || live_replay) {
+        return Err(
+            "--worktree sweeps uncommitted bytes and cannot combine with --rev or --live-replay (replay binds to an exact commit)"
+                .to_string(),
+        );
+    }
     Ok(Options {
         rev,
+        worktree,
         artifacts,
         live_replay,
         ripr,
@@ -763,6 +831,87 @@ fn row_label(schema_path: &str, pointer: Option<&str>) -> String {
     }
 }
 
+/// Summary counts from the required-gate corpus pass (#3919).
+pub(crate) struct VerificationCorpusGateSummary {
+    pub summary_lines: Vec<String>,
+    pub producer_discovered: usize,
+    pub producer_validated: usize,
+    pub edge_validated: usize,
+}
+
+/// Whether a hand-maintained contract row's subjects are owned by the corpus
+/// binding table rather than a per-row fixture path.
+pub(crate) fn contract_subjects_owned_by_corpus_gate(
+    schema_path: &str,
+    schema_pointer: Option<&str>,
+) -> bool {
+    if schema_path == "schemas/ripr/executed-control.schema.json"
+        && schema_pointer == Some("/$defs/packet")
+    {
+        // The binding row covers committed producer goldens; the design corpus
+        // in `fixtures/executed-control-contract/corpus.json` stays on the
+        // supplemental CONTRACT table until it is derived by rule (#3919).
+        return false;
+    }
+    VERIFICATION_CORPUS_BINDINGS.iter().any(|binding| {
+        binding.schema_path == schema_path
+            && binding.pointer == schema_pointer
+            && matches!(
+                binding.corpus,
+                Corpus::FileName(_) | Corpus::Paths(_) | Corpus::CommandSpecs { .. }
+            )
+    })
+}
+
+/// Validate every committed producer document the binding table claims on the
+/// working tree, using the same rules as `schema-producer-sweep --worktree`.
+pub(crate) fn verification_corpus_gate_check(
+    root: &Path,
+) -> Result<VerificationCorpusGateSummary, String> {
+    let tree = load_worktree(root)?;
+    let report = sweep(&tree, VERIFICATION_CORPUS_BINDINGS, &[])?;
+    let rows = report
+        .packet
+        .get("rows")
+        .and_then(Value::as_array)
+        .ok_or("corpus gate report missing rows")?;
+    let mut producer_discovered = 0usize;
+    let mut producer_validated = 0usize;
+    let mut edge_validated = 0usize;
+    for row in rows {
+        producer_discovered += row
+            .get("producer_subjects_discovered")
+            .and_then(Value::as_u64)
+            .unwrap_or(0) as usize;
+        producer_validated += row
+            .get("producer_subjects_valid")
+            .and_then(Value::as_u64)
+            .unwrap_or(0) as usize;
+        edge_validated += row
+            .get("edge_fixtures_valid")
+            .and_then(Value::as_u64)
+            .unwrap_or(0) as usize;
+    }
+    if report.violations.is_empty() {
+        Ok(VerificationCorpusGateSummary {
+            summary_lines: report.summary,
+            producer_discovered,
+            producer_validated,
+            edge_validated,
+        })
+    } else {
+        Err(format!(
+            "verification corpus gate failed:\n{}",
+            report
+                .violations
+                .iter()
+                .map(|violation| format!("- {violation}"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        ))
+    }
+}
+
 /// The subjects `corpus` binds in one committed document, with locations.
 fn corpus_subjects<'a>(corpus: &Corpus, path: &str, value: &'a Value) -> Vec<(String, &'a Value)> {
     match corpus {
@@ -944,9 +1093,47 @@ fn load_tree(root: &Path, rev: &str) -> Result<CandidateTree, String> {
         &["rev-parse", "--verify", &format!("{rev}^{{commit}}")],
     )?;
     let commit = String::from_utf8_lossy(&commit).trim().to_string();
+    archive_json_blobs(root, &commit, commit.clone())
+}
+
+/// Snapshot the working tree (HEAD plus every uncommitted, non-ignored change)
+/// into a tree object through a private index, so the user's index is never
+/// touched, then read it through the same `git archive` path as a commit.
+fn load_worktree(root: &Path) -> Result<CandidateTree, String> {
+    let index = root.join("target/ripr/schema-sweep-worktree.index");
+    if let Some(parent) = index.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|error| format!("create {}: {error}", parent.display()))?;
+    }
+    let _ = fs::remove_file(&index);
+    let index_text = index.to_string_lossy().into_owned();
+    let envs = [("GIT_INDEX_FILE", index_text.as_str())];
+    let run = |args: &[&str]| -> Result<Vec<u8>, String> {
+        let args: Vec<String> = args.iter().map(|arg| (*arg).to_string()).collect();
+        crate::run::capture_process_output_in("git", &args, Some(root), &[], &[], &envs)
+            .map_err(|error| error.message)
+    };
+    let snapshot = (|| {
+        run(&["read-tree", "HEAD"])?;
+        run(&["add", "-A", "--", "."])?;
+        run(&["write-tree"])
+    })();
+    let _ = fs::remove_file(&index);
+    let tree = String::from_utf8_lossy(&snapshot?).trim().to_string();
+    archive_json_blobs(root, &tree, format!("worktree-tree:{tree}"))
+}
+
+fn archive_json_blobs(root: &Path, tree_ish: &str, label: String) -> Result<CandidateTree, String> {
+    let commit = label;
     let archive = git(
         root,
-        &["archive", "--format=tar", &commit, "--", ":(glob)**/*.json"],
+        &[
+            "archive",
+            "--format=tar",
+            tree_ish,
+            "--",
+            ":(glob)**/*.json",
+        ],
     )?;
     let mut files = BTreeMap::new();
     let mut entries = tar::Archive::new(archive.as_slice());
@@ -1638,6 +1825,106 @@ mod tests {
     }
 
     #[test]
+    fn the_worktree_snapshot_sees_uncommitted_edits_and_new_files() -> Result<(), String> {
+        let root = example_root();
+        let golden = root.join("fixtures/a/expected/example.json");
+        write(&golden, r#"{"schema_version":"0.1","status":"pass"}"#);
+        commit(&root)?;
+        // Positive: the committed tree is clean.
+        let clean = load_worktree(&root).and_then(|tree| {
+            sweep(
+                &tree,
+                &[binding(Corpus::FileName("example.json"), &[])],
+                &[],
+            )
+        });
+        // Negative experiment (#12219): an uncommitted golden gains a member
+        // the schema forbids, and a new untracked golden carries the same one.
+        write(
+            &golden,
+            r#"{"schema_version":"0.1","status":"pass","conflicting_expressions":1}"#,
+        );
+        write(
+            &root.join("fixtures/b/expected/example.json"),
+            r#"{"schema_version":"0.1","status":"pass","extra":true}"#,
+        );
+        let tree = load_worktree(&root);
+        let dirty = tree
+            .as_ref()
+            .map_err(Clone::clone)
+            .and_then(|tree| sweep(tree, &[binding(Corpus::FileName("example.json"), &[])], &[]));
+        let index_left_behind = root
+            .join("target/ripr/schema-sweep-worktree.index")
+            .exists();
+        let _ = fs::remove_dir_all(&root);
+        let clean = clean?;
+        if !clean.violations.is_empty() {
+            return Err(format!("clean worktree failed: {:?}", clean.violations));
+        }
+        let dirty = dirty?;
+        let mentions = |needle: &str| dirty.violations.iter().any(|v| v.contains(needle));
+        if !mentions("fixtures/a/expected/example.json")
+            || !mentions("fixtures/b/expected/example.json")
+        {
+            return Err(format!(
+                "uncommitted or untracked drift passed the worktree sweep: {:?}",
+                dirty.violations
+            ));
+        }
+        if index_left_behind {
+            return Err("the private index was not removed".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn an_untracked_json_file_is_in_the_trigger_inventory() -> Result<(), String> {
+        let root = example_root();
+        commit(&root)?;
+        write(&root.join("fixtures/new/expected/check.json"), "{}");
+        write(&root.join("target/ignored.json"), "{}");
+        let untracked = untracked_paths(&root);
+        let _ = fs::remove_dir_all(&root);
+        let untracked = untracked?;
+        if sweep_trigger(&untracked) != Some("fixtures/new/expected/check.json") {
+            return Err(format!(
+                "untracked golden missed the trigger: {untracked:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn worktree_flag_parses_and_refuses_commit_bound_modes() -> Result<(), String> {
+        let ok = parse_args(&["--worktree".to_string()])?;
+        if !ok.worktree {
+            return Err("--worktree did not parse".to_string());
+        }
+        for args in [
+            vec!["--worktree", "--rev", "HEAD"],
+            vec!["--worktree", "--live-replay"],
+        ] {
+            let args: Vec<String> = args.into_iter().map(String::from).collect();
+            if parse_args(&args).is_ok() {
+                return Err(format!("{args:?} must be refused"));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn sweep_trigger_fires_for_schemas_json_and_the_sweep_source_only() {
+        let hit = |p: &str| sweep_trigger(&[p.to_string()]).is_some();
+        assert!(hit("schemas/ripr/check.schema.json"));
+        assert!(hit("fixtures/x/expected/check.json"));
+        assert!(hit("xtask/src/schema_producer_sweep.rs"));
+        assert!(hit("xtask/src/verification_contracts.rs"));
+        assert!(hit("xtask/src/exact_schema_json.rs"));
+        assert!(!hit("crates/ripr/src/lib.rs"));
+        assert!(!hit("docs/README.md"));
+    }
+
+    #[test]
     fn an_artifact_no_row_claims_fails_instead_of_being_dropped() -> Result<(), String> {
         let root = example_root();
         let artifact = root.join("live.json");
@@ -1707,7 +1994,7 @@ mod tests {
     /// so a new schema cannot ship without a sweep disposition and a renamed
     /// one cannot leave a binding that silently resolves nothing. This test
     /// deliberately stops at the table: validating the whole committed corpus
-    /// is the release command's job, not a new required gate during the cut
+    /// is also enforced by `check-verification-contracts` on the working tree
     /// (#3919).
     #[test]
     fn the_binding_table_covers_exactly_the_published_inventory() -> Result<(), String> {
@@ -1718,14 +2005,14 @@ mod tests {
             .filter(|path| path.starts_with(SCHEMAS_PREFIX))
             .collect();
         for schema_path in &inventory {
-            if !BINDINGS
+            if !VERIFICATION_CORPUS_BINDINGS
                 .iter()
                 .any(|binding| binding.schema_path == schema_path.as_str())
             {
                 return Err(format!("{schema_path} has no sweep binding"));
             }
         }
-        for binding in BINDINGS {
+        for binding in VERIFICATION_CORPUS_BINDINGS {
             if !inventory
                 .iter()
                 .any(|schema_path| schema_path.as_str() == binding.schema_path)
@@ -1790,10 +2077,13 @@ mod tests {
                     "named authority `{name}` no longer exists or is never run"
                 ));
             }
-            if !BINDINGS.iter().any(|binding| match &binding.corpus {
-                Corpus::Exempt(reason) | Corpus::Authority(reason) => reason.contains(name),
-                _ => false,
-            }) {
+            if !VERIFICATION_CORPUS_BINDINGS
+                .iter()
+                .any(|binding| match &binding.corpus {
+                    Corpus::Exempt(reason) | Corpus::Authority(reason) => reason.contains(name),
+                    _ => false,
+                })
+            {
                 return Err(format!("no exempt binding cites authority `{name}`"));
             }
         }
@@ -1846,6 +2136,42 @@ mod tests {
             assert!(
                 step.contains(&format!("--artifact schemas/ripr/{schema}.schema.json=")),
                 "sweep step does not feed the {schema} runtime row"
+            );
+        }
+        Ok(())
+    }
+
+    /// A schema tightened to reject a shape a committed producer golden carries
+    /// must fail the corpus gate (#3919 acceptance 5).
+    #[test]
+    fn tightened_schema_rejects_a_committed_producer_golden() -> Result<(), String> {
+        let root = example_root();
+        write(
+            &root.join("fixtures/a/expected/example.json"),
+            r#"{"schema_version":"0.1","status":"pass","note":"producer"}"#,
+        );
+        write(
+            &root.join(EXAMPLE_SCHEMA),
+            r#"{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/example.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "status"],
+  "properties": {
+    "schema_version": { "const": "0.1" },
+    "status": { "enum": ["pass", "fail"] }
+  }
+}"#,
+        );
+        let report = run(
+            &root,
+            &[binding(Corpus::FileName("example.json"), &[])],
+            &[],
+        )?;
+        if report.violations.is_empty() {
+            return Err(
+                "expected a violation when the schema rejects a producer field".to_string(),
             );
         }
         Ok(())

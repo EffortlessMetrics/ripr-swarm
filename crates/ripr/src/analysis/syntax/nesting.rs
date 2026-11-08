@@ -44,6 +44,47 @@ pub(crate) fn parse_clean_source_file(text: &str) -> Option<Parse<SourceFile>> {
     (error_count == 0).then_some(parse)
 }
 
+/// [`parse_clean_source_file`] memoized per thread for small texts.
+///
+/// The shadow checks re-read one test body once per (seam, naming test,
+/// oracle) triple, and every read re-parsed the same text: the large-workspace
+/// cold pilot spent most of its time there (#10167 regression). Rowan trees
+/// are cheap to clone (an `Arc`), so the memo keeps the parse by full text. It is
+/// capped at 512 entries of at most 16 KiB each: about 8 MiB of keys, plus
+/// trees that are a small multiple of that, per worker thread, cleared when full.
+pub(crate) fn parse_clean_source_file_memoized(text: &str) -> Option<Parse<SourceFile>> {
+    const MAX_ENTRIES: usize = 512;
+    const MAX_TEXT_BYTES: usize = 16 * 1024;
+    if text.len() > MAX_TEXT_BYTES {
+        return parse_clean_source_file(text);
+    }
+    CLEAN_PARSE_MEMO.with(|memo| {
+        let mut memo = memo.borrow_mut();
+        if let Some(hit) = memo.get(text) {
+            return hit.clone();
+        }
+        #[cfg(test)]
+        CLEAN_PARSE_MISSES.with(|n| n.set(n.get() + 1));
+        let parsed = parse_clean_source_file(text);
+        if memo.len() >= MAX_ENTRIES {
+            memo.clear();
+        }
+        memo.insert(text.to_string(), parsed.clone());
+        parsed
+    })
+}
+
+#[cfg(test)]
+thread_local! {
+    static CLEAN_PARSE_MISSES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+thread_local! {
+    static CLEAN_PARSE_MEMO: std::cell::RefCell<
+        std::collections::HashMap<String, Option<Parse<SourceFile>>>,
+    > = std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
 /// Parse with the current edition, retrying as Rust 2021 when that fails.
 /// ripr does not read each crate's edition, and 2024 reserves `gen`, so a
 /// 2021 crate's `fn arbitrary(gen: &mut Gen)` is a syntax error under the
@@ -89,7 +130,15 @@ pub(crate) fn parse_source_file_checked(text: &str) -> (Parse<SourceFile>, usize
 /// file (regex `64ad0b6`: 148 s, nearly all in this reparse). Parses are
 /// immutable green trees, so sharing a clone is observationally identical.
 const PARSE_CACHE_ENTRIES: usize = 4;
-const PARSE_CACHE_MAX_BYTES: usize = 512 * 1024;
+
+/// Larger inputs skip the memo, so a long-lived thread (the LSP analysis
+/// thread) holds at most [`PARSE_CACHE_ENTRIES`] trees plus this many source
+/// bytes each. 512 KiB was too small for this repository's analyzer files
+/// (`owner_pin.rs` is about 684 KiB, `related_tests.rs` about 653 KiB): every
+/// `parse_clean_source_file` call on those files skipped the memo and
+/// dominated self-check (#8629). 2 MiB matches the comment/string mask memo
+/// bound.
+const PARSE_CACHE_MAX_BYTES: usize = 2 * 1024 * 1024;
 
 type ParseCacheEntries = Vec<(String, Parse<SourceFile>, usize)>;
 
@@ -174,8 +223,35 @@ pub(crate) struct NestingEstimate {
 /// Comments, string, raw string and char literals are skipped so their
 /// contents cannot inflate the estimate. Over-estimates only cost a lexical
 /// fallback; the scan never recurses, so it is safe on any input.
+///
+/// `#"` and `##` lex differently by edition. Edition 2024 reserves them as a
+/// two-byte error token and lexes what follows as code, so the quote that
+/// follows `#` opens no string; earlier editions read `#` then a string.
+/// The analyzer parses the current edition first and retries older ones, so
+/// each reading can nest what the other hides inside a string. Parentheses
+/// after a stray `#"` aborted the process this way (#13494). When the first
+/// reading meets such a prefix, the second reading runs too and the larger
+/// estimate wins.
 pub(crate) fn estimate_rust_nesting(text: &str) -> NestingEstimate {
+    let (estimate, saw_guarded_prefix) = estimate_rust_nesting_reading(text, false);
+    if !saw_guarded_prefix {
+        return estimate;
+    }
+    let (reserved, _) = estimate_rust_nesting_reading(text, true);
+    NestingEstimate {
+        depth: estimate.depth.max(reserved.depth),
+        else_if_chain: estimate.else_if_chain.max(reserved.else_if_chain),
+        operator_run: estimate.operator_run.max(reserved.operator_run),
+    }
+}
+
+/// One scan under a single lexing of `#"` and `##`: when `reserved_prefix` is
+/// true they are the two-byte edition 2024 error token and what follows is
+/// code. The flag returned says whether the text carries such a prefix in
+/// code position, which is when the other reading can differ.
+fn estimate_rust_nesting_reading(text: &str, reserved_prefix: bool) -> (NestingEstimate, bool) {
     let bytes = text.as_bytes();
+    let mut saw_guarded_prefix = false;
     let mut estimate = NestingEstimate::default();
     let mut depth = 0usize;
     let mut unary_run = 0usize;
@@ -193,6 +269,9 @@ pub(crate) fn estimate_rust_nesting(text: &str) -> NestingEstimate {
     // True when the previous significant token ends an operand, so a
     // following `-`, `*`, `&` or `!` is binary, not prefix.
     let mut after_operand = false;
+    // Preserve the last significant token across whitespace and comments.
+    // Looking backward through bytes misses a closer hidden by comment trivia.
+    let mut previous_closed_group = false;
     let mut previous_word_was_else = false;
     let mut index = frontmatter_end(text);
 
@@ -209,6 +288,18 @@ pub(crate) fn estimate_rust_nesting(text: &str) -> NestingEstimate {
         if byte == b'/' && next == Some(b'*') {
             index = skip_block_comment(bytes, index);
             continue;
+        }
+        let follows_closed_group = previous_closed_group;
+        previous_closed_group = matches!(byte, b')' | b']');
+        if byte == b'#' && matches!(next, Some(b'"' | b'#')) {
+            saw_guarded_prefix = true;
+            if reserved_prefix {
+                index += 2;
+                after_operand = false;
+                unary_run = 0;
+                previous_word_was_else = false;
+                continue;
+            }
         }
         if byte == b'"' {
             index = skip_string(bytes, index + 1);
@@ -296,7 +387,7 @@ pub(crate) fn estimate_rust_nesting(text: &str) -> NestingEstimate {
         previous_word_was_else = false;
         match byte {
             b'(' | b'[' | b'{' => {
-                if after_operand && byte != b'{' && follows_closer(bytes, index) {
+                if after_operand && byte != b'{' && follows_closed_group {
                     // Postfix call or index on a closed group: `f()()..`,
                     // `x[0][0]..` nest left. A flat run of siblings such as
                     // the token tree of `m!(foo() foo() ..)` does not.
@@ -372,16 +463,7 @@ pub(crate) fn estimate_rust_nesting(text: &str) -> NestingEstimate {
         }
         index += 1;
     }
-    estimate
-}
-
-/// True when the last significant byte before `index` closes a group, so a
-/// following `(` or `[` is a postfix call or index on that group's value.
-fn follows_closer(bytes: &[u8], index: usize) -> bool {
-    bytes
-        .get(..index)
-        .and_then(|head| head.iter().rev().find(|b| !b.is_ascii_whitespace()))
-        .is_some_and(|b| matches!(b, b')' | b']'))
+    (estimate, saw_guarded_prefix)
 }
 
 /// Words after which a `-`, `*`, `&` or `!` is a prefix operator.
@@ -816,6 +898,74 @@ mod tests {
         assert_eq!(after - before, 2, "broken source revalidated on memo hits");
     }
 
+    /// A comment-padded function of exactly `len` bytes that still parses.
+    fn rust_source_of_len(len: usize) -> String {
+        let header = "fn analyzer_sized_probe() {\n    let _value = 1;\n    // ";
+        let footer = "\n}\n";
+        let fill = len.saturating_sub(header.len() + footer.len());
+        let mut source = String::with_capacity(header.len() + fill + footer.len());
+        source.push_str(header);
+        source.push_str(&"x".repeat(fill));
+        source.push_str(footer);
+        source
+    }
+
+    /// #8629: analyzer files such as `owner_pin.rs` (~684 KiB) sat above the
+    /// old 512 KiB cutoff, so every `parse_clean_source_file` call reparsed
+    /// them. A clean source just over that historical bound must be remembered.
+    #[test]
+    fn analyzer_sized_sources_are_remembered_by_the_parse_cache() {
+        let historic_bypass = 512 * 1024 + 256;
+        assert!(
+            historic_bypass <= PARSE_CACHE_MAX_BYTES,
+            "the memo must cover the historical 512 KiB analyzer-file cutoff"
+        );
+        let source = rust_source_of_len(historic_bypass);
+        assert_eq!(source.len(), historic_bypass);
+        let before = VALIDATION_PASSES.with(std::cell::Cell::get);
+        for _ in 0..5 {
+            assert!(
+                parse_clean_source_file(&source).is_some(),
+                "analyzer-sized fixture must parse cleanly"
+            );
+        }
+        let after = VALIDATION_PASSES.with(std::cell::Cell::get);
+        assert_eq!(
+            after - before,
+            1,
+            "a {historic_bypass}-byte source was revalidated on memo hits"
+        );
+    }
+
+    /// The memo covers `..=PARSE_CACHE_MAX_BYTES`: one byte past the bound is
+    /// parsed every time, and a source at the bound is remembered.
+    #[test]
+    fn parse_cache_bounds_are_inclusive_and_outside_texts_bypass_it() {
+        let at_bound = rust_source_of_len(PARSE_CACHE_MAX_BYTES);
+        assert_eq!(at_bound.len(), PARSE_CACHE_MAX_BYTES);
+        let before = VALIDATION_PASSES.with(std::cell::Cell::get);
+        for _ in 0..2 {
+            assert!(parse_clean_source_file(&at_bound).is_some());
+        }
+        assert_eq!(
+            VALIDATION_PASSES.with(std::cell::Cell::get) - before,
+            1,
+            "PARSE_CACHE_MAX_BYTES is remembered"
+        );
+
+        let over = rust_source_of_len(PARSE_CACHE_MAX_BYTES + 1);
+        assert_eq!(over.len(), PARSE_CACHE_MAX_BYTES + 1);
+        let before = VALIDATION_PASSES.with(std::cell::Cell::get);
+        for _ in 0..2 {
+            assert!(parse_clean_source_file(&over).is_some());
+        }
+        assert_eq!(
+            VALIDATION_PASSES.with(std::cell::Cell::get) - before,
+            2,
+            "one byte past PARSE_CACHE_MAX_BYTES must bypass the memo"
+        );
+    }
+
     use super::*;
 
     /// #11407: a long run of recursive prefix keywords nests the parser once
@@ -913,6 +1063,95 @@ mod tests {
         ];
         for (name, source) in flat {
             assert_eq!(rust_nesting_refusal(&source), None, "{name}");
+        }
+    }
+
+    /// Comments are trivia between postfix links, including nested comments
+    /// and line comments containing misleading delimiters.
+    #[test]
+    fn postfix_comments_preserve_chain_budget_and_flat_controls() {
+        for trivia in [" ", "/* gap */", "/* outer /* inner */ ) ] */", "// ) ]\n"] {
+            for postfix in ["()", "[0]"] {
+                let link = format!("{trivia}{postfix}");
+                for links in [
+                    0,
+                    1,
+                    32,
+                    RUST_OPERATOR_RUN_BUDGET,
+                    RUST_OPERATOR_RUN_BUDGET + 1,
+                ] {
+                    let source = format!("fn f() {{ x(){}; }}", link.repeat(links));
+                    let estimate = estimate_rust_nesting(&source);
+                    assert_eq!(estimate.operator_run, links, "{trivia:?} {postfix} {links}");
+                    if links > RUST_OPERATOR_RUN_BUDGET {
+                        assert!(
+                            rust_nesting_refusal(&source)
+                                .is_some_and(|reason| reason.contains("rust_nesting_budget"))
+                        );
+                        assert!(parse_clean_source_file(&source).is_none());
+                    } else {
+                        assert_eq!(rust_nesting_refusal(&source), None);
+                    }
+                }
+                // An intervening identifier starts a flat token-tree sibling.
+                let sibling = format!("x{postfix}{trivia}");
+                let flat = format!("fn f() {{ m!({}); }}", sibling.repeat(5_000));
+                assert_eq!(estimate_rust_nesting(&flat).operator_run, 0);
+                assert_eq!(rust_nesting_refusal(&flat), None);
+            }
+        }
+    }
+
+    #[test]
+    fn postfix_comment_controls_match_parser_structure() {
+        use ra_ap_syntax::SyntaxKind;
+
+        for trivia in ["", "/* gap */", "// gap\n", "/* /* nested */ */"] {
+            let source = format!(
+                "fn f() {{ x(){}; }}",
+                format!("{trivia}(){trivia}[0]").repeat(16)
+            );
+            let parsed = parse_clean_source_file(&source);
+            assert!(
+                parsed.is_some(),
+                "short postfix chain must parse: {trivia:?}"
+            );
+            let Some(parse) = parsed else { return };
+            let syntax = parse.syntax_node();
+            assert_eq!(
+                syntax
+                    .descendants()
+                    .filter(|node| node.kind() == SyntaxKind::CALL_EXPR)
+                    .count(),
+                17
+            );
+            assert_eq!(
+                syntax
+                    .descendants()
+                    .filter(|node| node.kind() == SyntaxKind::INDEX_EXPR)
+                    .count(),
+                16
+            );
+            assert_eq!(estimate_rust_nesting(&source).operator_run, 32);
+        }
+        // These intervening tokens must clear the closer state, even when a
+        // literal contains a misleading closer or comment delimiter.
+        for token in [
+            "foo",
+            "123",
+            "\") /*\"",
+            "r#\"] /*\"#",
+            "')'",
+            "'label",
+            ",",
+            ";",
+        ] {
+            let flat = format!(
+                "m!({});",
+                format!("(){token}/* gap */() separator ").repeat(5_000)
+            );
+            assert_eq!(estimate_rust_nesting(&flat).operator_run, 0, "{token}");
+            assert_eq!(rust_nesting_refusal(&flat), None, "{token}");
         }
     }
 
@@ -1288,5 +1527,115 @@ mod tests {
             block_comment_only_lines("x = '/'; /* c */\n/* d */\n").len(),
             1
         );
+    }
+}
+
+#[cfg(test)]
+mod memoized_parse_tests {
+    use super::{
+        RUST_NESTING_BUDGET, estimate_rust_nesting, parse_clean_source_file,
+        parse_clean_source_file_memoized, rust_nesting_refusal,
+    };
+
+    #[test]
+    fn memoized_parse_matches_the_direct_parse_for_clean_and_broken_text() {
+        let clean = "fn a() { let x = 1; }";
+        let broken = "fn a( {";
+        for _ in 0..2 {
+            let memo = parse_clean_source_file_memoized(clean).map(|p| p.syntax_node().to_string());
+            let direct = parse_clean_source_file(clean).map(|p| p.syntax_node().to_string());
+            assert_eq!(memo, direct);
+            assert!(memo.is_some());
+            assert!(parse_clean_source_file_memoized(broken).is_none());
+        }
+    }
+
+    #[test]
+    fn a_repeated_read_of_the_same_text_reuses_one_parse() {
+        let text = "fn reuse_probe() { let a = 1; }";
+        let before = super::CLEAN_PARSE_MISSES.with(std::cell::Cell::get);
+        for _ in 0..3 {
+            assert!(parse_clean_source_file_memoized(text).is_some());
+        }
+        let misses = super::CLEAN_PARSE_MISSES.with(std::cell::Cell::get) - before;
+        assert_eq!(misses, 1, "three reads of one text parse it once");
+    }
+
+    #[test]
+    fn same_length_different_text_is_not_confused() {
+        let one = "fn probe_a() { let a = 1; }";
+        let two = "fn probe_b() { let a = 1; }";
+        assert_eq!(one.len(), two.len());
+        let first = parse_clean_source_file_memoized(one).map(|p| p.syntax_node().to_string());
+        let second = parse_clean_source_file_memoized(two).map(|p| p.syntax_node().to_string());
+        assert_eq!(first.as_deref(), Some(one));
+        assert_eq!(second.as_deref(), Some(two));
+    }
+
+    #[test]
+    fn oversized_text_bypasses_the_memo_but_still_parses() {
+        let body = format!("fn big() {{ {} }}", "let a = 1; ".repeat(2 * 1024));
+        assert!(body.len() > 16 * 1024);
+        assert_eq!(
+            parse_clean_source_file_memoized(&body).map(|p| p.syntax_node().to_string()),
+            parse_clean_source_file(&body).map(|p| p.syntax_node().to_string()),
+        );
+    }
+
+    /// #13494: edition 2024 reads `#"` as a two-byte error token and lexes what
+    /// follows as code, so a `(` run after it nests the parser although the
+    /// 2021 reading hides it inside a string. `ripr check` aborted on this
+    /// shape with a stack overflow; the larger of the two readings must win.
+    #[test]
+    fn a_guarded_string_prefix_cannot_hide_nesting_inside_a_string() {
+        let hidden_in_2021 = format!(
+            "pub fn f(&x#\"elf, y: u32{}) -> u64 {{\n    let r = \"x\";\n}}\n",
+            "(".repeat(2 * RUST_NESTING_BUDGET)
+        );
+        let estimate = estimate_rust_nesting(&hidden_in_2021);
+        assert!(
+            estimate.depth > RUST_NESTING_BUDGET,
+            "2024 reading nests the run: {estimate:?}"
+        );
+        assert!(rust_nesting_refusal(&hidden_in_2021).is_some());
+        assert!(parse_clean_source_file(&hidden_in_2021).is_none());
+
+        // An identifier ending in `r` still reaches the prefix branch.
+        let after_identifier = format!(
+            "pub fn f(bar#\"elf, y: u32{}) -> u64 {{\n    let r = \"x\";\n}}\n",
+            "(".repeat(2 * RUST_NESTING_BUDGET)
+        );
+        assert!(rust_nesting_refusal(&after_identifier).is_some());
+
+        // The other direction: the 2021 reading closes the string at `x"` and
+        // sees the run; the 2024 reading opens a string there and hides it.
+        let hidden_in_2024 = format!(
+            "fn g() {{ let _ = #\"x\"{}; }}\n",
+            "(".repeat(2 * RUST_NESTING_BUDGET)
+        );
+        assert!(rust_nesting_refusal(&hidden_in_2024).is_some());
+    }
+
+    /// Negative controls for the reserved-prefix reading: a raw string spelled
+    /// with `#"` holds its parentheses as data, and a shallow body with a stray
+    /// prefix or a `##` escape is not refused.
+    #[test]
+    fn guarded_prefix_readings_leave_raw_strings_and_shallow_bodies_alone() {
+        let run = "(".repeat(2 * RUST_NESTING_BUDGET);
+        let raw = format!("fn f() {{ let s = r#\"{run}\"#; }}\n");
+        assert!(rust_nesting_refusal(&raw).is_none(), "raw string is data");
+        let shallow = "fn f(&x#\"elf, y: u32) { let r = \"x\"; }\n";
+        assert!(rust_nesting_refusal(shallow).is_none());
+        // `##"` is the two-byte token and then a plain string in both
+        // readings, so the run stays data; advancing one byte would read it as
+        // code.
+        let double = format!("fn f() {{ let _ = ##\"{run}\"; }}\n");
+        assert!(
+            rust_nesting_refusal(&double).is_none(),
+            "`##` string is data"
+        );
+        let escaped = "fn f() { quote::quote! { ##name } }\n";
+        assert!(rust_nesting_refusal(escaped).is_none());
+        assert!(estimate_rust_nesting(shallow).depth < 16);
     }
 }

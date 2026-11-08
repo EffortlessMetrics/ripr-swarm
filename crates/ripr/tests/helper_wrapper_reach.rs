@@ -262,6 +262,9 @@ const DEP_PRINTLN: &str = "use crate as dep;\n#[macro_export]\nmacro_rules! prin
 fn shadowed_or_macro_guarded_wrappers_confirm_neither_twin() -> Result<(), String> {
     for wrapper in [
         "    let is_bulk = |_q: u32| true;\n    if is_bulk(qty) { 5 } else { 0 }",
+        // #10357 item 2: non-`let` callee shadowing inside the wrapper body.
+        "    fn is_bulk(_: u32) -> bool { true }\n    if is_bulk(qty) { 5 } else { 0 }",
+        "    static is_bulk: fn(u32) -> bool = |_| true;\n    if is_bulk(qty) { 5 } else { 0 }",
         "    bail_at_ten!(qty);\n    if is_bulk(qty) { 5 } else { 0 }",
         // #10351 review: U+200E is Rust whitespace, so the bang still invokes.
         "    bail_at_ten!\u{200E}(qty);\n    if is_bulk(qty) { 5 } else { 0 }",
@@ -591,18 +594,58 @@ fn match_arm_behind_a_forwarding_wrapper_keeps_its_verdict_path() -> Result<(), 
 }
 
 #[test]
-fn wrapper_that_transforms_the_argument_transfers_no_boundary_value() -> Result<(), String> {
+fn wrapper_that_transforms_the_argument_binds_the_folded_boundary_value() -> Result<(), String> {
+    // RIPR-SPEC-0159 computed chain-edge argument: `qty + 1` over the
+    // wrapper's own `u32` parameter folds exactly, so `order_discount(9)`
+    // hands the owner 10 (the boundary) and `order_discount(8)` hands it 9.
     let computed = "    if is_bulk(qty + 1) {\n        5\n    } else {\n        0\n    }";
-    let finding = predicate_finding(&bulk_source(computed, BOUNDARY_TESTS), BULK_DIFF)?;
-    // Reach still holds through the call; the computed hop argument stops
-    // the exact-value transfer, so the wrapper's `10` is not a boundary row.
+    let tests =
+        "        assert_eq!(order_discount(9), 5);\n        assert_eq!(order_discount(8), 0);";
+    let finding = predicate_finding(&bulk_source(computed, tests), BULK_DIFF)?;
     assert_eq!(
         relation_of(&finding, "ten_items_earn_the_bulk_discount"),
         Some("helper_owner_call"),
         "{finding}"
     );
-    assert_ne!(finding["classification"], "exposed", "{finding}");
-    assert_ne!(finding["ripr"]["infect"]["state"], "yes", "{finding}");
+    assert_eq!(finding["ripr"]["infect"]["state"], "yes", "{finding}");
+    Ok(())
+}
+
+#[test]
+fn wrapper_that_transforms_the_argument_by_an_unreadable_value_transfers_no_boundary_value()
+-> Result<(), String> {
+    // Each stimulus is consistent with its wrapper's runtime value (`qty + 1`
+    // is the boundary at 9, `qty * 1` at 10), so a retained abstention is the
+    // unreadable argument stopping the transfer and not the stimulus
+    // contradicting a folded reading.
+    let plus_one_tests =
+        "        assert_eq!(order_discount(9), 5);\n        assert_eq!(order_discount(8), 0);";
+    for (computed, tests) in [
+        (
+            "    if is_bulk(qty + step()) {\n        5\n    } else {\n        0\n    }",
+            plus_one_tests,
+        ),
+        (
+            "    if is_bulk((qty + 1) as u32) {\n        5\n    } else {\n        0\n    }",
+            plus_one_tests,
+        ),
+        (
+            "    if is_bulk(qty * LIMIT) {\n        5\n    } else {\n        0\n    }",
+            BOUNDARY_TESTS,
+        ),
+    ] {
+        let source = bulk_source(computed, tests).replace(
+            "fn is_bulk",
+            "const LIMIT: u32 = 1;\nfn step() -> u32 {\n    1\n}\n\nfn is_bulk",
+        );
+        let finding = predicate_finding(&source, BULK_DIFF)?;
+        // Reach still holds through the call; the unreadable hop argument
+        // stops the exact-value transfer.
+        assert_ne!(
+            finding["ripr"]["infect"]["state"], "yes",
+            "{computed}: {finding}"
+        );
+    }
     Ok(())
 }
 
@@ -618,13 +661,71 @@ fn generic_helper_behind_a_constant_argument_wrapper_pairs() -> Result<(), Strin
     );
     assert_eq!(finding["ripr"]["infect"]["state"], "yes", "{finding}");
     // The wrapper's exact pin at `capped_score(10)` pairs with `cap ==
-    // value`; propagation through `if .. { cap } else { value }` remains a
-    // separate syntax-first limit, so the class is not asserted here.
+    // value`, and the condition decides which parameter the helper returns
+    // (#6694), so the finding is no longer an abstention.
     assert_eq!(finding["ripr"]["discriminate"]["state"], "yes", "{finding}");
     assert!(
         !discriminate_summary(&finding).contains("same_test_pairing_missing"),
         "{finding}"
     );
+    assert_eq!(finding["classification"], "exposed", "{finding}");
+    Ok(())
+}
+
+const CAPPED_DIFF: &str = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,3 +1,3 @@\n fn capped<T: PartialOrd + Copy>(value: T, cap: T) -> T {\n-    if value > cap {\n+    if cap < value {\n         cap\n";
+const CAPPED_HELPER: &str = "fn capped<T: PartialOrd + Copy>(value: T, cap: T) -> T {\n    if cap < value {\n        cap\n    } else {\n        value\n    }\n}\n";
+const CAPPED_WRAPPER: &str = "pub fn capped_score(value: u32) -> u32 {\n    capped(value, 10)\n}\n";
+const CAPPED_TESTS: &str = "        assert_eq!(capped_score(11), 10);\n        assert_eq!(capped_score(10), 10);\n        assert_eq!(capped_score(3), 3);\n";
+
+fn capped_source(helper: &str, wrapper: &str, tests: &str) -> String {
+    format!(
+        "{helper}\n{wrapper}\n#[cfg(test)]\nmod tests {{\n    use super::*;\n\n    #[test]\n    fn scores_above_the_cap_are_capped() {{\n{tests}    }}\n}}\n"
+    )
+}
+
+// #6694: the helper's branches return its two parameters, so the condition
+// decides the returned value; every control below keeps the abstention or a
+// weaker class because the pairing, the sink or the oracle is not exact.
+#[test]
+fn parameter_returning_helper_is_exposed_only_through_an_exact_forwarding_wrapper()
+-> Result<(), String> {
+    let exposed = predicate_finding(
+        &capped_source(CAPPED_HELPER, CAPPED_WRAPPER, CAPPED_TESTS),
+        CAPPED_DIFF,
+    )?;
+    assert_eq!(exposed["classification"], "exposed", "{exposed}");
+    // The wrapper transforms the argument by a value ripr cannot read.
+    let transformed = predicate_finding(
+        &capped_source(
+            CAPPED_HELPER,
+            "fn step() -> u32 {\n    1\n}\n\npub fn capped_score(value: u32) -> u32 {\n    capped(value * step(), 10)\n}\n",
+            CAPPED_TESTS,
+        ),
+        CAPPED_DIFF,
+    )?;
+    assert_ne!(transformed["classification"], "exposed", "{transformed}");
+    // A wrapper assertion that is not an exact value.
+    let loose = predicate_finding(
+        &capped_source(
+            CAPPED_HELPER,
+            CAPPED_WRAPPER,
+            "        assert!(capped_score(11) > 5);\n        assert!(capped_score(10) > 5);\n",
+        ),
+        CAPPED_DIFF,
+    )?;
+    assert_ne!(loose["classification"], "exposed", "{loose}");
+    // A second helper of the same name: the wrapper may call either.
+    let two_helpers = predicate_finding(
+        &capped_source(
+            &format!(
+                "{CAPPED_HELPER}\nmod other {{\n    pub fn capped<T: PartialOrd + Copy>(value: T, cap: T) -> T {{\n        if value > cap {{\n            cap\n        }} else {{\n            value\n        }}\n    }}\n}}\n"
+            ),
+            CAPPED_WRAPPER,
+            CAPPED_TESTS,
+        ),
+        CAPPED_DIFF,
+    )?;
+    assert_ne!(two_helpers["classification"], "exposed", "{two_helpers}");
     Ok(())
 }
 
@@ -711,9 +812,9 @@ fn buried_scalar_in_a_wrapper_argument_does_not_pair() -> Result<(), String> {
                 "{pin}: {finding}"
             );
             assert!(
-                finding["ripr"]["infect"]["summary"].as_str().is_some_and(
-                    |summary| summary.contains("equality-boundary discriminator is missing")
-                ),
+                finding["ripr"]["infect"]["summary"]
+                    .as_str()
+                    .is_some_and(|summary| summary.contains("equality-boundary check is missing")),
                 "{pin}: {finding}"
             );
         }

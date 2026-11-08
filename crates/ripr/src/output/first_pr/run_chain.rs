@@ -24,6 +24,9 @@ use std::time::{Duration, Instant};
 /// Stderr lines kept to name a failed step's own last diagnostic.
 const STDERR_TAIL_LINES: usize = 20;
 
+/// Environment variable overriding the per-step bound, in whole seconds.
+pub(super) const STEP_TIMEOUT_ENV: &str = "RIPR_FIRST_PR_RUN_CHAIN_STEP_TIMEOUT_SECS";
+
 /// Per-step wall-clock bound for `--run-chain` when the environment names no
 /// override. Zero disables the bound (tests inject a limit through
 /// [`run_steps_with`]).
@@ -319,20 +322,33 @@ pub(super) fn run_steps(
     let exe = std::env::current_exe().map_err(|err| {
         format!("first-pr --run-chain: cannot resolve the running ripr executable: {err}")
     })?;
-    run_steps_with(&exe, root, options, steps, step_timeout_from_env())
+    run_steps_with(
+        &exe,
+        root,
+        options,
+        steps,
+        step_timeout_from(std::env::var(STEP_TIMEOUT_ENV))?,
+    )
 }
 
-fn step_timeout_from_env() -> Option<Duration> {
-    match std::env::var("RIPR_FIRST_PR_RUN_CHAIN_STEP_TIMEOUT_SECS") {
-        Ok(raw) => {
-            let trimmed = raw.trim();
-            if trimmed == "0" {
-                None
-            } else {
-                trimmed.parse::<u64>().ok().map(Duration::from_secs)
-            }
-        }
-        Err(_) => Some(DEFAULT_STEP_TIMEOUT),
+/// The per-step bound: `RIPR_FIRST_PR_RUN_CHAIN_STEP_TIMEOUT_SECS` whole
+/// seconds, `0` for no bound, else the default. A value that is not a whole
+/// number is refused: a typo must not silently mean "unbounded".
+fn step_timeout_from(
+    value: Result<String, std::env::VarError>,
+) -> Result<Option<Duration>, String> {
+    match value {
+        Err(std::env::VarError::NotPresent) => Ok(Some(DEFAULT_STEP_TIMEOUT)),
+        Err(std::env::VarError::NotUnicode(_)) => Err(format!(
+            "{STEP_TIMEOUT_ENV} must be valid UTF-8; set it to a whole number of seconds (0 for no bound) or unset it"
+        )),
+        Ok(raw) => match raw.trim().parse::<u64>() {
+            Ok(0) => Ok(None),
+            Ok(secs) => Ok(Some(Duration::from_secs(secs))),
+            Err(_) => Err(format!(
+                "{STEP_TIMEOUT_ENV} must be a whole number of seconds (0 for no bound), got `{raw}`; set it to e.g. 7200 or unset it"
+            )),
+        },
     }
 }
 
@@ -479,14 +495,16 @@ fn wait_for_step(
                             discard(fresh_outputs);
                             let _ = child.kill();
                             let _ = child.wait();
-                            let _ = stdout_handle.join();
+                            // The stdout reader is not joined: a grandchild
+                            // holding the pipe open must not extend the chain
+                            // past its bound.
                             let seconds = limit.as_secs();
                             return Err(stopped(
                                 number,
                                 total,
                                 step,
                                 &format!(
-                                    "timed out after {seconds} second(s); the step did not finish"
+                                    "timed out after {seconds} second(s); the step did not finish; raise {STEP_TIMEOUT_ENV} and rerun"
                                 ),
                             ));
                         }
@@ -855,6 +873,50 @@ mod tests {
         .unwrap_or_default();
         assert!(error.contains("failed (exit 3); boom"), "{error}");
         assert!(!other.exists());
+        std::fs::remove_dir_all(&dir).map_err(|err| err.to_string())
+    }
+
+    #[test]
+    fn the_step_timeout_env_defaults_disables_and_refuses_typos() {
+        assert_eq!(
+            step_timeout_from(Err(std::env::VarError::NotPresent)),
+            Ok(Some(DEFAULT_STEP_TIMEOUT))
+        );
+        assert_eq!(step_timeout_from(Ok(" 0 ".to_string())), Ok(None));
+        assert_eq!(
+            step_timeout_from(Ok("45".to_string())),
+            Ok(Some(Duration::from_secs(45)))
+        );
+        for bad in ["soon", "-1", "1.5", ""] {
+            let error = step_timeout_from(Ok(bad.to_string()))
+                .err()
+                .unwrap_or_default();
+            assert!(
+                error.contains(STEP_TIMEOUT_ENV) && error.contains("set it"),
+                "{error}"
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_grandchild_holding_stdout_cannot_extend_the_bound() -> Result<(), String> {
+        let dir = std::env::temp_dir().join(format!("ripr-11720-grand-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).map_err(|err| err.to_string())?;
+        let target = dir.join("unused.json");
+        let started = Instant::now();
+        // `sleep` inherits the piped stdout and outlives the terminated shell.
+        let error = run_sh_with_timeout(
+            sh_step("sleep 30 & wait", None, &target),
+            Duration::from_millis(300),
+        )
+        .err()
+        .unwrap_or_default();
+        assert!(error.contains("timed out"), "{error}");
+        assert!(
+            started.elapsed() < Duration::from_secs(20),
+            "the chain waited for the grandchild"
+        );
         std::fs::remove_dir_all(&dir).map_err(|err| err.to_string())
     }
 }

@@ -1,0 +1,84 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/rust_contradiction_mates_only/input
+
+Summary: 2 changed behavior(s) checked: 0 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 2 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 2 of 2 finding(s) unsuppressed
+Terms: exposed = tests appear to notice the change; weakly_exposed = tests reach it but check it
+  only loosely; reachable_unrevealed = tests reach it but nothing appears to notice a change;
+  no_static_path = no test path found; infection_unknown, propagation_unknown, static_unknown = ripr
+  could not tell from the code (analysis limited, not a verdict); finding = one reported gap;
+  unsuppressed = not hidden by your suppression policy
+
+Analysis outcome: findings below (analysis complete; complete_with_findings)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 changed behavior(s) checked, 2 finding(s)
+
+Shared evidence and guidance
+  E1 [findings 1, 2]: reach no: No test is seen calling is_adult; tests share only its file or a name token: clamps_above_high, small_order_pays_full_price
+  E2 [findings 1, 2]: infection no: No test reaches the changed owner, so no test can activate this change
+  E3 [findings 1, 2]: observation no: No test reaches the changed owner, so no test can observe this change
+  E4 [findings 1, 2]: discriminator no: No test reaches the changed owner, so no test can discriminate this change
+  E5 [findings 1, 2]: local flow reaches returned value: age >= 18 (line 2)
+  E6 [findings 1, 2]: related test src/lib.rs:28 clamps_above_high uses strong exact value oracle: assert_eq!(clamp_to_range(15, 0, 10), 10); misses: no established call path to the changed code; linked by file location only
+  E7 [findings 1, 2]: related test src/lib.rs:33 small_order_pays_full_price uses strong exact value oracle: assert_eq!(discounted_total(5_000), 5_000); misses: no established call path to the changed code; linked by file location only
+  E8 [findings 1, 2]: source assertion argument value 0 at line 29
+  E9 [findings 1, 2]: source assertion argument value 10 at line 29
+  E10 [findings 1, 2]: source assertion argument value 15 at line 29
+  E11 [findings 1, 2]: source assertion argument value 5_000 at line 34
+  N1 [findings 1, 2]: ripr found no static test path to this change — this is not a coverage assessment. A test may already exercise it through macros, helper-call chains, or integration tests that ripr's static model does not yet trace. If none does, add a co-located test that reaches and observes the changed behavior so an assertion can notice if it is wrong
+
+Finding 1: WARNING ./src/lib.rs:2
+  id: probe:src_lib.rs:predicate:596620ae
+Changed
+  before: age > 18
+  after:  age >= 18
+Change type
+  a condition or comparison changed
+  family: predicate
+  delta:  control (changes which code path runs)
+  owner:  src/lib.rs::is_adult
+  gap id (for scripts): gap:rust:src/lib.rs:is_adult:predicate_boundary:predicate:age==18
+Static exposure
+  no_static_path (warning, confidence 0.43)
+Evidence
+  shared evidence: E1, E2
+  - propagation yes: Changed behavior appears to influence returned value: age >= 18
+  shared evidence: E3, E4, E5, E6, E7, E8, E9, E10, E11
+Weakness
+  - No detected boundary input for the changed predicate
+Next step
+  shared guidance: N1
+Drill in:
+  (finding id, for explain/context)
+  ripr explain --root <cwd>/fixtures/rust_contradiction_mates_only/input --diff <cwd>/fixtures/rust_contradiction_mates_only/diff.patch --mode fast probe:src_lib.rs:predicate:596620ae
+  ripr context --root <cwd>/fixtures/rust_contradiction_mates_only/input --diff <cwd>/fixtures/rust_contradiction_mates_only/diff.patch --mode fast --at probe:src_lib.rs:predicate:596620ae
+
+Finding 2: WARNING ./src/lib.rs:2
+  id: probe:src_lib.rs:return_value:fed8ac90
+Changed
+  before: age > 18
+  after:  age >= 18
+Change type
+  a returned value changed
+  family: return_value
+  delta:  value (changes a computed value)
+  owner:  src/lib.rs::is_adult
+  gap id (for scripts): gap:rust:src/lib.rs:is_adult:return_value:return_value:age>=18
+Static exposure
+  no_static_path (warning, confidence 0.43)
+Evidence
+  shared evidence: E1, E2
+  - propagation yes: Complete propagation witness reaches returned value: age >= 18
+  shared evidence: E3, E4, E5, E6, E7, E8, E9, E10, E11
+Next step
+  shared guidance: N1
+Drill in:
+  (finding id, for explain/context)
+  ripr explain --root <cwd>/fixtures/rust_contradiction_mates_only/input --diff <cwd>/fixtures/rust_contradiction_mates_only/diff.patch --mode fast probe:src_lib.rs:return_value:fed8ac90
+  ripr context --root <cwd>/fixtures/rust_contradiction_mates_only/input --diff <cwd>/fixtures/rust_contradiction_mates_only/diff.patch --mode fast --at probe:src_lib.rs:return_value:fed8ac90
+
+
+Note: ripr found no static test path for any of the 2 changed expression(s) in this diff. Scope
+  analyzed: 1 changed Rust file(s), 2 changed expression(s), and 2 statically linked related
+  test(s). This is not a coverage assessment. A test may already exercise these changes through
+  macros, helper-call chains, or integration tests that ripr's static model does not yet trace; if
+  none does, add co-located tests that observe the changed behavior.

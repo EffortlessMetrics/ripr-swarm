@@ -21,6 +21,10 @@ case = "hostile-it-fails-inverted-oracle"
 reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
 
 [[entry]]
+case = "jest-floating-resolves-unawaited"
+reason = "A floating expect(p).resolves.toBe(x) (no await, no return) cannot fail its own test; the jest 30 run only fails through the worker's unhandled rejection, a process-level race that no test owns. Withholding the credit (static_unknown) is the fail-closed reading (#11535), the same as ts-trap-floating-promise."
+
+[[entry]]
 case = "jest-mined-private-impl-dispatcher"
 reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
 

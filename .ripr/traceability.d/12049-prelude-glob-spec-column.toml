@@ -1,0 +1,6 @@
+# Registers the spec glob-column cross-check (#12049).
+[[extend]]
+id = "RIPR-SPEC-0369"
+tests = [
+  "crates/ripr/src/analysis/syntax/owner_pin.rs::prelude_glob_audit_tests::spec_glob_column_matches_the_full_trusted_glob_paths",
+]

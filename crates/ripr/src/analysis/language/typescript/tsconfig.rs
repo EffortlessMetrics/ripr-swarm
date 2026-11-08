@@ -1,12 +1,17 @@
 //! tsconfig.json / jsconfig.json alias-map loader (RIPR-SPEC-0099).
 //!
-//! This module is SINGLE-HOP and FAIL-CLOSED:
+//! This module is FAIL-CLOSED with a bounded `extends` chain:
 //!
 //! - Only `compilerOptions.baseUrl` and `compilerOptions.paths` are read.
 //! - Discovery reads ONLY `<workspace-root>/tsconfig.json` and
 //!   `<workspace-root>/jsconfig.json`; package-level tsconfigs are out of
 //!   scope, and the load-gap advice says so instead of implying the project
-//!   lacks config (#8715).
+//!   lacks config (#8715). The root map is additionally WITHHELD for an
+//!   importer whose nearest `tsconfig.json`/`jsconfig.json` (bounded upward
+//!   walk) declares its own `compilerOptions.paths` and is not the root
+//!   config: applying the root map there could credit the wrong owner
+//!   (#12754 slice). Root fallback is unchanged when no nearer config
+//!   declares `paths`.
 //! - `extends` chains are followed up to 8 hops when every target is a
 //!   relative path inside the directory of the extending config
 //!   (#11204); `references`, package-name `extends`, cross-directory
@@ -42,8 +47,9 @@ use super::bounded_read::read_config_capped;
 #[serde(rename_all = "camelCase")]
 struct RawTsConfig {
     compiler_options: Option<RawCompilerOptions>,
-    // If `extends` or `references` are present we MUST NOT follow them;
-    // we detect their presence and bail out (fail-closed).
+    // `extends` targets outside the supported same-directory chain and
+    // `references` are never followed; their presence is detected here and
+    // fails closed downstream.
     extends: Option<serde_json::Value>,
     references: Option<serde_json::Value>,
 }
@@ -395,7 +401,10 @@ impl TsAliasMap {
     }
 
     /// Whether a `paths` key (exact or single-`*` pattern) owns `specifier`.
-    fn paths_key_matches(&self, specifier: &str) -> bool {
+    /// The wrong-owner safeguard (`normalized_relative_import_module`,
+    /// #12754 slice) consults this to withhold the root map when a nearer
+    /// config owns the specifier's compilation unit.
+    pub(crate) fn paths_key_matches(&self, specifier: &str) -> bool {
         self.literal_entries.contains_key(specifier)
             || self
                 .glob_entries
@@ -490,7 +499,9 @@ impl TsAliasMap {
 /// - JSON parse error.
 /// - `compilerOptions` absent.
 /// - `baseUrl` absent.
-/// - `extends` or `references` present (single-hop only — do NOT follow).
+/// - `references` present, or an `extends` form outside the supported
+///   same-directory chain (package name, cross-directory, cycle, missing
+///   target, or deeper than `MAX_EXTENDS_DEPTH`).
 ///
 /// Test-only convenience over [`load_alias_map_with_read_error`] for the
 /// existing fixture callers; production surfaces read outcomes through the
@@ -556,8 +567,8 @@ pub(crate) fn load_alias_map_with_read_error(
     (None, None, Some(TsAliasMapLoadGap::ConfigMissing))
 }
 
-/// Why the strict single-hop alias-map compiler refused a config that was
-/// read successfully. Internal to `parse_alias_map`; surfaced to callers as
+/// Why the alias-map compiler refused a config that was read
+/// successfully. Internal to `parse_alias_map`; surfaced to callers as
 /// a `TsAliasMapLoadGap`.
 enum TsAliasMapBlocker {
     Unparseable { detail: String },
@@ -960,6 +971,34 @@ fn is_safe_relative(p: &Path) -> bool {
         .all(|c| matches!(c, Component::Normal(_) | Component::CurDir))
 }
 
+/// `true` when the config file at `path` declares its own
+/// `compilerOptions.paths` (presence of the key counts, even `{}` or without
+/// `baseUrl`: per TS 4.1+ paths-without-`baseUrl` resolve relative to the
+/// declaring config — #12760 — so no `baseUrl` requirement here).
+///
+/// Declaration probe for the wrong-owner safeguard (#12754 slice): the walk in
+/// `related_tests` withholds the workspace-root map for importers whose
+/// nearest declaring config is not the root one. Unreadable, unparseable, or
+/// non-object configs return `false` — this probe reports only an observed
+/// `paths` declaration; every other fail-closed shape stays owned by its own
+/// lane. `extends` is deliberately not followed and `references` not
+/// consulted: full per-config resolution remains out of scope.
+pub(crate) fn config_file_declares_paths(path: &Path) -> bool {
+    let Ok(text) = super::bounded_read::read_config_capped(path) else {
+        return false;
+    };
+    let Ok(normalized) = strip_jsonc(&text) else {
+        return false;
+    };
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(&normalized) else {
+        return false;
+    };
+    value
+        .get("compilerOptions")
+        .and_then(|options| options.get("paths"))
+        .is_some()
+}
+
 /// Strip the file extension from a path string, preserving the rest.
 fn strip_ts_ext(s: &str) -> String {
     for ext in &[".tsx", ".mts", ".cts", ".ts", ".jsx", ".mjs", ".cjs", ".js"] {
@@ -1171,6 +1210,68 @@ mod tests {
         write(&root, "src/base-owner.ts", "export const v = 1;");
         let map = load_alias_map(&root).ok_or("extends chain should load")?;
         assert!(map.resolve("@/owner").is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn extends_child_paths_replace_base_paths_partially() -> Result<(), String> {
+        // A child that redeclares one of two base aliases keeps its own and
+        // drops the other: whole-object replacement, not a per-key merge.
+        let root = temp_dir("extends-partial-paths");
+        write(
+            &root,
+            "tsconfig.base.json",
+            r#"{"compilerOptions":{"baseUrl":".","paths":{"@/owner":["src/base-owner"],"@/other":["src/other"]}}}"#,
+        );
+        write(
+            &root,
+            "tsconfig.json",
+            r#"{"extends":"./tsconfig.base.json","compilerOptions":{"paths":{"@/owner":["src/child-owner"]}}}"#,
+        );
+        write(&root, "src/base-owner.ts", "export const v = 1;");
+        write(&root, "src/child-owner.ts", "export const v = 2;");
+        write(&root, "src/other.ts", "export const v = 3;");
+        let map = load_alias_map(&root).ok_or("extends chain should load")?;
+        let resolved = map.resolve("@/owner").ok_or("own alias should resolve")?;
+        assert_eq!(
+            resolved.to_string_lossy().replace('\\', "/"),
+            "src/child-owner.ts"
+        );
+        assert!(
+            map.resolve("@/other").is_none(),
+            "base alias the child does not redeclare must be gone"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn extends_chain_at_max_hops_loads_but_one_more_fails_closed() -> Result<(), String> {
+        // Pins MAX_EXTENDS_DEPTH exactly: root plus 8 bases (deepest at
+        // depth 8) loads; root plus 9 bases (deepest at depth 9) fails
+        // closed with no map.
+        for (label, depth) in [("extends-max-loads", 8), ("extends-max-plus-one", 9)] {
+            let root = temp_dir(label);
+            for i in (0..depth).rev() {
+                let body = if i + 1 == depth {
+                    r#"{"compilerOptions":{"baseUrl":".","paths":{}}}"#.to_string()
+                } else {
+                    format!("{{\"extends\":\"./c{}.json\"}}", i + 1)
+                };
+                write(&root, &format!("c{i}.json"), &body);
+            }
+            write(&root, "tsconfig.json", r#"{"extends":"./c0.json"}"#);
+            if depth == 8 {
+                assert!(
+                    load_alias_map(&root).is_some(),
+                    "an 8-deep chain is within the bound and must load"
+                );
+            } else {
+                assert!(
+                    load_alias_map(&root).is_none(),
+                    "a 9-deep chain exceeds the bound and must fail closed"
+                );
+            }
+        }
         Ok(())
     }
 

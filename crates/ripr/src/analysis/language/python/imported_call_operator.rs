@@ -216,7 +216,7 @@ fn credits<'a>(
         {
             continue;
         }
-        let spellings = reader_spellings(test, owner);
+        let spellings = reader_spellings(test, owner, &module_owner.foreign_writes);
         if spellings.is_empty() {
             continue;
         }

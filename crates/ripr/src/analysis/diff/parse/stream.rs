@@ -2,6 +2,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::convert::Infallible;
 use std::path::{Path, PathBuf};
 
+use crate::core_error::CoreError;
+
 use super::{
     ChangedFile, DIFF_CHANGED_LINE_LIMIT_ENV, DIFF_FILE_LIMIT_ENV, MAX_DIFF_PATH_COMPONENTS,
     ParsedDiff, is_new_path_marker, parse_old_path_marker, parser_state,
@@ -59,7 +61,7 @@ pub(super) fn parse_unbounded(input: &str) -> ParsedDiff {
 pub(super) fn parse_bounded_lines<'a>(
     lines: impl Iterator<Item = &'a str>,
     limit: usize,
-) -> Result<ParsedDiff, String> {
+) -> Result<ParsedDiff, CoreError> {
     parse_bounded_lines_scoped(lines, limit, DEFAULT_DIFF_CHANGED_LINE_LIMIT, |_| true)
 }
 
@@ -71,7 +73,7 @@ pub(super) fn parse_bounded_lines_scoped<'a>(
     limit: usize,
     line_limit: usize,
     keep: impl Fn(&Path) -> bool,
-) -> Result<ParsedDiff, String> {
+) -> Result<ParsedDiff, CoreError> {
     parse_lines(
         lines,
         keep,
@@ -85,7 +87,8 @@ pub(super) fn parse_bounded_lines_scoped<'a>(
                  remaining file bodies and analysis was not run. Repair route: reduce \
                  the diff scope, split the extraction PR, run a narrower diff, or \
                  raise the limit via {DIFF_FILE_LIMIT_ENV}=<number>."
-            ))
+            )
+            .into())
         },
         |count| {
             if count <= line_limit {
@@ -98,7 +101,8 @@ pub(super) fn parse_bounded_lines_scoped<'a>(
                  route: reduce the diff scope, split the extraction PR, run a \
                  narrower diff, or raise the limit via \
                  {DIFF_CHANGED_LINE_LIMIT_ENV}=<number>."
-            ))
+            )
+            .into())
         },
         |raw| {
             if !path_marker_exceeds_depth_bound(raw) {
@@ -110,7 +114,8 @@ pub(super) fn parse_bounded_lines_scoped<'a>(
                  stopped before the header was resolved and analysis was not run. \
                  Repair route: regenerate the diff from a real checkout, whose \
                  paths are far shallower than this bound."
-            ))
+            )
+            .into())
         },
     )
 }

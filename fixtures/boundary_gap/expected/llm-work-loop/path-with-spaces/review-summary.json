@@ -22,7 +22,7 @@
   "next_command": {
     "step": "select_seam",
     "artifact": "target/ripr/pilot",
-    "reason": "no repair seam is known yet; `ripr pilot` inspects the workspace and selects the seam to repair",
+    "reason": "no repair gap is known yet; `ripr pilot` inspects the workspace and selects the gap to repair",
     "command": "ripr pilot --root '<cwd>/repo root' --out '<cwd>/repo root/target/ripr/pilot'"
   },
   "surfaces": [
@@ -138,8 +138,8 @@
     }
   ],
   "reviewer_summary": {
-    "headline": "Review packet is incomplete for unknown seam: producer analysis outcome is unavailable.",
-    "what_changed": "No producer-backed completeness result is available; static review evidence cannot be treated as complete.",
+    "headline": "Review incomplete: analysis outcome and repair receipt are unavailable.",
+    "what_changed": "Review incomplete: analysis outcome and repair receipt are unavailable.",
     "evidence": "Run agent receipt after verify to create review evidence.",
     "remaining": "Run the next command listed by agent status.",
     "reviewer_should_inspect": [

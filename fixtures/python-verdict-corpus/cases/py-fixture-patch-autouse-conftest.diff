@@ -1,0 +1,10 @@
+diff --git a/fxpatch/core.py b/fxpatch/core.py
+--- a/fxpatch/core.py
++++ b/fxpatch/core.py
+@@ -1,5 +1,5 @@
+ def price_autouse(x):
+-    return x * 2
++    return x * 3
+ 
+ 
+ def price_requested(x):

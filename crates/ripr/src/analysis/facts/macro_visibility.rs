@@ -25,9 +25,10 @@ use crate::analysis::sync_memo::SyncMemo;
 use crate::analysis::syntax::{
     ImportedMacros, MacroScope, first_macro_call, generator_calls, macro_scope,
 };
+use std::collections::HashMap;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock, Weak};
 
 #[cfg(test)]
 mod declaration_tests;
@@ -73,6 +74,54 @@ pub(crate) struct MacroVisibility {
 struct ExportIndex {
     definitions: BTreeMap<String, Vec<(PathBuf, Option<String>)>>,
     opaque: BTreeSet<PathBuf>,
+}
+
+/// Scopes already derived this run, keyed by the identity of the source
+/// allocation. The facts pass and the classifier each build a resolver over
+/// the same index, and a resolver (or a clone of one) starts with an empty
+/// memo, so every file was parsed again for each (about three parses of 1,700
+/// files on servo, 62% of the bytes a cold pilot parsed). An entry is valid
+/// only while its `Weak` still upgrades to the same allocation, so a freed and
+/// reused address cannot return another file's scope and nothing here keeps a
+/// source alive.
+type SharedScopes = HashMap<usize, (Weak<str>, Option<Arc<MacroScope>>)>;
+const SHARED_SCOPE_ENTRIES: usize = 16_384;
+static SHARED_SCOPES: Mutex<Option<SharedScopes>> = Mutex::new(None);
+
+fn shared_scope(source: &Arc<str>) -> Option<Arc<MacroScope>> {
+    let key = Arc::as_ptr(source).cast::<u8>() as usize;
+    {
+        let guard = lock_shared_scopes();
+        if let Some((weak, scope)) = guard.as_ref().and_then(|map| map.get(&key))
+            && weak
+                .upgrade()
+                .is_some_and(|live| Arc::ptr_eq(&live, source))
+        {
+            return scope.clone();
+        }
+    }
+    #[cfg(test)]
+    SCOPE_PARSES.with(|parses| parses.set(parses.get() + 1));
+    let scope = macro_scope(source).map(Arc::new);
+    let mut guard = lock_shared_scopes();
+    let map = guard.get_or_insert_with(HashMap::new);
+    if map.len() >= SHARED_SCOPE_ENTRIES {
+        map.retain(|_, (weak, _)| weak.strong_count() > 0);
+        if map.len() >= SHARED_SCOPE_ENTRIES {
+            map.clear();
+        }
+    }
+    map.insert(key, (Arc::downgrade(source), scope.clone()));
+    scope
+}
+
+/// The cache holds only derived data that a miss re-derives, so a panic
+/// elsewhere while the lock was held leaves nothing to repair: recover the
+/// guard instead of silently disabling sharing for the rest of the process.
+fn lock_shared_scopes() -> std::sync::MutexGuard<'static, Option<SharedScopes>> {
+    SHARED_SCOPES
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 impl Clone for MacroVisibility {
@@ -250,18 +299,33 @@ fn may_follow_attribute(item: &str) -> bool {
 
 impl MacroVisibility {
     pub(crate) fn new(files: impl Iterator<Item = (PathBuf, Arc<str>)>) -> Self {
+        use rayon::prelude::*;
         let sources: BTreeMap<PathBuf, Arc<str>> = files.collect();
-        let mut generators = BTreeSet::new();
-        for source in sources.values() {
-            if !source.contains("macro_rules") || !source.contains("test") {
-                continue;
-            }
-            for scoped in macro_scope(source).unwrap_or_default().macros {
-                if scoped.text.contains("test") {
-                    generators.insert(scoped.name);
+        // Each candidate's scope parse is independent and the result is a
+        // name set, so the scan runs on the rayon pool; the union is
+        // order-free and `shared_scope` is already a shared, locked memo.
+        let candidates: Vec<&Arc<str>> = sources
+            .values()
+            .filter(|source| source.contains("macro_rules") && source.contains("test"))
+            .collect();
+        let generators: BTreeSet<String> = candidates
+            .par_iter()
+            .fold(BTreeSet::new, |mut acc, source| {
+                if let Some(scope) = shared_scope(source) {
+                    acc.extend(
+                        scope
+                            .macros
+                            .iter()
+                            .filter(|scoped| scoped.text.contains("test"))
+                            .map(|scoped| scoped.name.clone()),
+                    );
                 }
-            }
-        }
+                acc
+            })
+            .reduce(BTreeSet::new, |mut left, right| {
+                left.extend(right);
+                left
+            });
         Self {
             sources,
             generators,
@@ -472,13 +536,7 @@ impl MacroVisibility {
         if let Some(cached) = cached {
             return cached;
         }
-        #[cfg(test)]
-        SCOPE_PARSES.with(|parses| parses.set(parses.get() + 1));
-        let scope = self
-            .sources
-            .get(file)
-            .and_then(|source| macro_scope(source))
-            .map(Arc::new);
+        let scope = self.sources.get(file).and_then(shared_scope);
         self.scopes
             .borrow()
             .insert(file.to_path_buf(), scope.clone());
@@ -1273,5 +1331,44 @@ mod tests {
         let b = format!("{GENERATOR}#[macro_use]\nmod a;\n");
         let files = [("tests/a.rs", a), ("tests/b.rs", b.as_str())];
         assert_eq!(imported(&files, "tests/a.rs"), "");
+    }
+
+    /// Resolvers built over the same source allocations (the facts pass, then
+    /// the classifier, or a clone) must share the derived scope instead of
+    /// parsing each file again; a different allocation holding the same text
+    /// is a different key and derives its own.
+    #[test]
+    fn resolvers_over_one_source_share_its_scope() {
+        let source: Arc<str> = Arc::from("macro_rules! t { () => { #[test] fn a() {} }; }\n");
+        let path = PathBuf::from("tests/a.rs");
+        let build = |source: &Arc<str>| {
+            MacroVisibility::new(std::iter::once((path.clone(), Arc::clone(source))))
+        };
+        let (first, second) = (build(&source), build(&source));
+        let (a, b) = (first.scope(&path), second.scope(&path));
+        assert!(a.is_some() && b.is_some(), "a clean macro file has a scope");
+        let shared = a
+            .as_ref()
+            .zip(b.as_ref())
+            .is_some_and(|(a, b)| Arc::ptr_eq(a, b));
+        assert!(shared, "the second resolver re-derived the scope");
+        let copy: Arc<str> = Arc::from(&*source);
+        let other = build(&copy).scope(&path);
+        assert!(other.is_some_and(|other| a.as_ref().is_some_and(|a| !Arc::ptr_eq(&other, a))));
+    }
+
+    #[test]
+    fn a_stale_entry_at_a_reused_address_is_not_returned() {
+        let source: Arc<str> = Arc::from("macro_rules! t { () => { #[test] fn a() {} }; }\n");
+        let key = Arc::as_ptr(&source).cast::<u8>() as usize;
+        // An entry at this address whose `Weak` points at a freed allocation,
+        // as after the address was reused: it must be ignored, not returned.
+        let dead: Weak<str> = Arc::downgrade(&Arc::<str>::from("fn gone() {}"));
+        let bogus = Arc::new(MacroScope::default());
+        lock_shared_scopes()
+            .get_or_insert_with(HashMap::new)
+            .insert(key, (dead, Some(Arc::clone(&bogus))));
+        let derived = shared_scope(&source);
+        assert!(derived.is_some_and(|scope| !Arc::ptr_eq(&scope, &bogus)));
     }
 }

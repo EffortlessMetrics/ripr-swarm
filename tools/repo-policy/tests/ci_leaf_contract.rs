@@ -3,6 +3,7 @@
 use std::process::{Command, Output};
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 const WORKFLOW: &str = include_str!("../../../.github/workflows/ci.yml");
+const VSCODE_E2E: &str = include_str!("../../../.github/workflows/vscode-e2e.yml");
 const ORIGINAL: &str = include_str!("../../../fixtures/convergence/ci-exact-subject/original.yml");
 const JOBS: &[(&str, &str)] = &[
     ("rust-only-features", "run_rust_only"),
@@ -27,6 +28,15 @@ fn job<'a>(source: &'a str, name: &str) -> &'a str {
         .map_or(tail.len(), |(offset, _)| offset);
     &tail[..end]
 }
+/// The job whose steps carry a lane's payload: the extension lane lives in the reusable
+/// workflow (#12252), every other lane in ci.yml itself.
+fn payload_job(name: &str) -> &'static str {
+    if name == "vscode" {
+        job(VSCODE_E2E, name)
+    } else {
+        job(WORKFLOW, name)
+    }
+}
 fn body(step: &str) -> String {
     step.split_once("        run: |\n")
         .unwrap_or_default()
@@ -49,12 +59,40 @@ fn run(script: &str, overrides: &[(&str, &str)]) -> TestResult<Output> {
     run_with_shell(WorkflowShell::ImplicitBash, script, overrides)
 }
 
+struct ShellScratch(std::path::PathBuf);
+
+impl ShellScratch {
+    fn new() -> TestResult<Self> {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let parent = std::env::temp_dir();
+        std::fs::create_dir_all(&parent)?;
+        let path = parent.join(format!(
+            "ripr-ci-leaf-shell-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir(&path)?;
+        Ok(Self(path))
+    }
+}
+
+impl Drop for ShellScratch {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
 fn run_with_shell(
     shell: WorkflowShell,
     script: &str,
     overrides: &[(&str, &str)],
 ) -> TestResult<Output> {
+    // Workflow blocks can contain real redirections even when commands such as
+    // cd are stubbed. Keep those writes away from the source checkout.
+    let scratch = ShellScratch::new()?;
     let mut cmd = Command::new("timeout");
+    cmd.current_dir(&scratch.0);
     cmd.args(["--kill-after=1s", "5s", "bash"]);
     match shell {
         WorkflowShell::ImplicitBash => {
@@ -113,6 +151,19 @@ fn run_with_shell(
     );
     Ok(output)
 }
+#[test]
+fn shell_redirections_are_owned_and_leave_the_caller_manifest_unchanged() -> TestResult {
+    let before = std::fs::read("Cargo.toml").ok();
+    let output = run(
+        "printf 'owned shell fixture\\n' >> Cargo.toml; cat Cargo.toml",
+        &[],
+    )?;
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8(output.stdout)?, "owned shell fixture\n");
+    assert_eq!(std::fs::read("Cargo.toml").ok(), before);
+    Ok(())
+}
+
 fn mapping<'a>(scope: &'a str, indent: usize, key: &str) -> Option<&'a str> {
     let marker = format!("{}{key}:\n", " ".repeat(indent));
     let offset = scope
@@ -286,6 +337,8 @@ struct Event<'a> {
     action: &'a str,
     label: &'a str,
     labels: &'a [&'a str],
+    // Output of the `vscode surface` job: "true", "false" or "" (the job failed).
+    surface: &'a str,
 }
 fn predicate(
     expression: &str,
@@ -301,6 +354,8 @@ fn predicate(
         .replace("github.event.label.name == 'merge-ready'",flag(event.label=="merge-ready"))
         .replace("contains(github.event.pull_request.labels.*.name, 'full-ci')",flag(event.labels.contains(&"full-ci")))
         .replace("contains(github.event.pull_request.labels.*.name, 'release-check')",flag(event.labels.contains(&"release-check")))
+        .replace("contains(github.event.pull_request.labels.*.name, 'vscode')",flag(event.labels.contains(&"vscode")))
+        .replace("needs.vscode-selection.outputs.selected != 'false'",flag(event.surface != "false"))
         .replace("contains(fromJSON('[\"opened\", \"synchronize\", \"reopened\"]'), github.event.action)",flag(["opened","synchronize","reopened"].contains(&event.action)))
         .replace("github.event_name",&format!("'{}'",event.name))
         .replace("github.ref", "'refs/heads/main'")
@@ -389,7 +444,7 @@ fn actual_predicates_preserve_legacy_events_and_use_only_frozen_callable_selecti
             "labeled",
             "merge-ready",
             vec!["merge-ready", "full-ci"],
-            [true; 4],
+            [true, true, true, false],
         ),
         (
             "pull_request",
@@ -406,6 +461,7 @@ fn actual_predicates_preserve_legacy_events_and_use_only_frozen_callable_selecti
             action,
             label,
             labels: &labels,
+            surface: "false",
         };
         for ((job_name, _), expected) in JOBS.iter().zip(expected) {
             let expression = condition(job(WORKFLOW, job_name));
@@ -427,10 +483,66 @@ fn actual_predicates_preserve_legacy_events_and_use_only_frozen_callable_selecti
     Ok(())
 }
 #[test]
+fn ci_runs_the_extension_e2e_only_off_pull_requests_and_for_a_frozen_selection() -> TestResult {
+    // #12252: a pull request's extension e2e is a job of routed-rust.yml's own run, read by
+    // the Result as a `needs` result. ci.yml keeps push/dispatch and the callable lane.
+    let expression = condition(job(WORKFLOW, "vscode"));
+    for (action, label, labels) in [
+        ("labeled", "merge-ready", &["merge-ready"][..]),
+        ("labeled", "merge-ready", &["merge-ready", "vscode"][..]),
+        ("labeled", "merge-ready", &["merge-ready", "full-ci"][..]),
+        ("synchronize", "", &["merge-ready", "vscode"][..]),
+    ] {
+        let event = Event {
+            name: "pull_request",
+            action,
+            label,
+            labels,
+            surface: "true",
+        };
+        assert!(
+            !predicate(&expression, false, event, false, "skipped")?,
+            "{action}/{label}/{labels:?}"
+        );
+    }
+    let push = Event {
+        name: "push",
+        action: "",
+        label: "",
+        labels: &[],
+        surface: "false",
+    };
+    assert!(predicate(&expression, false, push, false, "skipped")?);
+    // A callable run takes its frozen selection and a successful identity check.
+    let request = Event {
+        name: "pull_request",
+        action: "labeled",
+        label: "merge-ready",
+        labels: &["merge-ready"],
+        surface: "true",
+    };
+    assert!(predicate(&expression, true, request, true, "success")?);
+    assert!(!predicate(&expression, true, request, false, "success")?);
+    assert!(!predicate(&expression, true, request, true, "failure")?);
+    // The retired cross-workflow correlation stays gone from ci.yml.
+    for retired in [
+        "vscode surface",
+        "vscode-selection",
+        "CI merge-ready request",
+    ] {
+        assert!(
+            !WORKFLOW.contains(retired),
+            "ci.yml still carries {retired}"
+        );
+    }
+    Ok(())
+}
+#[test]
 fn independent_event_labels_reject_request_guard_removal() -> TestResult {
     const GUARD: &str =
         "(github.event.action == 'labeled' && github.event.label.name == 'merge-ready')";
-    for (name, _) in JOBS {
+    // The extension lane never runs for a pull request, so it has no request guard (#12252).
+    for (name, _) in JOBS.iter().filter(|(name, _)| *name != "vscode") {
         let expression = condition(job(WORKFLOW, name));
         assert_eq!(expression.matches(GUARD).count(), 1, "{name}");
         let mutant = expression.replacen(GUARD, "true", 1);
@@ -444,6 +556,7 @@ fn independent_event_labels_reject_request_guard_removal() -> TestResult {
                 action,
                 label,
                 labels: &["merge-ready", "full-ci"],
+                surface: "false",
             };
             assert!(
                 !predicate(&expression, false, event, false, "skipped")?,
@@ -497,17 +610,67 @@ fn pr_owned_step_allowance_is_exact_and_job_scoped() {
         vec![step]
     );
 }
+// #13201/#13212: the editor host must be verified before compilation and packaging.
+const VSCODE_PAYLOAD: &[&str] = &[
+    "npm ci",
+    "sudo apt-get update && sudo apt-get install -y xvfb",
+    "xvfb-run -a npm run setup:verify-editor",
+    "npm run compile",
+    "npm run package",
+    "xvfb-run -a npm run test:e2e",
+];
+
+fn is_exact_vscode_payload(scripts: &[String]) -> bool {
+    scripts.len() == VSCODE_PAYLOAD.len()
+        && scripts
+            .iter()
+            .zip(VSCODE_PAYLOAD)
+            .all(|(actual, expected)| actual.as_str() == *expected)
+}
+
+#[test]
+fn vscode_payload_requires_every_command_in_order() {
+    let actual = run_blocks(payload_job("vscode"));
+    assert!(is_exact_vscode_payload(&actual));
+    for (index, script) in actual.iter().enumerate() {
+        let mut removed = actual.clone();
+        removed.remove(index);
+        assert!(!is_exact_vscode_payload(&removed), "removed {index}");
+
+        let mut altered = actual.clone();
+        altered[index].push_str(" --extra");
+        assert!(!is_exact_vscode_payload(&altered), "altered {index}");
+
+        let mut duplicated = actual.clone();
+        duplicated.insert(index, script.clone());
+        assert!(!is_exact_vscode_payload(&duplicated), "duplicated {index}");
+    }
+    for index in 0..actual.len() - 1 {
+        let mut reordered = actual.clone();
+        reordered.swap(index, index + 1);
+        assert!(!is_exact_vscode_payload(&reordered), "reordered {index}");
+    }
+}
+
 #[test]
 fn feature_command_action_and_manual_denominators_are_unchanged() -> TestResult {
     for (name, _) in JOBS {
-        assert_eq!(
-            without_pr_owned_steps(name, run_blocks(job(WORKFLOW, name))).iter().filter(|script| !script.contains("proptest_singleton/input/Cargo.toml") && !script.contains("owner_return_pin_json_real_literal/input/Cargo.toml")).map(|script| script.replace("  [ \"${CALLED:-false}\" != true ] || return 0\n", "").replace("cargo package -p ripr --no-verify\npackage_id=\"$(cargo pkgid -p ripr)\"\npackage_version=\"${package_id##*#}\"\ntest -n \"$package_version\"\n", "cargo package -p ripr --no-verify\npackage_version=\"$(cargo pkgid -p ripr | sed 's/.*#//')\"\n")).collect::<Vec<_>>(),
-            run_blocks(job(ORIGINAL, name)).iter().map(|script| script.replace(
-                "cargo package -p ripr --no-verify && tar xzf \"target/package/ripr-$(cargo pkgid -p ripr | sed 's/.*#//').crate\" -C \"$RUNNER_TEMP\"\ncd \"$RUNNER_TEMP/ripr-$(cargo pkgid -p ripr | sed 's/.*#//')\" && rm Cargo.lock && cargo generate-lockfile",
-                "cargo package -p ripr --no-verify\npackage_version=\"$(cargo pkgid -p ripr | sed 's/.*#//')\"\ntar xzf \"target/package/ripr-$package_version.crate\" -C \"$RUNNER_TEMP\"\ncd \"$RUNNER_TEMP/ripr-$package_version\"\nrm Cargo.lock\ncargo generate-lockfile"
-            )).collect::<Vec<_>>(),
-            "payload {name}"
-        );
+        if *name == "vscode" {
+            let actual = run_blocks(payload_job(name));
+            assert!(
+                is_exact_vscode_payload(&actual),
+                "payload {name}: actual {actual:?}; expected {VSCODE_PAYLOAD:?}"
+            );
+        } else {
+            assert_eq!(
+                without_pr_owned_steps(name, run_blocks(payload_job(name))).iter().filter(|script| !script.contains("proptest_singleton/input/Cargo.toml") && !script.contains("owner_return_pin_json_real_literal/input/Cargo.toml")).map(|script| script.replace("  [ \"${CALLED:-false}\" != true ] || return 0\n", "").replace("cargo package -p ripr --no-verify\npackage_id=\"$(cargo pkgid -p ripr)\"\npackage_version=\"${package_id##*#}\"\ntest -n \"$package_version\"\n", "cargo package -p ripr --no-verify\npackage_version=\"$(cargo pkgid -p ripr | sed 's/.*#//')\"\n")).map(|script| if script.contains("unlocked-target") { "cargo publish -p ripr --dry-run".to_owned() } else { script }).collect::<Vec<_>>(),
+                run_blocks(job(ORIGINAL, name)).iter().filter(|script| !script.contains("unlocked-target")).map(|script| script.replace(
+                    "cargo package -p ripr --no-verify && tar xzf \"target/package/ripr-$(cargo pkgid -p ripr | sed 's/.*#//').crate\" -C \"$RUNNER_TEMP\"\ncd \"$RUNNER_TEMP/ripr-$(cargo pkgid -p ripr | sed 's/.*#//')\" && rm Cargo.lock && cargo generate-lockfile",
+                    "cargo package -p ripr --no-verify\npackage_version=\"$(cargo pkgid -p ripr | sed 's/.*#//')\"\ntar xzf \"target/package/ripr-$package_version.crate\" -C \"$RUNNER_TEMP\"\ncd \"$RUNNER_TEMP/ripr-$package_version\"\nrm Cargo.lock\ncargo generate-lockfile"
+                )).collect::<Vec<_>>(),
+                "payload {name}"
+            );
+        }
         let actions = |s: &str| {
             s.lines()
                 .filter(|l| l.trim_start().starts_with("- uses:"))
@@ -521,16 +684,36 @@ fn feature_command_action_and_manual_denominators_are_unchanged() -> TestResult 
                             .is_some_and(|(_, sha)| sha.len() == 40) =>
                     {
                         let name = pinned.rsplit_once('@').map_or(pinned, |(name, _)| name);
-                        format!("{name}@{}", tag.trim())
+                        // A comment may carry the exact release (`v6.1.0`) while the
+                        // predecessor names the major (`v6`); compare the major.
+                        let tag = tag.trim();
+                        let tag = if tag.starts_with('v') {
+                            tag.split('.').next().unwrap_or(tag)
+                        } else {
+                            tag
+                        };
+                        format!("{name}@{tag}")
                     }
                     _ => line.to_owned(),
                 })
                 .collect::<Vec<_>>()
         };
-        assert_eq!(actions(job(WORKFLOW, name)), actions(job(ORIGINAL, name)));
-        let child = job(WORKFLOW, name);
-        assert!(child.contains("    needs: source-identity"));
-        assert!(child.contains("ref: ${{ inputs.subject_sha || github.sha }}"));
+        assert_eq!(actions(payload_job(name)), actions(job(ORIGINAL, name)));
+        let child = payload_job(name);
+        if name == &"vscode" {
+            // The extension lane is a call of the reusable workflow (#12252).
+            let call = job(WORKFLOW, name);
+            assert!(
+                call.contains("    needs: [source-identity]"),
+                "{name} needs"
+            );
+            assert!(call.contains("    uses: ./.github/workflows/vscode-e2e.yml"));
+            assert!(call.contains("      ref: ${{ inputs.subject_sha || github.sha }}"));
+            assert!(child.contains("ref: ${{ inputs.ref || github.sha }}"));
+        } else {
+            assert!(child.contains("    needs: source-identity"), "{name} needs");
+            assert!(child.contains("ref: ${{ inputs.subject_sha || github.sha }}"));
+        }
         assert!(child.contains("persist-credentials: false"));
         // The callable qualification budget equals the retained predecessor's
         // budget for the same job; first-ever admitted runs must not fit a
@@ -577,8 +760,9 @@ fn feature_command_action_and_manual_denominators_are_unchanged() -> TestResult 
 fn literal_runtime_commands_propagate_native_failure() -> TestResult {
     let stub = "cargo() { return \"$NATIVE_STATUS\"; }; npm() { return \"$NATIVE_STATUS\"; }; xvfb-run() { shift; \"$@\"; };\n";
     let mut count = 0;
+    let mut early_host_checked = false;
     for (name, _) in JOBS {
-        for script in run_blocks(job(WORKFLOW, name)) {
+        for script in run_blocks(payload_job(name)) {
             if script.starts_with("cargo ") && !script.contains('\n')
                 || script.starts_with("npm ")
                 || script.starts_with("xvfb-run ")
@@ -593,9 +777,16 @@ fn literal_runtime_commands_propagate_native_failure() -> TestResult {
                         "masked {script}"
                     );
                 }
+                if *name == "vscode" && script == "xvfb-run -a npm run setup:verify-editor" {
+                    early_host_checked = true;
+                }
             }
         }
     }
+    assert!(
+        early_host_checked,
+        "early editor host was not failure-injected"
+    );
     assert_eq!(count, 14, "nonempty payload denominator");
     Ok(())
 }
@@ -711,9 +902,9 @@ fn unlocked_install_and_readiness_preserve_each_native_failure() -> TestResult {
     "#;
     for (name, commands) in [
         (
-            "Unlocked install resolution",
+            "Publish dry-run",
             &[
-                "cargo-package",
+                "cargo-xtask",
                 "cargo-pkgid",
                 "tar",
                 "cd",
@@ -755,14 +946,20 @@ fn unlocked_install_and_readiness_preserve_each_native_failure() -> TestResult {
             );
             let trace = String::from_utf8(output.stderr)?;
             assert!(trace.contains("reached:cargo-pkgid"));
-            for downstream in [
-                "reached:tar",
-                "reached:cd",
-                "reached:rm",
-                "reached:cargo-generate-lockfile",
-                "reached:cargo-check",
-                "reached:cargo-xtask",
-            ] {
+            // Commands after the pkgid call in this step. The publish step's
+            // own xtask rehearsal runs before pkgid, so it is not downstream.
+            let downstream_commands: &[&str] = if name == "Publish dry-run" {
+                &[
+                    "reached:tar",
+                    "reached:cd",
+                    "reached:rm",
+                    "reached:cargo-generate-lockfile",
+                    "reached:cargo-check",
+                ]
+            } else {
+                &["reached:cargo-xtask"]
+            };
+            for downstream in downstream_commands {
                 assert!(
                     !trace.contains(downstream),
                     "ran {downstream} after pkgid failed: {name}"
@@ -843,11 +1040,11 @@ fn removing_the_declared_shell_reproduces_masked_pkgid_failures() -> TestResult 
         cd() { return 0; }
         rm() { return 0; }
     "#;
-    // Main's unlocked-install form assigns `cargo pkgid` directly, so even
-    // the implicit shell fails closed there; the readiness pipeline through
-    // `sed` still masks a pkgid failure without pipefail.
+    // The publish step's unlocked-install tail assigns `cargo pkgid`
+    // directly, so even the implicit shell fails closed there; the readiness
+    // pipeline through `sed` still masks a pkgid failure without pipefail.
     for (name, downstream, masked) in [
-        ("Unlocked install resolution", "reached:check", false),
+        ("Publish dry-run", "reached:check", false),
         ("Release readiness", "reached:xtask", true),
     ] {
         let step = named_step(&implicit, "release-proof", name);
@@ -887,6 +1084,7 @@ fn release_steps_preserve_manual_semantics_and_ignore_labels_on_calls() -> TestR
                         action: "labeled",
                         label: "unrelated",
                         labels: &labels,
+                        surface: "false",
                     };
                     assert_eq!(
                         predicate(expr, false, context, false, "skipped")?,
@@ -898,7 +1096,7 @@ fn release_steps_preserve_manual_semantics_and_ignore_labels_on_calls() -> TestR
             }
         }
     }
-    assert_eq!(count, 5, "four release steps and receipt upload");
+    assert_eq!(count, 4, "three release steps and receipt upload");
     Ok(())
 }
 

@@ -79,8 +79,8 @@ const VERSION_AUTHORITIES: &[(&str, &[VersionProducer])] = &[
     (
         "executed-control",
         &[producer(
-            "crates/ripr/src/domain/executed_control.rs",
-            "pub(crate) const EXECUTED_CONTROL_SCHEMA_VERSION: &str = \"",
+            "crates/ripr-contract/src/domain/executed_control.rs",
+            "pub const EXECUTED_CONTROL_SCHEMA_VERSION: &str = \"",
             1,
         )],
     ),
@@ -129,7 +129,7 @@ const VERSION_AUTHORITIES: &[(&str, &[VersionProducer])] = &[
     (
         "review-comments",
         &[producer(
-            "crates/ripr/src/output/review_comments.rs",
+            "crates/ripr/src/output/review_comments/mod.rs",
             "const REVIEW_COMMENTS_SCHEMA_VERSION: &str = \"",
             1,
         )],
@@ -177,8 +177,8 @@ const VERSION_AUTHORITIES: &[(&str, &[VersionProducer])] = &[
     (
         "ripr-intervention-study",
         &[producer(
-            "crates/ripr/src/domain/intervention_study.rs",
-            "pub(crate) const RIPR_INTERVENTION_STUDY_SCHEMA_VERSION: &str = \"",
+            "crates/ripr-contract/src/domain/intervention_study.rs",
+            "pub const RIPR_INTERVENTION_STUDY_SCHEMA_VERSION: &str = \"",
             1,
         )],
     ),
@@ -583,7 +583,19 @@ const CONTRACTS: &[VerificationContract] = &[
     },
 ];
 
-pub(crate) fn check_verification_contracts(args: &[String]) -> Result<(), String> {
+/// Counts reported by the corpus-derived producer pass (#3919).
+pub(crate) struct CorpusGateCounts {
+    pub producer_discovered: usize,
+    pub producer_validated: usize,
+    pub edge_validated: usize,
+    pub summary_lines: Vec<String>,
+}
+
+pub(crate) fn check_verification_contracts_with_hooks(
+    args: &[String],
+    corpus_gate: impl FnOnce(&Path) -> Result<CorpusGateCounts, String>,
+    corpus_derived_contract: impl Fn(&str, Option<&str>) -> bool,
+) -> Result<(), String> {
     if !args.iter().all(|arg| arg == "--check") {
         return Err("usage: cargo xtask check-verification-contracts [--check]".to_string());
     }
@@ -623,10 +635,28 @@ pub(crate) fn check_verification_contracts(args: &[String]) -> Result<(), String
         &audit,
     ));
 
+    let corpus_counts = corpus_gate(&root)?;
+    for line in &corpus_counts.summary_lines {
+        println!("verification corpus: {line}");
+    }
+
     let mut subjects_checked = 0usize;
     for contract in CONTRACTS {
         let schema = read_json(root.join(contract.schema_path))?;
         validate_schema_document(contract.schema_path, &schema, &mut violations);
+
+        if corpus_derived_contract(contract.schema_path, contract.schema_pointer) {
+            let doc = read_text(root.join(contract.doc_path))?;
+            for marker in contract.doc_markers {
+                if !doc.contains(&format!("`{marker}`")) {
+                    violations.push(format!(
+                        "{} does not document schema field `{marker}`",
+                        contract.doc_path
+                    ));
+                }
+            }
+            continue;
+        }
 
         let exact_schema = read_exact_json(root.join(contract.schema_path))?;
         let subschema = match contract.schema_pointer {
@@ -717,8 +747,16 @@ pub(crate) fn check_verification_contracts(args: &[String]) -> Result<(), String
         // The audited count is reported beside the contract count so a run
         // cannot imply coverage of an inventory it never enumerated.
         println!(
-            "verification contracts: checked {} contracts over {subjects_checked} producer subjects; audited {} published schemas",
-            CONTRACTS.len(),
+            "verification contracts: checked {} supplemental contracts over {subjects_checked} hand-maintained subjects; corpus {} producer subjects discovered, {} validated, {} edge fixture(s); audited {} published schemas",
+            CONTRACTS
+                .iter()
+                .filter(|contract| {
+                    !corpus_derived_contract(contract.schema_path, contract.schema_pointer)
+                })
+                .count(),
+            corpus_counts.producer_discovered,
+            corpus_counts.producer_validated,
+            corpus_counts.edge_validated,
             published_schemas.len()
         );
         Ok(())
@@ -1198,7 +1236,7 @@ fn supported_numeric_bounds(
                     supported_numeric_bounds(entry, root, active_refs, depth + 1, remaining)
                 })
             }),
-            "not" | "if" | "then" | "else" | "items" => {
+            "not" | "if" | "then" | "else" | "items" | "additionalProperties" => {
                 supported_numeric_bounds(value, root, active_refs, depth + 1, remaining)
             }
             _ => true,
@@ -1379,7 +1417,20 @@ fn validate_value_against_schema_inner(
         return;
     }
     budget.depth += 1;
-    validate_value_against_schema_impl(value, schema, root_schema, location, violations, budget);
+    match schema.as_bool() {
+        Some(false) => violations.push(format!("{location}: false schema rejects value")),
+        Some(true) => {}
+        None => {
+            validate_value_against_schema_impl(
+                value,
+                schema,
+                root_schema,
+                location,
+                violations,
+                budget,
+            );
+        }
+    }
     budget.depth -= 1;
 }
 
@@ -1678,28 +1729,42 @@ fn validate_object(
         }
     }
 
-    let Some(properties) = schema.get("properties").and_then(ExactValue::as_object) else {
-        return;
-    };
+    let properties = schema.get("properties").and_then(ExactValue::as_object);
 
-    if schema
-        .get("additionalProperties")
-        .and_then(ExactValue::as_bool)
-        == Some(false)
+    if let Some(additional) = schema.get("additionalProperties")
+        && (additional.as_bool() == Some(false) || additional.is_object())
     {
-        for field in object.keys() {
+        for (field, field_value) in object {
             if !charge_validation_work(budget, 1 + field.len() / 1024) {
                 return;
             }
-            if !properties.contains_key(field) {
+            if properties.is_some_and(|declared| declared.contains_key(field)) {
+                continue;
+            }
+            if additional.as_bool() == Some(false) {
                 if !charge_validation_work(budget, 1 + location.len() / 1024 + field.len() / 1024) {
                     return;
                 }
                 violations.push(format!("{location}: unexpected field `{field}`"));
+            } else {
+                if !charge_validation_work(budget, 1 + location.len() / 1024) {
+                    return;
+                }
+                validate_value_against_schema_inner(
+                    field_value,
+                    additional,
+                    root_schema,
+                    format!("{location}.{field}"),
+                    violations,
+                    budget,
+                );
             }
         }
     }
 
+    let Some(properties) = properties else {
+        return;
+    };
     for (field, field_schema) in properties {
         if !charge_validation_work(budget, 1 + field.len() / 1024) {
             return;
@@ -2052,8 +2117,191 @@ fn compact_json(value: &Value) -> String {
 mod tests {
     use super::*;
 
+    fn check_verification_contracts(args: &[String]) -> Result<(), String> {
+        check_verification_contracts_with_hooks(
+            args,
+            |root| {
+                let summary = crate::schema_producer_sweep::verification_corpus_gate_check(root)?;
+                Ok(CorpusGateCounts {
+                    producer_discovered: summary.producer_discovered,
+                    producer_validated: summary.producer_validated,
+                    edge_validated: summary.edge_validated,
+                    summary_lines: summary.summary_lines,
+                })
+            },
+            crate::schema_producer_sweep::contract_subjects_owned_by_corpus_gate,
+        )
+    }
+
     fn parse_exact_text(text: &str) -> Result<ExactValue, String> {
         crate::exact_schema_json::parse(text.as_bytes())
+    }
+
+    #[test]
+    fn boolean_schemas_validate_direct_and_composed_values() -> Result<(), String> {
+        let value = parse_exact_text(r#"{"extra":9}"#)?;
+        for (schema, expected_valid) in [
+            ("true", true),
+            ("false", false),
+            (r#"{"allOf":[true]}"#, true),
+            (r#"{"allOf":[false]}"#, false),
+            (r#"{"allOf":[true,false]}"#, false),
+            (r#"{"anyOf":[false]}"#, false),
+            (r#"{"anyOf":[false,true]}"#, true),
+            (r#"{"oneOf":[false]}"#, false),
+            (r#"{"oneOf":[true,false]}"#, true),
+            (r#"{"oneOf":[true,true]}"#, false),
+            (r##"{"$defs":{"deny":false},"$ref":"#/$defs/deny"}"##, false),
+            (r##"{"$defs":{"allow":true},"$ref":"#/$defs/allow"}"##, true),
+            (r#"{"not":false}"#, true),
+            (r#"{"not":true}"#, false),
+            (r#"{"if":true,"then":false,"else":true}"#, false),
+            (r#"{"if":false,"then":false,"else":true}"#, true),
+            (r#"{"additionalProperties":true}"#, true),
+            (r#"{"additionalProperties":false}"#, false),
+            (r#"{"additionalProperties":{"allOf":[true]}}"#, true),
+            (r#"{"additionalProperties":{"allOf":[false]}}"#, false),
+            (
+                r##"{"$defs":{"deny":false},"additionalProperties":{"$ref":"#/$defs/deny"}}"##,
+                false,
+            ),
+            (
+                r##"{"$defs":{"allow":true},"additionalProperties":{"$ref":"#/$defs/allow"}}"##,
+                true,
+            ),
+            (r#"{"additionalProperties":{"not":false}}"#, true),
+            (r#"{"additionalProperties":{"not":true}}"#, false),
+            (r#"{"properties":{"extra":false}}"#, false),
+            (r#"{"properties":{"extra":{"not":false}}}"#, true),
+        ] {
+            let parsed = parse_exact_text(schema)?;
+            let mut violations = Vec::new();
+            validate_exact_value_against_schema(
+                &value,
+                &parsed,
+                &parsed,
+                "$".to_string(),
+                &mut violations,
+            );
+            assert_eq!(
+                violations.is_empty(),
+                expected_valid,
+                "{schema}: {violations:?}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn boolean_schema_entry_keeps_work_and_depth_charging() -> Result<(), String> {
+        let value = parse_exact_text("9")?;
+        for allowed in [false, true] {
+            let schema = ExactValue::Bool(allowed);
+            for (remaining, depth, expected_exhausted) in
+                [(1, 0, false), (0, 0, true), (1, MAX_SCHEMA_DEPTH, true)]
+            {
+                let mut budget = ValidationBudget {
+                    remaining,
+                    depth,
+                    exhausted: false,
+                };
+                let mut violations = Vec::new();
+                validate_value_against_schema_inner(
+                    &value,
+                    &schema,
+                    &schema,
+                    "$".to_string(),
+                    &mut violations,
+                    &mut budget,
+                );
+                assert_eq!(budget.exhausted, expected_exhausted);
+                assert_eq!(budget.depth, depth);
+                if expected_exhausted {
+                    assert!(violations.is_empty());
+                    assert_eq!(budget.remaining, remaining);
+                } else {
+                    assert_eq!(budget.remaining, 0);
+                    assert_eq!(violations.is_empty(), allowed);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn schema_valued_additional_properties_validate_undeclared_fields() -> Result<(), String> {
+        for (schema, document, expected) in [
+            (
+                r#"{"type":"object","additionalProperties":{"type":"string","minLength":2}}"#,
+                r#"{"E0001":"雪雪"}"#,
+                None,
+            ),
+            (
+                r#"{"type":"object","additionalProperties":{"type":"string","minLength":2}}"#,
+                r#"{"E0001":"雪"}"#,
+                Some("$.E0001: string shorter than minLength 2"),
+            ),
+            (
+                r#"{"properties":{"known":{"type":"integer"}},"additionalProperties":{"type":"string"}}"#,
+                r#"{"known":7,"extra":"kept"}"#,
+                None,
+            ),
+            (
+                r#"{"properties":{"known":{"type":"integer"}},"additionalProperties":{"type":"string"}}"#,
+                r#"{"known":7,"extra":9}"#,
+                Some("$.extra: expected type string, got number"),
+            ),
+            (
+                r#"{"additionalProperties":false}"#,
+                r#"{"extra":9}"#,
+                Some("$: unexpected field `extra`"),
+            ),
+            (r#"{"additionalProperties":true}"#, r#"{"extra":9}"#, None),
+        ] {
+            let schema = parse_exact_text(schema)?;
+            let value = parse_exact_text(document)?;
+            let mut violations = Vec::new();
+            validate_exact_value_against_schema(
+                &value,
+                &schema,
+                &schema,
+                "$".to_string(),
+                &mut violations,
+            );
+            if let Some(expected) = expected {
+                assert!(
+                    violations.iter().any(|actual| actual == expected),
+                    "expected {expected:?}, got {violations:?}"
+                );
+            } else {
+                assert!(violations.is_empty(), "{violations:?}");
+            }
+        }
+        // Admission must walk the additional-value schema before boolean
+        // evaluation: otherwise `not` turns a nested numeric refusal into a
+        // successful match. The refusal must come from the root preflight.
+        for schema in [
+            r#"{"additionalProperties":{"minimum":1e300}}"#,
+            r#"{"additionalProperties":{"not":{"minimum":1e300}}}"#,
+        ] {
+            let schema = parse_exact_text(schema)?;
+            let value = parse_exact_text(r#"{"extra":0}"#)?;
+            let mut violations = Vec::new();
+            validate_exact_value_against_schema(
+                &value,
+                &schema,
+                &schema,
+                "$".to_string(),
+                &mut violations,
+            );
+            assert!(
+                violations
+                    .iter()
+                    .any(|text| text.starts_with("$: unsupported numeric")),
+                "{violations:?}"
+            );
+        }
+        Ok(())
     }
 
     #[test]
@@ -2982,6 +3230,19 @@ mod tests {
             Err(err) => err,
         };
         assert!(err.contains("usage: cargo xtask check-verification-contracts"));
+    }
+
+    #[test]
+    fn check_verification_contracts_surfaces_corpus_gate_failures() {
+        let err = match check_verification_contracts_with_hooks(
+            &["--check".to_string()],
+            |_| Err("verification corpus gate failed: fixture".to_string()),
+            |_, _| false,
+        ) {
+            Ok(()) => "corpus gate errors must fail the required command".to_string(),
+            Err(err) => err,
+        };
+        assert!(err.contains("verification corpus gate failed"), "{err}");
     }
 
     #[test]

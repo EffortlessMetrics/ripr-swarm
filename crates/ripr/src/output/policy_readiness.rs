@@ -369,7 +369,7 @@ pub(crate) fn render_policy_readiness_json(
         "limits_note": LIMITS_NOTE,
         "preview_limits_note": PREVIEW_LIMITS_NOTE,
     }))
-    .map_err(|err| format!("failed to render policy readiness JSON: {err}"))
+    .map_err(|err| format!("failed to render policy readiness JSON: {err}; this is a ripr bug, report it with the command you ran"))
 }
 
 pub(crate) fn render_policy_readiness_markdown(report: &PolicyReadinessReport) -> String {

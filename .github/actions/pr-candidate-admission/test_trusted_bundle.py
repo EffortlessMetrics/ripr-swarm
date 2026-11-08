@@ -12,7 +12,7 @@ ROOT = (Path(sys.argv[1]).resolve() if sys.argv[1:] != ["--self-test"]
         else Path(__file__).resolve().parents[3])
 sys.argv = sys.argv[:1]
 ACTION = ".github/actions/pr-candidate-admission"
-FILES = ("action.yml", "candidate_admission.py", "release_cut_admission.py")
+FILES = ("action.yml", "candidate_admission.py", "release_cut_admission.py", "review_disposition.py")
 PIN = "${{ steps.trusted.outputs.sha }}"
 
 
@@ -64,6 +64,9 @@ elif '/git/commits/' in url:
 elif '/files?' in url:
     value=[{'filename':d.get('filename','src/lib.rs'),'status':'modified','additions':d.get('lines',1),'deletions':0}]
 elif '/pulls?' in url: value=[]
+elif '/issues/' in url and '/comments' in url:
+    # Conversation comments (the issue-comments endpoint, #11736 Proposal B).
+    value=d.get('comments', [])
 elif '/pulls/' in url:
     value={'number':10,'state':'open','draft':False,'head':{'sha':head,'repo':{'full_name':'o/r'}},'base':{'ref':'main','sha':base},'changed_files':1,'additions':d.get('lines',1),'deletions':0,'body':'Governing issue or accepted claim: #4986\nAcceptance delta (one sentence): trusted bundle controls'}
 elif '/contents/.gitattributes?' in url:

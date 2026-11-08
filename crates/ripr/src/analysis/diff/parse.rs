@@ -4,6 +4,7 @@ use crate::analysis_outcome::{
     AnalysisLimitation, AnalysisLimitationKind, AnalysisRecovery, AnalysisRecoveryKind,
     AnalysisStage,
 };
+use crate::core_error::CoreError;
 
 use super::model::{ChangedFile, ChangedLine};
 use super::path::{
@@ -14,6 +15,9 @@ use super::path::{
 };
 
 mod stream;
+
+#[cfg(kani)]
+mod hunk_kani;
 
 /// Default file-count limit for parsed diffs. Same default as the Rust adapter
 /// (`analysis/language/rust/mod.rs:DIFF_INDEX_FILE_LIMIT`); kept in sync so the
@@ -39,32 +43,67 @@ pub(crate) const DIFF_CHANGED_LINE_LIMIT_ENV: &str = "RIPR_MAX_DIFF_CHANGED_LINE
 /// The effective changed-line ceiling. An invalid value (non-numeric, zero,
 /// non-UTF-8) is an error through the shared positive-limit policy, never an
 /// unbounded parse.
-pub(crate) fn diff_changed_line_limit_from_env() -> Result<usize, String> {
+pub(crate) fn diff_changed_line_limit_from_env_core() -> Result<usize, CoreError> {
     crate::analysis::language::positive_limit_from_env(
         DIFF_CHANGED_LINE_LIMIT_ENV,
         DEFAULT_DIFF_CHANGED_LINE_LIMIT,
         crate::analysis::language::diff_limit_env(DIFF_CHANGED_LINE_LIMIT_ENV),
     )
+    .map_err(Into::into)
 }
 
-pub(crate) fn parse_unified_diff_bounded_with_metadata(input: &str) -> Result<ParsedDiff, String> {
+/// String compatibility wrapper around [`diff_changed_line_limit_from_env_core`].
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "String boundary for diff parse tests; production uses diff_changed_line_limit_from_env_core"
+    )
+)]
+pub(crate) fn diff_changed_line_limit_from_env() -> Result<usize, String> {
+    diff_changed_line_limit_from_env_core().map_err(Into::into)
+}
+
+pub(crate) fn parse_unified_diff_bounded_with_metadata_core(
+    input: &str,
+) -> Result<ParsedDiff, CoreError> {
     let limit = diff_file_limit_from_env();
-    let line_limit = diff_changed_line_limit_from_env()?;
+    let line_limit = diff_changed_line_limit_from_env_core()?;
     stream::parse_bounded_lines_scoped(input.lines(), limit, line_limit, |_| true)
+}
+
+/// String compatibility wrapper around [`parse_unified_diff_bounded_with_metadata_core`].
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "String boundary for diff parse tests; production uses parse_unified_diff_bounded_with_metadata_core"
+    )
+)]
+pub(crate) fn parse_unified_diff_bounded_with_metadata(input: &str) -> Result<ParsedDiff, String> {
+    parse_unified_diff_bounded_with_metadata_core(input).map_err(Into::into)
 }
 
 /// #9331: the bounded parse with the operator's scope applied at path
 /// registration, so a diff whose bulk is out of scope fits the file bound.
+pub(crate) fn parse_unified_diff_bounded_scoped_core(
+    input: &str,
+    keep: impl Fn(&Path) -> bool,
+) -> Result<ParsedDiff, CoreError> {
+    stream::parse_bounded_lines_scoped(
+        input.lines(),
+        diff_file_limit_from_env(),
+        diff_changed_line_limit_from_env_core()?,
+        keep,
+    )
+}
+
+/// String compatibility wrapper around [`parse_unified_diff_bounded_scoped_core`].
 pub(crate) fn parse_unified_diff_bounded_scoped(
     input: &str,
     keep: impl Fn(&Path) -> bool,
 ) -> Result<ParsedDiff, String> {
-    stream::parse_bounded_lines_scoped(
-        input.lines(),
-        diff_file_limit_from_env(),
-        diff_changed_line_limit_from_env()?,
-        keep,
-    )
+    parse_unified_diff_bounded_scoped_core(input, keep).map_err(Into::into)
 }
 
 /// Parse with an explicit file-count limit. Exposed for testing (#2398).
@@ -81,7 +120,7 @@ fn parse_unified_diff_with_metadata_and_limit(
     input: &str,
     limit: usize,
 ) -> Result<ParsedDiff, String> {
-    stream::parse_bounded_lines(input.lines(), limit)
+    stream::parse_bounded_lines(input.lines(), limit).map_err(Into::into)
 }
 
 pub(crate) fn diff_file_limit_from_env() -> usize {
@@ -247,6 +286,11 @@ mod parser_state {
         new_line: usize,
         in_hunk: bool,
         remaining_hunk_lines: Option<(usize, usize)>,
+        /// The open hunk's new side is empty (`+S,0`). Git then writes `S` as
+        /// the line *before* the gap, while every other hunk's start is the
+        /// first new line it covers, so a removal's new-side anchor is `S + 1`
+        /// (#13098).
+        hunk_new_side_empty: bool,
         saw_old_path_marker: bool,
         section_old_path: Option<PathBuf>,
         section_git_header: Option<String>,
@@ -892,6 +936,7 @@ mod parser_state {
                 }
                 self.old_line = header.old_start;
                 self.new_line = header.new_start;
+                self.hunk_new_side_empty = header.new_count == 0;
                 self.remaining_hunk_lines = Some((header.old_count, header.new_count));
                 self.in_hunk = true;
             } else {
@@ -1048,8 +1093,14 @@ mod parser_state {
                     // A hunk that deletes from the top of a file is headed
                     // `+0,0`: git's "after line 0". No file has a line 0, and
                     // it would surface as `file:0` in findings, so anchor
-                    // at the first line (#11486).
-                    new_side_line: self.new_line.max(1),
+                    // at the first line (#11486). Any other empty new side
+                    // (`+S,0`) names the line before the gap, so the removal
+                    // sits at the next new line, as in a hunk with context
+                    // (#13098).
+                    new_side_line: self
+                        .new_line
+                        .saturating_add(usize::from(self.hunk_new_side_empty))
+                        .max(1),
                     text,
                 });
                 self.changed_line_count = self.changed_line_count.saturating_add(1);
@@ -2366,6 +2417,46 @@ deleted file mode 100644
         *seed
     }
 
+    fn removal_new_side_lines(diff: &str) -> Result<Vec<(usize, usize)>, String> {
+        let parsed = parse_unified_diff_bounded_with_metadata(diff)
+            .map_err(|e| format!("diff should parse: {e}"))?;
+        Ok(parsed
+            .changed_files
+            .iter()
+            .flat_map(|file| file.removed_lines.iter())
+            .map(|line| (line.line, line.new_side_line))
+            .collect())
+    }
+
+    #[test]
+    fn pure_deletion_hunk_anchors_the_new_side_at_the_line_after_the_gap() -> Result<(), String> {
+        // #13098: `+1,0` names the line *before* the gap, so the removed old
+        // line 2 sits where new line 2 now begins, as in a context hunk.
+        let diff = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -2 +1,0 @@ line_0\n-line_1\n";
+        assert_eq!(removal_new_side_lines(diff)?, [(2, 2)]);
+        // A multi-line deletion keeps every removal at the same gap.
+        let diff = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -3,2 +2,0 @@\n-a\n-b\n";
+        assert_eq!(removal_new_side_lines(diff)?, [(3, 3), (4, 3)]);
+        Ok(())
+    }
+
+    #[test]
+    fn pure_deletion_after_an_earlier_net_delta_uses_the_shifted_gap() -> Result<(), String> {
+        // Hunk 1 adds two lines, so hunk 2 (`-10 +11,0`) sits two lines later
+        // on the new side: the removed old line 10 anchors at new line 12.
+        let diff = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -2,0 +3,2 @@\n+x\n+y\n@@ -10 +11,0 @@\n-gone\n";
+        assert_eq!(removal_new_side_lines(diff)?, [(10, 12)]);
+        Ok(())
+    }
+
+    #[test]
+    fn a_removal_beside_added_lines_keeps_the_next_new_line() -> Result<(), String> {
+        // Control: a non-empty new side starts at its first covered line.
+        let diff = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -2 +2 @@\n-old\n+new\n";
+        assert_eq!(removal_new_side_lines(diff)?, [(2, 2)]);
+        Ok(())
+    }
+
     #[test]
     fn removing_the_first_line_anchors_the_new_side_at_line_one() -> Result<(), String> {
         // #11486: git heads a top-of-file deletion `+0,0`; no finding may be
@@ -2415,6 +2506,28 @@ deleted file mode 100644
         assert!(
             err.contains("at least 6 changed files"),
             "error must name the observed lower bound, not the unread total: {err}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn bounded_parse_core_rejects_invalid_changed_line_limit_without_string_matching()
+    -> Result<(), String> {
+        use crate::analysis::language::with_forced_diff_limit_env;
+        let env_name = DIFF_CHANGED_LINE_LIMIT_ENV;
+        let result = with_forced_diff_limit_env(&[(env_name, "not-a-number")], || {
+            parse_unified_diff_bounded_with_metadata_core("--- a/x\n+++ b/x\n@@ -1 +1 @@\n-a\n+b\n")
+        });
+        let Err(error) = result else {
+            return Err("invalid env must fail closed".to_string());
+        };
+        assert!(
+            matches!(error, CoreError::Message(_)),
+            "env limit failures stay typed Message until a dedicated family exists"
+        );
+        assert!(
+            error.to_string().contains(env_name),
+            "Display must preserve the legacy env-limit wording: {error}"
         );
         Ok(())
     }

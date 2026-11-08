@@ -378,6 +378,12 @@ shadows and uncalled function values remain separate from runner registrations.
   catches still withholds). The finalizer's own assertions, assertions
   outside the `try`, and benign finalizers keep collection. This is not
   general promise dataflow or runner semantics.
+  In particular, this rule does not detect a finalizer that fails through an
+  expression rather than an explicit jump, such as
+  `finally { await Promise.reject(error); }` or `finally { null.x; }`.
+  Those failures can replace the pending completion at runtime, but do not by
+  themselves trigger this rule's withholding of the try/catch assertions
+  (#8613).
 - An assertion inside a nested callback (`forEach`, `waitFor`, `act`, a
   subtest) or inside a declaration initializer is not collected, except
   the three forms RIPR-SPEC-0246 rule 2 names.
@@ -417,6 +423,68 @@ pattern, a non-block body, `for await`, a non-ASCII parameter or body, a
 loop variable re-declared in the body, and every condition that already
 refuses an `.each` row).
 
+Amended (#11196): an object-row table reads the same way when its rows
+are plain object literals and the callback reads them as `row.key`.
+Two forms qualify. (1) `test.each([{ input: ..., out: ... }, ...])(title,
+(row) => ...)` with one plain identifier parameter, or one object pattern
+of plain `key` / `key: local` bindings (no default, rest, nested pattern or
+computed key). (2) `const tests = [{ ... }, ...]; for (const t of tests) {
+test(title, () => ... t.key ...); }` where the table is a `const` array
+literal in the same statement list as the loop, named exactly twice in that
+list (its declaration and the loop header, so no reassignment, `push`,
+index write, spread, alias, `concat`, `.map` derivation or export can
+reach it), the list holds no `eval`, `with` or `\u` escape, the loop body
+is exactly one test registration, and the callback takes no parameter.
+Each row is an object literal with no spread, computed key, method,
+accessor, duplicate key or `__proto__`. Every key the callback reads must
+hold a one-line literal in EVERY row: a scalar, `undefined`, or an
+all-literal nested array or object under the #11255 vocabulary. One row
+that misses the key, or holds an identifier, call, template, spread cell
+or `Number.POSITIVE_INFINITY`/`NaN` (outside the literal vocabulary),
+leaves the whole table unresolved. The row parameter may appear only as a
+plain `row.key` read (a spread of an array cell is a plain read); a bare
+row, `row[key]`, `row?.key`, an assignment, a declaration or shadowing
+parameter is refused. Every `row.key` read, scalar or container, resolves only when the
+callback is exactly one `expect(..).matcher(..)` statement and the read is
+a direct argument of the call that is the whole argument of `expect(` or of
+the matcher call. A complete `//` or `/* */` comment before, after or
+between the parts of that one statement is not code and does not count as a
+second statement (#12494); a comment inside the call's brackets, or an
+unterminated one, still refuses. A second statement, or a read wrapped in parentheses, a
+comma list, `void`, `delete`, an array, an operator, a further member
+(`t.out.toString()`, `(t.input).pop()`) or an argument of any other call
+(`Object.assign(t.input, ..)`, `fix(t.input)`) refuses the table. A
+container (array or object) cell is shared by every read of the row, so it
+is additionally read at most once. The `expect` it names must be a whole
+word (not `myexpect(` or `x.expect(`).
+One guard, applied to the whole call text (registration plus callback) of
+every row-table entry path (`for...of`, `test.each` over arrays or object
+rows, destructured and array-row parameters), refuses the table when code
+(outside quoted text and comments) contains `eval`, `Function`, `with`,
+`arguments`, `this`, `new.target`, any backslash (identifier `\u` escapes),
+or any `/` outside a comment (a division or a regex literal is refused outright; the same words are also refused by a plain text count even inside strings); the object-row `for...of` form and the
+array-table `for...of` form (#9533) also ban `eval`, `with` and `\u` anywhere
+in their statement list (one shared helper). A destructured
+scalar local is a copy of the cell, so it is exempt from the lone-`expect`
+rule that every `row.key` read obeys. A destructured container local is not a
+copy: it references the row's array or object. It is safe only because the
+callback is a single `expect(..).matcher(..)` statement, the local is read at
+most once as one direct argument with no trailing member, and the local is not
+reassigned. A pattern that repeats a row key
+(`({ input: a, input: b })`) refuses the table, and in the `for...of` form
+the loop parameter may not appear in the registration's callee or in any
+registration argument other than the callback, except a title that is
+exactly `t.key` or `t.key.toString()` over a scalar cell in every row.
+The assertions of a
+resolved table are the concatenation over its rows, each with that
+row's literals, so the credit is an aggregate over the row set and the
+existing classifier decides whether any row's input reaches the changed
+boundary with a discriminating expected value; nothing here grants
+credit by itself. A `for...of` table written `[..] as const` or `[..] as
+T[]` resolves like the plain array (the cast changes no runtime value).
+Tuple rows with array or object cells, rows whose cells span lines and
+ragged rows keep `typescript_table_case_unresolved`.
+
 ### Recogniser order
 
 Each assertion expression is tried in this order; the first match wins:
@@ -428,6 +496,18 @@ Each assertion expression is tried in this order; the first match wins:
    the callback has a first parameter that does not shadow an imported
    assertion binding;
 4. `node:assert` or chai `assert` through an imported binding.
+
+   An un-awaited, un-returned statement `expect(..).resolves|rejects..`
+   collects nothing and reads `static_unknown` (#11535): the promise settles
+   after the test body ends, so it cannot fail the test. Awaited, returned and
+   expression-bodied forms are collected as before, except that an
+   expression-bodied `forEach` callback floats (`forEach` discards its
+   result) and collects nothing. `expect.soft(..)` and `.not.resolves` /
+   `.not.rejects` follow the same rule. The rule is derived from
+   jest and is conservative for vitest. Known limits: a test calling
+   `expect.assertions(n)` and an expression-bodied subtest or a
+   function-reference callback may be demoted although they would fail; this
+   over-demotion is accepted (fail-closed). See RIPR-SPEC-0246 rule 4.
 
 **Rule 2. Jest negation is an assertion with capped strength.** `.not`
 between `expect(...)` (or `.resolves` / `.rejects`) and the matcher is
@@ -597,6 +677,26 @@ re-reads the same one-hop local; a literal-vs-literal self-comparison
 stays strong at extraction and the observation guard refuses it credit.
 Whitespace inside a string literal is significant, so
 `expect("ab").toBe("a b")` is not self-comparing.
+
+**Rule 9a. Partial-value equality is not exact (#11522).** A `toBe`,
+`toEqual` or `toStrictEqual` reads `relational_check` / weak, not
+`exact_value` / strong, when either (a) its matcher argument is a
+top-level asymmetric matcher, a call chain rooted at an identifier named
+`expect` (`expect.any(String)`, `expect.anything()`,
+`expect.stringMatching(/B/)`, `expect.objectContaining({ a: 1 })`), or
+(b) its asserted subject is a derived property of the value: any
+`typeof <expr>` or the `.length` of a spread-free array literal
+(`expect([f(100)]).toEqual([false])` stays strong). The matcher then
+accepts a family of values, or observes a kind or constant size the
+changed behavior need not move. Both checks are shape-only: they do not
+test whether the expression names the changed owner, so
+`expect(typeof owner(x)).toBe("boolean")` loses credit it could earn.
+That is the deliberate fail-closed direction. The asymmetric-matcher
+check does not restrict the namespace (`expect.soft` is also demoted); it
+relies on rule 3, under which a non-runner `expect` yields no assertion
+before this rule is reached. The demotion runs before the `.not` cap and
+the `rejects` exact-error override, so neither re-raises it. Owner:
+`expect_assertion_from_expression` in `typescript/oracle.rs`.
 
 ### Other assertion tables
 
@@ -1079,7 +1179,8 @@ a nested callback that rebinds the same name (a subtest's own context); `skip` /
 without a context parameter, is unaffected.
 
 **Rule 18. A returned expression that agrees on every asserted input is
-unexercised (#9497).** For a changed complete one-line `return <expr>;` in a
+unexercised (#9497, #12380).** For a changed complete one-line `return <expr>;`
+(or the reduction of a multi-line `return` described below) in a
 fixed-signature owner, when every strong assertion of every oracle-eligible
 related test observes owner calls whose arguments are all literals, and the
 old and new expressions evaluate to the same value on each of those
@@ -1089,7 +1190,10 @@ bound whose changed side no input reaches). The evaluator is exact and
 small: number, string and boolean literals, the owner's parameters,
 `+ - * / %`, comparisons, `&&` `||` `!`, unary `-`, conditionals (only the
 selected arm is evaluated), template literals with literal substitutions
-and `Math.min` / `max` / `abs` / `floor` / `ceil` / `trunc`. Anything else
+`typeof` of a literal-bound value (its kind string),
+`String(x)` and `JSON.stringify(x)` of a literal-bound integer, boolean or
+string (#12296) and
+`Math.min` / `max` / `abs` / `floor` / `ceil` / `trunc`. Anything else
 (a free identifier, another call, a non-literal argument, mixed-type
 coercion, a parameter reassigned in the owner, a class pin credit, a lookup
 table change) makes the answer unknown and keeps the existing verdict, so
@@ -1098,6 +1202,33 @@ be at the owner's own function level (no earlier arrow, `function` or
 method head, since a nested parameter can shadow the owner's), the observed
 value may call nothing but the owner directly, and `0` versus `-0` counts
 as different values.
+
+A changed line inside a multi-line `return` (#12380) is judged on the
+enclosing expression, never on the line alone: the continuation line of a
+boolean `return`, the first line, or a `? ...` / `: ...` arm of a conditional
+reduces to the whole `return` argument, and a property line of a returned
+object literal reduces to that one property value (a computed key, method,
+shorthand, spread, or a second property on the changed line is not reduced).
+Both versions of the owner are parsed, the old one by replacing the changed
+line with its counterpart, and a pair is used only when every byte outside
+the selected expression is identical in both, so an edited key, a
+neighbouring property or a guard on the `return` line is never hidden behind
+the evaluated expression. A class member owner parses inside a class
+wrapper; any parse failure keeps the existing verdict.
+
+When either version contains `typeof`, the probe also tries other value
+kinds (a string, `true`, `false`, `0`) for every argument, and flips boolean
+arguments, because a shifted number cannot separate a kind test.
+
+The `String` / `JSON.stringify` fold holds only for the built-in globals. It
+is refused, and the existing verdict kept, when an owner parameter is named
+`String` or `JSON`, or when the owner's file mentions either name in any
+form other than a plain `String(...)` or `JSON.stringify(...)` call: a
+module-scope `const` / `let` / `var`, function, class, import, export,
+assignment or member write, and any reference to `globalThis`, `global`,
+`window`, `self`, `eval`, `with` or `Function` (which can rebind a global).
+The check is an allowlist over the comment- and string-masked source, and an
+unreadable file refuses.
 
 The two versions must also differ on some probe input, so an equivalent
 rewrite is never reported as unexercised. Each numeric argument is probed at
@@ -1171,7 +1302,7 @@ with control flow stays `no_static_path` exactly as before.
 `dynamic_dispatch`, `metaprogramming`, `decorator_indirection`,
 `mocked_module`, then `missing_import_graph`. `mocked_module` reads the
 mocks of every related test the mock collector selects
-(`collect_related_mock_paths`), including heuristic-only links. The limit
+(`mock_paths_from_candidates`), including heuristic-only links. The limit
 is appended to `missing` after the class is chosen. Actionability reads
 `gap_state: static_limitation` before the `already_observed` branch
 (RIPR-SPEC-0087 F10); RIPR-SPEC-0087 orders actionability only and says
@@ -1638,6 +1769,28 @@ the masker.
     parse, and a worker-refusal textual fallback likewise retain the existing
     reading (a disclosed fail-open). `toHaveBeenCalledTimes` already reads weak mock
     evidence without an exact-value equality.
+    For the separately bounded #12949 case, a direct test imports unaliased
+    `test` and `expect` from the same `vitest` or `@jest/globals` module and
+    passes a fresh empty array and an ASCII string literal to a single-statement
+    owner whose `array.push(value)` argument changes to `value.toUpperCase()`. A length
+    pin does not observe the appended value. The recognizer admits only the
+    exact straight-line shape, standard bindings and inert literal assertions;
+    it withholds count and unrelated assertions from both oracle ranking and
+    sink observation. An exact pin on index zero that distinguishes the
+    literal from its uppercase form retains credit. The Jest extension requires
+    a plain `test(...)` or `test.only(...)` registration on that imported binding;
+    an unused import cannot authenticate another registration, and a locally
+    replaced `only` member is refused. Existing Vitest registration readings remain unchanged.
+    Mixed-framework pairs, global Jest bindings, renamed imports, added or multiple push arguments,
+    aliases, mutation, shadowing and unrecognized forms retain their prior
+    readings. This syntax-first preview assumes ordinary native
+    Array and String behavior; it cannot inspect every external setup module.
+    Input and expected string literals are compared as parser-decoded values;
+    different escape spellings cannot supply or suppress value credit merely
+    because their source text happens to match.
+    Empty `[]` array-type brackets do not count as computed member writes;
+    nonempty computed writes remain replacement refusals. The factory-getter
+    consumer has a separate reach and replacement control for that distinction.
 23. **Factory-built getter receivers (2026-10-30, #10402).** Adopted: a getter
     owner is related to a test that binds `const box = factory(...)` once and
     asserts `expect(box.<getter>)`, when the owner's module exports `factory`
@@ -1742,6 +1895,9 @@ call-count oracle projection (#10174).
 
 ## Non-Goals
 
+- No general exception or promise-rejection analysis in finalizers. Implicit
+  expression failures and awaited rejections are outside the explicit
+  completion-replacement scan described above (#8613).
 - No collection of assertions inside nested callbacks or subtests,
   except the literal `forEach`, returned or awaited `.then` and awaited
   `t.test` forms of RIPR-SPEC-0246 rule 2.
@@ -2082,6 +2238,28 @@ keys); do not take the next number.
   `export default class` imported under any local name), beside the existing
   shadowed-or-replaced-receiver control that keeps a rebound name uncredited.
 
+- #11196 (rule 11, object rows): `tests/object_row_tests.rs` pins the per-row
+  literal assertions for the `for...of` and `test.each` object-row forms and
+  their refusals (a row missing the key, an identifier, call, spread, template
+  or computed cell, a touched, aliased, exported, derived, `let` or late table,
+  a bare, computed or optional row read, a shadowing parameter, a sibling
+  statement in the loop). `app/tests/typescript_table_row_packets.rs` runs the
+  production `check` path; fixtures `ts_table_row_expected_credit` and
+  `ts_table_row_expected_refused` pin the credited and refused sets.
+
+- #12253 (rule 11, quoted words): the table-row text guard refuses `eval`,
+  `with`, `Function`, `arguments` and `this` as code. A text that parses is
+  judged on its syntax tree (identifiers, property names, `this`,
+  `new.target`, `with`), so the same words in a title, string or comment no
+  longer unresolve the table; a text that does not parse keeps the
+  whole-word check, which refuses them anywhere. A computed member key
+  (`globalThis["eval"]`, `globalThis["eval" + ""]`) is a route when a string
+  or template text inside it holds one of the words. `for...of` tables keep
+  the raw-text statement-list and loop-body guards (#12572). Unit
+  `row_text_guard_refuses_hidden_mutation_routes_outside_quotes`; fixture
+  `ts_table_row_quoted_words_credited` pins a credited quoted-word title and a
+  refused real `this`.
+
 - #9683 (rule 11, empty table): `tests/table_loop_tests.rs` pins that an empty
   `const` table holds no assertions and a `let` table does not. Corpus row
   `ts-trap-empty-table` moves from credited to gap.
@@ -2320,7 +2498,7 @@ keys); do not take the next number.
   (`static_limit_for_change`, `imported_symbol_call`,
   `named_limitation_for_static_limit`).
 - `crates/ripr/src/analysis/language/typescript/oracle.rs`:
-  `collect_related_mock_paths`, unchanged for the advisory limit; rule 8
+  `mock_paths_from_candidates`, unchanged for the advisory limit; rule 8
   reads mock paths per test file.
 - #8569: `crates/ripr/src/analysis/language/typescript/guard_entry_guard.rs`
   reads the enclosing conditions and evaluates literal call inputs;

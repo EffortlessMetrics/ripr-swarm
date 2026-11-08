@@ -5,6 +5,7 @@
 //! Unknown work totals stay unknown: this layer does not invent percentages.
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::sync::Arc;
 use std::time::Instant;
 
 use crate::analysis::cancellation::AnalysisAbortKind;
@@ -80,6 +81,14 @@ pub(crate) trait AnalysisProgressSink {
     /// it does not read like an internal crash; the `Failed` event is still
     /// delivered, so protocol sinks keep their terminal. Default: no-op.
     fn user_fixable_failure(&self) {}
+
+    /// A `'static` seam-count emitter the inventory walk can capture onto
+    /// rayon workers (#8643). Default `None` keeps unknown totals unknown.
+    /// The returned function must not change analysis identity; a panic is
+    /// isolated by [`repo_inventory_with_progress`].
+    fn unit_emitter(&self) -> Option<Arc<dyn Fn(u64, u64) + Send + Sync>> {
+        None
+    }
 }
 
 pub(crate) struct ProgressRun<'a> {
@@ -185,7 +194,14 @@ pub(crate) fn repo_inventory_with_progress<T, R>(
     let mut run = ProgressRun::new(sink, AnalysisProgressScope::Repo);
     run.emit(AnalysisProgressStage::LoadingInput);
     run.emit(AnalysisProgressStage::Analyzing);
-    let value = inventory()?;
+    let units_listener = sink
+        .and_then(AnalysisProgressSink::unit_emitter)
+        .map(|emit| {
+            Arc::new(move |completed: u64, total: u64| {
+                let _ = catch_unwind(AssertUnwindSafe(|| emit(completed, total)));
+            }) as Arc<dyn Fn(u64, u64) + Send + Sync>
+        });
+    let value = crate::analysis::inventory_progress::with_listener(units_listener, inventory)?;
     run.emit(AnalysisProgressStage::BuildingOutput);
     let assembled = assemble(value)?;
     run.complete();
@@ -200,17 +216,17 @@ mod tests {
     use crate::app::{CheckInput, Mode, OutputFormat};
     use crate::config::RiprConfig;
     use std::path::PathBuf;
-    use std::sync::Mutex;
+    use std::sync::{Arc, Mutex};
     use std::time::Duration;
 
     struct ProgressRecorder {
-        events: Mutex<Vec<AnalysisProgressEvent>>,
+        events: Arc<Mutex<Vec<AnalysisProgressEvent>>>,
     }
 
     impl ProgressRecorder {
         fn new() -> Self {
             Self {
-                events: Mutex::new(Vec::new()),
+                events: Arc::new(Mutex::new(Vec::new())),
             }
         }
 
@@ -228,6 +244,26 @@ mod tests {
                 Ok(mut events) => events.push(event),
                 Err(poisoned) => poisoned.into_inner().push(event),
             }
+        }
+
+        fn unit_emitter(&self) -> Option<Arc<dyn Fn(u64, u64) + Send + Sync>> {
+            let events = Arc::clone(&self.events);
+            Some(Arc::new(move |completed, total| match events.lock() {
+                Ok(mut events) => events.push(AnalysisProgressEvent {
+                    stage: AnalysisProgressStage::Analyzing,
+                    scope: AnalysisProgressScope::Repo,
+                    completed_units: Some(completed),
+                    total_units: Some(total),
+                    elapsed_ms: 0,
+                }),
+                Err(poisoned) => poisoned.into_inner().push(AnalysisProgressEvent {
+                    stage: AnalysisProgressStage::Analyzing,
+                    scope: AnalysisProgressScope::Repo,
+                    completed_units: Some(completed),
+                    total_units: Some(total),
+                    elapsed_ms: 0,
+                }),
+            }))
         }
     }
 
@@ -686,6 +722,47 @@ mod tests {
             "repo inventory must reuse the diff-scoped stage shape"
         );
         assert_honest_events(&events, AnalysisProgressScope::Repo, "private-root-text");
+        Ok(())
+    }
+
+    #[test]
+    fn repo_inventory_with_progress_forwards_honest_seam_units() -> Result<(), String> {
+        let recorder = ProgressRecorder::new();
+        let assembled = repo_inventory_with_progress(
+            Some(&recorder),
+            || {
+                crate::analysis::inventory_progress::report_units(500, 10_000);
+                Ok(41usize)
+            },
+            |value| Ok(value + 1),
+        )?;
+        assert_eq!(assembled, 42);
+        let events = recorder.events();
+        assert!(
+            events.iter().any(|event| {
+                event.stage == AnalysisProgressStage::Analyzing
+                    && event.scope == AnalysisProgressScope::Repo
+                    && event.completed_units == Some(500)
+                    && event.total_units == Some(10_000)
+            }),
+            "inventory unit reports must become analyzing events with both counts: {events:?}"
+        );
+        assert!(
+            events
+                .iter()
+                .all(|event| match (event.completed_units, event.total_units) {
+                    (None, None) => true,
+                    (Some(completed), Some(total)) => {
+                        completed <= total && event.stage == AnalysisProgressStage::Analyzing
+                    }
+                    _ => false,
+                }),
+            "units may only appear together on analyzing: {events:?}"
+        );
+        assert!(
+            !format!("{events:?}").to_ascii_lowercase().contains("eta"),
+            "unit events must not invent an ETA"
+        );
         Ok(())
     }
 

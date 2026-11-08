@@ -12,7 +12,7 @@ vocabulary; the next section separates current wiring from target behavior.
 | `full-ci` | Runs the currently wired broad advisory, editor, MSRV, and release-surface proof. Maps forecast to release band; suppresses budget warnings. |
 | `release-check` | Runs the release-surface proof without opting into every `full-ci` lane: package list, publish dry-run, and release-readiness. |
 | `ci-budget-ack` | Acknowledges an over-budget forecast at the `large` band. Budget-neutral; does not run additional lanes. |
-| `vscode` | Target label for forcing the VS Code extension lane on PRs that do not touch `editors/vscode/` but need it. |
+| `vscode` | Runs the VS Code extension e2e lane under `merge-ready` on PRs that do not touch `editors/vscode/` but need it. Editor path changes select the lane without the label (#12122). |
 | `coverage` | Runs the advisory coverage lane for the labeled pull request. `full-ci` also selects `coverage`. |
 | `clippy-future` | Runs future or candidate Clippy lint lanes in advisory mode. |
 | `ripr-waive` | Target label for acknowledging a `ripr` soft-gate finding for this PR. Requires a written reason in the PR body. |
@@ -31,6 +31,7 @@ table only documents the label meanings.
 | `status/blocked-upstream` | Blocked on `cargo-allow` or an external repository. |
 | `status/blocked-repo` | Blocked on a tracked in-repo item (PR, issue, or code). |
 | `status/needs-work` | Actionable and not started. Do **not** use it for partially landed work; that understates delivery and invites duplicate implementation. |
+| `status/needs-reverify` | One or more repo-rooted paths cited in the issue changed on `main` after filing. Re-verify each `path:line` anchor against current `main` before acting; the weekly issue-staleness watchdog applies this label and never removes it. |
 | `status/mis-scoped` | Re-scope, close, or supersede — the issue is the wrong scope or stale. |
 | `status/partial` | A bounded portion has merged to `main` (or another authoritative repository) and the residual acceptance plus next owner are recorded. Apply only when a merged deliverable exists — never merely planned. |
 
@@ -47,7 +48,10 @@ Current behavior:
   integration, `coverage`, Test Analytics, and future-Clippy advisory proof.
 - `coverage` activates the advisory coverage workflow.
 - `clippy-future` activates the future-Clippy advisory workflow.
-- `vscode`, `ci-budget-ack`, and `ripr-waive` remain documented policy
+- `vscode` activates the VS Code extension e2e; a PR that changes
+  `editors/vscode/**`, `ci.yml`, `vscode-e2e.yml` or `routed-rust.yml` runs it
+  without the label (#12122, #12252).
+- `ci-budget-ack` and `ripr-waive` remain documented policy
   vocabulary that is not yet wired to every target planner behavior; see
   [`current-state.md`](current-state.md).
 

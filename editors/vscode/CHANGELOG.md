@@ -11,6 +11,11 @@
   attempts require an explicit pick (never a newest/first guess), the
   per-root selection survives restarts, and untrusted workspaces refuse
   before any read ([#4643](https://github.com/EffortlessMetrics/ripr-swarm/issues/4643)).
+- `ripr: Start or Continue Repair` runs the shared after phase for one
+  resumable live attempt (inventory `disposition: resumable` with an after
+  command) and otherwise delegates to the existing start path
+  ([#4647](https://github.com/EffortlessMetrics/ripr-swarm/issues/4647),
+  advances [#2928](https://github.com/EffortlessMetrics/ripr-swarm/issues/2928)).
 
 ### Fixed
 

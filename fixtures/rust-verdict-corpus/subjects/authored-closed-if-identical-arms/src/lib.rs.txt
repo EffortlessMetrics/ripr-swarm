@@ -1,0 +1,15 @@
+pub fn pick(x: i32) -> i32 {
+    let r;
+    if x > 5 { r = 1; } else { r = 1; }
+    r + 0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pins_the_boundary_row() {
+        assert_eq!(pick(5), 1);
+    }
+}

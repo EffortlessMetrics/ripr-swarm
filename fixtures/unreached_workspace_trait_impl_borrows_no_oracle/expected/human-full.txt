@@ -45,8 +45,9 @@ Weakness
   - No exact error variant discriminator was detected
 
 Next step
-  ripr found no static test path to this change — this is not a coverage assessment. A test may already exercise it through macros, helper-call chains, or integration tests that ripr's static model does not yet trace. If none does, add a co-located test that reaches and observes the changed behavior so a discriminator exists
+  ripr found no static test path to this change — this is not a coverage assessment. A test may already exercise it through macros, helper-call chains, or integration tests that ripr's static model does not yet trace. If none does, add a co-located test that reaches and observes the changed behavior so an assertion can notice if it is wrong
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/unreached_workspace_trait_impl_borrows_no_oracle/input --diff <cwd>/fixtures/unreached_workspace_trait_impl_borrows_no_oracle/diff.patch --mode fast probe:src_lib.rs:error_path:84ce0ae1
   ripr context --root <cwd>/fixtures/unreached_workspace_trait_impl_borrows_no_oracle/input --diff <cwd>/fixtures/unreached_workspace_trait_impl_borrows_no_oracle/diff.patch --mode fast --at probe:src_lib.rs:error_path:84ce0ae1
 
@@ -76,14 +77,15 @@ Evidence
   - discriminator no: No test reaches the changed owner, so no test can discriminate this change
   - local flow reaches match arm result: None => (line 11)
   - related test src/lib.rs:29 other_test uses strong exact value oracle: assert_eq!(other(1), Ok(1)); misses: no established call path to the changed code; linked by file location only
-  - related test src/lib.rs:29 other_test uses strong exact error variant oracle: assert_eq!(other(250), Err("big".to_string())); misses: no established call path to the changed code; linked by file location only
+  - related test src/lib.rs:29 other_test uses strong exact error variant oracle: assert_eq!(other(250), Err("big".to_string())); misses
   - source assertion argument value 1 at line 30
   - source assertion argument value "big" at line 31
   - source assertion argument value 250 at line 31
 
 Next step
-  ripr found no static test path to this change — this is not a coverage assessment. A test may already exercise it through macros, helper-call chains, or integration tests that ripr's static model does not yet trace. If none does, add a co-located test that reaches and observes the changed behavior so a discriminator exists
+  ripr found no static test path to this change — this is not a coverage assessment. A test may already exercise it through macros, helper-call chains, or integration tests that ripr's static model does not yet trace. If none does, add a co-located test that reaches and observes the changed behavior so an assertion can notice if it is wrong
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/unreached_workspace_trait_impl_borrows_no_oracle/input --diff <cwd>/fixtures/unreached_workspace_trait_impl_borrows_no_oracle/diff.patch --mode fast probe:src_lib.rs:match_arm:c973c4dc
   ripr context --root <cwd>/fixtures/unreached_workspace_trait_impl_borrows_no_oracle/input --diff <cwd>/fixtures/unreached_workspace_trait_impl_borrows_no_oracle/diff.patch --mode fast --at probe:src_lib.rs:match_arm:c973c4dc
 

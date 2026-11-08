@@ -238,9 +238,10 @@ recorded. The run memo has four consumers (the external-docs scan in
 `classify/helper_transfer.rs`, function-oracle extraction in `syntax/ra.rs`
 and local test macro expansion); which of them run inside a probe's
 classification scope depends on the input. The unit control covers the
-recording and its attribution. No end-to-end fixture asserts a memo read from
-a real classification: the CLI fixture, with and without a helper chain,
-produced none. Remaining Phase A work must record those memo dependencies on every
+recording and its attribution. The end-to-end CLI fixture
+(`crates/ripr/tests/probe_read_trace.rs`) asserts a `foreign_entry_import`
+memo read from a real classification (#10933). Other memo products and call
+paths still lack e2e fixtures. Remaining Phase A work must record those memo dependencies on every
 read (including warm hits and pre-primed answers), replace direct scalar access
 with recording accessors, and cover or explicitly refuse the named disk inputs.
 

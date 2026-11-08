@@ -53,7 +53,7 @@ mod tests {{
 ",
         trait_name = case.trait_name,
         impl_type = case.impl_type,
-        definition = if case.impl_type == "Money" {
+        definition = if case.impl_type == "Money" && !case.extra_items.contains("struct Money") {
             "\n#[derive(Debug, Clone, Copy, PartialEq)]\npub struct Money(pub i64);\n"
         } else {
             ""
@@ -883,6 +883,195 @@ fn an_unresolved_macro_invocation_in_the_test_scope_withholds_the_credit() -> Re
         ..base
     };
     assert_eq!(classes(&foreign)?, [ExposureClass::StaticUnknown]);
+    Ok(())
+}
+
+/// `Money::add(..)` from a sibling test module, the type-path form that
+/// credits only when `add` is the sole method of that name on `Money`.
+const PATH_CALL: &str = "#[cfg(test)] mod named { use super::*; #[test] fn named_call() { let sum = Money::add(Money(1), Money(1)); assert_eq!(sum.0, 2); } }";
+
+#[test]
+fn an_impl_the_index_cannot_see_may_define_the_method_so_no_sole_credit() -> Result<(), String> {
+    let base = Case {
+        old_line: "        Self(self.0 + other.0)",
+        new_line: "        Self(other.0 + self.0)",
+        ..ADD
+    };
+    // Positive control: the same path call credits when nothing hidden can
+    // define `add` (the fixture's std derives define no `add`).
+    let plain = Case {
+        label: "sole_plain",
+        extra_items: PATH_CALL,
+        ..base
+    };
+    assert!(source(&plain).contains("derive(Debug, Clone, Copy, PartialEq)"));
+    assert_eq!(classes(&plain)?, [ExposureClass::WeaklyExposed]);
+
+    // A derive ripr cannot read may define `add` (`derive_more::Add`-style).
+    let derived = Case {
+        label: "sole_unknown_derive",
+        extra_items: concat!(
+            "#[derive(Clone, Copy, PartialEq, derive_more::Mul)]\npub struct Money(pub i64);\n",
+            "#[cfg(test)] mod named { use super::*; #[test] fn named_call() { let sum = Money::add(Money(1), Money(1)); assert_eq!(sum.0, 2); } }"
+        ),
+        ..base
+    };
+    assert!(source(&derived).contains("derive_more::Mul)]\npub struct Money"));
+    assert!(!source(&derived).contains("derive(Debug, Clone, Copy, PartialEq)"));
+    assert_eq!(classes(&derived)?, [ExposureClass::StaticUnknown]);
+
+    // A blanket impl of another trait that defines `add`.
+    let blanket = Case {
+        label: "sole_blanket",
+        extra_items: concat!(
+            "pub trait Wide { fn add(self, other: i64) -> i64; }\n",
+            "impl<T: Into<i64>> Wide for T { fn add(self, other: i64) -> i64 { self.into() + other } }\n",
+            "#[cfg(test)] mod named { use super::*; #[test] fn named_call() { let sum = Money::add(Money(1), Money(1)); assert_eq!(sum.0, 2); } }"
+        ),
+        ..base
+    };
+    assert!(source(&blanket).contains("impl<T: Into<i64>> Wide for T"));
+    assert_eq!(classes(&blanket)?, [ExposureClass::StaticUnknown]);
+
+    // A macro defined in a sibling file writes an impl for `Money` and is
+    // invoked in a module the test does not enclose.
+    let macro_generated = Case {
+        label: "sole_macro",
+        extra_items: concat!(
+            "mod generated { add_for!(i32); }\n",
+            "#[cfg(test)] mod named { use super::*; #[test] fn named_call() { let sum = Money::add(Money(1), Money(1)); assert_eq!(sum.0, 2); } }"
+        ),
+        sibling: "macro_rules! add_for {\n    ($t:ty) => {\n        impl Add<$t> for Money {\n            type Output = Money;\n            fn add(self, other: $t) -> Money { Money(self.0 + other as i64) }\n        }\n    };\n}\n",
+        ..base
+    };
+    assert!(source(&macro_generated).contains("mod generated { add_for!(i32); }"));
+    assert_eq!(classes(&macro_generated)?, [ExposureClass::StaticUnknown]);
+
+    // Discriminating negative for the macro rule: the same sibling macro
+    // writing an impl for an unrelated type does not remove the credit.
+    let unrelated_macro = Case {
+        label: "sole_unrelated_macro",
+        extra_items: PATH_CALL,
+        sibling: "macro_rules! add_for_other {\n    ($t:ty) => {\n        impl Add<$t> for Gold {\n            type Output = Gold;\n            fn add(self, other: $t) -> Gold { Gold(0) }\n        }\n    };\n}\n",
+        ..base
+    };
+    assert_eq!(classes(&unrelated_macro)?, [ExposureClass::WeaklyExposed]);
+
+    // A blanket impl whose self type is a reference with a lifetime
+    // (`&'a T`, `&'a mut T`) is still a blanket impl.
+    for (label, header) in [
+        (
+            "sole_blanket_ref_lifetime",
+            "impl<'a, T: Copy + Into<i64>> Wide for &'a T",
+        ),
+        (
+            "sole_blanket_mut_lifetime",
+            "impl<'a, T: Copy + Into<i64>> Wide for &'a mut T",
+        ),
+    ] {
+        let by_reference = Case {
+            label,
+            extra_items: Box::leak(
+                format!(
+                    "pub trait Wide {{ fn add(self, other: i64) -> i64; }}\n{header} {{ fn add(self, other: i64) -> i64 {{ other }} }}\n{PATH_CALL}"
+                )
+                .into_boxed_str(),
+            ),
+            ..base
+        };
+        assert!(source(&by_reference).contains(header));
+        assert_eq!(classes(&by_reference)?, [ExposureClass::StaticUnknown]);
+    }
+
+    // An item-level macro invocation that names the type may expand to an impl.
+    let invoked = Case {
+        label: "sole_macro_invocation",
+        extra_items: concat!(
+            "mod generated { add_for!(Money); }\n",
+            "#[cfg(test)] mod named { use super::*; #[test] fn named_call() { let sum = Money::add(Money(1), Money(1)); assert_eq!(sum.0, 2); } }"
+        ),
+        ..base
+    };
+    assert!(source(&invoked).contains("mod generated { add_for!(Money); }"));
+    assert_eq!(classes(&invoked)?, [ExposureClass::StaticUnknown]);
+
+    // Discriminating negative: an item-level invocation (in a module the test
+    // does not enclose, as the scope rule would otherwise refuse the lift
+    // first) that does not name `Money` leaves the credit.
+    let invoked_other = Case {
+        label: "sole_macro_invocation_other",
+        extra_items: concat!(
+            "mod generated { add_for!(Other); }\n",
+            "#[cfg(test)] mod named { use super::*; #[test] fn named_call() { let sum = Money::add(Money(1), Money(1)); assert_eq!(sum.0, 2); } }"
+        ),
+        ..base
+    };
+    assert!(source(&invoked_other).contains("mod generated { add_for!(Other); }"));
+    assert!(!source(&invoked_other).contains("mod generated { add_for!(Money); }"));
+    assert_eq!(classes(&invoked_other)?, [ExposureClass::WeaklyExposed]);
+
+    // `cfg_attr(.., derive(..))` hides the derive list behind a cfg.
+    let cfg_derived = Case {
+        label: "sole_cfg_attr_derive",
+        extra_items: concat!(
+            "#[cfg_attr(feature = \"extra\", derive(derive_more::Add))]\npub struct Money(pub i64);\n",
+            "#[cfg(test)] mod named { use super::*; #[test] fn named_call() { let sum = Money::add(Money(1), Money(1)); assert_eq!(sum.0, 2); } }"
+        ),
+        ..base
+    };
+    assert!(source(&cfg_derived).contains("derive(derive_more::Add))]\npub struct Money"));
+    assert!(!source(&cfg_derived).contains("derive(Debug, Clone, Copy, PartialEq)"));
+    assert_eq!(classes(&cfg_derived)?, [ExposureClass::StaticUnknown]);
+    Ok(())
+}
+
+/// A std derive that defines the owner's own method name is an impl the index
+/// cannot list: `#[derive(PartialEq)]` writes `eq`.
+#[test]
+fn a_std_derive_that_defines_the_method_withholds_the_sole_credit() -> Result<(), String> {
+    let eq = Case {
+        label: "cmp_without_derive",
+        trait_name: "PartialOrd",
+        method: "partial_cmp",
+        signature: "fn partial_cmp(&self, other: &Money) -> Option<std::cmp::Ordering>",
+        old_line: "        self.0.partial_cmp(&other.0)",
+        new_line: "        other.0.partial_cmp(&self.0)",
+        test_body: "let less = Money(2) < Money(3);\n        assert_eq!(less, true);",
+        extra_items: concat!(
+            "#[derive(Debug, Clone, Copy)]\npub struct Money(pub i64);\n",
+            "#[cfg(test)] mod named { use super::*; #[test] fn named_call() { let order = Money::partial_cmp(&Money(1), &Money(2)); assert!(order.is_some()); } }"
+        ),
+        ..ADD
+    };
+    assert!(source(&eq).contains("derive(Debug, Clone, Copy)]\npub struct Money"));
+    // Control: no derive defines `eq`, so the path call is credited.
+    let control = classes(&eq)?;
+    assert!(!control.is_empty());
+    assert!(
+        control
+            .iter()
+            .all(|class| *class == ExposureClass::WeaklyExposed)
+    );
+
+    let derived = Case {
+        label: "cmp_with_derive",
+        extra_items: concat!(
+            "#[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]\npub struct Money(pub i64);\n",
+            "#[cfg(test)] mod named { use super::*; #[test] fn named_call() { let order = Money::partial_cmp(&Money(1), &Money(2)); assert!(order.is_some()); } }"
+        ),
+        ..eq
+    };
+    assert!(
+        source(&derived)
+            .contains("derive(Debug, Clone, Copy, PartialEq, PartialOrd)]\npub struct Money")
+    );
+    let withheld = classes(&derived)?;
+    assert_eq!(withheld.len(), control.len());
+    assert!(
+        withheld
+            .iter()
+            .all(|class| *class == ExposureClass::StaticUnknown)
+    );
     Ok(())
 }
 
@@ -1952,7 +2141,7 @@ fn capped_method_call_must_bind_the_operator_owner() -> Result<(), String> {
             SEQUENCE.fetch_add(1, Ordering::Relaxed)
         ));
         std::fs::create_dir_all(root.join("src")).map_err(|e| e.to_string())?;
-        let mut source = "use std::ops::*;\n#[derive(Debug, Clone, Copy, PartialEq)]\npub struct Money(pub i64);\nimpl Add for Money {\n    type Output = Money;\n    fn add(self, other: Money) -> Money {\n        Self(other.0 + self.0)\n    }\n}\n#[cfg(test)] mod tests {\n    use super::*;\n".to_string();
+        let mut source = "use std::ops::*;\n#[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]\npub struct Money(pub i64);\nimpl Add for Money {\n    type Output = Money;\n    fn add(self, other: Money) -> Money {\n        Self(other.0 + self.0)\n    }\n}\n#[cfg(test)] mod tests {\n    use super::*;\n".to_string();
         for i in 0..operators {
             source.push_str(&format!("    #[test]\n    fn a{i:02}_operator() {{\n        let sum = Money(1) + Money(1);\n        assert_eq!(sum.0, 2);\n    }}\n"));
         }
@@ -2035,5 +2224,135 @@ fn capped_method_call_must_bind_the_operator_owner() -> Result<(), String> {
         );
         assert_eq!(findings[0].class, ExposureClass::WeaklyExposed, "{label}");
     }
+    Ok(())
+}
+
+/// Impl sources inside function bodies, from another crate, or reached through
+/// a blanket impl's trait default body (#10625). Each positive asserts the
+/// fixture holds the hidden source; each control keeps the credit.
+#[test]
+fn macros_in_bodies_foreign_macros_and_blanket_defaults_withhold_the_sole_credit()
+-> Result<(), String> {
+    let base = Case {
+        old_line: "        Self(self.0 + other.0)",
+        new_line: "        Self(other.0 + self.0)",
+        ..ADD
+    };
+    let with = |label: &'static str, hidden: &'static str, sibling: &'static str| Case {
+        label,
+        extra_items: Box::leak(format!("{hidden}\n{PATH_CALL}").into_boxed_str()),
+        sibling,
+        ..base
+    };
+
+    // Gap 1: a statement macro in a function body that names the type may
+    // expand to a local impl.
+    let in_body = with("body_macro", "fn setup() { add_for!(Money); }", "");
+    assert!(source(&in_body).contains("fn setup() { add_for!(Money); }"));
+    assert_eq!(classes(&in_body)?, [ExposureClass::StaticUnknown]);
+    // Also inside an impl method body.
+    let in_method = with(
+        "body_macro_method",
+        "impl Money { fn setup(&self) { add_for!(Money); } }",
+        "",
+    );
+    assert!(source(&in_method).contains("fn setup(&self) { add_for!(Money); }"));
+    assert_eq!(classes(&in_method)?, [ExposureClass::StaticUnknown]);
+    // A workspace macro that writes an impl is just as unreadable in a body.
+    let impl_macro = with(
+        "body_macro_defined",
+        "fn setup() { add_for!(Money); }",
+        "macro_rules! add_for {\n    ($t:ty) => {\n        impl Add<i32> for $t {\n            type Output = $t;\n            fn add(self, other: i32) -> $t { self }\n        }\n    };\n}\n",
+    );
+    assert!(source(&impl_macro).contains("fn setup() { add_for!(Money); }"));
+    assert_eq!(classes(&impl_macro)?, [ExposureClass::StaticUnknown]);
+    // A workspace macro that reuses a std macro's name and writes an impl is
+    // not the std macro.
+    let shadow_std = with(
+        "body_macro_shadow_std",
+        "fn setup() { write!(Money); }",
+        "macro_rules! write {\n    ($t:ty) => {\n        impl Add<i32> for $t {\n            type Output = $t;\n            fn add(self, other: i32) -> $t { self }\n        }\n    };\n}\n",
+    );
+    assert!(source(&shadow_std).contains("fn setup() { write!(Money); }"));
+    // The definition sits in `src/macros.rs`, read after `src/lib.rs`, so the
+    // end-of-build filter must see definitions from later files.
+    assert!(shadow_std.sibling.contains("macro_rules! write"));
+    assert_eq!(classes(&shadow_std)?, [ExposureClass::StaticUnknown]);
+    // The same shadowing definition in the invoking file itself.
+    let shadow_same_file = with(
+        "body_macro_shadow_std_same_file",
+        "macro_rules! write {\n    ($t:ty) => {\n        impl Add<i32> for $t {\n            type Output = $t;\n            fn add(self, other: i32) -> $t { self }\n        }\n    };\n}\nfn setup() { write!(Money); }",
+        "",
+    );
+    assert!(source(&shadow_same_file).contains("macro_rules! write"));
+    assert!(source(&shadow_same_file).contains("fn setup() { write!(Money); }"));
+    assert_eq!(classes(&shadow_same_file)?, [ExposureClass::StaticUnknown]);
+    // Control: a foreign macro with arguments that do not name the type.
+    let foreign_args = with(
+        "foreign_macro_args",
+        "mod generated { generate_ops!(Other); }",
+        "",
+    );
+    assert!(source(&foreign_args).contains("generate_ops!(Other)"));
+    assert_eq!(classes(&foreign_args)?, [ExposureClass::WeaklyExposed]);
+    // Controls: a body macro that does not name the type, a std expression
+    // macro that does, and a workspace macro that writes no impl.
+    let other = with("body_macro_other", "fn setup() { add_for!(Other); }", "");
+    assert!(source(&other).contains("add_for!(Other)"));
+    assert!(!source(&other).contains("add_for!(Money)"));
+    assert_eq!(classes(&other)?, [ExposureClass::WeaklyExposed]);
+    let std_macro = with(
+        "body_macro_std",
+        "fn setup() { assert_eq!(Money(1).0, 1); }",
+        "",
+    );
+    assert!(source(&std_macro).contains("assert_eq!(Money(1).0, 1)"));
+    assert_eq!(classes(&std_macro)?, [ExposureClass::WeaklyExposed]);
+    let no_impl = with(
+        "body_macro_no_impl",
+        "fn setup() { show!(Money(1)); }",
+        "macro_rules! show {\n    ($e:expr) => {\n        $e\n    };\n}\n",
+    );
+    assert!(source(&no_impl).contains("fn setup() { show!(Money(1)); }"));
+    assert_eq!(classes(&no_impl)?, [ExposureClass::WeaklyExposed]);
+
+    // Gap 2: an argument-free item-level invocation of a macro defined
+    // nowhere in the workspace could generate an impl for any type.
+    let foreign = with("foreign_macro", "mod generated { generate_ops!(); }", "");
+    assert!(source(&foreign).contains("mod generated { generate_ops!(); }"));
+    assert_eq!(classes(&foreign)?, [ExposureClass::StaticUnknown]);
+    // Control: the same invocation of a workspace macro that writes no impl.
+    let local = with(
+        "foreign_macro_local",
+        "mod generated { generate_ops!(); }",
+        "macro_rules! generate_ops {\n    () => {\n        const _: u8 = 0;\n    };\n}\n",
+    );
+    assert!(source(&local).contains("mod generated { generate_ops!(); }"));
+    assert_eq!(classes(&local)?, [ExposureClass::WeaklyExposed]);
+
+    // Gap 3: a blanket impl of a workspace trait whose default body defines
+    // `add` makes `Money::add` resolve to the default.
+    let defaults = with(
+        "blanket_default",
+        "pub trait Wide { fn add(self, other: i64) -> i64 where Self: Sized { other } }\nimpl<T: Into<i64>> Wide for T {}",
+        "",
+    );
+    assert!(source(&defaults).contains("impl<T: Into<i64>> Wide for T {}"));
+    assert_eq!(classes(&defaults)?, [ExposureClass::StaticUnknown]);
+    // Controls: the default has another name, or no blanket impl reaches it.
+    let other_default = with(
+        "blanket_default_other",
+        "pub trait Wide { fn plus(self, other: i64) -> i64 where Self: Sized { other } }\nimpl<T: Into<i64>> Wide for T {}",
+        "",
+    );
+    assert!(source(&other_default).contains("fn plus(self"));
+    assert_eq!(classes(&other_default)?, [ExposureClass::WeaklyExposed]);
+    let not_blanket = with(
+        "blanket_default_concrete",
+        "pub struct Gold;\npub trait Wide { fn add(self, other: i64) -> i64 where Self: Sized { other } }\nimpl Wide for Gold {}",
+        "",
+    );
+    assert!(source(&not_blanket).contains("impl Wide for Gold {}"));
+    assert_eq!(classes(&not_blanket)?, [ExposureClass::WeaklyExposed]);
     Ok(())
 }

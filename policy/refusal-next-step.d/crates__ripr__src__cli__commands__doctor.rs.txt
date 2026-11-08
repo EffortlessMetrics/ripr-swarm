@@ -1,2 +1,0 @@
-crates/ripr/src/cli/commands/doctor.rs|missing value for --profile
-crates/ripr/src/cli/commands/doctor.rs|missing value for --root

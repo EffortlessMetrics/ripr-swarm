@@ -504,3 +504,53 @@ fn structural_attribute_targets_cover_replacements_without_confusing_reads() {
     }
     assert_eq!(super::assigned_attributes("def broken("), None);
 }
+
+/// `without_test_bodies` of `source`, or an error naming what failed.
+fn blanked_test_bodies(source: &str) -> Result<String, String> {
+    let module = super::parse_module_result(Path::new("m.py"), source)?;
+    let statements = match module {
+        rustpython_parser::ast::Mod::Module(module) => module.body,
+        _ => return Err("expected a module".to_string()),
+    };
+    Ok(super::without_test_bodies(source, &statements))
+}
+
+#[test]
+fn many_unreferenced_tests_have_their_bodies_blanked() -> Result<(), String> {
+    let source: String = (0..300)
+        .map(|index| format!("def test_{index}():\n    assert {index} == {index}\n"))
+        .collect();
+    let blanked = blanked_test_bodies(&source)?;
+    assert_eq!(blanked.len(), source.len());
+    assert!(blanked.contains("def test_299():"));
+    assert!(!blanked.contains("assert"), "{blanked}");
+    Ok(())
+}
+
+#[test]
+fn a_test_named_outside_its_def_keeps_the_whole_module() -> Result<(), String> {
+    // One reference among many tests: the module-wide scan returns, and a
+    // test body that runs at import is not blanked.
+    let mut source: String = (0..300)
+        .map(|index| format!("def test_{index}():\n    assert {index} == {index}\n"))
+        .collect();
+    source.push_str("test_150()\n");
+    assert_eq!(blanked_test_bodies(&source)?, source);
+    Ok(())
+}
+
+#[test]
+fn a_test_name_defined_twice_keeps_the_whole_module() -> Result<(), String> {
+    let source = "def test_a():\n    assert 1 == 1\n\ndef test_a():\n    assert 2 == 2\n";
+    assert_eq!(blanked_test_bodies(source)?, source);
+    Ok(())
+}
+
+#[test]
+fn a_unicode_named_test_called_at_import_keeps_the_whole_module() -> Result<(), String> {
+    // `\u{2118}` is a Python identifier character that is not alphanumeric to
+    // Rust, so the name is not a word of its own; the call must still count.
+    let source = "def test_\u{2118}():\n    globals()['CASES'] = []\ntest_\u{2118}()\n";
+    assert_eq!(blanked_test_bodies(source)?, source);
+    Ok(())
+}

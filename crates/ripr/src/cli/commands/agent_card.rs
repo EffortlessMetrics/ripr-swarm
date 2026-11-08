@@ -57,27 +57,38 @@ pub(super) fn run_agent_card(options: AgentCardOptions) -> Result<(), CommandErr
 /// to what [`run_agent_card`] writes on success.
 pub(super) fn agent_card_stdout(options: AgentCardOptions) -> Result<String, CommandError> {
     ensure_command_root(&options.root, "agent card")?;
+    // Any id `ripr check` or `ripr pilot` prints works here: a finding id, a
+    // gap id or a `file:line` goes through the same shared resolver `ripr
+    // agent repair` uses; an exact seam id passes through untouched. A refused
+    // mapping is a typed `seam_not_found` refusal that keeps the id the caller
+    // typed, and a resolved id replaces it so the card matches the exact-id run.
+    let options = match super::translate_seam_id_for(
+        super::SeamIdSurface::Card,
+        &options.root,
+        &options.seam_id,
+    ) {
+        Ok(resolved) => AgentCardOptions {
+            seam_id: resolved,
+            ..options
+        },
+        // The resolver could not run (broken config, truncated inventory,
+        // analysis error): that says nothing about the id, so it stays the
+        // operational failure (exit 2) the card always reported.
+        Err(super::SeamIdTranslateError::Operational(message)) => {
+            return Err(CommandError::Failure(message));
+        }
+        Err(error) => {
+            return Err(card_refusal_error(
+                &options,
+                AgentCardRefusalKind::SeamNotFound,
+                error.message(),
+            ));
+        }
+    };
     let (card, hold) = match render_agent_card(&options) {
         Ok(card) => card,
         Err(AgentCardError::Refusal { kind, message }) => {
-            // A deliberate named refusal maps to the decision exit code 3,
-            // as the verify/verify-execute/repair siblings do. Under
-            // `--json` the typed envelope is the machine answer and goes to
-            // stdout, like `check`/`agent packet`; the prose message still
-            // reaches stderr through `CommandError` as the human rendering.
-            if options.json {
-                match render_agent_card_refusal(&options, kind, &message) {
-                    // A JSON document, not report text: bidi characters become
-                    // JSON escapes so the envelope stays parseable (#6309).
-                    Ok(rendered) => {
-                        write_stdout_refusal_json(rendered).map_err(CommandError::Failure)?
-                    }
-                    // No envelope could be produced, so no machine answer
-                    // exists: an operational failure (exit 2), not decision 3.
-                    Err(render_error) => return Err(CommandError::Failure(render_error)),
-                }
-            }
-            return Err(CommandError::Decision(message));
+            return Err(card_refusal_error(&options, kind, &message));
         }
         Err(AgentCardError::Operational(message)) => {
             return Err(CommandError::Failure(message));
@@ -112,6 +123,33 @@ pub(super) fn agent_card_stdout(options: AgentCardOptions) -> Result<String, Com
     Ok(rendered)
 }
 
+/// A deliberate named refusal maps to the decision exit code 3, as the
+/// verify/verify-execute/repair siblings do. Under `--json` the typed envelope
+/// is the machine answer and goes to stdout, like `check`/`agent packet`; the
+/// prose message still reaches stderr through `CommandError` as the human
+/// rendering.
+fn card_refusal_error(
+    options: &AgentCardOptions,
+    kind: AgentCardRefusalKind,
+    message: &str,
+) -> CommandError {
+    if options.json {
+        match render_agent_card_refusal(options, kind, message) {
+            // A JSON document, not report text: bidi characters become JSON
+            // escapes so the envelope stays parseable (#6309).
+            Ok(rendered) => {
+                if let Err(failure) = write_stdout_refusal_json(rendered) {
+                    return CommandError::Failure(failure);
+                }
+            }
+            // No envelope could be produced, so no machine answer exists: an
+            // operational failure (exit 2), not decision 3.
+            Err(render_error) => return CommandError::Failure(render_error),
+        }
+    }
+    CommandError::Decision(message.to_string())
+}
+
 /// Render the versioned typed-refusal document of an `agent card` refusal:
 /// the schema version, the document kind, and one typed `error` block
 /// naming the refusal kind, the seam id the call asked for, the exact
@@ -130,11 +168,12 @@ fn render_agent_card_refusal(
             "seam_id": options.seam_id,
             "message": message,
             "remedy_route": refusal_remedy_route(&options.root, &options.seam_id, kind),
+            "remedy": crate::domain::RefusalRemedy::from_prose(message),
         }
     });
     serde_json::to_string_pretty(&document)
         .map(|rendered| format!("{rendered}\n"))
-        .map_err(|error| format!("serialize agent card refusal document failed: {error}"))
+        .map_err(|error| format!("serialize agent card refusal document failed: {error}; report this as a ripr bug with the command you ran"))
 }
 
 /// The typed remedy route of one refusal kind: the opposite-remedy pairs the
@@ -198,7 +237,7 @@ fn render_agent_card(
         })?;
 
     let policy = AgentBriefPolicy::from_config(&config);
-    if let Some(reason) = policy.omission_reason_for_class(entry.class) {
+    if let Some(reason) = policy.omission_reason_for_class(entry.class, Some(entry.seam.file())) {
         // #5007 / #7736: a policy decision has its own recovery guidance;
         // re-listing seams cannot fix it.
         return Err(AgentCardError::refusal(
@@ -386,7 +425,10 @@ pub(crate) fn agent_card_prose_lines(
     }
     lines.push(done_when_line(&card.done_when));
     for stop in &card.stop_conditions {
-        lines.push(format!("  stop: {stop}"));
+        lines.push(format!(
+            "  stop: {}",
+            crate::output::human::plain_repair_card_user_wording(stop)
+        ));
     }
     // Group only references with identical destination, state and reason.
     // Each family remains named, and a stale or missing reference cannot be
@@ -468,7 +510,7 @@ pub(crate) fn agent_card_plain_lines(
     paste_root: Option<&std::path::Path>,
     hold: Option<&CardStartHold>,
 ) -> Vec<String> {
-    let mut lines = vec![format!("Repair brief for gap {}", card.subject.seam_id)];
+    let mut lines = vec!["Repair brief for this gap".to_string()];
     lines.push(format!("  Changed behavior: {}", card.changed_behavior));
     // One verdict: the shared start gate (`hold`) outranks the card's own
     // evidence readiness, so "ready" is only printed when `ripr repair`
@@ -479,11 +521,31 @@ pub(crate) fn agent_card_plain_lines(
     // next action; other refusals keep the card's evidence wording and
     // canonical next action, and the gate's reason is only the fallback.
     let refused = hold.is_some();
-    let hold_with_next = hold.filter(|hold| hold.next.is_some());
-    let started = card.attempt.is_some() && card.readiness.repair_ready && !refused;
+    let hold_with_next = hold.filter(|hold| card.attempt.is_none() && hold.next.is_some());
+    let started = card
+        .attempt
+        .as_ref()
+        .is_some_and(|attempt| attempt.state == "awaiting_edit")
+        && card.readiness.repair_ready
+        && !refused;
     let ready = card.readiness.repair_ready && !refused;
     if let Some(hold) = hold_with_next {
         lines.push(format!("  Not ready to repair yet: {}.", hold.reason));
+    } else if let Some(attempt) = card
+        .attempt
+        .as_ref()
+        .filter(|attempt| attempt.state != "awaiting_edit")
+    {
+        lines.push(match attempt.state.as_str() {
+            "ready_to_finish" => {
+                "  The attempt's after phase has finished; inspect its status for the outcome."
+                    .to_string()
+            }
+            "prepared" => {
+                "  The attempt was prepared but has not started; inspect its status.".to_string()
+            }
+            _ => "  The repair attempt has ended; inspect its status for the outcome.".to_string(),
+        });
     } else if started {
         lines.push(
             "  Ready to repair. The repair has started and is waiting for your test.".to_string(),
@@ -565,18 +627,23 @@ pub(crate) fn agent_card_plain_lines(
         // No runnable command of the card's own, a repair not yet started,
         // and the start gate holds nothing: the one next step is the repair
         // start itself (#11397), the command the pilot printed.
-        _ if ready && !started && !own_route => {
+        _ if ready && card.attempt.is_none() && !own_route => {
             let command = start_command();
             lines.push(format!("  Next: {command}"));
             lines.extend(powershell_pair(&command));
         }
-        // A started attempt with no stop of its own: the next step is the
-        // attempt's, not "no ready command" (#11381).
+        // A started attempt awaiting its test: the next step is the attempt's
+        // continue command, not "no ready command" (#11381). The canonical
+        // action for such an attempt is a prerequisite stop (the focused test
+        // edit), which the generic plain renderer has no command line for.
         Some(action)
             if started
                 && !own_route
                 && action.stop().is_none_or(|stop| {
                     matches!(stop, crate::domain::NextActionStop::Unsupported { .. })
+                        || matches!(stop,
+                        crate::domain::NextActionStop::ProvideInput { input, .. }
+                            if input.starts_with("focused test edit for attempt"))
                 }) =>
         {
             if let Some(attempt) = &card.attempt {
@@ -615,7 +682,10 @@ pub(crate) fn agent_card_plain_lines(
     }
     lines.push(plain_done_when_line(&card.done_when));
     if let Some(attempt) = &card.attempt {
-        lines.push(format!("  Repair in progress: {}", attempt.attempt_id));
+        lines.push(format!(
+            "  Repair attempt: {} ({})",
+            attempt.attempt_id, attempt.state
+        ));
     }
     let already_shown: &[String] = card
         .canonical_next_action
@@ -645,6 +715,9 @@ pub(crate) fn agent_card_plain_lines(
             format!("  Limits: {shown}; and {more} more (see --verbose)")
         });
     }
+    // The raw gap id is a copy-paste handle, not a title: it sits below the
+    // actionable lines, next to the machine-readable route that takes it.
+    lines.push(format!("  Repair ID: {}", card.subject.seam_id));
     lines.push("  This is a suggestion; ripr has not run or verified anything.".to_string());
     lines.push(format!(
         "  Machine-readable details (JSON): {packet_command}"
@@ -936,6 +1009,8 @@ mod tests {
                 has_fix_site: true,
                 has_suggested_assertion: false,
                 limitation_kinds: Vec::new(),
+                instruction_semantic_id: None,
+                instruction_instance_id: None,
             },
             readiness: RepairCardReadinessFacts {
                 repair_ready: true,
@@ -1203,8 +1278,8 @@ mod tests {
         Ok(())
     }
 
-    /// #10693: the default brief is short, plain, and projects the same typed
-    /// fields; the ledger rows and internal vocabulary are `--verbose` only.
+    /// #10693: a card that is not ready names its missing evidence in plain
+    /// words and the default brief stays within its line cap.
     #[test]
     fn plain_brief_not_ready_uses_plain_words_and_stays_capped() -> Result<(), String> {
         let mut card = prose_test_card();
@@ -1347,6 +1422,9 @@ mod tests {
         Ok(())
     }
 
+    /// #10693: the default brief is short, plain, and projects the same typed
+    /// fields; the ledger rows and internal vocabulary are `--verbose` only.
+    /// The title is a plain label; the raw gap id is demoted to a `Repair ID:` row.
     #[test]
     fn plain_brief_is_short_and_free_of_ledger_vocabulary() -> Result<(), String> {
         let mut card = prose_test_card();
@@ -1360,7 +1438,8 @@ mod tests {
         );
         let text = lines.join("\n");
         for needle in [
-            "Repair brief for gap ",
+            "Repair brief for this gap",
+            "  Repair ID: ",
             "  Files you may change: tests/t.rs",
             "  Do not change: src/lib.rs",
             "  Done when: ",

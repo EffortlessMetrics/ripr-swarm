@@ -1,0 +1,31 @@
+[[extend]]
+id = "RIPR-SPEC-0135"
+tests = [
+  "crates/ripr/src/app/kani_import/native/tests.rs::captured_ordinary_success_and_failure_retain_native_polarity",
+  "crates/ripr/src/app/kani_import/native/tests.rs::captured_vacuous_success_keeps_unreachable_assertion_and_cover",
+  "crates/ripr/src/app/kani_import/native/tests.rs::captured_expected_and_missing_panic_keep_opposite_native_verdicts",
+  "crates/ripr/src/app/kani_import/native/tests.rs::captured_unwind_results_preserve_undetermined_and_successful_unsupported_checks",
+  "crates/ripr/src/app/kani_import/native/tests.rs::captured_fail_fast_partial_does_not_invent_the_missing_harness",
+  "crates/ripr/src/app/kani_import/tests.rs::retained_native_captures_keep_exact_bytes_source_and_unattested_authority",
+  "crates/ripr/src/app/kani_import/tests.rs::retained_capture_refuses_different_source_or_export_under_unchanged_binding",
+  "crates/ripr/src/output/kani_report.rs::tests::captured_vacuous_success_matches_honesty_projection_and_complete_markdown",
+]
+code = [
+  "crates/ripr/src/app/kani_import.rs",
+  "crates/ripr/src/app/kani_import/native.rs",
+  "crates/ripr/src/output/kani_report.rs",
+]
+fixtures = [
+  "crates/ripr/src/app/kani_import/fixtures/native-captures/provenance.json",
+  "crates/ripr/src/app/kani_import/fixtures/native-captures/proof.rs.txt",
+  "crates/ripr/src/app/kani_import/fixtures/native-captures/success.native.json",
+  "crates/ripr/src/app/kani_import/fixtures/native-captures/failure.native.json",
+  "crates/ripr/src/app/kani_import/fixtures/native-captures/vacuous.native.json",
+  "crates/ripr/src/app/kani_import/fixtures/native-captures/expected-panic.native.json",
+  "crates/ripr/src/app/kani_import/fixtures/native-captures/missing-expected-panic.native.json",
+  "crates/ripr/src/app/kani_import/fixtures/native-captures/bounded-success.native.json",
+  "crates/ripr/src/app/kani_import/fixtures/native-captures/insufficient-bound.native.json",
+  "crates/ripr/src/app/kani_import/fixtures/native-captures/partial.native.json",
+  "fixtures/evidence-promotion-honesty-corpus/reports/kani-vacuous-capture-unattested.json",
+  "fixtures/evidence-promotion-honesty-corpus/cases/kani-vacuous-capture-unattested.json",
+]

@@ -68,6 +68,9 @@ come from `policy/distribution.toml`, bound by drift tests. The step:
   archive, wrong payload or wrong reported version exits 1 with no fallback;
 - stops with an explicit unsupported error on Windows ARM64.
 
+The `.github/actions/ripr-check` composite Action's `Install ripr` step carries
+the same contract (#6245); `tests/ripr_check_action.rs` replays it.
+
 The generated workflow must keep Rust-default behavior unchanged unless a later
 spec explicitly changes that default. Language-aware grouping is opt-in and
 appears only when configured language metadata includes more than Rust.

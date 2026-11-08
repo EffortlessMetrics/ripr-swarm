@@ -50,7 +50,7 @@
   },
   "perl_facts": {
     "packet": "packets/perl-0235-ex10-relation-without-oracle.json",
-    "sha256": "3be68b7c65c6172078dceaf3d7305104dc6684a25608dd7de5eff168d1fb8324",
+    "sha256": "7ebd21687882bd06ff5b8e7a2b5bc391961645a04c916874811315aa8121b83a",
     "provenance": "edited_producer",
     "edits": "Started from the producer packet of perl-test2-fee-isnt-zero, then in relations where {\"change_id\": \"$CHANGE_ID\"} set {\"oracle_id\": null}; the packet fingerprint was recomputed. The retained oracle facts predate the producer pin: its `isnt` oracle stays `strong_exact` here, where the pinned producer now emits `weak_smoke` (RIPR-SPEC-0235 rule 17 demotes it either way)."
   },

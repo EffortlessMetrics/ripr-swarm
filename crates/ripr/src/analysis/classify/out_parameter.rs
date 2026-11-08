@@ -1137,7 +1137,7 @@ fn simple_value(expression: &ast::Expr) -> bool {
 
 /// Whether `source` defines, imports or aliases a type named `String`, `Vec`
 /// or `VecDeque`, or glob-imports from anywhere but `super`/`self`/`std`.
-fn file_shadows_buffer_types(source: &str) -> bool {
+pub(in crate::analysis) fn file_shadows_buffer_types(source: &str) -> bool {
     const NAMES: &[&str] = &["String", "Vec", "VecDeque"];
     if !NAMES.iter().any(|name| source.contains(name)) && !source.contains('*') {
         return false;

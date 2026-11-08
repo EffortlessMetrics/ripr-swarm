@@ -42,8 +42,8 @@
       "flow_sinks": [
         {"kind":"return_value","text":"this.total += amount * 2;","line":4}
       ],
-      "evidence": ["owner: add", "typescript_oracle_observed: cart.add(0)", "typescript_oracle_expected: 0", "typescript_oracle_confidence: high", "typescript_oracle_evidence_ref: tests/cart.test.ts:6", "gap_state: unknown", "actionability_category: missing_target_shape", "why_not_actionable: TypeScript preview found related test evidence but cannot name a safe target discriminator or observer shape", "repair_route: add probe-specific discriminator extraction for this expression before repair packet projection", "missing_actionability_fields: repair_kind, target_test_shape, verify_command, receipt_command, must_not_change, allowed_edit_surface, raw_evidence_refs", "evidence_needed_to_promote: safe probe discriminator, repair kind, target shape, verify command, receipt command, and edit boundaries", "raw_evidence_ref: file=src/cart.ts;line=4;kind=typescript_preview_probe;source_id=probe:src_cart.ts:typescript_preview:2c9269a6;owner=add", "typescript_package_confidence: none", "typescript_package_limitation: typescript_package_root_unresolved", "typescript_package_limitation: typescript_test_runner_unresolved"],
-      "missing": ["Every related assertion calls `add` with literal inputs on which the old and the changed state update add the same amount; an exact assertion on those inputs passes on both versions. Add an input on which the two updates differ.", "TypeScript preview actionability `unknown` / `missing_target_shape`: TypeScript preview found related test evidence but cannot name a safe target discriminator or observer shape. Repair route: add probe-specific discriminator extraction for this expression before repair packet projection"],
+      "evidence": ["owner: add", "typescript_oracle_observed: cart.add(0)", "typescript_oracle_expected: 0", "typescript_oracle_confidence: high", "typescript_oracle_evidence_ref: tests/cart.test.ts:6", "gap_state: unknown", "actionability_category: missing_target_shape", "why_not_actionable: TypeScript preview found related test evidence but cannot name a safe target check or observer shape", "repair_route: add probe-specific discriminator extraction for this expression before repair packet projection", "missing_actionability_fields: repair_kind, target_test_shape, verify_command, receipt_command, must_not_change, allowed_edit_surface, raw_evidence_refs", "evidence_needed_to_promote: safe probe discriminator, repair kind, target shape, verify command, receipt command, and edit boundaries", "raw_evidence_ref: file=src/cart.ts;line=4;kind=typescript_preview_probe;source_id=probe:src_cart.ts:typescript_preview:2c9269a6;owner=add", "typescript_package_confidence: none", "typescript_package_limitation: typescript_package_root_unresolved", "typescript_package_limitation: typescript_test_runner_unresolved"],
+      "missing": ["Every related assertion calls `add` with literal inputs on which the old and the changed state update add the same amount; an exact assertion on those inputs passes on both versions. Add an input on which the two updates differ.", "TypeScript preview actionability `unknown` / `missing_target_shape`: TypeScript preview found related test evidence but cannot name a safe target check or observer shape. Repair route: add probe-specific discriminator extraction for this expression before repair packet projection"],
       "assertion_texts": {
       },
       "activation": {
@@ -96,11 +96,11 @@
         "repair_route": "add probe-specific discriminator extraction for this expression before repair packet projection",
         "source": "check_typescript_preview",
         "static_limits": [],
-        "suggested_assertion_shape": "Exact-value evidence is present; verify it targets the changed discriminator.",
+        "suggested_assertion_shape": "The related test's check is already strong, but ripr cannot tie it to the changed line. Exercise the changed branch with an input that flips it.",
         "verify": {
           "command": null
         },
-        "why_not_actionable": "TypeScript preview found related test evidence but cannot name a safe target discriminator or observer shape"
+        "why_not_actionable": "TypeScript preview found related test evidence but cannot name a safe target check or observer shape"
       },
       "preview_actionability": {
         "actionability_category": "missing_target_shape",
@@ -132,13 +132,13 @@
         "repair_packet_ready": false,
         "repair_route": "add probe-specific discriminator extraction for this expression before repair packet projection",
         "unlock_condition": null,
-        "why_not_actionable": "TypeScript preview found related test evidence but cannot name a safe target discriminator or observer shape"
+        "why_not_actionable": "TypeScript preview found related test evidence but cannot name a safe target check or observer shape"
       },
       "stop_reasons": [],
       "oracle_kind": "exact_value",
       "oracle_strength": "strong",
-      "recommended_next_step": "TypeScript preview advisory: add a test that exercises the changed behavior with an exact-value assertion (`toBe` / `toEqual` / `toStrictEqual`); no actionable repair packet is emitted until the target shape is explicit.",
-      "suggested_next_action": "TypeScript preview advisory: add a test that exercises the changed behavior with an exact-value assertion (`toBe` / `toEqual` / `toStrictEqual`); no actionable repair packet is emitted until the target shape is explicit.",
+      "recommended_next_step": "TypeScript preview advisory: the related test's check is already strong, but ripr cannot tie it to the changed line; exercise the changed branch with an input that flips it. No actionable repair packet is emitted until the target shape is explicit.",
+      "suggested_next_action": "TypeScript preview advisory: the related test's check is already strong, but ripr cannot tie it to the changed line; exercise the changed branch with an input that flips it. No actionable repair packet is emitted until the target shape is explicit.",
       "language": "typescript",
       "language_status": "preview",
       "owner_kind": "method",

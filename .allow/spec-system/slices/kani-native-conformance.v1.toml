@@ -1,0 +1,37 @@
+schema_version = "2.0"
+id = "ripr.slice.kani-native-conformance.v1"
+generation = 1
+source_issue = "issue:10746"
+design_reference = "RIPR-SPEC-0135#retained-kani-native-conformance"
+change_class = "spec_or_contract_change"
+
+claim_boundary = """
+Retains eight untouched Kani exports and exact source from the pinned producer.
+Offline parser, source-binding and report tests preserve literal native semantics
+and external_unattested authority. Portable test bindings are authored inputs,
+not the original run bindings. This slice depends on the #11387 importer.
+"""
+non_goals = [
+  "fresh verifier execution or authenticated provenance",
+  "static harness mapping, specification adequacy or receipt issuance",
+  "held-out accuracy, implementation-mutation scoring or complete #10746 delivery",
+  "new execution, dependencies, CI lanes or support-tier promotion",
+]
+return_conditions = [
+  "Return if historical native paths or outcomes are rewritten as original bytes.",
+  "Return if portable authored bindings become observed invocation claims.",
+  "Return if native success grants static, receipt or merge authority.",
+]
+owned_seams = ["seam:ripr:test:kani-native-conformance"]
+shared_seams = ["seam:ripr:app:kani-import", "seam:ripr:output:kani-report"]
+forbidden_seams = ["seam:ripr:agent:command-runner", "seam:ripr:agent:receipt-issuer"]
+
+[[requirement_delta]]
+requirement_id = "RIPR-SPEC-0135#retained-kani-native-conformance"
+requirement_generation = 1
+[implementation_claim]
+status = "implemented"
+[evidence]
+state = "outstanding"
+[support_claim]
+state = "unchanged"

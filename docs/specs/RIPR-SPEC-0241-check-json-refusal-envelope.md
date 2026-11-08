@@ -123,8 +123,8 @@ exists.
 
 ## Implementation Mapping
 
-- `crates/ripr/src/core_error.rs::CheckFailureKind`
-- `crates/ripr/src/core_error.rs::check_refusal`
+- `crates/ripr-contract/src/core_error.rs::CheckFailureKind`
+- `crates/ripr-contract/src/core_error.rs::check_refusal`
 - `crates/ripr/src/cli/commands/check.rs::refuse_check`
 - `crates/ripr/src/cli/commands/check.rs::config_load_refusal`
 - `crates/ripr/src/output/limited_check.rs::render_check_failure_json`
@@ -168,13 +168,13 @@ probe observes.
 - `crates/ripr/src/config/tests.rs::candidate_config_error_timeout_renders_the_timeout_diagnostic`
 - `crates/ripr/src/analysis/diff/load.rs::core_error_for_git_root_probe_matches_the_legacy_messages`
   (extended with the `TimedOut` arm)
-- `crates/ripr/src/domain/git_candidate.rs::error_display_names_each_failure_class`
+- `crates/ripr-contract/src/domain/git_candidate.rs::error_display_names_each_failure_class`
   (extended with the `ExecutionTimedOut` case)
 
 ## Implementation Mapping (Amendment #6956)
 
 - `crates/ripr/src/analysis/diff/load.rs::GitRootProbe::TimedOut`
-- `crates/ripr/src/domain/git_candidate.rs::GitCandidateSubjectError::ExecutionTimedOut`
+- `crates/ripr-contract/src/domain/git_candidate.rs::GitCandidateSubjectError::ExecutionTimedOut`
 - `crates/ripr/src/config.rs::CandidateConfigError`
 
 ## Amendment (#7331, #7332): sibling JSON commands and machine check formats
@@ -257,11 +257,11 @@ all renderers.
 
 ## Implementation Mapping (Amendment #7331, #7332)
 
-- `crates/ripr/src/core_error.rs::CheckFailureKind::{CheckArtifactUnusable, GapLedgerUnusable, SeamIdUnknown, SeamPolicyOmitted, SeamNotActionable, DiffInputUnsupported, AnalysisTimeout, AnalysisWorkerStopped}`
+- `crates/ripr-contract/src/core_error.rs::CheckFailureKind::{CheckArtifactUnusable, GapLedgerUnusable, SeamIdUnknown, SeamPolicyOmitted, SeamNotActionable, DiffInputUnsupported, AnalysisTimeout, AnalysisWorkerStopped}`
 - `crates/ripr/src/cli/commands/check_budget.rs::run_with_budget`
 - `crates/ripr/src/cli/commands_agent_support.rs::agent_brief_checked_lines_from_diff`
-- `crates/ripr/src/core_error.rs::RefusalNotice`
-- `crates/ripr/src/core_error.rs::refusal_notice`
+- `crates/ripr-contract/src/core_error.rs::RefusalNotice`
+- `crates/ripr-contract/src/core_error.rs::refusal_notice`
 - `crates/ripr/src/output/limited_check.rs::RefusalEnvelopeContext`
 - `crates/ripr/src/output/limited_check.rs::render_refusal_envelope`
 - `crates/ripr/src/cli/commands_context.rs::refuse_json_envelope`
@@ -388,3 +388,25 @@ lists the input-facts, budget, refusal, output and CLI controls for this amendme
 - `crates/ripr/src/cli/commands/check_budget.rs` (deadline stamp, worker capture registration)
 - `crates/ripr/src/cli/commands/check.rs` (`stash_timeout_refusal`, human recovery prose)
 - `crates/ripr/src/output/limited_check.rs::render_check_failure_json` (generation 0.3 and `input_context`)
+
+## Amendment (#11790, #11584): structured remedy
+
+Every refusal in the envelope also carries its next step as data. Each
+`run_limitations[0]` entry of a refusal envelope (generations `0.2` and `0.3`)
+gains an optional `remedy` object, additive and without a schema-version bump:
+`kind` (`command`, `mcp_tool`, `flags` or an explicit `none`), the stated
+`command`, `alternatives`, `tool`, `flags`, `fill_in` placeholders and
+`retry_stated` (what the message says, not a promise an unchanged retry succeeds), `env`, `conditional` (the only stated step is a fallback) and `prose_has_more` (the command omits flags or environment prerequisites the prose states). The prose in `message` is the source of truth: the owner
+(`RefusalRemedy::from_prose`, derived once in `CoreError::refusal_notice`)
+copies only a backticked `ripr ...` command, an MCP tool name or a flag the
+message states, and yields `none` otherwise. The renderer serializes it and
+never re-derives it. The frozen scope-guard documents are unchanged.
+`schemas/ripr/check.schema.json` and
+`schemas/ripr/check-timeout-refusal.schema.json` admit the field; the field is
+described in [OUTPUT_SCHEMA](../OUTPUT_SCHEMA.md#structured-refusal-remedy-remedy-additive-11790-11584).
+
+Controls: `domain::refusal_remedy` unit and source-corpus tests (every
+message-shaped literal yields a grounded remedy or an explicit `none`, and a
+stated command is never dropped), `output::limited_check` envelope tests
+(positive and negative), and `tests/refusal_next_step.rs`
+(`json_refusals_carry_a_grounded_structured_remedy`, the built binary).

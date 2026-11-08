@@ -418,7 +418,7 @@ pub(crate) fn render_ripr_zero_status_json(
         "warnings": report.warnings,
         "limits_note": LIMITS_NOTE,
     }))
-    .map_err(|err| format!("failed to render RIPR Zero status JSON: {err}"))
+    .map_err(|err| format!("failed to render RIPR Zero status JSON: {err}; this is a ripr bug, report it with the command you ran"))
 }
 
 pub(crate) fn render_ripr_zero_status_markdown(report: &RiprZeroStatusReport) -> String {

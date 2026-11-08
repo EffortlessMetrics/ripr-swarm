@@ -6,6 +6,9 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::process::Command;
 
+#[path = "common/xtask_bin.rs"]
+mod xtask_bin;
+
 const FAKE_GH: &str = r##"#!/bin/sh
 n=0
 [ ! -f "$FAKE_DIR/count" ] || n=$(cat "$FAKE_DIR/count")
@@ -57,14 +60,14 @@ fn run(case: &str, fail_at: &str) -> Result<(std::process::Output, String, PathB
         dir.join("bin").display(),
         std::env::var("PATH").unwrap_or_default()
     );
-    let output = test_command(env!("CARGO_BIN_EXE_xtask"))
-        .args(["gh-pr-status", "--pr", "42"])
-        .current_dir(&dir)
-        .env("PATH", path)
-        .env("FAKE_DIR", &dir)
-        .env("FAKE_FAIL_AT", fail_at)
-        .output()
-        .map_err(|e| e.to_string())?;
+    let output = xtask_bin::output(|command| {
+        command
+            .args(["gh-pr-status", "--pr", "42"])
+            .current_dir(&dir)
+            .env("PATH", &path)
+            .env("FAKE_DIR", &dir)
+            .env("FAKE_FAIL_AT", fail_at);
+    })?;
     let calls = fs::read_to_string(dir.join("calls")).map_err(|e| e.to_string())?;
     Ok((output, calls, dir))
 }

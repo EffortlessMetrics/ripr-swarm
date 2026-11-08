@@ -6,6 +6,7 @@ import {
   shouldShowMainStatusBar,
   statusBarColors,
   statusText,
+  workspaceStatusDeliveryBudgetLines,
   type RiprStatusKind
 } from '../../src/statusRender';
 import { compatibleLspEvidence } from './testCompatibility';
@@ -89,6 +90,7 @@ const MAIN_STATUS_BAR_VISIBILITY: Record<RiprStatusKind, boolean> = {
   resolvingServer: true,
   serverUnavailable: false,
   serverFailed: true,
+  circuitOpen: true,
   starting: true,
   analysisQueued: true,
   ready: true,
@@ -212,5 +214,134 @@ suite('Show Status command (#5319)', () => {
       outputLines.some((line) => line.includes('ripr status:')),
       `output channel must receive the status summary: ${outputLines.join('\n')}`
     );
+  });
+
+  test('prints delivery-budget overflow lines from collectWorkspaceStatus', async () => {
+    const outputLines: string[] = [];
+    const runtime: RiprClientRuntime = {
+      getConfig: () => enabledConfig,
+      workspaceRootState: () => ({ kind: 'singleRoot', root: '/workspace', roots: ['/workspace'] }),
+      workspaceFolders: () => [{ uri: vscode.Uri.file('/workspace'), name: 'workspace', index: 0 }],
+      showQuickPick: async () => undefined,
+      resolveServer: async () => ({
+        command: '/sentinel/trusted/ripr',
+        source: 'configured',
+        detail: 'sentinel server',
+        installationState: 'unmanaged',
+        compatibilityResult: compatibleLspEvidence
+      }),
+      createLanguageClient: () => ({
+        onNotification: () => ({ dispose: () => undefined }),
+        sendRequest: async (method: string) => {
+          if (method === 'workspace/executeCommand') {
+            return {
+              run_status: 'ready',
+              diagnostic_budget: {
+                overflowed: true,
+                selected_count: 50,
+                omitted_count: 1,
+                eligible_items: 51,
+                omitted: [{ reason: 'document_item_limit' }],
+                continuation_or_inspect_route: 'ripr/listActionableItems',
+              },
+            };
+          }
+          throw new Error(`unexpected request ${method}`);
+        },
+        setTrace: () => undefined,
+        start: async () => undefined,
+        stop: async () => undefined
+      }),
+      createFileSystemWatcher: () => ({} as unknown as vscode.FileSystemWatcher),
+      readFile: async () => undefined,
+      runRipr: async () => '',
+      writeClipboard: async () => undefined,
+      isWorkspaceTrusted: () => true,
+      showInformationMessage: async () => undefined,
+      showWarningMessage: async () => undefined,
+      showErrorMessage: async () => undefined
+    };
+    const output = {
+      appendLine: (line: string) => {
+        outputLines.push(line);
+      },
+      show: () => undefined
+    } as unknown as vscode.LogOutputChannel;
+    const controller = new RiprClientController(
+      {} as unknown as vscode.ExtensionContext,
+      output,
+      runtime
+    );
+    await controller.start();
+    await controller.showStatus();
+    assert.ok(
+      outputLines.some((line) => line.includes('50 selected, 1 omitted')),
+      outputLines.join('\n')
+    );
+    await controller.stop();
+  });
+});
+
+suite('Workspace status delivery budget disclosure (#2596)', () => {
+  test('overflowed budget status names omitted counts and the retrieval route', () => {
+    const lines = workspaceStatusDeliveryBudgetLines({
+      diagnostic_budget: {
+        overflowed: true,
+        selected_count: 50,
+        omitted_count: 1,
+        eligible_items: 51,
+        continuation_or_inspect_route: 'ripr/listActionableItems'
+      }
+    });
+    assert.strictEqual(lines.length, 2);
+    assert.ok(lines[0].includes('50 selected, 1 omitted'));
+    assert.ok(lines[0].includes('bounded subset'));
+    assert.ok(lines[1].includes('ripr/listActionableItems'));
+  });
+
+  test('profile-only omitted entries do not inflate delivery omission counts', () => {
+    const lines = workspaceStatusDeliveryBudgetLines({
+      diagnostic_budget: {
+        overflowed: true,
+        selected_count: 50,
+        omitted_count: 3,
+        eligible_items: 51,
+        omitted: [
+          { reason: 'profile_filtered' },
+          { reason: 'profile_filtered' },
+          { reason: 'document_item_limit' },
+        ],
+        continuation_or_inspect_route: 'ripr/listActionableItems',
+      },
+    });
+    assert.ok(lines[0].includes('50 selected, 1 omitted'));
+  });
+
+  test('byte-cap overflow with zero omissions still warns', () => {
+    const lines = workspaceStatusDeliveryBudgetLines({
+      diagnostic_budget: {
+        overflowed: true,
+        selected_count: 1,
+        omitted_count: 0,
+        overflow_reasons: ['serialized_byte_limit'],
+        continuation_or_inspect_route: 'ripr/listActionableItems',
+      },
+    });
+    assert.strictEqual(lines.length, 2);
+    assert.ok(lines[0].includes('byte cap'));
+  });
+
+  test('profile-only or complete budgets stay silent', () => {
+    assert.deepStrictEqual(
+      workspaceStatusDeliveryBudgetLines({
+        diagnostic_budget: {
+          overflowed: false,
+          omitted_count: 3,
+          selected_count: 0
+        }
+      }),
+      []
+    );
+    assert.deepStrictEqual(workspaceStatusDeliveryBudgetLines({}), []);
   });
 });

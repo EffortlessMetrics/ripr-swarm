@@ -23,7 +23,9 @@ use render::{SummaryRenderInput, render_pr_evidence_summary};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::cli::{expect_value, unknown_argument};
+use crate::cli::{expect_value, reconcile_root, unknown_argument};
+
+use super::subcommand::resolve_selected_root;
 
 const PR_EVIDENCE_JSON: &str = "target/ripr/pr/repo-exposure.json";
 const PR_EVIDENCE_MD: &str = "target/ripr/pr/repo-exposure.md";
@@ -57,7 +59,7 @@ pub(crate) fn run_pr_summary(args: &[String]) -> Result<(), String> {
         return Ok(());
     }
     let options = parse_options(args)?;
-    let repo = repo_root(&options.root)?;
+    let repo = resolve_selected_root(&options.root)?;
     // The selected root owns every input and output. A missing or file-typed
     // root must refuse before any write: `create_dir_all` below would
     // otherwise conjure the missing tree and report a summary of nothing.
@@ -135,6 +137,7 @@ fn summary_text(repo: &Path) -> String {
 
 fn parse_options(args: &[String]) -> Result<SummaryOptions, String> {
     let mut root = PathBuf::from(".");
+    let mut root_explicit = false;
     let mut check = false;
     let mut baseline: Option<String> = None;
     let mut index = 0;
@@ -166,7 +169,12 @@ fn parse_options(args: &[String]) -> Result<SummaryOptions, String> {
                     }
                 }
                 if arg == "--root" {
-                    root = PathBuf::from(path);
+                    // #9008/#10542: an identical repeat is absorbed for
+                    // scripted double-root invocations; a conflicting value
+                    // is a usage error naming both values.
+                    let reconciled = reconcile_root(&root, root_explicit, path, "pr-summary")?;
+                    root = reconciled;
+                    root_explicit = true;
                 } else {
                     baseline = Some(path.to_string());
                 }
@@ -226,17 +234,6 @@ fn write_summary(path: &Path, summary: &str) -> Result<(), String> {
     write_parented_file(path, PR_SUMMARY_MD, summary)?;
     println!("Wrote {PR_SUMMARY_MD}");
     Ok(())
-}
-
-/// Resolve a relative selected root once against the invocation directory.
-/// Absolute selections do not depend on the process working directory.
-fn repo_root(root: &Path) -> Result<PathBuf, String> {
-    if root.is_absolute() {
-        return Ok(root.to_path_buf());
-    }
-    std::env::current_dir()
-        .map(|cwd| cwd.join(root))
-        .map_err(|err| format!("failed to determine working directory: {err}; run ripr from an existing directory or pass an absolute `--root`"))
 }
 
 fn write_parented_file(path: &Path, label: &str, contents: impl AsRef<[u8]>) -> Result<(), String> {
@@ -375,12 +372,21 @@ mod tests {
         Ok(())
     }
 
+    /// #9008: a conflicting repeated `--root` refuses with both values named;
+    /// #10542: an identical repeat is silently absorbed so scripted
+    /// double-root invocations keep working.
     #[test]
-    fn parse_last_root_wins_regardless_of_flag_order() -> Result<(), String> {
-        let args = ["--check", "--root", "a", "--root", "b"].map(str::to_string);
-        let options = parse_options(&args)?;
-        if options.root.as_path() != Path::new("b") || !options.check {
-            return Err(format!("unexpected options: {options:?}"));
+    fn parse_refuses_a_conflicting_second_root_and_absorbs_an_identical_one() -> Result<(), String>
+    {
+        let conflicting = ["--check", "--root", "a", "--root", "b"].map(str::to_string);
+        match parse_options(&conflicting) {
+            Err(error) if error == "pr-summary takes --root once (got 'a' and 'b')" => {}
+            other => return Err(format!("conflicting repeat was not refused: {other:?}")),
+        }
+        let identical = ["--check", "--root", "a", "--root", "a"].map(str::to_string);
+        let options = parse_options(&identical)?;
+        if options.root.as_path() != Path::new("a") || !options.check {
+            return Err(format!("identical repeat was not absorbed: {options:?}"));
         }
         Ok(())
     }
@@ -588,7 +594,7 @@ mod tests {
     fn repo_root_keeps_absolute_and_anchors_relative_to_cwd() -> Result<(), String> {
         let _cwd = crate::testing::cwd_lock::hold_cwd();
         let absolute = unique_dir("repo-root")?;
-        if repo_root(&absolute)? != absolute {
+        if resolve_selected_root(&absolute)? != absolute {
             return Err("absolute root must be returned unchanged".to_string());
         }
         let cwd = std::env::current_dir().map_err(|error| format!("cwd: {error}"))?;
@@ -596,7 +602,7 @@ mod tests {
         if relative.is_absolute() {
             return Err("precondition: fixture must be relative".to_string());
         }
-        if repo_root(relative)? != cwd.join(relative) {
+        if resolve_selected_root(relative)? != cwd.join(relative) {
             return Err("relative root must join the working directory".to_string());
         }
         Ok(())

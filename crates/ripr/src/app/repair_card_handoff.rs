@@ -24,12 +24,14 @@ use crate::agent::loop_commands::{bound_root, shell_arg};
 use crate::analysis::ClassifiedSeam;
 use crate::analysis::RepoSeam;
 use crate::analysis::repair_route::{
-    RepairRouteReadiness, RepairTargetSelection, repair_packet_eligibility,
+    RepairRouteReadiness, RepairTargetSelection, collection_contents_check_suggestion,
+    repair_packet_eligibility,
 };
 use crate::config::RiprConfig;
 use crate::domain::{
-    AgentCardRefusalKind, CardCurrentnessGoal, CommandSpec, DiagnosticWitness, EditCageGoal,
-    FindingCanonicalGap, FixInstructionSummary, FocusedExecutionGoal, MutationConfirmationGoal,
+    AgentCardRefusalKind, CanonicalItemId, CardCurrentnessGoal, CommandSpec, DiagnosticWitness,
+    EditCageGoal, FindingCanonicalGap, FixInstructionIdentityContext, FixInstructionSummary,
+    FocusedExecutionGoal, InstructionSnapshotCurrentness, MutationConfirmationGoal,
     RepairCardBudget, RepairCardDetailFamily, RepairCardDetailState, RepairCardDoneWhen,
     RepairCardSnapshot, RepairCardSnapshotCurrentness, RepairCardSubject, RepairCardV1,
     StaticMovementGoal, repair_card_route_exposable,
@@ -463,11 +465,16 @@ pub(crate) fn assemble_repair_card(
     // the shared seam producer. The card reads that same producer so a repair
     // that prints an assertion shape never also says there is none.
     let seam_assertion = suggested_assertion_for_classified_seam(entry);
+    // #12711: a route that proposes a pushed collection's contents check
+    // names that check, the one the stub writes, instead of "none".
+    let seam_assertion =
+        seam_assertion.or_else(|| collection_contents_check_suggestion(entry, readiness));
     let mut instruction = facts
         .witness
         .map(FixInstructionSummary::from_witness)
         .unwrap_or_else(FixInstructionSummary::unavailable);
     instruction.has_suggested_assertion |= seam_assertion.is_some();
+    attach_fix_instruction_identities(&mut instruction, facts);
 
     // Edit cage: the exact derivation the seam packet states (#4330), so the
     // card cannot promise a different edit surface than the attempt enforces.
@@ -624,6 +631,29 @@ pub(crate) fn assemble_repair_card(
         budget: RepairCardBudget::default(),
     })
     .map_err(AgentCardError::budget_overflow)
+}
+
+fn attach_fix_instruction_identities(
+    instruction: &mut FixInstructionSummary,
+    facts: &SeamCardFacts<'_>,
+) {
+    let canonical_item = facts
+        .finding_gap_id
+        .and_then(|gap_id| CanonicalItemId::from_canonical_gap_id(gap_id).ok());
+    let snapshot_currentness = match facts.currentness {
+        RepairCardSnapshotCurrentness::Current => InstructionSnapshotCurrentness::Current,
+        RepairCardSnapshotCurrentness::AcceptedDirtyDraft => {
+            InstructionSnapshotCurrentness::AcceptedDirtyDraft
+        }
+    };
+    let context = FixInstructionIdentityContext {
+        canonical_item: canonical_item.as_ref(),
+        workspace_identity: Some(facts.workspace_identity),
+        repository_head: Some(facts.repository_head),
+        snapshot_currentness: Some(snapshot_currentness),
+        witness: facts.witness,
+    };
+    instruction.attach_identities(&context);
 }
 
 /// Whether the rendered packet envelope actually surfaces this seam. The
@@ -1053,13 +1083,29 @@ fn workspace_identity_naming_route(
     if let RepairTargetSelection::Existing(target) = &readiness.target_selection {
         return Ok(target.workspace_identity().to_string());
     }
+    // #13203 A0: a producer-owned proposal names the portable identity the
+    // producer minted from the workspace authority. The selection must be the
+    // very proposal the seam's admitted evidence carries; a proposal the
+    // evidence does not hold, or one whose producer could not name the
+    // workspace, mints nothing and falls through to the refusal below.
+    if let RepairTargetSelection::Proposed(proposal) = &readiness.target_selection
+        && !proposal.workspace_identity.is_empty()
+        && entry
+            .evidence
+            .new_test_target
+            .as_ref()
+            .and_then(|admission| admission.proposal.as_ref())
+            == Some(proposal)
+    {
+        return Ok(proposal.workspace_identity.clone());
+    }
     for test in &entry.evidence.related_tests {
         if let Some(target) = &test.test_target {
             return Ok(target.workspace_identity().to_string());
         }
     }
     Err(format!(
-        "agent card cannot name the portable workspace identity for seam `{}`: no admitted test-target evidence names it; run `{packet_route}` for the full evidence packet",
+        "agent card cannot name the portable workspace identity for gap `{}`: no admitted test-target evidence names it; run `{packet_route}` for the full evidence packet",
         entry.seam.id().as_str()
     ))
 }
@@ -1094,6 +1140,7 @@ mod tests {
         ExpectedSink, RepoSeam, RequiredDiscriminator, SeamGripClass, SeamKind,
     };
     use crate::analysis::test_grip_evidence::TestGripEvidence;
+    use crate::domain::DiscriminatorShape;
     use crate::domain::{Confidence, FixInstructionState, StageEvidence, StageState};
 
     fn stage(state: StageState) -> StageEvidence {
@@ -1117,6 +1164,115 @@ mod tests {
 
     fn weakly_gripped_entry() -> ClassifiedSeam {
         weakly_gripped_entry_for_seam(boundary_seam())
+    }
+
+    fn proposed_readiness(
+        proposal: crate::analysis::new_test_target::NewTestTargetProposal,
+    ) -> RepairRouteReadiness {
+        let mut readiness = repair_packet_eligibility(&weakly_gripped_entry()).readiness;
+        readiness.target_selection = RepairTargetSelection::Proposed(proposal);
+        readiness
+    }
+
+    fn proposal(identity: &str) -> crate::analysis::new_test_target::NewTestTargetProposal {
+        use crate::analysis::new_test_target::{
+            NewTestKind, NewTestProposalProvenance, NewTestTargetProposal,
+        };
+        NewTestTargetProposal {
+            kind: NewTestKind::Integration,
+            file: std::path::PathBuf::from("tests/discounted_total.rs"),
+            owner: "pricing::discounted_total".to_string(),
+            provenance: NewTestProposalProvenance::ProducerOwned,
+            workspace_identity: identity.to_string(),
+        }
+    }
+
+    fn entry_admitting(
+        admitted: Option<crate::analysis::new_test_target::NewTestTargetProposal>,
+    ) -> ClassifiedSeam {
+        let mut entry = weakly_gripped_entry();
+        entry.evidence.new_test_target =
+            Some(crate::analysis::new_test_target::NewTestTargetAdmission {
+                proposal: admitted,
+                ..Default::default()
+            });
+        entry
+    }
+
+    fn names_nothing(identity: Result<String, String>) -> bool {
+        identity.is_err()
+    }
+
+    /// #13203 A0: the identity is minted only from the producer's own admitted
+    /// proposal; a proposal without an identity, or one the seam's evidence does
+    /// not hold, names nothing and the start gate keeps refusing.
+    #[test]
+    fn a_proposal_names_the_workspace_only_when_the_evidence_admitted_it() {
+        let named = proposal("ws:demo");
+        let readiness = proposed_readiness(named.clone());
+        assert_eq!(
+            workspace_identity_for(&entry_admitting(Some(named.clone())), &readiness),
+            Ok("ws:demo".to_string())
+        );
+        // The producer could not name the workspace.
+        let unnamed = proposal("");
+        assert!(names_nothing(workspace_identity_for(
+            &entry_admitting(Some(unnamed.clone())),
+            &proposed_readiness(unnamed)
+        )));
+        // The readiness proposal is not the one the evidence admitted.
+        assert!(names_nothing(workspace_identity_for(
+            &entry_admitting(None),
+            &readiness
+        )));
+        assert!(names_nothing(workspace_identity_for(
+            &entry_admitting(Some(proposal("ws:other"))),
+            &readiness
+        )));
+        // No admission at all.
+        assert!(names_nothing(workspace_identity_for(
+            &weakly_gripped_entry(),
+            &readiness
+        )));
+    }
+
+    /// #13203 A0: the start gate's proposal refusal, called directly with a
+    /// hand-built `Proposed` readiness. Each defect names the same
+    /// route-not-ready refusal and text `check` compares against.
+    #[test]
+    fn a_proposal_start_is_refused_without_identity_or_edit_surface() {
+        use super::super::task_first::RefusalKind;
+        use super::super::task_first::{NO_TEST_TARGET_REASON, proposal_start_refusal};
+        let refused = |entry: &ClassifiedSeam, readiness: &RepairRouteReadiness| {
+            proposal_start_refusal(entry, readiness)
+        };
+        let expected = Some((
+            RefusalKind::RouteNotReady,
+            NO_TEST_TARGET_REASON.to_string(),
+        ));
+        // No workspace identity (the producer could not name it).
+        let unnamed = proposal("");
+        assert_eq!(
+            refused(
+                &entry_admitting(Some(unnamed.clone())),
+                &proposed_readiness(unnamed)
+            ),
+            expected
+        );
+        // Identity mismatch: the evidence admitted a different proposal.
+        assert_eq!(
+            refused(
+                &entry_admitting(Some(proposal("ws:other"))),
+                &proposed_readiness(proposal("ws:demo"))
+            ),
+            expected
+        );
+        // Identity is named and admitted, but the packet's edit surface is
+        // not the proposal's file, so no cage can be enforced.
+        let named = proposal("ws:demo");
+        let entry = entry_admitting(Some(named.clone()));
+        assert!(!crate::output::agent_seam_packets::recommended_test_is_repair_edit_target(&entry));
+        assert_eq!(refused(&entry, &proposed_readiness(named)), expected);
     }
 
     #[test]
@@ -1336,6 +1492,8 @@ mod tests {
                 line: 88,
                 owner: None,
             }),
+            shape: DiscriminatorShape::Other,
+            drafted_boundary: None,
         }];
         entry.evidence.related_tests = vec![std::sync::Arc::new(RelatedTestGrip {
             test_name: "below_threshold_has_no_discount".to_string(),
@@ -1502,6 +1660,34 @@ mod tests {
             {
                 return Err(format!(
                     "{family:?} must record an exact unavailable reason"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn card_names_the_contents_check_only_for_a_ready_headline_push() -> Result<(), String> {
+        // #12711: the card (the repair brief and hover read it) suggests the
+        // contents check for a ready push, and not once the class parks it.
+        const SUGGESTION: &str = "an exact check of the full contents of `buf`";
+        for (class, wanted) in [
+            (SeamGripClass::WeaklyGripped, true),
+            (SeamGripClass::Suppressed, false),
+            (SeamGripClass::Intentional, false),
+            (SeamGripClass::StronglyGripped, false),
+        ] {
+            let entry = crate::analysis::repair_route::marked_push_seam_for_tests(class);
+            let packet = packet_for(&entry);
+            let card = assemble_repair_card(&facts_for(&entry, &packet))?;
+            let named = card
+                .assertion_goal_detail
+                .as_deref()
+                .is_some_and(|detail| detail.contains(SUGGESTION));
+            if named != wanted {
+                return Err(format!(
+                    "{class:?}: card names the contents check {named}, want {wanted}: {:?}",
+                    card.assertion_goal_detail
                 ));
             }
         }
@@ -1794,7 +1980,7 @@ mod tests {
             },
             confidence: 0.5,
             evidence: Vec::new(),
-            missing: vec!["Missing discriminator value: amount == discount_threshold".to_string()],
+            missing: vec!["Missing check value: amount == discount_threshold".to_string()],
             flow_sinks: Vec::new(),
             activation: ActivationEvidence::default(),
             stop_reasons: Vec::new(),

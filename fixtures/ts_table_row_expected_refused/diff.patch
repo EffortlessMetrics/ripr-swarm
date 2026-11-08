@@ -1,0 +1,110 @@
+diff --git a/src/derivedTable.ts b/src/derivedTable.ts
+index 0000000..1111111 100644
+--- a/src/derivedTable.ts
++++ b/src/derivedTable.ts
+@@ -1,5 +1,5 @@
+ export function derivedTable(points: number): string {
+-    if (points > 1000) {
++    if (points >= 1000) {
+         return "gold";
+     }
+     return "silver";
+diff --git a/src/exportedTable.ts b/src/exportedTable.ts
+index 0000000..1111111 100644
+--- a/src/exportedTable.ts
++++ b/src/exportedTable.ts
+@@ -1,5 +1,5 @@
+ export function exportedTable(points: number): string {
+-    if (points > 1000) {
++    if (points >= 1000) {
+         return "gold";
+     }
+     return "silver";
+diff --git a/src/identifierCell.ts b/src/identifierCell.ts
+index 0000000..1111111 100644
+--- a/src/identifierCell.ts
++++ b/src/identifierCell.ts
+@@ -1,5 +1,5 @@
+ export function identifierCell(points: number): string {
+-    if (points > 1000) {
++    if (points >= 1000) {
+         return "gold";
+     }
+     return "silver";
+diff --git a/src/letTable.ts b/src/letTable.ts
+index 0000000..1111111 100644
+--- a/src/letTable.ts
++++ b/src/letTable.ts
+@@ -1,5 +1,5 @@
+ export function letTable(points: number): string {
+-    if (points > 1000) {
++    if (points >= 1000) {
+         return "gold";
+     }
+     return "silver";
+diff --git a/src/missingKey.ts b/src/missingKey.ts
+index 0000000..1111111 100644
+--- a/src/missingKey.ts
++++ b/src/missingKey.ts
+@@ -1,5 +1,5 @@
+ export function missingKey(points: number): string {
+-    if (points > 1000) {
++    if (points >= 1000) {
+         return "gold";
+     }
+     return "silver";
+diff --git a/src/offBoundary.ts b/src/offBoundary.ts
+index 0000000..1111111 100644
+--- a/src/offBoundary.ts
++++ b/src/offBoundary.ts
+@@ -1,5 +1,5 @@
+ export function offBoundary(points: number): string {
+-    if (points > 1000) {
++    if (points >= 1000) {
+         return "gold";
+     }
+     return "silver";
+diff --git a/src/pushedTable.ts b/src/pushedTable.ts
+index 0000000..1111111 100644
+--- a/src/pushedTable.ts
++++ b/src/pushedTable.ts
+@@ -1,5 +1,5 @@
+ export function pushedTable(points: number): string {
+-    if (points > 1000) {
++    if (points >= 1000) {
+         return "gold";
+     }
+     return "silver";
+diff --git a/src/mutatedContainer.ts b/src/mutatedContainer.ts
+index 0000000..1111111 100644
+--- a/src/mutatedContainer.ts
++++ b/src/mutatedContainer.ts
+@@ -1,5 +1,5 @@
+ export function mutatedContainer(point: { points: number }): string {
+-    if (point.points > 1000) {
++    if (point.points >= 1000) {
+         return "gold";
+     }
+     return "silver";
+diff --git a/src/titleMutation.ts b/src/titleMutation.ts
+index 0000000..1111111 100644
+--- a/src/titleMutation.ts
++++ b/src/titleMutation.ts
+@@ -1,5 +1,5 @@
+ export function titleMutation(point: { points: number }): string {
+-    if (point.points > 1000) {
++    if (point.points >= 1000) {
+         return "gold";
+     }
+     return "silver";
+diff --git a/src/aliasedKeys.ts b/src/aliasedKeys.ts
+index 0000000..1111111 100644
+--- a/src/aliasedKeys.ts
++++ b/src/aliasedKeys.ts
+@@ -1,5 +1,5 @@
+ export function aliasedKeys(point: { points: number }): string {
+-    if (point.points > 1000) {
++    if (point.points >= 1000) {
+         return "gold";
+     }
+     return "silver";

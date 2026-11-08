@@ -15,7 +15,7 @@
 //! `None`, and the caller keeps `static_unknown`.
 
 mod assoc;
-mod expr;
+pub(super) mod expr;
 
 pub(in crate::analysis) use self::assoc::associated_const_binding;
 use std::collections::BTreeMap;
@@ -95,6 +95,29 @@ impl ChangedConsts {
         line: usize,
     ) -> Option<&ConstChange> {
         self.by_line.get(&(normalize_path(file), line))
+    }
+}
+
+/// #11400: whether the paired declarations name one constant of one type
+/// whose evaluated value differs. A visibility, spelling or type-only edit
+/// (`10` to `5 + 5`, `const` to `pub const`) or a value the evaluator cannot
+/// read is not a changed value.
+pub(in crate::analysis) fn const_value_changes(change: &ConstChange) -> bool {
+    let (Some(old), Some(new)) = (
+        parse_const_decl(change.old_declaration.trim()),
+        parse_const_decl(change.new_declaration.trim()),
+    ) else {
+        return false;
+    };
+    if old.name != new.name || old.ty != new.ty {
+        return false;
+    }
+    match (
+        expr::evaluate_initializer(&old.init, old.ty),
+        expr::evaluate_initializer(&new.init, new.ty),
+    ) {
+        (Some(before), Some(after)) => before != after,
+        _ => false,
     }
 }
 
@@ -441,7 +464,7 @@ fn calls_name_the_type(text: &str, name: &str, self_type: &str) -> bool {
 }
 
 /// Whether `text` calls `name(`: a whole-word occurrence followed by `(`.
-fn mentions_call(text: &str, name: &str) -> bool {
+pub(super) fn mentions_call(text: &str, name: &str) -> bool {
     let word = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
     text.match_indices(name).any(|(at, _)| {
         text[..at].chars().next_back().is_none_or(|ch| !word(ch))

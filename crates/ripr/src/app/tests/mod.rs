@@ -17,6 +17,8 @@ mod preview_analyzed_outcome;
 mod python_test_note;
 // Drives the Python adapter end to end through `check_workspace_with_config`.
 #[cfg(feature = "lang-python")]
+mod python_exception_variant;
+#[cfg(feature = "lang-python")]
 mod python_family_selection_packets;
 #[cfg(feature = "lang-python")]
 mod python_packet_eligibility;
@@ -24,11 +26,17 @@ mod python_packet_eligibility;
 mod python_repo_mode_repair_failclosed;
 mod rendering_contracts;
 #[cfg(feature = "lang-typescript")]
+mod typescript_clause_single_token_packets;
+#[cfg(feature = "lang-typescript")]
+mod typescript_error_variant_packets;
+#[cfg(feature = "lang-typescript")]
 mod typescript_family_selection_packets;
 #[cfg(feature = "lang-typescript")]
 mod typescript_literal_container_packets;
 #[cfg(feature = "lang-typescript")]
 mod typescript_repo_mode_repair_failclosed;
+#[cfg(feature = "lang-typescript")]
+mod typescript_table_row_packets;
 
 fn sample_finding(file: &str, line: usize) -> Finding {
     Finding {

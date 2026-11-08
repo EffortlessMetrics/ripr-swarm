@@ -716,8 +716,8 @@ fn copy_for_identity_change_credits_strict_custom_matcher() -> Result<(), String
     let finding = settings_finding("identity-copy-t-deepEqual", ava_deep, "  return cfg;")?;
     assert_eq!(finding.class, ExposureClass::WeaklyExposed);
 
-    // #7916 remains refused: a comment between `expect` and `.extend` is not
-    // credited, so this PR must not loosen that guard to pass identity.
+    // #7916: a comment between `expect` and `.extend` still registers a strict
+    // matcher, so identity copy-for-identity reads exposed.
     let commented = "import { ready } from \"../src/settings\";\nexpect /* token */ .extend({ toBeSame(r, e) { return { pass: r === e }; } });\ntest(\"ready\", () => {\n  const cfg = { ok: true };\n  expect(ready(cfg)).toBeSame(cfg);\n});\n";
     let tests = extract_tests(Path::new("tests/settings.test.ts"), commented);
     let assertion = tests
@@ -725,10 +725,10 @@ fn copy_for_identity_change_credits_strict_custom_matcher() -> Result<(), String
         .flat_map(|test| &test.assertions)
         .find(|assertion| assertion.matcher == "toBeSame")
         .ok_or_else(|| "expected a commented-extend toBeSame assertion".to_string())?;
-    assert_eq!(assertion.oracle_kind, OracleKind::Unknown);
-    assert!(!assertion.compares_reference_identity);
+    assert_eq!(assertion.oracle_kind, OracleKind::ExactValue);
+    assert!(assertion.compares_reference_identity);
     let finding = settings_finding("identity-copy-comment-extend", commented, "  return cfg;")?;
-    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    assert_eq!(finding.class, ExposureClass::Exposed);
     Ok(())
 }
 

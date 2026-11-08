@@ -1,0 +1,9 @@
+# Pin the provider assertion macro inventory and prove the inequality tolerance wording (#6645).
+[[extend]]
+id = "RIPR-SPEC-0120"
+tests = [
+  "crates/ripr/tests/rust_assertion_provider_macro_inventory.rs::provider_assertion_macro_inventory_matches_current_behavior",
+]
+fixtures = [
+  "fixtures/rust_tolerance_ne_assertion_macro_limitation",
+]

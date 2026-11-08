@@ -17,15 +17,6 @@ target_behavior = "Keep release-bearing proof out of ordinary pull requests; run
 review_note = "Keep visible until the release-surface gate PR moves these steps."
 
 [[exception]]
-id = "vscode_runs_on_all_primary_prs"
-kind = "legacy_posture"
-paths = [".github/workflows/ci.yml"]
-lanes = ["vscode-compile", "vscode-e2e"]
-current_behavior = "The vscode job runs on pushes to main or master, workflow_dispatch, and pull requests labeled full-ci; it is not yet path-gated or wired to the vscode label."
-target_behavior = "Run editor lanes for editor path changes, main, vscode label, or full-ci."
-review_note = "Do not add more editor checks to the default front door before path gating."
-
-[[exception]]
 id = "coverage_upload_blocks_trusted_runs"
 kind = "trusted_upload"
 paths = [".github/workflows/coverage.yml"]

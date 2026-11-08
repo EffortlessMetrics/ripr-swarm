@@ -19,9 +19,7 @@
 //! related-test oracles produce `weakly_exposed`; missing related tests produce
 //! `no_static_path`.
 
-use super::super::{
-    AnalysisOptions, diff::ChangedFile, fingerprint_probe_id, normalize_expression,
-};
+use super::super::{AnalysisOptions, diff::ChangedFile, fingerprint_probe_id};
 use super::read_limit_disclosure::bounded_read_limit_limitations;
 use super::{
     LanguageAdapter, LanguageDiffResult, LanguageId, LanguageRepoResult, PreviewFactCacheStats,
@@ -68,6 +66,292 @@ use std::{
     path::{Path, PathBuf},
 };
 
+/// Mark unavailable lexical context. This exact text is not an established stable
+/// equivalence; consumers still need to refuse identity-based reuse for v1u.
+fn normalize_python_expression(expression: &str) -> String {
+    format!("\0python-uncertain-v1\0{expression}")
+}
+
+/// Lex a whole file once so fragment boundaries are not mistaken for string
+/// boundaries. None means the caller lacks trustworthy source context.
+struct PythonIdentityContext<'a> {
+    source: &'a str,
+    lines: Vec<(usize, usize)>,
+    literals: Vec<(usize, usize, bool)>,
+    comment_ends: Vec<usize>,
+}
+
+impl<'a> PythonIdentityContext<'a> {
+    fn new(source: &'a str) -> Option<Self> {
+        use rustpython_parser::{Mode, Tok, lexer::lex};
+        let mut literals = Vec::new();
+        for token in lex(source, Mode::Module) {
+            if let (Tok::String { .. }, range) = token.ok()? {
+                let (start, end) = (usize::from(range.start()), usize::from(range.end()));
+                literals.push((
+                    start,
+                    end,
+                    source.get(start..end)?.chars().any(char::is_whitespace),
+                ));
+            }
+        }
+        // The installed lexer skips comments. Walk bytes outside its verified
+        // string token spans, consuming each comment through its physical line
+        // ending. Quotes or # characters inside comments cannot open a string.
+        let bytes = source.as_bytes();
+        let (mut pos, mut literal_index) = (0, 0);
+        let mut comment_ends = Vec::new();
+        while pos < bytes.len() {
+            while literals
+                .get(literal_index)
+                .is_some_and(|(_, end, _)| *end <= pos)
+            {
+                literal_index += 1;
+            }
+            if let Some((start, end, _)) = literals.get(literal_index)
+                && *start <= pos
+                && pos < *end
+            {
+                pos = *end;
+                continue;
+            }
+            if bytes[pos] == b'#' {
+                while pos < bytes.len() && !matches!(bytes[pos], b'\r' | b'\n') {
+                    pos += 1;
+                }
+                if pos < bytes.len() {
+                    comment_ends.push(pos);
+                }
+            } else {
+                pos += 1;
+            }
+        }
+        let mut lines = Vec::new();
+        let mut start = 0;
+        for segment in source.split_inclusive('\n') {
+            let line = segment.strip_suffix('\n').unwrap_or(segment);
+            let line = line.strip_suffix('\r').unwrap_or(line);
+            lines.push((start, start + line.len()));
+            start += segment.len();
+        }
+        Some(Self {
+            source,
+            lines,
+            literals,
+            comment_ends,
+        })
+    }
+
+    fn normalize_line(&self, line: usize, expected: &str) -> Option<String> {
+        let &(start, end) = self.lines.get(line.checked_sub(1)?)?;
+        if self.source.get(start..end)? != expected {
+            return None;
+        }
+        self.normalize(line, expected)
+    }
+
+    fn normalize(&self, line: usize, expected: &str) -> Option<String> {
+        let &(line_start, line_end) = self.lines.get(line.checked_sub(1)?)?;
+        let source_line = self.source.get(line_start..line_end)?;
+        // Diff lines include their indentation; repo facts contain the exact
+        // (possibly multiline) AST source span without leading indentation.
+        if source_line == expected {
+            return self.normalize_span(line_start, expected);
+        }
+        let first = expected.split('\n').next()?;
+        let first = first.strip_suffix('\r').unwrap_or(first);
+        if first.is_empty() {
+            return None;
+        }
+        // The same statement text may repeat on one physical line
+        // (`return x; return x`). That is ambiguous only when the occurrences
+        // normalize differently; identical readings are one identity.
+        let mut result: Option<String> = None;
+        for (offset, _) in source_line.match_indices(first) {
+            let Some(candidate) = self.normalize_span(line_start + offset, expected) else {
+                continue;
+            };
+            match &result {
+                Some(previous) if *previous != candidate => return None,
+                _ => result = Some(candidate),
+            }
+        }
+        result
+    }
+
+    fn normalize_span(&self, start: usize, expected: &str) -> Option<String> {
+        let end = start.checked_add(expected.len())?;
+        let text = self.source.get(start..end)?;
+        if text != expected {
+            return None;
+        }
+        let mut result = String::with_capacity(text.len());
+        let mut pending_space = false;
+        let mut versioned = false;
+        let mut after_comment = false;
+        let mut skip_lf_at = None;
+        let mut comment_index = self.comment_ends.partition_point(|end| *end < start);
+        let mut index = self
+            .literals
+            .partition_point(|(_, close, _)| *close <= start);
+        for (relative, ch) in text.char_indices() {
+            let offset = start + relative;
+            if skip_lf_at == Some(offset) && ch == '\n' {
+                skip_lf_at = None;
+                continue;
+            }
+            if self.comment_ends.get(comment_index) == Some(&offset) {
+                pending_space = false;
+                result.push('\n');
+                versioned = true;
+                after_comment = true;
+                if ch == '\r' && self.source.as_bytes().get(offset + 1) == Some(&b'\n') {
+                    skip_lf_at = Some(offset + 1);
+                }
+                comment_index += 1;
+                continue;
+            }
+            while self
+                .literals
+                .get(index)
+                .is_some_and(|(_, close, _)| *close <= offset)
+            {
+                index += 1;
+            }
+            let inside = self
+                .literals
+                .get(index)
+                .is_some_and(|(open, close, _)| *open <= offset && offset < *close);
+            if inside {
+                versioned |= self.literals[index].2;
+            }
+            if ch.is_whitespace() && !inside {
+                if !after_comment {
+                    pending_space |= !result.is_empty();
+                }
+            } else {
+                after_comment = false;
+                if pending_space {
+                    result.push(' ');
+                    pending_space = false;
+                }
+                result.push(ch);
+            }
+        }
+        if versioned {
+            Some(format!("\0python-literal-v1\0{result}"))
+        } else {
+            Some(result)
+        }
+    }
+}
+
+/// Rebind a just-classified probe using source-verified lexical boundaries.
+/// The caller rebinds its value-origin receipt after any subsequent ordinal.
+fn reidentify_python_finding(finding: &mut Finding, normalized: &str) {
+    // The Python path can contain colons on Unix. Split the fixed prefix
+    // from the left and family/fingerprint from the right.
+    let Some((prefix, remainder)) = finding.probe.id.0.split_once(':') else {
+        return;
+    };
+    let Some((path_and_family, _fingerprint)) = remainder.rsplit_once(':') else {
+        return;
+    };
+    let Some((path, family)) = path_and_family.rsplit_once(':') else {
+        return;
+    };
+    let mut id = fingerprint_probe_id(
+        prefix,
+        path,
+        family,
+        finding
+            .probe
+            .owner
+            .as_ref()
+            .map_or("", |owner| owner.0.as_str()),
+        normalized,
+        1,
+    );
+    let marker = if normalized.starts_with("\0python-literal-v1\0") {
+        Some("v1-")
+    } else if normalized.starts_with("\0python-uncertain-v1\0") {
+        Some("v1u-")
+    } else {
+        None
+    };
+    if let (Some(marker), Some(separator)) = (marker, id.0.rfind(':')) {
+        id.0.insert_str(separator + 1, marker);
+    }
+    finding.id = id.0.clone();
+    finding.probe.id = id;
+}
+
+#[cfg(test)]
+mod python_identity_review_controls {
+    use super::PythonIdentityContext;
+
+    #[test]
+    fn comment_boundaries_respect_literals_and_crlf() -> Result<(), String> {
+        let expr = |source: &str| -> Result<String, String> {
+            let context = PythonIdentityContext::new(source).ok_or("source did not lex")?;
+            let expected = source
+                .strip_prefix("def label(x):\n    ")
+                .ok_or("fixture prefix missing")?
+                .trim_end();
+            context
+                .normalize(2, expected)
+                .ok_or_else(|| "source span mismatch".to_string())
+        };
+        let active = "def label(x):\n    return (\"a b\" # note\n      + x\n    )\n";
+        let formatted = "def label(x):\n    return  (\"a b\" # note\r\n       + x\n    )\n";
+        let commented = "def label(x):\n    return (\"a b\" # note + x\n    )\n";
+        let quoted_hash = "def label(x):\n    return (\"a # b\"\n      + x\n    )\n";
+        let quoted_hash_format = "def label(x):\n    return  (\"a # b\"\n       + x\n    )\n";
+        assert_eq!(expr(active)?, expr(formatted)?);
+        assert_ne!(expr(active)?, expr(commented)?);
+        assert_eq!(expr(quoted_hash)?, expr(quoted_hash_format)?);
+        Ok(())
+    }
+
+    #[test]
+    fn a_statement_repeated_on_one_line_normalizes_when_readings_agree() -> Result<(), String> {
+        let source = "def f(x):\n    return x; return x\n";
+        let context = PythonIdentityContext::new(source).ok_or("source did not lex")?;
+        assert_eq!(
+            context.normalize(2, "return x"),
+            Some("return x".to_string())
+        );
+        let quoted = "def f(x):\n    y = 'a  b'; z = 'a  b'; y = 'a  b'\n";
+        let context = PythonIdentityContext::new(quoted).ok_or("source did not lex")?;
+        assert!(context.normalize(2, "y = 'a  b'").is_some());
+        // One reading is code and the other sits inside a literal: ambiguous.
+        let mixed = "def f(x):\n    return x; s = 'return x'\n";
+        let context = PythonIdentityContext::new(mixed).ok_or("source did not lex")?;
+        assert!(context.normalize(2, "return x").is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn multiline_literal_space_is_data_and_outer_formatting_is_not() -> Result<(), String> {
+        let a = "def label():\n    return  \"\"\"foo \nbar\"\"\"\n";
+        let b = "def label():\n    return    \"\"\"foo \nbar\"\"\"\n";
+        let c = "def label():\n    return  \"\"\"foo  \nbar\"\"\"\n";
+        let normalize = |source: &str| -> Result<String, String> {
+            let line = source
+                .lines()
+                .nth(1)
+                .ok_or("fixture opening line missing")?;
+            PythonIdentityContext::new(source)
+                .ok_or("fixture source did not lex")?
+                .normalize(2, line)
+                .ok_or_else(|| "fixture line did not match source context".to_string())
+        };
+        assert_eq!(normalize(a)?, normalize(b)?);
+        assert_ne!(normalize(a)?, normalize(c)?);
+        Ok(())
+    }
+}
+
 /// Workspace files whose facts are extracted per parallel batch before the
 /// batch is folded, bounding how many unfolded fact sets are alive at once.
 const FACT_EXTRACTION_BATCH_FILES: usize = 256;
@@ -79,19 +363,28 @@ mod boundary;
 mod call_chain;
 mod caplog_text;
 mod classify;
+mod coarse_projection;
 mod conditional_defs;
 mod conditional_expression;
 mod dataclass_default;
 mod deleted_lines;
+mod derived_expectation;
 mod doctest_eval;
 mod doctest_tests;
 mod dunder_truthiness;
 mod guard_activation;
+mod guard_atoms;
 mod guard_credit;
 mod helper_inline;
+mod import_identity;
 mod imported_call_operator;
 mod known_equality_helpers;
 mod loop_walk;
+// The may-reach graph is built and measured by tests and the corpus report
+// only; no verdict reads it yet (#11425), so it is not part of the shipped
+// build.
+#[cfg(test)]
+mod may_reach;
 mod message_pin;
 mod module_value;
 mod test_local_literal;
@@ -107,8 +400,12 @@ mod discriminators;
 mod effect_alignment;
 #[cfg(test)]
 mod effect_order_tests;
+mod exception_variant;
+#[cfg(test)]
+mod exception_variant_tests;
 mod hypothesis;
 mod module_constants;
+mod nested_result;
 mod no_behavior;
 mod oracles;
 mod owner_exact;
@@ -121,6 +418,9 @@ mod reexports;
 mod related_tests;
 mod repo;
 mod route_client;
+mod row_discriminator_coverage;
+#[cfg(test)]
+mod row_discriminator_coverage_tests;
 mod row_miss;
 mod row_reach;
 mod setup_receivers;
@@ -189,6 +489,8 @@ use source_facts::{
 };
 mod source_utils;
 use source_utils::{is_test_file, normalized_path};
+mod collection_config;
+mod fixture_substitution;
 mod fixtures;
 mod forwarding_decorator;
 mod helper_assertions;
@@ -225,6 +527,16 @@ use workspace::{line_is_in_ranges, owner_for_changed_line, visit_workspace_with_
 /// Stateless: routing, parsing, and per-file extraction only.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct PythonAdapter;
+
+/// Publish one production Python finding after the shared witness retain hook
+/// (#4790 / #6426 parity with Rust `push_retained_finding`).
+pub(in crate::analysis::language::python) fn publish_production_finding(
+    findings: &mut Vec<Finding>,
+    finding: Finding,
+) {
+    crate::analysis::witness::retain_finding_projection(&finding);
+    findings.push(finding);
+}
 
 /// Whether `text` holds `name` as a whole Python identifier.
 fn mentions_python_name(text: &str, name: &str) -> bool {
@@ -357,6 +669,23 @@ struct PythonOwner {
     /// subcommand, and the name a test passes to the group to reach it
     /// (`cli_subcommand.rs`, #9226). `None` unless the file proves it.
     cli_subcommand: Option<cli_subcommand::CliSubcommand>,
+    /// For a nested function owner (`outer.inner`): whether the enclosing
+    /// function's own body, outside the nested def, calls it by name. A test
+    /// that only calls the enclosing function reaches the nested body only
+    /// when this holds (`related_tests.rs`, #12141). `false` for every other
+    /// owner, which keeps parent-call reach fail-closed.
+    nested_called_by_parent: bool,
+    /// For a nested function owner: whether every call the enclosing body
+    /// makes is an expression statement of its own, so the nested function's
+    /// result never reaches what the enclosing function returns (`classify.rs`,
+    /// #12182). `false` for every other owner and for any call whose value may
+    /// flow on, which keeps today's reading.
+    nested_result_discarded: bool,
+    /// The module's stdlib `click` import alias is bound exactly once at module
+    /// scope (`cli_subcommand.rs`, #9226). `cli_runner_invoke` and transparent
+    /// click-alias decorators require this; reassigned aliases stay fail-closed.
+    #[serde(default)]
+    trusted_stdlib_click_alias: bool,
 }
 
 /// One declared parameter of a Python function owner.
@@ -811,7 +1140,7 @@ fn python_recommended_next_step(
                 }
             };
             Some(format!(
-                "Python preview: {action} for missing discriminator `{missing}`."
+                "Python preview: {action} for the missing check `{missing}`."
             ))
         }
     }
@@ -948,19 +1277,53 @@ fn parse_budget_limitation(
     }) else {
         return Ok(None);
     };
+    let portable = normalized_path(relative);
+    let probable_fixture = crate::config::is_probable_fixture_or_data_path(relative);
+    let bounded_detail = if probable_fixture {
+        format!("{portable} looks like a fixture or data file; {detail}")
+    } else {
+        detail
+    }
+    .chars()
+    .take(crate::analysis_outcome::MAX_ANALYSIS_LIMITATION_DETAIL_CHARS)
+    .collect::<String>();
+    let recovery = if probable_fixture {
+        AnalysisRecovery::new(
+            AnalysisRecoveryKind::DeclarePreviewExcludedPatterns,
+            "The Python preview adapter hit a parse budget on a file that looks like fixture or data content you typically should not rewrite. Add a repository-relative glob under `[languages.python] excluded_file_patterns` (for example `tests/syntax-tests/**`) to omit it from preview-language indexing, then re-run the analysis.",
+        )?
+    } else {
+        AnalysisRecovery::new(
+            AnalysisRecoveryKind::Retry,
+            "Split or simplify the deeply nested Python expression, operator chain, or elif chain, then re-run the analysis.",
+        )?
+    };
     Ok(Some(
         AnalysisLimitation::new(
             AnalysisLimitationKind::LanguageScopeUnsupported,
             AnalysisStage::LanguageAdapter,
-            AnalysisRecovery::new(
-                AnalysisRecoveryKind::Retry,
-                "Split or simplify the deeply nested Python expression, operator chain, or elif chain, then re-run the analysis.",
-            )?,
+            recovery,
         )
-        .with_path(normalized_path(relative))?
+        .with_path(portable)?
         .with_affected_items(1)?
-        .with_detail(detail)?,
+        .with_detail(bounded_detail)?,
     ))
+}
+
+fn identity_context_limitation(relative: &Path) -> Result<AnalysisLimitation, String> {
+    let portable = normalized_path(relative);
+    let limitation = AnalysisLimitation::new(
+        AnalysisLimitationKind::ProducerFailure,
+        AnalysisStage::LanguageAdapter,
+        AnalysisRecovery::new(AnalysisRecoveryKind::InspectFailure,
+            "Restore matching, lexable Python source for the diff and re-run the analysis.")?,
+    ).with_affected_items(1)?.with_detail(format!(
+        "{portable}: Python source identity context was unavailable or did not match the diff; findings for this file were withheld."
+    ))?;
+    Ok(limitation
+        .clone()
+        .with_path(&portable)
+        .unwrap_or(limitation))
 }
 
 /// One typed `producer_failure` per changed Python file the facts producer
@@ -996,7 +1359,7 @@ fn source_fact_parse_error_limitation(
         AnalysisStage::LanguageAdapter,
         AnalysisRecovery::new(
             AnalysisRecoveryKind::InspectFailure,
-            "Fix the file so it parses as Python, then re-run the analysis.",
+            crate::analysis_outcome::PYTHON_PARSE_FAILURE_RECOVERY,
         )?,
     )
     .with_affected_items(1)?
@@ -1058,7 +1421,12 @@ impl PythonAdapter {
         changed_files: &[ChangedFile],
         walk_limits: PythonDiffWalkLimits,
     ) -> Result<LanguageDiffResult, String> {
-        Self::analyze_diff_with_handwritten(options, changed_files, walk_limits, &[])
+        Self::analyze_diff_with_handwritten(
+            options,
+            changed_files,
+            walk_limits,
+            &crate::config::PythonLanguageConfig::default(),
+        )
     }
 
     /// [`analyze_diff_with_handwritten`] with the environment-resolved walk
@@ -1067,26 +1435,25 @@ impl PythonAdapter {
     pub(crate) fn analyze_diff_with_handwritten_env(
         options: &AnalysisOptions,
         changed_files: &[ChangedFile],
-        handwritten: &[String],
+        python_config: &crate::config::PythonLanguageConfig,
     ) -> Result<LanguageDiffResult, String> {
         Self::analyze_diff_with_handwritten(
             options,
             changed_files,
             PythonDiffWalkLimits::from_env(),
-            handwritten,
+            python_config,
         )
     }
 
-    /// [`analyze_diff_with_limits`] plus the `[languages.python]
-    /// handwritten_files` declarations (#7386): exact repository-relative
-    /// paths admitted past the built-in excluded-directory conventions, so a
-    /// hand-written source under a `build/`, `dist/` or `env/` directory is
-    /// walked, read and counted instead of silently dropped.
+    /// [`analyze_diff_with_limits`] plus the `[languages.python]`
+    /// declarations (#7386, #5380): exact hand-written paths admitted past
+    /// excluded-directory conventions and configured exclusion globs omitted
+    /// from preview indexing.
     pub(in crate::analysis::language::python) fn analyze_diff_with_handwritten(
         options: &AnalysisOptions,
         changed_files: &[ChangedFile],
         walk_limits: PythonDiffWalkLimits,
-        handwritten: &[String],
+        python_config: &crate::config::PythonLanguageConfig,
     ) -> Result<LanguageDiffResult, String> {
         // A previous run's facts are freed before this run builds its own
         // (sequential callers; see `teardown` for concurrent ones).
@@ -1103,9 +1470,13 @@ impl PythonAdapter {
             WorkspaceFileSelection::new(walk_limits.max_workspace_files, |file: &Path| {
                 changed_walk_paths.contains(&normalized_path(file))
             });
-        visit_workspace_with_handwritten(&options.root, &options.root, handwritten, &mut |file| {
-            selection.push(file)
-        });
+        visit_workspace_with_handwritten(
+            &options.root,
+            &options.root,
+            &python_config.handwritten_files,
+            &python_config.excluded_file_patterns,
+            &mut |file| selection.push(file),
+        );
         let (mut workspace_files, mut refused_files) = selection.finish();
         // Past the cap, spend it on the files whose text can reach the diff
         // instead of the earliest paths (#10785). The second walk holds every
@@ -1118,7 +1489,8 @@ impl PythonAdapter {
             visit_workspace_with_handwritten(
                 &options.root,
                 &options.root,
-                handwritten,
+                &python_config.handwritten_files,
+                &python_config.excluded_file_patterns,
                 &mut |file| discovered.push(file),
             );
             reach = workspace_reach::admit_by_reach(
@@ -1145,6 +1517,8 @@ impl PythonAdapter {
         let mut fixture_defs_by_file: BTreeMap<PathBuf, Vec<PythonFixtureDef>> = BTreeMap::new();
         let mut fixture_side_by_file: BTreeMap<PathBuf, fixtures::FixtureSideEffects> =
             BTreeMap::new();
+        let mut substitution_by_file: BTreeMap<PathBuf, fixture_substitution::SubstitutionScope> =
+            BTreeMap::new();
         // Conftests that install implicit setup around tests (#6657).
         let mut implicit_conftests: BTreeSet<PathBuf> = BTreeSet::new();
         let mut reach_conftests: BTreeSet<PathBuf> = BTreeSet::new();
@@ -1162,6 +1536,7 @@ impl PythonAdapter {
             Vec<module_constants::PythonModuleAttributeWrite>,
         )> = Vec::new();
         let mut limitations = Vec::new();
+        let mut parse_failure_paths = BTreeSet::new();
         // The diff-scoped limitation set describes the changed scope (the
         // read-failure disclosure model below); parse-failure promotions
         // bind to the same admitted changed paths.
@@ -1216,6 +1591,7 @@ impl PythonAdapter {
                     .any(|changed| changed == &normalized_path(relative))
                     && let Some(limitation) = source_fact_parse_error_limitation(relative, &facts)?
                 {
+                    parse_failure_paths.insert(normalized_path(relative));
                     limitations.push(limitation);
                 }
                 if let Some(star) = &facts.star_facts {
@@ -1233,6 +1609,9 @@ impl PythonAdapter {
                 import_ranges_by_file.insert(relative.clone(), facts.import_line_ranges.clone());
                 if !facts.fixtures.is_empty() {
                     fixture_defs_by_file.insert(relative.clone(), facts.fixtures.clone());
+                }
+                if facts.substitution_scope != fixture_substitution::SubstitutionScope::default() {
+                    substitution_by_file.insert(relative.clone(), facts.substitution_scope.clone());
                 }
                 let side = fixtures::side_effects_of(&facts);
                 if side != fixtures::FixtureSideEffects::default() {
@@ -1268,6 +1647,11 @@ impl PythonAdapter {
         let unreadable_conftest = |conftest: &Path| {
             !workspace_read.sources.contains_key(conftest) && options.root.join(conftest).is_file()
         };
+        fixture_substitution::apply_fixture_substitution(
+            &mut all_tests,
+            &substitution_by_file,
+            unreadable_conftest,
+        );
         fixtures::mark_isolated_fixture_defs(
             &mut all_tests,
             &fixture_defs_by_file,
@@ -1297,6 +1681,7 @@ impl PythonAdapter {
             &mut all_tests,
             &module_attribute_writes,
         );
+        collection_config::apply_collection_config(&mut all_tests, &options.root);
         reexports::apply_package_reexports(
             &mut all_owners,
             |file| workspace_read.sources.get(file).map(String::as_str),
@@ -1306,6 +1691,9 @@ impl PythonAdapter {
             workspace_read.sources.get(file).map(String::as_str)
         });
         known_equality_helpers::credit_known_equality_helpers(&mut all_tests, |file| {
+            workspace_read.sources.get(file).map(String::as_str)
+        });
+        derived_expectation::demote_derived_expectations(&mut all_tests, &all_owners, |file| {
             workspace_read.sources.get(file).map(String::as_str)
         });
         // Rival src-layout modules are found by path, so an over-cap run still
@@ -1413,9 +1801,13 @@ impl PythonAdapter {
             .filter(|changed| {
                 matches!(route(&changed.path), Some(LanguageId::Python))
                     && !is_detectable_generated_python_path(&changed.path)
+                    && !crate::config::path_matches_preview_excluded_patterns(
+                        &python_config.excluded_file_patterns,
+                        &changed.path,
+                    )
                     && (!is_detectable_excluded_python_path(&changed.path)
                         || crate::config::is_declared_handwritten_python_path(
-                            handwritten,
+                            &python_config.handwritten_files,
                             &changed.path,
                         ))
             })
@@ -1470,14 +1862,17 @@ impl PythonAdapter {
         // Bytecode CPython never checks against its source, or an import path
         // a test configuration adds, can run code other than what is read
         // here (#9226). Read once, only when a file changed.
-        let shadowed_import = !python_changed_files.is_empty()
-            && (module_value::unchecked_bytecode(
+        let unchecked_bytecode = !python_changed_files.is_empty()
+            && module_value::unchecked_bytecode(
                 &options.root,
                 workspace_read.sources.keys().map(|file| file.as_path()),
-            ) || module_value::import_path_configured(
+            );
+        let configured_import_path = !python_changed_files.is_empty()
+            && module_value::import_path_configured(
                 &options.root,
                 workspace_read.sources.keys().map(|file| file.as_path()),
-            ));
+            );
+        let shadowed_import = unchecked_bytecode || configured_import_path;
         let extension_names = if python_changed_files.is_empty() {
             Some(BTreeSet::new())
         } else {
@@ -1493,21 +1888,59 @@ impl PythonAdapter {
             .keys()
             .flat_map(|file| file.ancestors().skip(1))
             .collect();
-        let foreign_of = |file: &Path| {
-            let mut foreign = foreign_index.excluding(file);
-            if shadowed_import
+        let import_path_admission = if !workspace_incomplete && !unchecked_bytecode {
+            import_identity::import_path_admission(
+                &options.root,
+                &import_roots,
+                configured_import_path,
+            )
+        } else {
+            import_identity::ImportPathAdmission::Refused
+        };
+        // A canonical `import pytest` can load a local module or package.
+        // The exception-class reading needs the real framework's semantics;
+        // keep this per-run fact separate from other module-value credit.
+        let pytest_import_unshadowed = import_path_admission.admitted()
+            && exception_variant::pytest_import_unshadowed(
+                &options.root,
+                &import_roots,
+                extension_names.as_ref(),
+            );
+        let import_shadow_for = |file: &Path| {
+            shadowed_import
                 || module_value::extension_beside(&options.root, file)
                 || module_value::compiled_package_shadow(&options.root, &import_roots, file)
                 || extension_names
                     .as_ref()
                     .is_none_or(|names| module_value::shadowed_by_extension(names, file))
-            {
+        };
+        let foreign_of = |file: &Path| {
+            let mut foreign = foreign_index.excluding(file);
+            if import_shadow_for(file) {
                 foreign.mark_compiled_shadow();
             }
             foreign
         };
+        let mut unshadowed_modules = BTreeSet::new();
         for changed in &python_changed_files {
-            let mut foreign = foreign_of(&changed.path);
+            let mut foreign = foreign_index.excluding(&changed.path);
+            let module_import_unshadowed = import_identity::module_import_unshadowed(
+                &options.root,
+                &changed.path,
+                &workspace_read.sources,
+                &import_roots,
+                extension_names.as_ref(),
+                import_path_admission,
+                &foreign,
+            );
+            if module_import_unshadowed {
+                unshadowed_modules.insert(changed.path.clone());
+            }
+            // Keep the legacy refusal on the shared owner. Only the two
+            // bounded readings receive the separate positive import fact.
+            if import_shadow_for(&changed.path) {
+                foreign.mark_compiled_shadow();
+            }
             // A sole top-level line replacement may be a module constant a
             // sibling module reads through a relative import of one of its
             // readers (#9619); each such module gets its own write view.
@@ -1587,6 +2020,10 @@ impl PythonAdapter {
             }
             changed_count += 1;
             let file_start = findings.len();
+            let identity_context = workspace_read
+                .sources
+                .get(&changed.path)
+                .and_then(|source| PythonIdentityContext::new(source));
             if is_test_file(&changed.path) {
                 continue;
             }
@@ -1603,6 +2040,38 @@ impl PythonAdapter {
                 .sources
                 .get(&changed.path)
                 .and_then(|source| reconstruct_old_source(source, changed));
+            // Never mint an ID from a fragment without source-verified string
+            // boundaries. Paired deletions do not become deleted findings.
+            let paired_old: BTreeSet<usize> = changed
+                .aligned_counterparts()
+                .values()
+                .map(|line| line.line)
+                .collect();
+            let old_identity = old_source.as_deref().and_then(PythonIdentityContext::new);
+            let valid_new = identity_context.as_ref().is_some_and(|context| {
+                changed
+                    .added_lines
+                    .iter()
+                    .all(|line| context.normalize_line(line.line, &line.text).is_some())
+            });
+            let valid_old = changed
+                .removed_lines
+                .iter()
+                .filter(|line| !paired_old.contains(&line.line))
+                .all(|line| {
+                    old_identity.as_ref().is_some_and(|context| {
+                        context.normalize_line(line.line, &line.text).is_some()
+                    })
+                });
+            if !valid_new || !valid_old {
+                // Missing/read-failed files already have their own disclosure.
+                if workspace_read.sources.contains_key(&changed.path)
+                    && !parse_failure_paths.contains(&normalized_path(&changed.path))
+                {
+                    limitations.push(identity_context_limitation(&changed.path)?);
+                }
+                continue;
+            }
             let (old_docstring_ranges, old_import_ranges) = old_source
                 .as_deref()
                 .map(|source| {
@@ -1740,8 +2209,10 @@ impl PythonAdapter {
                         (changed.added_lines.as_slice(), changed.removed_lines.as_slice()),
                         ([added_line], [removed_line]) if added_line.line == removed_line.line
                     ),
+                    module_import_unshadowed: unshadowed_modules.contains(&changed.path),
+                    pytest_import_unshadowed,
                 };
-                if let Some(finding) = classify_change_with_value_origins(
+                if let Some(mut finding) = classify_change_with_value_origins(
                     &changed.path,
                     added.line,
                     &added.text,
@@ -1756,10 +2227,22 @@ impl PythonAdapter {
                     &mut value_origins,
                     Some(&mut related_memo),
                 ) {
-                    findings.push(finding);
+                    let original = finding.probe.clone();
+                    if let Some(normalized) = identity_context
+                        .as_ref()
+                        .and_then(|context| context.normalize_line(added.line, &added.text))
+                    {
+                        reidentify_python_finding(&mut finding, &normalized);
+                        value_origins.rebind_probe(&original, &finding.probe);
+                    }
+                    publish_production_finding(&mut findings, finding);
                 }
             }
-            classify::number_colliding_candidates(&mut findings[file_start..], &mut value_origins);
+            classify::number_colliding_candidates(
+                &mut findings[file_start..],
+                &mut value_origins,
+                identity_context.as_ref(),
+            );
             // A deleted behavior line no added line pairs with is kept as
             // base-side evidence on its owner, as the Rust adapter keeps it
             // (#7587, RIPR-SPEC-0156).
@@ -1781,7 +2264,9 @@ impl PythonAdapter {
                 &mut value_origins,
                 &mut related_memo,
             );
-            findings.extend(deleted);
+            for finding in deleted {
+                publish_production_finding(&mut findings, finding);
+            }
         }
         // Freeing the run's facts takes ~0.3 s on one thread for a large
         // workspace (#10914: pandas, ~23k tests). Nothing in the result
@@ -1856,6 +2341,63 @@ impl PythonAdapter {
 }
 
 #[cfg(test)]
+mod parse_budget_limitation_tests {
+    use super::DomainLanguageId;
+    use super::parse_budget_limitation;
+    use crate::analysis::language::python::source_facts::{
+        PythonSourceFacts, PythonSourceLimitation,
+    };
+    use crate::analysis_outcome::{AnalysisRecoveryKind, MAX_ANALYSIS_LIMITATION_DETAIL_CHARS};
+    use crate::domain::StaticLimitKind;
+    use std::path::PathBuf;
+
+    #[test]
+    fn fixture_refusal_survives_long_repository_relative_path() -> Result<(), String> {
+        let deep = PathBuf::from(format!(
+            "tests/syntax-tests/{}/file.py",
+            "nested/".repeat(120)
+        ));
+        let facts = PythonSourceFacts {
+            file: deep.clone(),
+            language: DomainLanguageId::Python.as_str(),
+            owners: Vec::new(),
+            tests: Vec::new(),
+            fixtures: Vec::new(),
+            fixture_side_effects: Default::default(),
+            substitution_scope: Default::default(),
+            helper_module: Default::default(),
+            conftest_implicit_setup: false,
+            conftest_declares_fixture_or_hook: false,
+            facts: Vec::new(),
+            limitations: vec![PythonSourceLimitation {
+                kind: StaticLimitKind::UnsupportedSyntax,
+                evidence: "parse_budget: depth exceeded".to_string(),
+                missing: String::new(),
+            }],
+            docstring_line_ranges: Vec::new(),
+            import_line_ranges: Vec::new(),
+            assigned_attributes: None,
+            module_attribute_writes: Vec::new(),
+            foreign_lexes: None,
+            star_facts: None,
+        };
+        let limitation = parse_budget_limitation(&deep, &facts)?
+            .ok_or_else(|| "expected a parse-budget limitation".to_string())?;
+        assert_eq!(
+            limitation.recovery.kind,
+            AnalysisRecoveryKind::DeclarePreviewExcludedPatterns
+        );
+        let detail = limitation.bounded_detail.as_deref().unwrap_or_default();
+        assert!(
+            detail.chars().count() <= MAX_ANALYSIS_LIMITATION_DETAIL_CHARS,
+            "detail must stay bounded, got {} chars",
+            detail.chars().count()
+        );
+        Ok(())
+    }
+}
+
+#[cfg(test)]
 mod property_assertion_tests;
 
 #[cfg(test)]
@@ -1863,6 +2405,12 @@ mod unreachable_assertion_tests;
 
 #[cfg(test)]
 mod arm_activation_tests;
+
+#[cfg(test)]
+mod nested_result_tests;
+
+#[cfg(test)]
+mod guard_atoms_tests;
 
 #[cfg(test)]
 mod conditional_expression_tests;
@@ -1873,7 +2421,12 @@ mod assertion_selection_tests;
 #[cfg(test)]
 mod bool_oracle_tests;
 #[cfg(test)]
+mod derived_expectation_tests;
+#[cfg(test)]
 mod known_equality_helpers_tests;
+
+#[cfg(test)]
+mod collection_config_tests;
 
 #[cfg(test)]
 mod conftest_admission_tests;
@@ -1886,6 +2439,9 @@ mod deleted_lines_tests;
 
 #[cfg(test)]
 mod fixtures_tests;
+
+#[cfg(test)]
+mod fixture_substitution_tests;
 
 #[cfg(test)]
 mod import_writer_tests;
@@ -1940,6 +2496,8 @@ mod forwarder_tests;
 #[cfg(test)]
 mod imported_call_operator_tests;
 #[cfg(test)]
+mod may_reach_tests;
+#[cfg(test)]
 mod module_value_tests;
 #[cfg(test)]
 mod new_declaration_tests;
@@ -1960,10 +2518,15 @@ mod route_identity_tests;
 mod row_miss_tests;
 
 #[cfg(test)]
+pub(crate) use row_miss_tests::{python_direct_and_advisory_finding, python_miss_matrix_findings};
+
+#[cfg(test)]
 mod tests;
 
 #[cfg(test)]
 mod loop_walk_tests;
+#[cfg(test)]
+mod unemitted_stage_unknown_tests;
 #[cfg(test)]
 mod verdict_corpus_tests;
 

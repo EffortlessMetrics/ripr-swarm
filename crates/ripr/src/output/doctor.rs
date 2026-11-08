@@ -20,7 +20,7 @@
 //! `root_directory` evidence, skip reasons, and MissingRoot guidance cannot
 //! claim an existing file does not exist (#5101).
 
-use crate::config::{CONFIG_FILE_NAME, RiprConfig, load_for_root};
+use crate::config::{CONFIG_FILE_NAME, ConfigValidationMachine, RiprConfig, load_for_root_failure};
 use crate::domain::NextActionDoctorRecovery;
 use crate::domain::{
     CanonicalNextActionV1, LanguageId, LanguageStatus, NextActionCurrentness, NextActionDiffSource,
@@ -33,6 +33,7 @@ use crate::output::path::{
 };
 use crate::process_owner::OwnedProcess;
 use serde::Serialize;
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -603,6 +604,11 @@ pub(crate) struct DoctorCheck {
     /// Human-readable evidence (e.g. "Cargo.toml found at /workspace").
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) evidence: Option<String>,
+    /// Structured semantic validation coordinates when the `config` check fails
+    /// on a typed `ConfigDiagnostic` (#2624). Omitted for structural parse
+    /// failures and for non-config checks.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) validation: Option<ConfigValidationMachine>,
     /// How long the check's own computation took, in milliseconds
     /// (additive, #8540). Measured at the production site; `None` for
     /// skipped checks and for checks produced without a timer, so an absent
@@ -633,6 +639,16 @@ pub(crate) struct DoctorDetectedLanguage {
     /// Whether the effective configuration enables this language, `None` when
     /// the configuration could not be loaded.
     pub(crate) enabled: Option<bool>,
+    /// The shared availability state (`LanguageAvailabilityReport`, #2961):
+    /// closed vocabulary such as `detected_compiled_disabled` or
+    /// `detected_not_compiled`. It states whether the language is available
+    /// for analysis, never that an adapter ran or that the support tier moved.
+    /// `null` when the configuration could not be loaded: enablement is then
+    /// unknown (`enabled: null`), and a definite state would contradict it.
+    pub(crate) availability_state: Option<&'static str>,
+    /// Ordered remediation steps for that state from the same report; empty
+    /// when none applies.
+    pub(crate) remediation: Vec<String>,
 }
 
 /// Source in a language no ripr adapter reads, counted per language.
@@ -1057,8 +1073,24 @@ impl DoctorReport {
             name: name.to_string(),
             status: status.into(),
             evidence,
+            validation: None,
             elapsed_ms: None,
         });
+    }
+
+    pub(crate) fn attach_check_validation(
+        &mut self,
+        name: &str,
+        validation: ConfigValidationMachine,
+    ) {
+        if let Some(check) = self
+            .checks
+            .iter_mut()
+            .rev()
+            .find(|check| check.name == name)
+        {
+            check.validation = Some(validation);
+        }
     }
 
     /// Record how long the most recently added check with `name` took.
@@ -1103,6 +1135,7 @@ impl DoctorReport {
             name: name.to_string(),
             status: DoctorCheckStatus::Skipped,
             evidence: Some(evidence),
+            validation: None,
             elapsed_ms: None,
         });
     }
@@ -1112,6 +1145,7 @@ impl DoctorReport {
             name: name.to_string(),
             status: DoctorCheckStatus::Advisory,
             evidence: Some(evidence),
+            validation: None,
             elapsed_ms: None,
         });
     }
@@ -1128,6 +1162,7 @@ impl DoctorReport {
                 DoctorCheckStatus::Advisory
             },
             evidence: Some(evidence),
+            validation: None,
             elapsed_ms: None,
         });
     }
@@ -1231,23 +1266,6 @@ impl DoctorReport {
         }
         report
     }
-}
-
-/// Strip a `toml` parse error down to its first line.
-///
-/// `toml::de::Error`'s `Display` embeds the offending source excerpt and a
-/// caret pointing at the failing column (e.g. `"...\n  |\n1 | [invalid\n  |
-/// ^...\n"`). Echoing that excerpt into `ripr doctor --json` would leak
-/// `ripr.toml` source text — which may contain repository-specific paths or
-/// other content the caller did not intend to publish — into machine-readable
-/// output that gets captured in CI logs, PR comments, and agent context
-/// (RIPR-SPEC-0007, P2). The first line alone (path, "invalid ripr.toml",
-/// parse location) is enough to act on and contains no source text, so
-/// doctor's JSON evidence keeps only that line.
-/// The misplaced-key hint (#4534) is kept too: it names only a key and a
-/// table from a fixed allowlist, never file content.
-fn redact_config_parse_error(error: &str) -> String {
-    crate::config::config_error_summary(error)
 }
 
 /// Result of evaluating the doctor core checks, plus the raw config load
@@ -1444,6 +1462,7 @@ pub(crate) fn canonical_next_action_for_doctor(
         check_item: None,
         card_item: None,
         item_candidates: Vec::new(),
+        item_candidate_labels: Vec::new(),
         attempts: Vec::new(),
         currentness: NextActionCurrentness {
             head_expected: None,
@@ -1645,7 +1664,9 @@ pub(crate) fn evaluate_doctor_core_with_config_for_profile(
     detected: &[LanguageId],
     profile: DoctorProfile,
 ) -> DoctorCoreEvaluation {
-    evaluate_doctor_core_with_probe_for_profile(root, detected, profile, doctor_tool_check_for_root)
+    evaluate_doctor_core_with_probe_for_profile(root, detected, profile, |tool, root| {
+        doctor_tool_check_for_root(tool, root, profile)
+    })
 }
 
 #[cfg(test)]
@@ -1894,12 +1915,16 @@ fn evaluate_doctor_core_with_probe_for_profile(
     // #8540: time each check's own computation where it runs, so the
     // first-run cost is attributable. Skipped checks keep no measurement.
     let config_started = std::time::Instant::now();
-    let config = load_for_root(root);
+    let config = load_for_root_failure(root);
     let config_elapsed = config_started.elapsed();
     let located_started = std::time::Instant::now();
     let located = locate_cargo_toml(root);
     let located_elapsed = located_started.elapsed();
-    let rust_scope = rust_toolchain_scope(&config, detected, located.is_some());
+    let config_human: Result<RiprConfig, String> = match &config {
+        Ok(loaded) => Ok(loaded.clone()),
+        Err(failure) => Err(failure.human_display(root, cfg!(windows))),
+    };
+    let rust_scope = rust_toolchain_scope(&config_human, detected, located.is_some());
     let root_started = std::time::Instant::now();
     let root_path = DoctorRootPath::classify(root);
     let (root_status, root_evidence) = root_path.root_directory_evidence(root);
@@ -1993,11 +2018,16 @@ fn evaluate_doctor_core_with_probe_for_profile(
                 None => format!("{CONFIG_FILE_NAME} not found; using built-in defaults"),
             }),
         ),
-        Err(error) => report.add_check(
-            "config",
-            DoctorStatus::Fail,
-            Some(redact_config_parse_error(error)),
-        ),
+        Err(failure) => {
+            report.add_check(
+                "config",
+                DoctorStatus::Fail,
+                Some(failure.human_summary_for_machine()),
+            );
+            if let Some(validation) = failure.semantic_validation() {
+                report.attach_check_validation("config", validation);
+            }
+        }
     }
     report.mark_check_elapsed("config", config_elapsed);
     for tool in DOCTOR_TOOLS {
@@ -2049,7 +2079,10 @@ fn evaluate_doctor_core_with_probe_for_profile(
             .map(|language| language.as_str().to_string())
             .collect();
     }
-    DoctorCoreEvaluation { report, config }
+    DoctorCoreEvaluation {
+        report,
+        config: config_human,
+    }
 }
 
 /// Probe a single tool's availability via `<tool> --version`.
@@ -2066,15 +2099,18 @@ pub(crate) fn doctor_tool_check_isolated(tool: &str) -> (DoctorStatus, String) {
     doctor_tool_check_with_command(tool, command, DOCTOR_TOOL_TIMEOUT, None).into_public()
 }
 
-fn doctor_tool_command(tool: &str) -> std::process::Command {
+fn doctor_tool_command(tool: impl AsRef<OsStr>) -> std::process::Command {
     // Windows: std's program lookup for a bare `pnpm` only resolves
     // `pnpm.exe` on PATH, so a tool installed as a batch shim (npm/corepack
     // install `pnpm.cmd` and `yarn.cmd`) would be misreported as not
     // installed. When no `.exe` exists, run the resolved shim by full path;
     // std launches `.cmd`/`.bat` through cmd.exe with its batch-argument
     // escaping. Other platforms keep the plain tool name unchanged.
-    let mut program = std::ffi::OsString::from(tool);
-    if cfg!(windows) {
+    let tool = tool.as_ref();
+    let mut program = tool.to_os_string();
+    if cfg!(windows)
+        && let Some(tool) = tool.to_str()
+    {
         let path = std::env::var_os("PATH").unwrap_or_default();
         let pathext = std::env::var("PATHEXT").ok();
         let dirs: Vec<std::path::PathBuf> = std::env::split_paths(&path).collect();
@@ -2130,7 +2166,11 @@ pub(crate) fn doctor_tool_check(tool: &str) -> (DoctorStatus, String) {
     doctor_tool_check_with_timeout(tool, DOCTOR_TOOL_TIMEOUT)
 }
 
-fn doctor_tool_check_for_root(tool: &str, root: &Path) -> (DoctorStatus, String) {
+fn doctor_tool_check_for_root(
+    tool: &str,
+    root: &Path,
+    profile: DoctorProfile,
+) -> (DoctorStatus, String) {
     if RUST_TOOLCHAIN_TOOLS.contains(&tool)
         && let Some(file) = crate::config::repository_toolchain_path_pin(root)
     {
@@ -2139,12 +2179,69 @@ fn doctor_tool_check_for_root(tool: &str, root: &Path) -> (DoctorStatus, String)
             crate::config::toolchain_path_pin_refusal(&file),
         );
     }
+    if tool == "rustc" && profile == DoctorProfile::SourceBuild {
+        let rustc = std::env::var_os("RUSTC");
+        let cargo_build_rustc = std::env::var_os("CARGO_BUILD_RUSTC");
+        let (command, selector) = match source_build_rustc_command(
+            root,
+            rustc.as_deref(),
+            cargo_build_rustc.as_deref(),
+        ) {
+            Ok(command) => command,
+            Err(evidence) => return (DoctorStatus::Fail, evidence),
+        };
+        let mut result =
+            doctor_tool_check_with_command(tool, command, DOCTOR_TOOL_TIMEOUT, Some(root));
+        if let Some(selector) = selector {
+            if result.evidence == rust_toolchain_missing_with_install_fix(tool) {
+                result.evidence = rust_toolchain_missing_state(tool);
+            }
+            result.evidence = format!("{selector} compiler: {}", result.evidence);
+            if result.status == DoctorStatus::Fail {
+                result
+                    .evidence
+                    .push_str(&format!("; fix or unset {selector}"));
+            }
+        }
+        return result.into_public();
+    }
     doctor_tool_check_with_timeout_result_at(
         tool,
         DOCTOR_TOOL_TIMEOUT,
         doctor_tool_probe_dir(tool, root),
     )
     .into_public()
+}
+
+/// Cargo's explicit compiler precedence is `RUSTC`, then `CARGO_BUILD_RUSTC`.
+/// Resolve a relative path against the selected build root before the child
+/// changes directory. A bare executable name keeps `PATH` lookup. These are
+/// literal program names, never shell commands; Cargo config and wrappers
+/// remain outside this prerequisite check.
+fn source_build_rustc_command(
+    root: &Path,
+    rustc: Option<&OsStr>,
+    cargo_build_rustc: Option<&OsStr>,
+) -> Result<(std::process::Command, Option<&'static str>), String> {
+    let selected = rustc
+        .map(|program| ("RUSTC", program))
+        .or_else(|| cargo_build_rustc.map(|program| ("CARGO_BUILD_RUSTC", program)));
+    let Some((selector, program)) = selected else {
+        return Ok((doctor_tool_command("rustc"), None));
+    };
+    let program = program
+        .to_str()
+        .filter(|program| !program.is_empty())
+        .ok_or_else(|| {
+            format!("{selector} must name one nonempty Unicode executable; fix or unset {selector}")
+        })?;
+    let program = if program.contains(['/', '\\']) {
+        std::path::absolute(root.join(program))
+            .map_err(|error| format!("cannot resolve {selector} from the selected root: {error}"))?
+    } else {
+        PathBuf::from(program)
+    };
+    Ok((doctor_tool_command(program), Some(selector)))
 }
 
 /// The directory a core tool probe runs in. `cargo` and `rustc` resolve
@@ -3209,9 +3306,176 @@ mod tests {
 
     #[test]
     fn rustc_doctor_probe_from_selected_root_applies_the_version_gate() {
-        let (status, evidence) = doctor_tool_check_for_root("rustc", &std::env::temp_dir());
+        let (status, evidence) =
+            doctor_tool_check_for_root("rustc", &std::env::temp_dir(), DoctorProfile::Analysis);
         assert_eq!(status, DoctorStatus::Pass, "{evidence}");
         assert!(evidence.starts_with("rustc "), "{evidence}");
+    }
+
+    #[cfg(unix)]
+    fn probe_source_build_compiler(
+        root: &Path,
+        path: &Path,
+        rustc: Option<&OsStr>,
+        cargo_build_rustc: Option<&OsStr>,
+    ) -> Result<DoctorToolCheckResult, String> {
+        let (command, _) = source_build_rustc_command(root, rustc, cargo_build_rustc)?;
+        assert!(command.get_args().next().is_none());
+        let program = command.get_program().to_os_string();
+        Ok(probe_published_tool_with_command(
+            "rustc",
+            || {
+                let mut command = doctor_tool_command(&program);
+                command.env("PATH", path).env("RUSTUP_AUTO_INSTALL", "1");
+                command
+            },
+            SHIM_PROBE_TEST_CEILING,
+            Some(root),
+        ))
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn source_build_compiler_overrides_precede_path_without_shell_splitting() -> Result<(), String>
+    {
+        let dir = unique_test_dir("compiler-selection");
+        let root = dir.join("selected root");
+        let path = dir.join("path tools");
+        let sdk = root.join("sdk");
+        std::fs::create_dir_all(&sdk).map_err(|error| error.to_string())?;
+        std::fs::create_dir_all(&path).map_err(|error| error.to_string())?;
+        let script = |identity: &str| {
+            format!(
+                "#!/bin/sh\n[ \"$#\" -eq 1 ] && [ \"$1\" = --version ] && [ \"$RUSTUP_AUTO_INSTALL\" = 0 ] || exit 17\nprintf 'rustc 1.95.0 ({identity}; %s)\\n' \"${{PWD##*/}}\"\n"
+            )
+        };
+        publish_doctor_test_tool(&path, "rustc", &script("PATH"))?;
+        publish_doctor_test_tool(&path, "custom-rustc", &script("bare-name"))?;
+        publish_doctor_test_tool(&sdk, "rustc", &script("relative-path"))?;
+        let explicit = publish_doctor_test_tool(&dir, "explicit compiler", &script("RUSTC"))?;
+        let cargo = publish_doctor_test_tool(&dir, "cargo compiler", &script("CARGO_BUILD_RUSTC"))?;
+        let bare = OsStr::new("custom-rustc");
+        let relative = OsStr::new("./sdk/rustc");
+        let cases = [
+            (None, None, "PATH"),
+            (Some(bare), None, "bare-name"),
+            (Some(relative), None, "relative-path"),
+            (Some(explicit.as_os_str()), None, "RUSTC"),
+            (None, Some(cargo.as_os_str()), "CARGO_BUILD_RUSTC"),
+            (Some(explicit.as_os_str()), Some(cargo.as_os_str()), "RUSTC"),
+            (None, Some(bare), "bare-name"),
+            (None, Some(relative), "relative-path"),
+        ];
+        let results: Result<Vec<_>, _> = cases
+            .iter()
+            .map(|(rustc, cargo, identity)| {
+                probe_source_build_compiler(&root, &path, *rustc, *cargo)
+                    .map(|result| (*identity, result))
+            })
+            .collect();
+        let _ = std::fs::remove_dir_all(&dir);
+        for (identity, result) in results? {
+            assert_eq!(result.status, DoctorStatus::Pass, "{}", result.evidence);
+            let expected = format!("rustc 1.95.0 ({identity}; selected root)");
+            assert_eq!(result.evidence, expected);
+        }
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn source_build_compiler_failure_never_borrows_a_healthy_fallback() -> Result<(), String> {
+        let dir = unique_test_dir("compiler-failure");
+        std::fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
+        let healthy = publish_doctor_test_tool(
+            &dir,
+            "rustc",
+            "#!/bin/sh\nprintf 'rustc 1.95.0 (healthy)\\n'\n",
+        )?;
+        let old = publish_doctor_test_tool(
+            &dir,
+            "old-compiler",
+            &format!("#!/bin/sh\nprintf '{}\\n'\n", below_minimum_rustc_output()?),
+        )?;
+        let malformed = publish_doctor_test_tool(
+            &dir,
+            "malformed-compiler",
+            "#!/bin/sh\nprintf 'not a Rust compiler\\n'\n",
+        )?;
+        let failing = publish_doctor_test_tool(
+            &dir,
+            "failing-compiler",
+            "#!/bin/sh\nprintf 'error: selected compiler failed\\n' >&2\nexit 7\n",
+        )?;
+        let missing = dir.join("missing-compiler");
+        let healthy_result = probe_source_build_compiler(&dir, &dir, None, None)?;
+        let cases = [
+            (&missing, "not available"),
+            (&old, "below ripr's build minimum"),
+            (&malformed, "not a Rust compiler"),
+            (&failing, "selected compiler failed"),
+        ];
+        let results: Result<Vec<_>, _> = cases
+            .iter()
+            .map(|(compiler, evidence)| {
+                probe_source_build_compiler(
+                    &dir,
+                    &dir,
+                    Some(compiler.as_os_str()),
+                    Some(healthy.as_os_str()),
+                )
+                .map(|result| (*evidence, result))
+            })
+            .collect();
+        let cargo_missing =
+            probe_source_build_compiler(&dir, &dir, None, Some(missing.as_os_str()));
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(healthy_result.status, DoctorStatus::Pass);
+        for (evidence, result) in results? {
+            assert_eq!(result.status, DoctorStatus::Fail, "{}", result.evidence);
+            assert!(result.evidence.contains(evidence), "{}", result.evidence);
+            assert!(!result.evidence.contains("healthy"), "{}", result.evidence);
+        }
+        assert_eq!(cargo_missing?.status, DoctorStatus::Fail);
+        Ok(())
+    }
+
+    #[test]
+    fn source_build_compiler_empty_override_is_an_error_before_fallback() {
+        for (rustc, cargo, selector) in [
+            (Some(OsStr::new("")), Some(OsStr::new("rustc")), "RUSTC"),
+            (None, Some(OsStr::new("")), "CARGO_BUILD_RUSTC"),
+        ] {
+            let result = source_build_rustc_command(Path::new("."), rustc, cargo);
+            assert!(
+                matches!(
+                    result,
+                    Err(ref error) if error.contains(selector) && error.contains("nonempty")
+                ),
+                "{result:?}"
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn source_build_compiler_non_unicode_override_is_disclosed() {
+        use std::os::unix::ffi::OsStrExt;
+
+        let invalid = OsStr::from_bytes(b"rustc-\xff");
+        for (rustc, cargo, selector) in [
+            (Some(invalid), Some(OsStr::new("rustc")), "RUSTC"),
+            (None, Some(invalid), "CARGO_BUILD_RUSTC"),
+        ] {
+            let result = source_build_rustc_command(Path::new("."), rustc, cargo);
+            assert!(
+                matches!(
+                    result,
+                    Err(ref error) if error.contains(selector) && error.contains("Unicode")
+                ),
+                "{result:?}"
+            );
+        }
     }
 
     #[cfg(unix)]
@@ -4862,6 +5126,8 @@ mod tests {
                 status: LanguageStatus::Preview,
                 adapter_available: true,
                 enabled: Some(false),
+                availability_state: Some("detected_compiled_disabled"),
+                remediation: vec!["enable `python` under `[languages]`".to_string()],
             }],
             unanalyzed_source_languages: vec![DoctorUnanalyzedLanguage {
                 language: "Go".to_string(),
@@ -4973,6 +5239,42 @@ mod tests {
             evidence.to_lowercase().contains("line"),
             "evidence must still point at a parse location: {evidence:?}"
         );
+        assert!(
+            config_check.validation.is_none(),
+            "structural parse failures must not emit typed validation: {:?}",
+            config_check.validation
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn config_check_json_carries_semantic_validation_coordinates() -> Result<(), String> {
+        let dir = unique_test_dir("semantic-validation");
+        std::fs::create_dir_all(&dir).map_err(|err| format!("create temp dir: {err}"))?;
+        std::fs::write(
+            dir.join(CONFIG_FILE_NAME),
+            "[analysis]\nmode = \"bad-mode\"\n",
+        )
+        .map_err(|err| format!("write invalid config: {err}"))?;
+
+        let report = evaluate_doctor_core(&dir, &[]);
+        let json = serde_json::to_string(&report).map_err(|err| format!("serialize: {err}"))?;
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let document: serde_json::Value =
+            serde_json::from_str(&json).map_err(|err| format!("parse JSON: {err}"))?;
+        let config_check = document["checks"]
+            .as_array()
+            .and_then(|checks| checks.iter().find(|check| check["name"] == "config"))
+            .ok_or_else(|| format!("missing config check in JSON: {document}"))?;
+        let validation = config_check
+            .get("validation")
+            .ok_or_else(|| format!("missing validation in JSON: {document}"))?;
+        assert_eq!(validation["config_path"], "analysis.mode");
+        assert_eq!(validation["location_status"], "exact");
+        assert_eq!(validation["start_line"], 2);
+        assert_eq!(validation["start_column"], 8);
+        assert_eq!(validation["invalid_value"], "\"bad-mode\"");
         Ok(())
     }
 
@@ -5071,9 +5373,9 @@ mod tests {
             return Err("staged tool remained after atomic publication".to_string());
         }
         let shim_text = shim.to_str().ok_or("shim path is not utf-8")?;
-        // #2441: this test publishes and immediately execs, exactly like its
-        // sibling below, so it needs the same bounded launch retry. Without it
-        // the test failed intermittently on CI with `ExecutableFileBusy` while
+        // #2441: this test publishes and immediately execs, so it needs the
+        // bounded launch retry. Without it the test failed intermittently on
+        // CI with `ExecutableFileBusy` while
         // proving nothing about the publication contract it exists to check.
         let (status, evidence) = probe_published_tool(shim_text, Duration::from_secs(1));
         std::fs::remove_dir_all(&dir).map_err(|err| format!("remove dir: {err}"))?;
@@ -5088,10 +5390,10 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn doctor_tool_check_times_out_a_hanging_tool_100_times() -> Result<(), String> {
-        // #2183 review: a shim that blocks forever must not hang doctor;
+        // #2183 review: a hanging tool must not hang doctor;
         // the probe terminates it at the deadline and names the timeout. Run
-        // the materialization and probe repeatedly to catch visibility and
-        // cleanup races under full-suite parallelism.
+        // the probe repeatedly to catch deadline and cleanup races under
+        // full-suite parallelism.
         // Ten threads of ten attempts: the same 100 probes, but each waits out
         // its 250ms deadline concurrently, so the race window is wider and the
         // test takes about a tenth of the wall time.
@@ -5120,32 +5422,30 @@ mod tests {
 
     #[cfg(unix)]
     fn hanging_tool_attempt(attempt: usize) -> Result<(), String> {
-        let dir = unique_test_dir("timeout");
-        std::fs::create_dir(&dir).map_err(|err| format!("create dir: {err}"))?;
         let sleep = ["/usr/bin/sleep", "/bin/sleep"]
             .into_iter()
             .find(|candidate| std::path::Path::new(candidate).is_file())
             .ok_or("no portable Unix sleep utility found")?;
-        let script = format!("#!/bin/sh\nexec {sleep} 60\n");
-        let shim = publish_doctor_test_tool(&dir, "ripr-hanging-probe-tool", &script)?;
+        let shell = "/bin/sh";
+        let mut command = doctor_tool_command(shell);
+        command.args(["-c", &format!("exec {sleep} 60")]);
 
         let start = std::time::Instant::now();
-        let shim_text = shim.to_str().ok_or("shim path is not utf-8")?;
-        // #2242/#2378: publish the executable pathname only after the
-        // writer is closed. The bounded retry for independent host-level
-        // exec contention now lives in `probe_published_tool`, shared with
-        // the atomic-publication test (#2441); a real timeout result is
-        // still never retried.
-        let (status, evidence) = probe_published_tool(shim_text, Duration::from_millis(250));
+        // #13305: execute a stable interpreter instead of a newly written
+        // tool. The fixed script replaces the shell with sleep, so doctor
+        // still owns the hanging process. Its appended --version is shell
+        // argument zero, not an option passed to sleep.
+        let (status, evidence) =
+            doctor_tool_check_with_command(shell, command, Duration::from_millis(250), None)
+                .into_public();
         let elapsed = start.elapsed();
 
-        std::fs::remove_dir_all(&dir).map_err(|err| format!("remove dir: {err}"))?;
         if status != DoctorStatus::Fail {
             return Err(format!(
                 "attempt {attempt}: hanging tool unexpectedly passed"
             ));
         }
-        if evidence != format!("{shim_text} timed out after 250ms") {
+        if evidence != format!("{shell} timed out after 250ms") {
             return Err(format!(
                 "attempt {attempt}: expected a 250ms timeout, got: {evidence}"
             ));

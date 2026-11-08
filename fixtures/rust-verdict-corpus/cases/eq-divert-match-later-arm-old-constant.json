@@ -6,7 +6,7 @@
     "file": "src/lib.rs",
     "line": 53
   },
-  "edit_kind": "behavior_change",
+  "edit_kind": "behavior_preserving_rewrite",
   "behavior_family": "predicate_boundary",
   "test_shape": "equality_row_diverted_before_the_changed_line",
   "hard_case": null,
@@ -17,11 +17,11 @@
     "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
     "mutants": [
       {
-        "replacement": "x if x == 6 => 1,",
-        "mutated_line": null,
+        "replacement": "x if x == 2 => 1,",
+        "mutated_line": "x if x == 2 => 1,",
         "outcome": "tests_passed",
         "failing_test": null,
-        "equivalence_review": "not equivalent: the edit changes which input takes the branch, but no executed assertion observes it"
+        "equivalence_review": "not equivalent: arm_old(2) yields 1 instead of 0"
       }
     ]
   },
@@ -32,7 +32,7 @@
       "limited"
     ]
   },
-  "reasoning": "The only row, 5, takes the earlier arm (`x if x > 3`) and returns 9, so the `x if x == 5` guard is never reached for it: moving its constant to 6 changes nothing the test sees. A row that an earlier match arm handles must not credit the swap.",
+  "reasoning": "The only row, 5, takes the earlier arm (`x if x > 3`) and returns 9, so the `x if x == 5` guard is never reached for it: moving its constant to 6 changes nothing the test sees. A row that an earlier match arm handles must not credit the swap. The edit itself is behavior-preserving: the compared constant (5 or 6) is shadowed by the earlier branch for every input, so the truth comes from a reachable mutant of the same line (constant 2), which the single diverted row cannot notice.",
   "labeling_observation": {
     "ripr_commit": "fd684cecd",
     "full_checkout_verdict": "limited",

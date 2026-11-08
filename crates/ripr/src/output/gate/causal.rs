@@ -25,31 +25,35 @@ impl CausalDeltaAuthority {
         let text = match fs::read_to_string(&path) {
             Ok(text) => text,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-            Err(error) => return Err(format!("read canonical delta failed: {error}")),
+            Err(error) => {
+                return Err(format!(
+                    "read canonical delta failed: {error}; check that the path exists and is readable, then rerun"
+                ));
+            }
         };
         let value: Value = serde_json::from_str(&text)
-            .map_err(|error| format!("parse canonical delta failed: {error}"))?;
+            .map_err(|error| format!("parse canonical delta failed: {error}; regenerate the input with the command that wrote it, then rerun"))?;
         let schema_version = value
             .get("schema_version")
             .and_then(Value::as_str)
-            .ok_or_else(|| "canonical delta missing schema_version".to_string())?;
+            .ok_or_else(|| "canonical delta missing schema_version; regenerate the input with the command that wrote it, then rerun".to_string())?;
         if schema_version != "0.1" {
             return Err(format!(
-                "unsupported canonical delta schema_version `{schema_version}`"
+                "unsupported canonical delta schema_version `{schema_version}`; regenerate the input with the command that wrote it, then rerun"
             ));
         }
         let coverage = value
             .get("coverage")
-            .ok_or_else(|| "canonical delta missing coverage".to_string())?;
+            .ok_or_else(|| "canonical delta missing coverage; regenerate the input with the command that wrote it, then rerun".to_string())?;
         let mut ambiguous_items = coverage
             .get("ambiguous_items")
             .and_then(Value::as_u64)
-            .ok_or_else(|| "canonical delta coverage missing ambiguous_items".to_string())?
+            .ok_or_else(|| "canonical delta coverage missing ambiguous_items; regenerate the input with the command that wrote it, then rerun".to_string())?
             as usize;
         let mut unknown_items = coverage
             .get("unknown_items")
             .and_then(Value::as_u64)
-            .ok_or_else(|| "canonical delta coverage missing unknown_items".to_string())?
+            .ok_or_else(|| "canonical delta coverage missing unknown_items; regenerate the input with the command that wrote it, then rerun".to_string())?
             as usize;
         let producer_claimed_complete = coverage
             .get("complete")
@@ -59,7 +63,7 @@ impl CausalDeltaAuthority {
         for delta in value
             .get("deltas")
             .and_then(Value::as_array)
-            .ok_or_else(|| "canonical delta missing deltas array".to_string())?
+            .ok_or_else(|| "canonical delta missing deltas array; regenerate the input with the command that wrote it, then rerun".to_string())?
         {
             let Some(gap_id) = delta
                 .get("canonical_gap_id")

@@ -190,8 +190,19 @@ exactly one transition to `selected_single_root`.
   not implementation scope owned by this spec.
 - Symlink canonicalization of root identity and any output schema version
   bump.
-- Status payload shape changes; root state disclosure reuses the existing
-  `root_state` / `candidate_roots` / `root_detail` fields.
+- Unbounded status payload growth (#4483 extends the existing
+  `root_state` / `candidate_roots` / `root_detail` fields with bounded
+  list projection and `candidate_roots_omitted_count` when disclosure
+  exceeds reviewed byte/count limits; shape remains the same fields).
+
+### Bounded status disclosure (#4483)
+
+When ambiguous or blocked root states name more candidate folders than the
+reviewed disclosure budget allows, `ripr/analysisStatus` lists a prefix of
+`candidate_roots` in stable path order and sets
+`candidate_roots_omitted_count` to the number of paths not listed. Log and
+showMessage disclosures use the same bounded list helpers and name omitted
+counts explicitly.
 
 ## Acceptance Examples
 

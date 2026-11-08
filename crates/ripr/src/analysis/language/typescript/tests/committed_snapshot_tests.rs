@@ -2112,3 +2112,213 @@ fn plain_inline_projects_keep_the_credit_and_every_other_spelling_refuses() -> R
     }
     Ok(())
 }
+
+/// #9940: a spread of an unread base or a variable-computed key on the root
+/// config object may carry a snapshot override this walk never read, so the
+/// reading stays at medium. A plain config, an array spread, a nested-object
+/// spread and a literal computed key keep the credit.
+#[test]
+fn root_spread_of_unread_base_and_computed_key_refuse_but_plain_configs_keep_credit()
+-> Result<(), String> {
+    let jest = jest_snap(&[("price 1", "140")]);
+    for (text, expected) in [
+        (
+            "module.exports = { testEnvironment: \"node\" };",
+            OracleStrength::Strong,
+        ),
+        (
+            "module.exports = { moduleFileExtensions: [...defaults.moduleFileExtensions, \"ts\"] };",
+            OracleStrength::Strong,
+        ),
+        (
+            "module.exports = { transform: { ...tsJestTransform }, testEnvironment: \"node\" };",
+            OracleStrength::Strong,
+        ),
+        (
+            "module.exports = { ...{ ...base } };",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = async () => { const base = await load(); return { ...base, a: 1 }; };",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = function () { return { ...base }; };",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = { re: /\\{/, ...base };",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = { a: /'/, ...base, b: /'/ };",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = { maxWorkers: cpus / 2, testEnvironment: \"node\" };",
+            OracleStrength::Strong,
+        ),
+        (
+            "module.exports = { [\"testEnvironment\"]: \"node\" };",
+            OracleStrength::Strong,
+        ),
+        (
+            "module.exports = { ...require(\"./jest.base\"), testEnvironment: \"node\" };",
+            OracleStrength::Medium,
+        ),
+        (
+            "const base = require(\"./jest.base\");\nmodule.exports = { ...base };",
+            OracleStrength::Medium,
+        ),
+        (
+            "export default defineConfig({ ...baseConfig, test: { globals: true } });",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = { testEnvironment: \"node\", [name]: \"x\" };",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = { re: /'/, ...base };",
+            OracleStrength::Medium,
+        ),
+    ] {
+        assert_eq!(
+            strengths(
+                "snap-root-inheritance",
+                PRICE_TEST,
+                &[(SNAP_PATH, &jest), ("jest.config.js", text)]
+            )?,
+            vec![expected],
+            "{text}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn block_commented_snapshot_entry_does_not_promote() -> Result<(), String> {
+    let live = jest_snap(&[("price 1", "140")]);
+    assert_eq!(
+        strengths("snap-block-live", PRICE_TEST, &[(SNAP_PATH, &live)])?,
+        vec![OracleStrength::Strong]
+    );
+    let commented = format!("{JEST_HEADER}/*\n{}*/\n", entry("price 1", "140"));
+    assert_eq!(
+        strengths("snap-block-comment", PRICE_TEST, &[(SNAP_PATH, &commented)])?,
+        vec![OracleStrength::Medium]
+    );
+    Ok(())
+}
+
+#[test]
+fn snapshot_entries_ignore_non_code_and_keep_live_counters() -> Result<(), String> {
+    let live = entry("price 1", "140");
+    let fake_one = entry("price 1", "fake");
+    let fake_two = entry("price 2", "fake");
+    let cases = [
+        (
+            format!("{JEST_HEADER}/*\n{fake_one}*/\n"),
+            OracleStrength::Medium,
+        ),
+        (
+            format!("{JEST_HEADER}const value = \"start\\\nexports[`price 1`] = fake\\\nend\";\n"),
+            OracleStrength::Medium,
+        ),
+        (
+            format!("{JEST_HEADER}{live}/*\n{fake_two}*/\n"),
+            OracleStrength::Strong,
+        ),
+        (
+            format!("{JEST_HEADER}exports[`other 1`] = `/* \\` \\${{x}} */`;\n{live}"),
+            OracleStrength::Strong,
+        ),
+        (
+            format!("{JEST_HEADER}{live}if (true) {{\n{fake_one}}}\n"),
+            OracleStrength::Medium,
+        ),
+        (
+            format!("{JEST_HEADER}{live}if (true) {{\n{fake_two}}}\n"),
+            OracleStrength::Medium,
+        ),
+        (
+            format!("{JEST_HEADER}{live}void (\n{fake_two});\n"),
+            OracleStrength::Medium,
+        ),
+        (format!("{JEST_HEADER}{live}{live}"), OracleStrength::Medium),
+        (
+            format!("{JEST_HEADER}{live}{fake_two}"),
+            OracleStrength::Medium,
+        ),
+        (
+            format!("{JEST_HEADER}{live}/* unterminated"),
+            OracleStrength::Medium,
+        ),
+    ];
+    for (snap, expected) in cases {
+        assert_eq!(
+            strengths("snap-lexical", PRICE_TEST, &[(SNAP_PATH, &snap)])?,
+            vec![expected],
+            "{snap}"
+        );
+    }
+    let hinted = "test(\"price\", () => { expect(price(150)).toMatchSnapshot(\"cap\"); });\n";
+    let jest = jest_snap(&[("price: cap 1", "140")]);
+    assert_eq!(
+        strengths("snap-hint-live", hinted, &[(SNAP_PATH, &jest)])?,
+        vec![OracleStrength::Strong]
+    );
+    let vitest = format!("{VITEST_HEADER}{live}");
+    assert_eq!(
+        strengths(
+            "snap-vitest-live",
+            PRICE_TEST,
+            &[
+                (SNAP_PATH, &vitest),
+                ("vitest.config.ts", "export default { test: {} };")
+            ]
+        )?,
+        vec![OracleStrength::Strong]
+    );
+    Ok(())
+}
+
+#[test]
+fn adapter_snapshot_comment_does_not_expose_changed_owner() -> Result<(), String> {
+    fn classify(label: &str, snap: &str) -> Result<ExposureClass, String> {
+        let root = ts_unique_tempdir(label)?;
+        ts_write_file(&root.join(".git/HEAD"), "x\n")?;
+        ts_write_file(
+            &root.join("src/price.ts"),
+            "export function price(n: number): number {\n  return n + 1;\n}\n",
+        )?;
+        ts_write_file(&root.join("test/price.test.ts"), PRICE_TEST)?;
+        ts_write_file(&root.join(SNAP_PATH), snap)?;
+        let result = TypeScriptAdapter.analyze_diff(
+            &ts_analysis_options(root.clone()),
+            &OraclePolicy::default(),
+            &[changed_with_lines(
+                "src/price.ts",
+                &[(2, "  return n + 1;")],
+            )],
+        );
+        let _ = std::fs::remove_dir_all(&root);
+        result?
+            .findings
+            .into_iter()
+            .find(|finding| finding.probe.location.line == 2)
+            .map(|finding| finding.class)
+            .ok_or_else(|| format!("{label}: missing changed-owner finding"))
+    }
+    let live = jest_snap(&[("price 1", "140")]);
+    let commented = format!("{JEST_HEADER}/*\n{}*/\n", entry("price 1", "140"));
+    assert_eq!(
+        classify("adapter-snap-live", &live)?,
+        ExposureClass::Exposed
+    );
+    assert_eq!(
+        classify("adapter-snap-comment", &commented)?,
+        ExposureClass::WeaklyExposed
+    );
+    Ok(())
+}

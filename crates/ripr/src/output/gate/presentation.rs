@@ -52,7 +52,7 @@ pub(crate) fn render_gate_decision_json(report: &GateDecisionReport) -> Result<S
         object.insert("analysis_scope".to_string(), scope.clone());
     }
     serde_json::to_string_pretty(&document)
-        .map_err(|err| format!("failed to render gate decision JSON: {err}"))
+        .map_err(|err| format!("failed to render gate decision JSON: {err}; this is a ripr bug, report it with the command you ran"))
 }
 
 /// Subject identity block (#5263): which build produced the decision and
@@ -200,7 +200,15 @@ pub(crate) fn render_gate_decision_markdown(report: &GateDecisionReport) -> Stri
 }
 
 pub(crate) fn gate_decision_should_fail(report: &GateDecisionReport) -> bool {
-    report.status == super::GATE_STATUS_BLOCKED || report.status == super::GATE_STATUS_CONFIG_ERROR
+    status_fails_gate(&report.status)
+}
+
+/// Fail closed: only the known non-failing statuses (`pass`, `advisory`,
+/// `acknowledged`) pass the gate. `blocked` and `config_error` fail, and so
+/// does any unknown token — a future or corrupt producer status must never
+/// silently exit 0.
+pub(super) fn status_fails_gate(status: &str) -> bool {
+    !matches!(status, "pass" | "advisory" | "acknowledged")
 }
 
 pub(crate) fn gate_decision_status(report: &GateDecisionReport) -> &str {
@@ -332,6 +340,14 @@ fn inputs_json(inputs: &GateDecisionInputs) -> Value {
             Value::String(exception_policy.clone()),
         );
     }
+    if let Some(acknowledgements) = &inputs.acknowledgements
+        && let Some(object) = value.as_object_mut()
+    {
+        object.insert(
+            "acknowledgements".to_string(),
+            Value::String(acknowledgements.clone()),
+        );
+    }
     value
 }
 
@@ -342,6 +358,16 @@ fn policy_json(policy: &GatePolicy) -> Value {
         "acknowledgement_labels": policy.acknowledgement_labels,
         "default_workflow_posture": policy.default_workflow_posture,
     })
+}
+
+fn insert_optional_string(
+    object: &mut serde_json::Map<String, Value>,
+    key: &str,
+    value: Option<&str>,
+) {
+    if let Some(value) = value {
+        object.insert(key.to_string(), Value::String(value.to_string()));
+    }
 }
 
 fn summary_json(summary: &GateSummary) -> Value {
@@ -437,6 +463,49 @@ fn decision_json(decision: &GateDecision) -> Value {
             Value::String(match_kind.clone()),
         );
     }
+    if let Some(policy_object) = value.get_mut("policy").and_then(Value::as_object_mut) {
+        insert_optional_string(
+            policy_object,
+            "acknowledgement_id",
+            decision.policy.acknowledgement_id.as_deref(),
+        );
+        insert_optional_string(
+            policy_object,
+            "acknowledgement_match_kind",
+            decision.policy.acknowledgement_match_kind.as_deref(),
+        );
+        insert_optional_string(
+            policy_object,
+            "acknowledgement_actor",
+            decision.policy.acknowledgement_actor.as_deref(),
+        );
+        insert_optional_string(
+            policy_object,
+            "acknowledgement_reason",
+            decision.policy.acknowledgement_reason.as_deref(),
+        );
+        insert_optional_string(
+            policy_object,
+            "acknowledgement_expires_at",
+            decision.policy.acknowledgement_expires_at.as_deref(),
+        );
+        insert_optional_string(
+            policy_object,
+            "acknowledgement_review_after",
+            decision.policy.acknowledgement_review_after.as_deref(),
+        );
+        if let Some(global_scope) = decision.policy.acknowledgement_global_scope {
+            policy_object.insert(
+                "acknowledgement_global_scope".to_string(),
+                Value::Bool(global_scope),
+            );
+        }
+        insert_optional_string(
+            policy_object,
+            "acknowledgement_limitation",
+            decision.policy.acknowledgement_limitation.as_deref(),
+        );
+    }
     value
 }
 
@@ -447,6 +516,17 @@ pub(super) fn repair_route_json(route: &GateRepairRoute) -> Value {
             "name": name,
             "file": file,
             "line": line,
+        }),
+        GateRepairTarget::Proposed {
+            proposal_kind,
+            file,
+            owner,
+        } => json!({
+            "kind": "proposed",
+            "proposal_kind": proposal_kind,
+            "file": file,
+            "owner": owner,
+            "provenance": "producer_owned",
         }),
         GateRepairTarget::ProductionCaller { owner, file, line } => json!({
             "kind": "production_caller",
@@ -606,6 +686,18 @@ fn push_repair_target(out: &mut String, target: Option<&GateRepairTarget>) {
                 "  - Near test: {} at {}\n",
                 code_span(name),
                 code_span(&format!("{file}:{line}"))
+            ));
+        }
+        Some(GateRepairTarget::Proposed {
+            proposal_kind,
+            file,
+            owner,
+        }) => {
+            out.push_str(&format!(
+                "  - Proposed test: {} in {} (owner {})\n",
+                code_span(proposal_kind),
+                code_span(file),
+                code_span(owner),
             ));
         }
         Some(GateRepairTarget::ProductionCaller { owner, file, line }) => {
@@ -795,6 +887,23 @@ mod tests {
             return Err("JSON must keep the prompt's verify sentence".to_string());
         }
         Ok(())
+    }
+
+    #[test]
+    fn proposed_target_markdown_names_kind_file_and_owner() {
+        let mut out = String::new();
+        push_repair_target(
+            &mut out,
+            Some(&GateRepairTarget::Proposed {
+                proposal_kind: "integration".to_string(),
+                file: "tests/loyalty_price.rs".to_string(),
+                owner: "pricing::loyalty_price".to_string(),
+            }),
+        );
+        assert_eq!(
+            out,
+            "  - Proposed test: `integration` in `tests/loyalty_price.rs` (owner `pricing::loyalty_price`)\n"
+        );
     }
 
     #[test]

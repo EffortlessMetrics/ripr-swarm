@@ -35,6 +35,7 @@ Language
 
 Static exposure
   weakly_exposed (warning, confidence 0.40)
+  Why capped: preview adapter: infection/propagation not modeled (Python); syntax-first, no type or import resolution; the assertion is not confirmed to observe the changed value. Preview score, not on the same scale as Rust confidence.
 
 Evidence
   - reach yes: 1 related Python test(s) found for owner `labels`
@@ -43,7 +44,7 @@ Evidence
   - observation weak: Strongest extracted Python oracle kind: `exact_value` (rank 5)
   - discriminator weak: Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior
   - local flow reaches unknown sink: "label": "y", (line 4) — ripr could not classify where the changed value ends up; propagation confidence is limited
-  - related test tests/test_labels.py:3 test_name_is_x uses strong exact value oracle: assert labels()["name"] == "x"; unconfirmed: ripr could not confirm that this assertion observes the changed behavior
+  - related test tests/test_labels.py:3 test_name_is_x uses strong exact value oracle: assert labels()["name"] == "x"
 
 Weakness
   - A strong Python oracle reaches `labels`, but its assertion does not observe the changed owner's output; static evidence cannot confirm the changed behavior is discriminated. Add an assertion on the changed owner's output
@@ -54,6 +55,7 @@ Repair placement
   pytest node: tests/test_labels.py::test_name_is_x
   verify (Bash): (cd -P -- <cwd>/fixtures/python_multiline_literal_sibling_read/input && python -m pytest tests/test_labels.py::test_name_is_x) (high)
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/python_multiline_literal_sibling_read/input --diff <cwd>/fixtures/python_multiline_literal_sibling_read/diff.patch --mode fast probe:labels.py:python_preview:c4a51c9b
   ripr context --root <cwd>/fixtures/python_multiline_literal_sibling_read/input --diff <cwd>/fixtures/python_multiline_literal_sibling_read/diff.patch --mode fast --at probe:labels.py:python_preview:c4a51c9b
 

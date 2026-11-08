@@ -784,6 +784,19 @@ fn summary_json(out: &mut String, output: &CheckOutput) {
         s.propagation_unknown,
         s.static_unknown
     ));
+    // Additive (#11554): present only when different probe families gave one
+    // expression different classes, so every other document is unchanged.
+    if s.conflicting_expressions > 0 {
+        out.push_str(&format!(
+            ",\"conflicting_expressions\":{}",
+            s.conflicting_expressions
+        ));
+    }
+    // Additive (#12921): findings reached only by an unevaluated proof harness,
+    // a subset of `no_static_path`; present only when greater than zero.
+    if s.proof_harness_only > 0 {
+        out.push_str(&format!(",\"proof_harness_only\":{}", s.proof_harness_only));
+    }
     // Additive (#2103): per-language changed-file counts, one entry per
     // adapter that ran, sorted by language wire string. `changed_rust_files`
     // above carries the Rust adapter's count only.
@@ -888,7 +901,10 @@ fn finding_json_with_config_and_counts(
         out,
         indent + 1,
         "severity",
-        config.severity().for_exposure(&finding.class).as_str(),
+        config
+            .severity_for_file(&finding.probe.location.file)
+            .for_exposure(&finding.class)
+            .as_str(),
         true,
     );
     float_field(out, indent + 1, "confidence", finding.confidence, true);
@@ -1302,7 +1318,7 @@ fn strongest_related_test(finding: &Finding) -> Option<&RelatedTest> {
         finding.language,
         Some(crate::domain::LanguageId::TypeScript | crate::domain::LanguageId::JavaScript)
     ) {
-        return crate::output::related_test_miss::strongest_related_test(&finding.related_tests);
+        return crate::output::related_test_miss::typescript_script_preview_related_test(finding);
     }
     finding
         .related_tests

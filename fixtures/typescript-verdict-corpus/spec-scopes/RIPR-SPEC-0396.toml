@@ -1,0 +1,3 @@
+id = "RIPR-SPEC-0396"
+scope = "out"
+reason = "Dart preview contract is spec-only until adapter slices #5843/#5844; no TypeScript-corpus discrimination for Dart facts yet"

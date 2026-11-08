@@ -291,13 +291,14 @@ pub(crate) fn resolve_repair_attempt_store(
             ));
         }
         let canonical_relative = relative_locator(&canonical_root, &canonical_store)?;
-        if canonical_relative != relative {
+        if store_spelling_is_rejected_alias(&relative, &canonical_relative) {
             return Err(format!(
                 "repair attempt store {} is a symlink, junction, or case-fold alias of `{}`; store identity uses the concrete contained locator, and aliases are rejected",
                 display_path(&requested),
                 canonical_relative
             ));
         }
+        store_open_spelling_matches_disk(&cleaned, &canonical_store)?;
         return Ok(store_ref(
             canonical_root,
             canonical_relative,
@@ -337,7 +338,7 @@ pub(crate) fn resolve_repair_attempt_store(
                 ));
             }
             let canonical_relative = relative_locator(&canonical_root, &canonical_store)?;
-            if canonical_relative != relative {
+            if store_spelling_is_rejected_alias(&relative, &canonical_relative) {
                 let _ = std::fs::remove_dir_all(&cleaned);
                 return Err(format!(
                     "repair attempt store {} is a symlink, junction, or case-fold alias of `{}`; store identity uses the concrete contained locator, and aliases are rejected",
@@ -452,6 +453,58 @@ fn is_drive_relative(text: &str) -> bool {
         && bytes
             .get(2)
             .is_none_or(|next| *next != b'\\' && *next != b'/')
+}
+
+/// Whether the caller's contained locator spelling must be refused as an alias
+/// of the canonical contained locator (#4981 item 6 on Windows).
+fn store_spelling_is_rejected_alias(requested: &str, canonical: &str) -> bool {
+    if requested == canonical {
+        return false;
+    }
+    if cfg!(windows) {
+        requested.eq_ignore_ascii_case(canonical)
+    } else {
+        true
+    }
+}
+
+/// On case-insensitive volumes, canonicalize can preserve the caller's spelling
+/// even when the on-disk directory name differs (#4981 item 6).
+fn store_open_spelling_matches_disk(
+    requested: &Path,
+    canonical_store: &Path,
+) -> Result<(), String> {
+    if !cfg!(windows) {
+        return Ok(());
+    }
+    let Some(parent) = canonical_store.parent() else {
+        return Ok(());
+    };
+    let Some(requested_name) = requested.file_name() else {
+        return Ok(());
+    };
+    let entries = std::fs::read_dir(parent).map_err(|error| {
+        format!(
+            "read repair attempt store parent {} failed: {error}",
+            display_path(parent)
+        )
+    })?;
+    for entry in entries {
+        let entry = entry.map_err(|error| {
+            format!(
+                "read repair attempt store parent {} failed: {error}",
+                display_path(parent)
+            )
+        })?;
+        if entry.path() == canonical_store && entry.file_name() != requested_name {
+            return Err(format!(
+                "repair attempt store {} is a symlink, junction, or case-fold alias of `{}`; store identity uses the concrete contained locator, and aliases are rejected",
+                display_path(requested),
+                display_path(canonical_store)
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn path_escapes_root(root: &Path, candidate: &Path) -> bool {

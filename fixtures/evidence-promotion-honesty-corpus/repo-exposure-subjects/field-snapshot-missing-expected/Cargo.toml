@@ -1,0 +1,8 @@
+[package]
+name = "field_snapshot_admission"
+version = "0.0.0"
+edition = "2024"
+[workspace]
+[dev-dependencies]
+insta = { version = "=1.49.0", features = ["json"] }
+expect-test = "1"

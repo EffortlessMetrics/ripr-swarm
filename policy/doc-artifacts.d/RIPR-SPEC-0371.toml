@@ -1,0 +1,7 @@
+[[artifact]]
+id = "RIPR-SPEC-0371"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0371-kani-bounded-model-checking-lane.md"
+status = "proposed"
+owner = "repository-policy"
+standalone_reason = "Introduces formal verification of ripr's own pure cores; the spec pins the lane's honest pass/fail contract and what a bounded Kani proof does and does not claim."

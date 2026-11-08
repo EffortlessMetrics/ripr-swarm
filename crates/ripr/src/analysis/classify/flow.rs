@@ -276,6 +276,14 @@ fn predicate_flow_sinks(
             owner,
         )];
     }
+    if let Some(branch) = tail_if_parameter_branches(probe, owner_fn) {
+        return vec![flow_sink(
+            FlowSinkKind::ReturnValue,
+            branch.text,
+            branch.line,
+            owner,
+        )];
+    }
     if let Some(return_fact) = nearest_return(owner_fn, probe.location.line) {
         return vec![flow_sink(
             FlowSinkKind::ReturnValue,
@@ -896,6 +904,67 @@ fn tail_if_branch_value(
     })
 }
 
+/// #6694: the rustfmt tail `if <cond> {` / `a` / `} else {` / `b` / `}` whose
+/// two branch values are different parameters of the owner (`if value > cap {
+/// cap } else { value }`, the body of a generic `min`/`max`/clamp helper). The
+/// condition decides which parameter the function returns, so the first branch
+/// is the value sink. Fails closed: the function body is exactly that `if`
+/// (no earlier statement can rebind a parameter), the owner returns a value,
+/// the probe is the `if` condition, and each branch is one bare parameter name
+/// (distinct, so the choice is observable). A literal, call or other
+/// expression branch keeps the adjacency reading of [`next_branch_value`].
+fn tail_if_parameter_branches(
+    probe: &Probe,
+    owner_fn: Option<&FunctionSummary>,
+) -> Option<LocalTextFact> {
+    let function = owner_fn?;
+    if probe.owner.as_ref() != Some(&function.id) || probe.location.line != function.start_line + 1
+    {
+        return None;
+    }
+    let masked = crate::analysis::language::mask_rust_comments_and_strings(&function.body);
+    let lines: Vec<&str> = masked.lines().map(str::trim).collect();
+    let [
+        signature,
+        head,
+        then_value,
+        else_head,
+        else_value,
+        inner_close,
+        outer_close,
+    ] = lines.as_slice()
+    else {
+        return None;
+    };
+    if !signature_returns_value(signature)
+        || !signature.ends_with('{')
+        || *else_head != "} else {"
+        || *inner_close != "}"
+        || *outer_close != "}"
+    {
+        return None;
+    }
+    let condition = head.strip_prefix("if ")?.strip_suffix('{')?.trim();
+    let code = |text: &str| {
+        crate::analysis::language::mask_rust_comments_and_strings(text)
+            .trim()
+            .to_string()
+    };
+    if condition.is_empty() || condition != code(&probe.expression) {
+        return None;
+    }
+    let parameters = super::call_parameter_names(function);
+    let is_parameter =
+        |name: &str| is_plain_identifier(name) && parameters.iter().any(|known| known == name);
+    if !is_parameter(then_value) || !is_parameter(else_value) || then_value == else_value {
+        return None;
+    }
+    Some(LocalTextFact {
+        line: probe.location.line + 1,
+        text: (*then_value).to_string(),
+    })
+}
+
 /// Whether the signature's top-level return type (the arrow after the
 /// parameter list) names a non-unit value. Arrows inside parameter types
 /// (`fn() -> i32`) do not count.
@@ -985,6 +1054,85 @@ fn nearest_return(owner_fn: Option<&FunctionSummary>, probe_line: usize) -> Opti
     })
 }
 
+/// The changed predicate's two branch values, read from the owner body
+/// with the same parser the tail-if sink models use: entry 0 is the arm a
+/// HOLDING equality boundary executes and entry 1 the arm a failing
+/// boundary executes, each `return_sink_text`-normalized. An arm the model
+/// cannot read as the block's plain tail value stays `None` — the caller
+/// refuses that branch instead of guessing, because a guessed value would
+/// draft a wrong expected value. Registered return facts (explicit
+/// `return` statements) are not read here; see
+/// [`returned_value_texts_at`].
+pub(in crate::analysis) fn predicate_branch_values(
+    owner_fn: &FunctionSummary,
+    predicate_line: usize,
+) -> Option<[Option<String>; 2]> {
+    use crate::analysis::syntax::parse_clean_source_file;
+    use ra_ap_syntax::{AstNode, ast};
+
+    let parse = parse_clean_source_file(&owner_fn.body)?;
+    let tree = parse.tree();
+    let mut items = tree.syntax().children().filter_map(ast::Item::cast);
+    let Some(ast::Item::Fn(function)) = items.next() else {
+        return None;
+    };
+    let body = function.body()?;
+    // The predicate owns the `if` that starts on its line.
+    let mut predicate_if = None;
+    for candidate in body.syntax().descendants().filter_map(ast::IfExpr::cast) {
+        let start = usize::from(candidate.syntax().text_range().start());
+        let line = owner_fn.start_line
+            + owner_fn
+                .body
+                .get(..start)?
+                .bytes()
+                .filter(|byte| *byte == b'\n')
+                .count();
+        if line == predicate_line {
+            predicate_if = Some(candidate);
+            break;
+        }
+    }
+    let predicate_if = predicate_if?;
+    let then_tail = predicate_if
+        .then_branch()?
+        .tail_expr()
+        .map(|expression| return_sink_text(&expression.syntax().text().to_string()));
+    let else_tail = predicate_if.else_branch().and_then(|branch| match branch {
+        ast::ElseBranch::Block(block) => block
+            .tail_expr()
+            .map(|expression| return_sink_text(&expression.syntax().text().to_string())),
+        // An `else if` chain makes the failing boundary's arm a nested
+        // condition, not one plain value; the model refuses it.
+        ast::ElseBranch::IfExpr(_) => None,
+    });
+    Some([then_tail, else_tail])
+}
+
+/// The owner's returned value expressions at or after `line`, in source
+/// order, as the flow model reads them (`return_sink_text`-normalized, for
+/// example `amount - 10`). Consumers that must pick the branch a pinned
+/// input actually takes read the first entry (the arm at or after the
+/// predicate) or the second (the following arm), and refuse when the model
+/// does not expose the branch they need — a guessed branch would draft a
+/// wrong expected value.
+pub(in crate::analysis) fn returned_value_texts_at(
+    owner_fn: Option<&FunctionSummary>,
+    line: usize,
+) -> Vec<String> {
+    let Some(function) = owner_fn else {
+        return Vec::new();
+    };
+    let mut texts: Vec<(usize, String)> = function
+        .returns
+        .iter()
+        .filter(|return_fact| return_fact.line >= line)
+        .map(|return_fact| (return_fact.line, return_sink_text(&return_fact.text)))
+        .collect();
+    texts.sort_by_key(|(return_line, _)| *return_line);
+    texts.into_iter().map(|(_, text)| text).collect()
+}
+
 /// Whether the value on `value_offset` is repeated by a later arm of the
 /// `} else if .. {` / `} else {` chain that follows it, line by line. An arm
 /// that returns what the first arm returns makes the choice between them
@@ -1017,6 +1165,67 @@ fn chain_repeats_adjacent_value(body: &str, value_offset: usize) -> bool {
     false
 }
 
+/// Whether every `{ .. }` arm on one line holds the same statement, so the
+/// predicate decides nothing the next line can observe.
+///
+/// Braces are located on the comment-and-string-masked copy (same length, so
+/// the offsets line up), but the arms are compared as written: masking blanks
+/// string literals, which would make `r = "yes";` and `r = "low";` look equal.
+/// A nested block inside an arm (`if a { if b { .. } else { .. } } else { .. }`)
+/// is not judged: the outer arms say nothing about the inner predicate, so the
+/// reading declines and the caller keeps its established behavior.
+fn inline_arms_all_agree(line: &str) -> bool {
+    let masked = crate::analysis::language::mask_rust_comments_and_strings(line);
+    if masked.len() != line.len() {
+        return false;
+    }
+    let mut arms = Vec::new();
+    let mut depth = 0usize;
+    let mut start = 0usize;
+    for (index, ch) in masked.char_indices() {
+        match ch {
+            '{' => {
+                if depth == 0 {
+                    start = index + 1;
+                } else {
+                    return false;
+                }
+                depth += 1;
+            }
+            '}' if depth > 0 => {
+                depth -= 1;
+                if depth == 0 {
+                    let Some(arm) = line.get(start..index) else {
+                        return false;
+                    };
+                    arms.push(arm.trim().trim_end_matches(';').trim());
+                }
+            }
+            _ => {}
+        }
+    }
+    arms.split_first().is_some_and(|(first, rest)| {
+        !first.is_empty() && !rest.is_empty() && rest.iter().all(|arm| arm == first)
+    })
+}
+
+/// Whether the predicate line of `owner_fn` at `probe_line` is a one-line `if`
+/// whose arms all hold the same statement, so the condition decides nothing a
+/// test can observe. The shared owner of that reading for diff and repo seams
+/// (#10880, #12053).
+pub(in crate::analysis) fn predicate_line_arms_all_agree(
+    owner_fn: Option<&FunctionSummary>,
+    probe_line: usize,
+) -> bool {
+    owner_fn.is_some_and(|function| {
+        function
+            .body
+            .lines()
+            .nth(probe_line.saturating_sub(function.start_line))
+            .is_some_and(inline_arms_all_agree)
+    })
+}
+
 fn next_branch_value(
     owner_fn: Option<&FunctionSummary>,
     probe_line: usize,
@@ -1026,6 +1235,14 @@ fn next_branch_value(
     let start_index = probe_line.saturating_sub(function.start_line);
     let adjacent_offset = start_index + 1;
     if chain_repeats_adjacent_value(&function.body, adjacent_offset) {
+        return None;
+    }
+    // A one-line `if` whose arms hold the same statement (`if c { r = 1; }
+    // else { r = 1; }`) decides nothing the next line can observe, so that
+    // line is not the predicate's produced value (#10880; #9843 for the tail
+    // form). Arms that differ keep the adjacency rule: `let r = if c { 1 }
+    // else { 0 };` really does feed `r` to the next line.
+    if predicate_line_arms_all_agree(owner_fn, probe_line) {
         return None;
     }
     function
@@ -2124,6 +2341,61 @@ mod tests {
     }
 
     #[test]
+    fn identical_inline_arms_do_not_lend_the_next_line_as_a_branch_value() {
+        for tail in ["r + 0", "r * 2", "r.max(0)"] {
+            let body = format!(
+                "pub fn f(x: i32) -> i32 {{\n    let r;\n    if x > 5 {{ r = 1; }} else {{ r = 1; }}\n    {tail}\n}}"
+            );
+            let owner = tail_owner(&body);
+            let probe = probe(ProbeFamily::Predicate, "x > 5", 3);
+
+            let sinks = local_flow_sinks(&probe, Some(&owner));
+
+            assert!(
+                !sinks
+                    .iter()
+                    .any(|sink| sink.kind == FlowSinkKind::ReturnValue),
+                "`{body}` must not produce a return-value sink: {sinks:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn three_identical_inline_arms_lose_the_sink_and_a_differing_last_arm_keeps_it() {
+        let identical = "pub fn f(c: bool, d: bool) -> i32 {\n    let r;\n    if c { r = 1; } else if d { r = 1; } else { r = 1; }\n    r + 0\n}";
+        let owner = tail_owner(identical);
+        let first = probe(ProbeFamily::Predicate, "c", 3);
+        assert!(local_flow_sinks(&first, Some(&owner)).is_empty());
+
+        // The last arm differs, so the condition still decides what `r` is.
+        let differing = "pub fn f(c: bool, d: bool) -> i32 {\n    let r;\n    if c { r = 1; } else if d { r = 1; } else { r = 2; }\n    r + 0\n}";
+        let owner = tail_owner(differing);
+        let second = probe(ProbeFamily::Predicate, "c", 3);
+        assert_eq!(local_flow_sinks(&second, Some(&owner)).len(), 1);
+    }
+
+    #[test]
+    fn differing_inline_arms_and_closures_keep_the_adjacent_value() {
+        for (body, line) in [
+            (
+                "pub fn f(x: i32) -> i32 {\n    let r = if x > 5 { 1 } else { 0 };\n    r + 0\n}",
+                2,
+            ),
+            (
+                "pub fn f(x: u32) -> u32 {\n    let _unused = || x > 1;\n    7\n}",
+                2,
+            ),
+        ] {
+            let owner = tail_owner(body);
+            let probe = probe(ProbeFamily::Predicate, "x > 5", line);
+
+            let sinks = local_flow_sinks(&probe, Some(&owner));
+
+            assert_eq!(sinks.len(), 1, "`{body}`: {sinks:?}");
+        }
+    }
+
+    #[test]
     fn later_arms_that_only_agree_with_each_other_keep_the_first_sink() {
         let owner = tail_owner(
             "pub fn f(x: i32) -> i32 {\n    if x > 1 { 1 } else if x > 0 { 2 } else { 2 }\n}",
@@ -2779,6 +3051,76 @@ mod tests {
             item: Default::default(),
             impl_context: Default::default(),
         }
+    }
+
+    /// #6694: `if c { a } else { b }` as a helper's whole body over two
+    /// distinct parameters sinks the condition at the first branch value;
+    /// every other shape keeps no sink.
+    #[test]
+    fn parameter_returning_tail_if_sinks_the_condition_only_when_whole_and_distinct() {
+        let sinks = |body: &str| {
+            let owner = function(body);
+            local_flow_sinks(
+                &probe(ProbeFamily::Predicate, "cap < value", 2),
+                Some(&owner),
+            )
+        };
+        let capped = |branches: &str, prefix: &str| {
+            format!(
+                "fn capped<T: PartialOrd + Copy>(value: T, cap: T) -> T {{\n{prefix}    if cap < value {{\n{branches}}}\n}}"
+            )
+        };
+        let found = sinks(&capped(
+            "        cap\n    } else {\n        value\n    ",
+            "",
+        ));
+        assert!(
+            found
+                .iter()
+                .any(|sink| sink.kind == FlowSinkKind::ReturnValue
+                    && sink.text == "cap"
+                    && sink.line == 3),
+            "{found:?}"
+        );
+        for (label, body) in [
+            (
+                "a statement before the if",
+                capped(
+                    "        cap\n    } else {\n        value\n    ",
+                    "    let value = value;\n",
+                ),
+            ),
+            (
+                "the same parameter in both branches",
+                capped("        value\n    } else {\n        value\n    ", ""),
+            ),
+            (
+                "a branch that is no parameter",
+                capped("        cap\n    } else {\n        other\n    ", ""),
+            ),
+            (
+                "a statement after the branches",
+                capped("        cap\n    } else {\n        value\n    ", "")
+                    .replace("    }\n}", "    }\n    ;\n}"),
+            ),
+        ] {
+            let found = sinks(&body);
+            assert!(
+                found
+                    .iter()
+                    .all(|sink| sink.text != "cap" && sink.text != "value"),
+                "{label}: {found:?}"
+            );
+        }
+        // A unit-returning function has no value to decide.
+        let unit = sinks(
+            "fn capped(value: u32, cap: u32) {\n    if cap < value {\n        cap\n    } else {\n        value\n    }\n}",
+        );
+        assert!(
+            unit.iter()
+                .all(|sink| sink.text != "cap" && sink.text != "value"),
+            "{unit:?}"
+        );
     }
 
     // ── #6695: `.ok_or(Variant)?` propagates that error from the owner ──

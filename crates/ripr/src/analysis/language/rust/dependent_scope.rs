@@ -65,7 +65,7 @@ use std::path::{Path, PathBuf};
 /// Widened reach indexes retained at once. Owners alternate among a few
 /// closures, so two slots remove the rebuilds while bounding the memory
 /// the retained indexes hold (#5363; the 512 MB peak-RSS target stays).
-const REACH_INDEX_CAPACITY: usize = 2;
+pub(super) const REACH_INDEX_CAPACITY: usize = 2;
 
 /// The cached value for `key`, built by `build` on a miss. `cache` holds at
 /// most `capacity` entries, most recently used last, so a miss evicts the
@@ -299,15 +299,26 @@ impl AdmissionQuery {
         // Calling it per changed-span owner re-parsed crates/ripr on every
         // doctor.rs / cli_smoke.rs function and hung PR evidence at 3600s.
         let unseen = classify::UnseenReachNames::build(index);
-        for facts in index.files().values() {
-            if facts.source.contains("macro_rules") {
-                query
-                    .empty_macro_names
-                    .extend(crate::analysis::syntax::local_empty_macro_names(
-                        &facts.source,
-                    ));
-            }
-        }
+        // Each file's parse is independent and the answer is a name set, so
+        // the scan fans out over the rayon pool; the union is order-free.
+        let macro_sources: Vec<&str> = index
+            .files()
+            .values()
+            .map(|facts| facts.data().source.as_ref())
+            .filter(|source| source.contains("macro_rules"))
+            .collect();
+        query.empty_macro_names.extend(
+            macro_sources
+                .par_iter()
+                .fold(BTreeSet::new, |mut acc, source| {
+                    acc.extend(crate::analysis::syntax::local_empty_macro_names(source));
+                    acc
+                })
+                .reduce(BTreeSet::new, |mut left, right| {
+                    left.extend(right);
+                    left
+                }),
+        );
         for (file, lines) in changed_lines {
             query
                 .package_prefixes
@@ -423,7 +434,7 @@ impl AdmissionQuery {
             || spells(&self.implemented_traits)
             || (self.binary_owner
                 && (contains(bytes, b"CARGO_BIN_EXE_") || contains(bytes, b"cargo_bin")))
-            || composes_modules(bytes)
+            || crate::analysis::workspace::composes_modules(bytes)
             || spells(&self.empty_macro_names)
             || (!self.impl_types.is_empty() && impl_header_names(bytes, &self.impl_types))
     }
@@ -537,7 +548,7 @@ pub(super) struct NarrowedScope {
     /// holds; owners whose closure selects the same files reuse one.
     /// Owners alternate between a few closures, so a single slot rebuilt
     /// the same index repeatedly (#5363).
-    reach_index: Vec<(Vec<PathBuf>, RustIndex)>,
+    reach_index: Vec<(Vec<PathBuf>, std::sync::Arc<RustIndex>)>,
     /// Closure-specific index builds so far (cache misses). Past
     /// [`REACH_INDEX_CAPACITY`] builds the run is alternating among more
     /// owners than the cache holds, and narrowing costs more than it saves
@@ -699,6 +710,7 @@ pub(super) fn admit_dependents(
     // main index then counts twice, which a union absorbs.
     let mut withheld_macro_bindings = classify::WithheldMacroBindings::default();
     let mut bindings_saturated = false;
+    let mut withheld_routing_disabled = false;
     // File names spelled by `#[path]`/`include!` compositions, `"*"` for one
     // with no readable literal: a composed withheld binary's macros reach
     // the composing crate (#10191).
@@ -761,7 +773,7 @@ pub(super) fn admit_dependents(
                 loaded.push((file, bytes));
             }
         }
-        let scanned: Vec<Result<Option<FileTokens>, String>> = loaded
+        let scanned: Vec<Result<Option<(FileTokens, bool)>, String>> = loaded
             .par_iter()
             .map(|(file, bytes)| {
                 cancellation::with_optional_token(token.as_ref(), || {
@@ -770,7 +782,17 @@ pub(super) fn admit_dependents(
                         .iter()
                         .any(|registration| registration.target == **file);
                     let admit = !core_only && (harness_target || query.admits(bytes));
-                    Ok((!admit).then(|| FileTokens::scan(bytes)))
+                    // The routing probe parses the file, so it runs here on
+                    // the worker beside the token scan, not on the serial
+                    // fold below.
+                    Ok((!admit).then(|| {
+                        (
+                            FileTokens::scan(bytes),
+                            crate::analysis::workspace::withheld_source_disables_crate_root_routing(
+                                file, bytes,
+                            ),
+                        )
+                    }))
                 })
             })
             .collect();
@@ -783,7 +805,10 @@ pub(super) fn admit_dependents(
                     }
                     admitted.push((*file).clone());
                 }
-                Some(file_tokens) => {
+                Some((file_tokens, disables_routing)) => {
+                    if disables_routing {
+                        withheld_routing_disabled = true;
+                    }
                     let id = u32::try_from(withheld.len()).map_err(|err| {
                         format!("dependent scope: too many withheld files: {err}")
                     })?;
@@ -816,6 +841,9 @@ pub(super) fn admit_dependents(
                 admitted.push(file.clone());
             }
         }
+    }
+    if withheld_routing_disabled {
+        withheld_macro_bindings.disable_crate_root_routing();
     }
     withheld_macro_bindings.widen_composed(&composed_names);
     admitted.sort();
@@ -902,11 +930,14 @@ enum Closure {
 }
 
 /// The witness index outcome for one owner.
-pub(super) enum ReachIndex<'a> {
+pub(super) enum ReachIndex {
     /// The main index already holds every file the owner's reach can touch.
     Main,
     /// A wider index holding the owner's caller closure.
-    Widened(&'a RustIndex),
+    Widened {
+        index: std::sync::Arc<RustIndex>,
+        files: Vec<PathBuf>,
+    },
     /// The scope's one full-selection index ([`NarrowedScope::shared_reach`]).
     /// It carries no borrow so the caller can derive per-index lookups from
     /// it once and reuse them for every finding.
@@ -934,7 +965,7 @@ impl NarrowedScope {
         main_index: &RustIndex,
         limit: usize,
         hard_limit: usize,
-    ) -> Result<ReachIndex<'_>, String> {
+    ) -> Result<ReachIndex, String> {
         if !self.widen {
             return Ok(ReachIndex::Main);
         }
@@ -1024,18 +1055,22 @@ impl NarrowedScope {
         let consumed = &mut self.consumed;
         let builds = &mut self.widened_builds;
         let (root, harnesses) = (&self.root, &self.test_harnesses);
-        let index = most_recent_or_build(
+        let arc = most_recent_or_build(
             &mut self.reach_index,
             REACH_INDEX_CAPACITY,
-            files,
+            files.clone(),
             |files| {
                 *builds += 1;
                 #[cfg(test)]
                 OBSERVED_REACH_BUILDS.with(|count| count.set(count.get() + 1));
-                build_index(root, files, harnesses, consumed).map(|cached| cached.index)
+                build_index(root, files, harnesses, consumed)
+                    .map(|cached| std::sync::Arc::new(cached.index))
             },
         )?;
-        Ok(ReachIndex::Widened(index))
+        Ok(ReachIndex::Widened {
+            index: arc.clone(),
+            files,
+        })
     }
 
     /// The pre-#5320 selection: the main files and every withheld dependent,
@@ -1497,49 +1532,10 @@ fn is_identifier_byte(byte: u8) -> bool {
     byte == b'_' || byte.is_ascii_alphanumeric() || byte >= 0x80
 }
 
-/// `include!` and `#[path]` compose a file out of other files, so the
-/// composing file decides those files' module roles. A lexical superset:
-/// `include !`, `# [ path ..]` and any `cfg_attr`, which may carry a `path`
-/// with no static target that disables crate-root routing (#6909).
-fn composes_modules(bytes: &[u8]) -> bool {
-    let after_space = |at: usize| {
-        bytes.get(at..).map_or(at, |rest| {
-            at + rest
-                .iter()
-                .take_while(|byte| byte.is_ascii_whitespace())
-                .count()
-        })
-    };
-    let word_at = |at: usize, word: &[u8]| {
-        bytes.get(at..at + word.len()) == Some(word)
-            && bytes
-                .get(at + word.len())
-                .is_none_or(|next| !is_identifier_byte(*next))
-    };
-    (0..bytes.len()).any(|at| {
-        let starts_word = at == 0 || !is_identifier_byte(bytes[at - 1]);
-        if starts_word && word_at(at, b"include") {
-            return bytes.get(after_space(at + b"include".len())) == Some(&b'!');
-        }
-        if bytes[at] != b'#' {
-            return false;
-        }
-        let mut next = after_space(at + 1);
-        if bytes.get(next) == Some(&b'!') {
-            next = after_space(next + 1);
-        }
-        if bytes.get(next) != Some(&b'[') {
-            return false;
-        }
-        let name = after_space(next + 1);
-        word_at(name, b"path") || word_at(name, b"cfg_attr")
-    })
-}
-
 /// The `.rs` file names a composing file spells, or `"*"` when it composes
 /// modules without spelling one.
 fn note_composed_names(bytes: &[u8], names: &mut BTreeSet<String>) {
-    if !composes_modules(bytes) {
+    if !crate::analysis::workspace::composes_modules(bytes) {
         return;
     }
     let text = String::from_utf8_lossy(bytes);
@@ -1743,6 +1739,7 @@ mod tests {
                 attrs: Vec::new(),
                 nested_fn_names: Vec::new(),
                 let_bindings: Vec::new(),
+                generated: None,
             }],
             ..Default::default()
         });
@@ -2071,6 +2068,9 @@ mod tests {
         assert!(none.admits(b"#[cfg_attr(unix, path = \"u.rs\")] mod check;"));
         assert!(none.admits(b"# [ path = \"a.rs\" ] mod a;"));
         assert!(none.admits(b"include !(\"x.rs\");"));
+        assert!(none.admits(b"#[/*c*/ cfg_attr(unix, path = \"u.rs\")] mod check;"));
+        assert!(none.admits(b"# /*c*/ [path = \"a.rs\"] mod a;"));
+        assert!(none.admits("#[\u{00a0}path = \"a.rs\"] mod a;".as_bytes()));
         assert!(!none.admits(b"#[derive(Debug)] struct S; fn includes() {}"));
         assert!(!none.admits(b"#![doc = include_str!(\"../README.md\")]"));
         let cargo_bin = b"let tool = env!(\"CARGO_BIN_EXE_tool\");";

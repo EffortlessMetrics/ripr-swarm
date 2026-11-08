@@ -33,7 +33,16 @@ const PINS: &[Pin] = &[
         "1.95.0",
         "035fceb3c12fb0c6a9461b52775e16473133e591",
         None,
-        4,
+        3,
+    ),
+    (
+        // #12252: the extension e2e moved out of ci.yml into the reusable workflow.
+        "vscode-e2e.yml",
+        "dtolnay/rust-toolchain",
+        "1.95.0",
+        "035fceb3c12fb0c6a9461b52775e16473133e591",
+        None,
+        1,
     ),
     (
         "dx-scoreboard.yml",
@@ -206,7 +215,7 @@ const PINS: &[Pin] = &[
     (
         "rust-gates.yml",
         "taiki-e/install-action",
-        "v2",
+        "v2.87.31",
         "1e29709c0ec63babbe8f266397a465f29a825f91",
         Some("tool: ${{ inputs.use-scratch && 'sccache,nextest' || 'nextest' }}"),
         1,
@@ -222,7 +231,7 @@ const PINS: &[Pin] = &[
     (
         "security.yml",
         "taiki-e/install-action",
-        "cargo-deny",
+        "v2.87.30",
         "a4d3f3f761dcd95cce1b72cb61cb6d1963438177",
         Some("tool: cargo-deny"),
         1,
@@ -393,8 +402,8 @@ fn pin_contract_rejects_uses_headers_in_step_data() -> Result<(), String> {
     for (action, reference) in [
         ("dtolnay/rust-toolchain", "1.95.0"),
         ("Swatinem/rust-cache", "v2"),
-        ("taiki-e/install-action", "v2"),
-        ("taiki-e/install-action", "cargo-deny"),
+        ("taiki-e/install-action", "v2.87.31"),
+        ("taiki-e/install-action", "v2.87.30"),
     ] {
         let pin = PINS
             .iter()

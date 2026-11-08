@@ -1325,6 +1325,90 @@ fn generated_first_pr_preflight_recovery_commands_quote_root_and_refs() -> Resul
             );
         }
     }
+
+    // Both refs still resolve, but `git diff` fails once the head tree object is
+    // missing (#5339).
+    let tree = fixture_git_output(&repo, &["rev-parse", "HEAD^{tree}"])?
+        .trim()
+        .to_string();
+    assert!(
+        tree.len() == 40 && tree.bytes().all(|byte| byte.is_ascii_hexdigit()),
+        "fixture did not produce a SHA-1 tree: {tree:?}"
+    );
+    let object = repo.join(".git/objects").join(&tree[..2]).join(&tree[2..]);
+    fs::remove_file(&object)?;
+    let label = "diff inspect failure";
+    let output = replay::ripr(
+        &parent,
+        &[
+            "first-pr",
+            "--root",
+            "repo root",
+            "--base",
+            "HEAD~1",
+            "--head",
+            "HEAD",
+        ],
+    )?;
+    assert!(
+        output.status.success(),
+        "{label}: first-pr failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let packet: serde_json::Value = serde_json::from_str(&fs::read_to_string(
+        repo.join("target/ripr/reports/start-here.json"),
+    )?)?;
+    let diff_check = packet["preflight"]["checks"]
+        .as_array()
+        .and_then(|checks| {
+            checks
+                .iter()
+                .find(|check| check.get("id").and_then(|id| id.as_str()) == Some("git_diff"))
+        })
+        .ok_or_else(|| format!("{label}: no git_diff preflight check in {packet}"))?;
+    assert_eq!(
+        diff_check["status"].as_str(),
+        Some("needs_attention"),
+        "{label}: {packet}"
+    );
+    assert!(
+        diff_check["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("Could not inspect diff range")),
+        "{label}: {packet}"
+    );
+    let recovery = recovery_texts(&packet, "git_diff");
+    assert!(
+        !recovery.is_empty(),
+        "{label}: no `git_diff` recovery command in {packet}"
+    );
+    for text in recovery {
+        let rerun = text
+            .split('`')
+            .find(|segment| segment.starts_with("ripr first-pr "))
+            .ok_or_else(|| format!("{label}: no `ripr first-pr` rerun in `{text}`"))?;
+        assert!(
+            rerun.contains(&format!("--root '{}'", canonical_repo.display())),
+            "{label}: rerun does not bind the quoted root: {rerun}"
+        );
+        let run = replay::bash(&foreign, rerun, &[])?;
+        let stdout = String::from_utf8_lossy(&run.stdout);
+        let stderr = String::from_utf8_lossy(&run.stderr);
+        assert!(
+            run.status.success(),
+            "{label}: rerun failed from a foreign directory: {rerun}\nstdout={stdout}\nstderr={stderr}"
+        );
+        assert!(
+            stdout.contains(&canonical_repo.display().to_string()),
+            "{label}: rerun did not analyze the selected root: {stdout}"
+        );
+        assert!(
+            !foreign.join("target").exists() && !decoy.join("target").exists(),
+            "{label}: rerun read or wrote outside the selected root: {rerun}"
+        );
+    }
+
     fs::remove_dir_all(base)?;
     Ok(())
 }
@@ -4396,6 +4480,32 @@ fn generated_install_windows_zip_route_replays_securely() -> Result<(), Box<dyn 
             "duplicate entry",
         ),
         (
+            "literal-match-only",
+            zip_bytes(&[file("riprXexe", good_exe.as_bytes())])?,
+            "does not contain ripr.exe at its root",
+        ),
+        (
+            "lone-uppercase",
+            zip_bytes(&[file("RIPR.EXE", good_exe.as_bytes())])?,
+            "does not contain ripr.exe at its root",
+        ),
+        (
+            "case-duplicate",
+            zip_bytes(&[
+                file("ripr.exe", good_exe.as_bytes()),
+                file("RIPR.EXE", b"#!/bin/sh\necho evil"),
+            ])?,
+            "duplicate entry",
+        ),
+        (
+            "trailing-dot-duplicate",
+            zip_bytes(&[
+                file("ripr.exe", good_exe.as_bytes()),
+                file("ripr.exe.", b"#!/bin/sh\necho evil"),
+            ])?,
+            "duplicate entry",
+        ),
+        (
             "not-a-zip",
             b"this is not a zip archive".to_vec(),
             "is not a readable zip archive",
@@ -5112,4 +5222,40 @@ fn ci_packet_annotations_emit_a_notice_for_a_static_limitation() -> Result<(), B
         "{stdout}"
     );
     Ok(())
+}
+
+/// A pull request from a fork or from Dependabot gets a read-only token, so
+/// every step that writes to the pull request must carry the same trust guard
+/// the summary step uses instead of running and failing (#11206).
+#[test]
+fn comment_writing_steps_skip_fork_and_dependabot_pull_requests() -> Result<(), Box<dyn Error>> {
+    let nonce = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
+    let root = std::env::temp_dir().join(format!(
+        "ripr-fork-guard-workflow-{}-{nonce}",
+        std::process::id()
+    ));
+    fs::create_dir_all(&root)?;
+    let result = (|| -> Result<(), Box<dyn Error>> {
+        let init = run_ripr_init(&root)?;
+        assert!(init.status.success(), "ripr init failed");
+        let workflow = fs::read_to_string(root.join(".github/workflows/ripr.yml"))?;
+        for step in [
+            "Publish RIPR summary comment",
+            "Publish RIPR inline comments",
+        ] {
+            let block = workflow_step_block(&workflow, step).ok_or("missing step")?;
+            assert!(
+                block
+                    .contains("github.event.pull_request.head.repo.full_name == github.repository"),
+                "{step} must skip fork heads:\n{block}"
+            );
+            assert!(
+                block.contains("github.actor != 'dependabot[bot]'"),
+                "{step} must skip Dependabot:\n{block}"
+            );
+        }
+        Ok(())
+    })();
+    let _ = fs::remove_dir_all(&root);
+    result
 }

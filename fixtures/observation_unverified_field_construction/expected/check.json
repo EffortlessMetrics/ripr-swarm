@@ -46,7 +46,7 @@
         {"kind":"struct_field","text":"retries: 1","line":9}
       ],
       "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches constructed field: retries: 1", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach default_config: config_exists"],
-      "missing": ["Missing discriminator value: retries: 1,", "No strong discriminator was detected"],
+      "missing": ["Missing check value: retries: 1,", "No strong discriminator was detected"],
       "assertion_texts": {
         "6": "assert!(cfg.timeout_secs > 0);"
       },
@@ -98,8 +98,8 @@
       "stop_reasons": [],
       "oracle_kind": "relational_check",
       "oracle_strength": "weak",
-      "recommended_next_step": "Strengthen the related assertion so it discriminates the changed behavior.",
-      "suggested_next_action": "Strengthen the related assertion so it discriminates the changed behavior.",
+      "recommended_next_step": "Not a candidate edit target (base_deleted): the changed source is not current on the candidate side, so this finding recommends no test change.",
+      "suggested_next_action": "Not a candidate edit target (base_deleted): the changed source is not current on the candidate side, so this finding recommends no test change.",
       "language": "rust",
       "source_currentness": "base_deleted"
     },

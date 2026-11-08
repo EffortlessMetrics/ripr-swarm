@@ -1,0 +1,6 @@
+--- a/rules.py
++++ b/rules.py
+@@ -1,2 +1,2 @@
+ def is_adult(age, threshold=18) -> bool:
+-    return age > threshold
++    return age >= threshold
