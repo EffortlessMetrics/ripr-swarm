@@ -3716,4 +3716,81 @@ To add an exception for this directory, call:\n\n\tgit config --global --add saf
         }
         Ok(())
     }
+
+    fn probe_repo(label: &str) -> Result<PathBuf, String> {
+        let root = std::env::temp_dir().join(format!(
+            "ripr-git-probe-{label}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|elapsed| elapsed.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(root.join("cache"))
+            .map_err(|err| format!("create probe repo: {err}"))?;
+        run_git(&root, &["init", "--quiet"]).map_err(|err| err.to_string())?;
+        Ok(root)
+    }
+
+    /// `tracked_files_under` must separate "the repository ships a file here"
+    /// from "an untracked file merely sits here": only the index answers.
+    #[test]
+    fn tracked_files_under_distinguishes_tracked_from_untracked() -> Result<(), String> {
+        let root = probe_repo("tracked")?;
+        let cache = root.join("cache");
+        let result = (|| {
+            std::fs::write(cache.join("entry.json"), "{}").map_err(|err| err.to_string())?;
+            if tracked_files_under(&cache)? {
+                return Err("an untracked cache file must not read as repository-shipped".into());
+            }
+            run_git(&root, &["add", "cache/entry.json"]).map_err(|err| err.to_string())?;
+            if !tracked_files_under(&cache)? {
+                return Err("a tracked file under the directory must be reported".into());
+            }
+            // The probe is scoped to `dir`: a tracked sibling does not count.
+            std::fs::create_dir_all(root.join("other")).map_err(|err| err.to_string())?;
+            if tracked_files_under(&root.join("other"))? {
+                return Err("tracked files outside `dir` must not count".into());
+            }
+            Ok(())
+        })();
+        let _ = std::fs::remove_dir_all(&root);
+        result
+    }
+
+    /// An unreadable (here: absent) directory cannot establish "no tracked
+    /// files"; it must be an `Err`, never a silent `Ok(false)` admission.
+    #[test]
+    fn tracked_files_under_absent_directory_is_an_error_not_false() -> Result<(), String> {
+        let root = probe_repo("absent")?;
+        let result = tracked_files_under(&root.join("no-such-dir"));
+        let _ = std::fs::remove_dir_all(&root);
+        match result {
+            Err(message) if !message.is_empty() => Ok(()),
+            other => Err(format!("absent directory must fail closed, got {other:?}")),
+        }
+    }
+
+    /// The root probe separates the top level from a subdirectory of the same
+    /// work tree, and an absent directory is an error rather than a verdict.
+    #[test]
+    fn probe_work_tree_root_separates_root_from_inside_and_errors_when_absent() -> Result<(), String>
+    {
+        let root = probe_repo("root")?;
+        let outcome = (|| {
+            let at_root = probe_work_tree_root(&root)?;
+            let inside = probe_work_tree_root(&root.join("cache"))?;
+            let absent = probe_work_tree_root(&root.join("no-such-dir"));
+            Ok::<_, String>((at_root, inside, absent))
+        })();
+        let _ = std::fs::remove_dir_all(&root);
+        let (at_root, inside, absent) = outcome?;
+        assert_eq!(at_root, WorkTreeRootProbe::Root);
+        assert_eq!(inside, WorkTreeRootProbe::InsideWorkTree);
+        assert!(
+            absent.is_err(),
+            "absent directory must not verify: {absent:?}"
+        );
+        Ok(())
+    }
 }
