@@ -675,6 +675,82 @@ fn imported_names(source: &str, keep_root: impl Fn(&str) -> bool) -> Vec<String>
 
 /// Parser-backed owner ids carry their impl segment
 /// (`src/lib.rs::impl Display for Money::fmt`).
+/// How many production caller hops [`owner_tested_through_production_caller`]
+/// walks up from the owner before giving up.
+const PRODUCTION_CALLER_HOPS: usize = 6;
+
+fn call_names(call: &str, name: &str) -> bool {
+    call == name
+        || call
+            .strip_suffix(name)
+            .is_some_and(|prefix| prefix.ends_with("::"))
+}
+
+/// Whether a chain of production callers (at most
+/// [`PRODUCTION_CALLER_HOPS`] hops, matched by callee name) leads from
+/// `owner` to a function that a test, or a test-side helper, calls by name.
+///
+/// This is a name-level lookalike of transitive reach: it never establishes
+/// reach and never credits an oracle. It only answers whether tests that
+/// merely sit near the owner are the whole story. When the owner sits behind
+/// a production caller that tests do call (a private helper behind a public
+/// entry), a missing assertion on the nearby tests is no evidence that the
+/// change goes unnoticed (#12900). A same-named call of another type also
+/// matches, which can only keep more findings out of `reachable_unrevealed`.
+/// A caller no test calls (an unexercised sibling) does not count.
+pub(in crate::analysis) fn owner_tested_through_production_caller(
+    owner: &FunctionSummary,
+    index: &RustIndex,
+) -> bool {
+    use super::super::facts::FunctionSourceRole;
+    if owner.name.is_empty() {
+        return false;
+    }
+    let tested = |name: &str| {
+        index
+            .tests()
+            .iter()
+            .any(|test| test.calls.iter().any(|call| call_names(&call.name, name)))
+            || index.functions().iter().any(|function| {
+                function.source_role != FunctionSourceRole::Production
+                    && function
+                        .calls
+                        .iter()
+                        .any(|call| call_names(&call.name, name))
+            })
+    };
+    let mut seen: BTreeSet<String> = BTreeSet::from([owner.name.clone()]);
+    let mut frontier: Vec<String> = vec![owner.name.clone()];
+    for _ in 0..PRODUCTION_CALLER_HOPS {
+        let mut next = Vec::new();
+        for function in index.functions().iter() {
+            if function.source_role != FunctionSourceRole::Production
+                || function.id == owner.id
+                || function.name.is_empty()
+                || seen.contains(&function.name)
+            {
+                continue;
+            }
+            if function
+                .calls
+                .iter()
+                .any(|call| frontier.iter().any(|name| call_names(&call.name, name)))
+            {
+                seen.insert(function.name.clone());
+                next.push(function.name.clone());
+            }
+        }
+        if next.iter().any(|name| tested(name)) {
+            return true;
+        }
+        if next.is_empty() {
+            return false;
+        }
+        frontier = next;
+    }
+    false
+}
+
 pub(in crate::analysis) fn is_trait_impl_method(owner: &FunctionSummary) -> bool {
     owner
         .id
@@ -936,6 +1012,65 @@ mod tests {
     use crate::domain::SymbolId;
     use std::collections::BTreeMap;
     use std::path::PathBuf;
+
+    fn parsed_index(files: &[(&str, &str)]) -> Result<RustIndex, String> {
+        use crate::analysis::syntax::{RaRustSyntaxAdapter, RustSyntaxAdapter};
+        let mut index = RustIndex::default();
+        for (path, source) in files {
+            let facts = RaRustSyntaxAdapter.summarize_file(Path::new(path), source)?;
+            let functions = facts.functions.clone();
+            let tests = facts.tests.clone();
+            index.insert_file_only(PathBuf::from(path), facts);
+            index.extend_functions(functions);
+            index.extend_tests(tests);
+        }
+        Ok(index)
+    }
+
+    fn owner_named<'a>(index: &'a RustIndex, name: &str) -> Result<&'a FunctionSummary, String> {
+        index
+            .functions()
+            .iter()
+            .find(|function| function.name == name)
+            .ok_or_else(|| format!("owner {name} indexed"))
+    }
+
+    /// #12900: a private helper behind a public entry that a test calls is
+    /// tested through that caller chain, at any hop up to the bound.
+    #[test]
+    fn helper_behind_a_tested_public_entry_is_tested_through_a_caller() -> Result<(), String> {
+        let lib = "pub fn parse(s: &str) -> u32 { step(s) }\n\
+                   fn step(s: &str) -> u32 { digits(s) + 1 }\n\
+                   fn digits(s: &str) -> u32 { s.len() as u32 }\n";
+        let test = "#[test]\nfn parses() { assert!(parse(\"ab\") > 0); }\n";
+        let index = parsed_index(&[("src/lib.rs", lib), ("tests/parse.rs", test)])?;
+        for owner in ["step", "digits"] {
+            assert!(
+                owner_tested_through_production_caller(owner_named(&index, owner)?, &index),
+                "{owner} is reached through the tested entry `parse`"
+            );
+        }
+        Ok(())
+    }
+
+    /// The negative: a caller that no test calls (an unexercised sibling, the
+    /// `compile_time_marker_test_no_observation` shape) gives no such chain,
+    /// and neither does an owner with no production caller at all.
+    #[test]
+    fn unexercised_sibling_caller_or_no_caller_is_not_a_tested_chain() -> Result<(), String> {
+        let lib = "struct W(u32);\n\
+                   impl W {\n    fn peek(&self) -> u32 { self.get() }\n    fn get(&self) -> u32 { self.0 }\n}\n\
+                   pub fn lonely() -> u32 { 1 }\n";
+        let test = "#[test]\nfn unrelated() { assert_eq!(2, 2); }\n";
+        let index = parsed_index(&[("src/lib.rs", lib), ("tests/t.rs", test)])?;
+        for owner in ["get", "lonely"] {
+            assert!(
+                !owner_tested_through_production_caller(owner_named(&index, owner)?, &index),
+                "{owner} has no production caller that tests call"
+            );
+        }
+        Ok(())
+    }
 
     #[test]
     fn given_no_related_tests_when_building_reach_evidence_then_stage_is_no() {

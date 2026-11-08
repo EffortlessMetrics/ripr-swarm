@@ -58,6 +58,15 @@ pub(in crate::analysis) struct ClassifiedProbeEvidence {
     /// change. An owner with an unresolved caller chain keeps its
     /// shape-based class even when no related test was found.
     pub(in crate::analysis) reach_ruled_out: bool,
+    /// Reach is `Weak` only because every related test is a proximity guess
+    /// (same file, name token, module), the owner is not a trait-impl method,
+    /// and a chain of production callers leads to a function tests call
+    /// (`owner_tested_through_production_caller`). The guessed tests are not
+    /// shown to run the owner, so their missing assertion is not evidence
+    /// that the change goes unnoticed: tests may run the owner through that
+    /// caller chain (a private helper behind a public entry).
+    /// `classify` keeps such a finding out of `reachable_unrevealed` (#12900).
+    pub(in crate::analysis) proximity_reach_of_named_owner: bool,
     /// #11870: a related test reads the field this probe's assignment writes
     /// with a weak relational check, under the one start policy the seam side
     /// asks too (`assigned_field_weak_read_start`). Only then does a weakly
@@ -1733,6 +1742,18 @@ impl ClassifiedProbeEvidence {
             && context
                 .owner_fn
                 .is_some_and(|owner| !context.owner_may_be_reached_unseen(owner));
+        let proximity_reach_of_named_owner = reach.state == StageState::Weak
+            && !context.related_tests.is_empty()
+            && context.related_tests.iter().all(|(_, reason)| {
+                *reason != RelationReason::SeamCalleeCall && !reason.establishes_reach(true)
+            })
+            && context.owner_fn.is_some_and(|owner| {
+                !crate::analysis::classify::is_trait_impl_method(owner)
+                    && crate::analysis::classify::owner_tested_through_production_caller(
+                        owner,
+                        context.index,
+                    )
+            });
         // A weak stage is replaced too: with no reaching test, an
         // unconfirmed oracle (#5830 withholds confirmation from tokens that
         // only coincide with the owner's) is no discriminator at all.
@@ -2042,6 +2063,7 @@ impl ClassifiedProbeEvidence {
             observe,
             discriminate,
             reach_ruled_out,
+            proximity_reach_of_named_owner,
             assigned_field_weakly_read,
             assertion_refusal,
             refusals_are_analyzer_limits,
@@ -2267,6 +2289,13 @@ impl ClassifiedProbeEvidence {
             &self.discriminate,
             probe,
         );
+        // #12900: a "reached but not noticed" claim needs a test shown to run
+        // the owner. When only proximity guesses are related and something
+        // else names the owner, the missing assertion was read on tests that
+        // may never call it, so the gap is unconfirmed, not revealed.
+        if class == ExposureClass::ReachableUnrevealed && self.proximity_reach_of_named_owner {
+            return ExposureClass::WeaklyExposed;
+        }
         // RIPR-SPEC-0228: a field assignment is credited only through a
         // confirmed read of that field after the owner call. A weak reading
         // there means ripr could not tell whether a related assertion reads
