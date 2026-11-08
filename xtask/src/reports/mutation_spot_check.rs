@@ -36,6 +36,8 @@
 //! developer meets first.
 
 pub(crate) mod pilot;
+mod stryker;
+mod synthetic_diff;
 
 use crate::run::{
     capture_bytes_in_dir_with_timeout, capture_output_with_timeout,
@@ -125,7 +127,8 @@ const RECALL_LANGUAGES: &[&str] = &["rust", "python", "typescript"];
 const HARNESS_LANGUAGE: &str = "rust";
 const REDERIVE_USAGE: &str =
     "usage: cargo xtask mutation-spot-check --rederive-summaries <mutation-spot-check.json>";
-const USAGE: &str = "usage: cargo xtask mutation-spot-check --repo <name>=<checkout> [--repo ...] [--mutants-out <name>=<mutants.out dir>] [--run-mutants] [--mutants-arg <name>=<arg>] [--jobs <n>] [--mutant-timeout-secs <n>] [--examples <n>] [--ripr <binary>]";
+const USAGE: &str = "usage: cargo xtask mutation-spot-check --repo <name>=<checkout> [--repo ...] [--mutants-out <name>=<mutants.out dir>] [--run-mutants] [--mutants-arg <name>=<arg>] [--jobs <n>] [--mutant-timeout-secs <n>] [--examples <n>] [--ripr <binary>]
+  TypeScript (real Stryker outcomes, synthetic-diff verdict join): --repo <name>=<checkout> --stryker-report <name>=<mutation.json> [--stryker-max-mutants <n>]";
 
 fn harness_owned_mutants_arg(arg: &str) -> bool {
     if let Some(bundle) = arg.strip_prefix('-').filter(|rest| !rest.starts_with('-')) {
@@ -182,6 +185,23 @@ pub(crate) fn mutation_spot_check(args: &[String]) -> Result<(), String> {
 
     let mut repos = Vec::new();
     for (name, checkout) in &options.repos {
+        if let Some(report_path) = options.stryker_reports.get(name) {
+            let (sources, tool) = stryker::parse_stryker_report(&read_json(report_path)?)
+                .map_err(|err| format!("`{name}`: {err}"))?;
+            repos.push(synthetic_diff::spot_check_synthetic_repo(
+                &synthetic_diff::SyntheticRepo {
+                    binary: &binary,
+                    scratch: &scratch,
+                    name,
+                    checkout,
+                    profile: synthetic_diff::TYPESCRIPT,
+                    sources: &sources,
+                    tool,
+                    max_mutants: options.stryker_max_mutants,
+                },
+            )?);
+            continue;
+        }
         repos.push(spot_check_repo(
             &binary, &scratch, name, checkout, &options,
         )?);
@@ -201,6 +221,9 @@ struct Options {
     repos: Vec<(String, PathBuf)>,
     mutants_out: BTreeMap<String, PathBuf>,
     mutants_args: BTreeMap<String, Vec<String>>,
+    /// Repos scored from a Stryker report (TypeScript) instead of cargo-mutants.
+    stryker_reports: BTreeMap<String, PathBuf>,
+    stryker_max_mutants: usize,
     run_mutants: bool,
     jobs: usize,
     mutant_timeout_secs: u64,
@@ -213,6 +236,8 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
         repos: Vec::new(),
         mutants_out: BTreeMap::new(),
         mutants_args: BTreeMap::new(),
+        stryker_reports: BTreeMap::new(),
+        stryker_max_mutants: synthetic_diff::DEFAULT_MAX_MUTANTS,
         run_mutants: false,
         jobs: DEFAULT_JOBS,
         mutant_timeout_secs: DEFAULT_MUTANT_TIMEOUT_SECS,
@@ -223,7 +248,7 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
     while index < args.len() {
         let flag = args[index].as_str();
         match flag {
-            "--repo" | "--mutants-out" => {
+            "--repo" | "--mutants-out" | "--stryker-report" => {
                 index += 1;
                 let (name, path) = parse_named_path(required_arg(args, index, flag)?, flag)?;
                 if flag == "--repo" {
@@ -231,6 +256,10 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
                         return Err(format!("duplicate --repo name `{name}`"));
                     }
                     options.repos.push((name, path));
+                } else if flag == "--stryker-report" {
+                    if options.stryker_reports.insert(name.clone(), path).is_some() {
+                        return Err(format!("duplicate --stryker-report name `{name}`"));
+                    }
                 } else if options.mutants_out.insert(name.clone(), path).is_some() {
                     return Err(format!("duplicate --mutants-out name `{name}`"));
                 }
@@ -254,6 +283,11 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
                     .entry(name.trim().to_string())
                     .or_default()
                     .push(arg.to_string());
+            }
+            "--stryker-max-mutants" => {
+                index += 1;
+                options.stryker_max_mutants =
+                    parse_positive(required_arg(args, index, flag)?, flag)? as usize;
             }
             "--run-mutants" => options.run_mutants = true,
             "--jobs" => {
@@ -289,6 +323,16 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
     for name in options.mutants_out.keys() {
         if !options.repos.iter().any(|(repo, _)| repo == name) {
             return Err(format!("--mutants-out `{name}` names no --repo"));
+        }
+    }
+    for name in options.stryker_reports.keys() {
+        if !options.repos.iter().any(|(repo, _)| repo == name) {
+            return Err(format!("--stryker-report `{name}` names no --repo"));
+        }
+        if options.mutants_out.contains_key(name) || options.mutants_args.contains_key(name) {
+            return Err(format!(
+                "`{name}` is scored from a Stryker report, so --mutants-out and --mutants-arg do not apply to it"
+            ));
         }
     }
     for name in options.mutants_args.keys() {
@@ -357,6 +401,9 @@ struct RepoRun {
     /// Judged pilot recommendations, or why pilot produced none. A pilot
     /// failure does not discard the repo's validated mutation outcomes.
     pilot: Result<Vec<Value>, String>,
+    /// Receipt fields of a synthetic-diff repo (`agreement_method`, the
+    /// mutation tool, ...); `None` for a Rust span-join repo.
+    synthetic: Option<Value>,
 }
 
 fn spot_check_repo(
@@ -471,6 +518,7 @@ fn spot_check_repo(
             &mutant_genres(&mutant_records),
         )
         .map_err(|err| format!("`{name}`: {err}"))?,
+        synthetic: None,
         pilot: pilot_top.map(|top| {
             pilot::judge_recommendations(
                 &top,
@@ -757,6 +805,9 @@ struct Record {
     expression: Option<String>,
     mutant: String,
     operator_token: &'static str,
+    /// ripr's own classification token for a synthetic-diff record; empty for
+    /// the Rust span join, whose `grip_class` is the seam's.
+    verdict_token: String,
 }
 
 /// Seam id to source expression, from the repo exposure JSON.
@@ -897,6 +948,7 @@ fn classify_records(
             expression,
             mutant,
             operator_token,
+            verdict_token: String::new(),
         });
     }
     let unjoined = |runtime: &Value, disposition: String| Record {
@@ -911,6 +963,7 @@ fn classify_records(
         expression: None,
         mutant: text(runtime, "/mutant_id"),
         operator_token: "not_applicable",
+        verdict_token: String::new(),
     };
     for (key, disposition) in [
         ("ambiguous_file_line_matches", "ambiguous_file_line"),
@@ -1069,7 +1122,18 @@ fn analyzer_version(binary: &Path) -> Result<String, String> {
     Ok(version.to_string())
 }
 
-fn build_report(repos: &[RepoRun], examples: usize, analyzer: &str) -> Value {
+fn build_report(all_repos: &[RepoRun], examples: usize, analyzer: &str) -> Value {
+    // Synthetic-diff repos (TypeScript) are scored by a different join, so
+    // their numbers stay out of every Rust span-join aggregate below and are
+    // reported under `synthetic_diff_verdict` instead.
+    let repos: Vec<&RepoRun> = all_repos
+        .iter()
+        .filter(|repo| repo.synthetic.is_none())
+        .collect();
+    let synthetic_repos: Vec<&RepoRun> = all_repos
+        .iter()
+        .filter(|repo| repo.synthetic.is_some())
+        .collect();
     let mut by_disposition: BTreeMap<String, BTreeMap<String, BTreeMap<String, usize>>> =
         BTreeMap::new();
     // Both families are always reported, so a run that scores only one
@@ -1084,7 +1148,7 @@ fn build_report(repos: &[RepoRun], examples: usize, analyzer: &str) -> Value {
     let mut example_seams = BTreeSet::new();
     let mut operator_tokens: BTreeMap<&str, usize> = BTreeMap::new();
     let mut operator_token_absent = Vec::new();
-    for repo in repos {
+    for repo in &repos {
         for record in &repo.records {
             let grip_class = if record.grip_class.is_empty() {
                 "no_joined_seam"
@@ -1147,7 +1211,7 @@ fn build_report(repos: &[RepoRun], examples: usize, analyzer: &str) -> Value {
         .collect::<serde_json::Map<_, _>>();
     let by_disposition_value = json!(by_disposition);
     let mut language_outcomes: BTreeMap<String, Value> = BTreeMap::new();
-    for repo in repos {
+    for repo in all_repos {
         merge_outcomes(
             language_outcomes
                 .entry(repo.language.clone())
@@ -1159,25 +1223,12 @@ fn build_report(repos: &[RepoRun], examples: usize, analyzer: &str) -> Value {
     let coverage = seam_coverage(&by_disposition_value);
     let families = Value::Object(families);
     let replacement = replacement_criterion(Some(&families), &recall, &coverage, None);
-    json!({
+    let mut report = json!({
         "schema_version": SCHEMA_VERSION,
         "status": "advisory",
         "analyzer_version": analyzer,
         "claim_boundary": "Agreement is scored only on canonical_precise records: a BinaryOperator or UnaryOperator mutant that ripr calibrate joined by seam_id or by unique span containment to a predicate_boundary or return_value seam, with a caught or missed outcome. File/line fallback joins, span-overlap ties, unmatched records, and unsupported genres, seam kinds or outcomes are counted as exclusions and never scored. Claims are limited to the recorded checkout revisions, cargo-mutants versions, and this join rule; this is not a suite adequacy measure.",
-        "repos": repos.iter().map(|repo| json!({
-            "name": repo.name,
-            "language": repo.language,
-            "revision": repo.revision,
-            "mutant_diffs_checked_against_revision": repo.diffs_checked,
-            "exposure_run_status": repo.exposure_run_status,
-            "cargo_mutants_args": repo.cargo_mutants_args,
-            "cargo_mutants_version": repo.cargo_mutants_version,
-            "mutant_timeout_secs": repo.mutant_timeout_secs,
-            "mutant_set_sha256": repo.mutant_set_sha256,
-            "calibration_metrics": repo.metrics,
-            "pairings": pairing_counts(&repo.records),
-            "outcomes_by_disposition_and_grip_class": outcome_table(&repo.records),
-        })).collect::<Vec<_>>(),
+        "repos": all_repos.iter().map(repo_entry).collect::<Vec<_>>(),
         "outcomes_by_disposition_and_grip_class": by_disposition,
         "scored_families": families,
         "recall_of_missed": recall,
@@ -1194,6 +1245,122 @@ fn build_report(repos: &[RepoRun], examples: usize, analyzer: &str) -> Value {
                 .map(|repo| (repo.name.clone(), repo.pilot.clone()))
                 .collect::<Vec<_>>(),
         ),
+    });
+    if !synthetic_repos.is_empty() {
+        report["synthetic_diff_verdict"] = synthetic_section(&synthetic_repos, examples);
+    }
+    report
+}
+
+/// One repo's entry in the receipt's `repos` array.
+fn repo_entry(repo: &RepoRun) -> Value {
+    let methods: &[&str] = if repo.synthetic.is_some() {
+        &[synthetic_diff::AGREEMENT_METHOD]
+    } else {
+        CANONICAL_JOIN_METHODS
+    };
+    let mut entry = json!({
+        "name": repo.name,
+        "language": repo.language,
+        "revision": repo.revision,
+        "mutant_diffs_checked_against_revision": repo.diffs_checked,
+        "exposure_run_status": repo.exposure_run_status,
+        "cargo_mutants_args": repo.cargo_mutants_args,
+        "cargo_mutants_version": repo.cargo_mutants_version,
+        "mutant_timeout_secs": repo.mutant_timeout_secs,
+        "mutant_set_sha256": repo.mutant_set_sha256,
+        "calibration_metrics": repo.metrics,
+        "pairings": pairing_counts(&repo.records, methods),
+        "outcomes_by_disposition_and_grip_class": outcome_table(&repo.records),
+    });
+    if let (Some(extra), Some(fields)) = (
+        repo.synthetic.as_ref().and_then(Value::as_object),
+        entry.as_object_mut(),
+    ) {
+        for (key, value) in extra {
+            fields.insert(key.clone(), value.clone());
+        }
+    }
+    entry
+}
+
+/// Scores of the synthetic-diff repos, kept apart from the Rust span-join
+/// numbers: ripr's diff-time verdict on a synthetic one-hunk diff of each real
+/// mutant, against the mutant's real outcome.
+fn synthetic_section(repos: &[&RepoRun], examples: usize) -> Value {
+    let mut tables: BTreeMap<String, BTreeMap<String, usize>> =
+        ["claims_discriminator", "claims_no_discriminator"]
+            .into_iter()
+            .map(|family| (family.to_string(), BTreeMap::new()))
+            .collect();
+    let mut owners: BTreeMap<String, BTreeSet<(String, String)>> = BTreeMap::new();
+    let mut tokens: BTreeMap<String, BTreeMap<String, usize>> = BTreeMap::new();
+    let mut exclusions: BTreeMap<String, usize> = BTreeMap::new();
+    let mut disagreement_examples: BTreeMap<&str, Vec<Value>> = BTreeMap::new();
+    let mut records_total = 0;
+    let mut outcomes = json!({});
+    for repo in repos {
+        merge_outcomes(&mut outcomes, &json!(outcome_table(&repo.records)));
+        for record in &repo.records {
+            records_total += 1;
+            if record.disposition != CANONICAL_PRECISE {
+                *exclusions.entry(record.disposition.clone()).or_default() += 1;
+                continue;
+            }
+            *tokens
+                .entry(record.verdict_token.clone())
+                .or_default()
+                .entry(record.outcome.clone())
+                .or_default() += 1;
+            let family = verdict_family(&record.grip_class);
+            let verdict = agreement(family, &record.outcome);
+            if verdict == "unscored" {
+                continue;
+            }
+            *tables
+                .entry(family.to_string())
+                .or_default()
+                .entry(verdict.to_string())
+                .or_default() += 1;
+            owners
+                .entry(family.to_string())
+                .or_default()
+                .insert((repo.name.clone(), record.seam_id.clone()));
+            let list = disagreement_examples.entry(verdict).or_default();
+            if verdict != "agree" && list.len() < examples {
+                list.push(example(repo, record));
+            }
+        }
+    }
+    disagreement_examples.remove("agree");
+    let families = tables
+        .iter()
+        .map(|(family, counts)| {
+            let agree = counts.get("agree").copied().unwrap_or(0);
+            let total: usize = counts.values().sum();
+            (
+                family.clone(),
+                json!({
+                    "mutants_scored": total,
+                    "owners_scored": owners.get(family).map_or(0, BTreeSet::len),
+                    "counts": counts,
+                    "agreement_rate": rate(agree, total),
+                }),
+            )
+        })
+        .collect::<serde_json::Map<_, _>>();
+    let canonical = records_total - exclusions.values().sum::<usize>();
+    json!({
+        "agreement_method": synthetic_diff::AGREEMENT_METHOD,
+        "repos": repos.iter().map(|repo| json!({"name": repo.name, "language": repo.language})).collect::<Vec<_>>(),
+        "claim_boundary": "Advisory and never mixed with the Rust span-join figures. For each real mutation-tool mutant, a one-hunk diff from the original to the mutated source is run through `ripr check --diff` in a scratch copy of the checkout whose ripr.toml enables the language, and the classification on the mutated lines is read back. Only pairs with a caught or missed runtime outcome (the mutation tool's detected mutants versus its undetected or uncovered ones) and exactly one classification and owner on the mutated lines are scored: exposed claims a discriminator (a missed mutant is an overclaim); reachable_unrevealed and no_static_path claim none (a caught mutant is a false gap); weakly_exposed and the unknown classes are counted but not scored. Every other mutant is an exclusion with its reason, and canonical_precise plus the exclusions equals records_total. TypeScript analysis is a syntax-first preview; a mutated line is not a seam; the figures bind to the recorded revisions and tool versions and are not suite adequacy.",
+        "records_total": records_total,
+        "canonical_precise": canonical,
+        "excluded": exclusions,
+        "scored_families": families,
+        "verdict_tokens_by_outcome": tokens,
+        "outcomes_by_disposition_and_grip_class": outcomes,
+        "disagreement_examples": disagreement_examples,
     })
 }
 
@@ -1464,6 +1631,12 @@ fn recall_of_missed(outcomes: &Value, language_outcomes: &BTreeMap<String, Value
             Some(table) => {
                 let mut counts = recall_counts(table);
                 counts.insert("status".into(), json!("established"));
+                if language != HARNESS_LANGUAGE {
+                    counts.insert(
+                        "agreement_method".into(),
+                        json!(synthetic_diff::AGREEMENT_METHOD),
+                    );
+                }
                 Value::Object(counts)
             }
             None => json!({
@@ -1586,7 +1759,7 @@ fn recorded_language_outcomes(
 }
 
 fn example(repo: &RepoRun, record: &Record) -> Value {
-    json!({
+    let mut row = json!({
         "repo": repo.name,
         "revision": repo.revision,
         "file": record.file,
@@ -1598,16 +1771,18 @@ fn example(repo: &RepoRun, record: &Record) -> Value {
         "grip_class": record.grip_class,
         "mutant": record.mutant,
         "runtime_outcome": record.outcome,
-    })
+    });
+    if !record.verdict_token.is_empty() {
+        row["verdict_token"] = json!(record.verdict_token);
+    }
+    row
 }
 
 /// The denominator stays every runtime record: `canonical_precise` plus every
 /// exclusion always equals `records_total`.
-fn pairing_counts(records: &[Record]) -> Value {
-    let mut by_join_method: BTreeMap<&str, usize> = CANONICAL_JOIN_METHODS
-        .iter()
-        .map(|method| (*method, 0))
-        .collect();
+fn pairing_counts(records: &[Record], methods: &[&'static str]) -> Value {
+    let mut by_join_method: BTreeMap<&str, usize> =
+        methods.iter().map(|method| (*method, 0)).collect();
     let mut excluded: BTreeMap<&str, usize> = BTreeMap::new();
     for record in records {
         if record.disposition == CANONICAL_PRECISE {
@@ -1639,12 +1814,15 @@ fn spot_check_markdown(report: &Value) -> String {
     if let Some(boundary) = report.get("claim_boundary").and_then(Value::as_str) {
         out.push_str(&format!("{boundary}\n\n"));
     }
+    // Synthetic-diff repos have their own section; the tables below are the
+    // Rust span join.
     let repos = || {
         report
             .get("repos")
             .and_then(Value::as_array)
             .into_iter()
             .flatten()
+            .filter(|repo| repo.get("agreement_method").is_none())
     };
     let name = |repo: &Value| {
         repo.get("name")
@@ -1798,7 +1976,81 @@ fn spot_check_markdown(report: &Value) -> String {
     {
         out.push_str(&format!("- **absent** {}\n", example_line(row)));
     }
+    out.push_str(&synthetic_markdown(report));
     out.push_str(&pilot::markdown(report));
+    out
+}
+
+fn synthetic_markdown(report: &Value) -> String {
+    let Some(section) = report.get("synthetic_diff_verdict") else {
+        return String::new();
+    };
+    let mut out = String::from("\n## Synthetic-diff verdicts (real mutants, TypeScript)\n\n");
+    if let Some(boundary) = section.get("claim_boundary").and_then(Value::as_str) {
+        out.push_str(&format!("{boundary}\n\n"));
+    }
+    let n = |pointer: &str| {
+        section
+            .pointer(pointer)
+            .and_then(Value::as_u64)
+            .unwrap_or(0)
+    };
+    out.push_str(&format!(
+        "{} mutants: {} canonical_precise, {} excluded.\n\n",
+        n("/records_total"),
+        n("/canonical_precise"),
+        n("/records_total") - n("/canonical_precise"),
+    ));
+    out.push_str("| Exclusion | Mutants |\n| --- | --- |\n");
+    for (reason, count) in section
+        .get("excluded")
+        .and_then(Value::as_object)
+        .into_iter()
+        .flatten()
+    {
+        out.push_str(&format!(
+            "| `{reason}` | {} |\n",
+            count.as_u64().unwrap_or(0)
+        ));
+    }
+    out.push_str("\n| Verdict family | Owners | Mutants | Agree | Overclaim | False gap | Agreement |\n| --- | --- | --- | --- | --- | --- | --- |\n");
+    for (family, row) in section
+        .get("scored_families")
+        .and_then(Value::as_object)
+        .into_iter()
+        .flatten()
+    {
+        let count = |key: &str| {
+            row.pointer(&format!("/counts/{key}"))
+                .and_then(Value::as_u64)
+                .unwrap_or(0)
+        };
+        out.push_str(&format!(
+            "| {family} | {} | {} | {} | {} | {} | {} |\n",
+            row.get("owners_scored")
+                .and_then(Value::as_u64)
+                .unwrap_or(0),
+            row.get("mutants_scored")
+                .and_then(Value::as_u64)
+                .unwrap_or(0),
+            count("agree"),
+            count("overclaim"),
+            count("false_gap"),
+            row.get("agreement_rate")
+                .and_then(Value::as_f64)
+                .map_or_else(|| "n/a".to_string(), |rate| format!("{:.1}%", rate * 100.0)),
+        ));
+    }
+    for (verdict, rows) in section
+        .get("disagreement_examples")
+        .and_then(Value::as_object)
+        .into_iter()
+        .flatten()
+    {
+        for row in rows.as_array().into_iter().flatten() {
+            out.push_str(&format!("- **{verdict}** {}\n", example_line(row)));
+        }
+    }
     out
 }
 
@@ -2772,7 +3024,99 @@ mod tests {
             metrics: Value::Null,
             records,
             pilot: Ok(Vec::new()),
+            synthetic: None,
         }
+    }
+
+    fn synthetic_record(disposition: &str, token: &str, outcome: &str) -> Record {
+        Record {
+            disposition: disposition.to_string(),
+            join_method: synthetic_diff::AGREEMENT_METHOD.to_string(),
+            grip_class: if token.is_empty() {
+                String::new()
+            } else {
+                synthetic_diff::grip_class_for_token(token)
+            },
+            outcome: outcome.to_string(),
+            seam_id: "typescript:src/a.ts::f".to_string(),
+            seam_kind: String::new(),
+            file: "src/a.ts".to_string(),
+            line: 2,
+            expression: None,
+            mutant: format!("src/a.ts:2:1: M [{outcome}] id=1"),
+            operator_token: "not_applicable",
+            verdict_token: token.to_string(),
+        }
+    }
+
+    #[test]
+    fn synthetic_repos_stay_out_of_the_rust_aggregates() {
+        let mut ts = repo_run(vec![
+            synthetic_record(CANONICAL_PRECISE, "exposed", "caught"),
+            synthetic_record(CANONICAL_PRECISE, "exposed", "missed"),
+            synthetic_record(CANONICAL_PRECISE, "reachable_unrevealed", "missed"),
+            synthetic_record(CANONICAL_PRECISE, "reachable_unrevealed", "caught"),
+            synthetic_record(CANONICAL_PRECISE, "weakly_exposed", "missed"),
+            synthetic_record("no_finding_on_mutated_lines", "", "missed"),
+            synthetic_record("unscoreable_outcome", "", "timeout"),
+        ]);
+        ts.name = "pkg".to_string();
+        ts.language = "typescript".to_string();
+        ts.synthetic = Some(json!({"agreement_method": synthetic_diff::AGREEMENT_METHOD}));
+        ts.pilot = Err("n/a".to_string());
+        let report = build_report(&[ts], 5, "ripr test");
+        // No Rust span-join figure sees the TypeScript records.
+        assert_eq!(
+            report["scored_families"]["claims_discriminator"]["mutants_scored"],
+            0
+        );
+        assert_eq!(report["seam_coverage"]["mutants_total"], 0);
+        assert_eq!(report["recall_of_missed"]["missed_total"], 0);
+        assert_eq!(report["pilot_top_recommendations"]["unavailable_repos"], 0);
+        // The synthetic row scores them and keeps the bookkeeping identity.
+        let row = &report["synthetic_diff_verdict"];
+        assert_eq!(row["agreement_method"], "synthetic_diff_verdict");
+        assert_eq!(row["records_total"], 7);
+        assert_eq!(row["canonical_precise"], 5);
+        assert_eq!(row["excluded"]["no_finding_on_mutated_lines"], 1);
+        assert_eq!(row["excluded"]["unscoreable_outcome"], 1);
+        assert_eq!(
+            row["scored_families"]["claims_discriminator"]["counts"]["agree"],
+            1
+        );
+        assert_eq!(
+            row["scored_families"]["claims_discriminator"]["counts"]["overclaim"],
+            1
+        );
+        assert_eq!(
+            row["scored_families"]["claims_no_discriminator"]["counts"]["agree"],
+            1
+        );
+        assert_eq!(
+            row["scored_families"]["claims_no_discriminator"]["counts"]["false_gap"],
+            1
+        );
+        // Only the exposed and reachable_unrevealed pairs are scored.
+        assert_eq!(
+            row["scored_families"]["claims_discriminator"]["mutants_scored"],
+            2
+        );
+        let entry = &report["repos"][0];
+        assert_eq!(entry["language"], "typescript");
+        assert_eq!(entry["agreement_method"], "synthetic_diff_verdict");
+        assert_eq!(entry["pairings"]["records_total"], 7);
+        assert_eq!(entry["pairings"]["canonical_precise"], 5);
+        let by_language = &report["recall_of_missed"]["by_language"];
+        assert_eq!(by_language["typescript"]["status"], "established");
+        assert_eq!(
+            by_language["typescript"]["agreement_method"],
+            "synthetic_diff_verdict"
+        );
+        assert_eq!(by_language["typescript"]["missed_total"], 4);
+        assert_eq!(by_language["python"]["status"], "not_established");
+        assert!(by_language["rust"].get("agreement_method").is_none());
+        let markdown = spot_check_markdown(&report);
+        assert!(markdown.contains("Synthetic-diff verdicts"));
     }
 
     fn fixture(dir: &str, file: &str) -> Result<Value, String> {
