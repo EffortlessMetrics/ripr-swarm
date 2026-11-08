@@ -543,7 +543,11 @@ pub(super) fn render_markdown(receipt: &Value) -> String {
     if let Some(reasons) = receipt["r0_install"]["reasons"].as_array()
         && !reasons.is_empty()
     {
-        out.push_str("\nWhy not met:\n\n");
+        let heading = match receipt["r0_install"]["status"].as_str() {
+            Some("not_established") => "Why not established",
+            _ => "Why not met",
+        };
+        out.push_str(&format!("\n{heading}:\n\n"));
         for reason in reasons {
             out.push_str(&format!("- {}\n", reason.as_str().unwrap_or("")));
         }
