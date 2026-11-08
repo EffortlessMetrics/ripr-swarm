@@ -23,7 +23,9 @@
 use crate::analysis::classify::call_identity::{
     production_text_calls_owner, shared_owner_call_identity,
 };
-use crate::analysis::facts::{CallFact, FunctionContainer, FunctionSummary, RustIndex, TestFact};
+use crate::analysis::facts::{
+    CallFact, FunctionContainer, FunctionSummary, OracleFact, RustIndex, TestFact,
+};
 use crate::domain::StaticLimitKind;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
@@ -1034,6 +1036,7 @@ const IMPLICIT_DISPATCH_METHODS: &[&str] = &[
 /// The reverse name walk from one owner, for asking whether a test may run
 /// it ([`TransitiveReachIndex::owner_reach`]).
 pub(in crate::analysis) struct OwnerReach<'g, 'a> {
+    index: &'a RustIndex,
     graph: &'g ReachGraph<'a>,
     owner_name: String,
     reaching: HashSet<&'a str>,
@@ -1141,7 +1144,13 @@ impl OwnerReach<'_, '_> {
     /// full reverse closure, macro hops included, rather than trusting
     /// `path_untraced`, which blanket-fails on any macro in a large
     /// workspace. Fail closed when the owner may be reached implicitly.
-    pub(in crate::analysis) fn assertion_pins_other_function(&self, assertion_text: &str) -> bool {
+    pub(in crate::analysis) fn assertion_pins_other_function(
+        &self,
+        owner: &FunctionSummary,
+        test: &TestFact,
+        assertion: &OracleFact,
+        assertion_text: &str,
+    ) -> bool {
         if self.implicit_dispatch {
             return false;
         }
@@ -1151,7 +1160,49 @@ impl OwnerReach<'_, '_> {
         let mut other_indexed = false;
         for name in super::reveal::called_names(assertion_text) {
             let name = name.as_str();
-            if name == self.owner_name || self.reaching.contains(name) {
+            if name == self.owner_name {
+                if super::call_identity::text_may_call_function_kind(assertion_text, owner) {
+                    return false;
+                }
+                // A receiver call cannot name a free owner, nor a bare call a
+                // method owner. It may still call an opposite-kind wrapper
+                // that reaches this owner. Inspect that definition's edges,
+                // not the shared leaf name (which always reaches itself).
+                let mut candidates = self
+                    .graph
+                    .by_name
+                    .get(name)
+                    .into_iter()
+                    .flatten()
+                    .copied()
+                    .filter(|function| {
+                        super::call_identity::text_may_call_function_kind(assertion_text, function)
+                    });
+                let Some(candidate) = candidates.next() else {
+                    // An unindexed receiver is not another indexed function.
+                    continue;
+                };
+                if candidates.next().is_some()
+                    || candidate.id == owner.id
+                    || !self.assertion_names_candidate(test, assertion, candidate)
+                    || !self.opposite_kind_return_is_closed(candidate)
+                    || !super::related_tests::assertion_has_closed_candidate_values(
+                        test,
+                        assertion,
+                        candidate,
+                        self.index,
+                        &|path| self.opposite_kind_enum_value_is_closed(candidate, path),
+                    )
+                    || self.opposite_kind_function_may_run_owner(candidate)
+                {
+                    // Ambiguous dispatch, implicit/unknown code and a real
+                    // outgoing owner path retain the existing uncertainty.
+                    return false;
+                }
+                other_indexed = true;
+                continue;
+            }
+            if self.reaching.contains(name) {
                 return false;
             }
             if self.graph.by_name.contains_key(name) {
@@ -1165,6 +1216,209 @@ impl OwnerReach<'_, '_> {
             }
         }
         other_indexed
+    }
+
+    /// Shape only selects a candidate. The existing binding authority must
+    /// establish the actual call in this assertion before it can refuse credit.
+    fn assertion_names_candidate(
+        &self,
+        test: &TestFact,
+        assertion: &OracleFact,
+        candidate: &FunctionSummary,
+    ) -> bool {
+        match candidate.item.container {
+            FunctionContainer::Free => {
+                super::owner_pin::targeted_free_call_reaches_owner(
+                    test,
+                    candidate,
+                    None,
+                    self.index,
+                    &self.index.call_identity_memos.receiver_pin_syntax,
+                ) && super::related_tests::assertion_free_owner_calls_resolve(
+                    test, assertion, candidate, self.index,
+                )
+            }
+            FunctionContainer::Inherent { .. } => {
+                super::related_tests::assertion_inherent_owner_calls_resolve(
+                    test, assertion, candidate, self.index,
+                )
+            }
+            _ => false,
+        }
+    }
+
+    /// Absence of calls is insufficient: a global/field/local can carry the
+    /// owner's result. Admit only primitive signature inputs, literal values,
+    /// built-in primitive expressions and declared enum construction. Every
+    /// other value, callable, binding or expansion preserves uncertainty.
+    fn opposite_kind_function_may_run_owner(&self, function: &FunctionSummary) -> bool {
+        use ra_ap_syntax::{AstNode, ast, ast::HasArgList};
+        if function.item.container == FunctionContainer::Unknown
+            || !super::operand_pin::callable_context_is_closed(function, self.index)
+        {
+            return true;
+        }
+        let Some(parameters) =
+            super::operand_pin::closed_primitive_parameters(function, self.index)
+        else {
+            return true;
+        };
+        let Some(parse) = self.index.source_syntax.parse_fragment(&function.body) else {
+            return true;
+        };
+        let Some(body) = parse
+            .tree()
+            .syntax()
+            .children()
+            .find_map(ast::Fn::cast)
+            .and_then(|definition| definition.body())
+        else {
+            return true;
+        };
+        let primitive =
+            |expression: &ast::Expr| closed_primitive_expression(expression, &parameters, 32);
+        body.syntax().descendants().any(|node| {
+            if ast::Attr::can_cast(node.kind())
+                || ast::Item::can_cast(node.kind())
+                || ast::LetStmt::can_cast(node.kind())
+                || ast::MacroCall::can_cast(node.kind())
+            {
+                return true;
+            }
+            if let Some(pattern) = ast::Pat::cast(node.clone()) {
+                return !matches!(pattern, ast::Pat::LiteralPat(_) | ast::Pat::WildcardPat(_));
+            }
+            let Some(expression) = ast::Expr::cast(node) else {
+                return false;
+            };
+            match &expression {
+                ast::Expr::Literal(_) | ast::Expr::ParenExpr(_) | ast::Expr::BlockExpr(_) => false,
+                ast::Expr::BinExpr(_) | ast::Expr::PrefixExpr(_) => !primitive(&expression),
+                ast::Expr::PathExpr(path) => {
+                    !primitive(&expression)
+                        && !path.path().is_some_and(|path| {
+                            self.opposite_kind_enum_path_is_closed(function, &path)
+                        })
+                }
+                ast::Expr::CallExpr(call) => {
+                    let Some(ast::Expr::PathExpr(callee)) = call.expr() else {
+                        return true;
+                    };
+                    !callee
+                        .path()
+                        .is_some_and(|path| self.opposite_kind_enum_path_is_closed(function, &path))
+                        || call
+                            .arg_list()
+                            .is_none_or(|list| !list.args().all(|arg| primitive(&arg)))
+                }
+                ast::Expr::MatchExpr(expression) => {
+                    expression.expr().is_none_or(|expr| !primitive(&expr))
+                }
+                _ => true,
+            }
+        })
+    }
+
+    fn opposite_kind_enum_path_is_closed(
+        &self,
+        function: &FunctionSummary,
+        path: &ra_ap_syntax::ast::Path,
+    ) -> bool {
+        use ra_ap_syntax::{AstNode, ast, ast::HasName};
+        let Some(qualifier) = path.qualifier() else {
+            return false;
+        };
+        let (Some(enum_name), Some(variant)) = (
+            qualifier.segment().and_then(|segment| segment.name_ref()),
+            path.segment().and_then(|segment| segment.name_ref()),
+        ) else {
+            return false;
+        };
+        let snapshot = self.index.source_syntax.get(self.index, &function.file);
+        let root_scope = snapshot
+            .as_ref()
+            .and_then(|snapshot| snapshot.item_nesting(&function.name, function.start_line, true))
+            .is_some_and(|scope| scope.modules.is_empty() && !scope.cfg_gated);
+        // The older enum helper establishes declarations and rebinding,
+        // not this occurrence's namespace. Restrict the exception to a
+        // bare Enum::Variant and an enum in this function's own file-root
+        // scope. Modules, constants, aliases and nested owners stay unknown.
+        root_scope
+            && qualifier.qualifier().is_none()
+            && !self.graph.by_name.contains_key(variant.text())
+            && snapshot
+                .as_ref()
+                .and_then(|snapshot| snapshot.tree())
+                .is_some_and(|tree| {
+                    tree.syntax()
+                        .children()
+                        .filter_map(ast::Enum::cast)
+                        .any(|item| {
+                            item.name()
+                                .is_some_and(|name| name.text() == enum_name.text())
+                                && super::call_identity::data_declaration_name_is_unambiguous(
+                                    item.syntax(),
+                                )
+                                && super::operand_pin::enum_constructor_context_is_closed(
+                                    &item, function, self.index,
+                                )
+                        })
+                })
+            && super::owner_pin::owner_builds_declared_error_variant(
+                &path.syntax().text().to_string(),
+                function,
+                self.index,
+            )
+    }
+
+    fn opposite_kind_enum_value_is_closed(
+        &self,
+        function: &FunctionSummary,
+        path: &ra_ap_syntax::ast::Path,
+    ) -> bool {
+        self.opposite_kind_enum_path_is_closed(function, path)
+            && path
+                .qualifier()
+                .and_then(|path| path.segment())
+                .and_then(|segment| segment.name_ref())
+                .is_some_and(|name| {
+                    let name = name.text();
+                    super::owner_pin::error_enum_compares_payload(name, self.index)
+                        && super::element_field_pin::drop_is_plain_in_closed_sources(
+                            self.index, name,
+                        )
+                })
+    }
+
+    /// Comparing or dropping the returned value can execute code too. A
+    /// primitive return or an actual constructed enum with established value
+    /// equality and plain Drop is the whole admission; aliases stay unknown.
+    fn opposite_kind_return_is_closed(&self, function: &FunctionSummary) -> bool {
+        use ra_ap_syntax::{AstNode, ast};
+        if super::operand_pin::declared_return_is_primitive(function, self.index) {
+            return true;
+        }
+        let Some(parse) = self.index.source_syntax.parse_fragment(&function.body) else {
+            return false;
+        };
+        let Some(definition) = parse.tree().syntax().children().find_map(ast::Fn::cast) else {
+            return false;
+        };
+        let Some(returned) = definition.ret_type().and_then(|returned| returned.ty()) else {
+            return false;
+        };
+        let returned = returned.syntax().text().to_string();
+        definition
+            .syntax()
+            .descendants()
+            .filter_map(ast::PathExpr::cast)
+            .any(|value| {
+                value.path().is_some_and(|path| {
+                    path.qualifier()
+                        .is_some_and(|qualifier| qualifier.syntax().text() == returned.trim())
+                        && self.opposite_kind_enum_value_is_closed(function, &path)
+                })
+            })
     }
 
     /// Whether `test` may run the owner, by name only (#6297). It may when
@@ -1191,6 +1445,52 @@ impl OwnerReach<'_, '_> {
                     || (!self.graph.by_name.contains_key(name)
                         && name.starts_with(|c: char| c.is_ascii_lowercase() || c == '_')))
         })
+    }
+}
+
+/// A small value grammar, not a type or value-flow resolver. Every name is an
+/// established primitive parameter; overloaded operators and indirect reads
+/// therefore have no admission. The bound retains uncertainty on deep syntax.
+fn closed_primitive_expression(
+    expression: &ra_ap_syntax::ast::Expr,
+    parameters: &std::collections::BTreeSet<String>,
+    remaining: usize,
+) -> bool {
+    use ra_ap_syntax::{AstNode, ast};
+    let Some(remaining) = remaining.checked_sub(1) else {
+        return false;
+    };
+    match expression {
+        ast::Expr::Literal(_) => true,
+        ast::Expr::PathExpr(path) => path.path().is_some_and(|path| {
+            path.qualifier().is_none()
+                && path
+                    .segment()
+                    .and_then(|segment| segment.name_ref())
+                    .is_some_and(|name| parameters.contains(name.text().trim_start_matches("r#")))
+        }),
+        ast::Expr::ParenExpr(paren) => paren
+            .expr()
+            .is_some_and(|expr| closed_primitive_expression(&expr, parameters, remaining)),
+        ast::Expr::PrefixExpr(prefix) => {
+            prefix
+                .syntax()
+                .children_with_tokens()
+                .filter_map(|element| element.into_token())
+                .any(|token| matches!(token.text(), "-" | "!"))
+                && prefix
+                    .expr()
+                    .is_some_and(|expr| closed_primitive_expression(&expr, parameters, remaining))
+        }
+        ast::Expr::BinExpr(binary) => {
+            binary
+                .lhs()
+                .is_some_and(|expr| closed_primitive_expression(&expr, parameters, remaining))
+                && binary
+                    .rhs()
+                    .is_some_and(|expr| closed_primitive_expression(&expr, parameters, remaining))
+        }
+        _ => false,
     }
 }
 
@@ -1677,6 +1977,7 @@ impl<'a> TransitiveReachIndex<'a> {
             || reaching.iter().any(|name| graph.macro_may_mention(name))
             || graph.walk_past_bound(owner_name, |_| Some(())).is_some();
         OwnerReach {
+            index: self.index,
             graph,
             owner_name: owner_name.to_string(),
             reaching,
@@ -3642,6 +3943,9 @@ pub(in crate::analysis) fn trait_dispatch_ambiguity_detail_lines(
 }
 
 #[cfg(test)]
+mod assertion_owner_identity_tests;
+
+#[cfg(test)]
 mod declaration_tests {
     use super::*;
 
@@ -3776,6 +4080,7 @@ mod tests {
                 used_lexical_fallback: false,
                 module_declarations: Vec::new(),
                 unresolved_property_macros: Vec::new(),
+                verus_guard_facts: Vec::new(),
                 role_provenance: Default::default(),
                 source: source.into(),
                 item_scopes: None,
@@ -5229,6 +5534,25 @@ mod tests {
         false
     }
 
+    // The older name-only controls have no same-named container candidate;
+    // only the new kind distinction requires a parsed assertion source scope.
+    fn pins_other_without_container_candidate(
+        reach: &OwnerReach<'_, '_>,
+        owner: &FunctionSummary,
+        text: &str,
+    ) -> bool {
+        let test = make_test("contract", Vec::new());
+        let assertion = OracleFact {
+            line: 1,
+            text: text.to_string(),
+            kind: crate::domain::OracleKind::ExactValue,
+            strength: crate::domain::OracleStrength::Strong,
+            observed_tokens: Vec::new(),
+            ok_value_observed: None,
+        };
+        reach.assertion_pins_other_function(owner, &test, &assertion, text)
+    }
+
     #[test]
     fn an_assertion_on_another_indexed_function_pins_that_function_not_the_owner() {
         // #11552: `reduce` is indexed and has no path to `consume`, so an
@@ -5245,16 +5569,37 @@ mod tests {
         );
         let reach_index = TransitiveReachIndex::new(&index);
         let reach = reach_index.owner_reach("consume");
-        assert!(reach.assertion_pins_other_function(
+        let owner = make_fn("consume", Vec::new());
+        assert!(pins_other_without_container_candidate(
+            &reach,
+            &owner,
             "assert_eq!(reduce(2500), Reduction::Over(Duration::from_millis(15)))"
         ));
-        assert!(!reach.assertion_pins_other_function("assert_eq!(consume(1), true)"));
-        assert!(!reach.assertion_pins_other_function("assert!(consume_bridge(1))"));
-        assert!(
-            !reach.assertion_pins_other_function("assert_eq!(reduce(1), consume_bridge(1).into())")
-        );
-        assert!(!reach.assertion_pins_other_function("assert!(matches!(x, Reduction::Over(1)))"));
-        assert!(!reach.assertion_pins_other_function("assert_eq!(Duration::from_millis(5), x)"));
+        assert!(!pins_other_without_container_candidate(
+            &reach,
+            &owner,
+            "assert_eq!(consume(1), true)"
+        ));
+        assert!(!pins_other_without_container_candidate(
+            &reach,
+            &owner,
+            "assert!(consume_bridge(1))"
+        ));
+        assert!(!pins_other_without_container_candidate(
+            &reach,
+            &owner,
+            "assert_eq!(reduce(1), consume_bridge(1).into())"
+        ));
+        assert!(!pins_other_without_container_candidate(
+            &reach,
+            &owner,
+            "assert!(matches!(x, Reduction::Over(1)))"
+        ));
+        assert!(!pins_other_without_container_candidate(
+            &reach,
+            &owner,
+            "assert_eq!(Duration::from_millis(5), x)"
+        ));
     }
 
     #[test]
@@ -5275,9 +5620,22 @@ mod tests {
         );
         let reach_index = TransitiveReachIndex::new(&index);
         let reach = reach_index.owner_reach("consume");
-        assert!(!reach.assertion_pins_other_function("assert_eq!(outer(), 1)"));
-        assert!(!reach.assertion_pins_other_function("assert_eq!(outer_of_opaque(), 1)"));
-        assert!(reach.assertion_pins_other_function("assert_eq!(leaf(), 1)"));
+        let owner = make_fn("consume", Vec::new());
+        assert!(!pins_other_without_container_candidate(
+            &reach,
+            &owner,
+            "assert_eq!(outer(), 1)"
+        ));
+        assert!(!pins_other_without_container_candidate(
+            &reach,
+            &owner,
+            "assert_eq!(outer_of_opaque(), 1)"
+        ));
+        assert!(pins_other_without_container_candidate(
+            &reach,
+            &owner,
+            "assert_eq!(leaf(), 1)"
+        ));
     }
 
     #[test]
@@ -5591,6 +5949,7 @@ mod tests {
                     used_lexical_fallback: false,
                     module_declarations: Vec::new(),
                     unresolved_property_macros: Vec::new(),
+                    verus_guard_facts: Vec::new(),
                     role_provenance: Default::default(),
                     source: source.into(),
                     item_scopes: None,

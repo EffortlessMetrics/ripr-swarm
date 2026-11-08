@@ -119,8 +119,10 @@ pub(crate) fn check_fixture_contracts() -> Result<(), String> {
     );
     crate::work_burndown_identity::validate_work_burndown_identity_fixture_corpus(&mut violations);
     crate::work_intake_identity::validate_work_intake_identity_fixture_corpus(&mut violations);
+    crate::repository_orientation::validate_repository_orientation_fixture_corpus(&mut violations);
     crate::work_plan_identity::validate_work_plan_identity_fixture_corpus(&mut violations);
     crate::work_adapter_identity::validate_work_adapter_identity_fixture_corpus(&mut violations);
+    crate::product_route_parity::validate_product_route_parity_fixture_corpus(&mut violations);
     crate::readiness_snapshot::validate_readiness_snapshot_fixture_corpus(&mut violations);
     validate_blind_journey_execute_fixture_corpus(&mut violations)?;
     validate_blind_journey_installed_rust_fixture(&mut violations)?;
@@ -170,6 +172,9 @@ pub(crate) fn check_fixture_contracts() -> Result<(), String> {
                 violations.push(format!("{} is missing `{heading}`", normalize_path(&spec)));
             }
         }
+        violations.extend(crate::fixture_expected_classes::fixture_dir_violations(
+            &path,
+        ));
     }
 
     finish_policy_report_with_disclosures(

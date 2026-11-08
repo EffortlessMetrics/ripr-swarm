@@ -106,7 +106,7 @@ does_not_prove = "It does not demonstrate analyzer classification correctness or
 [[pack]]
 id = "release-package"
 paths = ["Cargo.toml", "Cargo.lock", "CHANGELOG.md", "crates/ripr/Cargo.toml", "editors/vscode/package.json", "editors/vscode/package-lock.json", ".github/workflows/publish-extension.yml", ".github/workflows/release-server-binaries.yml"]
-required_commands = ["cargo test --workspace", "cargo clippy --workspace --all-targets -- -D warnings", "cargo xtask check-pr", "cargo package -p ripr --list", "cargo publish -p ripr --dry-run", "cargo xtask release-readiness"]
+required_commands = ["cargo test --workspace", "cargo clippy --workspace --all-targets -- -D warnings", "cargo xtask check-pr", "cargo package -p ripr --list", "cargo xtask publish-dry-run", "cargo xtask release-readiness"]
 advisory_commands = []
 ci_lane = "release-readiness-proof"
 proves = "Release-bearing surfaces always pay the full release proof: workspace tests, clippy, check-pr, package contents, publish dry-run, and release-readiness (release-notes and known-limits docs)."
@@ -115,8 +115,8 @@ never_routed = true
 
 [[pack]]
 id = "identity-registry"
-paths = ["crates/ripr/src/domain/identity/**", "docs/identity/**", "xtask/src/identity_registry.rs"]
-required_commands = ["cargo xtask check-identity-registry", "cargo test -p ripr", "cargo test -p xtask"]
+paths = ["crates/ripr-contract/src/domain/identity/**", "docs/identity/**", "xtask/src/identity_registry.rs"]
+required_commands = ["cargo xtask check-identity-registry", "cargo test -p ripr", "cargo test -p ripr-contract", "cargo test -p xtask"]
 advisory_commands = []
 ci_lane = "routed-rust-small"
 proves = "The governed identity catalog stays internally consistent, generated Markdown/JSON match the catalog, and unknown identity-shaped fields on scanned surfaces fail closed."

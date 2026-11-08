@@ -1,0 +1,1 @@
+| [RIPR-SPEC-0420](../specs/RIPR-SPEC-0420-verification-plan-corpus-pr-a.md) | proposed | Change-to-verification plan corpus PR A (#5173): typed mechanics validator, synthetic falsification matrix, `cargo xtask verification-plan-corpus check|report`, and honest `not_measured` real safety denominators until Stage A rows land |

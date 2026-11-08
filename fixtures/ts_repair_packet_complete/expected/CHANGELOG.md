@@ -1,5 +1,11 @@
 # Golden Output Changes
 
+## Pending — cross-surface annotation conformance (#12925)
+
+Add SARIF/GitHub goldens under RIPR-SPEC-0008 for the existing complete versus
+unreachable-discriminator agent-packet controls. No analyzer behavior or prior
+check/human golden changes.
+
 ## Pending
 
 Reason:
