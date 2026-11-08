@@ -609,6 +609,38 @@ mod tests {
     use crate::analysis::rust_index::summarize_file;
 
     #[test]
+    fn file_snapshot_memo_evicts_least_recently_used_past_its_source_budget() {
+        let mut files = FileSnapshots::default();
+        let one_mib: Arc<str> = Arc::from("x".repeat(1024 * 1024));
+        let budget_files = FILE_SNAPSHOT_RESIDENT_SOURCE_BYTES / one_mib.len();
+        let path = |n: usize| PathBuf::from(format!("src/f{n}.rs"));
+        let first = files.slot(&path(0), &one_mib);
+        for n in 1..budget_files {
+            files.slot(&path(n), &one_mib);
+        }
+        assert_eq!(files.entries.len(), budget_files);
+        // A hit refreshes recency and returns the same slot.
+        assert!(Arc::ptr_eq(&first, &files.slot(&path(0), &one_mib)));
+        // One more file goes past the budget: the least recently used entry
+        // (f1, since f0 was just read) leaves; the newest and f0 stay.
+        files.slot(&path(budget_files), &one_mib);
+        assert!(files.resident_bytes <= FILE_SNAPSHOT_RESIDENT_SOURCE_BYTES);
+        assert!(files.entries.contains_key(&path(0)));
+        assert!(!files.entries.contains_key(&path(1)));
+        assert!(files.entries.contains_key(&path(budget_files)));
+        // A source larger than the whole budget is still served and kept
+        // alone rather than evicting itself.
+        let huge: Arc<str> = Arc::from("y".repeat(FILE_SNAPSHOT_RESIDENT_SOURCE_BYTES + 1));
+        files.slot(&path(999), &huge);
+        assert_eq!(files.entries.len(), 1);
+        assert!(files.entries.contains_key(&path(999)));
+        // A replaced source releases its old bytes from the account.
+        let small: Arc<str> = Arc::from("fn f() {}");
+        files.slot(&path(999), &small);
+        assert_eq!(files.resident_bytes, small.len());
+    }
+
+    #[test]
     fn root_impl_lines_cover_only_direct_root_impls() {
         // Lines: 1 impl A, 2-4 mod m (with a nested impl B on 3), 5-7 impl C
         // spanning three lines, 8 fn with a local impl D.
