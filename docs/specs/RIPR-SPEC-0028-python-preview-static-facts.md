@@ -1749,6 +1749,32 @@ cannot evaluate no longer hides a false one (`vip and total > 1000`); this
 also applies to live guarded lines and only moves a verdict from `exposed` to
 `weakly_exposed`.
 
+## Cross-Module Caller Amendment (2026-11-08, #12955)
+
+A top-level helper that no test calls itself, reached by a test only through a
+function of another module that imports it, no longer reads `no_static_path`.
+The first `helper_owner_call` hop may also enter from a function or method of
+another module that binds the helper through `from <helper module> import
+<name>` (aliased or not) and bare-calls that binding; later hops stay in the
+file of the function they call, within the same three-hop bound. Such a
+test is related with the reach-only `cross_module_caller_call` relation: it
+carries no oracle, and when every related test is reached that way the finding
+is `static_unknown` under `missing_import_graph`, naming the caller and its
+file, with no repair card. A test that also reaches the helper through a
+same-module caller keeps the existing `helper_owner_call` reading.
+
+The binding must be exact: the import's module must be the helper's module
+under the same provenance rules a test import uses (src-layout ambiguity and
+rival definitions included); it must be the only import in scope binding that
+local name; and no top-level `def` or `class` of the caller's file may share
+it. A plain `import M` read as `M.helper(...)`, a star import, a parameter or
+local rebinding, a binding passed as a value rather than called, and a
+same-named function of another module make no edge. When more than 32
+functions of other modules call the helper, none of them is followed; with no
+other related test the finding is `static_unknown` and says that reach through
+them was not checked, so a heavily imported helper never reads
+`no_static_path` on that account alone.
+
 ## Metrics
 
 In addition to the cross-language metrics in RIPR-SPEC-0026, the Python

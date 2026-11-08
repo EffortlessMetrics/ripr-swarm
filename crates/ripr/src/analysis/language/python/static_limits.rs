@@ -9,7 +9,8 @@ use super::fixtures::{inert_tool_fixture, literal_owner_instance_fixture};
 use super::forwarding_decorator::is_forwarding_decorator;
 use super::literal_patch::{literal_patch_calls, without_calls};
 use super::related_tests::{
-    PythonRelatedCandidate, PythonRelationKind, body_calls_owner, dunder_method_class,
+    HelperOwnerCallCandidate, MAX_CROSS_MODULE_CALLERS, PythonRelatedCandidate, PythonRelationKind,
+    body_calls_owner, cross_module_callers_exceed_cap, dunder_method_class,
     import_source_module_matches_owner, is_python_identifier_char,
     line_prefix_looks_like_comment_or_string, test_imports_owner_module,
     test_may_reach_owner_class,
@@ -1614,6 +1615,69 @@ fn prints_to_standard_stream(text: &str) -> bool {
 fn contains_identifier(text: &str, identifier: &str) -> bool {
     text.match_indices(identifier)
         .any(|(index, _)| has_identifier_boundary(text, index, identifier.len()))
+}
+
+/// Reach into a changed helper that enters its module only from another
+/// module (#12955). Every related test reaches `owner` through a function of
+/// another module that imports and calls it (`cross_module_caller_call`), or
+/// no test relates at all while more functions of other modules call it than
+/// the relation follows. The adapter does not evaluate values across that
+/// module boundary, so the edit is read as unresolved: never graded as a gap,
+/// and never `no_static_path`.
+pub(super) fn cross_module_reach_limit(
+    owner: &PythonOwner,
+    owners: &[PythonOwner],
+    related_candidates: &[PythonRelatedCandidate<'_>],
+    helper_callers: &[HelperOwnerCallCandidate<'_>],
+) -> Option<PythonStaticLimit> {
+    if related_candidates.is_empty() {
+        return cross_module_callers_exceed_cap(owner, owners).then(|| PythonStaticLimit {
+            kind: StaticLimitKind::MissingImportGraph,
+            evidence: format!(
+                "static_limit missing_import_graph: more than {MAX_CROSS_MODULE_CALLERS} functions of other modules call `{}`",
+                owner.name
+            ),
+            missing: format!(
+                "Static limit `missing_import_graph`: more than {MAX_CROSS_MODULE_CALLERS} functions of other modules import and call `{}`; the Python preview adapter does not follow that many cross-module callers, so it does not read this edit as having no test path.",
+                owner.name
+            ),
+        });
+    }
+    if helper_callers.is_empty()
+        || related_candidates.len() != helper_callers.len()
+        || !helper_callers.iter().all(|helper| helper.cross_module)
+    {
+        return None;
+    }
+    let mut callers: Vec<&str> = helper_callers
+        .iter()
+        .map(|helper| helper.caller.as_str())
+        .collect();
+    callers.sort_unstable();
+    callers.dedup();
+    let shown = callers
+        .iter()
+        .take(3)
+        .map(|caller| format!("`{caller}`"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let more = callers.len().saturating_sub(3);
+    let shown = if more == 0 {
+        shown
+    } else {
+        format!("{shown} and {more} more")
+    };
+    Some(PythonStaticLimit {
+        kind: StaticLimitKind::MissingImportGraph,
+        evidence: format!(
+            "static_limit missing_import_graph: related tests reach `{}` only through callers in other modules ({shown})",
+            owner.name
+        ),
+        missing: format!(
+            "Static limit `missing_import_graph`: related tests reach `{}` only through functions of other modules that import it ({shown}); the Python preview adapter does not evaluate values across the module boundary, so it does not grade this edit as a gap.",
+            owner.name
+        ),
+    })
 }
 
 /// Heuristic-only relations that cannot honestly grade a gap (#9421, #9423).
