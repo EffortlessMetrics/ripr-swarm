@@ -130,6 +130,44 @@ def ratio(numerator, denominator):
     return numerator / denominator if numerator is not None and denominator not in (None, 0) else None
 
 
+def _pair_stats(pairs, arm_runs, control_runs):
+    """Paired deltas for one stratum; headline fields only on complete pairing.
+
+    Failures stay in the denominator via arm/control run counts. Unknown token
+    or escape measurements stay null and never count as zero.
+    """
+    costs = [(token_count(a), token_count(b)) for a, b in pairs]
+    measured_costs = [(a, b) for a, b in costs if a is not None and b is not None]
+    quality = [(escape(a), escape(b)) for a, b in pairs]
+    measured_quality = [(a, b) for a, b in quality if a is not None and b is not None]
+    full = bool(pairs) and len(pairs) == arm_runs == control_runs
+    cost_complete = full and len(measured_costs) == len(pairs)
+    quality_complete = full and len(measured_quality) == len(pairs)
+    verified_pairs = [(a, b) for a, b in pairs if quality_verified(a) and quality_verified(b)]
+    verified_complete = full and len(verified_pairs) == len(pairs)
+    return dict(verified_quality_pairs=len(verified_pairs),
+                comparison_status=("partial_pairing" if not full else "missing_usage" if not cost_complete
+                                   else "quality_not_verified" if not verified_complete else "descriptive_matched"),
+                verified_escape_rate_vs_none=mean([escape(a) - escape(b) for a, b in verified_pairs]) if verified_complete else None,
+                pairs=len(pairs), complete_pairing=full,
+                task_protocol_identity_matched=bool(pairs) and all(a.get("task_sha256") and a.get("protocol_sha256") for a, _ in pairs),
+                tokens_measured_pairs=len(measured_costs), quality_measured_pairs=len(measured_quality),
+                observed_token_delta_mean=mean([a - b for a, b in measured_costs]),
+                observed_token_delta_total=(sum(a - b for a, b in measured_costs) if measured_costs else None),
+                arm_tokens_observed_total=(sum(a for a, _ in measured_costs) if measured_costs else None),
+                control_tokens_observed_total=(sum(b for _, b in measured_costs) if measured_costs else None),
+                arm_escape_rate=mean([a for a, _ in measured_quality]),
+                control_escape_rate=mean([b for _, b in measured_quality]),
+                tokens_vs_none_x=ratio(sum(a for a, _ in measured_costs), sum(b for _, b in measured_costs)) if cost_complete else None,
+                fix_rate_vs_none=mean([int(success(a)) - int(success(b)) for a, b in pairs]) if full else None,
+                escape_rate_vs_none=mean([a - b for a, b in measured_quality]) if quality_complete else None)
+
+
+def _mixed(values):
+    vals = [v for v in values if v is not None]
+    return any(v > 0 for v in vals) and any(v < 0 for v in vals)
+
+
 def paired(rows, controls):
     arm = {(r["task"], r["rep"]): r for r in rows}
     base = {(r["task"], r["rep"]): r for r in controls}
@@ -142,28 +180,28 @@ def paired(rows, controls):
             mismatches.append(list(key))
         else:
             pairs.append((a, b))
-    costs = [(token_count(a), token_count(b)) for a, b in pairs]
-    measured_costs = [(a, b) for a, b in costs if a is not None and b is not None]
-    quality = [(escape(a), escape(b)) for a, b in pairs]
-    measured_quality = [(a, b) for a, b in quality if a is not None and b is not None]
-    full = bool(pairs) and len(pairs) == len(rows) == len(controls)
-    cost_complete = full and len(measured_costs) == len(pairs)
-    quality_complete = full and len(measured_quality) == len(pairs)
-    verified_pairs = [(a, b) for a, b in pairs if quality_verified(a) and quality_verified(b)]
-    verified_complete = full and len(verified_pairs) == len(pairs)
-    return dict(verified_quality_pairs=len(verified_pairs),
-                comparison_status=("partial_pairing" if not full else "missing_usage" if not cost_complete
-                                   else "quality_not_verified" if not verified_complete else "descriptive_matched"),
-                verified_escape_rate_vs_none=mean([escape(a) - escape(b) for a, b in verified_pairs]) if verified_complete else None,
-                pairs=len(pairs), unmatched_runs=[list(k) for k in sorted(arm.keys() - base.keys())],
+    pooled = _pair_stats(pairs, len(rows), len(controls))
+    # Per-task (per pairing-stratum) economics alongside the pooled totals.
+    # The stratum key is the task within the cohort/model/cap group already
+    # selected by build_report; pairing within it still requires same rep,
+    # digests and mutant denominator (enforced above).
+    per_task = []
+    for task in sorted({r["task"] for r in rows} | {r["task"] for r in controls}):
+        task_pairs = [(a, b) for a, b in pairs if a["task"] == task]
+        arm_n = sum(1 for r in rows if r["task"] == task)
+        ctrl_n = sum(1 for r in controls if r["task"] == task)
+        stats = _pair_stats(task_pairs, arm_n, ctrl_n)
+        per_task.append(dict(task=task, stratum=task, arm_runs=arm_n, control_runs=ctrl_n,
+                             unmatched_runs=[list(k) for k in sorted(arm.keys() - base.keys()) if k[0] == task],
+                             unmatched_control_runs=[list(k) for k in sorted(base.keys() - arm.keys()) if k[0] == task],
+                             subject_mismatches=[m for m in mismatches if m[0] == task], **stats))
+    return dict(**pooled,
+                per_task=per_task,
+                per_task_escape_direction_mixed=_mixed([t["escape_rate_vs_none"] for t in per_task]),
+                per_task_token_direction_mixed=_mixed([t["observed_token_delta_mean"] for t in per_task]),
+                unmatched_runs=[list(k) for k in sorted(arm.keys() - base.keys())],
                 unmatched_control_runs=[list(k) for k in sorted(base.keys() - arm.keys())],
-                subject_mismatches=mismatches, complete_pairing=full,
-                task_protocol_identity_matched=bool(pairs) and all(a.get("task_sha256") and a.get("protocol_sha256") for a, _ in pairs),
-                tokens_measured_pairs=len(measured_costs), quality_measured_pairs=len(measured_quality),
-                observed_token_delta_mean=mean([a - b for a, b in measured_costs]),
-                tokens_vs_none_x=ratio(sum(a for a, _ in measured_costs), sum(b for _, b in measured_costs)) if cost_complete else None,
-                fix_rate_vs_none=mean([int(success(a)) - int(success(b)) for a, b in pairs]) if full else None,
-                escape_rate_vs_none=mean([a - b for a, b in measured_quality]) if quality_complete else None)
+                subject_mismatches=mismatches)
 
 
 def build_report(rows):
@@ -246,6 +284,19 @@ def render(table):
                          f"{p['tokens_measured_pairs']}/{p['quality_measured_pairs']} | {cell(p['tokens_vs_none_x'])} | "
                          f"{cell(p['fix_rate_vs_none'], '+.1%')} | {cell(p['escape_rate_vs_none'], '+.1%')} | "
                          f"{p['verified_quality_pairs']} | {p['comparison_status']} |")
+    lines += ["", "## Per-task paired economics", "",
+              "Pooled deltas can hide opposing per-task regressions; per-task headline fields require complete pairing for that task.", "",
+              "| Group | Task | Pairs arm/control | Token delta mean | Token x none | Success delta | Escape delta | Comparison | Mixed directions |",
+              "|---|---|---:|---:|---:|---:|---:|---|---|"]
+    for row in table:
+        p = row["paired"]
+        if p is not None:
+            mixed = p.get("per_task_escape_direction_mixed") or p.get("per_task_token_direction_mixed")
+            for t in p.get("per_task", []):
+                lines.append(f"| {label(row)} | {t['task']} | {t['pairs']} {t['arm_runs']}/{t['control_runs']} | "
+                             f"{cell(t['observed_token_delta_mean'])} | {cell(t['tokens_vs_none_x'])} | "
+                             f"{cell(t['fix_rate_vs_none'], '+.1%')} | {cell(t['escape_rate_vs_none'], '+.1%')} | "
+                             f"{t['comparison_status']} | {mixed} |")
     return "\n".join(lines) + "\n"
 
 

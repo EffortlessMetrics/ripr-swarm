@@ -80,6 +80,64 @@ class ScoreboardTests(unittest.TestCase):
         self.assertIn("Success delta", self.markdown)
         self.assertIn("-50.0%", self.markdown)
 
+    def test_pooled_delta_hides_opposing_per_task_regressions(self):
+        rows = [receipt(task="alpha", tokens=100),
+                receipt(task="beta", tokens=100, killed=0, survived=[0, 1]),
+                receipt(task="alpha", arm="check-mandatory", tokens=50, killed=0, survived=[0, 1]),
+                receipt(task="beta", arm="check-mandatory", tokens=150)]
+        row = next(r for r in self.report(rows) if r["config"] == "check-mandatory")
+        # Pooled economics look neutral on both axes.
+        self.assertEqual(row["paired"]["escape_rate_vs_none"], 0.0)
+        self.assertEqual(row["paired"]["observed_token_delta_mean"], 0.0)
+        self.assertEqual(row["tokens_vs_none_x"], 1.0)
+        per_task = {t["task"]: t for t in row["paired"]["per_task"]}
+        self.assertEqual(set(per_task), {"alpha", "beta"})
+        # alpha regresses on quality (escape 0 -> 1) while saving tokens.
+        self.assertEqual(per_task["alpha"]["escape_rate_vs_none"], 1.0)
+        self.assertEqual(per_task["alpha"]["tokens_vs_none_x"], 0.5)
+        self.assertEqual(per_task["alpha"]["observed_token_delta_mean"], -50)
+        self.assertEqual(per_task["alpha"]["arm_runs"], 1)
+        self.assertEqual(per_task["alpha"]["control_runs"], 1)
+        # beta improves on quality (escape 1 -> 0) while spending more.
+        self.assertEqual(per_task["beta"]["escape_rate_vs_none"], -1.0)
+        self.assertEqual(per_task["beta"]["tokens_vs_none_x"], 1.5)
+        self.assertEqual(per_task["beta"]["observed_token_delta_mean"], 50)
+        self.assertTrue(row["paired"]["per_task_escape_direction_mixed"])
+        self.assertTrue(row["paired"]["per_task_token_direction_mixed"])
+        self.assertIn("Per-task paired economics", self.markdown)
+        self.assertIn("alpha", self.markdown)
+
+    def test_per_task_headline_requires_complete_pairing_for_that_task(self):
+        rows = [receipt(task="alpha"), receipt(task="alpha", rep=2),
+                receipt(task="beta"),
+                receipt(task="alpha", arm="check-mandatory", tokens=50),
+                receipt(task="beta", arm="check-mandatory", tokens=50)]
+        row = next(r for r in self.report(rows) if r["config"] == "check-mandatory")
+        per_task = {t["task"]: t for t in row["paired"]["per_task"]}
+        # alpha has an unmatched control rep: no per-task headline ratio.
+        self.assertFalse(per_task["alpha"]["complete_pairing"])
+        self.assertEqual(per_task["alpha"]["pairs"], 1)
+        self.assertEqual(per_task["alpha"]["unmatched_control_runs"], [["alpha", 2]])
+        self.assertIsNone(per_task["alpha"]["tokens_vs_none_x"])
+        self.assertIsNone(per_task["alpha"]["fix_rate_vs_none"])
+        self.assertEqual(per_task["alpha"]["comparison_status"], "partial_pairing")
+        # beta is completely paired, so its headline survives pooled partiality.
+        self.assertTrue(per_task["beta"]["complete_pairing"])
+        self.assertEqual(per_task["beta"]["tokens_vs_none_x"], 0.5)
+        self.assertIsNone(row["tokens_vs_none_x"])
+
+    def test_per_task_unknown_tokens_stay_unknown_not_zero(self):
+        rows = [receipt(task="alpha"), receipt(task="alpha", arm="check-mandatory", tokens=None)]
+        row = next(r for r in self.report(rows) if r["config"] == "check-mandatory")
+        task = row["paired"]["per_task"][0]
+        self.assertEqual(task["tokens_measured_pairs"], 0)
+        self.assertIsNone(task["observed_token_delta_mean"])
+        self.assertIsNone(task["tokens_vs_none_x"])
+        self.assertEqual(task["comparison_status"], "missing_usage")
+        # The failed/unmeasured attempt still counts in the task denominator.
+        self.assertEqual(task["arm_runs"], 1)
+        self.assertEqual(task["pairs"], 1)
+
     def test_failure_spend_is_in_cost_per_success(self):
         row = self.report([receipt(), receipt(rep=2, error="failed", tokens=300, cost_usd=0.03)])[0]
         self.assertEqual(row["tokens_per_success"], 400)
