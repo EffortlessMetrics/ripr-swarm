@@ -1,0 +1,102 @@
+name: Mutation spot check (TypeScript)
+
+# Scores ripr's TypeScript verdicts against real Stryker mutation outcomes
+# (#12901). It clones the pinned packages listed in
+# benchmarks/mutation_spot_check/corpus-typescript.json, runs Stryker with the
+# JSON reporter at an exact pinned version, then runs
+# `cargo xtask mutation-spot-check --stryker-report`, which synthesizes a
+# one-hunk diff per mutant, runs `ripr check --diff` on it, and compares the
+# verdict with the real outcome. Runs on demand only, never on a pull
+# request. Read-only: no secrets, nothing is published or pushed.
+#
+# STATUS: this workflow has NOT run. No package in the corpus has been
+# confirmed to install, pass its tests under Stryker, or produce a report; the
+# first run is the first evidence. The receipt is advisory and its
+# `synthetic_diff_verdict` figures are never merged with the Rust span-join
+# figures.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mutation-spot-check-typescript-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  typescript:
+    name: typescript (Stryker)
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 22
+
+      - name: Mutate the pinned packages with Stryker
+        shell: bash
+        run: |
+          set -uo pipefail
+          corpus=benchmarks/mutation_spot_check/corpus-typescript.json
+          stryker=$(jq -r .stryker.version "$corpus")
+          reports="$GITHUB_WORKSPACE/target/ripr/reports"
+          status="$reports/typescript-stryker-status.tsv"
+          mkdir -p "$RUNNER_TEMP/corpus" "$reports"
+          : > "$status"; : > "$RUNNER_TEMP/xtask-args"
+          for name in $(jq -r '.packages[].name' "$corpus"); do
+            pkg() { jq -r --arg n "$name" ".packages[]|select(.name==\$n).$1" "$corpus"; }
+            url=$(pkg url); sha=$(pkg sha); glob=$(pkg mutate)
+            dir="$RUNNER_TEMP/corpus/$name"
+            rc=0
+            { [[ $sha =~ ^[0-9a-f]{40}$ ]] && mkdir "$dir" && cd "$dir" \
+              && git init -q && git remote add origin "$url" \
+              && git fetch -q --depth 1 origin "$sha" && git checkout -q FETCH_HEAD \
+              && [ "$(git rev-parse HEAD)" = "$sha" ] \
+              && npm install --ignore-scripts --no-audit --no-fund --no-package-lock \
+              && npm install --no-save --ignore-scripts --no-audit --no-fund --no-package-lock "@stryker-mutator/core@$stryker" "@stryker-mutator/vitest-runner@$stryker" \
+              && npx stryker run --testRunner vitest --plugins @stryker-mutator/vitest-runner --reporters json --mutate "$glob" --concurrency 2; } || rc=$?
+            cd "$GITHUB_WORKSPACE"
+            printf '%s\t%s\n' "$name" "$rc" >> "$status"
+            if [ -f "$dir/reports/mutation/mutation.json" ]; then
+              printf -- '--repo %s=%s --stryker-report %s=%s/reports/mutation/mutation.json ' "$name" "$dir" "$name" "$dir" >> "$RUNNER_TEMP/xtask-args"
+            fi
+          done
+          [ -s "$RUNNER_TEMP/xtask-args" ] || { echo "no Stryker report was produced"; exit 1; }
+
+      - name: Score ripr against the Stryker outcomes
+        # Advisory lane: a scoring failure must not hide the receipt upload;
+        # the final step turns a missing receipt into a red job.
+        continue-on-error: true
+        shell: bash
+        run: cargo xtask mutation-spot-check $(cat "$RUNNER_TEMP/xtask-args")
+
+      - name: Upload the spot-check receipt and per-package Stryker status
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: mutation-spot-check-typescript
+          path: |
+            target/ripr/reports/mutation-spot-check.json
+            target/ripr/reports/mutation-spot-check.md
+            target/ripr/reports/typescript-stryker-status.tsv
+          if-no-files-found: error
+
+      - name: Fail when the receipt is missing or a package failed
+        if: always()
+        shell: bash
+        run: |
+          status=target/ripr/reports/typescript-stryker-status.tsv
+          [ -s target/ripr/reports/mutation-spot-check.json ] || { echo "no mutation-spot-check receipt was written"; exit 1; }
+          [ -f "$status" ] || { echo "no per-package Stryker status was recorded"; exit 1; }
+          bad=$(awk -F'\t' '$2 != 0 {print $1 " (exit " $2 ")"}' "$status")
+          [ -z "$bad" ] || { echo "Stryker or setup failed for: $bad"; exit 1; }

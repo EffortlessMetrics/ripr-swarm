@@ -378,6 +378,7 @@ mod tests {
             ("published-install-matrix.yml", "23 6 * * 1"),
             ("outcome-nightly.yml", "47 6 * * *"),
             ("mutation-spot-check.yml", "23 4 * * 0"),
+            ("mutation-spot-check-typescript.yml", "17 5 * * 3"),
         ] {
             let path = format!(".github/workflows/{file}");
             let source = std::fs::read_to_string(root.join(&path)).map_err(|e| e.to_string())?;

@@ -878,10 +878,10 @@ Pyflakes. The `github-script-syntax` check needs Node 20 or newer on `PATH`;
 local runs without it must record that JavaScript syntax coverage as omitted.
 It does not claim ShellCheck/Pyflakes coverage or replace repository policy,
 security checks, release qualification, or hosted cache measurements. The
-existing qualification and release workflows are unchanged. Only this cheap
-lint lane cancels an obsolete run for the same PR; its concurrency group is
-separate from all qualification/release jobs, and manual runs use their unique
-run IDs so one dispatch cannot replace another pending dispatch. Rollback removes
+existing qualification and release workflows are unchanged. The lint lane's
+legacy PR cancellation expression is dormant. Its concurrency group is separate
+from qualification/release jobs, and manual runs use their unique run IDs so one
+dispatch cannot replace another pending dispatch. Rollback removes
 this optional workflow, its linter configuration and policy entries without
 changing protected checks.
 
@@ -973,8 +973,8 @@ owner still performs substantive exact-head review and resolves current findings
 before conditional admission. The separately purposed scheduled Droid security
 scan retains its existing safeguards.
 
-UB's receipt reporter stays in `xtask`, with its explicit example tests. Its
-workflow test and run commands use `--no-default-features` to build the JSON
+UB's receipt reporter stays in `xtask`, with its explicit example tests. Local
+example test and run invocations can use `--no-default-features` to build the JSON
 reader without xtask's product/parser dependencies. The default `automation`
 feature retains the ordinary xtask commands, examples and workspace test graph;
 `perl-identity` also retains it. Reporter source, receipt interpretation, native
