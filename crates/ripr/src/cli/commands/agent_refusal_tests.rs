@@ -319,6 +319,7 @@ fn before_phase_refuses_dirty_production_premise_before_the_seam_inventory() -> 
                 authority: None,
             },
             verify_rollback: false,
+            test_result: None,
             store: None,
             json: false,
             quiet: false,

@@ -94,7 +94,9 @@ ripr agent repair --root . --attempt <repair-attempt-id> --phase verify --verify
 `verify` accepts only `--attempt`, not a seam selector. The verification authority
 must match the edit authority. Trust-selection flags belong on `before` only.
 Optional `--verify-rollback` requests restoration after observation; inspect the
-reported rollback result rather than assuming restoration.
+reported rollback result rather than assuming restoration. The after phase of
+`agent repair` accepts optional `--test-result FILE`, a caller-run libtest result
+that is validated and recorded, never executed by ripr.
 
 Follow [the governed Python sequence](REPAIR_ATTEMPT.md#governed-python-sequence)
 for selection, authorization, and recovery. Execution success does not itself

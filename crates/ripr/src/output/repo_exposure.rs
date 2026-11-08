@@ -91,6 +91,40 @@ impl PythonRepoExposureGuidance {
          result is not a clean Python result (named limitation).";
 }
 
+/// One seam-evidence-pass limitation (#13340) as a JSON object whose braces
+/// sit at `indent` spaces, with no trailing newline. The one writer for the
+/// `limitations[]` entry in `repo-exposure.json` and the pilot summary's
+/// `inventory_evidence_limitations`, so the two cannot drift.
+pub(crate) fn evidence_limitation_json_object(
+    limitation: &AnalysisLimitation,
+    indent: usize,
+) -> String {
+    let outer = " ".repeat(indent);
+    let inner = " ".repeat(indent + 2);
+    let mut out = format!("{outer}{{\n");
+    out.push_str(&format!(
+        "{inner}\"category\": \"{}\",\n",
+        limitation.kind.as_str()
+    ));
+    out.push_str(&format!(
+        "{inner}\"producer_stage\": \"{}\",\n",
+        limitation.producer_stage.as_str()
+    ));
+    out.push_str(&format!("{inner}\"scope\": \"pass_wide\",\n"));
+    if let Some(detail) = limitation.bounded_detail.as_deref() {
+        out.push_str(&format!(
+            "{inner}\"detail\": \"{}\",\n",
+            json_escape(detail)
+        ));
+    }
+    out.push_str(&format!(
+        "{inner}\"repair_route\": \"{}\"\n",
+        json_escape(&limitation.recovery.detail)
+    ));
+    out.push_str(&format!("{outer}}}"));
+    out
+}
+
 /// `run_status` of a repo-exposure run whose seam-evidence pass failed
 /// (#13340): every seam carries the opaque stand-in, so the inventory is not a
 /// complete result. The one pass-wide `producer_failure` entry in
@@ -1145,23 +1179,8 @@ fn write_repo_exposure_json_document<W: io::Write>(
                 writeln!(out, "    ,")?;
             }
             first = false;
-            writeln!(out, "    {{")?;
-            writeln!(out, "      \"category\": \"{}\",", limitation.kind.as_str())?;
-            writeln!(
-                out,
-                "      \"producer_stage\": \"{}\",",
-                limitation.producer_stage.as_str()
-            )?;
-            writeln!(out, "      \"scope\": \"pass_wide\",")?;
-            if let Some(detail) = limitation.bounded_detail.as_deref() {
-                writeln!(out, "      \"detail\": \"{}\",", json_escape(detail))?;
-            }
-            writeln!(
-                out,
-                "      \"repair_route\": \"{}\"",
-                json_escape(&limitation.recovery.detail)
-            )?;
-            writeln!(out, "    }}")?;
+            out.write_all(evidence_limitation_json_object(limitation, 4).as_bytes())?;
+            writeln!(out)?;
         }
         if let Some(bound) = byte_bound {
             if !first {
@@ -1832,6 +1851,7 @@ pub(crate) fn render_repo_exposure_md(
         ts_guidance,
         python_guidance,
         None,
+        &[],
     )
 }
 
@@ -1841,6 +1861,7 @@ pub(crate) fn render_repo_exposure_md_with_generated_skip(
     ts_guidance: Option<&TsFullRepoGuidance>,
     python_guidance: Option<&PythonRepoExposureGuidance>,
     generated_skip: Option<&GeneratedRustSkip>,
+    evidence_limitations: &[AnalysisLimitation],
 ) -> String {
     render_repo_exposure_md_with_limit(
         classified,
@@ -1848,6 +1869,7 @@ pub(crate) fn render_repo_exposure_md_with_generated_skip(
         ts_guidance,
         python_guidance,
         generated_skip,
+        evidence_limitations,
     )
 }
 
@@ -1857,6 +1879,7 @@ pub(crate) fn render_repo_exposure_md_with_limit(
     ts_guidance: Option<&TsFullRepoGuidance>,
     python_guidance: Option<&PythonRepoExposureGuidance>,
     generated_skip: Option<&GeneratedRustSkip>,
+    evidence_limitations: &[AnalysisLimitation],
 ) -> String {
     let metrics = ExposureMetrics::from(classified.iter());
     let mut out = String::new();
@@ -1885,9 +1908,26 @@ pub(crate) fn render_repo_exposure_md_with_limit(
     let has_limitations = limit_info.is_some()
         || ts_guidance.is_some()
         || python_guidance.is_some()
-        || generated_skip.is_some();
+        || generated_skip.is_some()
+        || !evidence_limitations.is_empty();
     if has_limitations {
         out.push_str("\n## Limitations\n\n");
+        // A failed shared evidence pass leaves opaque stand-in seams, so the
+        // counts above are not an inventory result (#13340). Mirrors the
+        // JSON `limited_seam_evidence` status and pass-wide `producer_failure`.
+        for limitation in evidence_limitations {
+            out.push_str(&format!(
+                "> Seam evidence unavailable ({}; producer_stage: {}; scope: pass_wide): \
+                 the shared test-evidence pass failed, so the counts above are not a \
+                 complete inventory result and every seam carries opaque stand-in evidence.",
+                limitation.kind.as_str(),
+                limitation.producer_stage.as_str(),
+            ));
+            if let Some(detail) = limitation.bounded_detail.as_deref() {
+                out.push_str(&format!(" Detail: {}.", detail.trim_end_matches('.')));
+            }
+            out.push_str(&format!(" Next: {}\n\n", limitation.recovery.detail));
+        }
         // Seam-limit disclosure: emit only when a real cap fired.
         for limit in limit_info
             .into_iter()
@@ -2720,7 +2760,7 @@ pub fn surcharge(total: i32) -> Result<i32, String> {
                     "repair_route": route,
                 }])
             );
-            let md = render_repo_exposure_md_with_limit(&classified, limit, None, None, None);
+            let md = render_repo_exposure_md_with_limit(&classified, limit, None, None, None, &[]);
             assert_eq!(
                 md.lines().find(|line| line.starts_with("> Partial scan:")),
                 Some(markdown_line)
@@ -2732,7 +2772,7 @@ pub fn surcharge(total: i32) -> Result<i32, String> {
         assert_eq!(artifact["run_status"], "complete");
         assert_eq!(artifact["seams"].as_array().map(Vec::len), Some(1));
         assert!(artifact.get("limitations").is_none());
-        let md = render_repo_exposure_md_with_limit(&classified, None, None, None, None);
+        let md = render_repo_exposure_md_with_limit(&classified, None, None, None, None, &[]);
         assert!(!md.contains("> Partial scan:"));
         Ok(())
     }
@@ -2811,6 +2851,7 @@ pub fn surcharge(total: i32) -> Result<i32, String> {
             None,
             None,
             Some(&skip),
+            &[],
         );
         assert!(md.contains("rust_files_declined"), "{md}");
         assert!(!md.contains("generated_rust_source_skipped"), "{md}");
@@ -2871,6 +2912,7 @@ pub fn surcharge(total: i32) -> Result<i32, String> {
             None,
             None,
             Some(&skip),
+            &[],
         );
         assert!(
             md.contains("generated_rust_source_skipped"),

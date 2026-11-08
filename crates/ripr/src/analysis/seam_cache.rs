@@ -705,7 +705,13 @@ pub(crate) struct CachedSeamLimitInfo {
 /// `1.168`: `MissingDiscriminatorFact` carries a typed `shape`; cached facts
 /// written before the field cannot decode and inserted-guard facts name the
 /// guard domain instead of the equality boundary (#12414).
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.168";
+/// `1.169`: the repo-wide audit withholds a plain `assert_eq!` whose literal the
+/// current owner provably does not return; cached grips decided before the
+/// withhold would keep crediting it (#13005).
+/// `1.170`: an `Err(..)` constructor is credited only when every call between it
+/// and its assertion macro is on the positive allowlist; wrapper and receiver
+/// reads are refused (#12474).
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.170";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -915,7 +921,9 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.168";
 /// `0.168`: same drafted-boundary-assertion transition as full `1.166`.
 /// `0.169`: same drop-in import limit as full `1.167` (#12886).
 /// `0.170`: same typed missing-discriminator shape as full `1.168` (#12414).
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.170";
+/// `0.171`: same plain `assert_eq!` literal withhold as full `1.169` (#13005).
+/// `0.172`: same positive Err-enclosing rule as full `1.170` (#12474).
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.172";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -1127,7 +1135,9 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.170";
 /// `0.168`: same drafted-boundary-assertion transition as full `1.166`.
 /// `0.169`: same drop-in import limit as full `1.167` (#12886).
 /// `0.170`: same typed missing-discriminator shape as full `1.168` (#12414).
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.170";
+/// `0.171`: same plain `assert_eq!` literal withhold as full `1.169` (#13005).
+/// `0.172`: same positive Err-enclosing rule as full `1.170` (#12474).
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.172";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -1338,7 +1348,9 @@ pub(crate) const COUNT_CACHE_SCHEMA_VERSION: &str = "0.2";
 /// facts for reach (#9478); `1.55` facts lack them.
 /// `1.57`: `FileFacts` carry parsed `verus_guard_facts` (#10747); `1.56`
 /// warm entries deserialize with an empty guard vector.
-pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.57";
+/// `1.58`: the positive Err-enclosing allowlist refuses wrapper and receiver
+/// shapes that still read as `ExactErrorVariant` under the denylist (#12474).
+pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.58";
 
 /// Keep the best-effort classified-seam cache from turning a successful live
 /// analysis into an unbounded post-analysis stall on large repos. Larger live
@@ -5068,7 +5080,8 @@ mod tests {
         // 1.49 -> 1.50: arrow row inputs substituted (RIPR-SPEC-0231 rule 9, #10797).
         // 1.55 -> 1.56: path-value `.map(owner)` synthetic call facts (#9478).
         // 1.56 -> 1.57: Verus guard facts on file facts (#10747).
-        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.57");
+        // 1.57 -> 1.58: positive Err-enclosing allowlist (#12474).
+        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.58");
         // 1.4 -> 1.5: metadata-sourced harness validation (#3634) flips
         // verdicts for workspaces the manifest emulation approximated.
         // 1.5 -> 1.6: the #3636 reachability authority excludes
@@ -5265,8 +5278,10 @@ mod tests {
         // 1.163 -> 1.164: predicate-boundary facts carry the concrete drafted
         // boundary assertion (agent-efficiency study tweak #4).
         // 1.166 -> 1.167: a drop-in assertion import names the unverifiable-macro limit (#12886).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.168");
         // 1.167 -> 1.168: typed missing-discriminator shape (#12414).
+        // 1.169 -> 1.170: positive Err-enclosing allowlist (#12474).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.170");
+        // 1.168 -> 1.169: plain `assert_eq!` literal withhold in the audit (#13005).
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -5415,9 +5430,11 @@ mod tests {
         // 0.166 -> 0.167: same sibling-variant guarded-match grade as full 1.165 (#12897).
         // 0.167 -> 0.168: same drafted-boundary-assertion transition as full 1.166.
         // 0.168 -> 0.169: same drop-in import limit as full 1.167 (#12886).
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.170");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.170");
         // 0.169 -> 0.170: same typed missing-discriminator shape as full 1.168 (#12414).
+        // 0.171 -> 0.172: same positive Err-enclosing rule as full 1.170 (#12474).
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.172");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.172");
+        // 0.170 -> 0.171: same plain `assert_eq!` literal withhold as full 1.169 (#13005).
     }
 
     #[test]
