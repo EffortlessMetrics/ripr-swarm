@@ -27791,6 +27791,11 @@ fn check_gitignored_files_are_disclosed_not_silent() -> Result<(), String> {
             ));
         }
     }
+    if dirty.contains("node_modules") || dirty.contains(".venv") {
+        return Err(format!(
+            "worktree read must not name vendored dependency files; got:\n{dirty}"
+        ));
+    }
 
     ignore_remove_dir_all(&root);
     Ok(())
