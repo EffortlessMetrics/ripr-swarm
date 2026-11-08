@@ -13,12 +13,11 @@ use crate::analysis::classify::{
     getter_plainly_reads_key, has_same_test_boundary_oracle_pairing, helper_only_reach,
     helper_pins_owner_call, infection_evidence_for_owner, is_drop_destructor, local_flow_sinks,
     method_cannot_store, observes_returned_element_field, operand_only_pin,
-    oracle_crediting_relations, outer_imported_names, owner_call_text, owner_touches_field_only_at,
-    package_prefix, parameter_rebound, propagation_evidence_with_witness,
-    pushed_collection_compared_whole, pushed_literal_path, reach_evidence,
-    returned_array_construction_plain, reveal_outcome, same_test_pairing_missing_summary,
-    setter_plainly_writes, signature_parameters, unconditional_owner_insert_field,
-    unexercised_mask_bits, wrapper_return_boundary_pinned,
+    oracle_crediting_relations, outer_imported_names, owner_touches_field_only_at, package_prefix,
+    parameter_rebound, propagation_evidence_with_witness, pushed_collection_compared_whole,
+    pushed_literal_path, reach_evidence, returned_array_construction_plain, reveal_outcome,
+    same_test_pairing_missing_summary, setter_plainly_writes, signature_parameters,
+    unconditional_owner_insert_field, unexercised_mask_bits, wrapper_return_boundary_pinned,
 };
 use crate::analysis::extract::mask_comments_and_strings;
 use crate::analysis::facts::{FunctionSummary, OracleFact, RustIndex, TestSummary};
