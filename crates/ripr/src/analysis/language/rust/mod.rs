@@ -1364,6 +1364,9 @@ fn apply_probe_and_oracle_limits(
     oracles::apply_cross_language_limit(finding, probe, index);
     // Existing FFI limits own their detail and guidance before this narrower annotation.
     probes::apply_rust_field_match_selector_limit(finding, probe, index);
+    // #13702: an async owner whose only reaching tests create its future and
+    // drop it unpolled is not reached; name that before any oracle-side limit.
+    classify::withhold_unpolled_future_gap(finding, index);
     // #7133: a captured log record the test asserts on is a named limit.
     classify::withhold_log_capture_gap(finding, index, owner_name.as_deref());
     // RIPR-SPEC-0240: a `#[should_panic]` test's panic outcome is an oracle
