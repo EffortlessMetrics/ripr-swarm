@@ -2724,7 +2724,10 @@ fn run_agent_repair_phase(
                 }
                 // A retry may carry a new input path. Validate it before a
                 // pending focused retention can commit, so a different claim
-                // is never silently reported as the one being recovered.
+                // is never silently reported as the one being recovered. A
+                // focused finish is promoted only after this recheck: omitting
+                // the file is never less strict than supplying it.
+                let mut focused_claim_rechecked = false;
                 if let Some(result_path) = test_result.as_deref()
                     && let Ok(parsed_id) =
                         crate::app::repair_attempt::RepairAttemptId::parse(id.to_string())
@@ -2764,6 +2767,7 @@ fn run_agent_repair_phase(
                         refusal.typed = true;
                         return Err(error);
                     }
+                    focused_claim_rechecked = true;
                 }
                 // A trust-bound result can promote the already accepted receipt
                 // only after the original claim and authority are rechecked and
@@ -2858,8 +2862,11 @@ fn run_agent_repair_phase(
                 let completed = if trust_promoted {
                     false
                 } else {
-                    crate::app::repair_attempt::complete_pending_terminal_retention_from(
-                        &root, store_ref, id,
+                    crate::app::repair_attempt::complete_pending_terminal_retention_authorized_from(
+                        &root,
+                        store_ref,
+                        id,
+                        focused_claim_rechecked,
                     )
                     .map_err(|error| {
                         repair_attempt_input_error(&caller_root, store_ref, Some(id), error)
@@ -5121,10 +5128,6 @@ fn gap_closure_summary_lines(verify: &serde_json::Value) -> Vec<String> {
     )]
 }
 
-/// Stdout of an after phase without `--json`: the movement line the receipt
-/// owns, what was written, and the next step. With `--json` these lines are
-/// stderr narration instead; stdout is what a caller that reads only stdout
-/// keeps.
 /// Render a completed focused recovery from the attempt-local evidence, not
 /// from the shared compatibility projections that a later attempt can replace.
 fn recovered_focused_after_output(
@@ -5181,6 +5184,10 @@ fn recovered_focused_after_output(
     Ok((document, summary, receipt_path))
 }
 
+/// Stdout of an after phase without `--json`: the movement line the receipt
+/// owns, what was written, and the next step. With `--json` these lines are
+/// stderr narration instead; stdout is what a caller that reads only stdout
+/// keeps.
 fn after_phase_human_stdout(
     summary_lines: &[String],
     receipt_path: &Path,

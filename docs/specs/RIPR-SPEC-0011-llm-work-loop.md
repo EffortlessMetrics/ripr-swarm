@@ -903,7 +903,13 @@ A focused finish records its receipt recovery protocol before evaluation starts.
 A separate durable marker precedes evaluation, and a successful decision commits
 the exact rendered receipt and verified-input digests before receipt publication.
 After interruption, recovery retains only the receipt and verify bytes named by
-that outcome, and a different supplied claim is refused. A stop before the
+that outcome, and a different supplied claim is refused. Every focused
+recovery, trust-bound or not, requires the same `--test-result FILE`: it is
+re-validated against the current HEAD, the attempt and its test file and must
+equal the pending normalized claim before any evidence is promoted. An after
+phase without it is refused and leaves the attempt recoverable; status names
+that same-result retry for a recoverable finish and a new attempt otherwise
+(including a finish whose recorded recovery protocol is not durable-v1). A stop before the
 marker allows the original claim to retry. A stop after the marker without a
 matching durable success and receipt is ambiguous: the attempt stays finished
 and requires a new attempt, even if evaluation had not yet made its decision.
@@ -1097,6 +1103,7 @@ read of a written field stays #11870.
 - `crates/ripr/tests/focused_test_result.rs::interrupted_focused_recovery_refuses_changed_claim_and_partial_publication` (#13203)
 - `crates/ripr/tests/focused_test_result.rs::proposal_recovery_revalidates_reported_completion` (#13203)
 - `crates/ripr/tests/focused_test_result.rs::pending_promotion_rejects_an_interposed_receipt_replacement` (#13203)
+- `crates/ripr/tests/focused_test_result.rs::accepted_focused_finish_recovery_requires_the_same_result` (#13203)
 - `crates/ripr/tests/focused_test_result.rs::review_fifth_focused_refusal_requires_restart` (#13203)
 - `crates/ripr/src/app/repair_attempt/mod.rs::tests::focused_restore_refuses_another_finish_or_committed_evidence` (#13203)
 - `crates/ripr/tests/focused_test_result.rs::focused_result_does_not_bind_a_replaced_test_file` (#13203)

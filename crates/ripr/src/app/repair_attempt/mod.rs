@@ -2837,12 +2837,16 @@ pub(crate) fn complete_pending_terminal_retention_from(
     complete_pending_terminal_retention_authorized_from(root, store, attempt_id, false)
 }
 
-/// `allow_trust` requires caller-side claim, authority and missing-projection checks.
+/// `focused_claim_rechecked` means the caller re-validated the same
+/// caller-reported focused result (current HEAD, attempt and test file, and
+/// record-equal to the pending claim) and, for a trust-bound attempt, its
+/// authority and missing apply projection. Without it, no focused finish is
+/// promoted.
 pub(crate) fn complete_pending_terminal_retention_authorized_from(
     root: &Path,
     store: Option<&Path>,
     attempt_id: &str,
-    allow_trust: bool,
+    focused_claim_rechecked: bool,
 ) -> Result<bool, String> {
     let attempt_id = RepairAttemptId::parse(attempt_id.to_string())?;
     let locator = store;
@@ -2855,20 +2859,15 @@ pub(crate) fn complete_pending_terminal_retention_authorized_from(
     {
         return Ok(false);
     }
-    // A focused trust-bound after phase still has an apply record to publish.
-    // A receipt alone must not turn an interrupted apply into a completed
-    // evidence set; the after command instead revalidates the supplied claim
-    // and retries the whole transaction under the workflow lock.
-    if !allow_trust
+    // A focused finish is promoted only after the after command re-validated
+    // the same caller-reported claim (and, for a trust-bound attempt, its
+    // authority and missing apply projection). A receipt alone must not turn
+    // an interrupted focused finish into a completed evidence set.
+    if !focused_claim_rechecked
         && manifest
             .after
             .as_ref()
             .is_some_and(|after| after.focused_result.is_some())
-        && find_manifest_artifact_by_role(
-            &manifest,
-            crate::app::python_repair_binding::BINDING_ARTIFACT_ROLE,
-        )
-        .is_some()
     {
         return Ok(false);
     }

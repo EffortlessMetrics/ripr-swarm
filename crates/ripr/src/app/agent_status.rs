@@ -203,7 +203,17 @@ pub(crate) struct AgentStatusRepairAttempt {
     /// For an interrupted focused finish with no retained terminal evidence:
     /// the recovery limitation status reports instead of reading the shared
     /// compatibility receipt as this attempt's.
-    pub(crate) focused_recovery: Option<&'static str>,
+    pub(crate) focused_recovery: Option<FocusedRecovery>,
+}
+
+/// One route for an interrupted focused finish: either retry the after phase
+/// with the same caller-reported result, or start a new attempt.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct FocusedRecovery {
+    pub(crate) limitation: &'static str,
+    /// Whether the after phase can recover this finish when it is re-run
+    /// with the same `--test-result FILE`.
+    pub(crate) retry_same_result: bool,
 }
 
 /// The workflow receipt read against one attempt. Only a `ready_to_finish`
@@ -879,7 +889,7 @@ fn status_repair_attempt(
             }
         }),
         diverged_recovery,
-        focused_recovery: focused_receipt_recovery_limitation(manifest),
+        focused_recovery: focused_receipt_recovery(manifest),
     }
 }
 
@@ -1149,8 +1159,13 @@ fn finished_attempt_warnings(
                     }
                 ) + &match attempt.focused_recovery {
                     // An interrupted focused finish has no issued receipt;
-                    // say why, and name the new-attempt route the gate admits.
-                    Some(limitation) => format!(
+                    // say why. A retryable finish names only the same-result
+                    // retry; any other names the new-attempt route the gate
+                    // admits.
+                    Some(recovery) if recovery.retry_same_result => {
+                        format!(". {}", recovery.limitation)
+                    }
+                    Some(FocusedRecovery { limitation, .. }) => format!(
                         ". {limitation}{}",
                         match gate.check(&attempt.seam_id) {
                             Some(refusal) => format!(
@@ -3249,6 +3264,28 @@ fn corrupt_attempt_status(
 pub(crate) fn focused_receipt_recovery_limitation(
     manifest: &RepairAttemptManifest,
 ) -> Option<&'static str> {
+    focused_receipt_recovery(manifest).map(|recovery| recovery.limitation)
+}
+
+/// The recovery route for an interrupted focused finish, matching what the
+/// after phase enforces: it recovers only a durable-v1 finish with no
+/// evaluation or an accepted one, and only when re-run with the same
+/// `--test-result FILE`.
+pub(crate) fn focused_receipt_recovery(
+    manifest: &RepairAttemptManifest,
+) -> Option<FocusedRecovery> {
+    let new_attempt = |limitation| {
+        Some(FocusedRecovery {
+            limitation,
+            retry_same_result: false,
+        })
+    };
+    let retry = |limitation| {
+        Some(FocusedRecovery {
+            limitation,
+            retry_same_result: true,
+        })
+    };
     if manifest.state != RepairAttemptState::ReadyToFinish
         || !manifest.terminal_artifacts.is_empty()
     {
@@ -3256,24 +3293,24 @@ pub(crate) fn focused_receipt_recovery_limitation(
     }
     let pending = manifest.after.as_ref()?.focused_result.as_ref()?;
     if manifest.last_after_refusal.is_some() {
-        return Some(
+        return new_attempt(
             "the focused finish ended in a recorded refusal; inspect that refusal and start a new attempt",
         );
     }
     if pending.receipt_protocol.as_deref() != Some("durable-v1") {
-        return Some(
-            "the focused receipt recovery protocol is unknown; inspect the attempt and start a new attempt",
+        return new_attempt(
+            "the focused receipt recovery protocol is not durable-v1, so the after phase cannot restore it; start a new attempt",
         );
     }
     match &manifest.focused_receipt_evaluation {
-        None => Some(
+        None => retry(
             "no focused receipt evaluation is recorded yet; if the after phase is no longer running, retry with the same --test-result FILE and, for a trust-bound attempt, its original edit authority",
         ),
-        Some(crate::app::repair_attempt::FocusedReceiptEvaluation::Started) => Some(
+        Some(crate::app::repair_attempt::FocusedReceiptEvaluation::Started) => new_attempt(
             "focused receipt evaluation has started but no outcome is recorded; if the after phase is no longer running, inspect the attempt and start a new attempt",
         ),
-        Some(crate::app::repair_attempt::FocusedReceiptEvaluation::Accepted { .. }) => Some(
-            "the focused receipt decision was committed; if the after phase is no longer running, retry with the same --test-result FILE and, for a trust-bound attempt, its original edit authority. Recovery requires current bound inputs and the exact committed receipt and verify bytes; if those are unavailable, start a new attempt",
+        Some(crate::app::repair_attempt::FocusedReceiptEvaluation::Accepted { .. }) => retry(
+            "the focused receipt decision was committed; if the after phase is no longer running, retry with the same --test-result FILE (an after phase without it is refused) and, for a trust-bound attempt, its original edit authority; recovery rechecks that result against the current HEAD, the attempt and its test file and the exact committed receipt and verify bytes",
         ),
     }
 }

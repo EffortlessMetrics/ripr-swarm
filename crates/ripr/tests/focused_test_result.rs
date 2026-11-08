@@ -1535,6 +1535,69 @@ fn interrupted_receipt_evaluation_fails_closed() -> Result<(), String> {
     Ok(())
 }
 
+/// An existing-test attempt whose focused finish stopped after its receipt
+/// decision was committed is not promoted by an after phase that omits the
+/// result: that run is refused and leaves the attempt as it was, and the
+/// original `--test-result FILE` then recovers it.
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+#[test]
+fn accepted_focused_finish_recovery_requires_the_same_result() -> Result<(), String> {
+    let production = PRICE_FN.trim_start_matches("pub ");
+    let module = |tests: &str| {
+        format!("{production}\n#[cfg(test)]\nmod tests {{\n    use super::*;\n{tests}}}\n")
+    };
+    let existing = "\n    #[test]\n    fn existing_discount() {\n        assert_eq!(discounted_total(50, 100), 50);\n    }\n";
+    let added = "\n    #[test]\n    fn equality_boundary_discounts() {\n        assert_eq!(discounted_total(100, 100), 90);\n    }\n";
+    let fixture = fixture_with("focused-accepted-omit", &module(existing), false)?;
+    let root = &fixture.root;
+    let attempt = begin(root)?;
+    write(root, "src/lib.rs", &module(&format!("{existing}{added}")))?;
+    let input = result_document(
+        &attempt.id,
+        &head_sha(root)?,
+        "src/lib.rs",
+        serde_json::json!([ok_event("tests::equality_boundary_discounts")]),
+    );
+    let result = write_result(root, "accepted-omit", &input)?;
+    let stopped = after_with_publication_hook(root, &attempt, &result, "stop")?;
+    assert_eq!(stopped.status.code(), Some(77), "{}", combined(&stopped));
+    let pending = manifest(root, &attempt)?;
+    assert_eq!(
+        pending["focused_receipt_evaluation"]["state"], "accepted",
+        "{pending}"
+    );
+    assert!(terminal_roles(&pending).is_empty(), "{pending}");
+    let missing = run_ripr(
+        root,
+        &[
+            "agent",
+            "repair",
+            "--json",
+            "--root",
+            &attempt.root_arg,
+            "--attempt",
+            &attempt.id,
+            "--phase",
+            "after",
+        ],
+    )?;
+    // The existing-test refusal, not the proposal-recovery one.
+    assert_eq!(missing.status.code(), Some(3), "{}", combined(&missing));
+    assert!(
+        combined(&missing).contains("needs the same --test-result FILE"),
+        "{}",
+        combined(&missing)
+    );
+    assert_eq!(manifest(root, &attempt)?, pending);
+    let recovered = after_with(root, &attempt, &result)?;
+    assert!(recovered.status.success(), "{}", combined(&recovered));
+    let finished = manifest(root, &attempt)?;
+    for role in ["agent_receipt", "agent_verify", RESULT_ROLE] {
+        retained_terminal(root, &finished, role)?;
+    }
+    Ok(())
+}
+
 #[cfg(all(target_os = "linux", target_env = "gnu"))]
 #[test]
 fn proposal_recovery_revalidates_reported_completion() -> Result<(), String> {
