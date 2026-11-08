@@ -1001,9 +1001,10 @@ impl Backend {
         // Retain the typed component outcomes for the deduplicated
         // degradation warning emitted after a successful commit (#1997).
         let component_outcomes = snapshot.component_outcomes.clone();
-        // #13441: the empty-scope marker payload of the snapshot being
+        // #13441, #13562: the scope marker payload of the snapshot being
         // replaced, compared with the new one after commit. A payload change
-        // (different base or empty-scope cause) is a marker-state change too.
+        // (different base, empty-scope cause or incomplete limitation) is a
+        // marker-state change too.
         let previous_marker = self
             .latest_pull_snapshot()
             .and_then(|(previous, _)| scope_marker_payload(&previous));
@@ -1549,7 +1550,7 @@ impl Backend {
             last_diagnostics.clear();
         }
         // #13441: a push client may be showing the served (never tracked)
-        // empty-scope marker on open documents; capture that before the
+        // scope marker on open documents; capture that before the
         // snapshot is dropped so the root transition or shutdown retracts it.
         let marker_served = !self.pull_diagnostics_enabled()
             && self
@@ -4012,7 +4013,8 @@ impl Backend {
             .unwrap_or_default()
     }
 
-    /// #13441: the empty-scope marker is served, not stored, and a clean
+    /// #13441, #13562: the scope marker (empty-scope or incomplete-analysis) is
+    /// served, not stored, and a clean
     /// open skips the refresh, so a push client opening a document after a
     /// clean snapshot committed would otherwise receive nothing (silence that
     /// reads as an all-clear). Publish the committed marker once on open. It
@@ -4068,7 +4070,7 @@ impl Backend {
     }
 
     fn set_last_diagnostics_for_uri(&self, uri: &Uri, diagnostics: Vec<Diagnostic>) {
-        // #13441: the empty-scope marker is served, not stored. Recording it
+        // #13441, #13562: the scope marker is served, not stored. Recording it
         // as the committed baseline would put the URI in the next refresh's
         // clear set and wipe the marker on a second consecutive clean refresh.
         if !diagnostics.is_empty() && diagnostics.iter().all(is_scope_marker) {

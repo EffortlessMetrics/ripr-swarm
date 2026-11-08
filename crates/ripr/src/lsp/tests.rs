@@ -27003,6 +27003,25 @@ async fn framed_clean_push_session(
     ),
     String,
 > {
+    let (client_read, client_write, server_task, _notifications) =
+        framed_push_session_with_notifications(root, "seams_deferred").await?;
+    Ok((client_read, client_write, server_task))
+}
+
+/// The framed push session behind `framed_clean_push_session`, also returning
+/// the notifications read while the first refresh settled.
+async fn framed_push_session_with_notifications(
+    root: &Path,
+    settled_run_status: &str,
+) -> Result<
+    (
+        tokio::io::ReadHalf<tokio::io::DuplexStream>,
+        tokio::io::WriteHalf<tokio::io::DuplexStream>,
+        tokio::task::JoinHandle<()>,
+        Vec<serde_json::Value>,
+    ),
+    String,
+> {
     let (client_io, server_io) = tokio::io::duplex(64 * 1024);
     let (mut client_read, mut client_write) = tokio::io::split(client_io);
     let (server_read, server_write) = tokio::io::split(server_io);
@@ -27054,24 +27073,46 @@ async fn framed_clean_push_session(
         }),
     )
     .await?;
-    read_lsp_notifications_until_refresh_settled(
+    let notifications = read_lsp_notifications_until_refresh_settled(
         &mut client_read,
         &mut client_write,
         "ripr analysis refresh completed in",
-        "seams_deferred",
+        settled_run_status,
     )
     .await?;
-    Ok((client_read, client_write, server_task))
+    Ok((client_read, client_write, server_task, notifications))
 }
 
-fn empty_scope_marker_count(params: &serde_json::Value) -> Option<usize> {
+fn scope_marker_count(params: &serde_json::Value, kind: &str) -> Option<usize> {
     Some(
         params["diagnostics"]
             .as_array()?
             .iter()
-            .filter(|item| item["data"]["kind"] == "empty_scope")
+            .filter(|item| item["data"]["kind"] == kind)
             .count(),
     )
+}
+
+fn empty_scope_marker_count(params: &serde_json::Value) -> Option<usize> {
+    scope_marker_count(params, "empty_scope")
+}
+
+fn incomplete_analysis_marker_count(params: &serde_json::Value) -> Option<usize> {
+    scope_marker_count(params, "incomplete_analysis")
+}
+
+/// A fixture whose only change is a file-mode flip on `src/lib.rs`: a
+/// well-formed diff with nothing ripr analyzes, so the committed snapshot is
+/// `unsupported_input` with no row and serves the incomplete-analysis scope
+/// marker (#13562) rather than the empty-scope one.
+#[cfg(unix)]
+fn incomplete_mode_only_push_root(name: &str) -> Result<TempLspRoot, String> {
+    use std::os::unix::fs::PermissionsExt;
+    let temp = boundary_gap_git_fixture_root(name)?;
+    let lib = temp.path().join("src/lib.rs");
+    std::fs::set_permissions(&lib, std::fs::Permissions::from_mode(0o755))
+        .map_err(|err| format!("chmod failed: {err}"))?;
+    Ok(temp)
 }
 
 #[test]
@@ -27252,6 +27293,200 @@ fn framed_push_client_shutdown_retracts_the_served_marker() -> Result<(), String
         if last["diagnostics"] != serde_json::json!([]) {
             return Err(format!("shutdown must clear the marker: {last}"));
         }
+        drop(temp);
+        Ok(())
+    })
+}
+
+/// Open `lib.rs` of an incomplete-outcome fixture through the framed push
+/// session and require its first publication to carry exactly one
+/// incomplete-analysis scope marker and no empty-scope marker (#13562).
+#[cfg(unix)]
+async fn framed_incomplete_push_session(
+    root: &Path,
+) -> Result<
+    (
+        tokio::io::ReadHalf<tokio::io::DuplexStream>,
+        tokio::io::WriteHalf<tokio::io::DuplexStream>,
+        tokio::task::JoinHandle<()>,
+    ),
+    String,
+> {
+    let (client_read, client_write, server_task, notifications) =
+        framed_push_session_with_notifications(root, "limited_incomplete_input").await?;
+    let lib_uri = file_uri_for_path(&root.join("src/lib.rs"))?
+        .as_str()
+        .to_string();
+    let first = published_params_for_uri(&notifications, &lib_uri)
+        .last()
+        .copied()
+        .ok_or_else(|| format!("lib.rs was not served after the snapshot: {notifications:?}"))?;
+    if incomplete_analysis_marker_count(first) != Some(1)
+        || empty_scope_marker_count(first) != Some(0)
+        || first["diagnostics"].as_array().map(Vec::len) != Some(1)
+    {
+        return Err(format!(
+            "the open document must carry exactly one incomplete marker: {first}"
+        ));
+    }
+    Ok((client_read, client_write, server_task))
+}
+
+#[cfg(unix)]
+#[test]
+#[serial]
+fn framed_push_client_late_open_and_close_follow_the_incomplete_snapshot_marker()
+-> Result<(), String> {
+    // #13562: the incomplete-analysis marker reuses the #13441 lifecycle: a
+    // document opened after the incomplete snapshot committed gets exactly one
+    // incomplete marker (not the empty-scope one, not stacked), and closing it
+    // retracts the marker.
+    work_done_progress_runtime()?.block_on(async {
+        let temp = incomplete_mode_only_push_root("push-incomplete-late-open-close")?;
+        let root = temp.path().to_path_buf();
+        let (mut client_read, mut client_write, mut server_task) =
+            framed_incomplete_push_session(&root).await?;
+        let late_path = root.join("Cargo.toml");
+        let late_text = std::fs::read_to_string(&late_path)
+            .map_err(|err| format!("read Cargo.toml failed: {err}"))?;
+        let late_uri = file_uri_for_path(&late_path)?.as_str().to_string();
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0", "method": "textDocument/didOpen",
+                "params": {"textDocument": {
+                    "uri": late_uri, "languageId": "toml", "version": 1, "text": late_text
+                }}
+            }),
+        )
+        .await?;
+        let opened = drain_until_publish(&mut client_read, &mut client_write, &late_uri).await?;
+        let opened = opened
+            .first()
+            .ok_or("a document opened after an incomplete snapshot must be served the marker")?;
+        if incomplete_analysis_marker_count(opened) != Some(1)
+            || empty_scope_marker_count(opened) != Some(0)
+            || opened["diagnostics"].as_array().map(Vec::len) != Some(1)
+        {
+            return Err(format!(
+                "late open must carry exactly one incomplete marker: {opened}"
+            ));
+        }
+        if opened["diagnostics"][0]["severity"] != serde_json::json!(3) {
+            return Err(format!("the marker must be Information: {opened}"));
+        }
+        let repeat = drain_publishes_within(
+            &mut client_read,
+            &mut client_write,
+            &late_uri,
+            Duration::from_secs(2),
+        )
+        .await?;
+        if let Some(extra) = repeat.first() {
+            return Err(format!("late open must not publish a second time: {extra}"));
+        }
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0", "method": "textDocument/didClose",
+                "params": {"textDocument": {"uri": late_uri}}
+            }),
+        )
+        .await?;
+        let closed = drain_until_publish(&mut client_read, &mut client_write, &late_uri).await?;
+        let closed = closed.first().ok_or("closing must retract the marker")?;
+        if closed["diagnostics"] != serde_json::json!([]) {
+            return Err(format!("close must clear the marker: {closed}"));
+        }
+        shutdown_framed_session(&mut client_read, &mut client_write, &mut server_task, 2).await?;
+        drop(temp);
+        Ok(())
+    })
+}
+
+#[cfg(unix)]
+#[test]
+#[serial]
+fn framed_push_client_shutdown_retracts_the_served_incomplete_marker() -> Result<(), String> {
+    // #13562: the incomplete marker is served, not tracked, so shutdown must
+    // still retract it from the open document.
+    work_done_progress_runtime()?.block_on(async {
+        let temp = incomplete_mode_only_push_root("push-incomplete-shutdown")?;
+        let root = temp.path().to_path_buf();
+        let lib_uri = file_uri_for_path(&root.join("src/lib.rs"))?
+            .as_str()
+            .to_string();
+        let (mut client_read, mut client_write, _server_task) =
+            framed_incomplete_push_session(&root).await?;
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({"jsonrpc": "2.0", "id": 2, "method": "shutdown", "params": null}),
+        )
+        .await?;
+        let (_response, notifications) = read_lsp_response_with_notifications_and_progress(
+            &mut client_read,
+            &mut client_write,
+            2,
+        )
+        .await?;
+        let published = published_params_for_uri(&notifications, &lib_uri);
+        let last = published.last().ok_or("shutdown must retract the marker")?;
+        if last["diagnostics"] != serde_json::json!([]) {
+            return Err(format!("shutdown must clear the marker: {last}"));
+        }
+        drop(temp);
+        Ok(())
+    })
+}
+
+#[cfg(unix)]
+#[test]
+#[serial]
+fn framed_push_client_root_change_retracts_the_served_incomplete_marker() -> Result<(), String> {
+    // #13562: a root change drops the snapshot that justified the marker, so
+    // the push client must see the open document's marker retracted.
+    work_done_progress_runtime()?.block_on(async {
+        let temp = incomplete_mode_only_push_root("push-incomplete-root-change")?;
+        let other = boundary_gap_git_fixture_root("push-incomplete-root-change-other")?;
+        let root = temp.path().to_path_buf();
+        let lib_uri = file_uri_for_path(&root.join("src/lib.rs"))?
+            .as_str()
+            .to_string();
+        let (mut client_read, mut client_write, mut server_task) =
+            framed_incomplete_push_session(&root).await?;
+        let root_uri = file_uri_for_path(&root)?;
+        let other_uri = file_uri_for_path(other.path())?;
+        let folder = |uri: &str| serde_json::json!({"uri": uri, "name": "fixture"});
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "workspace/didChangeWorkspaceFolders",
+                "params": {"event": {
+                    "added": [folder(other_uri.as_str())], "removed": [folder(root_uri.as_str())]
+                }}
+            }),
+        )
+        .await?;
+        let request = read_lsp_request(&mut client_read, "workspace/workspaceFolders").await?;
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": request["id"].clone(),
+                "result": [folder(other_uri.as_str())]
+            }),
+        )
+        .await?;
+        let published = drain_until_publish(&mut client_read, &mut client_write, &lib_uri).await?;
+        let last = published
+            .last()
+            .ok_or("a root change must retract the marker")?;
+        if last["diagnostics"] != serde_json::json!([]) {
+            return Err(format!("root change must clear the marker: {last}"));
+        }
+        shutdown_framed_session(&mut client_read, &mut client_write, &mut server_task, 2).await?;
+        drop(other);
         drop(temp);
         Ok(())
     })

@@ -853,15 +853,15 @@ pub(super) fn delivered_diagnostics_for_uri(
     diagnostics
 }
 
-/// The passive Information marker served on a document of a snapshot whose
-/// analysis scope was empty (#13441). A clean tree publishes no row, so a
+/// The passive Information scope marker served on a document of a snapshot
+/// whose analysis scope was empty (#13441) or incomplete (#13562). A clean tree publishes no row, so a
 /// pull-only or push client otherwise sees silence that reads as an
 /// all-clear; the not-all-clear fact lived only in the line-0 hover and the
 /// refresh log (#12416). Served at serve time, not stored: there is no
 /// changed file to anchor it to, and a stored batch would make a first
 /// finding look like a delivery change. It is gated on the same fact as the
-/// other empty-scope disclosures (an empty-scope outcome kind and no row of
-/// any kind in the snapshot), so a snapshot with findings, gap rows or other
+/// other scope disclosures (an empty-scope or incomplete outcome kind and no
+/// row of any kind in the snapshot), so a snapshot with findings, gap rows or other
 /// markers never carries it, and it disappears with the next real snapshot.
 /// No finding identity, repair data or actionability; never a Warning.
 fn push_scope_marker(snapshot: &AnalysisSnapshot, uri: &Uri, diagnostics: &mut Vec<Diagnostic>) {
