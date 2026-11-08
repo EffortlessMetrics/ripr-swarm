@@ -470,13 +470,16 @@ client supports:
   `stale_snapshot` (stale gap diagnostic),
   `verification_route_unavailable` / `receipt_route_unavailable` (gap
   record without a safe verify/receipt command), and
-  `preview_or_static_limitation` (cross-language unresolved target or a
-  named static limitation), and `repair_route_not_ready` (a same-language
-  seam that fails the repair-packet flip only because ripr has not picked a
-  test to extend yet, #13716). A seam-addressed action reads its readiness
-  from the seam's own producer-owned repair-packet flip, the same gate the
-  seam hover and `ripr agent repair --seam-id` use, so a seam past the flip
-  is offered the repair start without any injected fix-instruction. The
+  `preview_or_static_limitation` (cross-language unresolved target), and
+  `repair_route_not_ready` (a same-language seam that fails the
+  repair-packet flip only because ripr has not picked a test to extend
+  yet, or an actionable gap with no fix site, #13716). A seam-addressed
+  action reads its readiness from the seam's own producer-owned
+  repair-packet flip, the same gate the seam hover and
+  `repair_start_command_for` use, so a seam past the flip is offered the
+  repair start without any injected fix-instruction. `ripr agent repair`
+  still re-checks start-time facts (dirty premise, proposal identity, held
+  inline target, ignored build directory) and refuses with nothing started. The
   backend health gate also returns retained diagnostic-addressed actions
   inert as `analysis_not_current` when the root is valid and the client
   supports disabled actions (#7458). It names queued/running as a wait state

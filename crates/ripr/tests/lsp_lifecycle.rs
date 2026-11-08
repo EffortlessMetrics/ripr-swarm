@@ -3067,7 +3067,9 @@ fn real_seam_diagnostic_offers_the_repair_start_on_a_committed_change() -> Resul
                 .and_then(serde_json::Value::as_array)
         {
             for diagnostic in diagnostics {
-                if diagnostic.pointer("/data/seam_id").is_some() {
+                if diagnostic["code"] == "ripr-seam-weakly-gripped"
+                    && diagnostic.pointer("/data/seam_id").is_some()
+                {
                     let uri = message.pointer("/params/uri").cloned();
                     seam_diagnostic = Some((uri, diagnostic.clone()));
                 }
@@ -3127,5 +3129,23 @@ fn real_seam_diagnostic_offers_the_repair_start_on_a_committed_change() -> Resul
     if brief.get("disabled").is_some() {
         return Err(format!("the brief must not be disabled: {brief}"));
     }
-    shutdown_exit_and_wait(&mut session)
+    shutdown_exit_and_wait(&mut session)?;
+
+    // The CLI half of the parity: the before phase the start names accepts
+    // this seam on the same clean, committed fixture and starts an attempt.
+    let before = Command::new(env!("CARGO_BIN_EXE_ripr"))
+        .args(["agent", "repair", "--root"])
+        .arg(&root)
+        .args(["--seam-id", seam_id, "--phase", "before"])
+        .current_dir(&root)
+        .output()
+        .map_err(|err| format!("run agent repair before phase: {err}"))?;
+    let stderr = String::from_utf8_lossy(&before.stderr);
+    if !before.status.success() || !stderr.contains("attempt manifest:") {
+        return Err(format!(
+            "`ripr agent repair --phase before` must accept the offered seam: status {:?}\n{stderr}",
+            before.status.code()
+        ));
+    }
+    Ok(())
 }

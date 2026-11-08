@@ -7806,6 +7806,14 @@ fn retained_health_preserves_gap_producer_refusals() -> Result<(), String> {
             "Inspect gap: copy repair packet",
             "preview_or_static_limitation",
         ),
+        // #13716: an actionable gap with no anchor and no repair target is
+        // inspect-only; it names `repair_route_not_ready`, not a language
+        // boundary, and keeps that reason through the health conversion.
+        (
+            "route",
+            "Inspect gap: copy repair packet",
+            "repair_route_not_ready",
+        ),
     ];
     let commands = vscode_advertised_client_commands()?;
     let borrowed = commands.iter().map(String::as_str).collect::<Vec<_>>();
@@ -7844,6 +7852,10 @@ fn retained_health_preserves_gap_producer_refusals() -> Result<(), String> {
                     "projection_exclusion_reasons".to_string(),
                     serde_json::json!(["cross_language_target_unresolved"]),
                 );
+            }
+            "route" => {
+                data.remove("anchor");
+                data.remove("repair_route");
             }
             _ => return Err(format!("unsupported gap producer fixture: {producer}")),
         }

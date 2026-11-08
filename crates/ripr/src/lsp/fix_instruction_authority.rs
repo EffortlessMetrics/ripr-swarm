@@ -82,9 +82,12 @@ const REPAIR_ROUTE_NOT_READY: &str = "repair_route_not_ready";
 /// The seam's own fix-instruction summary, from the producer-owned
 /// repair-packet flip (`repair_packet_eligibility`, RIPR-SPEC-0087 §8).
 ///
-/// A seam passing the flip is `fix_site_ready`: the flip is the gate
-/// `ripr agent repair --seam-id` and the seam hover's "repair (start here)"
-/// line already consume, so the code action must agree with them (#13716).
+/// A seam passing the flip is `fix_site_ready`: the flip is the gate the
+/// seam hover's "repair (start here)" line and `repair_start_command_for`
+/// already consume, so the code action must agree with them (#13716).
+/// `ripr agent repair` re-checks more at start time (proposal identity, a
+/// held inline target, the dirty-tree premise, an ignored build directory)
+/// and refuses with nothing started; the editor does not claim those.
 /// The seam is not re-derived from a `ripr check` finding witness: that is
 /// a finding-level projection keyed by a different id family, and on the
 /// same change it can report no related test while the seam holds one, which
