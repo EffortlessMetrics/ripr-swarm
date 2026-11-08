@@ -169,7 +169,7 @@ pub(crate) enum RefusalStdout {
     Empty,
     /// Refusal JSON document is on stdout (`agent verify-execute`).
     Document,
-    /// Refusal JSON is on stdout only with `--json` (`agent repair`, `agent card`, `agent stub`, `agent packet`).
+    /// Refusal JSON is on stdout only with `--json` (`agent repair`, `continue`, `agent card`, `agent stub`, `agent packet`).
     JsonOptional,
 }
 
@@ -223,7 +223,10 @@ fn required_exit_contract(id: &str) -> Option<CommandExitContract> {
         // with prose on stderr and an empty stdout, like the card family.
         // #12417: the unanchored discovery refusal joins both, and status
         // spells it too instead of reporting state for a non-project.
-        "cmd:repair" | "cmd:continue" | "cmd:status" => Some(EXIT_TYPED_REFUSAL_EMPTY_STDOUT),
+        "cmd:repair" | "cmd:status" => Some(EXIT_TYPED_REFUSAL_EMPTY_STDOUT),
+        // #11584: selection-arm refusals leave stdout empty; under `--json`
+        // a typed after-phase refusal or failure prints its document.
+        "cmd:continue" => Some(EXIT_TYPED_REFUSAL_JSON_OPTIONAL_STDOUT),
         "cmd:agent.verify-execute" => Some(EXIT_TYPED_REFUSAL_STDOUT_DOCUMENT),
         "cmd:agent.repair" => Some(EXIT_TYPED_REFUSAL_JSON_OPTIONAL_STDOUT),
         "cmd:receipt.check" => Some(EXIT_RECEIPT_CHECK),
@@ -1897,7 +1900,7 @@ const METADATA: &[CommandMetadata] = &[
             optional: &[],
         },
         state_target: None,
-        accepts_json_flag: JsonFlag::None,
+        accepts_json_flag: JsonFlag::Json,
         writes_json_artifacts: false,
         example: "ripr repair [<item>] --root .",
         next_routes: &["continue", "status"],
@@ -1927,7 +1930,7 @@ const METADATA: &[CommandMetadata] = &[
             optional: &[],
         },
         state_target: None,
-        accepts_json_flag: JsonFlag::None,
+        accepts_json_flag: JsonFlag::Json,
         writes_json_artifacts: false,
         example: "ripr continue [--attempt ID] --root .",
         next_routes: &["status", "receipt write"],
@@ -1940,7 +1943,7 @@ const METADATA: &[CommandMetadata] = &[
             "no workspace, package or Git repository anchors the current directory (unanchored_root) starts nothing; run from inside the project or pass `--root <dir>`",
             "an edit-cage violation exits 2 with code edit_cage_violation (attempt_stale or attempt_incomparable when HEAD moved or files cannot be compared): the attempt is terminal, start a fresh `ripr repair`",
         ],
-        exit: EXIT_TYPED_REFUSAL_EMPTY_STDOUT,
+        exit: EXIT_TYPED_REFUSAL_JSON_OPTIONAL_STDOUT,
         limitations: "records the after snapshot and composes static verification for one attempt; ripr never performs the edit and never runs project tests itself.",
         not_applicable_reason: None,
     },
@@ -3574,7 +3577,7 @@ mod tests {
             ("cmd:agent.packet", EXIT_TYPED_REFUSAL_JSON_OPTIONAL_STDOUT),
             ("cmd:agent.repair", EXIT_TYPED_REFUSAL_JSON_OPTIONAL_STDOUT),
             ("cmd:repair", EXIT_TYPED_REFUSAL_EMPTY_STDOUT),
-            ("cmd:continue", EXIT_TYPED_REFUSAL_EMPTY_STDOUT),
+            ("cmd:continue", EXIT_TYPED_REFUSAL_JSON_OPTIONAL_STDOUT),
             (
                 "cmd:agent.verify-execute",
                 EXIT_TYPED_REFUSAL_STDOUT_DOCUMENT,
