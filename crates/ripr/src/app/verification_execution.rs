@@ -1806,4 +1806,119 @@ mod tests {
         assert_eq!(leftovers, 0);
         Ok(())
     }
+
+    fn args(items: &[&str]) -> Vec<String> {
+        items.iter().map(|item| (*item).to_string()).collect()
+    }
+
+    #[test]
+    fn digest_matches_the_known_sha256_vector() {
+        assert_eq!(
+            digest(b"abc"),
+            "sha256:ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+        assert_ne!(digest(b"abc"), digest(b"abd"));
+    }
+
+    #[test]
+    fn route_arg_path_requires_exactly_one_flag_with_a_usable_value() {
+        let ok = route_arg_path(&args(&["verify", "--before", "a.json"]), "--before");
+        assert_eq!(
+            ok.map(|path| path.to_string_lossy().into_owned()).ok(),
+            Some("a.json".to_string())
+        );
+
+        let cases: [(&[&str], &str); 5] = [
+            (&["verify"], "command is missing --before"),
+            (
+                &["--before", "a", "--before", "b"],
+                "command repeats --before",
+            ),
+            (
+                &["verify", "--before"],
+                "command is missing a value for --before",
+            ),
+            (&["--before", ""], "invalid value for --before"),
+            (&["--before", "a\0b"], "invalid value for --before"),
+        ];
+        for (input, reason) in cases {
+            let error = route_arg_path(&args(input), "--before")
+                .err()
+                .map(|refusal| (refusal.disposition, refusal.reason));
+            assert_eq!(
+                error,
+                Some((DISPOSITION_REJECTED, reason.to_string())),
+                "{input:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn confined_paths_refuse_escapes_and_accept_files_under_root() -> Result<(), String> {
+        let root = seeded_root("confine")?;
+        fs::create_dir_all(root.path.join("out")).map_err(|error| error.to_string())?;
+        let outside = TempRoot::new("confine-outside")?;
+        outside.write("secret.json", b"{}")?;
+
+        let inside = confined_existing_file(&root.path, Path::new("before.json"), "before")?;
+        assert_eq!(inside, root.path.join("before.json"));
+        let absolute_outside = outside.path.join("secret.json");
+        let error = confined_existing_file(&root.path, &absolute_outside, "before")
+            .err()
+            .ok_or("an absolute path outside the root must be refused")?;
+        assert_eq!(error.disposition, DISPOSITION_WRONG_ROOT);
+        assert_eq!(error.reason, "before must be a file under root");
+        let error = confined_existing_file(&root.path, Path::new("out"), "before")
+            .err()
+            .ok_or("a directory is not a file")?;
+        assert_eq!(error.reason, "before must be a file under root");
+        let error = confined_existing_file(&root.path, Path::new("missing.json"), "before")
+            .err()
+            .ok_or("a missing file must be refused")?;
+        assert_eq!(error.disposition, DISPOSITION_WRONG_ROOT);
+
+        assert_eq!(
+            confined_output_path(&root.path, Path::new("out/result.json"), "result")?,
+            root.path.join("out").join("result.json")
+        );
+        for bad in [Path::new("../result.json"), absolute_outside.as_path()] {
+            let error = confined_output_path(&root.path, bad, "result")
+                .err()
+                .ok_or("an escaping output path must be refused")?;
+            assert_eq!(error.disposition, DISPOSITION_WRONG_ROOT);
+            assert_eq!(
+                error.reason,
+                "result must be a root-relative path without .."
+            );
+        }
+        let error = confined_output_path(&root.path, Path::new("nodir/result.json"), "result")
+            .err()
+            .ok_or("a missing parent directory must be refused")?;
+        assert_eq!(error.disposition, DISPOSITION_WRONG_ROOT);
+
+        let error = canonical_directory(&root.path.join("before.json"), "root")
+            .err()
+            .ok_or("a file is not a directory root")?;
+        assert_eq!(error.reason, "root is not a directory");
+        assert_eq!(canonical_directory(&root.path, "root")?, root.path);
+        Ok(())
+    }
+
+    #[test]
+    fn atomic_write_creates_a_new_result_exactly() -> Result<(), String> {
+        let root = TempRoot::new("write-new")?;
+        let target = root.path.join("result.json");
+        atomic_write(&target, b"{\"ok\":true}")?;
+        assert_eq!(
+            fs::read(&target).map_err(|error| error.to_string())?,
+            b"{\"ok\":true}"
+        );
+        let leftovers = fs::read_dir(&root.path)
+            .map_err(|error| error.to_string())?
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_name().to_string_lossy().ends_with(".tmp"))
+            .count();
+        assert_eq!(leftovers, 0);
+        Ok(())
+    }
 }
