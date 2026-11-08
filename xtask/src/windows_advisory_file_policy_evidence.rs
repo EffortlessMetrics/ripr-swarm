@@ -505,10 +505,12 @@ mod tests {
     }
 
     /// True when some workflow line passes `--exact` and names `test` as a
-    /// whole argument, so a drifted filter would run zero tests.
+    /// whole argument outside any `#` comment, so a drifted filter would run
+    /// zero tests.
     fn workflow_exact_filter_names(workflow: &str, test: &str) -> bool {
         workflow.lines().any(|line| {
-            let mut args = line.split_whitespace();
+            let code = line.split('#').next().unwrap_or("");
+            let mut args = code.split_whitespace();
             args.clone().any(|arg| arg == "--exact") && args.any(|arg| arg == test)
         })
     }
@@ -522,6 +524,16 @@ mod tests {
         );
         let drifted = workflow.replace(FACADE_TEST, "tests::drifted_facade_name");
         assert!(!workflow_exact_filter_names(&drifted, FACADE_TEST));
+
+        let live = format!("run: cargo test -p xtask {FACADE_TEST} -- --exact");
+        assert!(workflow_exact_filter_names(&live, FACADE_TEST));
+        let drifted_filter = "cargo test -p xtask tests::drifted_facade_name -- --exact";
+        let trailing = format!("{drifted_filter} # was {FACADE_TEST} --exact");
+        assert!(!workflow_exact_filter_names(&trailing, FACADE_TEST));
+        let standalone = format!("{drifted_filter}\n# {FACADE_TEST} -- --exact\n");
+        assert!(!workflow_exact_filter_names(&standalone, FACADE_TEST));
+        let longer = format!("cargo test -p xtask {FACADE_TEST}_v2 -- --exact");
+        assert!(!workflow_exact_filter_names(&longer, FACADE_TEST));
     }
 
     #[test]
