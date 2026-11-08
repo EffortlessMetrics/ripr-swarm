@@ -1567,7 +1567,9 @@ echo: `schema_version`, `tool`, `status: "refused"` and
 `error {code, message, token?, next}` with `code` one of `unknown_argument`,
 `unknown_command`, `unknown_value`, `selector_miss`. `token` is the offending
 argument, command, value or selector; `next` is a fixed help pointer
-(`list_valid_arguments`, `list_valid_commands`) or `null`. No argv echo and no
+(`list_valid_arguments`, `list_valid_commands`) or `null`; `selector_miss`
+always carries `next: null`, because its message embeds the caller's selector
+and nothing is lifted from caller-controlled text. No argv echo and no
 partial analysis. Without a JSON request stdout stays empty. Schema:
 `schemas/ripr/cli-refusal.schema.json`.
 

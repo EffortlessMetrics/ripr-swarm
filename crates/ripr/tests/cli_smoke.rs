@@ -4020,6 +4020,28 @@ fn gate_evaluate_complete_gap_ledger_is_advisory_in_visible_only_mode() -> Resul
     Ok(())
 }
 
+/// #11584: a completed run carries neither refusal key, so a consumer can
+/// branch on `status` alone.
+#[test]
+fn check_json_completed_run_carries_neither_status_nor_error() -> Result<(), String> {
+    let root = workspace_root().display().to_string();
+    let diff = sample_diff().display().to_string();
+    let output = run_ripr(&["check", "--root", &root, "--diff", &diff, "--json"]);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let value: serde_json::Value = serde_json::from_str(&stdout)
+        .map_err(|err| format!("completed stdout should parse as JSON: {err}\n{stdout}"))?;
+    assert!(
+        value["findings"]
+            .as_array()
+            .is_some_and(|rows| !rows.is_empty()),
+        "control must be a completed analysis, not a refusal: {stdout}"
+    );
+    assert_ne!(value["analysis_scope"]["downstream_consumable"], false);
+    assert!(value.get("status").is_none(), "{stdout}");
+    assert!(value.get("error").is_none(), "{stdout}");
+    Ok(())
+}
+
 #[test]
 fn check_json_diff_scope_oversized_emits_limited_artifact() -> Result<(), String> {
     let root = workspace_root().display().to_string();
@@ -4045,6 +4067,14 @@ fn check_json_diff_scope_oversized_emits_limited_artifact() -> Result<(), String
     );
     assert_eq!(value["run_limitations"][0]["downstream_consumable"], false);
     assert_eq!(value["findings"].as_array().map(Vec::len), Some(0));
+    // #11584: the scope-guard refusal carries the shared refusal block, with
+    // the guard's own diagnostic as the block's message.
+    assert_eq!(value["status"], "refused");
+    assert_eq!(value["error"]["code"], "diff_scope_oversized");
+    assert_eq!(
+        value["error"]["message"],
+        value["run_limitations"][0]["message"]
+    );
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
@@ -4383,6 +4413,9 @@ fn assert_check_json_refusal(
         ("/run_limitations/0/run_status", identity),
         ("/run_limitations/0/basis", identity),
         ("/run_limitations/0/repair_route", repair_route),
+        // #11584: the shared refusal block rides beside the frozen keys.
+        ("/status", "refused"),
+        ("/error/code", identity),
     ] {
         let actual = value.pointer(pointer).and_then(serde_json::Value::as_str);
         if actual != Some(expected) {
@@ -4590,7 +4623,16 @@ fn context_selector_miss_emits_cli_refusal_only_for_json_request() -> Result<(),
     let json = run_ripr(&[
         "context", "--root", &root_arg, "--diff", &diff_arg, "--at", selector, "--json",
     ]);
-    assert_cli_refusal(&json, "selector_miss", selector, "no finding matched")?;
+    let value = assert_cli_refusal(&json, "selector_miss", selector, "no finding matched")?;
+    // `next` is never lifted from the miss prose, which embeds the selector:
+    // a selector shaped like a runnable command stays `null`.
+    assert_eq!(value["error"]["next"], serde_json::Value::Null);
+    let hostile = "`ripr check --json` probe:nope.rs:1:absent-6834";
+    let hostile_out = run_ripr(&[
+        "context", "--root", &root_arg, "--diff", &diff_arg, "--at", hostile, "--json",
+    ]);
+    let hostile_value = assert_cli_refusal(&hostile_out, "selector_miss", hostile, "")?;
+    assert_eq!(hostile_value["error"]["next"], serde_json::Value::Null);
     let plain = run_ripr(&[
         "context", "--root", &root_arg, "--diff", &diff_arg, "--at", selector,
     ]);

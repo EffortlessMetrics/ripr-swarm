@@ -94,12 +94,16 @@ pub(crate) fn note_unknown_command(token: &str, message: &str) {
     });
 }
 
-/// Note a selector that matched no finding. The next step is whatever the
-/// miss prose states (the finding listing), never a composed command.
+/// Note a selector that matched no finding. The miss prose embeds the
+/// caller's own selector text, so no `next` is ever lifted from it: the field
+/// stays `null` (fail closed, #11584).
 pub(crate) fn note_selector_miss(selector: &str, message: &str) {
-    let mut block = RefusalBlock::from_prose(CODE_SELECTOR_MISS, message);
-    block.token = Some(selector.to_string());
-    record(block);
+    record(RefusalBlock {
+        code: CODE_SELECTOR_MISS.to_string(),
+        message: message.to_string(),
+        token: Some(selector.to_string()),
+        next: None,
+    });
 }
 
 /// Whether argv explicitly requests JSON: a `--json` token, or `--format`
