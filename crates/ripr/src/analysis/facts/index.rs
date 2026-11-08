@@ -697,6 +697,9 @@ impl RustIndex {
         self.insert_file(path, facts, false);
     }
     pub fn push_function(&mut self, fact: FunctionFact) {
+        // Per-index memos (such as the function-name buckets) index function
+        // order, so a new function invalidates them.
+        self.call_identity_memos.clear();
         self.bump_membership_revision();
         let id = self.function_facts.allocate(fact);
         self.function_positions

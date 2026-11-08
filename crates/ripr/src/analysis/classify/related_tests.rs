@@ -4614,22 +4614,30 @@ fn inherent_constructor_names(index: &RustIndex, ty: &str) -> Vec<String> {
 /// return type. Workspace-wide names would block a file-local unit struct
 /// `name()` when an unrelated module declares the same free fn (#8917).
 fn free_function_declared(index: &RustIndex, file: &Path, name: &str) -> bool {
-    index.functions().iter().any(|function| {
-        function.file == file
-            && function.name == name
-            && function.item.container == FunctionContainer::Free
-    })
+    let functions = index.functions();
+    let unraw = name.strip_prefix("r#").unwrap_or(name);
+    index
+        .call_identity_memos
+        .function_positions_named(index, unraw)
+        .iter()
+        .filter_map(|&position| functions.get(position))
+        .any(|function| {
+            function.file == file
+                && function.name == name
+                && function.item.container == FunctionContainer::Free
+        })
 }
 
 fn free_fn_returns_type(index: &RustIndex, name: &str, ty: &str) -> bool {
     // `r#fixture` and `fixture` are one identifier, so a raw-named nested fn
     // shadows the file-level helper.
-    let unraw = |text: &str| text.strip_prefix("r#").unwrap_or(text).to_string();
-    let name = unraw(name);
+    let name = name.strip_prefix("r#").unwrap_or(name);
+    let functions = index.functions();
     let mut declarations = index
-        .functions()
+        .call_identity_memos
+        .function_positions_named(index, name)
         .iter()
-        .filter(|function| unraw(&function.name) == name);
+        .filter_map(|&position| functions.get(position));
     let (Some(function), None) = (declarations.next(), declarations.next()) else {
         return false;
     };
