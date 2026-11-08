@@ -691,14 +691,17 @@ pub(crate) fn current_command_platform() -> Option<CommandPlatform> {
 /// run/inspect tail. Each gate names its typed stop; removing one gate fails
 /// its focused negative (control 10).
 ///
-/// The gate is chosen by `decide_next_action` as a typed
+/// The gate is chosen by `walk_gates`, the single gate owner, as a typed
 /// `NextActionDecision` (no label formatting, no candidate collection); this
-/// function only renders that decision into the minted action.
+/// function renders that decision into the minted action at the gate's own
+/// return site, so each gate renders only its own stop.
 pub(crate) fn select_canonical_next_action(
     input: &NextActionInput<'_>,
 ) -> Result<CanonicalNextActionV1, String> {
-    let decision = decide_next_action(input).map_err(str::to_string)?;
-    render_decision(input, decision)
+    match walk_gates(input, |decision| render_decision(input, decision)) {
+        Ok(rendered) => rendered,
+        Err(violation) => Err(violation.to_string()),
+    }
 }
 
 /// The selector's typed gate decision for one input: which gate fired, with
@@ -769,12 +772,29 @@ impl NextActionDecision<'_> {
     }
 }
 
-/// Choose the gate for normalized producer state, in the load-bearing order
-/// documented on [`select_canonical_next_action`]. Producer-input violations
-/// are returned as their exact static refusal text.
+/// The typed gate decision for normalized producer state, without rendering.
+#[cfg(any(test, kani))]
 fn decide_next_action<'i>(
     input: &'i NextActionInput<'_>,
 ) -> Result<NextActionDecision<'i>, &'static str> {
+    walk_gates(input, |decision| decision)
+}
+
+/// Choose the gate for normalized producer state, in the load-bearing order
+/// documented on [`select_canonical_next_action`], and hand the typed
+/// decision to `emit` at that gate's own return site. Producer-input
+/// violations are returned as their exact static refusal text.
+///
+/// `emit` is applied where each gate fires rather than after a shared exit:
+/// every call site passes a decision whose variant is fixed there, so a
+/// bounded model checker following the selector explores only that gate's
+/// rendering instead of every rendering arm under a merged symbolic decision.
+/// `decide_next_action` passes the identity, `select_canonical_next_action`
+/// passes `render_decision`; the gate logic exists only here.
+fn walk_gates<'i, R>(
+    input: &'i NextActionInput<'_>,
+    emit: impl FnOnce(NextActionDecision<'i>) -> R,
+) -> Result<R, &'static str> {
     if input.root.trim().is_empty() {
         return Err(
             "next-action producer must bind a root; report this as a ripr bug with the command that produced it",
@@ -809,36 +829,36 @@ fn decide_next_action<'i>(
     // Pilot without a delegation handle invented a route outside its
     // transaction: a typed limitation, never an action.
     if input.producer == NextActionProducer::PilotDelegation && input.pilot_delegation.is_none() {
-        return Ok(NextActionDecision::PilotInvention);
+        return Ok(emit(NextActionDecision::PilotInvention));
     }
     // A stale or moved head invalidates the action and names the restart
     // route (control 5). Unbound axes are explicit unknowns, handled at the
     // tail; only bound divergence refuses here.
     if input.currentness.heads_diverge() {
-        return Ok(NextActionDecision::HeadsDiverge);
+        return Ok(emit(NextActionDecision::HeadsDiverge));
     }
     if input.currentness.configs_diverge() {
-        return Ok(NextActionDecision::ConfigsDiverge);
+        return Ok(emit(NextActionDecision::ConfigsDiverge));
     }
     // Check and card disagree on the selected item: refuse rather than
     // choosing one silently (control 1).
     if let (Some(check_item), Some(card_item)) = (&input.check_item, &input.card_item)
         && check_item != card_item
     {
-        return Ok(NextActionDecision::Disagreement {
+        return Ok(emit(NextActionDecision::Disagreement {
             check_item,
             card_item,
-        });
+        }));
     }
     // A producer-declared limitation is a valid result, never an executable
     // repair.
     if let Some(limitation) = &input.limitation {
-        return Ok(NextActionDecision::Limitation { limitation });
+        return Ok(emit(NextActionDecision::Limitation { limitation }));
     }
     // Several visible attempts require selection rather than a
     // newest/first/mtime fallback (control 6).
     if input.attempts.len() > 1 {
-        return Ok(NextActionDecision::SeveralAttempts);
+        return Ok(emit(NextActionDecision::SeveralAttempts));
     }
     if let Some(attempt) = input.attempts.first() {
         // Read-only specs stay available on terminal results: inspection and
@@ -849,26 +869,26 @@ fn decide_next_action<'i>(
             matches!(spec.role, CommandRole::Inspection | CommandRole::Receipt)
         });
         if attempt.terminal && !read_only_offer {
-            return Ok(NextActionDecision::TerminalAttempt { attempt });
+            return Ok(emit(NextActionDecision::TerminalAttempt { attempt }));
         }
         if attempt.awaits_edit {
-            return Ok(NextActionDecision::AwaitingEdit { attempt });
+            return Ok(emit(NextActionDecision::AwaitingEdit { attempt }));
         }
         if attempt.restart_recommended {
-            return Ok(NextActionDecision::RestartRecommended { attempt });
+            return Ok(emit(NextActionDecision::RestartRecommended { attempt }));
         }
     }
     // Several unranked items require selection (control 6 covers attempts;
     // this is the item twin). One candidate normalizes to the bound item.
     if input.item_candidates.len() > 1 {
-        return Ok(NextActionDecision::SeveralItems);
+        return Ok(emit(NextActionDecision::SeveralItems));
     }
     // A command the route would refuse can never be the primary action,
     // however plausible its syntax (control 2).
     if let Some(spec) = input.offered_command
         && !input.route_admitted
     {
-        return Ok(NextActionDecision::RouteRefused { spec });
+        return Ok(emit(NextActionDecision::RouteRefused { spec }));
     }
     // Missing platform rendering stays unavailable with an explicit
     // alternative; it never emits an unqualified string (control 8).
@@ -877,47 +897,47 @@ fn decide_next_action<'i>(
             .platform
             .is_none_or(|platform| !spec.platforms.contains(&platform))
     {
-        return Ok(NextActionDecision::PlatformUnavailable { spec });
+        return Ok(emit(NextActionDecision::PlatformUnavailable { spec }));
     }
     if let Some(spec) = input.offered_command
         && spec.execution_mode == CommandExecutionMode::Manual
     {
-        return Ok(NextActionDecision::ManualStep { spec });
+        return Ok(emit(NextActionDecision::ManualStep { spec }));
     }
     // No offered command but a named missing prerequisite: satisfy it
     // before anything can run.
     if input.offered_command.is_none()
         && let Some(missing) = &input.missing_input
     {
-        return Ok(NextActionDecision::MissingInput { missing });
+        return Ok(emit(NextActionDecision::MissingInput { missing }));
     }
 
     // Tail: an admitted executable command wins; otherwise the most specific
     // producer stop explains what to do instead of running.
     if let Some(spec) = input.offered_command {
         if !input.currentness.heads_bound_and_fresh() {
-            return Ok(NextActionDecision::HeadNotFresh);
+            return Ok(emit(NextActionDecision::HeadNotFresh));
         }
         let Some(transition_to) = &input.transition_to else {
             return Err(
                 "next-action producer must name the offered command's effect; report this as a ripr bug with the command that produced it",
             );
         };
-        return Ok(NextActionDecision::Run {
+        return Ok(emit(NextActionDecision::Run {
             spec,
             transition_to,
-        });
+        }));
     }
     if let Some(case) = input.check_case {
-        return Ok(NextActionDecision::CheckTriage { case });
+        return Ok(emit(NextActionDecision::CheckTriage { case }));
     }
     if let Some(recovery) = &input.doctor_recovery {
-        return Ok(NextActionDecision::DoctorRecovery { recovery });
+        return Ok(emit(NextActionDecision::DoctorRecovery { recovery }));
     }
     if let Some(delegation) = &input.pilot_delegation {
-        return Ok(NextActionDecision::PilotDelegated { delegation });
+        return Ok(emit(NextActionDecision::PilotDelegated { delegation }));
     }
-    Ok(NextActionDecision::InspectTarget)
+    Ok(emit(NextActionDecision::InspectTarget))
 }
 
 /// The head refresh stop shared by bound divergence and the not-fresh tail.
