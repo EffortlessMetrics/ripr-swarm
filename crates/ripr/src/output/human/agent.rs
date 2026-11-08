@@ -71,6 +71,12 @@ pub(super) fn render(
     let incomplete = render_incomplete_analysis(&mut out, output);
     let next = next_line(&triage, output, &gaps, drill_in, provenance);
     if output.findings.is_empty() && !output.no_scope_provided {
+        // #13658: a `no_scope` outcome (empty or unparseable --diff) read
+        // nothing, so it must not claim `done`.
+        if !incomplete && has_no_scope_outcome(output) {
+            out.push_str("stop=nothing was in scope; zero findings is not a clean result (nothing was parsed or analyzed)\n");
+            return out;
+        }
         out.push_str(if incomplete {
             "stop=analysis incomplete; zero findings is not a clean result\n"
         } else {
@@ -141,6 +147,12 @@ pub(super) fn render(
 /// Project the producer's closed completeness decision, before any terminal
 /// claim. Retained gaps may still be useful, but do not complete this run.
 /// The pipeline already projects partial-scope budgets into this outcome.
+fn has_no_scope_outcome(output: &CheckOutput) -> bool {
+    output.analysis_outcome.as_ref().is_some_and(|outcome| {
+        outcome.kind == crate::analysis_outcome::AnalysisOutcomeKind::NoScope
+    })
+}
+
 fn render_incomplete_analysis(out: &mut String, output: &CheckOutput) -> bool {
     let Some(outcome) = output
         .analysis_outcome

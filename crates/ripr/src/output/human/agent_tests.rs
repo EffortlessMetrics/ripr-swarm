@@ -196,6 +196,34 @@ fn agent_dispatch_never_completes_incomplete_empty_or_exposed_reports() -> Resul
     Ok(())
 }
 
+/// #13658: an explicit empty/unparseable `--diff` yields a `no_scope`
+/// outcome; stdout must not claim `done`. Control: a complete no-findings run
+/// still says `done`.
+#[test]
+fn agent_no_scope_outcome_is_not_done_but_complete_no_findings_is() -> Result<(), String> {
+    use crate::analysis_outcome::AnalysisOutcomeKind::{CompleteNoFindings, NoScope};
+    let config = RiprConfig::default();
+    let mut scoped = outcome_output(CompleteNoFindings, Vec::new())?;
+    scoped.analysis_outcome = Some(crate::analysis_outcome::AnalysisOutcome::new(
+        NoScope,
+        crate::analysis_outcome::AnalysisIdentity::default(),
+        crate::analysis_outcome::AnalysisOutcomeCounts::default(),
+        Vec::new(),
+    )?);
+    let no_scope = agent_dispatch(&scoped, &config)?;
+    assert!(
+        no_scope.contains("\nstop=nothing was in scope"),
+        "{no_scope}"
+    );
+    assert!(!no_scope.contains("done="), "{no_scope}");
+    let clean = agent_dispatch(&outcome_output(CompleteNoFindings, Vec::new())?, &config)?;
+    assert!(
+        clean.contains("\ndone=no changed behavior found"),
+        "{clean}"
+    );
+    Ok(())
+}
+
 #[test]
 fn agent_dispatch_keeps_partial_gaps_and_complete_controls() -> Result<(), String> {
     use crate::analysis_outcome::AnalysisOutcomeKind::{
