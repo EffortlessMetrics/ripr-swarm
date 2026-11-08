@@ -60,6 +60,14 @@ pub(super) struct PythonHelperModule {
     /// Attribute names assigned anywhere in the module (`x.attr = ...`).
     #[serde(default)]
     assigned_attributes: BTreeSet<String>,
+    /// True only when the module has no star import and nowhere names a
+    /// patcher or dynamic namespace writer (`patch`, `setattr`, `globals`,
+    /// `sys.modules`, ...). A module-level or autouse-fixture patch of an
+    /// imported module's attribute is otherwise invisible to the
+    /// module-attribute helper read. Defaults to false so a stale cached
+    /// module fails closed.
+    #[serde(default)]
+    patch_free: bool,
 }
 
 /// Counts every import binding and `del` target in `statements`, descending
@@ -169,6 +177,9 @@ pub(super) fn collect_helper_module(
     let imports = collect_imports_from_statements(file, statements);
     // A star import may rebind any name, wrapper included.
     let star_import = imports.iter().any(|import| import.imported == "*");
+    module.patch_free = !star_import
+        && !source.contains("patch")
+        && !super::module_constants::writes_namespace_in_text(source);
     let imported: BTreeSet<String> = imports.into_iter().map(|import| import.alias).collect();
     let bindings = super::module_constants::ModuleBindingFacts::of(source, statements);
     let attributes = Arc::new(super::module_constants::assigned_attribute_names(
@@ -656,6 +667,9 @@ fn resolve_module_helper<'a>(
         || own.bound.contains(module_name)
         // The helper attribute replaced anywhere in the test file.
         || own.assigned_attributes.contains(helper_name)
+        // A star import, or a patcher anywhere in the test file (module
+        // level, an autouse fixture, a decorator), may replace the attribute.
+        || !own.patch_free
         || test.body_text.contains("setattr")
         || test.body_text.contains("patch")
         || assigns_module_attribute(&test.body_text, module_name, helper_name)

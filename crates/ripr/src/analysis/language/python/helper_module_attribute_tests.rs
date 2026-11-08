@@ -248,3 +248,34 @@ fn given_the_helper_attribute_is_patched_when_called_then_nothing_resolves() -> 
         ),
     ])
 }
+
+#[test]
+fn given_the_helper_is_patched_outside_the_test_body_when_called_then_nothing_resolves()
+-> Result<(), String> {
+    assert_unresolved(&[
+        // A module-level started patch replaces the helper for every test.
+        (
+            "from . import conftest\nfrom unittest import mock\nmock.patch.object(conftest, \"check_equal\").start()",
+            CALL,
+            vec![],
+        ),
+        // An autouse fixture in the same file patches the helper.
+        (
+            "from . import conftest\nimport pytest\n\n\n@pytest.fixture(autouse=True)\ndef _quiet(monkeypatch):\n    monkeypatch.setattr(conftest, \"check_equal\", print)",
+            CALL,
+            vec![],
+        ),
+        // A module-level `setattr` replaces the helper.
+        (
+            "from . import conftest\nsetattr(conftest, \"check_equal\", print)",
+            CALL,
+            vec![],
+        ),
+        // A star import after the module import may rebind its name.
+        (
+            "from . import conftest\nfrom fastconf import *",
+            CALL,
+            vec![],
+        ),
+    ])
+}
