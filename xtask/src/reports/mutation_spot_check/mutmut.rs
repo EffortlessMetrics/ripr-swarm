@@ -437,12 +437,10 @@ mod tests {
     #[test]
     fn stale_multihunk_and_empty_diffs_are_kept_but_never_scored() -> Result<(), String> {
         let stale = one_line_diff(1, "    return x >= 1", "    return x > 1");
-        let two = format!(
-            "--- a/src/m.py\n+++ b/src/m.py\n@@ -2 +2 @@\n-    return x >= 1\n+    return x > 1\n@@ -5 +5 @@\n-    return \"é\" + s + 'é'\n+    return \"é\" - s + 'é'\n"
-        );
+        let two = "--- a/src/m.py\n+++ b/src/m.py\n@@ -2 +2 @@\n-    return x >= 1\n+    return x > 1\n@@ -5 +5 @@\n-    return \"é\" + s + 'é'\n+    return \"é\" - s + 'é'\n";
         let dump = [
             record("m.x_f__mutmut_1", "killed", &stale), // ripr-allow: static-language: mutmut status name
-            record("m.x_f__mutmut_2", "survived", &two), // ripr-allow: static-language: mutmut status name
+            record("m.x_f__mutmut_2", "survived", two), // ripr-allow: static-language: mutmut status name
             record("m.x_f__mutmut_3", "timeout", &stale),
             record("m.x_f__mutmut_4", "survived", ""), // ripr-allow: static-language: mutmut status name
             record("m.x_f__mutmut_5", "no tests", ""),
@@ -484,11 +482,18 @@ mod tests {
     }
 
     #[test]
-    fn malformed_records_and_unreadable_files_fail_the_parse() {
-        assert!(parse_mutmut_dump("", &read, None).is_err());
-        assert!(parse_mutmut_dump("not json", &read, None).is_err());
-        assert!(parse_mutmut_dump(r#"{"name": "a", "status": "killed"}"#, &read, None).is_err()); // ripr-allow: static-language: mutmut status name
+    fn malformed_records_and_unreadable_files_fail_the_parse() -> Result<(), String> {
         let other = "--- a/src/other.py\n+++ b/src/other.py\n@@ -1 +1 @@\n-a\n+b\n";
-        assert!(parse_mutmut_dump(&record("o", "killed", other), &read, None).is_err()); // ripr-allow: static-language: mutmut status name
+        let no_diff = r#"{"name": "a", "status": "killed"}"#; // ripr-allow: static-language: mutmut status name
+        let unreadable = record("o", "killed", other); // ripr-allow: static-language: mutmut status name
+        for dump in ["", "not json", no_diff, unreadable.as_str()] {
+            if let Ok((sources, _)) = parse_mutmut_dump(dump, &read, None) {
+                return Err(format!(
+                    "{dump:?} should fail the parse, got {} sources",
+                    sources.len()
+                ));
+            }
+        }
+        Ok(())
     }
 }

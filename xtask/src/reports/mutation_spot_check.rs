@@ -436,7 +436,7 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
         return Err("--mutmut-version only applies with --mutmut-dump".to_string());
     }
     if !options.mutmut_dumps.is_empty()
-        && !(options.stryker_reports.is_empty() && options.cosmic_ray_dumps.is_empty())
+        && (!options.stryker_reports.is_empty() || !options.cosmic_ray_dumps.is_empty())
     {
         return Err(
             "--mutmut-dump with --stryker-report or --cosmic-ray-dump in one run would mix tools in the one synthetic_diff_verdict section; run them separately"

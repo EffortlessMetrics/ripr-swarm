@@ -159,53 +159,56 @@ jobs:
         run: |
           set -uo pipefail
           corpus=benchmarks/mutation_spot_check/corpus-python-mutmut.json
-          version=$(jq -r .mutmut.version "$corpus")
           reports="$GITHUB_WORKSPACE/target/ripr/reports"
           status="$reports/python-mutmut-status.tsv"
           mkdir -p "$RUNNER_TEMP/corpus" "$reports"
-          : > "$status"; : > "$RUNNER_TEMP/xtask-args"
-          python -m pip install --disable-pip-version-check "mutmut==$version" pytest
+          : > "$status"
+          python -m pip install --disable-pip-version-check "mutmut==$(jq -r .mutmut.version "$corpus")" pytest
           for name in $(jq -r '.packages[].name' "$corpus"); do
             if [ -n "$PACKAGES" ] && ! [[ ",$PACKAGES," == *",$name,"* ]]; then continue; fi
             pkg() { jq -r --arg n "$name" ".packages[]|select(.name==\$n).$1" "$corpus"; }
-            url=$(pkg url); sha=$(pkg sha); module=$(pkg module_path); tests=$(pkg tests_dir)
-            extra=$(pkg pip_extra); pytest_args=$(pkg pytest_args)
+            sha=$(pkg sha); module=$(pkg module_path); tests=$(pkg tests_dir); pytest_args=$(pkg pytest_args)
             dir="$RUNNER_TEMP/corpus/$name"
             rc=0
             { [[ $sha =~ ^[0-9a-f]{40}$ ]] && mkdir "$dir" && cd "$dir" \
-              && git init -q && git remote add origin "$url" \
+              && git init -q && git remote add origin "$(pkg url)" \
               && git fetch -q --depth 1 origin "$sha" && git checkout -q FETCH_HEAD \
               && [ "$(git rev-parse HEAD)" = "$sha" ] \
-              && python -m pip install --disable-pip-version-check -e . $extra \
+              && python -m pip install --disable-pip-version-check -e . $(pkg pip_extra) \
               && { printf '\n[mutmut]\npaths_to_mutate = %s\ntests_dir = %s\npytest_add_cli_args =\n' "$module" "$tests"
                    for arg in $pytest_args; do printf '    %s\n' "$arg"; done; } >> setup.cfg \
               && python -m pytest -q $pytest_args "$tests" \
               && mutmut run --max-children 4 \
               && mutmut results --all true > "$RUNNER_TEMP/$name-results.txt"; } || rc=$?
-            if [ "$rc" = 0 ]; then
-              # One {name, status, diff} line per listed mutant; a mutant that
-              # cannot be applied keeps an empty diff and is counted, not dropped.
-              : > dump.jsonl
-              sed -n 's/^    \([^:]*\): \(.*\)$/\1\t\2/p' "$RUNNER_TEMP/$name-results.txt" \
-                | while IFS=$'\t' read -r mutant result; do
-                    mutmut apply "$mutant" > /dev/null 2>&1 || true
-                    diff=$(git diff --no-color --no-ext-diff -U0 -- "$module")
-                    git checkout -q -- "$module"
-                    jq -nc --arg name "$mutant" --arg status "$result" --arg diff "$diff" \
-                      '{name: $name, status: $status, diff: $diff}' >> dump.jsonl
-                  done || rc=$?
-              mv dump.jsonl "$RUNNER_TEMP/$name-dump.jsonl"
-              # Leave the checkout as pinned, so ripr reads the real tree, not
-              # mutmut's trampolined copy.
-              rm -rf mutants && git checkout -q -- . && git clean -fdqx
-            fi
             cd "$GITHUB_WORKSPACE"
-            printf '%s\t%s\n' "$name" "$rc" >> "$status"
-            if [ -s "$RUNNER_TEMP/$name-dump.jsonl" ]; then
-              printf -- '--repo %s=%s --mutmut-dump %s=%s ' "$name" "$dir" "$name" "$RUNNER_TEMP/$name-dump.jsonl" >> "$RUNNER_TEMP/xtask-args"
-              cp "$RUNNER_TEMP/$name-dump.jsonl" "$reports/python-mutmut-$name-dump.jsonl"
-            fi
+            printf '%s\t%s\t%s\t%s\n' "$name" "$rc" "$dir" "$module" >> "$status"
           done
+
+      - name: Write one apply-and-diff record per mutant
+        # mutmut has no location export: apply each listed mutant, record the
+        # module diff, restore. An unappliable mutant keeps an empty diff and is
+        # counted, not dropped. The checkout is then left as pinned, so ripr
+        # reads the real tree, not mutmut's trampolined copy.
+        shell: bash
+        run: |
+          set -uo pipefail
+          reports="$GITHUB_WORKSPACE/target/ripr/reports"
+          : > "$RUNNER_TEMP/xtask-args"
+          while IFS=$'\t' read -r name rc dir module; do
+            [ "$rc" = 0 ] || continue
+            dump="$reports/python-mutmut-$name-dump.jsonl"
+            : > "$dump"
+            sed -n 's/^    \([^:]*\): \(.*\)$/\1\t\2/p' "$RUNNER_TEMP/$name-results.txt" \
+              | while IFS=$'\t' read -r mutant result; do
+                  (cd "$dir" && { mutmut apply "$mutant" > /dev/null 2>&1 || true; } \
+                    && diff=$(git diff --no-color --no-ext-diff -U0 -- "$module") \
+                    && git checkout -q -- "$module" \
+                    && jq -nc --arg name "$mutant" --arg status "$result" --arg diff "$diff" \
+                      '{name: $name, status: $status, diff: $diff}') >> "$dump"
+                done
+            (cd "$dir" && rm -rf mutants && git checkout -q -- . && git clean -fdqx)
+            [ -s "$dump" ] && printf -- '--repo %s=%s --mutmut-dump %s=%s ' "$name" "$dir" "$name" "$dump" >> "$RUNNER_TEMP/xtask-args"
+          done < "$reports/python-mutmut-status.tsv"
           [ -s "$RUNNER_TEMP/xtask-args" ] || { echo "no mutmut dump was produced"; exit 1; }
 
       - name: Score ripr against the mutmut outcomes
