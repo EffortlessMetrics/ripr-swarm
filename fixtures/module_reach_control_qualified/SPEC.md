@@ -14,7 +14,7 @@ cargo xtask fixtures module_reach_control_qualified
 
 ## Then
 
-Related to the changed helper through the entry (control for the refusals).
+Related to the changed helper through the entry (control for the refusals). The qualified spelling classifies the same changed behavior as the bare-import control (`module_reach_bare_import_control`): both read `exposed`, because the exact assertions at inputs 10 and 9 pin the wrapper's whole boolean return (#13625).
 
 ## Must Not
 

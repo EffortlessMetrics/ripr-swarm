@@ -78,9 +78,25 @@ pub(in crate::analysis) fn wrapper_return_boundary_pinned(
     let literal = |text: &str| {
         matches!(text.trim(), "true" | "false") || argument_is_whole_numeric_literal(text.trim())
     };
+    // #13625: the entry may be spelled through a module path
+    // (`krate::inner::entry(10)`) exactly as through a bare import. A path
+    // spelling counts only when the shared call-identity authority settles
+    // that spelled path on this wrapper; a path that names another module's
+    // same-named function stays refused.
+    let whole_call_of = |subject: &str| {
+        super::owner_pin::direct_call_name(subject) == Some(name)
+            || path_qualified_whole_call(subject, name).is_some_and(|_| {
+                super::call_identity::qualified_owner_calls_resolve(
+                    index,
+                    &hop.caller,
+                    test,
+                    subject,
+                    assertion.line,
+                )
+            })
+    };
     let whole_call = assertion_comparison_operands(&assertion.text).is_some_and(|[left, right]| {
-        (super::owner_pin::direct_call_name(left) == Some(name) && literal(right))
-            || (super::owner_pin::direct_call_name(right) == Some(name) && literal(left))
+        (whole_call_of(left) && literal(right)) || (whole_call_of(right) && literal(left))
     });
     assertion.text.trim_start().starts_with("assert_eq!")
         && assertion.kind == OracleKind::ExactValue
@@ -307,6 +323,30 @@ fn assertion_names_one_entry_call(
         })
         && owner_call_count(&assertion.text, entry) == 1
         && owner_call_count(&assertion.text, &owner.name) == 0
+}
+
+/// `Some(prefix)` when `subject` is one whole call `a::b::name(..)` through a
+/// module path of plain identifiers: the same shape as
+/// `direct_call_name` with a non-empty path in front. The path is only
+/// shape-checked here; the caller settles what it names.
+fn path_qualified_whole_call<'a>(subject: &'a str, name: &str) -> Option<&'a str> {
+    let subject = subject.trim();
+    let open = subject.find('(')?;
+    let head = subject[..open].trim_end();
+    let prefix = head.strip_suffix(name)?.strip_suffix("::")?;
+    let plain_path = !prefix.is_empty()
+        && prefix.split("::").all(|segment| {
+            let mut chars = segment.chars();
+            chars
+                .next()
+                .is_some_and(|first| first.is_ascii_alphabetic() || first == '_')
+                && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+        });
+    if !plain_path {
+        return None;
+    }
+    let call = &subject[prefix.len() + 2..];
+    (super::owner_pin::direct_call_name(call) == Some(name)).then_some(prefix)
 }
 
 fn owner_call_count(text: &str, name: &str) -> usize {
@@ -1564,6 +1604,37 @@ mod tests {
             None,
             &index,
         )
+    }
+
+    // #13625: only a whole call through a plain module path is a qualified
+    // entry spelling; anything else keeps the bare-name reading.
+    #[test]
+    fn path_qualified_whole_call_reads_only_a_whole_plain_path_call() {
+        assert_eq!(
+            path_qualified_whole_call("krate::inner::entry(10)", "entry"),
+            Some("krate::inner")
+        );
+        assert_eq!(
+            path_qualified_whole_call(" crate::entry (10) ", "entry"),
+            Some("crate")
+        );
+        for refused in [
+            "entry(10)",
+            "other::entry(10).wrapping_add(1)",
+            "krate::entry(10) * 0",
+            "krate::entry_two(10)",
+            "krate::sub_entry(10)",
+            "Type::<T>::entry(10)",
+            "x.krate::entry(10)",
+            "::entry(10)",
+            "krate::inner::entry",
+        ] {
+            assert_eq!(
+                path_qualified_whole_call(refused, "entry"),
+                None,
+                "{refused}"
+            );
+        }
     }
 
     #[test]
