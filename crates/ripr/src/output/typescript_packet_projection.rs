@@ -1243,8 +1243,13 @@ fn bare_throw_variant_target(
         return None;
     }
     let discriminator = &finding.activation.missing_discriminators.first()?.value;
-    thrown_error_variant(discriminator)
-        .or_else(|| thrown_error_message(discriminator, &finding.probe.expression))
+    thrown_error_variant(discriminator).or_else(|| {
+        thrown_error_message(
+            discriminator,
+            &finding.probe.expression,
+            evidence_value(finding, "typescript_error_message_pin: "),
+        )
+    })
 }
 
 /// The quoted message literal a bare `toThrow()` can be strengthened to pin
@@ -1260,8 +1265,16 @@ fn bare_throw_variant_target(
 /// the error may not carry. The message must be plain text (letters, digits,
 /// spaces and `_ - , . :`) with a word of at least three letters, so the
 /// emitted string needs no escaping and a substring match on it is not
-/// trivially satisfied. Anything else stays `None`.
-fn thrown_error_message(discriminator: &str, changed_line: &str) -> Option<String> {
+/// trivially satisfied. The analyzer's `typescript_error_message_pin` fact
+/// must name the same message: it is emitted only at the owner's sole throw
+/// site and only when the old side cannot satisfy the same substring check
+/// (a pure addition, or an old message that does not contain the new one).
+/// Anything else stays `None`.
+fn thrown_error_message(
+    discriminator: &str,
+    changed_line: &str,
+    pinned: Option<&str>,
+) -> Option<String> {
     let rest = discriminator
         .trim()
         .strip_prefix("throws Error matching ")?;
@@ -1281,7 +1294,7 @@ fn thrown_error_message(discriminator: &str, changed_line: &str) -> Option<Strin
         .strip_prefix("throw new Error(")?
         .strip_suffix(')')?
         .trim();
-    if argument != format!("{quote}{body}{quote}") {
+    if argument != format!("{quote}{body}{quote}") || pinned != Some(body) {
         return None;
     }
     Some(format!("'{body}'"))
@@ -2216,6 +2229,13 @@ pub(crate) mod tests {
         ] {
             let mut finding = bare_throw_finding(discriminator);
             finding.probe.expression = line.to_string();
+            let message = line
+                .split(['\'', '"'])
+                .nth(1)
+                .ok_or("fixture line must quote its message")?;
+            finding
+                .evidence
+                .push(format!("typescript_error_message_pin: {message}"));
             let record = typescript_gap_record_for(&finding)
                 .ok_or(format!("`{discriminator}` must project a record"))?;
             validate_agent_gap_record_packet(&record)?;
@@ -2269,6 +2289,13 @@ pub(crate) mod tests {
                 "throw new Error({})",
                 discriminator.trim_start_matches("throws Error matching ")
             );
+            // The analyzer pin names the same text, so only the message rules
+            // themselves can refuse these.
+            let tail = discriminator.trim_start_matches("throws Error matching ");
+            finding.evidence.push(format!(
+                "typescript_error_message_pin: {}",
+                tail.trim_matches(|c| c == '\'' || c == '"')
+            ));
             assert!(
                 typescript_gap_record_for(&finding).is_none(),
                 "`{discriminator}` must project no record"
@@ -2279,6 +2306,23 @@ pub(crate) mod tests {
     /// The discriminator's literal is only the first string on the changed
     /// line. Unless that literal is the whole `new Error(...)` argument, the
     /// error may carry a different message, so no message packet projects.
+    #[test]
+    fn bare_tothrow_message_needs_the_analyzer_pin_fact() {
+        for pin in [None, Some("division by"), Some("division by zero occurred")] {
+            let mut finding = bare_throw_finding("throws Error matching 'division by zero'");
+            finding.probe.expression = "throw new Error('division by zero');".to_string();
+            if let Some(pin) = pin {
+                finding
+                    .evidence
+                    .push(format!("typescript_error_message_pin: {pin}"));
+            }
+            assert!(
+                typescript_gap_record_for(&finding).is_none(),
+                "pin {pin:?} must project no message record"
+            );
+        }
+    }
+
     #[test]
     fn bare_tothrow_message_must_be_the_whole_error_argument() {
         for line in [
@@ -2295,6 +2339,9 @@ pub(crate) mod tests {
         ] {
             let mut finding = bare_throw_finding("throws Error matching 'too long'");
             finding.probe.expression = line.to_string();
+            finding
+                .evidence
+                .push("typescript_error_message_pin: too long".to_string());
             assert!(
                 typescript_gap_record_for(&finding).is_none(),
                 "`{line}` must project no message record"

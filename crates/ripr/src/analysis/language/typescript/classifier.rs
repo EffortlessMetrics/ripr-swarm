@@ -8474,6 +8474,15 @@ pub(crate) fn classify_resolved_owner(
     for discriminator in &missing_discriminators {
         evidence.push(format!("missing_discriminator: {}", discriminator.value));
     }
+    // #13827: the literal message a bare `toThrow()` repair may pin, read
+    // from both sides of the changed throw. The packet projection offers a
+    // message target only when this fact is present.
+    if matches!(family, ProbeFamily::ErrorPath)
+        && !missing_discriminators.is_empty()
+        && let Some(message) = error_facts.pinnable_generic_error_message()
+    {
+        evidence.push(format!("typescript_error_message_pin: {message}"));
+    }
     // The call input that hits the named predicate boundary, when the owner's
     // module pins it statically (parameter read-only, literal or single
     // immutable integer module `const`), or both sides are read-only owner

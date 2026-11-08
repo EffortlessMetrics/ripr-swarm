@@ -197,6 +197,18 @@ fn throws_builtin_error(throw: &[LineToken]) -> bool {
 /// message of its own: any member call, or a call to a name that is neither
 /// an owner parameter, a keyword, nor a `new` construction. Conservative.
 fn calls_unknown_function(masked: &str, params: &[String]) -> bool {
+    calls_unknown_function_except(masked, params, false)
+}
+
+/// Pure `Math` methods that cannot throw for any argument: they coerce and
+/// return a number (or `NaN`).
+const PURE_MATH_METHODS: &[&str] = &[
+    "abs", "ceil", "floor", "max", "min", "round", "sign", "sqrt", "trunc",
+];
+
+/// [`calls_unknown_function`], optionally treating a pure `Math` method call
+/// (`Math.floor(a / b)`) as known: it runs no user code and cannot throw.
+fn calls_unknown_function_except(masked: &str, params: &[String], pure_math: bool) -> bool {
     const KEYWORDS: [&str; 9] = [
         "if", "for", "while", "switch", "catch", "function", "return", "typeof", "await",
     ];
@@ -234,6 +246,13 @@ fn calls_unknown_function(masked: &str, params: &[String]) -> bool {
             {
                 return true;
             }
+            continue;
+        }
+        if pure_math
+            && word
+                .strip_prefix("Math.")
+                .is_some_and(|method| PURE_MATH_METHODS.contains(&method))
+        {
             continue;
         }
         if word.contains('.') {
@@ -422,6 +441,11 @@ pub(crate) struct ErrorChangeFacts {
     old_shape: Option<MessageShape>,
     /// The new side's [`Self::old_shape`].
     new_shape: Option<MessageShape>,
+    /// An old line was read for this change (`false` for a pure addition).
+    old_line_read: bool,
+    /// [`Self::sole_throw_site`], with pure `Math` method calls in the owner
+    /// treated as unable to throw (#13827).
+    sole_throw_site_allowing_pure_math: bool,
 }
 
 impl ErrorChangeFacts {
@@ -526,7 +550,38 @@ impl ErrorChangeFacts {
                 .and_then(|(_, throw)| builtin_class(throw)),
             old_shape,
             new_shape,
+            old_line_read: old_line.is_some(),
+            sole_throw_site_allowing_pure_math: false,
         }
+    }
+
+    /// The literal message a `toThrow('<message>')` repair may pin for this
+    /// change (#13827), or `None`. Only for a generic `Error` whose new
+    /// message is a plain literal at the owner's sole throw site (pure `Math`
+    /// calls allowed), and only
+    /// when the old side cannot also satisfy that substring check: either
+    /// the line is a pure addition, or the old side threw a known message
+    /// that does not contain the new one. A shortened message
+    /// (`'division by zero occurred'` to `'division by zero'`), an unread
+    /// old message, or a replaced non-throw line stays `None`, since pinning
+    /// would pass on both versions or is not established to discriminate.
+    pub(crate) fn pinnable_generic_error_message(&self) -> Option<&str> {
+        if !self.sole_throw_site_allowing_pure_math
+            || self.new_builtin_class.as_deref() != Some("Error")
+        {
+            return None;
+        }
+        let message = self.new_message.as_deref().filter(|m| !m.is_empty())?;
+        if self.new_shape.is_some() {
+            return None;
+        }
+        if self.old_line_read {
+            let old = self.old_message.as_deref()?;
+            if old.contains(message) {
+                return None;
+            }
+        }
+        Some(message)
     }
 
     /// The two sides construct different built-in sibling error classes
@@ -566,6 +621,7 @@ impl ErrorChangeFacts {
         owner_params: &[String],
         changed_line: &str,
     ) -> Self {
+        let mut pure_math_sole = false;
         self.sole_throw_site = owner_source.is_some_and(|source| {
             let masked = ts_mask_literals_and_comments(source);
             // The one throw site must be the changed line itself: another
@@ -594,15 +650,18 @@ impl ErrorChangeFacts {
                     })
                     .count()
             };
-            count("throw") == 1
-                && !calls_unknown_function(&masked, owner_params)
+            let one_throw = count("throw") == 1
                 && count("reject") == 0
                 && !masked
                     .split_whitespace()
                     .collect::<Vec<_>>()
                     .join(" ")
-                    .contains("new Promise")
+                    .contains("new Promise");
+            pure_math_sole =
+                one_throw && !calls_unknown_function_except(&masked, owner_params, true);
+            one_throw && !calls_unknown_function(&masked, owner_params)
         });
+        self.sole_throw_site_allowing_pure_math = pure_math_sole;
         self
     }
 

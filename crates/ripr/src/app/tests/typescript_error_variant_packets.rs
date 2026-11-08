@@ -32,6 +32,14 @@ const DIVIDE_LOOKUP_TS: &str = "export function divide(a: number, b: number): nu
 
 const DIVIDE_LOOKUP_DIFF: &str = "diff --git a/src/index.ts b/src/index.ts\nindex 0000000..1111111 100644\n--- a/src/index.ts\n+++ b/src/index.ts\n@@ -1,3 +1,6 @@\n export function divide(a: number, b: number): number {\n+  if (b === 0) {\n+    throw new Error(t('division by zero'));\n+  }\n   return Math.floor(a / b);\n }\n";
 
+const DIVIDE_SHORTENED_TS: &str = "export function divide(a: number, b: number): number {\n  if (b === 0) {\n    throw new Error('division by zero');\n  }\n  return Math.floor(a / b);\n}\n";
+
+const DIVIDE_SHORTENED_DIFF: &str = "diff --git a/src/index.ts b/src/index.ts\nindex 0000000..1111111 100644\n--- a/src/index.ts\n+++ b/src/index.ts\n@@ -1,6 +1,6 @@\n export function divide(a: number, b: number): number {\n   if (b === 0) {\n-    throw new Error('division by zero occurred');\n+    throw new Error('division by zero');\n   }\n   return Math.floor(a / b);\n }\n";
+
+const DIVIDE_TWO_THROWS_TS: &str = "export function divide(a: number, b: number): number {\n  if (a < 0) {\n    throw new Error('negative dividend');\n  }\n  if (b === 0) {\n    throw new Error('division by zero');\n  }\n  return Math.floor(a / b);\n}\n";
+
+const DIVIDE_TWO_THROWS_DIFF: &str = "diff --git a/src/index.ts b/src/index.ts\nindex 0000000..1111111 100644\n--- a/src/index.ts\n+++ b/src/index.ts\n@@ -1,6 +1,9 @@\n export function divide(a: number, b: number): number {\n   if (a < 0) {\n     throw new Error('negative dividend');\n   }\n+  if (b === 0) {\n+    throw new Error('division by zero');\n+  }\n   return Math.floor(a / b);\n }\n";
+
 struct TypeScriptCheck {
     finding: Value,
     ledger: Value,
@@ -249,6 +257,54 @@ fn bare_tothrow_generic_error_lookup_message_offers_no_packet() -> Result<(), St
     if check.any_agent_packet_eligible() {
         return Err(format!(
             "lookup-key message must offer no agent start: {}",
+            check.finding
+        ));
+    }
+    Ok(())
+}
+
+/// #13827 negative control: a shortened message (`'division by zero
+/// occurred'` to `'division by zero'`) satisfies `toThrow('division by zero')`
+/// on both versions, so no message packet is offered.
+#[test]
+fn bare_tothrow_shortened_message_offers_no_message_packet() -> Result<(), String> {
+    let check = check_typescript_with(
+        "divide-shortened",
+        DIVIDE_SHORTENED_TS,
+        DIVIDE_SHORTENED_DIFF,
+        DIVIDE_BARE_TEST,
+    )?;
+    if check
+        .assertion_shape()
+        .is_some_and(|shape| shape.contains("toThrow('"))
+        || check.any_agent_packet_eligible()
+    {
+        return Err(format!(
+            "a shortened message must not be pinned: {}",
+            check.finding
+        ));
+    }
+    Ok(())
+}
+
+/// #13827 negative control: with another generic `Error` throw in the owner,
+/// the bare `toThrow()` test may observe that one, so the changed message is
+/// not pinned.
+#[test]
+fn bare_tothrow_message_at_one_of_two_throws_offers_no_message_packet() -> Result<(), String> {
+    let check = check_typescript_with(
+        "divide-two-throws",
+        DIVIDE_TWO_THROWS_TS,
+        DIVIDE_TWO_THROWS_DIFF,
+        DIVIDE_BARE_TEST,
+    )?;
+    if check
+        .assertion_shape()
+        .is_some_and(|shape| shape.contains("toThrow('"))
+        || check.any_agent_packet_eligible()
+    {
+        return Err(format!(
+            "a non-sole throw must not be pinned: {}",
             check.finding
         ));
     }
