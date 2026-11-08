@@ -402,3 +402,25 @@ fn the_runner_checkout_path_in_next_is_shown_as_the_repository_root() -> TestRes
     assert!(!outcome.body.contains("a b"), "{}", outcome.body);
     Ok(())
 }
+
+#[test]
+fn only_the_next_line_is_rewritten_and_every_root_in_it_is() -> TestResult {
+    let report = "#ripr agent static-advisory findings=1 gaps=1\nweakly_exposed|src/a.rs:1|x --root /keep|missing=y|test=t1|id=probe:a\nt1=tests/a.rs:2 t exact `assert_eq!(c, \"ripr check --root /fixture --base HEAD\");`\nnext=ripr explain --root /one --base abc --root /two probe:a\n";
+    let outcome = Case::new("root-scope")?.run(b"", report, 0, None)?;
+    assert!(outcome.body.contains("x --root /keep|"), "{}", outcome.body);
+    assert!(
+        outcome
+            .body
+            .contains("\"ripr check --root /fixture --base HEAD\""),
+        "{}",
+        outcome.body
+    );
+    assert!(
+        outcome
+            .body
+            .contains("next=ripr explain --root . --base abc --root . probe:a"),
+        "{}",
+        outcome.body
+    );
+    Ok(())
+}
