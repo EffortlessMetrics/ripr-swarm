@@ -126,7 +126,7 @@ a useful related test or strong oracle. See [Static limits](STATIC_LIMITS.md).
 
 | Static limit | How to read it |
 | --- | --- |
-| `dynamic_dispatch` | The call target is chosen at runtime, such as `obj[name](...)` or `getattr(obj, name)(...)`. |
+| `dynamic_dispatch` | The call target is chosen at runtime, such as a computed member call (`obj[name]` then invoked) or `getattr(obj, name)(...)`. |
 | `metaprogramming` | Decorators, proxies, or metaclasses may change behavior. |
 | `missing_import_graph` | The adapter did not resolve a full project import graph. |
 | `decorator_indirection` | A Python decorator may change the callable boundary. Simple route decorators such as `@api.post(...)` and `functools` caching decorators are not this limit. |
