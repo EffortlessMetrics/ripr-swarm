@@ -1518,6 +1518,71 @@ fn the_open_path_stays_at_the_floor_however_many_findings() {
     );
 }
 
+/// #13603: the named test is the one that calls the changed function, not a
+/// same-file neighbor that sits first and holds a stronger oracle.
+#[test]
+fn a_direct_owner_caller_is_named_ahead_of_a_same_file_neighbor() {
+    use crate::domain::{RelationConfidence, RelationReason};
+    let mut gap = weak_gap("probe:caller", 2);
+    let mut neighbor = gap.related_tests[0].clone();
+    neighbor.name = "shipping_free_for_big_order".to_string();
+    neighbor.line = 17;
+    neighbor.relation_reason = Some(RelationReason::SameTestFile);
+    neighbor.relation_confidence = Some(RelationConfidence::Medium);
+    // As in the repro, the neighbor holds the stronger oracle (an exact pin on
+    // another function); strength alone would have named it.
+    neighbor.oracle_strength = OracleStrength::Strong;
+    gap.related_tests[0].name = "find_exists".to_string();
+    gap.related_tests[0].line = 24;
+    gap.related_tests[0].relation_reason = Some(RelationReason::DirectOwnerCall);
+    gap.related_tests[0].relation_confidence = Some(RelationConfidence::High);
+    // The neighbor is listed first, as in the issue's repro.
+    gap.related_tests.insert(0, neighbor);
+    let text = rendered(&output(vec![gap]));
+    assert!(text.contains("find_exists"), "{text}");
+    assert!(!text.contains("shipping_free_for_big_order"), "{text}");
+}
+
+/// #13603 negative: with no recorded relation on either row, the stronger
+/// oracle still wins, as before.
+#[test]
+fn rows_without_a_recorded_relation_still_pick_the_stronger_oracle() {
+    let mut gap = weak_gap("probe:strength", 2);
+    let mut stronger = gap.related_tests[0].clone();
+    stronger.name = "exact_pin".to_string();
+    stronger.oracle_strength = OracleStrength::Strong;
+    gap.related_tests.push(stronger);
+    let text = rendered(&output(vec![gap]));
+    assert!(text.contains("exact_pin"), "{text}");
+    assert!(!text.contains("discount_runs"), "{text}");
+}
+
+/// #13603 review: a `done=` line names the test that appears to notice the
+/// change, so a stronger pin outranks a direct caller holding a smoke check.
+#[test]
+fn a_done_line_names_the_pinning_test_over_a_smoke_only_direct_caller() {
+    use crate::domain::{RelationConfidence, RelationReason};
+    let mut done = weak_gap("probe:done", 4);
+    done.class = ExposureClass::Exposed;
+    done.activation.missing_discriminators.clear();
+    let mut caller = done.related_tests[0].clone();
+    caller.name = "caller_smoke".to_string();
+    caller.oracle_strength = OracleStrength::Smoke;
+    caller.miss = None;
+    caller.relation_reason = Some(RelationReason::DirectOwnerCall);
+    caller.relation_confidence = Some(RelationConfidence::High);
+    done.related_tests[0].name = "exact_pin".to_string();
+    done.related_tests[0].oracle_strength = OracleStrength::Strong;
+    done.related_tests[0].miss = None;
+    done.related_tests[0].relation_reason = Some(RelationReason::SameTestFile);
+    done.related_tests[0].relation_confidence = Some(RelationConfidence::Medium);
+    done.related_tests.insert(0, caller);
+    let text = explained(&done);
+    assert!(text.lines().any(|line| line.starts_with("done=")), "{text}");
+    assert!(text.contains("exact_pin"), "{text}");
+    assert!(!text.contains("caller_smoke"), "{text}");
+}
+
 fn verify_line(output: &CheckOutput) -> Result<String, String> {
     let text = agent_dispatch(output, &RiprConfig::default())?;
     let last = text.lines().last().ok_or("empty report")?.to_string();
