@@ -80,8 +80,8 @@ reports no runtime outcomes; a real mutation runner confirms later.
 | [`ripr agent verify-execute`](#agent-verify-execute) | Execute the packet's authorized verify projection and record the result. | advanced |
 | [`ripr annotations`](#annotations) | Render review comments as GitHub Actions warning annotations. | public |
 | [`ripr assistant-loop`](#assistant-loop) | Show the assistant-loop surface. | public |
-| [`ripr assistant-loop health`](#assistant-loop-health) | Project assistant-loop health from one or more proof artifacts. | public |
-| [`ripr assistant-loop proof`](#assistant-loop-proof) | Compose the assistant test-oracle proof from review and repair artifacts. | public |
+| [`ripr assistant-loop health`](#assistant-loop) | Project assistant-loop health from one or more proof artifacts. | public |
+| [`ripr assistant-loop proof`](#assistant-loop) | Compose the assistant test-oracle proof from review and repair artifacts. | public |
 | [`ripr baseline`](#baseline) | Show the baseline command surface. | public |
 | [`ripr baseline create`](#baseline-create) | Create the gate baseline artifact the next runs compare against. | public |
 | [`ripr baseline diff`](#baseline-diff) | Compare a gate decision against the stored baseline. | public |
@@ -91,16 +91,16 @@ reports no runtime outcomes; a real mutation runner confirms later.
 | [`ripr cache export`](#cache-export) | Copy a validated current-input cache snapshot without historical generations. | public |
 | [`ripr cache status`](#cache-status) | Show cache occupancy and entry health. | public |
 | [`ripr calibrate`](#calibrate) | Show the calibration surface. | public |
-| [`ripr calibrate cargo-mutants`](#calibrate-cargo-mutants) | Calibrate static exposure against a cargo-mutants output JSON. | public |
+| [`ripr calibrate cargo-mutants`](#calibrate) | Calibrate static exposure against a cargo-mutants output JSON. | public |
 | [`ripr capabilities`](#capabilities) | Show per-language, framework and mode capability status. | public |
 | [`ripr check`](#check) | Analyze the current diff and name the top actionable gap. | public |
 | [`ripr start-here`](#start-here) | Compatibility alias for first-pr; compose the same start-here bundle. | compatibility |
 | [`ripr config`](#config) | Show the configuration command surface. | public |
-| [`ripr config validate`](#config-validate) | Validate ripr.toml without running analysis. | public |
+| [`ripr config validate`](#config) | Validate ripr.toml without running analysis. | public |
 | [`ripr context`](#context) | Collect the tests and seams related to one finding. | public |
 | [`ripr continue`](#continue) | Continue the current repair attempt through its after phase. | public |
 | [`ripr coverage-grip`](#coverage-grip) | Show the coverage-grip surface. | public |
-| [`ripr coverage-grip frontier`](#coverage-grip-frontier) | Project the coverage-grip frontier from ledger, delta, and zero-status artifacts. | public |
+| [`ripr coverage-grip frontier`](#coverage-grip) | Project the coverage-grip frontier from ledger, delta, and zero-status artifacts. | public |
 | [`ripr diff`](#diff) | Analyze the diff between two revisions and write the JSON result to stdout. | public |
 | [`ripr doctor`](#doctor) | Probe the local tool versions and config this workspace needs. | public |
 | [`ripr evidence-health`](#evidence-health) | Summarize how strong the current static evidence looks. | public |
@@ -109,9 +109,9 @@ reports no runtime outcomes; a real mutation runner confirms later.
 | [`ripr feedback export`](#feedback-export) | Join usefulness-feedback receipts onto route-quality rows. | public |
 | [`ripr feedback record`](#feedback-record) | Record one local usefulness-feedback receipt. | public |
 | [`ripr first-action`](#first-action) | Project the first useful action from review and evidence artifacts. | public |
-| [`ripr first-pr`](#first-pr) | Compose the start-here PR evidence bundle from existing artifacts. | public |
+| [`ripr first-pr`](#start-here) | Compose the start-here PR evidence bundle from existing artifacts. | public |
 | [`ripr gate`](#gate) | Show the gate command surface. | public |
-| [`ripr gate evaluate`](#gate-evaluate) | Evaluate advisory gate modes over PR guidance. | public |
+| [`ripr gate evaluate`](#gate) | Evaluate advisory gate modes over PR guidance. | public |
 | [`ripr help`](#help) | Route to per-command options, the exhaustive reference, and the versioned machine catalog. | public |
 | [`ripr impacted-evidence`](#impacted-evidence) | Route later mutation work from PR evidence and labels. | public |
 | [`ripr init`](#init) | Install the ripr.toml configuration (and, with --ci, an advisory workflow). | public |
@@ -135,9 +135,9 @@ reports no runtime outcomes; a real mutation runner confirms later.
 | [`ripr pr-comments summary`](#pr-comments-summary) | Write the request that posts or updates the one PR summary comment. | public |
 | [`ripr pr-evidence`](#pr-evidence) | Write the diff-scoped PR evidence packet for one base and head. | public |
 | [`ripr pr-ledger`](#pr-ledger) | Show the PR evidence ledger surface. | public |
-| [`ripr pr-ledger record`](#pr-ledger-record) | Record one PR's evidence state into the ledger and history. | public |
+| [`ripr pr-ledger record`](#pr-ledger) | Record one PR's evidence state into the ledger and history. | public |
 | [`ripr pr-review`](#pr-review) | Show the PR review surface. | public |
-| [`ripr pr-review front-panel`](#pr-review-front-panel) | Compose the first-screen PR review summary from existing artifacts. | public |
+| [`ripr pr-review front-panel`](#pr-review) | Compose the first-screen PR review summary from existing artifacts. | public |
 | [`ripr pr-summary`](#pr-summary) | Write the PR evidence summary from existing artifacts. | public |
 | [`ripr receipt`](#receipt) | Show the receipt surface. | public |
 | [`ripr receipt check`](#receipt-check) | Validate a receipt JSON against structure and the live gap set. | public |
@@ -158,7 +158,7 @@ reports no runtime outcomes; a real mutation runner confirms later.
 | [`ripr swarm ingest`](#swarm-ingest) | Classify one external agent result for safe ingestion. | public |
 | [`ripr swarm queue`](#swarm-queue) | Rank gap-ledger records into a bounded, assignable repair queue. | public |
 | [`ripr zero`](#zero) | Show the RIPR Zero command surface. | public |
-| [`ripr zero status`](#zero-status) | Report RIPR Zero state from the current policy artifacts. | public |
+| [`ripr zero status`](#zero) | Report RIPR Zero state from the current policy artifacts. | public |
 
 ## Help text by command
 
@@ -838,8 +838,6 @@ Examples:
   ripr annotations --check
 ```
 
-<a id="assistant-loop-health"></a>
-<a id="assistant-loop-proof"></a>
 ### assistant-loop
 
 Shared help for `ripr assistant-loop`, `ripr assistant-loop health`, `ripr assistant-loop proof`.
@@ -1312,7 +1310,6 @@ Examples:
   ripr cache status --json
 ```
 
-<a id="calibrate-cargo-mutants"></a>
 ### calibrate
 
 Shared help for `ripr calibrate`, `ripr calibrate cargo-mutants`.
@@ -1437,7 +1434,6 @@ More:
   ripr check --help --all   Every option (--path/--exclude too), format, and env var.
 ```
 
-<a id="first-pr"></a>
 ### start-here
 
 Shared help for `ripr start-here`, `ripr first-pr`.
@@ -1496,7 +1492,6 @@ Examples:
   ripr first-pr --root . --base BASE --head HEAD
 ```
 
-<a id="config-validate"></a>
 ### config
 
 Shared help for `ripr config`, `ripr config validate`.
@@ -1629,7 +1624,6 @@ Examples:
   ripr continue [--attempt ID] --root .
 ```
 
-<a id="coverage-grip-frontier"></a>
 ### coverage-grip
 
 Shared help for `ripr coverage-grip`, `ripr coverage-grip frontier`.
@@ -2078,7 +2072,6 @@ Examples:
   ripr first-action --pr-guidance target/ripr/review/comments.json
 ```
 
-<a id="gate-evaluate"></a>
 ### gate
 
 Shared help for `ripr gate`, `ripr gate evaluate`.
@@ -3885,7 +3878,6 @@ Examples:
   ripr pr-evidence --base origin/main
 ```
 
-<a id="pr-ledger-record"></a>
 ### pr-ledger
 
 Shared help for `ripr pr-ledger`, `ripr pr-ledger record`.
@@ -3931,7 +3923,6 @@ Examples:
   ripr pr-ledger record --pr-number 123 --base SHA --head SHA --gate target/ripr/reports/gate-decision.json
 ```
 
-<a id="pr-review-front-panel"></a>
 ### pr-review
 
 Shared help for `ripr pr-review`, `ripr pr-review front-panel`.
@@ -5553,7 +5544,6 @@ Examples:
   ripr swarm queue --root .
 ```
 
-<a id="zero-status"></a>
 ### zero
 
 Shared help for `ripr zero`, `ripr zero status`.
