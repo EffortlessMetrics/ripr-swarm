@@ -151,6 +151,11 @@ pub(super) fn is_python_plain_local_value_assignment(line_text: &str) -> bool {
         || rhs.is_empty()
         || rhs.starts_with('=')
         || rhs.ends_with('\\')
+        // A trailing comma is a call-argument, parameter or dict continuation
+        // (`timeout=30,`), and `;` joins a second statement: neither is one
+        // plain assignment.
+        || rhs.ends_with(',')
+        || rhs.contains(';')
         || !python_brackets_balanced(rhs)
     {
         return false;

@@ -4353,6 +4353,13 @@ fn plain_local_value_assignment_is_closed() {
         "    def f(): x = 3",
         "    lambda: x = 3",
         "    return = 3",
+        // Argument, parameter and dict continuations; joined statements.
+        "        timeout=30,",
+        "        flag=True,",
+        "    total = amount + 1,",
+        "    total = amount + 1; other = 2",
+        "    total = amount + 1;",
+        "    def f(a, timeout=30):",
         // Multi-line first line: unbalanced brackets.
         "    total = (amount +",
         "    items = [a,",
