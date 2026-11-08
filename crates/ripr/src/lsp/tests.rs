@@ -33331,7 +33331,7 @@ fn incomplete_outcome_with_no_rows_serves_a_passive_marker_and_nothing_else_does
                 ));
             }
         }
-        if super::diagnostics::scope_marker_payload(&snapshot).as_ref() != Some(marker) {
+        if super::diagnostics::empty_scope_marker_payload(&snapshot).as_ref() != Some(marker) {
             return Err("lifecycle payload must equal the served marker".to_string());
         }
         ids.push(format!(
@@ -33403,7 +33403,7 @@ fn incomplete_outcome_with_no_rows_serves_a_passive_marker_and_nothing_else_does
     if served(&rows)
         .iter()
         .any(|d| scope_marker_kind_of(d).is_some_and(|kind| kind == "incomplete_analysis"))
-        || super::diagnostics::scope_marker_payload(&rows).is_some()
+        || super::diagnostics::empty_scope_marker_payload(&rows).is_some()
     {
         return Err("a snapshot with rows must not carry the incomplete marker".to_string());
     }
@@ -33436,7 +33436,7 @@ fn incomplete_outcome_with_no_rows_serves_a_passive_marker_and_nothing_else_does
         K::PartialWithLimitations,
         vec![incomplete_limitation_fixture(L::ProducerFailure, "r.")?],
     )?);
-    if super::diagnostics::snapshot_serves_scope_marker(&stored)
+    if super::diagnostics::snapshot_serves_empty_scope_marker(&stored)
         || served(&stored)
             .iter()
             .any(|d| scope_marker_kind_of(d).is_some_and(|kind| kind == "incomplete_analysis"))
@@ -33509,7 +33509,7 @@ fn file_mode_only_change_serves_the_incomplete_marker_through_the_real_producer(
         .map_err(|err| format!("edit failed: {err}"))?;
     let edited = workspace_diagnostics_with_config(root.path(), &config, true)?;
     if edited.snapshot.diagnostic_count() == 0
-        || super::diagnostics::scope_marker_payload(&edited.snapshot).is_some()
+        || super::diagnostics::empty_scope_marker_payload(&edited.snapshot).is_some()
     {
         return Err("a text edit must serve rows and no scope marker".to_string());
     }

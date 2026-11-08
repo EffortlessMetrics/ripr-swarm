@@ -18,8 +18,8 @@ use super::diagnostics::{
     AnalysisPendingRecovery, DiagnosticBatch, DiagnosticRefreshPlan, DiagnosticResultIdCache,
     WorkspaceDiagnostics, analysis_pending_diagnostics, analysis_pending_withdrawal_diagnostics,
     delivered_diagnostics_for_uri, delivery_omission_diagnostic, diagnostic_refresh_plan,
-    is_scope_marker, scope_marker_payload, snapshot_serves_scope_marker, take_all_uris,
-    withdrawn_quarantine_diagnostics,
+    empty_scope_marker_payload, is_empty_scope_marker, snapshot_serves_empty_scope_marker,
+    take_all_uris, withdrawn_quarantine_diagnostics,
 };
 use super::hover::{
     NoEvidenceState, UnanalyzedFileCause, classify_unanalyzed_file, unanalyzed_file_hover_route,
@@ -1006,9 +1006,9 @@ impl Backend {
         // (different base or empty-scope cause) is a marker-state change too.
         let previous_marker = self
             .latest_pull_snapshot()
-            .and_then(|(previous, _)| scope_marker_payload(&previous));
+            .and_then(|(previous, _)| empty_scope_marker_payload(&previous));
         let previous_marked = previous_marker.is_some();
-        let new_marker = scope_marker_payload(&snapshot);
+        let new_marker = empty_scope_marker_payload(&snapshot);
         let marker_state_changed = previous_marker != new_marker;
         let Some(quarantine_edges) =
             self.commit_refresh_snapshot(snapshot, &plan, &pending_analyzed, &pending_entered)
@@ -1556,7 +1556,7 @@ impl Backend {
                 .latest_analysis
                 .lock()
                 .ok()
-                .and_then(|latest| latest.as_deref().map(snapshot_serves_scope_marker))
+                .and_then(|latest| latest.as_deref().map(snapshot_serves_empty_scope_marker))
                 .unwrap_or(false);
         if let Ok(mut latest_analysis) = self.latest_analysis.lock() {
             *latest_analysis = None;
@@ -4034,7 +4034,7 @@ impl Backend {
             .lock()
             .ok()
             .and_then(|value| value.clone())
-            .is_some_and(|snapshot| snapshot_serves_scope_marker(&snapshot));
+            .is_some_and(|snapshot| snapshot_serves_empty_scope_marker(&snapshot));
         if !marker_snapshot {
             return;
         }
@@ -4071,7 +4071,7 @@ impl Backend {
         // #13441: the empty-scope marker is served, not stored. Recording it
         // as the committed baseline would put the URI in the next refresh's
         // clear set and wipe the marker on a second consecutive clean refresh.
-        if !diagnostics.is_empty() && diagnostics.iter().all(is_scope_marker) {
+        if !diagnostics.is_empty() && diagnostics.iter().all(is_empty_scope_marker) {
             return;
         }
         if let Ok(mut last) = self.quarantine.last_diagnostics.lock() {
@@ -4129,7 +4129,7 @@ impl Backend {
         let had_visible = self
             .committed_served_diagnostics_for_uri(uri)
             .iter()
-            .any(|diagnostic| !is_scope_marker(diagnostic))
+            .any(|diagnostic| !is_empty_scope_marker(diagnostic))
             || self.last_diagnostics_has_any(uri);
         if !had_visible {
             return;
@@ -7061,7 +7061,7 @@ impl LanguageServer for Backend {
             && self
                 .committed_served_diagnostics_for_uri(&params.text_document.uri)
                 .iter()
-                .any(is_scope_marker);
+                .any(is_empty_scope_marker);
         if (pending_marker_was_tracked || marker_was_served) && !self.pull_diagnostics_enabled() {
             self.client
                 .publish_diagnostics(
