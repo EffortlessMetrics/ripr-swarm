@@ -9,9 +9,12 @@
 //!    the full templates are emitted once in an `evidence_legend` block at the
 //!    document head. Expanding the codes through the legend reconstructs the
 //!    exact original strings, in order.
-//! 2. The known `suggested_next_action` alias is omitted when it equals
-//!    `recommended_next_step`; the document records the alias once in
-//!    `dropped_aliases`. Other fields remain verbatim even when values match.
+//! 2. Known aliases are omitted when they equal their owner:
+//!    `suggested_next_action` (owner `recommended_next_step`), and the
+//!    finding-level `observed_values` / `missing_discriminators` (owner: the
+//!    same-named arrays inside `activation`, #13673). The document records each
+//!    dropped alias once in `dropped_aliases`. Other fields remain verbatim even
+//!    when values match.
 //!
 //! What terse does *not* do: it never drops a finding, never changes a
 //! verdict/classification/severity/confidence, and never touches nested
@@ -39,6 +42,12 @@ const RENDERING_MODE_KEY: &str = "rendering";
 const RENDERING_MODE_VALUE: &str = "terse";
 const LEGEND_KEY: &str = "evidence_legend";
 const DROPPED_ALIASES_KEY: &str = "dropped_aliases";
+/// Every alias terse may omit, in `dropped_aliases` emission order.
+const KNOWN_ALIASES: [&str; 3] = [
+    "suggested_next_action",
+    "observed_values",
+    "missing_discriminators",
+];
 // Entry costs include a comma each. The outer comma replaces the final one,
 // leaving the field's key quotes, colon and braces as shared overhead.
 const LEGEND_FIELD_OVERHEAD: usize = LEGEND_KEY.len() + 5;
@@ -86,11 +95,14 @@ pub(crate) fn render_terse(rendered: &str) -> Result<String, String> {
         }
         root.insert(LEGEND_KEY.to_string(), Value::Object(legend));
     }
-    if coder.dropped_next_action_alias {
-        root.insert(
-            DROPPED_ALIASES_KEY.to_string(),
-            Value::Array(vec![Value::String("suggested_next_action".to_string())]),
-        );
+    let dropped: Vec<Value> = KNOWN_ALIASES
+        .iter()
+        .zip(coder.dropped_aliases)
+        .filter(|(_, dropped)| *dropped)
+        .map(|(alias, _)| Value::String((*alias).to_string()))
+        .collect();
+    if !dropped.is_empty() {
+        root.insert(DROPPED_ALIASES_KEY.to_string(), Value::Array(dropped));
     }
     root.insert(
         RENDERING_MODE_KEY.to_string(),
@@ -113,8 +125,9 @@ struct LegendCoder {
     counts: HashMap<String, usize>,
     /// Distinct templates in first-appearance order, independent of map order.
     order: Vec<String>,
-    /// The known alias is recorded once, regardless of the finding count.
-    dropped_next_action_alias: bool,
+    /// Each known alias (indexed like [`KNOWN_ALIASES`]) is recorded once,
+    /// regardless of the finding count.
+    dropped_aliases: [bool; 3],
 }
 
 impl LegendCoder {
@@ -199,18 +212,31 @@ fn compact_finding(finding: &mut serde_json::Map<String, Value>, coder: &mut Leg
     drop_same_value_aliases(finding, coder);
 }
 
-/// Omit only the documented alias: equal text in unrelated fields does not
+/// Omit only the documented aliases: equal values in unrelated fields do not
 /// establish an alias relationship. The kept field is the decoding authority,
-/// independent of map order or other coincidentally identical string values.
+/// independent of map order or other coincidentally identical values.
 fn drop_same_value_aliases(finding: &mut serde_json::Map<String, Value>, coder: &mut LegendCoder) {
-    let Some(action) = finding.get("suggested_next_action").and_then(Value::as_str) else {
-        return;
-    };
-    if action.len() >= MIN_LEGEND_TEXT_LEN
+    if let Some(action) = finding.get("suggested_next_action").and_then(Value::as_str)
+        && action.len() >= MIN_LEGEND_TEXT_LEN
         && finding.get("recommended_next_step").and_then(Value::as_str) == Some(action)
     {
         finding.remove("suggested_next_action");
-        coder.dropped_next_action_alias = true;
+        coder.dropped_aliases[0] = true;
+    }
+    // #13673: the finding-level arrays repeat `activation` verbatim. An empty
+    // array costs less than its legend entry, so only non-empty copies drop.
+    for (index, key) in [(1, "observed_values"), (2, "missing_discriminators")] {
+        let owner = finding
+            .get("activation")
+            .and_then(|activation| activation.get(key));
+        let alias = finding.get(key);
+        if let (Some(owner), Some(alias)) = (owner, alias)
+            && owner == alias
+            && alias.as_array().is_some_and(|items| !items.is_empty())
+        {
+            finding.remove(key);
+            coder.dropped_aliases[index] = true;
+        }
     }
 }
 
@@ -341,6 +367,40 @@ mod tests {
         for index in [2, 3] {
             assert_eq!(terse["findings"][index], full["findings"][index]);
         }
+        Ok(())
+    }
+
+    #[test]
+    fn terse_drops_finding_activation_copies_only_when_equal_and_non_empty() -> Result<(), String> {
+        let values =
+            serde_json::json!([{"line": 8, "value": "age = 30", "context": "function_argument"}]);
+        let missing = serde_json::json!([{"value": "age == 18", "reason": "no input at 18"}]);
+        let other =
+            serde_json::json!([{"line": 9, "value": "age = 31", "context": "function_argument"}]);
+        let full = serde_json::json!({"findings": [
+            {"activation": {"observed_values": values, "missing_discriminators": missing},
+             "observed_values": values, "missing_discriminators": missing},
+            {"activation": {"observed_values": values, "missing_discriminators": []},
+             "observed_values": other, "missing_discriminators": []},
+            {"observed_values": values, "missing_discriminators": missing}
+        ]});
+        let input = serde_json::to_string(&full).map_err(|error| error.to_string())?;
+        let terse: Value = serde_json::from_str(&super::render_terse(&input)?)
+            .map_err(|error| error.to_string())?;
+        assert_eq!(
+            terse["dropped_aliases"],
+            serde_json::json!(["observed_values", "missing_discriminators"])
+        );
+        // Equal non-empty copies drop; the activation owner keeps the value.
+        assert!(terse["findings"][0].get("observed_values").is_none());
+        assert!(terse["findings"][0].get("missing_discriminators").is_none());
+        assert_eq!(
+            terse["findings"][0]["activation"],
+            full["findings"][0]["activation"]
+        );
+        // A differing copy, an empty copy and a finding without an owner stay.
+        assert_eq!(terse["findings"][1], full["findings"][1]);
+        assert_eq!(terse["findings"][2], full["findings"][2]);
         Ok(())
     }
 
