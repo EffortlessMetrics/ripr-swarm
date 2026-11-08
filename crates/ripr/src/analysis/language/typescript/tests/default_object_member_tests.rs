@@ -166,7 +166,6 @@ fn a_file_level_or_setup_replacement_of_the_member_credits_nothing() -> Result<(
             "setup-hook-assignment",
             "beforeEach(() => {\n  utils.merge = () => ({ a: 1, b: 5, c: 4 });\n});\n",
         ),
-        ("other-member-call", "utils.other(1);\n"),
     ] {
         assert_ne!(
             class_of(label, OWNER, &format!("{header}{setup}{test}"))?,
@@ -174,6 +173,15 @@ fn a_file_level_or_setup_replacement_of_the_member_credits_nothing() -> Result<(
             "{label}"
         );
     }
+    // A sibling member's direct call no longer withholds (#6653, amended rule 5).
+    assert_eq!(
+        class_of(
+            "other-member-call",
+            OWNER,
+            &format!("{header}utils.other(1);\n{test}")
+        )?,
+        ExposureClass::Exposed
+    );
     // Control: the same file without a setup use still credits.
     assert_eq!(
         class_of("control", OWNER, &format!("{header}{test}"))?,
@@ -229,6 +237,35 @@ fn a_named_import_call_cannot_launder_a_replaced_default_member() -> Result<(), 
     let test = "import { it, expect } from 'vitest';\nimport { merge } from '../src/utils';\nimport utils from '../src/utils';\n\nit('merges', () => {\n  utils.merge = () => ({ a: 1, b: 5, c: 4 });\n  merge({ a: 1, b: 2 }, { b: 3, c: 4 });\n  expect(utils.merge({ a: 1, b: 2 }, { b: 3, c: 4 })).toEqual({ a: 1, b: 5, c: 4 });\n});\n";
     assert_ne!(
         class_of("named-plus-replaced-default", &owner, test)?,
+        ExposureClass::Exposed
+    );
+    Ok(())
+}
+
+#[test]
+fn calls_of_several_members_still_credit_each_called_member() -> Result<(), String> {
+    // axios `utils.merge` beside `utils.extend` (#6653): every use is still a
+    // direct member call, so the sibling member no longer withholds `merge`.
+    let two = test_with(&format!(
+        "{CALL}\n  expect(utils.extend({{ a: 1 }}, {{ b: 2 }})).toEqual({{ a: 1, b: 2 }});"
+    ));
+    assert_eq!(
+        class_of("two-members", OWNER, &two)?,
+        ExposureClass::Exposed
+    );
+    // A sibling use that is not a direct call still withholds the credit.
+    let leaked = test_with(&format!(
+        "{CALL}\n  const other = utils.extend;\n  other({{}}, {{}});"
+    ));
+    assert_ne!(
+        class_of("sibling-alias", OWNER, &leaked)?,
+        ExposureClass::Exposed
+    );
+    // Only the member the test calls is credited, not an uncalled sibling.
+    let unrelated =
+        test_with("  expect(utils.extend({ a: 1 }, { b: 2 })).toEqual({ a: 1, b: 2 });");
+    assert_ne!(
+        class_of("sibling-only", OWNER, &unrelated)?,
         ExposureClass::Exposed
     );
     Ok(())

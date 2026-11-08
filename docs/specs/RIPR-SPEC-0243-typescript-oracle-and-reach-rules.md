@@ -962,9 +962,10 @@ object holds the top-level function (or `const` arrow function; a `let` or
 its own name (`{ name }` or
 `{ name: name }`). The object must be made only of such plain entries; a
 spread, computed key, method, getter, renamed entry or duplicate key leaves
-every owner unmarked. The test file must use `local` for nothing but calls of
-that one member, anywhere in the file (setup hooks and file-level code
-included), so an alias (`const m = local.name`), a reassignment, `Object.assign`
+every owner unmarked. The test file must use `local` for nothing but direct
+calls `local.member(` (any number of distinct members, each credited only to
+the owner it names; amended #6653), anywhere in the file (setup hooks and
+file-level code included), so an alias (`const m = local.name`), a reassignment, `Object.assign`
 or a body-local rebinding of `local` all refuse the relation. The relation is
 `imported_owner_call` and the observation guard reads `local.name(...)` as a
 call of the owner, as it does for a namespace import.

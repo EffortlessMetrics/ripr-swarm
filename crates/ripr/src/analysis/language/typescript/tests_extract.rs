@@ -2007,9 +2007,10 @@ fn identity_helpers(statements: &[Statement<'_>], code: &str) -> Vec<String> {
 }
 
 /// `(local, member)` for each default import whose local is used, across the
-/// whole file, only as its own `import local` binding and as calls
-/// `local.member(` of one member. Any other use (assignment, `spyOn`,
-/// alias, argument) withholds the pair, wherever it sits in the file.
+/// whole file, only as its own `import local` binding and as direct calls
+/// `local.member(` (one pair per distinct called member; axios `utils.merge`
+/// beside `utils.extend`, #6653). Any other use (assignment, `spyOn`, alias,
+/// argument) withholds every pair of that local, wherever it sits in the file.
 fn default_member_only_locals(imports: &[TypeScriptImport], code: &str) -> Vec<(String, String)> {
     if file_is_opaque(code) {
         return Vec::new();
@@ -2020,7 +2021,7 @@ fn default_member_only_locals(imports: &[TypeScriptImport], code: &str) -> Vec<(
         .iter()
         .filter(|import| !import.namespace && import.imported.as_deref() == Some("default"))
     {
-        let mut member: Option<String> = None;
+        let mut members: Vec<String> = Vec::new();
         let mut clean = true;
         for at in word_occurrences(code, &import.local) {
             let before = code[..at].trim_end();
@@ -2044,17 +2045,21 @@ fn default_member_only_locals(imports: &[TypeScriptImport], code: &str) -> Vec<(
                 clean = false;
                 break;
             }
-            match (&member, name) {
-                (None, Some(name)) => member = Some(name),
-                (Some(seen), Some(name)) if *seen == name => {}
-                _ => {
+            match name {
+                Some(name) if !members.contains(&name) => members.push(name),
+                Some(_) => {}
+                None => {
                     clean = false;
                     break;
                 }
             }
         }
-        if let (true, Some(member)) = (clean, member) {
-            pairs.push((import.local.clone(), member));
+        if clean {
+            pairs.extend(
+                members
+                    .into_iter()
+                    .map(|member| (import.local.clone(), member)),
+            );
         }
     }
     pairs
