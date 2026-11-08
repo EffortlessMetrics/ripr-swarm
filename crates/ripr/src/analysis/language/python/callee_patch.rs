@@ -501,7 +501,10 @@ fn edit_reaches_owner_calls(
         } else {
             nested_indent = None;
         }
-        if text.starts_with("global ") || text.starts_with("nonlocal ") {
+        if tokens(text)
+            .iter()
+            .any(|(_, token)| matches!(*token, "global" | "nonlocal"))
+        {
             return true;
         }
         // `a = b; c = d` hides all but the last assignment from the split.
@@ -579,8 +582,13 @@ fn tainted_outside_plain_shape(text: &str, taint: &[&str]) -> bool {
         return false;
     }
     let value = match assignment_split(text) {
-        Some((target, value, _)) => {
-            let target = target.trim();
+        Some((target, value, augmented)) => {
+            let target = if augmented {
+                target.trim_end_matches(|c: char| !is_python_identifier_char(c) && c != ' ')
+            } else {
+                target
+            }
+            .trim();
             let plain = !target.is_empty()
                 && is_plain_name(target)
                 && target.chars().all(is_python_identifier_char);
@@ -596,6 +604,12 @@ fn tainted_outside_plain_shape(text: &str, taint: &[&str]) -> bool {
             else {
                 return true;
             };
+            // A one-line suite (`if c: raise obj`) hides a second statement.
+            let value = value.trim_end();
+            let value = value.strip_suffix(':').unwrap_or(value);
+            if value.replace(":=", "").contains(':') {
+                return true;
+            }
             value
         }
     };

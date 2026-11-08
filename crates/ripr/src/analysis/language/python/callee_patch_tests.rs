@@ -320,7 +320,10 @@ fn an_edit_that_reaches_the_patched_callee_transitively_keeps_the_limit() -> Res
 /// `mocked_module`.
 #[test]
 fn receiver_literal_and_target_shapes_keep_the_limit() -> Result<(), String> {
-    let bodies: [&str; 27] = [
+    let bodies: [&str; 29] = [
+        // A one-line suite hides a `raise` or a `global` behind the test.
+        "    base = amount * 3\n    obj = base\n    if region: raise obj\n    return rate_for(region)\n",
+        "    if region: global base\n    base = amount * 3\n    return rate_for(region)\n",
         // Protocols reached past the adjacent token: multi-item `with`, a
         // `for` target unpacking a display element, list-target unpacking,
         // a parenthesized star, and `raise` of a tainted class.
