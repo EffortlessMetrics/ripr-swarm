@@ -13925,7 +13925,11 @@ fn proximity_assertion_on_a_local_bound_to_another_function_lends_no_oracle() ->
         let compact = compact_evidence_for_seam(boundary, &context);
         assert_eq!(
             full.observe.state, compact.observe.state,
-            "full and compact agree"
+            "full and compact agree on observe"
+        );
+        assert_eq!(
+            full.discriminate.state, compact.discriminate.state,
+            "full and compact agree on discriminate"
         );
         Ok(full
             .related_tests
