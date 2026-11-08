@@ -372,3 +372,62 @@ fn an_oracle_bearing_test_beside_a_forwarded_limit_decides_the_finding_unchanged
     );
     Ok(())
 }
+
+/// Seven more forwarded-limit tests `f1`..`f7` beside `a`, plus test `z`
+/// (sorted last, so the eight-row display window omits it) calling `z_helper`.
+fn many_forwarded_tests_and_z(z_helper: &str) -> String {
+    let mut extra = String::from(
+        "    fn run_plain(expected: &str, _fun: impl FnOnce() -> String) {\n        assert_eq!(\"hello bob\", expected);\n    }\n",
+    );
+    for index in 1..=7 {
+        extra.push_str(&format!(
+            "    #[test]\n    fn f{index}() {{\n        run_test(\"hello bob\", || greet(\"bob\"));\n    }}\n"
+        ));
+    }
+    extra.push_str(&format!(
+        "    #[test]\n    fn z() {{\n        {z_helper}(\"hello bob\", || greet(\"bob\"));\n    }}\n"
+    ));
+    extra
+}
+
+#[test]
+fn an_assertion_free_test_outside_the_display_window_keeps_the_finding_wording()
+-> Result<(), String> {
+    // Nine related tests: eight visible forwarded-limit rows, and `z`, a
+    // genuinely assertion-free test the eight-row window omits. The decision
+    // reads every related test, so `z` keeps the no-assertion guidance.
+    let finding =
+        TempRepo::create_with(UNRESOLVED_FORWARD, &many_forwarded_tests_and_z("run_plain"))?
+            .finding()?;
+    // Premises: nine related tests, eight shown, `z` not among them, and every
+    // shown row is a rewritten forwarded limit.
+    assert!(finding.related_tests_total() >= 9, "{finding:?}");
+    assert_eq!(finding.related_tests.len(), 8, "{finding:?}");
+    assert!(
+        finding.related_tests.iter().all(|test| test.name != "z"),
+        "{finding:?}"
+    );
+    assert!(
+        finding
+            .related_tests
+            .iter()
+            .all(|test| test.miss.map(|miss| miss.as_str()) == Some("assertion_admission_unproven")),
+        "{finding:?}"
+    );
+    let (step, observe, discriminate) = guidance(&finding);
+    assert!(step.starts_with(ADD_ASSERTION), "next step: {step}");
+    assert_eq!(observe, NO_OBSERVING_ASSERTION);
+    assert_eq!(discriminate, NO_ASSERTION_FOUND);
+
+    // Control: when the omitted ninth test is a forwarded limit too, every
+    // related test's only assertion is a forwarded helper's, and the finding
+    // defers to the refused-context wording.
+    let all_limits =
+        TempRepo::create_with(UNRESOLVED_FORWARD, &many_forwarded_tests_and_z("run_test"))?
+            .finding()?;
+    assert!(all_limits.related_tests_total() >= 9, "{all_limits:?}");
+    let (step, observe, _) = guidance(&all_limits);
+    assert!(!step.contains(ADD_ASSERTION), "control next step: {step}");
+    assert_eq!(observe, CONTEXT_UNESTABLISHED);
+    Ok(())
+}

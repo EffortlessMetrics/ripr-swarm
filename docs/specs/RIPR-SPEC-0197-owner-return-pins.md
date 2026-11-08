@@ -2458,7 +2458,11 @@ that never runs or forwards the closure, keep their earlier readings.
 
 Finding-level guidance follows the rows only when every assertion the related
 tests hold is such a forwarded helper's: at least one row was rewritten, no
-`no_assertion` row is left and no row carries an oracle. Then, and only when
+`no_assertion` row is left, no row carries an oracle, and every
+oracle-crediting related test, including any the eight-row display window
+omits, is a forwarded-limit test with no assertion of its own. The decision
+reads the full related-test set, not the capped display rows, so an omitted
+assertion-free or oracle-bearing test keeps the earlier wording. Then, and only when
 the observe and discriminate stages carry exactly the no-assertion summaries
 ("Related tests were found, but no assertion appears to observe ..." and "No
 assertion found on related tests"), those two summaries are replaced by the

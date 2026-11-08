@@ -104,7 +104,9 @@ pub(in crate::analysis) fn split_assertion_not_credited_misses(
 /// absence claim (and its "add an assertion" repair) is withdrawn.
 ///
 /// [`ForwardedCallbackLimits::only_limits`] is true when at least one row was
-/// rewritten, no `no_assertion` row is left and no row carries an oracle: the
+/// rewritten, no `no_assertion` row is left, no row carries an oracle, and
+/// every oracle-crediting related test, including any the display window
+/// omits, is a forwarded-limit test with no assertion of its own: the
 /// only assertions the related tests hold are the forwarded helpers'. Only
 /// then may the caller replace the "no assertion" stage summaries with the
 /// existing refused-context ones (RIPR-SPEC-0221), so the finding-level next
@@ -133,10 +135,27 @@ pub(in crate::analysis) fn name_forwarded_callback_limits(
             named.evidence.push(line);
         }
     }
+    // The rows are the capped display window; the stage summaries read every
+    // related test. So the decision also reads every related test: each one
+    // whose relation may credit an oracle must be a forwarded-limit test with
+    // no assertion of its own. A hidden assertion-free or oracle-bearing test
+    // anywhere keeps the finding's no-assertion wording.
+    let credits = super::oracle_crediting_relations(&context.related_tests);
     named.only_limits = !named.evidence.is_empty()
         && related_tests
             .iter()
-            .all(|row| row.oracle.is_none() && row.miss != Some(RelatedTestMiss::NoAssertion));
+            .all(|row| row.oracle.is_none() && row.miss != Some(RelatedTestMiss::NoAssertion))
+        && context
+            .related_tests
+            .iter()
+            .filter(|(_, reason)| credits(*reason))
+            .all(|(test, _)| {
+                test.assertions.is_empty()
+                    && context
+                        .index
+                        .forwarded_callback_limit(&test.file, test.start_line, &test.name)
+                        .is_some()
+            });
     named
 }
 
