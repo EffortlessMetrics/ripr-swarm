@@ -119,6 +119,19 @@ and fix or remove the file first when it is not a JSON object or `mcpServers`
 is not an object, which init refuses. A `.mcp.json` that is a symlink is not
 verified; one over 1 MiB is reported as unreadable.
 
+### Generated MCP registration (#13050)
+
+The `ripr` server entry that `ripr init --mcp` writes to `.mcp.json`, and
+`ripr init --agents cursor --mcp` to `.cursor/mcp.json`, is one shared value:
+command `ripr`, args `mcp`, `--stdio`, and
+`"env": {"RIPR_MCP_TOOLS_LIST": "slim"}`. The slim listing omits only each tool's
+`outputSchema` (docs/interop/mcp.md), cutting the `tools/list` every agent
+session pays at start; results still carry `structuredContent`. An existing
+`ripr` entry is left alone without `--force`, doctor ignores `env`, and a host
+that validates results against `outputSchema` deletes the `env` line to get the
+full listing. Acceptance: the init unit tests compare the written entry with
+this value for both files.
+
 ### Suppression manifest declarations
 
 The configured suppression file and explicit `--suppression-policy` input share

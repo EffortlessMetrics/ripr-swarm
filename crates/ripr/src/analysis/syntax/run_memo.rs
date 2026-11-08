@@ -33,6 +33,8 @@ pub(crate) enum Product {
     SourceNamings,
     CallMakingClosure,
     OwnerItemScan,
+    ClosureArgumentPositions,
+    InvokedCallbackParams,
 }
 
 impl Product {
@@ -45,6 +47,8 @@ impl Product {
             Self::SourceNamings => "source_namings",
             Self::CallMakingClosure => "call_making_closure",
             Self::OwnerItemScan => "owner_item_scan",
+            Self::ClosureArgumentPositions => "closure_argument_positions",
+            Self::InvokedCallbackParams => "invoked_callback_params",
         }
     }
 }
