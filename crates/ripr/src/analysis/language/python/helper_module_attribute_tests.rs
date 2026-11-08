@@ -103,8 +103,11 @@ fn given_a_conftest_helper_that_does_not_assert_when_called_through_the_module_t
     Ok(())
 }
 
+/// `(imports, test body, extra files)` for one unresolved case.
+type UnresolvedCase<'a> = (&'a str, &'a str, Vec<(&'a str, &'a str)>);
+
 /// Each case must leave the call unresolved: the findings carry no assertion.
-fn assert_unresolved(cases: &[(&str, &str, Vec<(&str, &str)>)]) -> Result<(), String> {
+fn assert_unresolved(cases: &[UnresolvedCase<'_>]) -> Result<(), String> {
     let mut credited = Vec::new();
     for (imports, body, extra) in cases {
         let source = test_source(imports, body);
