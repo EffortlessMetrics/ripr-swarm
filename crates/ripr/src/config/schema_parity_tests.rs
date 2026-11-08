@@ -195,50 +195,80 @@ fn documented_reference_rows_are_all_in_the_schema() -> Result<(), String> {
     Ok(())
 }
 
-#[test]
-fn schema_enums_match_the_values_the_parser_accepts() -> Result<(), String> {
-    let schema = schema()?;
-    let props = &schema["properties"];
-    let enums: [(&str, &str, &Value); 5] = [
-        (
-            "analysis",
-            "mode",
-            &props["analysis"]["properties"]["mode"]["enum"],
-        ),
-        (
-            "oracles",
-            "snapshot_strength",
-            &props["oracles"]["properties"]["snapshot_strength"]["enum"],
-        ),
-        (
-            "severity.findings",
-            "exposed",
-            &props["severity"]["properties"]["findings"]["properties"]["exposed"]["enum"],
-        ),
-        (
-            "severity.seams",
-            "opaque",
-            &props["severity"]["properties"]["seams"]["properties"]["opaque"]["enum"],
-        ),
-        (
-            "lsp",
-            "diagnostic_profile",
-            &props["lsp"]["properties"]["diagnostic_profile"]["enum"],
-        ),
-    ];
-    for (table, key, values) in enums {
-        let values = values
-            .as_array()
-            .ok_or(format!("{table}.{key} has no enum"))?;
-        for value in values {
-            let text = value.as_str().ok_or("enum value is not a string")?;
-            parse_config(&format!("[{table}]\n{key} = \"{text}\"\n"))
-                .map_err(|err| format!("{table}.{key} = {text} rejected: {err}"))?;
+/// Every closed value set and integer floor the schema declares, outside
+/// array-of-tables rows (whose required fields make single-key probes
+/// meaningless), as (TOML table header, key, schema node).
+fn constrained_leaves(schema: &Value) -> Result<Vec<(String, String, &Value)>, String> {
+    let mut all = Vec::new();
+    tables("", schema, &mut all)?;
+    let mut leaves = Vec::new();
+    for (header, node) in all {
+        if header.is_empty() || header.contains("[]") {
+            continue;
         }
-        assert!(
-            parse_config(&format!("[{table}]\n{key} = \"zz_not_a_value\"\n")).is_err(),
-            "{table}.{key} accepted a value outside the schema enum"
-        );
+        for (key, child) in node["properties"].as_object().into_iter().flatten() {
+            if child.get("enum").is_some()
+                || child["items"].get("enum").is_some()
+                || child.get("minimum").is_some()
+            {
+                leaves.push((header.clone(), key.clone(), child));
+            }
+        }
+    }
+    Ok(leaves)
+}
+
+#[test]
+fn schema_value_constraints_match_what_the_parser_accepts() -> Result<(), String> {
+    let schema = schema()?;
+    let leaves = constrained_leaves(&schema)?;
+    assert!(
+        leaves.len() >= 27,
+        "only {} constrained keys found",
+        leaves.len()
+    );
+    for (table, key, node) in leaves {
+        let (values, wrap) = match (node.get("enum"), node["items"].get("enum")) {
+            (Some(values), _) => (values.as_array(), false),
+            (None, Some(values)) => (values.as_array(), true),
+            (None, None) => (None, false),
+        };
+        for value in values.into_iter().flatten() {
+            let text = value.as_str().ok_or("enum value is not a string")?;
+            let literal = if wrap {
+                format!("[\"{text}\"]")
+            } else {
+                format!("\"{text}\"")
+            };
+            // A language this binary was built without is still a recognized
+            // value: the parser names the missing Cargo feature, not a typo.
+            match parse_config(&format!("[{table}]\n{key} = {literal}\n")) {
+                Ok(_) => {}
+                Err(err) if err.contains("built without Cargo feature") => {}
+                Err(err) => return Err(format!("{table}.{key} = {literal} rejected: {err}")),
+            }
+        }
+        if values.is_some() {
+            let literal = if wrap {
+                "[\"zz_not_a_value\"]"
+            } else {
+                "\"zz_not_a_value\""
+            };
+            assert!(
+                parse_config(&format!("[{table}]\n{key} = {literal}\n")).is_err(),
+                "{table}.{key} accepted a value outside the schema enum"
+            );
+        }
+        if let Some(minimum) = node.get("minimum").and_then(Value::as_u64) {
+            parse_config(&format!("[{table}]\n{key} = {minimum}\n"))
+                .map_err(|err| format!("{table}.{key} = {minimum} rejected: {err}"))?;
+            if let Some(below) = minimum.checked_sub(1) {
+                assert!(
+                    parse_config(&format!("[{table}]\n{key} = {below}\n")).is_err(),
+                    "{table}.{key} accepted {below}, below the schema minimum {minimum}"
+                );
+            }
+        }
     }
     Ok(())
 }

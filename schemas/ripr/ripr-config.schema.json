@@ -491,7 +491,7 @@
         },
         "timeout_ms": {
           "type": "integer",
-          "minimum": 0,
+          "minimum": 1,
           "description": "Per-invocation timeout."
         },
         "cache_dir": {
@@ -503,7 +503,7 @@
     },
     "overrides": {
       "type": "array",
-      "description": "Per-crate or per-path severity and oracle overrides.",
+      "description": "Per-crate or per-path severity and oracle overrides. Each row sets exactly one of `crate` or `path`, plus a severity or oracles block.",
       "items": {
         "type": "object",
         "additionalProperties": false,

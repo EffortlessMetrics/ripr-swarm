@@ -44,6 +44,7 @@ pub(super) const KNOWN_KEYS: &[&str] = &[
     "overrides",
     "path",
     "perl",
+    "producer",
     "production_like_targets",
     "profiles",
     "propagation_unknown",
@@ -69,7 +70,6 @@ pub(super) const KNOWN_KEYS: &[&str] = &[
     "ungripped",
     "weakly_exposed",
     "weakly_gripped",
-    "producer",
 ];
 
 /// The field names serde lists after "expected", for either the

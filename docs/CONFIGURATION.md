@@ -133,7 +133,7 @@ A test keeps this table, the schema, and the parser's accepted keys identical.
 | `severity.seams.suppressed` | one of `info`, `warning`, `note`, `off` | Severity for `suppressed` seams; `off` hides them. |
 | `lsp.seam_diagnostics` | boolean | Publish saved-workspace seam diagnostics. |
 | `lsp.diagnostic_profile` | one of `actionable`, `full` | Editor diagnostic profile. |
-| `reports.max_related_tests` | integer | Default related-test cap for context packets. |
+| `reports.max_related_tests` | integer, at least 1 | Default related-test cap for context packets. |
 | `suppressions.path` | string | Repository-relative, slash-separated suppressions file. |
 | `languages.enabled` | array of `rust`, `typescript`, `javascript`, `python`, `perl` | Enabled languages. |
 | `languages.rust.generated_file_patterns` | array of string | Additive generated-source globs. |
@@ -147,9 +147,9 @@ A test keeps this table, the schema, and the parser's accepted keys identical.
 | `typescript.resolve_tsconfig_paths` | boolean | Resolve tsconfig `paths` aliases. |
 | `perl.producer` | one of `perl-ripr-facts`, `perllsp`, `perl-lsp` | Managed fact-packet exporter. |
 | `perl.executable` | string | Exporter path; honored only when RIPR_ALLOW_REPO_PERL_EXECUTABLE=1. |
-| `perl.timeout_ms` | integer | Per-invocation timeout. |
+| `perl.timeout_ms` | integer, at least 1 | Per-invocation timeout. |
 | `perl.cache_dir` | string | Fact cache location. |
-| `overrides[]` | array of tables | Per-crate or per-path severity and oracle overrides. |
+| `overrides[]` | array of tables | Per-crate or per-path severity and oracle overrides. Each row sets exactly one of `crate` or `path`, plus a severity or oracles block. |
 | `overrides[].crate` | string | Cargo package name. |
 | `overrides[].path` | string | Repository-relative glob. |
 | `overrides[].severity.findings.exposed` | one of `info`, `warning`, `note` | Severity for `exposed` findings. |
