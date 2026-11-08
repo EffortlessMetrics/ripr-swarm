@@ -2025,6 +2025,11 @@ impl ClassifiedProbeEvidence {
             pin_syntax,
             &mut related_tests,
         );
+        super::super::classify::name_forwarded_callback_limits(
+            context,
+            &mut related_tests,
+            &mut evidence,
+        );
 
         Self {
             ripr,

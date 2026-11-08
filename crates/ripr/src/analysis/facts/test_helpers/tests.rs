@@ -1383,19 +1383,190 @@ fn plain_helper_that_never_invokes_a_closure_parameter_lends_nothing() -> Result
     Ok(())
 }
 
+/// A same-file `with_default` that eagerly invokes its closure parameter.
+const SAME_FILE_INVOKER: &str =
+    "    fn with_default(f: impl FnOnce() -> bool) -> bool {\n        f()\n    }\n";
+
+fn forwarded_limit(index: &RustIndex, name: &str) -> Result<Option<(String, String)>, String> {
+    let test = test_named(index, name)?;
+    Ok(index
+        .forwarded_callback_limit(&test.file, test.start_line, &test.name)
+        .map(|limit| (limit.helper.clone(), limit.callee.clone())))
+}
+
 #[test]
-fn plain_helper_that_only_forwards_a_closure_parameter_lends_nothing() -> Result<(), Box<dyn Error>>
-{
-    // Negative (#9997): forwarding is indistinguishable from never calling it
-    // until the receiving call is resolved, so no credit.
+fn plain_helper_forwarding_a_closure_to_a_same_file_invoker_lends_its_later_assertion()
+-> Result<(), Box<dyn Error>> {
+    // #9981 forwarding residual (this was the pinned negative of #9997): the
+    // receiving call resolves to a same-file function whose body eagerly
+    // invokes the forwarded closure, so the closure runs before the helper's
+    // assertion, exactly as in the direct-invocation rule. Like that rule, an
+    // assertion that does not read the closure's result is still credited
+    // (documented accepted limit above); value-level grip is judged later.
     let index = index_for(&callback_source(
-        "    fn with_default(f: impl FnOnce() -> bool) -> bool {\n        f()\n    }\n    fn run_test(want: bool, f: impl FnOnce() -> bool) {\n        let _ = with_default(f);\n        assert_eq!(want, true);\n    }\n",
+        &format!(
+            "{SAME_FILE_INVOKER}    fn run_test(want: bool, f: impl FnOnce() -> bool) {{\n        let _ = with_default(f);\n        assert_eq!(want, true);\n    }}\n"
+        ),
         "        run_test(true, || gate(11));\n",
     ))?;
 
     let test = test_named(&index, "boundary")?;
 
-    assert!(test.assertions.is_empty(), "{:?}", assertion_texts(test));
+    assert_eq!(assertion_texts(test), vec!["assert_eq!(want, true);"]);
+    assert!(calls(test).contains(&"gate"), "{:?}", calls(test));
+    assert!(calls(test).contains(&"with_default"), "{:?}", calls(test));
+    assert!(
+        !calls(test).contains(&"f"),
+        "the callback parameter names no function: {:?}",
+        calls(test)
+    );
+    assert_eq!(forwarded_limit(&index, "boundary")?, None);
+    Ok(())
+}
+
+#[test]
+fn forwarded_closure_credits_the_same_file_invokers_own_observing_assertion()
+-> Result<(), Box<dyn Error>> {
+    // One hop: the receiving function invokes the closure and asserts on its
+    // result; the forwarding helper itself has no assertion.
+    let index = index_for(&callback_source(
+        "    fn check(f: impl FnOnce() -> bool) {\n        let got = f();\n        assert_eq!(got, true);\n    }\n    fn run_test(f: impl FnOnce() -> bool) {\n        check(f);\n    }\n",
+        "        run_test(|| gate(11));\n",
+    ))?;
+
+    let test = test_named(&index, "boundary")?;
+
+    assert_eq!(assertion_texts(test), vec!["assert_eq!(got, true);"]);
+    assert!(calls(test).contains(&"check"), "{:?}", calls(test));
+    Ok(())
+}
+
+#[test]
+fn forwarded_closure_to_an_unresolved_callee_is_a_named_limit_not_credit()
+-> Result<(), Box<dyn Error>> {
+    // The tracing shape: `with_default` is not a function of this file, so
+    // whether it runs the closure is not established. No assertion is lent;
+    // the limit names the helper and the callee for the classifier.
+    for (shape, callee, helper) in [
+        (
+            "external free function",
+            "with_default",
+            "    fn run_test(want: bool, fun: impl FnOnce() -> bool) {\n        with_default(fun);\n        assert_eq!(want, true);\n    }\n",
+        ),
+        (
+            "external path",
+            "tracing::subscriber::with_default",
+            "    fn run_test(want: bool, fun: impl FnOnce() -> bool) {\n        tracing::subscriber::with_default(want, fun);\n        assert_eq!(want, true);\n    }\n",
+        ),
+        (
+            "receiver of a method chain",
+            "std::panic::catch_unwind",
+            "    fn run_test(want: bool, fun: impl FnOnce() -> bool + std::panic::UnwindSafe) {\n        let got = std::panic::catch_unwind(fun).unwrap();\n        assert_eq!(got, want);\n    }\n",
+        ),
+        (
+            "method call",
+            ".run",
+            "    fn run_test(want: bool, fun: impl FnOnce() -> bool) {\n        let pool = Pool::new();\n        pool.run(fun);\n        assert_eq!(want, true);\n    }\n",
+        ),
+        (
+            "same-file callee that never invokes it",
+            "with_default",
+            "    fn with_default(_f: impl FnOnce() -> bool) -> bool {\n        true\n    }\n    fn run_test(want: bool, f: impl FnOnce() -> bool) {\n        let _ = with_default(f);\n        assert_eq!(want, true);\n    }\n",
+        ),
+        (
+            "same-file callee that forwards again (one hop only)",
+            "with_default",
+            "    fn inner(f: impl FnOnce() -> bool) -> bool {\n        f()\n    }\n    fn with_default(f: impl FnOnce() -> bool) -> bool {\n        inner(f)\n    }\n    fn run_test(want: bool, f: impl FnOnce() -> bool) {\n        let _ = with_default(f);\n        assert_eq!(want, true);\n    }\n",
+        ),
+        (
+            "same-file callee that invokes it only conditionally",
+            "with_default",
+            "    fn with_default(f: impl FnOnce() -> bool) -> bool {\n        if false {\n            return f();\n        }\n        true\n    }\n    fn run_test(want: bool, f: impl FnOnce() -> bool) {\n        let _ = with_default(f);\n        assert_eq!(want, true);\n    }\n",
+        ),
+    ] {
+        let index = index_for(&callback_source(
+            helper,
+            "        run_test(true, || gate(11));\n",
+        ))?;
+        let test = test_named(&index, "boundary")?;
+        assert!(
+            test.assertions.is_empty(),
+            "{shape}: {:?}",
+            assertion_texts(test)
+        );
+        assert_eq!(
+            forwarded_limit(&index, "boundary")?,
+            Some(("run_test".to_string(), callee.to_string())),
+            "{shape}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn forwarded_closure_shapes_outside_the_grammar_grant_nothing_and_name_nothing()
+-> Result<(), Box<dyn Error>> {
+    // Fail-closed: none of these earns credit, and none records the limit,
+    // so the row keeps its earlier reading.
+    for (shape, helper, body) in [
+        (
+            "assertion only before the forwarding statement",
+            format!(
+                "{SAME_FILE_INVOKER}    fn run_test(want: bool, f: impl FnOnce() -> bool) {{\n        assert_eq!(want, true);\n        let _ = with_default(f);\n    }}\n"
+            ),
+            "        run_test(true, || gate(11));\n",
+        ),
+        (
+            "forwarded through a borrow",
+            "    fn run_test(want: bool, f: impl Fn() -> bool) {\n        with_default(&f);\n        assert_eq!(want, true);\n    }\n".to_string(),
+            "        run_test(true, || gate(11));\n",
+        ),
+        (
+            "forwarded under a branch",
+            format!(
+                "{SAME_FILE_INVOKER}    fn run_test(want: bool, f: impl FnOnce() -> bool) {{\n        if want {{\n            with_default(f);\n        }}\n        assert_eq!(want, true);\n    }}\n"
+            ),
+            "        run_test(true, || gate(11));\n",
+        ),
+        (
+            "forwarded parameter mentioned twice",
+            "    fn run_test(want: bool, f: impl Fn() -> bool + Copy) {\n        with_default(f);\n        with_default(f);\n        assert_eq!(want, true);\n    }\n".to_string(),
+            "        run_test(true, || gate(11));\n",
+        ),
+        (
+            "two forwarded parameters",
+            "    fn run_test(f: impl FnOnce() -> bool, g: impl FnOnce() -> bool) {\n        with_default(f);\n        with_default(g);\n        assert_eq!(1, 1);\n    }\n".to_string(),
+            "        run_test(|| gate(11), || gate(12));\n",
+        ),
+        (
+            "second call-making closure at a position the helper never runs",
+            "    fn run_test(f: impl FnOnce() -> bool, _g: impl FnOnce() -> bool) {\n        with_default(f);\n        assert_eq!(1, 1);\n    }\n".to_string(),
+            "        run_test(|| true.then(|| ()).is_some(), || gate(11));\n",
+        ),
+        (
+            "helper call reached only under a test branch",
+            format!(
+                "{SAME_FILE_INVOKER}    fn run_test(want: bool, f: impl FnOnce() -> bool) {{\n        let _ = with_default(f);\n        assert_eq!(want, true);\n    }}\n"
+            ),
+            "        if gate(0) == false {\n            run_test(true, || gate(11));\n        }\n",
+        ),
+        (
+            "async forwarding helper",
+            format!(
+                "{SAME_FILE_INVOKER}    async fn run_test(want: bool, f: impl FnOnce() -> bool) {{\n        let _ = with_default(f);\n        assert_eq!(want, true);\n    }}\n"
+            ),
+            "        run_test(true, || gate(11));\n",
+        ),
+    ] {
+        let index = index_for(&callback_source(&helper, body))?;
+        let test = test_named(&index, "boundary")?;
+        assert!(
+            test.assertions.is_empty(),
+            "{shape}: {:?}",
+            assertion_texts(test)
+        );
+        assert_eq!(forwarded_limit(&index, "boundary")?, None, "{shape}");
+    }
     Ok(())
 }
 

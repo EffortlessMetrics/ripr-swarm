@@ -19,7 +19,10 @@
 //! limited to this closure-callback path. The plain-helper path (a helper that
 //! invokes no parameter, so it never runs a closure or only forwards it, the
 //! tracing `with_default` shape of #9981) asks [`passes_call_making_closure`]
-//! and lends nothing when the test hands it a call-making closure (#9997).
+//! and lends nothing when the test hands it a call-making closure (#9997),
+//! except that [`forwarded_callback_params`] lets the facts producer follow
+//! one forwarded parameter into a same-file function that eagerly invokes it
+//! (#9981 forwarding residual).
 
 use super::*;
 use crate::analysis::syntax::node_has_macro_escape;
@@ -36,6 +39,184 @@ pub(crate) struct InvokedCallbackParam {
     /// point, which also orders two statements that share a line.
     pub(crate) end_line: usize,
     pub(crate) end_column: usize,
+}
+
+/// A helper parameter the helper body hands, as a bare argument, to another
+/// call instead of invoking it (#9981 forwarding residual):
+/// `with_default(subscriber, fun);`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ForwardedCallbackParam {
+    pub(crate) position: usize,
+    pub(crate) name: String,
+    /// The receiving callee as written, whitespace removed: a path
+    /// (`with_default`, `tracing::subscriber::with_default`) or `.method`.
+    pub(crate) callee: String,
+    /// The callee's name when it is a single-segment free-function call, the
+    /// only spelling a same-file resolution may follow.
+    pub(crate) local_callee: Option<String>,
+    /// Position of the forwarded name among the receiving call's arguments.
+    pub(crate) argument_position: usize,
+    /// 1-based line, relative to the parsed text, where the forwarding
+    /// statement ends, and the byte column of that end within the line.
+    pub(crate) end_line: usize,
+    pub(crate) end_column: usize,
+}
+
+/// Parameters of the free function in `helper_text` that its body does not
+/// invoke but passes, as a bare unparenthesized argument, to a call that is
+/// itself a statement the body reaches unconditionally and in order (the
+/// same grammar as [`invoked_callback_params`]: `g(.., f, ..);`, a tail
+/// `g(f)`, or `let PAT = g(f);`, optionally as the receiver of a method chain
+/// such as `g(f).unwrap()`). The parameter must be a plain immutable
+/// identifier bound nowhere else, and the forwarding argument must be its only
+/// mention in the body (an identifier token count, so a mention inside a macro
+/// argument also refuses). An `async fn`, a method (`self`) or an unparsable
+/// text yields `None`.
+///
+/// Forwarding says nothing about whether the receiving call runs the closure;
+/// the facts producer decides that, and only for a same-file callee whose own
+/// body eagerly invokes the forwarded argument.
+pub(crate) fn forwarded_callback_params(helper_text: &str) -> Option<Vec<ForwardedCallbackParam>> {
+    let parse = parse_clean_source_file(helper_text)?;
+    let function = parse
+        .tree()
+        .syntax()
+        .descendants()
+        .find_map(ast::Fn::cast)?;
+    if function.async_token().is_some() {
+        return None;
+    }
+    let parameters = function.param_list()?;
+    if parameters.self_param().is_some() {
+        return None;
+    }
+    let body = function.body()?;
+    let eager = eager_statement_exprs(&body);
+    let line_index = LineIndex::new(helper_text);
+    let mut forwarded = Vec::new();
+    for (position, parameter) in parameters.params().enumerate() {
+        let Some(name) = plain_callback_param(&function, &parameter) else {
+            continue;
+        };
+        if eager_invocation_end(&body, &name).is_some() {
+            continue;
+        }
+        let mentions = body
+            .syntax()
+            .descendants_with_tokens()
+            .filter_map(|element| element.into_token())
+            .filter(|token| {
+                token.kind() == ra_ap_syntax::SyntaxKind::IDENT && token.text() == name.as_str()
+            })
+            .count();
+        if mentions != 1 {
+            continue;
+        }
+        let Some((callee, local_callee, argument_position, end)) =
+            eager.iter().find_map(|(expression, end)| {
+                let (callee, local, argument_position) = forwarding_call(expression, &name)?;
+                Some((callee, local, argument_position, *end))
+            })
+        else {
+            continue;
+        };
+        let end_line = line_index.line_for_range_end(end);
+        let line_start = line_index.starts.get(end_line - 1).copied().unwrap_or(0);
+        forwarded.push(ForwardedCallbackParam {
+            position,
+            name,
+            callee,
+            local_callee,
+            argument_position,
+            end_line,
+            end_column: text_size_to_usize(end).saturating_sub(line_start),
+        });
+    }
+    Some(forwarded)
+}
+
+/// The call in a statement expression that receives `name` as a bare
+/// argument: the expression itself, or the receiver of a method chain on it
+/// (`with_default(f).unwrap()`), which is evaluated first and in full. Yields
+/// the callee spelling, single-segment name and argument position.
+fn forwarding_call(expression: &ast::Expr, name: &str) -> Option<(String, Option<String>, usize)> {
+    let mut current = expression.clone();
+    loop {
+        if let Some((callee, local, arguments)) = forwarding_call_parts(&current)
+            && let Some(position) = arguments.args().position(|argument| {
+                matches!(&argument, ast::Expr::PathExpr(path)
+                    if path.path().is_some_and(|path| path.qualifier().is_none()
+                        && path.segment().and_then(|segment| segment.name_ref())
+                            .is_some_and(|reference| reference.text() == name)))
+            })
+        {
+            return Some((callee, local, position));
+        }
+        let ast::Expr::MethodCallExpr(method) = current else {
+            return None;
+        };
+        current = method.receiver()?;
+    }
+}
+
+/// The callee spelling, single-segment name and argument list of a call or
+/// method call. A computed callee (`(g)(f)`, `self.g(f)` field call) yields
+/// `None`.
+fn forwarding_call_parts(expression: &ast::Expr) -> Option<(String, Option<String>, ast::ArgList)> {
+    match expression {
+        ast::Expr::CallExpr(call) => {
+            let ast::Expr::PathExpr(path) = call.expr()? else {
+                return None;
+            };
+            let spelling: String = path
+                .syntax()
+                .text()
+                .to_string()
+                .split_whitespace()
+                .collect();
+            Some((spelling, single_segment_callee(call), call.arg_list()?))
+        }
+        ast::Expr::MethodCallExpr(method) => Some((
+            format!(".{}", method.name_ref()?.text()),
+            None,
+            method.arg_list()?,
+        )),
+        _ => None,
+    }
+}
+
+/// Argument positions at which any call to `helper` in `test_text`, reached or
+/// not, passes an argument that holds a call-making closure literal or a name
+/// bound earlier to one (the [`passes_call_making_closure`] reading, per
+/// position). The forwarding credit (#9981) requires this set to be exactly
+/// the forwarded position, so a second closure the helper never runs cannot
+/// carry the owner call. `None` when the text does not parse cleanly.
+pub(crate) fn call_making_closure_positions(
+    test_text: &str,
+    helper: &str,
+) -> Option<BTreeSet<usize>> {
+    let parse = parse_clean_source_file(test_text)?;
+    let mut positions = BTreeSet::new();
+    for call in parse
+        .tree()
+        .syntax()
+        .descendants()
+        .filter_map(ast::CallExpr::cast)
+        .filter(|call| single_segment_callee(call).as_deref() == Some(helper))
+    {
+        let Some(arguments) = call.arg_list() else {
+            continue;
+        };
+        for (position, argument) in arguments.args().enumerate() {
+            if holds_call_making_closure(argument.syntax())
+                || retained_callback_name(argument)
+                    .is_some_and(|name| bound_to_call_making_closure(&call, &name))
+            {
+                positions.insert(position);
+            }
+        }
+    }
+    Some(positions)
 }
 
 /// Argument positions at which a direct call to `helper` in `test_text`

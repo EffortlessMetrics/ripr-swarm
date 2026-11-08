@@ -2320,11 +2320,11 @@ analysis:
 
 The credit rides the existing same-file helper eligibility (helper role,
 single definition, same module, no cfg, no `use`/nested `fn`, non-async).
-Not credited by this rule: a callback merely forwarded to another function
-(tracing's `with_default(subscriber, fun)`, #9981's original example),
-`assert_eq!(f(), x)` or other invocations inside macro arguments, boxed or
-by-reference closures, and invocations under branches, loops, or after an
-earlier exit.
+Not credited by this rule: a callback forwarded to a function this rule
+cannot resolve (tracing's `with_default(subscriber, fun)`, #9981's original
+example; see "Forwarded closure callbacks" below), `assert_eq!(f(), x)` or
+other invocations inside macro arguments, boxed or by-reference closures, and
+invocations under branches, loops, or after an earlier exit.
 
 A plain helper (one that invokes no parameter directly, so it never runs a
 closure parameter or only forwards it, as tracing's `with_default(subscriber,
@@ -2372,7 +2372,70 @@ casts, and a struct field or tuple holding the closure. A qualified or
 computed receiver is not a local callback binding. The scan does not model
 shadowing, so a closure parameter `|f| run(1, f)` beside an outer call-making
 `let f` is withheld (a missed advisory). The tracing forwarding shape is a
-limitation, not a credit, until the receiving call is itself resolved.
+limitation, not a credit, until the receiving call is itself resolved (next
+section).
+
+#### Forwarded closure callbacks (#9981 forwarding residual)
+
+A plain helper that does not invoke its closure parameter but hands it on
+(`let got = with_default(fun); assert_eq!(got, want);`) is the one exception
+to the plain-helper withholding above. Decision: credit only where the
+receiving call is a same-file function whose own body is shown to run the
+closure, one hop deep; everywhere else, withhold credit and replace the false
+"has no assertion" reading with a named analyzer limit. Following arbitrary
+callees, or treating forwarding as invocation, was rejected: an external
+`with_default` may store, drop or conditionally run the closure, and a wrong
+credit is worse than a missed one.
+
+Forwarding grammar (`forwarded_callback_params`, fail-closed):
+
+- the helper is not `async` and has no `self`; the forwarded parameter is the
+  same immutable plain identifier, bound once, that the invocation rule
+  admits, and the helper does not invoke it directly;
+- the parameter's only mention in the helper body (counted by identifier
+  token, so a mention inside a macro argument refuses) is a bare,
+  unborrowed, unparenthesized argument of a call or method call that is a
+  statement the helper reaches unconditionally and in order (`g(.., fun);`,
+  tail `g(fun)`, `let PAT = g(fun);`), or the receiver of a method chain on
+  such a call (`catch_unwind(fun).unwrap()`);
+- exactly one parameter is forwarded; the test reaches the helper call
+  eagerly with a call-making closure literal at that position (the
+  invocation rule's test side), and every argument of every call to the
+  helper in the test that holds a call-making closure, or a name bound to
+  one (the #9997 reading), sits at that same position, so a second closure
+  the helper never runs cannot carry the owner call.
+
+Same-file forward (credited): the receiving call is a single-segment free
+function defined once in the file, an evidence-helper role item of the
+test's own module (the direct-helper eligibility), neither the helper nor a
+name the helper binds, sharing no line with the test, whose plain body
+eagerly invokes exactly one parameter, the one at the forwarded argument
+position, under the invocation rule above. Then the helper's parser-backed
+assertions that start after the forwarding statement ends, and the receiving
+function's assertions that start after its invoking statement ends, are
+copied to the test with their own lines, filtered by each function's role
+(`assert_eq!` only for a `Production` integration-target item). The
+receiving function's calls, except the callback parameter's own call, are
+added with the helper's. A receiving function that forwards again, invokes
+the parameter only conditionally, or never invokes it is not followed
+(one hop).
+
+Unresolved forward (named limit, never credit): when the grammar holds but
+the receiving call is not such a same-file function (an external
+`with_default`, a qualified path, a method call, or a same-file function
+outside the rule) and the helper still has a role-admitted assertion after
+the forwarding statement, the helper-credit pass records a transient
+per-test limit naming the helper and the callee as written, and lends
+nothing. The classifier reads it only for a row it would otherwise mark
+`no_assertion` with no oracle: that row's miss becomes the analyzer-limit
+`assertion_admission_unproven` (RIPR-SPEC-0221) and the finding evidence
+gains one line, `closure forwarded by helper: test `a` calls helper
+`run_test`, which asserts after forwarding the closure to `with_default`;
+whether it runs the closure is not established statically`. No oracle, kind,
+strength, stage or class changes, so no verdict can rise to `exposed` (or
+anywhere) from this path; the change withdraws a false absence claim and its
+"add an assertion" repair. A test credited by another helper, and a helper
+that never runs or forwards the closure, keep their earlier readings.
 
 ### Selected tier literals through a returned binding (#13037)
 
@@ -3026,6 +3089,19 @@ assertions. This repair shares the existing callback without that larger migrati
   a return or `?` written in the callback literal, and the benign
   `format!("hi {}", "bob")` operand positive) pin
   observation-fact admission, not a changed-sink or owner-return claim.
+
+- Forwarded closure callbacks (#9981 forwarding residual):
+  `plain_helper_forwarding_a_closure_to_a_same_file_invoker_lends_its_later_assertion`
+  (the former #9997 pinned negative, now an intended positive),
+  `forwarded_closure_credits_the_same_file_invokers_own_observing_assertion`,
+  `forwarded_closure_to_an_unresolved_callee_is_a_named_limit_not_credit` and
+  `forwarded_closure_shapes_outside_the_grammar_grant_nothing_and_name_nothing`
+  in `crates/ripr/src/analysis/facts/test_helpers/tests.rs`;
+  `crates/ripr/tests/forwarded_closure_helper.rs` drives the public API: a
+  same-file forward reads exactly like the direct-invocation reference, and an
+  unresolved forward keeps the never-invoked control's class and strength
+  while its row reads `assertion_admission_unproven` with the named evidence
+  line (the never-invoked control stays `no_assertion`).
 
 - Cloned unused callbacks (#13219):
   `closure_callbacks::tests::cloned_callback_names_keep_the_plain_helper_withhold`

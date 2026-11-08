@@ -94,6 +94,43 @@ pub(in crate::analysis) fn split_assertion_not_credited_misses(
     }
 }
 
+/// #9981 forwarding residual: a row read as `no_assertion` whose test calls a
+/// same-file helper that asserts after forwarding the test's closure to a call
+/// ripr cannot resolve (tracing's `with_default(subscriber, fun)`) does have
+/// an assertion; whether it observes the closure is what is unknown. Such a
+/// row becomes the analyzer-limit miss `assertion_admission_unproven`
+/// (RIPR-SPEC-0221) and the finding names the helper and callee. It grants no
+/// oracle, strength or stage, so no class can rise from it; only the false
+/// absence claim (and its "add an assertion" repair) is withdrawn.
+pub(in crate::analysis) fn name_forwarded_callback_limits(
+    context: &ProbeContext<'_>,
+    related_tests: &mut [RelatedTest],
+    evidence: &mut Vec<String>,
+) {
+    for row in related_tests.iter_mut() {
+        if row.miss != Some(RelatedTestMiss::NoAssertion) || row.oracle.is_some() {
+            continue;
+        }
+        let Some(limit) = context
+            .index
+            .forwarded_callback_limit(&row.file, row.line, &row.name)
+        else {
+            continue;
+        };
+        row.miss = Some(RelatedTestMiss::AssertionAdmissionUnproven);
+        let line = format!(
+            "{FORWARDED_CALLBACK_PREFIX}test `{}` calls helper `{}`, which asserts after forwarding the closure to `{}`; whether it runs the closure is not established statically",
+            row.name, limit.helper, limit.callee
+        );
+        if !evidence.contains(&line) {
+            evidence.push(line);
+        }
+    }
+}
+
+/// Evidence prefix of a [`name_forwarded_callback_limits`] line.
+pub(in crate::analysis) const FORWARDED_CALLBACK_PREFIX: &str = "closure forwarded by helper: ";
+
 #[cfg(test)]
 mod combine_tests {
     use super::combine_refusal_misses;
