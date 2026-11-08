@@ -1392,7 +1392,9 @@ own recovery naming the budget (split or flatten the deeply nested expression,
 operator chain or `else if` chain), so it is never told to fix valid syntax
 (#13660). The human and GitHub reports cap an echoed canonical gap id (which
 embeds the changed expression) at 240 characters with a truncation marker; JSON
-and agent output keep the full id.
+and agent output keep the full id. A capped id is for display only: the
+"for scripts" line is truncated above 240 characters, so take the id from
+`--format json`; a truncated id does not resolve in `ripr repair`.
 
 When supported raw findings align to a canonical evidence item, `ripr check
 --json` also emits an additive `finding_alignment` section. The section is

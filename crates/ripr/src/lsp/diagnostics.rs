@@ -2248,25 +2248,47 @@ pub(super) fn file_has_parse_failure(
     file: &Path,
     outcome: Option<&AnalysisOutcome>,
 ) -> bool {
+    file_parse_failure_limitation(root, file, outcome).is_some()
+}
+
+/// True when the file's parse-failure limitation is the valid-Rust
+/// `rust_nesting_budget` decline rather than a syntax error (#13660). A file
+/// that also carries a real parse failure is not a nesting decline.
+pub(super) fn file_parse_failure_is_nesting_budget(
+    root: &Path,
+    file: &Path,
+    outcome: Option<&AnalysisOutcome>,
+) -> bool {
+    file_parse_failure_limitation(root, file, outcome).is_some_and(|limitation| {
+        limitation.recovery.detail == crate::analysis_outcome::RUST_NESTING_BUDGET_RECOVERY
+    })
+}
+
+fn file_parse_failure_limitation<'a>(
+    root: &Path,
+    file: &Path,
+    outcome: Option<&'a AnalysisOutcome>,
+) -> Option<&'a crate::analysis_outcome::AnalysisLimitation> {
     let relative = if file.is_absolute() {
-        let Ok(relative) = file.strip_prefix(root) else {
-            return false;
-        };
-        relative
+        file.strip_prefix(root).ok()?
     } else {
         file
     };
-    let Ok(path) = crate::analysis_outcome::normalize_portable_analysis_path(
+    let path = crate::analysis_outcome::normalize_portable_analysis_path(
         relative.to_string_lossy().as_ref(),
-    ) else {
-        return false;
-    };
-    outcome.is_some_and(|outcome| {
-        outcome.limitations.iter().any(|limitation| {
+    )
+    .ok()?;
+    // Prefer a real parse failure over a nesting-budget decline for one path.
+    outcome?
+        .limitations
+        .iter()
+        .filter(|limitation| {
             limitation_is_file_parse_failure(limitation)
                 && limitation.path.as_deref() == Some(path.as_str())
         })
-    })
+        .min_by_key(|limitation| {
+            limitation.recovery.detail == crate::analysis_outcome::RUST_NESTING_BUDGET_RECOVERY
+        })
 }
 
 /// One Information diagnostic on each changed file the language adapter could

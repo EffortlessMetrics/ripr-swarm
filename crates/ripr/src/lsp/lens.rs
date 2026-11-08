@@ -246,6 +246,10 @@ fn lens_line(snapshot: &AnalysisSnapshot, finding: &Finding) -> u32 {
 const PARSE_FAILED_LENS_TITLE: &str =
     "ripr: related tests unknown, this file did not parse · fix the syntax error and save";
 
+/// Advisory for valid Rust the nesting budget declined: not a syntax error
+/// (#13660).
+const NESTING_BUDGET_LENS_TITLE: &str = "ripr: related tests unknown, this file is over the parse nesting budget · split the deeply nested expression and save";
+
 /// True when `snapshot.analysis_outcome` carries a language-adapter producer
 /// failure limitation for the same portable path as `finding`.
 fn file_parse_failed(snapshot: &AnalysisSnapshot, finding: &Finding) -> bool {
@@ -379,7 +383,15 @@ fn finding_to_code_lens(
         end: Position { line, character: 0 },
     };
     let body = if file_parse_failed(snapshot, finding) {
-        PARSE_FAILED_LENS_TITLE.to_string()
+        if super::diagnostics::file_parse_failure_is_nesting_budget(
+            &snapshot.root,
+            &finding.probe.location.file,
+            snapshot.analysis_outcome.as_ref(),
+        ) {
+            NESTING_BUDGET_LENS_TITLE.to_string()
+        } else {
+            PARSE_FAILED_LENS_TITLE.to_string()
+        }
     } else {
         related_test_lens_title(finding, age)
     };
@@ -1719,6 +1731,37 @@ mod tests {
                 ));
             }
         }
+        Ok(())
+    }
+
+    #[test]
+    fn nesting_declined_file_gets_its_own_lens_title_and_real_parse_failure_keeps_its_own()
+    -> Result<(), String> {
+        let title_for = |recovery_text: &str| -> Result<String, String> {
+            let finding = make_finding("src/lib.rs", 10, ExposureClass::WeaklyExposed, 0, None);
+            let limitation = AnalysisLimitation::new(
+                AnalysisLimitationKind::ProducerFailure,
+                AnalysisStage::LanguageAdapter,
+                AnalysisRecovery::new(AnalysisRecoveryKind::InspectFailure, recovery_text)?,
+            )
+            .with_path("src/lib.rs")?;
+            let snapshot =
+                snapshot_with_parse_failure_limitation("/workspace", vec![finding], limitation)?;
+            let uri = parse_uri("file:///workspace/src/lib.rs")?;
+            code_lens_response(&uri, Some(&snapshot), &ClientFeatureProfile::unsupported())
+                .first()
+                .and_then(|lens| lens.command.as_ref())
+                .map(|command| command.title.clone())
+                .ok_or_else(|| "expected one lens".to_string())
+        };
+        let nesting = title_for(crate::analysis_outcome::RUST_NESTING_BUDGET_RECOVERY)?;
+        assert!(nesting.contains(NESTING_BUDGET_LENS_TITLE), "{nesting}");
+        assert!(!nesting.contains("syntax error"), "{nesting}");
+        let parse = title_for(crate::analysis_outcome::RUST_PARSE_FAILURE_RECOVERY)?;
+        assert!(parse.contains(PARSE_FAILED_LENS_TITLE), "{parse}");
+        assert!(lens_title_is_static_language_clean(
+            NESTING_BUDGET_LENS_TITLE
+        ));
         Ok(())
     }
 

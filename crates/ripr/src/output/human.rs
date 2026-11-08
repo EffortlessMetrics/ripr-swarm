@@ -2553,10 +2553,6 @@ mod tests {
         Ok(())
     }
 
-    /// #10691: the default view carries no internal noun from the issue's
-    /// list, on a propagation-unknown finding whose producer prose names an
-    /// "observable sink"; `human-full` keeps the stable tokens, glossed, and
-    /// leads stop reasons with the sentence.
     #[test]
     fn long_gap_id_is_capped_in_the_default_view_and_short_ids_are_whole() {
         // #13660: a gap id embeds the changed expression; one huge generated
@@ -2586,10 +2582,34 @@ mod tests {
         );
         assert!(line.chars().count() < 400, "{}", line.chars().count());
         assert!(!rendered.contains(&long));
+        // The exhaustive per-finding card caps the same id.
+        let full = super::render_full_with_config(
+            &bounded_output_with_findings(vec![{
+                let mut f = sample_finding();
+                f.canonical_gap = Some(crate::domain::FindingCanonicalGap {
+                    id: long.clone(),
+                    language: "rust".to_string(),
+                    file: "src/lib.rs".to_string(),
+                    owner: "f".to_string(),
+                    behavior_kind: "static_unknown".to_string(),
+                    probe_kind: "predicate".to_string(),
+                    normalized_discriminator: "x".to_string(),
+                });
+                f
+            }]),
+            &RiprConfig::default(),
+        );
+        assert!(full.contains("gap id (for scripts): "), "{}", full.len());
+        assert!(!full.contains(&long));
+        assert!(full.len() < 20_000, "{}", full.len());
         let short = "gap:rust:src/lib.rs:f:predicate_boundary:predicate:a==1";
         assert_eq!(super::cap_rendered_identity(short), short);
     }
 
+    /// #10691: the default view carries no internal noun from the issue's
+    /// list, on a propagation-unknown finding whose producer prose names an
+    /// "observable sink"; `human-full` keeps the stable tokens, glossed, and
+    /// leads stop reasons with the sentence.
     #[test]
     fn plain_language_default_and_glossed_human_full() {
         let mut finding = sample_finding();
