@@ -4096,6 +4096,75 @@ fn check_json_diff_scope_oversized_emits_limited_artifact() -> Result<(), String
     Ok(())
 }
 
+/// #13641: a diff over `RIPR_MAX_DIFF_CHANGED_RUST_LINES` whose files each
+/// fit the limit degrades into the disclosed `limited_partial_scope` result
+/// (exit 0, gate-ineligible) instead of the `diff_scope_oversized` refusal.
+#[test]
+fn check_json_over_the_changed_rust_line_limit_degrades_into_partial_scope() -> Result<(), String> {
+    let dir = unique_temp_workspace("check-rust-line-limit-degrades");
+    std::fs::create_dir_all(dir.join("src")).map_err(|err| format!("mkdir: {err}"))?;
+    std::fs::write(
+        dir.join("Cargo.toml"),
+        "[package]\nname = \"degrade\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )
+    .map_err(|err| format!("write manifest: {err}"))?;
+    std::fs::write(dir.join("src/lib.rs"), "mod a;\nmod b;\nmod c;\n")
+        .map_err(|err| format!("write lib: {err}"))?;
+    let mut diff = String::new();
+    for module in ["a", "b", "c"] {
+        std::fs::write(
+            dir.join(format!("src/{module}.rs")),
+            format!("pub fn {module}(x: i32) -> bool {{ x >= 3 }}\n"),
+        )
+        .map_err(|err| format!("write {module}: {err}"))?;
+        diff.push_str(&format!(
+            "diff --git a/src/{module}.rs b/src/{module}.rs\n--- a/src/{module}.rs\n+++ b/src/{module}.rs\n@@ -1,1 +1,1 @@\n\
+             -pub fn {module}(x: i32) -> bool {{ x > 3 }}\n+pub fn {module}(x: i32) -> bool {{ x >= 3 }}\n"
+        ));
+    }
+    let diff_path = dir.join("change.diff");
+    std::fs::write(&diff_path, diff).map_err(|err| format!("write diff: {err}"))?;
+    let root = dir.display().to_string();
+    let diff = diff_path.display().to_string();
+    // 3 files x 2 changed lines = 6 > 5; the clamped 5-line budget selects
+    // the first two files (4 lines) and leaves `src/c.rs` uninspected.
+    let output = run_ripr_with_env(
+        &[
+            "check", "--root", &root, "--diff", &diff, "--json", "--quiet",
+        ],
+        &[("RIPR_MAX_DIFF_CHANGED_RUST_LINES", "5")],
+    );
+    assert_success(&output);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let value: serde_json::Value = serde_json::from_str(&stdout)
+        .map_err(|err| format!("check stdout should parse as JSON: {err}\n{stdout}"))?;
+    let scope = &value["analysis_scope"];
+    assert_eq!(scope["run_status"], "limited_partial_scope", "{stdout}");
+    assert_eq!(scope["gate_eligibility"], "ineligible");
+    assert_eq!(scope["downstream_consumable"], false);
+    assert_eq!(scope["line_budget"], 5);
+    assert_eq!(
+        scope["selected_files"],
+        serde_json::json!(["src/a.rs", "src/b.rs"])
+    );
+    assert_eq!(scope["uninspected_files_lower_bound"], 1);
+    assert_eq!(scope["uninspected_changed_lines_lower_bound"], 2);
+    assert_eq!(scope["stop_reason"], "line_budget");
+    assert!(
+        !stdout.contains("diff_scope_oversized: "),
+        "the changed-line guard must not refuse: {stdout}"
+    );
+    let findings = value["findings"].as_array().ok_or("findings array")?;
+    assert!(
+        findings
+            .iter()
+            .all(|finding| !finding.to_string().contains("src/c.rs")),
+        "an unselected file must never carry a finding"
+    );
+    std::fs::remove_dir_all(&dir).map_err(|err| format!("remove fixture root: {err}"))?;
+    Ok(())
+}
+
 /// One-file Python diff with six added lines (same shape as the #11832 LSP
 /// control). The language-neutral parser budget counts every added/removed
 /// payload, so a lowered `RIPR_MAX_DIFF_CHANGED_LINES=5` must refuse before

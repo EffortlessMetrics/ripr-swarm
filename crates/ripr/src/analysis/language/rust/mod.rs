@@ -106,7 +106,9 @@ const DIFF_INDEX_FILE_LIMIT_ENV: &str = "RIPR_MAX_DIFF_INDEX_FILES";
 /// Default ceiling on the number of added/removed Rust diff lines that may be
 /// expanded into probes. Large code-motion PRs can touch only one indexed file
 /// but still create thousands of probe/classifier records, exhausting
-/// constrained runners before an artifact is written (#1324).
+/// constrained runners before an artifact is written (#1324). Applied to the
+/// files a run analyzes: a larger diff degrades into a `limited_partial_scope`
+/// partition (#13641) and refuses only when one selected file alone exceeds it.
 const DIFF_CHANGED_RUST_LINE_LIMIT: usize = 2_000;
 
 /// Env override for [`DIFF_CHANGED_RUST_LINE_LIMIT`]. Operators can raise it
@@ -678,7 +680,7 @@ pub(crate) fn positive_limit_from_env(
 /// Default partial-selection budget on the number of changed-line files a
 /// diff-scoped Rust analysis will inspect before returning a bounded
 /// `limited_partial_scope` result (RIPR-PROP-0019, #1999). Deliberately
-/// smaller than [`DIFF_INDEX_FILE_LIMIT`]: the hard guard protects runner
+/// smaller than [`DIFF_INDEX_FILE_LIMIT`]: the index guard protects runner
 /// memory and still fails closed with `diff_scope_oversized`; this budget is
 /// the lower, interactive-cost bound that yields a disclosed partial result
 /// instead of an all-or-nothing error.
@@ -1277,6 +1279,24 @@ fn select_partial_diff_partition_with_identity(
     })
 }
 
+/// The bounded partition for a run whose enabled-language set leaves the
+/// Rust adapter out (#13641). The Rust adapter selects the partition for
+/// every language when it runs; without it, a preview-only diff over a
+/// changed-line guard still degrades into `limited_partial_scope` through the
+/// same selector, budgets, and identity instead of refusing outright.
+pub(crate) fn select_partial_diff_scope(
+    changed_files: &[ChangedFile],
+    enabled_languages: &[LanguageId],
+) -> Result<Option<PartialDiffScope>, String> {
+    let budgets = partial_diff_budgets()?;
+    Ok(select_partial_diff_partition_with_identity(
+        changed_files,
+        changed_files,
+        &budgets,
+        enabled_languages,
+    ))
+}
+
 fn changed_rust_line_count(changed_files: &[ChangedFile]) -> usize {
     changed_files
         .iter()
@@ -1311,6 +1331,30 @@ fn enforce_changed_rust_line_limit(
          `--path <glob>` and/or `--exclude <glob>` to `ripr check` (repeatable, \
          repository-relative; files left out are reported as not analyzed)."
     ))
+}
+
+/// The changed-Rust-line guard applied to the files this run analyzes
+/// (#13641): the selected partition of a `limited_partial_scope` run, or the
+/// whole analyzable diff otherwise. Selection clamps its line budget to the
+/// same limit, so the backstop refuses only when the first selected file alone
+/// exceeds the limit: a partition never splits a file, and analyzing it whole
+/// would bypass the runner-memory protection the guard exists for.
+fn enforce_changed_rust_line_limit_on_selection(
+    analyzable_changed_files: &[ChangedFile],
+    partial_scope: Option<&PartialDiffScope>,
+    line_limit: usize,
+) -> Result<(), String> {
+    match partial_scope {
+        Some(scope) => {
+            let selected = analyzable_changed_files
+                .iter()
+                .filter(|file| scope.selects(&file.path))
+                .cloned()
+                .collect::<Vec<_>>();
+            enforce_changed_rust_line_limit(&selected, line_limit)
+        }
+        None => enforce_changed_rust_line_limit(analyzable_changed_files, line_limit),
+    }
 }
 
 /// Extract the bare function name from a probe's owner SymbolId for the
@@ -2127,13 +2171,9 @@ impl RustAdapter {
             .filter(|file| !generated_sources.contains(&file.path))
             .cloned()
             .collect::<Vec<_>>();
-        enforce_changed_rust_line_limit(
-            &analyzable_changed_files,
-            diff_changed_rust_line_limit()?,
-        )?;
-        // RIPR-PROP-0019 (#1999): within the hard guards, a diff that exceeds
-        // the smaller partial-selection budget is analyzed as a deterministic
-        // bounded partition and reported as `limited_partial_scope` instead of
+        // RIPR-PROP-0019 (#1999): a diff that exceeds the smaller
+        // partial-selection budget is analyzed as a deterministic bounded
+        // partition and reported as `limited_partial_scope` instead of
         // failing closed with zero findings. A malformed override fails closed
         // as `partial_budget_invalid`.
         let partial_budgets = partial_diff_budgets()?;
@@ -2143,6 +2183,17 @@ impl RustAdapter {
             &partial_budgets,
             enabled_languages,
         );
+        // #13641: the changed-Rust-line guard measures what this run will
+        // actually analyze. A diff over the guard degrades into the bounded
+        // partition above (its line budget is clamped to the same limit)
+        // instead of refusing outright; the guard stays as a backstop on the
+        // selected partition, which can exceed it only when the first
+        // selected file alone carries more changed Rust lines than the limit.
+        enforce_changed_rust_line_limit_on_selection(
+            &analyzable_changed_files,
+            partial_scope.as_ref(),
+            diff_changed_rust_line_limit()?,
+        )?;
         let changed_rust_paths = analyzable_changed_files
             .iter()
             .filter(|file| self.accepts_path(&file.path))
@@ -3645,7 +3696,8 @@ mod tests {
         PartialDiffScope, PartialDiffStopReason, RustAdapter, apply_probe_and_oracle_limits,
         changed_rust_line_count, dependent_scope, diff_changed_rust_line_limit_from_env,
         diff_identity_from_changed_files, diff_index_file_limit_from_env,
-        diff_narrow_index_files_from_env, enforce_changed_rust_line_limit, is_binary_source_path,
+        diff_narrow_index_files_from_env, enforce_changed_rust_line_limit,
+        enforce_changed_rust_line_limit_on_selection, is_binary_source_path,
         is_cargo_binary_invocation, is_diff_scope_oversized, is_generated_rust_file,
         is_generated_rust_file_with_patterns, limitations_for_absent_changed_files,
         partial_diff_budgets_from_env, partition_canonical_form,
@@ -6895,6 +6947,59 @@ fn absent_delimiter_boundary_returns_head() {
                 "expected only Rust changed lines to count, got {count}"
             ));
         }
+        Ok(())
+    }
+
+    #[test]
+    fn changed_rust_line_guard_measures_the_selected_partition() -> Result<(), String> {
+        // #13641: three 2-line files (6 lines) exceed a 4-line guard, but the
+        // budgets clamped to that guard select a partition within it, so the
+        // run degrades into limited_partial_scope instead of refusing.
+        let files = vec![
+            changed_file("src/a.rs", 1, 1),
+            changed_file("src/b.rs", 1, 1),
+            changed_file("src/c.rs", 1, 1),
+        ];
+        assert!(enforce_changed_rust_line_limit(&files, 4).is_err());
+        let clamped = partial_diff_budgets_from_env(
+            Err(std::env::VarError::NotPresent),
+            Err(std::env::VarError::NotPresent),
+            DIFF_INDEX_FILE_LIMIT,
+            4,
+        )?;
+        assert_eq!(clamped.line_budget, 4);
+        assert_eq!(clamped.disclosures.len(), 1, "{:?}", clamped.disclosures);
+        let scope = select_partial_diff_partition(&files, &clamped, ALL_LANGUAGES)
+            .ok_or("an over-guard diff must select a partition")?;
+        assert_eq!(scope.selected_files, vec!["src/a.rs", "src/b.rs"]);
+        assert_eq!(scope.uninspected_files_lower_bound, 1);
+        assert_eq!(scope.uninspected_changed_lines_lower_bound, 2);
+        enforce_changed_rust_line_limit_on_selection(&files, Some(&scope), 4)?;
+        // Without a partition the guard still measures the whole diff.
+        assert!(enforce_changed_rust_line_limit_on_selection(&files, None, 4).is_err());
+
+        // Backstop: a first selected file that alone exceeds the guard is
+        // analyzed whole by the first-file exception, so the guard refuses.
+        let oversized_first = vec![
+            changed_file("src/a.rs", 3, 2),
+            changed_file("src/b.rs", 1, 0),
+        ];
+        let scope = select_partial_diff_partition(&oversized_first, &clamped, ALL_LANGUAGES)
+            .ok_or("an over-budget diff must select a partition")?;
+        assert_eq!(
+            scope.stop_reason,
+            PartialDiffStopReason::LineBudgetExceededOnFirstFile
+        );
+        let refusal =
+            match enforce_changed_rust_line_limit_on_selection(&oversized_first, Some(&scope), 4) {
+                Ok(()) => return Err("a 5-line first file must exceed a 4-line guard".to_string()),
+                Err(refusal) => refusal,
+            };
+        assert!(is_diff_scope_oversized(&refusal), "{refusal}");
+        assert!(
+            refusal.contains("5 changed Rust lines across 1 Rust files"),
+            "{refusal}"
+        );
         Ok(())
     }
 

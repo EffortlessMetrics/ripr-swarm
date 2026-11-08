@@ -1315,8 +1315,10 @@ fn enforce_changed_language_line_limit(
 /// failure is non-abort (recorded in `language_runs`), while this refusal is
 /// infra-class and must propagate exactly like the Rust guard's, so the
 /// `diff_scope_oversized` prefix handling (LSP conversion, CLI exit 2,
-/// `--json` limited artifact) keeps working. Runs after the Rust adapter so
-/// a mixed Rust+Python oversized diff keeps the Rust refusal it gets today.
+/// `--json` limited artifact) keeps working. Runs after the Rust adapter,
+/// over the selected partition when one exists (#13641), so an oversized
+/// diff degrades into `limited_partial_scope` and only a selected file that
+/// alone exceeds the budget still refuses.
 /// Counts only files each adapter would admit past its generated-name and
 /// excluded-directory authorities, so generated bulk cannot refuse a diff
 /// whose hand-written surface is small (Devin review, PR #10803).
@@ -1596,13 +1598,44 @@ fn run_pipeline_for_diff_text_with_language_config(
             &diff_scope_label(None),
         ));
     }
-    // #10730: fail closed before any preview adapter runs when an enabled
-    // preview language's changed-line count exceeds its budget. The refusal
-    // propagates like the Rust guard's, keeping the diff_scope_oversized
-    // prefix handling (LSP conversion, CLI exit 2, --json limited artifact)
-    // intact. The count admits only files each adapter's generated-name and
-    // excluded-directory authorities would let it probe.
-    enforce_changed_preview_line_limits(languages, &analysis_changed_files, language_config)?;
+    // #13641: without the Rust adapter nothing selected a partition, so a
+    // preview-only diff over its changed-line guard selects one here through
+    // the same selector instead of refusing outright. Below the guard the run
+    // keeps its full scope, exactly as before.
+    if partial_scope.is_none()
+        && !languages.contains(&LanguageId::Rust)
+        && enforce_changed_preview_line_limits(languages, &analysis_changed_files, language_config)
+            .is_err()
+    {
+        partial_scope =
+            super::language::select_partial_diff_scope(&analysis_changed_files, languages)?;
+    }
+    // When a partial partition exists, preview adapters analyze only the
+    // selected files; uninspected accounting lives on the scope record.
+    let selected_changed_files = partial_scope.as_ref().map(|scope| {
+        analysis_changed_files
+            .iter()
+            .filter(|file| scope.selects(&file.path))
+            .cloned()
+            .collect::<Vec<_>>()
+    });
+    // #10730 / #13641: fail closed before any preview adapter runs when an
+    // enabled preview language's changed-line count over the files this run
+    // analyzes (the selected partition, when one exists) exceeds its budget.
+    // A larger diff degrades into `limited_partial_scope` above; this stays a
+    // backstop for a first selected file that alone exceeds the guard. The
+    // refusal propagates like the Rust guard's, keeping the
+    // diff_scope_oversized prefix handling (LSP conversion, CLI exit 2,
+    // --json limited artifact) intact. The count admits only files each
+    // adapter's generated-name and excluded-directory authorities would let
+    // it probe.
+    enforce_changed_preview_line_limits(
+        languages,
+        selected_changed_files
+            .as_deref()
+            .unwrap_or(&analysis_changed_files),
+        language_config,
+    )?;
     let scope_label = diff_scope_label(partial_scope.as_ref());
     if let Some(limitation) = unanalyzed_source_language_limitation(&analysis_changed_files)? {
         limitations.push(limitation);
@@ -1614,21 +1647,9 @@ fn run_pipeline_for_diff_text_with_language_config(
             ));
         }
     }
-    // When the Rust adapter returned a partial partition, preview adapters
-    // analyze only the selected files; uninspected accounting lives on the
-    // scope record. Otherwise the full diff is dispatched as before.
-    let restricted_changed_files;
-    let preview_changed_files: &[diff::ChangedFile] = match &partial_scope {
-        Some(scope) => {
-            restricted_changed_files = analysis_changed_files
-                .iter()
-                .filter(|file| scope.selects(&file.path))
-                .cloned()
-                .collect::<Vec<_>>();
-            &restricted_changed_files
-        }
-        None => &changed_files,
-    };
+    // Otherwise the full diff is dispatched as before.
+    let preview_changed_files: &[diff::ChangedFile] =
+        selected_changed_files.as_deref().unwrap_or(&changed_files);
 
     // Limitations kept only because they describe caller-supplied evidence
     // (#5421). They say nothing about whether the diff parsed, so the
@@ -9161,6 +9182,9 @@ index 0000000..1111111 100644
 
     #[test]
     fn oversized_diff_still_fails_closed_without_a_scope() -> Result<(), String> {
+        // #13641: `src/big.rs` sorts first and alone carries 2,100 changed
+        // Rust lines, so even the one-file partition exceeds the guard: the
+        // backstop still refuses rather than analyze an over-limit file.
         let refusal = run_scoped("scope-none", &[], &[], &scoped_oversized_diff())?
             .err()
             .ok_or("an unscoped oversized diff must be refused")?;
@@ -9716,8 +9740,121 @@ index 0000000..1111111 100644
         Ok(())
     }
 
+    /// #13641: a diff whose `files` each stay under the changed-line guards
+    /// but whose total exceeds them. Every file carries `lines_per_file`
+    /// added lines built by `line`.
+    fn multi_file_diff(files: &[&str], lines_per_file: usize, line: fn(usize) -> String) -> String {
+        let mut diff = String::new();
+        for path in files {
+            diff.push_str(&format!(
+                "diff --git a/{path} b/{path}\n--- a/{path}\n+++ b/{path}\n@@ -0,0 +1,{lines_per_file} @@\n"
+            ));
+            for index in 0..lines_per_file {
+                diff.push_str(&format!("+{}\n", line(index)));
+            }
+        }
+        diff
+    }
+
+    /// The partition every #13641 degrade test expects from three 800-line
+    /// files under the default budgets: the first file only (a second would
+    /// cross the 1,000-line budget), the other two counted as uninspected.
+    fn assert_degraded_to_first_of_three(
+        result: &AnalysisResult,
+        first: &str,
+    ) -> Result<(), String> {
+        let scope = result
+            .partial_scope
+            .as_ref()
+            .ok_or("an over-guard diff must degrade into limited_partial_scope, not full scope")?;
+        assert_eq!(scope.run_status, PartialDiffScope::RUN_STATUS);
+        assert_eq!(scope.selected_files, vec![first.to_string()]);
+        assert_eq!(scope.selected_changed_lines, 800);
+        assert_eq!(scope.uninspected_files_lower_bound, 2);
+        assert_eq!(scope.uninspected_changed_lines_lower_bound, 1_600);
+        assert_eq!(scope.unselected_files.len(), 2);
+        assert_eq!(
+            scope.stop_reason,
+            super::super::language::PartialDiffStopReason::LineBudget
+        );
+        let outcome = result
+            .analysis_outcome
+            .as_ref()
+            .ok_or("outcome must be projected")?;
+        assert!(!outcome.kind.is_complete(), "{:?}", outcome.kind);
+        assert!(
+            outcome.limitations.iter().any(|limitation| limitation.kind
+                == AnalysisLimitationKind::DiffScopeOversized
+                && limitation
+                    .recovery
+                    .detail
+                    .contains("widen the analyzed partition")),
+            "the partial scope must be disclosed as a limitation"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn rust_diff_over_the_changed_line_guard_degrades_into_partial_scope() -> Result<(), String> {
+        // 3 x 800 = 2,400 changed Rust lines exceed the 2,000-line guard,
+        // which refused this diff before #13641. No single file exceeds it,
+        // so the bounded partition analyzes the first file instead.
+        let root = temp_root("rust-guard-degrade")?;
+        let files = ["src/a.rs", "src/b.rs", "src/c.rs"];
+        for path in files {
+            write(root.join(path).as_path(), "pub fn seed() -> u32 { 0 }\n")?;
+        }
+        let result = run_pipeline_for_diff_text(
+            &sample_rust_diff_options(root),
+            &OraclePolicy::default(),
+            &[LanguageId::Rust],
+            &crate::config::RustLanguageConfig::default(),
+            &multi_file_diff(&files, 800, |index| {
+                format!("pub fn f_{index}(x: u32) -> bool {{ x > {index} }}")
+            }),
+        )?;
+        assert_degraded_to_first_of_three(&result, "src/a.rs")
+    }
+
+    #[test]
+    fn python_diff_over_the_changed_line_guard_degrades_into_partial_scope() -> Result<(), String> {
+        // Python-only enablement: no Rust adapter selects a partition, so the
+        // pipeline selects one through the same selector (#13641).
+        let root = temp_root("py-guard-degrade")?;
+        let result = run_pipeline_for_diff_text(
+            &sample_rust_diff_options(root),
+            &OraclePolicy::default(),
+            &[LanguageId::Python],
+            &crate::config::RustLanguageConfig::default(),
+            &multi_file_diff(&["pkg/a.py", "pkg/b.py", "pkg/c.py"], 800, |index| {
+                format!("v_{index} = {index}")
+            }),
+        )?;
+        assert_degraded_to_first_of_three(&result, "pkg/a.py")
+    }
+
+    #[test]
+    fn typescript_diff_over_the_changed_line_guard_degrades_into_partial_scope()
+    -> Result<(), String> {
+        // Rust enabled alongside: the Rust adapter's partition governs the
+        // preview guard, which now measures only the selected files.
+        let root = temp_root("ts-guard-degrade")?;
+        let result = run_pipeline_for_diff_text(
+            &sample_rust_diff_options(root),
+            &OraclePolicy::default(),
+            &[LanguageId::Rust, LanguageId::TypeScript],
+            &crate::config::RustLanguageConfig::default(),
+            &multi_file_diff(&["web/a.ts", "web/b.ts", "web/c.ts"], 800, |index| {
+                format!("export const v_{index} = {index};")
+            }),
+        )?;
+        assert_degraded_to_first_of_three(&result, "web/a.ts")
+    }
+
     #[test]
     fn oversized_python_diff_is_refused_before_python_analysis() -> Result<(), String> {
+        // #13641: one file alone over the guard is the backstop case — a
+        // partition never splits a file, so it still refuses.
         let root = temp_root("py-guard-oversized")?;
         let refusal = run_pipeline_for_diff_text(
             &sample_rust_diff_options(root),

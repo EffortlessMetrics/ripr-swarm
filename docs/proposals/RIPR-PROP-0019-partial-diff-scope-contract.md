@@ -41,6 +41,8 @@ authority for #1999 (implementation) and for any future partition continuation.
 - A diff above the partial-selection budget but within the hard analysis-cost
   guards returns `limited_partial_scope` with a non-empty, deterministic
   partition instead of `diff_scope_oversized` and zero findings (decisions 1-3).
+  Since #13641 this includes a diff above the changed-line guards whose first
+  selected file fits them (decision 3).
 - Every partial result names its selected files, the lower-bound uninspected
   file and changed-line counts, and the stop reason (decision 4).
 - No partial result is accepted as a gate, baseline, badge, or RIPR Zero input
@@ -111,9 +113,17 @@ same partition.
 Three distinct limits, never conflated:
 
 - **Hard analysis-cost guards** (existing): `DIFF_INDEX_FILE_LIMIT` and
-  `DIFF_CHANGED_RUST_LINE_LIMIT`, with their env overrides. Above these the
-  run still fails closed with `diff_scope_oversized`. They protect runner
-  memory; partial selection never exceeds them.
+  `DIFF_CHANGED_RUST_LINE_LIMIT`, with their env overrides. Above the index
+  guard the run still fails closed with `diff_scope_oversized`. They protect
+  runner memory; partial selection never exceeds them. Revision (#13641): the
+  changed-line guards — `DIFF_CHANGED_RUST_LINE_LIMIT` and the preview
+  Python/TypeScript limits of RIPR-SPEC-0361 — measure the files the run
+  analyzes, so a diff over them degrades into the partition below (whose line
+  budget is clamped to the Rust limit) instead of refusing. They remain a
+  backstop on the selected partition: since files are never split, a first
+  selected file that alone exceeds a changed-line guard still fails closed
+  with `diff_scope_oversized`. The language-neutral streaming parse guards are
+  unchanged.
 - **Partial-selection budget** (new): a smaller, separately named budget
   (`RIPR_PARTIAL_DIFF_FILE_BUDGET`, `RIPR_PARTIAL_DIFF_LINE_BUDGET`) spent in
   the priority order of decision 2. When the diff exceeds this budget, the run

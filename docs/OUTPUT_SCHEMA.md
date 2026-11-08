@@ -1544,6 +1544,16 @@ preserves the normal check envelope (`schema_version`, `tool`, `mode`, `root`,
 - `run_limitations[]` with the same category, run status, repair route, and the
   budget diagnostic message
 
+Since #13641 the per-language changed-line limits
+(`RIPR_MAX_DIFF_CHANGED_RUST_LINES`, `RIPR_MAX_DIFF_CHANGED_PYTHON_LINES`,
+`RIPR_MAX_DIFF_CHANGED_TYPESCRIPT_LINES`) measure the files a run actually
+analyzes. A diff over them degrades into the bounded
+`analysis_scope.run_status: "limited_partial_scope"` result (RIPR-PROP-0019)
+instead of this refusal; the refusal remains only when the first selected file
+alone exceeds a limit (a partition never splits a file), and for the
+language-neutral streaming parse guards and the `RIPR_MAX_DIFF_INDEX_FILES`
+index guard, which still fail closed as described here.
+
 Consumers must not treat a limited `diff_scope_oversized` artifact as a clean
 or complete analysis. The zero summary and empty `findings` array mean analysis
 did not run far enough to classify probes, not that the diff has no findings.
