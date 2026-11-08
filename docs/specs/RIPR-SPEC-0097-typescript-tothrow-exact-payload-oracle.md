@@ -225,14 +225,22 @@ usual boundary witness decides whether the literal equals the missing
 boundary. A throw test at another input credits nothing. The credit needs
 all of these:
 
-- the owner is a function or arrow function with exactly one `throw`;
+- the owner is a function or arrow function with exactly one `throw` and no
+  other syntactically visible failure route: any `Promise.`, `new Promise`,
+  `reject`, `await`, `yield`, `.then(` or `.catch(` in the masked owner text
+  declines (a failure inside a called helper stays invisible and keeps the
+  weak reading);
+- the condition compares an owner parameter with a numeric literal, and the
+  call's argument for that parameter equals that literal, so a throw test at
+  another input is neither exposed nor projected as a strong related test;
 - the condition has no `&&`, `||` or `??`;
 - the matcher has no argument, or its one argument is the class the line
   throws, written as a bare identifier (`toThrow(RangeError)` for
   `throw new RangeError(...)`); a message string, pattern or other class
   is not credited;
 - the observed value is a callback `() => owner(...)` or, for
-  `rejects.toThrow`, the owner call itself;
+  `rejects.toThrow`, the owner call itself, where every `expect(<owner call>)`
+  of that call in the test carries its own `.rejects` modifier;
 - the test has no negated check (`.not.`) and does not declare its own
   owner name.
 

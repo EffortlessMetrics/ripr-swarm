@@ -9,9 +9,9 @@
 //! The credit is deliberately narrow. The changed line must be a single
 //! `if (<one comparison>) throw ...` line, the owner must contain no other
 //! `throw`, the test must call the owner with literal arguments only, and no
-//! assertion in that test may be negated. Whether the literal equals the
-//! missing boundary stays with the row activation witness, so a throw test
-//! at another input credits nothing.
+//! assertion in that test may be negated. The literal argument for the
+//! compared parameter must equal the boundary literal, so a throw test at
+//! another input credits nothing and is not shown as a strong related test.
 
 use super::*;
 
@@ -83,19 +83,100 @@ fn guarded_throw_class(line_text: &str) -> Option<Option<String>> {
     Some(class)
 }
 
-/// `true` when the owner source holds exactly one `throw`, so another throw
-/// cannot make a call at the boundary throw whatever the guard says.
+/// `true` when the only failure source the owner text shows is its one
+/// `throw`: no second `throw`, and nothing that can reject or throw through
+/// another route, so a call at the boundary cannot fail identically whatever
+/// the guard says. Conservative syntactic rule (RIPR-SPEC-0097): any
+/// `Promise.`, `new Promise`, `reject`, `await`, `yield`, `.then(` or `.catch(` in the masked
+/// owner text declines. Failures inside a called helper are not visible
+/// here and stay with the weak reading.
 fn owner_has_single_throw(owner_source: &str) -> bool {
     let masked = ts_mask_literals_and_comments(owner_source);
-    masked
-        .match_indices("throw")
-        .filter(|(index, _)| {
-            let before = masked[..*index].chars().next_back();
-            let after = masked[index + "throw".len()..].chars().next();
-            !before.is_some_and(is_identifier_char) && !after.is_some_and(is_identifier_char)
-        })
-        .count()
-        == 1
+    let keyword = |word: &str| {
+        masked
+            .match_indices(word)
+            .filter(|(index, _)| {
+                let before = masked[..*index].chars().next_back();
+                let after = masked[index + word.len()..].chars().next();
+                !before.is_some_and(is_identifier_char) && !after.is_some_and(is_identifier_char)
+            })
+            .count()
+    };
+    let other_failure_route = masked.contains("Promise.")
+        || masked.contains("new Promise")
+        || masked.contains("reject")
+        || masked.contains(".then(")
+        || masked.contains(".catch(")
+        || keyword("await") > 0
+        || keyword("yield") > 0;
+    keyword("throw") == 1 && !other_failure_route
+}
+
+/// The boundary the changed guard compares: the index of the owner
+/// parameter and the numeric literal it is compared with, from a condition
+/// `param OP 5` or `5 OP param`. `None` when the condition is anything else.
+fn guard_boundary(line_text: &str, owner: &TypeScriptOwner) -> Option<(usize, String)> {
+    let masked = ts_mask_literals_and_comments(line_text);
+    let code = masked.trim();
+    let code = code.strip_prefix("} else").map_or(code, str::trim_start);
+    let code = code.strip_prefix("else").map_or(code, str::trim_start);
+    let after_if = code.strip_prefix("if")?.trim_start();
+    let mut depth = 0_usize;
+    let mut close = None;
+    for (offset, c) in after_if.char_indices() {
+        match c {
+            '(' => depth += 1,
+            ')' => {
+                depth = depth.checked_sub(1)?;
+                if depth == 0 {
+                    close = Some(offset);
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    let condition = after_if.get(1..close?)?;
+    let (lhs, rhs) = ["===", "!==", "<=", ">=", "==", "!=", "<", ">"]
+        .iter()
+        .find_map(|op| condition.split_once(op))?;
+    let (lhs, rhs) = (lhs.trim(), rhs.trim());
+    let param_index = |name: &str| owner.params.iter().position(|param| param == name);
+    let literal = |text: &str| {
+        (!text.ends_with('n'))
+            .then(|| numeric_literal_value(text))
+            .flatten()
+    };
+    match (
+        param_index(lhs),
+        literal(rhs),
+        param_index(rhs),
+        literal(lhs),
+    ) {
+        (Some(index), Some(value), _, _) | (_, _, Some(index), Some(value)) => Some((index, value)),
+        _ => None,
+    }
+}
+
+/// `true` when every `expect(<observed>)` in the test body carries a
+/// `.rejects` modifier of its own, so a rejecting check on one call cannot
+/// stand for a synchronous throw check on another.
+fn observed_always_rejects(body_text: &str, observed: &str) -> bool {
+    let compact = |text: &str| -> String {
+        ts_mask_literals_and_comments(text)
+            .split_whitespace()
+            .collect()
+    };
+    let body = compact(body_text);
+    let needle = format!("expect({})", compact(observed));
+    let mut seen = 0_usize;
+    for (index, _) in body.match_indices(&needle) {
+        seen += 1;
+        if !body[index + needle.len()..].starts_with(".rejects.") {
+            return false;
+        }
+    }
+    seen > 0
 }
 
 /// Throw assertions on a literal call to the owner, where the changed line is
@@ -122,6 +203,9 @@ pub(crate) fn ts_throw_boundary_pin_facts(
         return facts;
     }
     let Some(thrown_class) = guarded_throw_class(line_text) else {
+        return facts;
+    };
+    let Some((boundary_index, boundary_value)) = guard_boundary(line_text, owner) else {
         return facts;
     };
     let pins = |assertion: &TypeScriptAssertion| {
@@ -177,19 +261,26 @@ pub(crate) fn ts_throw_boundary_pin_facts(
                     None => continue,
                 },
                 // `expect(f(0)).rejects.toThrow()`: no callback.
-                None if compact_body.contains(".rejects.") => observed,
+                None if observed_always_rejects(&test.body_text, observed) => observed,
                 None => continue,
             };
             let mut call = assertion.clone();
             call.observed_expression = Some(call_text.to_string());
-            let literal_arguments =
+            // Every argument is a scalar literal and the one the guard
+            // compares equals the boundary literal: a throw test at another
+            // input is not the check for this change.
+            let at_boundary =
                 ts_observed_owner_call_arguments(test, &call, &names, owner, &receivers)
                     .is_some_and(|arguments| {
                         arguments
                             .iter()
                             .all(|argument| is_scalar_literal(argument.trim()))
+                            && arguments.get(boundary_index).is_some_and(|argument| {
+                                numeric_literal_value(argument.trim()).as_deref()
+                                    == Some(boundary_value.as_str())
+                            })
                     });
-            if literal_arguments
+            if at_boundary
                 && observes_imported_owner_result(
                     test,
                     &call,

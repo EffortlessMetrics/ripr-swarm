@@ -99,12 +99,25 @@ fn throw_test_at_another_input_does_not_close_the_gap() -> Result<(), String> {
         let body = format!(
             "test('throws', () => {{\n  expect(() => mustPositive({input})).toThrow(RangeError);\n}});\n"
         );
-        assert_ne!(
-            class_of(&owner, &body)?,
-            ExposureClass::Exposed,
-            "input {input}"
-        );
+        let finding = classify(&owner, &body)?;
+        assert_ne!(finding.class, ExposureClass::Exposed, "input {input}");
+        // The related row must not read as an exact/strong oracle either.
+        assert!(!finding.related_tests.is_empty(), "input {input}");
+        for row in &finding.related_tests {
+            assert_ne!(row.oracle_kind, OracleKind::ExactValue, "input {input}");
+            assert_ne!(row.oracle_strength, OracleStrength::Strong, "input {input}");
+        }
     }
+    // The boundary input does project the credited row.
+    let at = "test('throws', () => {\n  expect(() => mustPositive(0)).toThrow(RangeError);\n});\n";
+    let finding = classify(&owner, at)?;
+    assert!(
+        finding
+            .related_tests
+            .iter()
+            .any(|row| row.oracle_kind == OracleKind::ExactValue
+                && row.oracle_strength == OracleStrength::Strong)
+    );
     Ok(())
 }
 
@@ -170,5 +183,36 @@ fn throw_test_does_not_close_a_guard_that_does_not_throw() -> Result<(), String>
     let owner = owner_source("  if (n < 0) return 0;");
     let body = "test('throws at zero', () => {\n  expect(() => mustPositive(0)).toThrow();\n});\n";
     assert_ne!(class_of(&owner, body)?, ExposureClass::Exposed);
+    Ok(())
+}
+
+#[test]
+fn rejects_modifier_on_another_assertion_does_not_credit_a_sync_throw_test() -> Result<(), String> {
+    let owner = owner_source(GUARD);
+    let body = "test('mixed', async () => {\n  await expect(Promise.reject(Error('x'))).rejects.toThrow();\n  expect(mustPositive(0)).toThrow();\n});\n";
+    assert_ne!(class_of(&owner, body)?, ExposureClass::Exposed);
+    // A callback-free call that is checked both with and without `.rejects`
+    // is not credited either.
+    let twice = "test('twice', async () => {\n  await expect(mustPositive(0)).rejects.toThrow();\n  expect(mustPositive(0)).toThrow();\n});\n";
+    assert_ne!(class_of(&owner, twice)?, ExposureClass::Exposed);
+    Ok(())
+}
+
+#[test]
+fn owner_with_another_failure_route_does_not_close_the_gap() -> Result<(), String> {
+    let body = "test('throws at zero', () => {\n  expect(() => mustPositive(0)).toThrow();\n});\n";
+    let rejects_body = "test('rejects at zero', async () => {\n  await expect(mustPositive(0)).rejects.toThrow();\n});\n";
+    for tail in [
+        "  return Promise.reject(new RangeError(\"bad\"));",
+        "  return new Promise((_, reject) => reject(new RangeError(\"bad\")));",
+        "  return await other(n);",
+    ] {
+        let owner = format!(
+            "export async function mustPositive(n: number): Promise<number> {{\n{GUARD}\n{tail}\n}}\n"
+        );
+        for test in [body, rejects_body] {
+            assert_ne!(class_of(&owner, test)?, ExposureClass::Exposed, "{tail}");
+        }
+    }
     Ok(())
 }
