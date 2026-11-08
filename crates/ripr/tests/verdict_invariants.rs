@@ -135,11 +135,20 @@ fn run_full(
         })
         .collect();
     rows.sort();
+    // Mask both the given and the canonical root (macOS /private/var,
+    // Windows verbatim prefixes) so only real run-to-run drift remains.
     let root_text = root.display().to_string();
+    let canonical_text = std::fs::canonicalize(&root)
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|_| root_text.clone());
     let mut full: Vec<String> = output
         .findings
         .iter()
-        .map(|f| format!("{f:?}").replace(&root_text, "<root>"))
+        .map(|f| {
+            format!("{f:?}")
+                .replace(&canonical_text, "<root>")
+                .replace(&root_text, "<root>")
+        })
         .collect();
     full.sort();
     Ok((rows, full))
@@ -257,12 +266,14 @@ fn test_function_rename_keeps_classes(lang: &Lang) -> Result<(), String> {
             .collect()
     };
     let base = baseline(lang)?;
-    if !base.iter().any(|r| {
+    if !base.iter().all(|r| {
         r.contains("|exposed|")
             || r.contains("|weakly_exposed|")
             || r.contains("|reachable_unrevealed|")
     }) {
-        return Err(format!("baseline has no oracle-dependent class: {base:?}"));
+        return Err(format!(
+            "baseline has a finding outside the oracle-dependent classes: {base:?}"
+        ));
     }
     let a = strip(base);
     let b = strip(run(
