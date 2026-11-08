@@ -10465,7 +10465,7 @@ impl Backend {
     /// the caller asked for the top packet, never that a malformed id was
     /// dropped.
     fn collect_repair_packet(&self, gap_id: Option<&str>) -> Option<LSPAny> {
-        let health = self.analysis_health_snapshot();
+        let health = self.analysis_health_for_currentness();
         if !health.allows_current_repairs() {
             // The reason stays `analysis_snapshot_stale` and the packet stays
             // withheld; the added fields only tell a client whether to retry

@@ -21248,6 +21248,36 @@ fn execute_command_collect_repair_packet_distinguishes_in_flight_from_terminal()
     })
 }
 
+#[test]
+fn execute_command_collect_repair_packet_withheld_during_debounce_window() -> Result<(), String> {
+    // A changed save advanced the revision but the attempt is not queued yet:
+    // the Succeeded pre-save snapshot must not be served as a current packet.
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|err| format!("failed to start test runtime: {err}"))?;
+    runtime.block_on(async {
+        let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
+        let backend = service.inner();
+        seed_successful_snapshot(backend)?;
+        backend.set_analysis_attempt_state_for_test(AnalysisAttemptState::Succeeded);
+        let before = repair_packet_sentinel_for(backend).await?;
+        if before["reason"] == "analysis_snapshot_stale" {
+            return Err(format!("succeeded snapshot must not be stale: {before}"));
+        }
+        backend.set_interactive_debounce_open_for_test(true);
+        let during = repair_packet_sentinel_for(backend).await?;
+        assert_eq!(during["status"], "not_actionable_or_incomplete");
+        assert_eq!(during["reason"], "analysis_snapshot_stale");
+        assert_eq!(during["refresh_state"], "in_flight");
+        assert_eq!(during["attempt_state"], "queued");
+        backend.set_interactive_debounce_open_for_test(false);
+        let after = repair_packet_sentinel_for(backend).await?;
+        assert_eq!(after, before);
+        Ok(())
+    })
+}
+
 async fn repair_packet_sentinel_for(backend: &Backend) -> Result<serde_json::Value, String> {
     backend
         .execute_command(ExecuteCommandParams {
