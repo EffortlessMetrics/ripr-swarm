@@ -143,6 +143,7 @@ fn find_transitive_witness(owner_name: &str, index: &RustIndex) -> Option<Transi
 pub(in crate::analysis) struct TransitiveReachIndex<'a> {
     index: &'a RustIndex,
     graph: OnceLock<ReachGraph<'a>>,
+    pub(in crate::analysis) effect_method_names: super::effect_carrier::EffectMethodNames<'a>,
 }
 
 struct ReachGraph<'a> {
@@ -1504,6 +1505,7 @@ impl<'a> TransitiveReachIndex<'a> {
         Self {
             index,
             graph: OnceLock::new(),
+            effect_method_names: super::effect_carrier::EffectMethodNames::new(index),
         }
     }
 
