@@ -6367,36 +6367,117 @@ pub(crate) fn line_prefix_looks_like_comment_or_string(body_text: &str, idx: usi
     prefix.trim_start().starts_with("//") || has_unclosed_quote_or_template(prefix)
 }
 
+/// `true` when `idx` falls inside an unclosed `/* ... */` comment.
+///
+/// A `/*` written inside a `//` line comment or a string on its line opens
+/// nothing (a comment such as `// a trailing /* after a segment`), so it
+/// must not hide the code after it (#13592 follow-up). Strings are tracked
+/// per line, like [`line_prefix_looks_like_comment_or_string`], so a
+/// misread quote cannot spill past its line.
 pub(crate) fn inside_block_comment(body_text: &str, idx: usize) -> bool {
-    let prefix = &body_text[..idx];
-    let comment_start = prefix.rfind("/*");
-    let comment_end = prefix.rfind("*/");
-    comment_start.is_some_and(|start| comment_end.is_none_or(|end| start > end))
+    let Some(prefix) = body_text.get(..idx) else {
+        return false;
+    };
+    let bytes = prefix.as_bytes();
+    let mut in_block = false;
+    let mut quote: Option<u8> = None;
+    let mut i = 0usize;
+    while i < bytes.len() {
+        let byte = bytes[i];
+        let next = bytes.get(i + 1).copied();
+        if in_block {
+            if byte == b'*' && next == Some(b'/') {
+                in_block = false;
+                i += 2;
+                continue;
+            }
+        } else if byte == b'\n' {
+            quote = None;
+        } else if let Some(open) = quote {
+            if byte == b'\\' {
+                i += 2;
+                continue;
+            }
+            if byte == open {
+                quote = None;
+            }
+        } else if byte == b'/' && next == Some(b'/') {
+            // Line comment: skip to the end of the line.
+            match bytes[i..].iter().position(|&b| b == b'\n') {
+                Some(offset) => {
+                    i += offset;
+                    continue;
+                }
+                None => return false,
+            }
+        } else if byte == b'/' && next == Some(b'*') {
+            in_block = true;
+            i += 2;
+            continue;
+        } else if matches!(byte, b'\'' | b'"' | b'`') {
+            quote = Some(byte);
+        }
+        i += 1;
+    }
+    in_block
 }
 
+/// `true` when `prefix` ends inside a string or template literal's text.
+///
+/// A template literal's `${...}` substitution is code, not text: a call
+/// written there runs (`` `${render(value)}` ``), so the scan tracks nested
+/// substitutions and their braces instead of treating everything after a
+/// backtick as text (#13592 follow-up). Line-local, like its callers.
 fn has_unclosed_quote_or_template(prefix: &str) -> bool {
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    enum Mode {
+        /// Code; the count is the open `{` depth inside a template
+        /// substitution (unused at the outermost level).
+        Code(usize),
+        Single,
+        Double,
+        Template,
+    }
+    let mut stack: Vec<Mode> = vec![Mode::Code(0)];
     let mut escaped = false;
-    let mut in_single = false;
-    let mut in_double = false;
-    let mut in_template = false;
-    for ch in prefix.chars() {
-        if escaped {
-            escaped = false;
-            continue;
-        }
-        if ch == '\\' {
-            escaped = true;
-            continue;
-        }
-        if ch == '\'' && !in_double && !in_template {
-            in_single = !in_single;
-        } else if ch == '"' && !in_single && !in_template {
-            in_double = !in_double;
-        } else if ch == '`' && !in_single && !in_double {
-            in_template = !in_template;
+    let mut chars = prefix.chars().peekable();
+    while let Some(ch) = chars.next() {
+        let Some(mode) = stack.last_mut() else {
+            return false;
+        };
+        match *mode {
+            Mode::Single | Mode::Double | Mode::Template if escaped => escaped = false,
+            Mode::Single | Mode::Double | Mode::Template if ch == '\\' => escaped = true,
+            Mode::Single if ch == '\'' => {
+                stack.pop();
+            }
+            Mode::Double if ch == '"' => {
+                stack.pop();
+            }
+            Mode::Template if ch == '`' => {
+                stack.pop();
+            }
+            Mode::Template if ch == '$' && chars.peek() == Some(&'{') => {
+                chars.next();
+                stack.push(Mode::Code(0));
+            }
+            Mode::Single | Mode::Double | Mode::Template => {}
+            Mode::Code(depth) => match ch {
+                '\'' => stack.push(Mode::Single),
+                '"' => stack.push(Mode::Double),
+                '`' => stack.push(Mode::Template),
+                '{' => *mode = Mode::Code(depth + 1),
+                '}' if depth > 0 => *mode = Mode::Code(depth - 1),
+                // Closes a template substitution and resumes the template
+                // text; a stray `}` at the outermost level stays code.
+                '}' if stack.len() > 1 => {
+                    stack.pop();
+                }
+                _ => {}
+            },
         }
     }
-    in_single || in_double || in_template
+    !matches!(stack.last(), Some(Mode::Code(_)))
 }
 
 pub(crate) fn is_javascript_identifier_char(ch: char) -> bool {
