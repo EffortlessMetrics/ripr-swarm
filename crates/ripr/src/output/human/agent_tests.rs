@@ -1339,3 +1339,173 @@ fn the_open_path_stays_at_the_floor_however_many_findings() {
         "{text}"
     );
 }
+
+fn verify_line(output: &CheckOutput) -> Result<String, String> {
+    let text = agent_dispatch(output, &RiprConfig::default())?;
+    let last = text.lines().last().ok_or("empty report")?.to_string();
+    assert_eq!(
+        text.matches("verify=").count(),
+        1,
+        "exactly one verification record, and it is last: {text}"
+    );
+    assert!(last.starts_with("verify="), "{text}");
+    assert!(text.ends_with('\n'), "{text}");
+    Ok(last)
+}
+
+fn with_counts(mut output: CheckOutput, findings: usize, exposed: usize) -> CheckOutput {
+    output.summary.findings = findings;
+    output.summary.exposed = exposed;
+    output
+}
+
+#[test]
+fn verification_record_completes_only_for_closed_outcomes_with_equal_full_counts()
+-> Result<(), String> {
+    use crate::analysis_outcome::AnalysisOutcomeKind::{CompleteNoFindings, CompleteWithFindings};
+    let none = outcome_output(CompleteNoFindings, Vec::new())?;
+    assert_eq!(
+        verify_line(&none)?,
+        "verify=complete|outcome=complete_no_findings|findings=0|exposed=0"
+    );
+    let exposed = with_counts(
+        outcome_output(
+            CompleteWithFindings,
+            vec![finding("probe:ok", ExposureClass::Exposed, 4)],
+        )?,
+        3,
+        3,
+    );
+    assert_eq!(
+        verify_line(&exposed)?,
+        "verify=complete|outcome=complete_with_findings|findings=3|exposed=3"
+    );
+    Ok(())
+}
+
+#[test]
+fn verification_record_counts_the_full_summary_not_the_displayed_subset() -> Result<(), String> {
+    use crate::analysis_outcome::AnalysisOutcomeKind::CompleteWithFindings;
+    // Only exposed findings are displayed (so `done=` prints), but the full
+    // summary still holds an unresolved gap hidden by triage or budgets.
+    let hidden = with_counts(
+        outcome_output(
+            CompleteWithFindings,
+            vec![finding("probe:ok", ExposureClass::Exposed, 4)],
+        )?,
+        5,
+        4,
+    );
+    let text = agent_dispatch(&hidden, &RiprConfig::default())?;
+    assert!(text.contains("\ndone="), "{text}");
+    assert_eq!(
+        verify_line(&hidden)?,
+        "verify=refused|outcome=complete_with_findings|findings=5|exposed=4|reason=gaps_remain"
+    );
+    // A displayed gap list capped by the budget never changes the full counts.
+    let many: Vec<Finding> = (0..30)
+        .map(|index| weak_gap(&format!("probe:gap{index}"), index + 1))
+        .collect();
+    let capped = with_counts(outcome_output(CompleteWithFindings, many)?, 30, 0);
+    let text = agent_dispatch(&capped, &RiprConfig::default())?;
+    assert!(text.contains("more gaps not shown"), "{text}");
+    assert_eq!(
+        verify_line(&capped)?,
+        "verify=refused|outcome=complete_with_findings|findings=30|exposed=0|reason=gaps_remain"
+    );
+    Ok(())
+}
+
+#[test]
+fn verification_record_refuses_missing_empty_scope_and_incomplete_outcomes() -> Result<(), String> {
+    use crate::analysis_outcome::AnalysisOutcomeKind::{
+        AnalysisFailed, NoBehavioralCandidates, NoChangedLines, NoScope, PartialWithLimitations,
+        UnsupportedInput,
+    };
+    let missing = output(Vec::new());
+    assert_eq!(
+        verify_line(&missing)?,
+        "verify=refused|outcome=missing|findings=0|exposed=0|reason=outcome_missing"
+    );
+    for kind in [NoScope, NoChangedLines, NoBehavioralCandidates] {
+        // The per-kind count invariants are the producer's; this test only
+        // varies the closed kind of an otherwise valid complete outcome.
+        let mut empty = outcome_output(
+            crate::analysis_outcome::AnalysisOutcomeKind::CompleteNoFindings,
+            Vec::new(),
+        )?;
+        empty
+            .analysis_outcome
+            .as_mut()
+            .ok_or("missing outcome")?
+            .kind = kind;
+        let line = verify_line(&empty)?;
+        assert_eq!(
+            line,
+            format!(
+                "verify=refused|outcome={}|findings=0|exposed=0|reason=no_behavior_in_scope",
+                kind.as_str()
+            )
+        );
+    }
+    for kind in [PartialWithLimitations, UnsupportedInput, AnalysisFailed] {
+        let line = verify_line(&outcome_output(kind, Vec::new())?)?;
+        assert_eq!(
+            line,
+            format!(
+                "verify=refused|outcome={}|findings=0|exposed=0|reason=analysis_incomplete",
+                kind.as_str()
+            )
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn verification_record_refuses_stale_worktree_and_no_scope() -> Result<(), String> {
+    use crate::analysis_outcome::AnalysisOutcomeKind::CompleteNoFindings;
+    let mut stale = outcome_output(CompleteNoFindings, Vec::new())?;
+    stale.unanalyzed_working_tree = true;
+    assert_eq!(
+        verify_line(&stale)?,
+        "verify=refused|outcome=complete_no_findings|findings=0|exposed=0|reason=unanalyzed_working_tree"
+    );
+    let mut no_scope = outcome_output(CompleteNoFindings, Vec::new())?;
+    no_scope.no_scope_provided = true;
+    assert_eq!(
+        verify_line(&no_scope)?,
+        "verify=refused|outcome=complete_no_findings|findings=0|exposed=0|reason=no_scope"
+    );
+    let mut both = outcome_output(CompleteNoFindings, Vec::new())?;
+    both.unanalyzed_working_tree = true;
+    both.no_scope_provided = true;
+    assert!(
+        verify_line(&both)?.ends_with("reason=unanalyzed_working_tree,no_scope"),
+        "every unmet condition is named"
+    );
+    Ok(())
+}
+
+#[test]
+fn verification_record_follows_every_terminal_and_is_the_last_line() -> Result<(), String> {
+    use crate::analysis_outcome::AnalysisOutcomeKind::{
+        CompleteWithFindings, PartialWithLimitations,
+    };
+    for output in [
+        outcome_output(PartialWithLimitations, Vec::new())?,
+        outcome_output(CompleteWithFindings, vec![weak_gap("probe:gap", 2)])?,
+        outcome_output(
+            CompleteWithFindings,
+            vec![finding("probe:lim", ExposureClass::NoStaticPath, 3)],
+        )?,
+        output(Vec::new()),
+    ] {
+        let text = agent_dispatch(&output, &RiprConfig::default())?;
+        let last = text.lines().last().ok_or("empty report")?;
+        assert!(last.starts_with("verify="), "{text}");
+        assert_eq!(text.matches("verify=").count(), 1, "{text}");
+    }
+    // The explain drill-in is not a completion surface and carries no record.
+    assert!(!explained(&weak_gap("probe:gap", 2)).contains("verify="));
+    Ok(())
+}

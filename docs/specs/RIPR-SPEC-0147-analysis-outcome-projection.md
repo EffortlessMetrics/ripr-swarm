@@ -15,11 +15,12 @@ enough to establish that the input was fully analyzable.
 ## Behavior
 
 The generated agent loop uses bounded Agent output to discover a gap, then a
-single post-edit `json-compact` check for both verification and completion.
-The report must describe the same root, base and saved source; changed inputs
-require a fresh check. The consumer retains the complete outcome, analysis
-completeness, full summary counts and document/worktree disclosures before
-claiming done. An empty findings list alone is not completion evidence.
+single post-edit Agent-format check for both verification and completion.
+Its final `verify=` line (#13516) projects the complete outcome, analysis
+completeness, full summary counts and worktree/partial/no-scope disclosures;
+full JSON is an explicit drilldown. The report must describe the same root,
+base and saved source; changed inputs require a fresh check. The consumer
+requires `verify=complete` before claiming done. An empty findings list alone is not completion evidence.
 Explain navigation retains its printed format for artifact replay with an
 explicit suppression policy, since that combination refuses Agent format.
 

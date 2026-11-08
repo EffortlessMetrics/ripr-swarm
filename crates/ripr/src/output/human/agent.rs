@@ -18,6 +18,10 @@
 //! next=ripr explain --root /repo probe:...
 //! ```
 //!
+//! The last line is always `verify=complete|...` or `verify=refused|...|reason=`
+//! (#13516): the post-edit completion record, projected from the producer's
+//! outcome and full summary counts, never from the displayed subset.
+//!
 //! Terminal states are one explicit line: `done=` when nothing is left to fix
 //! from the test side, `stop=` when ripr cannot offer a test-side fix.
 //! Explain drill-ins keep this format unless an explicit suppression policy
@@ -51,6 +55,66 @@ pub(super) fn gap_line_budget(total: usize) -> usize {
 const FIELD_BUDGET: usize = 80;
 
 pub(super) fn render(
+    output: &CheckOutput,
+    config: &RiprConfig,
+    drill_in: Option<&FindingDrillIn>,
+    provenance: CheckDiffProvenance,
+) -> String {
+    let mut out = render_report(output, config, drill_in, provenance);
+    // #13516: the verification record is the last line, after every bounded
+    // section, so external truncation can never leave a leading success marker.
+    out.push_str(&verification_line(output));
+    out.push('\n');
+    out
+}
+
+/// The post-edit completion record for `ripr check --format agent` (#13516).
+///
+/// A pure projection of producer-owned facts: the closed analysis outcome, the
+/// full summary counts (never the displayed or triaged subset) and the
+/// saved-worktree and partial/no-scope disclosures. It adds no classifier or
+/// completeness decision of its own. `verify=complete` requires a present
+/// closed `complete_*` outcome that has behavior in scope, equal full
+/// findings/exposed counts, and no unanalyzed worktree, partial or no-scope
+/// condition. Anything missing is `verify=refused` with every reason named;
+/// empty findings or `done=` alone never establish completion. It is
+/// independent of the triage `done=` terminal, which keeps its own meaning.
+fn verification_line(output: &CheckOutput) -> String {
+    use crate::analysis_outcome::AnalysisOutcomeKind::{CompleteNoFindings, CompleteWithFindings};
+    let outcome = output.analysis_outcome.as_ref().map(|outcome| outcome.kind);
+    let mut reasons: Vec<&str> = Vec::new();
+    match outcome {
+        None => reasons.push("outcome_missing"),
+        Some(CompleteNoFindings | CompleteWithFindings) => {}
+        Some(kind) if kind.is_complete() => reasons.push("no_behavior_in_scope"),
+        Some(_) => reasons.push("analysis_incomplete"),
+    }
+    if output.summary.findings != output.summary.exposed {
+        reasons.push("gaps_remain");
+    }
+    if output.unanalyzed_working_tree {
+        reasons.push("unanalyzed_working_tree");
+    }
+    if output.partial_scope.is_some() {
+        reasons.push("partial_scope");
+    }
+    if output.no_scope_provided {
+        reasons.push("no_scope");
+    }
+    let facts = format!(
+        "outcome={}|findings={}|exposed={}",
+        outcome.map_or("missing", |kind| kind.as_str()),
+        output.summary.findings,
+        output.summary.exposed
+    );
+    if reasons.is_empty() {
+        format!("verify=complete|{facts}")
+    } else {
+        format!("verify=refused|{facts}|reason={}", reasons.join(","))
+    }
+}
+
+fn render_report(
     output: &CheckOutput,
     config: &RiprConfig,
     drill_in: Option<&FindingDrillIn>,
