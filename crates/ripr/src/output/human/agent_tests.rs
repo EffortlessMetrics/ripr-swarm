@@ -7,7 +7,7 @@ use crate::domain::{
     ActivationEvidence, Confidence, DeltaKind, DiscriminatorShape, ExposureClass, Finding,
     MissingDiscriminatorFact, OracleKind, OracleStrength, Probe, ProbeFamily, ProbeId, RelatedTest,
     RelatedTestMiss, RevealEvidence, RiprEvidence, SourceCurrentness, SourceLocation,
-    StageEvidence, StageState, StaticLimitKind, Summary,
+    StageEvidence, StageState, StaticLimitKind,
 };
 use std::path::PathBuf;
 
@@ -89,7 +89,11 @@ fn weak_gap(id: &str, line: usize) -> Finding {
     gap
 }
 
+/// Summary counts are derived from the supplied findings by the producer's
+/// own summarizer, so the full-summary `verify=` counts agree with the
+/// header on every fixture unless a test overrides them deliberately.
 fn output(findings: Vec<Finding>) -> CheckOutput {
+    let summary = crate::analysis::summary::summarize_findings(1, &findings);
     CheckOutput {
         value_origins: Default::default(),
         harness_projections: Vec::new(),
@@ -98,7 +102,7 @@ fn output(findings: Vec<Finding>) -> CheckOutput {
         mode: Mode::Draft,
         root: PathBuf::from("repo"),
         base: Some("origin/main".to_string()),
-        summary: Summary::default(),
+        summary,
         findings,
         preview_language_advisories: Vec::new(),
         language_runs: Vec::new(),
@@ -305,7 +309,13 @@ fn top_gap_carries_location_missing_value_test_id_and_next_command() {
         "t1=tests/t.rs:3 discount_runs relational_check `assert!(discount(10, 100) > 0);` miss=weak_assertion"
     );
     assert_eq!(lines[3], "next=ripr explain --format agent probe:a");
-    assert_eq!(lines.len(), 4, "{text}");
+    // #13516: the verification record is last and repeats the header's full
+    // counts (2 findings, 1 exposed); no outcome means refused.
+    assert_eq!(
+        lines[4],
+        "verify=refused|outcome=missing|findings=2|exposed=1|reason=outcome_missing,gaps_remain"
+    );
+    assert_eq!(lines.len(), 5, "{text}");
 }
 
 /// #13157: all three compact check drill-ins retain the same source
@@ -1460,4 +1470,260 @@ fn the_open_path_stays_at_the_floor_however_many_findings() {
         text.contains("\n+7 more open findings not shown;"),
         "{text}"
     );
+}
+
+fn verify_line(output: &CheckOutput) -> Result<String, String> {
+    let text = agent_dispatch(output, &RiprConfig::default())?;
+    let last = text.lines().last().ok_or("empty report")?.to_string();
+    assert_eq!(
+        text.matches("verify=").count(),
+        1,
+        "exactly one verification record, and it is last: {text}"
+    );
+    assert!(last.starts_with("verify="), "{text}");
+    assert!(text.ends_with('\n'), "{text}");
+    Ok(last)
+}
+
+fn with_counts(mut output: CheckOutput, findings: usize, exposed: usize) -> CheckOutput {
+    output.summary.findings = findings;
+    output.summary.exposed = exposed;
+    output
+}
+
+#[test]
+fn verification_record_completes_only_for_closed_outcomes_with_equal_full_counts()
+-> Result<(), String> {
+    use crate::analysis_outcome::AnalysisOutcomeKind::{CompleteNoFindings, CompleteWithFindings};
+    let none = outcome_output(CompleteNoFindings, Vec::new())?;
+    assert_eq!(
+        verify_line(&none)?,
+        "verify=complete|outcome=complete_no_findings|findings=0|exposed=0"
+    );
+    // The summary is derived from the supplied findings by the producer's
+    // summarizer (two findings, both exposed); no count is overridden.
+    let exposed = outcome_output(
+        CompleteWithFindings,
+        vec![
+            finding("probe:ok1", ExposureClass::Exposed, 4),
+            finding("probe:ok2", ExposureClass::Exposed, 9),
+        ],
+    )?;
+    assert_eq!((exposed.summary.findings, exposed.summary.exposed), (2, 2));
+    assert_eq!(
+        verify_line(&exposed)?,
+        "verify=complete|outcome=complete_with_findings|findings=2|exposed=2"
+    );
+    Ok(())
+}
+
+#[test]
+fn verification_record_counts_the_full_summary_not_the_displayed_subset() -> Result<(), String> {
+    use crate::analysis_outcome::AnalysisOutcomeKind::CompleteWithFindings;
+    // Only exposed findings are displayed (so `done=` prints), but the full
+    // summary still holds an unresolved gap hidden by triage or budgets.
+    let hidden = with_counts(
+        outcome_output(
+            CompleteWithFindings,
+            vec![finding("probe:ok", ExposureClass::Exposed, 4)],
+        )?,
+        5,
+        4,
+    );
+    let text = agent_dispatch(&hidden, &RiprConfig::default())?;
+    assert!(text.contains("\ndone="), "{text}");
+    assert_eq!(
+        verify_line(&hidden)?,
+        "verify=refused|outcome=complete_with_findings|findings=5|exposed=4|reason=gaps_remain"
+    );
+    // A displayed gap list capped by the budget never changes the full counts.
+    let many: Vec<Finding> = (0..30)
+        .map(|index| weak_gap(&format!("probe:gap{index}"), index + 1))
+        .collect();
+    let capped = with_counts(outcome_output(CompleteWithFindings, many)?, 30, 0);
+    let text = agent_dispatch(&capped, &RiprConfig::default())?;
+    assert!(text.contains("more gaps not shown"), "{text}");
+    assert_eq!(
+        verify_line(&capped)?,
+        "verify=refused|outcome=complete_with_findings|findings=30|exposed=0|reason=gaps_remain"
+    );
+    Ok(())
+}
+
+#[test]
+fn verification_record_refuses_missing_empty_scope_and_incomplete_outcomes() -> Result<(), String> {
+    use crate::analysis_outcome::AnalysisOutcomeKind::{
+        AnalysisFailed, NoBehavioralCandidates, NoChangedLines, NoScope, PartialWithLimitations,
+        UnsupportedInput,
+    };
+    let missing = output(Vec::new());
+    assert_eq!(
+        verify_line(&missing)?,
+        "verify=refused|outcome=missing|findings=0|exposed=0|reason=outcome_missing"
+    );
+    for kind in [NoScope, NoChangedLines, NoBehavioralCandidates] {
+        if kind == NoScope {
+            // A NoScope outcome that also disclosed `no_scope_provided`
+            // names both reasons.
+            let mut unscoped = outcome_output(
+                crate::analysis_outcome::AnalysisOutcomeKind::CompleteNoFindings,
+                Vec::new(),
+            )?;
+            unscoped
+                .analysis_outcome
+                .as_mut()
+                .ok_or("missing outcome")?
+                .kind = NoScope;
+            unscoped.no_scope_provided = true;
+            assert_eq!(
+                verify_line(&unscoped)?,
+                "verify=refused|outcome=no_scope|findings=0|exposed=0|reason=no_behavior_in_scope,no_scope"
+            );
+        }
+        // The per-kind count invariants are the producer's; this test only
+        // varies the closed kind of an otherwise valid complete outcome.
+        let mut empty = outcome_output(
+            crate::analysis_outcome::AnalysisOutcomeKind::CompleteNoFindings,
+            Vec::new(),
+        )?;
+        empty
+            .analysis_outcome
+            .as_mut()
+            .ok_or("missing outcome")?
+            .kind = kind;
+        let line = verify_line(&empty)?;
+        assert_eq!(
+            line,
+            format!(
+                "verify=refused|outcome={}|findings=0|exposed=0|reason=no_behavior_in_scope",
+                kind.as_str()
+            )
+        );
+    }
+    for kind in [PartialWithLimitations, UnsupportedInput, AnalysisFailed] {
+        let line = verify_line(&outcome_output(kind, Vec::new())?)?;
+        assert_eq!(
+            line,
+            format!(
+                "verify=refused|outcome={}|findings=0|exposed=0|reason=analysis_incomplete",
+                kind.as_str()
+            )
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn verification_record_refuses_stale_worktree_and_no_scope() -> Result<(), String> {
+    use crate::analysis_outcome::AnalysisOutcomeKind::CompleteNoFindings;
+    let mut stale = outcome_output(CompleteNoFindings, Vec::new())?;
+    stale.unanalyzed_working_tree = true;
+    assert_eq!(
+        verify_line(&stale)?,
+        "verify=refused|outcome=complete_no_findings|findings=0|exposed=0|reason=unanalyzed_working_tree"
+    );
+    let mut no_scope = outcome_output(CompleteNoFindings, Vec::new())?;
+    no_scope.no_scope_provided = true;
+    assert_eq!(
+        verify_line(&no_scope)?,
+        "verify=refused|outcome=complete_no_findings|findings=0|exposed=0|reason=no_scope"
+    );
+    let mut both = outcome_output(CompleteNoFindings, Vec::new())?;
+    both.unanalyzed_working_tree = true;
+    both.no_scope_provided = true;
+    assert!(
+        verify_line(&both)?.ends_with("reason=unanalyzed_working_tree,no_scope"),
+        "every unmet condition is named"
+    );
+    Ok(())
+}
+
+#[test]
+fn verification_record_refuses_untracked_but_not_ignored_excluded_source() -> Result<(), String> {
+    use crate::analysis_outcome::AnalysisOutcomeKind::CompleteNoFindings;
+    // A working-tree read leaves `unanalyzed_working_tree` false while routed
+    // source files outside the diff are listed; an untracked file in an
+    // enabled language must still refuse.
+    let clean = outcome_output(CompleteNoFindings, Vec::new())?;
+    assert_eq!(
+        verify_line(&clean)?,
+        "verify=complete|outcome=complete_no_findings|findings=0|exposed=0"
+    );
+    let mut untracked = outcome_output(CompleteNoFindings, Vec::new())?;
+    untracked.untracked_working_tree_source_paths = vec!["src/new.rs".to_string()];
+    assert!(!untracked.unanalyzed_working_tree);
+    assert_eq!(
+        verify_line(&untracked)?,
+        "verify=refused|outcome=complete_no_findings|findings=0|exposed=0|reason=untracked_source_excluded"
+    );
+    // Gitignored source is disclosed by the notes but never refuses.
+    let mut ignored = outcome_output(CompleteNoFindings, Vec::new())?;
+    ignored.ignored_working_tree_source_paths = vec![
+        "src/gen.rs".to_string(),
+        "node_modules/pkg/index.js".to_string(),
+    ];
+    assert!(!ignored.unanalyzed_working_tree);
+    assert_eq!(
+        verify_line(&ignored)?,
+        "verify=complete|outcome=complete_no_findings|findings=0|exposed=0"
+    );
+    let mut both = outcome_output(CompleteNoFindings, Vec::new())?;
+    both.untracked_working_tree_source_paths = vec!["src/new.rs".to_string()];
+    both.ignored_working_tree_source_paths = vec!["src/gen.rs".to_string()];
+    assert!(
+        verify_line(&both)?.ends_with("reason=untracked_source_excluded"),
+        "only the untracked condition is named"
+    );
+    Ok(())
+}
+
+#[test]
+fn verification_record_refuses_a_partial_scope_run() -> Result<(), String> {
+    use crate::analysis_outcome::AnalysisOutcomeKind::CompleteNoFindings;
+    let mut partial = outcome_output(CompleteNoFindings, Vec::new())?;
+    partial.partial_scope = Some(crate::analysis::PartialDiffScope {
+        run_status: crate::analysis::PartialDiffScope::RUN_STATUS.to_string(),
+        diff_identity: "sha256:diff".to_string(),
+        file_budget: 1,
+        line_budget: 1,
+        budget_disclosures: Vec::new(),
+        selected_files: vec!["src/a.rs".to_string()],
+        unselected_files: vec!["src/b.rs".to_string()],
+        selected_changed_lines: 1,
+        uninspected_files_lower_bound: 1,
+        uninspected_changed_lines_lower_bound: 1,
+        stop_reason: crate::analysis::PartialDiffStopReason::FileBudget,
+        next_file_changed_lines: Some(1),
+        whole_diff_budgets: None,
+        partition_identity: "sha256:partition".to_string(),
+    });
+    assert_eq!(
+        verify_line(&partial)?,
+        "verify=refused|outcome=complete_no_findings|findings=0|exposed=0|reason=partial_scope"
+    );
+    Ok(())
+}
+
+#[test]
+fn verification_record_follows_every_terminal_and_is_the_last_line() -> Result<(), String> {
+    use crate::analysis_outcome::AnalysisOutcomeKind::{
+        CompleteWithFindings, PartialWithLimitations,
+    };
+    for output in [
+        outcome_output(PartialWithLimitations, Vec::new())?,
+        outcome_output(CompleteWithFindings, vec![weak_gap("probe:gap", 2)])?,
+        outcome_output(
+            CompleteWithFindings,
+            vec![finding("probe:lim", ExposureClass::NoStaticPath, 3)],
+        )?,
+        output(Vec::new()),
+    ] {
+        let text = agent_dispatch(&output, &RiprConfig::default())?;
+        let last = text.lines().last().ok_or("empty report")?;
+        assert!(last.starts_with("verify="), "{text}");
+        assert_eq!(text.matches("verify=").count(), 1, "{text}");
+    }
+    // The explain drill-in is not a completion surface and carries no record.
+    assert!(!explained(&weak_gap("probe:gap", 2)).contains("verify="));
+    Ok(())
 }

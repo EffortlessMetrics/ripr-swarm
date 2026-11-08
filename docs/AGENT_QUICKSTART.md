@@ -72,14 +72,12 @@ Loop (max 3 rounds per gap):
 3. WRITE   One focused test next to the related test. Use assert_eq! on exact changed
            values: every changed field, branch and boundary (below, equal, above). Not
            `.is_some()`, `.is_empty()`, `<=`, or only whole-struct equality.
-4. VERIFY  `cargo test <your_test_name>` must pass. Then run `ripr check --quiet --format json-compact`
-           once on the same root, base and saved source (new files need `git add -N PATH`).
-           Check its exit status before reading the JSON; do not change inputs before DONE.
-5. DONE    Use that same report; require exit 0 and these fields:
-           `analysis_outcome.outcome.kind`: `complete_no_findings` or `complete_with_findings`;
-           `analysis_outcome.analysis_complete`: true; `summary.findings` = `summary.exposed`.
-           Missing required fields, `analysis_outcome.document_complete: false`, or
-           `unanalyzed_working_tree: true` mean STOP. Empty `.findings` alone is never enough.
+4. VERIFY  `cargo test <your_test_name>` must pass. Then run `ripr check --quiet --format agent`
+           once more on the same root, base and saved source (new files need `git add -N PATH`).
+           Check its exit status before reading it; do not change inputs before DONE.
+5. DONE    Use that same report; require exit 0 and its last line `verify=complete|...`.
+           `verify=refused`, a missing `verify=` line, or a cut-off report mean STOP.
+           `done=` or an empty gap list alone is never enough.
            If gaps remain, return to FIND; if inputs change, repeat VERIFY before DONE.
            Report tests and static result; this does not establish runtime bug detection.
 
@@ -159,24 +157,33 @@ For one finding, pick by what the consumer is:
 ## When the agent should stop
 
 **Done** requires the focused test to pass and the successful post-edit
-`ripr check --quiet --format json-compact` for the same root, base and saved
-source used by the loop. Use that single report for both verification and the
-done decision; if inputs change, run the check again.
-Read the complete report, not just `.findings` or the human message
-`State: no gap selected for repair`:
+`ripr check --quiet --format agent` for the same root, base and saved source
+used by the loop. Use that single report for both verification and the done
+decision; if inputs change, run the check again. Read its last line, not just
+`done=`, an empty gap list or the human message `State: no gap selected for
+repair`. That `verify=` record is projected from the producer's outcome and
+full summary counts, never from the displayed subset:
 
-- `analysis_outcome.outcome.kind` must be `complete_no_findings` or
-  `complete_with_findings`, and `analysis_outcome.analysis_complete` must be true.
-  `no_scope`, `no_changed_lines` and `no_behavioral_candidates` can also have
-  `analysis_complete: true`; they describe an empty analysis scope and do not
-  establish completion of the requested behavior review.
-- The required numeric `summary.findings` and `summary.exposed` counts must
-  match. These full-analysis counts also prevent a rendered subset from hiding
-  a remaining gap or a policy-suppressed finding.
-- `analysis_outcome.document_complete: false` means the output was truncated;
-  `unanalyzed_working_tree: true` means saved changes were not analyzed. Either
-  blocks done. These two fields are optional when the condition is absent;
-  missing outcome or summary fields do not establish completion.
+- `verify=complete|outcome=O|findings=N|exposed=N` means the outcome is
+  `complete_no_findings` or `complete_with_findings`, the full
+  `findings` and `exposed` counts are equal, and no unanalyzed working tree,
+  untracked source in an enabled language excluded from the diff, partial or
+  no-scope condition applies. A new file stays untracked until
+  `git add -N <path>`, so stage new files before the post-edit check.
+  Gitignored source is named in the notes but does not refuse.
+- `verify=refused|...|reason=R,...` names every unmet condition
+  (`outcome_missing`, `no_behavior_in_scope`, `analysis_incomplete`,
+  `gaps_remain`, `unanalyzed_working_tree`, `untracked_source_excluded`,
+  `partial_scope`, `no_scope`).
+  `no_scope`, `no_changed_lines` and `no_behavioral_candidates` are complete
+  analyses of an empty scope; they do not establish completion of the
+  requested behavior review.
+- The record is the last line, after the bounded gap lines, so a truncated
+  report cannot leave a leading success marker. A missing `verify=` line means
+  STOP.
+
+The full JSON (`--format json`) remains an explicit drilldown, not ordinary
+model input. Test execution stays a separate proof (`cargo test`).
 
 **Stop and report** the actual state when the outcome is empty, partial,
 unsupported or failed, required evidence is missing, or output is truncated.

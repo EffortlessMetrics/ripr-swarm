@@ -116,6 +116,8 @@ not a claim that the nextest run would pass or fail.
 
 ## cargo-mutants
 
+Switching from cargo-mutants? See [Coming from cargo-mutants](FROM_CARGO_MUTANTS.md).
+
 ripr answers "does a test appear to contain a discriminator for this change"
 without running anything. cargo-mutants answers it by running mutants. Use ripr
 to see where a change has no discriminator, add the test, then let cargo-mutants
