@@ -12845,6 +12845,11 @@ export const Eager = new Promise((resolve) => resolve(1));
 export const Copied = Array.from(nums, (n) => n + 1);
 export const Entries = Object.entries(obj).map(([k, v]) => v);
 export const Computed = reg["make"]("X", (inst) => {});
+export const Eached = _.each(items, (item) => sink(item));
+export const Replaced = s.replace(re, (m) => m.toUpperCase());
+export const ReplacedAll = s.replaceAll("a", (m) => m + m);
+export const Parsed = JSON.parse(text, (k, v) => v);
+export const Timed = _.times(3, (i) => i);
 "#,
     );
     let flag = |name: &str| {
@@ -12870,7 +12875,19 @@ export const Computed = reg["make"]("X", (inst) => {});
     assert_eq!(flag("NoCall"), Some((OwnerKind::ArrowFunction, false)));
     // Eagerly invoked callbacks run at module load: keep the old reading.
     for name in [
-        "Doubled", "Each", "Later", "Caught", "Eager", "Copied", "Entries", "Computed",
+        "Doubled",
+        "Each",
+        "Later",
+        "Caught",
+        "Eager",
+        "Copied",
+        "Entries",
+        "Computed",
+        "Eached",
+        "Replaced",
+        "ReplacedAll",
+        "Parsed",
+        "Timed",
     ] {
         assert_eq!(
             flag(name),

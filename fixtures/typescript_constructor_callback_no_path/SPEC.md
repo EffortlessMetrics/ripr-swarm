@@ -18,8 +18,8 @@ cargo xtask fixtures typescript_constructor_callback_no_path
 ## Then
 
 The finding stays `no_static_path`, and its missing-check and next-step wording
-says the changed code runs when a value built from `ZodTransform` is used, not
-at module load, instead of asking for an `expect(IMPORTED_CONST)` observer.
+says the changed code may run only when a value built from `ZodTransform` is
+used, not at module load, instead of asking for an `expect(IMPORTED_CONST)` observer.
 The negative control is `typescript_module_value_unused`, a plain constant
 initializer that keeps the module-initializer wording.
 

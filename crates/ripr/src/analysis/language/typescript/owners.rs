@@ -1154,6 +1154,11 @@ const EAGER_CALLBACK_METHODS: &[&str] = &[
     "race",
     "allSettled",
     "any",
+    "each",
+    "times",
+    "replace",
+    "replaceAll",
+    "parse",
 ];
 
 /// Whether a declarator initializer is directly a call that receives a
