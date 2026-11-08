@@ -646,15 +646,21 @@ from prose.
 readiness facts for one canonical item and, only when every gate is
 established, creates — or replays — one bounded in-memory repair transaction
 bound to the current snapshot, the item, and the root identity. The packet
-carries a deterministic `repair-attempt-` identity, the fix site (test file,
-line, oracle), an `allowed_edit_surface` limited to that test file, the
-edit-cage `must_not_change` statements, stop conditions, the before-evidence
-identity, an empty `command_routes` list with the typed limitation (concrete
-typed `CommandSpec` routes are published only by the durable CLI before
-phase), the shared non-claims, and the resource links. An ineligible item
-returns `isError: true` with `repair_packet_ready: false`, the typed
-ineligibility reason, `attempt: null` and a machine-readable `next` object
-(`kind` one of `nothing_to_do`, `write_test_by_hand`, `change_policy`,
+carries a deterministic `repair-attempt-` identity, the fix site (file, line,
+oracle), and its `allowed_edit_surface`. For an external test file,
+`inline_test_module` is `null`. For an admitted inline test module, it is an
+object with string `file`, `module`, and `boundary` fields: only new test
+functions inside that module may be added; production code, the module
+declaration, and existing tests stay unchanged. The advertised output schema
+admits both forms while keeping the packet's top level closed. The packet also
+carries the edit-cage `must_not_change` statements, stop conditions, the
+before-evidence identity, an empty `command_routes` list with the typed
+limitation (concrete typed `CommandSpec` routes are published only by the
+durable CLI before phase), the shared non-claims, and the resource links. `inline_test_module`
+remains optional in the output schema because an ineligible packet omits it.
+An ineligible item returns `isError: true` with `repair_packet_ready: false`,
+the typed ineligibility reason, `attempt: null` and a machine-readable `next`
+object (`kind` one of `nothing_to_do`, `write_test_by_hand`, `change_policy`,
 `commit_then_refresh`, `await_producer_fact`, or `terminal_static_limit`; the
 `reason`; an `mcp` route or `null`; and, only for `write_test_by_hand`,
 `after_editing_tests`; a
