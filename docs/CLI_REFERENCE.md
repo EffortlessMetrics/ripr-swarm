@@ -93,33 +93,33 @@ reports no runtime outcomes; a real mutation runner confirms later.
 | [`ripr calibrate`](#calibrate) | Show the calibration surface. | public |
 | [`ripr calibrate cargo-mutants`](#calibrate) | Calibrate static exposure against a cargo-mutants output JSON. | public |
 | [`ripr capabilities`](#capabilities) | Show per-language, framework and mode capability status. | public |
-| [`ripr check`](#check) | Analyze the current diff and name the top actionable gap. | public |
+| [`ripr check`](#check) | Find changed behavior in your diff that your tests may not catch. | public |
 | [`ripr start-here`](#first-pr) | Compatibility alias for first-pr; compose the same start-here bundle. | compatibility |
 | [`ripr completions`](#completions) | Print a tab-completion script for your shell. | public |
 | [`ripr config`](#config) | Show the configuration command surface. | public |
 | [`ripr config validate`](#config) | Validate ripr.toml without running analysis. | public |
-| [`ripr context`](#context) | Collect the tests and seams related to one finding. | public |
-| [`ripr continue`](#continue) | Continue the current repair attempt through its after phase. | public |
+| [`ripr context`](#context) | Print one finding's probe and related tests for an agent or script. | public |
+| [`ripr continue`](#continue) | After the test edit, check whether it closed the gap. | public |
 | [`ripr coverage-grip`](#coverage-grip) | Show the coverage-grip surface. | public |
 | [`ripr coverage-grip frontier`](#coverage-grip) | Project the coverage-grip frontier from ledger, delta, and zero-status artifacts. | public |
 | [`ripr diff`](#diff) | Analyze the diff between two revisions and write the JSON result to stdout. | public |
-| [`ripr doctor`](#doctor) | Probe the local tool versions and config this workspace needs. | public |
+| [`ripr doctor`](#doctor) | Check the local ripr setup and show what to fix. | public |
 | [`ripr evidence-health`](#evidence-health) | Summarize how strong the current static evidence looks. | public |
-| [`ripr explain`](#explain) | Explain one finding against the current diff. | public |
+| [`ripr explain`](#explain) | Show why ripr flagged one change. | public |
 | [`ripr feedback`](#feedback) | Show the feedback surface. | public |
 | [`ripr feedback export`](#feedback-export) | Join usefulness-feedback receipts onto route-quality rows. | public |
 | [`ripr feedback record`](#feedback-record) | Record one local usefulness-feedback receipt. | public |
 | [`ripr first-action`](#first-action) | Project the first useful action from review and evidence artifacts. | public |
-| [`ripr first-pr`](#first-pr) | Compose the start-here PR evidence bundle from existing artifacts. | public |
+| [`ripr first-pr`](#first-pr) | Summarize what to fix in one PR from existing ripr reports. | public |
 | [`ripr gate`](#gate) | Show the gate command surface. | public |
 | [`ripr gate evaluate`](#gate) | Evaluate advisory gate modes over PR guidance. | public |
 | [`ripr help`](#help) | Route to per-command options, the exhaustive reference, and the versioned machine catalog. | public |
 | [`ripr impacted-evidence`](#impacted-evidence) | Route later mutation work from PR evidence and labels. | public |
-| [`ripr init`](#init) | Install the ripr.toml configuration (and, with --ci, an advisory workflow). | public |
+| [`ripr init`](#init) | Write an optional ripr.toml and, with --ci, a non-blocking CI workflow. | public |
 | [`ripr lsp`](#lsp) | Run the experimental language server over stdio until the client disconnects. | public |
 | [`ripr mcp`](#mcp) | Serve the read-only MCP adapter over stdio until the client disconnects. | public |
 | [`ripr outcome`](#outcome) | Render the movement receipt between two saved snapshots. | public |
-| [`ripr pilot`](#pilot) | Find the top test gap and write an actionable pilot packet. | public |
+| [`ripr pilot`](#pilot) | Find the top test gap across the whole repository. | public |
 | [`ripr plus`](#plus) | Compose the repo-wide RIPR+ receipt from one existing artifact. | public |
 | [`ripr policy`](#policy) | Show the policy command surface. | public |
 | [`ripr policy history`](#policy-history) | Append a policy-history record and render the history view. | public |
@@ -143,7 +143,7 @@ reports no runtime outcomes; a real mutation runner confirms later.
 | [`ripr receipt`](#receipt) | Show the receipt surface. | public |
 | [`ripr receipt check`](#receipt-check) | Validate a receipt JSON against structure and the live gap set. | public |
 | [`ripr receipt write`](#receipt-write) | Author the canonical repair receipt for one completed attempt. | public |
-| [`ripr repair`](#repair) | Start a repair attempt for one gap, or select the gap to repair. | public |
+| [`ripr repair`](#repair) | Pick one Rust gap to close with a focused test edit and start tracking it. | public |
 | [`ripr reports`](#reports) | Show the reports surface. | public |
 | [`ripr reports ci-packet`](#reports-ci-packet) | Run the generated CI workflow's RIPR steps and write its artifact packet. | public |
 | [`ripr reports ci-summary`](#reports-ci-summary) | Print the generated CI workflow's step summary from existing artifacts. | public |
@@ -154,7 +154,7 @@ reports no runtime outcomes; a real mutation runner confirms later.
 | [`ripr reports ts-limitations`](#reports-ts-limitations) | Project TypeScript limitation counts from a check output artifact. | public |
 | [`ripr rerun`](#rerun) | Re-evaluate static evidence affected by one edited Rust test. | public |
 | [`ripr review-comments`](#review-comments) | Analyze a PR range and draft review comments with evidence links. | public |
-| [`ripr status`](#status) | Report the current repair state and the one next action. | public |
+| [`ripr status`](#status) | Show where the current repair stands and what to run next. | public |
 | [`ripr swarm`](#swarm) | Show the swarm surface. | public |
 | [`ripr swarm ingest`](#swarm-ingest) | Classify one external agent result for safe ingestion. | public |
 | [`ripr swarm queue`](#swarm-queue) | Rank gap-ledger records into a bounded, assignable repair queue. | public |
@@ -1522,6 +1522,8 @@ Options:
                            same findings with repeated evidence prose coded
                            against a document-head legend -> json-terse;
                            compact report for a coding agent -> agent;
+                           one sorted path:line:col gap line per actionable
+                           finding, nothing for exposed -> missed-txt;
                            file annotations in Actions logs -> github; code
                            scanning upload -> sarif (bounded minified:
                            sarif-compact); README badge ->
@@ -1532,7 +1534,7 @@ Options:
                              Analysis (diff-scoped):
                                human, human-full, json, json-compact,
                                json-terse, github,
-                               sarif, sarif-compact, agent,
+                               sarif, sarif-compact, agent, missed-txt,
                                check-findings-json (identified snapshot
                                for `agent verify`)
                              Badge (diff-scoped, for PR/CI status):
@@ -1546,6 +1548,12 @@ Options:
                                repo-badge-plus-json, repo-badge-plus-shields
                              Agent (machine-readable repair evidence):
                                agent-seam-packets-json
+                           missed-txt prints `path:line:col: <classification>
+                           <probe family>: <expression> -> <missing
+                           discriminator>` for each candidate-actionable,
+                           unsuppressed, non-exposed finding, sorted; exposed
+                           findings print nothing. Static classification only;
+                           no runtime mutation outcome is claimed.
                            json-compact is the same check document as json,
                            with only insignificant whitespace removed and one
                            final newline. Evidence, source identity, actions,
@@ -1576,7 +1584,7 @@ Options:
                            Apply a suppressions TOML (same schema as
                            .ripr/suppressions.toml) to the findings-based
                            formats (human, human-full, json, json-compact,
-                           github). exposure_gap
+                           github, missed-txt). exposure_gap
                            entries select findings by finding_id or by a
                            path glob (with optional static_class narrowing).
                            Suppressed findings stay visible in JSON with
@@ -1655,7 +1663,8 @@ Progress:
   run can be told from a hang. Non-TTY / CI output is newline-delimited
   with no control sequences. A TTY may reuse one line and stays silent
   for sub-threshold flashes. Machine formats (json, json-compact, sarif,
-  github) keep stdout byte-clean. With json, json-compact, sarif, badge-*
+  github, missed-txt) keep stdout byte-clean. With json, json-compact, sarif,
+  missed-txt, badge-*
   or agent selected and stderr not a terminal, the stream is off by default;
   `RIPR_PROGRESS=1` restores it. A terminal and the human formats keep it. Unknown totals
   never become a percentage or ETA. Progress does not mean analysis is faster
@@ -1913,7 +1922,9 @@ Options:
                    exit code. Selection refusals (no current attempt,
                    several attempts, an ended attempt, a blocked baseline,
                    an unanchored root) and operational errors before
-                   the verify step keep stdout empty.
+                   the verify step keep stdout empty. An unknown flag or
+                   stray argument prints the `cli_refusal` JSON document
+                   on stdout beside its exit 2 stderr prose.
   --quiet          Drop the after phase's progress narration and `wrote
                    <path>` lines from stderr. Refusal prose and the result
                    stay. `RIPR_QUIET` does the same.
@@ -4515,7 +4526,9 @@ Options:
                    `repair_attempt.attempt_id`, instead of the summary and
                    card. A repeated start prints the existing attempt's
                    status JSON. Refusals keep stderr prose, empty stdout
-                   and their exit codes.
+                   and their exit codes. An unknown flag prints the
+                   `cli_refusal` JSON document on stdout beside its exit 2
+                   stderr prose.
   --quiet          Drop the start's progress narration and `wrote <path>`
                    lines from stderr. Refusal prose, the attempt id and the
                    next command stay. `RIPR_QUIET` (any value except empty,

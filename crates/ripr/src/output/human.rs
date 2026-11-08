@@ -1573,7 +1573,7 @@ pub(crate) use evidence_lines::{
 };
 pub(crate) use sections::HUMAN_EVIDENCE_LEGEND;
 pub(crate) use sections::render_finding_with_config;
-pub(crate) use triage::unresolved_boundary_operand;
+pub(crate) use triage::{multi_comparison_predicate, unresolved_boundary_operand};
 
 #[cfg(test)]
 mod tests {
