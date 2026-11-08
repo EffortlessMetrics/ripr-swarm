@@ -11,12 +11,11 @@ name: Mutation spot check (Python)
 #
 # The `mutmut` job does the same with mutmut (#13842) on the packages of
 # benchmarks/mutation_spot_check/corpus-python-mutmut.json. mutmut has no
-# machine-readable location export, so for every mutant the job runs
-# `mutmut apply <name>`, records `git diff -U0` of the module, restores the
-# tree, and writes one {name, status, diff} JSON line; `--mutmut-dump` scores
-# that file. Both tools run on schedule; `tool` picks one on demand.
+# machine-readable location export, so for every mutant the job records
+# `mutmut show <name>` as one {name, status, diff} JSON line; `--mutmut-dump`
+# scores that file. Both tools run on schedule; `tool` picks one on demand.
 #
-# STATUS: the cosmic-ray job has run (#13776); the mutmut job has NOT run. No package in the corpus has been
+# STATUS: both jobs have run (#13776, #13842). No package in the corpus has been
 # confirmed to install, pass its tests, or produce a cosmic-ray session; the
 # first run is the first evidence. The receipt is advisory and its
 # `synthetic_diff_verdict` figures are never merged with the Rust span-join
@@ -184,11 +183,12 @@ jobs:
             printf '%s\t%s\t%s\t%s\n' "$name" "$rc" "$dir" "$module" >> "$status"
           done
 
-      - name: Write one apply-and-diff record per mutant
-        # mutmut has no location export: apply each listed mutant, record the
-        # module diff, restore. An unappliable mutant keeps an empty diff and is
-        # counted, not dropped. The checkout is then left as pinned, so ripr
-        # reads the real tree, not mutmut's trampolined copy.
+      - name: Write one mutmut show record per mutant
+        # mutmut has no location export: record `mutmut show` (the original
+        # versus mutant function, from mutmut's own module) for each listed
+        # mutant; the parser finds that function in the checkout. `mutmut
+        # apply` is not used: it rewrites the first same-named function in the
+        # module. A record whose show fails keeps an empty diff and is counted.
         shell: bash
         run: |
           set -uo pipefail
@@ -200,12 +200,11 @@ jobs:
             : > "$dump"
             sed -n 's/^    \([^:]*\): \(.*\)$/\1\t\2/p' "$RUNNER_TEMP/$name-results.txt" \
               | while IFS=$'\t' read -r mutant result; do
-                  (cd "$dir" && { mutmut apply "$mutant" > /dev/null 2>&1 || true; } \
-                    && diff=$(git diff --no-color --no-ext-diff -U0 -- "$module") \
-                    && git checkout -q -- "$module" \
-                    && jq -nc --arg name "$mutant" --arg status "$result" --arg diff "$diff" \
-                      '{name: $name, status: $status, diff: $diff}') >> "$dump"
+                  diff=$(cd "$dir" && mutmut show "$mutant" 2> /dev/null)
+                  jq -nc --arg name "$mutant" --arg status "$result" --arg diff "$diff" \
+                    '{name: $name, status: $status, diff: $diff}' >> "$dump"
                 done
+            # Leave the checkout as pinned, so ripr reads the real tree.
             (cd "$dir" && rm -rf mutants && git checkout -q -- . && git clean -fdqx)
             [ -s "$dump" ] && printf -- '--repo %s=%s --mutmut-dump %s=%s ' "$name" "$dir" "$name" "$dump" >> "$RUNNER_TEMP/xtask-args"
           done < "$reports/python-mutmut-status.tsv"

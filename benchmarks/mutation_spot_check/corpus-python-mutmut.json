@@ -1,19 +1,19 @@
 {
   "schema_version": "ripr-mutation-spot-check-python-mutmut-corpus-v1",
-  "status": "unrun",
-  "note": "Pinned for the mutmut job of .github/workflows/mutation-spot-check-python.yml (#13842). Revisions are HEAD commits cloned on 2026-11-08; the packages' tests were not run in an agent sandbox (third-party code runs only in that workflow). cachetools is pinned at the cosmic-ray corpus revision so the two tools can be compared on one tree.",
+  "status": "first_run_partial",
+  "note": "Pinned for the mutmut job of .github/workflows/mutation-spot-check-python.yml (#13842). Revisions are HEAD commits cloned on 2026-11-08; the packages' tests were not run in an agent sandbox (third-party code runs only in that workflow). cachetools is pinned at the cosmic-ray corpus revision so the two tools can be compared on one tree. First hosted run (42515371901): itsdangerous and cachetools finished; humanize was dropped because its unmutated suite fails under mutmut's trampoline (naturalsize(300) read '-300 Bytes'), and isodate replaces it.",
   "mutmut": {
     "version": "3.8.1"
   },
   "packages": [
     {
-      "name": "humanize",
-      "url": "https://github.com/python-humanize/humanize",
-      "sha": "d16e6352c9785c5ab86de0133222bd22e89b0db2",
-      "module_path": "src/humanize",
+      "name": "isodate",
+      "url": "https://github.com/gweis/isodate",
+      "sha": "17cb25eb7bc3556a68f3f7b241313e9bb8b23760",
+      "module_path": "src/isodate",
       "tests_dir": "tests",
-      "pip_extra": "freezegun",
-      "pytest_args": "-p no:cacheprovider -o addopts= --ignore=tests/test_benchmarks.py"
+      "pip_extra": "",
+      "pytest_args": "-p no:cacheprovider -o addopts="
     },
     {
       "name": "itsdangerous",
@@ -31,7 +31,8 @@
       "module_path": "src/tomli",
       "tests_dir": "tests",
       "pip_extra": "",
-      "pytest_args": "-p no:cacheprovider -o addopts="
+      "pytest_args": "-p no:cacheprovider -o addopts= --deselect=tests/test_misc.py::TestMiscellaneous::test_inline_array_recursion_limit",
+      "note": "The recursion-limit test is deselected: mutmut's trampoline adds stack frames, so the unmutated suite fails it."
     },
     {
       "name": "python-slugify",
@@ -40,7 +41,8 @@
       "module_path": "slugify",
       "tests_dir": "tests",
       "pip_extra": "",
-      "pytest_args": "-p no:cacheprovider -o addopts="
+      "pytest_args": "-p no:cacheprovider -o addopts= --ignore=tests/test_release.py",
+      "note": "tests/test_release.py imports the repo's tools/ package, which mutmut's mutants/ copy does not contain."
     },
     {
       "name": "cachetools",

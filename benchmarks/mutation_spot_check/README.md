@@ -289,19 +289,27 @@ receipt so a parser mismatch can be diagnosed.
 `--mutmut-dump <name>=<file>` (with the matching `--repo <name>=<checkout>`)
 scores Python mutmut (3.x) outcomes through the same join (#13842). mutmut
 has no machine-readable export of a mutant's location, so the workflow writes
-the file: for each mutant listed by `mutmut results --all true` it runs
-`mutmut apply <name>`, records `git diff -U0 -- <module>`, restores the tree,
-and writes one `{"name", "status", "diff"}` JSON line. The parser (`mutmut.rs`)
-takes the path from the diff's `+++ b/` header and the replaced range from its
-one hunk: the smallest span (common prefix and suffix removed) that turns the
-removed lines into the added ones, so multi-line mutants are located exactly.
-Every removed and context line must match the checkout at the hunk's line
-numbers. A diff that does not match, has several hunks, or only inserts or
-deletes whole lines keeps an `unlocatable_diff` or `unlocatable_multihunk`
-token and is never scored. A record with an empty diff (the mutant could not be
-applied) has no path, so it is counted by status in the receipt's
-`mutation_tool.records_without_diff` rather than dropped. `--mutmut-version`
-records the version; the workflow passes the corpus pin.
+the file: for each mutant listed by `mutmut results --all true` it records
+`mutmut show <name>` as one `{"name", "status", "diff"}` JSON line. That diff
+compares the original function with the mutant function from mutmut's own
+module, so it is the real mutation, but its line numbers count from the
+function and a method is dedented to column 0. The parser (`mutmut.rs`) finds
+the hunk's original side (context and removed lines) in the checkout at one
+constant indent (a line inside a multi-line string may also match verbatim)
+and requires exactly one placement, so code repeated verbatim in two places
+(`unlocatable_ambiguous`) or a dump from another revision (`unlocatable_diff`)
+is never scored. The replaced range is the smallest span (common prefix and
+suffix removed) that turns the removed lines into the re-indented added ones,
+so multi-line mutants are located exactly; a diff with several changed hunks
+is `unlocatable_multihunk`. A record with an empty diff has no path, so it is
+counted by status in the receipt's `mutation_tool.records_without_diff` rather
+than dropped. `--mutmut-version` records the version; the workflow passes the
+corpus pin.
+
+`mutmut apply` is deliberately not used. In mutmut 3.8.1 it replaces the first
+function of the mutant's name anywhere in the module (any class's `__init__`,
+or an `@overload` stub), and on the first hosted run it garbled the file for
+about a third of itsdangerous and cachetools mutants.
 
 Status mapping: mutmut's detected status is `caught` and its undetected status
 is `missed`; `timeout`, `no tests`, `skipped`, `not checked`, `suspicious`,
@@ -313,9 +321,11 @@ refused.
 
 The `mutmut` job of `.github/workflows/mutation-spot-check-python.yml` runs it
 weekly beside cosmic-ray (or alone with `tool=mutmut`) on the pinned packages of
-`corpus-python-mutmut.json` (humanize, itsdangerous, tomli, python-slugify, and
+`corpus-python-mutmut.json` (isodate, itsdangerous, tomli, python-slugify, and
 cachetools at the cosmic-ray revision for a cross-tool comparison). Each package
-must pass its own tests before mutmut runs. The recall figure the scoreboard
+must pass its own tests before mutmut runs, and mutmut must pass them again
+under its trampoline: humanize was dropped because it does not (see the corpus
+note), and tomli and python-slugify each skip one test that cannot run there. The recall figure the scoreboard
 reads is `recall_of_missed.by_language.python`: of the runtime-missed mutants with a
 scoreable verdict, the strict share ripr calls a gap and the share it calls a
 gap, weak or unknown.

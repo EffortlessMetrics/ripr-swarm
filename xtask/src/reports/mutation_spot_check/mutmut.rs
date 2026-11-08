@@ -5,24 +5,33 @@
 //! mutmut keeps its results in `mutants/<path>.meta` files and has no
 //! machine-readable export of a mutant's location, so the hosted workflow
 //! writes the dump itself: for every mutant listed by `mutmut results --all
-//! true` it runs `mutmut apply <name>`, records `git diff -U0 -- <module>`,
-//! and restores the tree. One JSON object per line:
+//! true` it records `mutmut show <name>`. One JSON object per line:
 //!
 //! ```text
-//! {"name": "pkg.mod.x_fn__mutmut_3", "status": "...", "diff": "<git diff>"}
+//! {"name": "pkg.mod.x_fn__mutmut_3", "status": "...", "diff": "<mutmut show>"}
 //! ```
 //!
-//! The diff is a real file diff, so the path comes from its `+++ b/<path>`
-//! header and the changed range from its one hunk. The replaced range and the
-//! replacement are the smallest span that turns the hunk's removed lines into
-//! its added lines (common prefix and suffix removed), so a multi-line mutant
-//! is located exactly too. Every removed line must match the checkout at the
-//! hunk header's line number, so a dump from another revision is not scored.
-//! A mutant whose diff is empty, has several hunks or does not match the
-//! checkout keeps an `unlocatable_*` outcome token: it stays countable in the
-//! receipt and is never scored. A mutant with no diff at all has no path, so
-//! it cannot join a source file; such records are counted by status in the
-//! receipt's tool identity (`records_without_diff`) instead of disappearing.
+//! `mutmut show` diffs the original function against the mutant function
+//! (both read from mutmut's own trampolined module), so the diff is the real
+//! mutation, but its line numbers count from the function's first line and a
+//! method is dedented to column 0. `mutmut apply`, which would give a file
+//! diff, is not used: it replaces the first function of that name anywhere in
+//! the module (any class's `__init__`), which garbles the file for a third of
+//! the mutants of a class-heavy package.
+//!
+//! The path comes from the `+++ <path>` header. The hunk's original side
+//! (context and removed lines) is found in the checkout as a block at one
+//! constant indent (a line inside a multi-line string may also match
+//! verbatim); it must occur exactly once, so a dump from another revision, or
+//! code repeated verbatim in two places, is not scored. The replaced range
+//! and replacement are the smallest span that turns the located removed lines
+//! into the re-indented added lines (common prefix and suffix removed), so a
+//! multi-line mutant is located exactly too. A diff that cannot be located,
+//! has several changed hunks, or only inserts or deletes whole lines keeps an
+//! `unlocatable_*` outcome token: it stays countable in the receipt and is
+//! never scored. A record with no diff at all has no path, so it cannot join
+//! a source file; such records are counted by status in the receipt's tool
+//! identity (`records_without_diff`) instead of disappearing.
 //!
 //! A line that is not a well-formed record fails the parse: a silently
 //! skipped mutant would leave the population short of the real set.
@@ -33,6 +42,7 @@ use std::collections::BTreeMap;
 
 const UNLOCATABLE_DIFF: &str = "unlocatable_diff";
 const UNLOCATABLE_MULTIHUNK: &str = "unlocatable_multihunk";
+const UNLOCATABLE_AMBIGUOUS: &str = "unlocatable_ambiguous";
 
 /// Join outcome token for a mutmut status (the strings of mutmut's
 /// `status_by_exit_code`). Only a test run that detected the mutant is
@@ -53,8 +63,8 @@ pub(crate) fn outcome_of(status: &str) -> &'static str {
     }
 }
 
-/// Path of a unified diff, from its `+++ b/<path>` header (or `--- a/<path>`
-/// for a deletion), without the `a/`/`b/` prefix.
+/// Path of a unified diff, from its `+++ <path>` header (or `--- <path>`),
+/// without a git `a/`/`b/` prefix.
 fn diff_path(diff: &str) -> Option<String> {
     let mut old = None;
     for line in diff.lines() {
@@ -63,12 +73,12 @@ fn diff_path(diff: &str) -> Option<String> {
         }
         if let Some(path) = line.strip_prefix("+++ ") {
             let path = path.strip_prefix("b/").unwrap_or(path).trim_end();
-            if path != "/dev/null" {
+            if path != "/dev/null" && !path.is_empty() {
                 return Some(path.to_string());
             }
         } else if let Some(path) = line.strip_prefix("--- ") {
             let path = path.strip_prefix("a/").unwrap_or(path).trim_end();
-            if path != "/dev/null" {
+            if path != "/dev/null" && !path.is_empty() {
                 old = Some(path.to_string());
             }
         }
@@ -76,53 +86,24 @@ fn diff_path(diff: &str) -> Option<String> {
     old
 }
 
-/// One hunk's removed and added lines.
-struct Hunk<'a> {
-    removed: Vec<&'a str>,
-    added: Vec<&'a str>,
-    /// Context lines in hunk order, with their original line numbers.
-    context: Vec<(usize, &'a str)>,
-    /// Original line number of each removed line.
-    removed_at: Vec<usize>,
-}
-
-fn hunks(diff: &str) -> Option<Vec<Hunk<'_>>> {
-    let mut hunks: Vec<Hunk<'_>> = Vec::new();
-    let mut cursor = 0usize;
+/// The body lines of each hunk, as `(marker, text)` with marker ' ', '-' or
+/// '+'. Header line numbers are not used: they count from the function.
+fn hunks(diff: &str) -> Vec<Vec<(char, &str)>> {
+    let mut hunks: Vec<Vec<(char, &str)>> = Vec::new();
     for line in diff.split('\n') {
-        if let Some(header) = line.strip_prefix("@@ -") {
-            let start = header.split([',', ' ']).next()?.parse::<usize>().ok()?;
-            // `-N,0` (pure insertion) names the line *before* the insertion.
-            let count = header
-                .split(' ')
-                .next()
-                .and_then(|range| range.split_once(','))
-                .map_or(Some(1), |(_, count)| count.parse::<usize>().ok())?;
-            let first = if count == 0 { start + 1 } else { start };
-            cursor = first;
-            hunks.push(Hunk {
-                removed: Vec::new(),
-                added: Vec::new(),
-                context: Vec::new(),
-                removed_at: Vec::new(),
-            });
+        if line.starts_with("@@") {
+            hunks.push(Vec::new());
             continue;
         }
         let Some(hunk) = hunks.last_mut() else {
             continue;
         };
-        if let Some(text) = line.strip_prefix('+') {
-            hunk.added.push(text);
-        } else if let Some(text) = line.strip_prefix('-') {
-            hunk.removed.push(text);
-            hunk.removed_at.push(cursor);
-            cursor += 1;
-        } else if let Some(text) = line.strip_prefix(' ') {
-            hunk.context.push((cursor, text));
-            cursor += 1;
+        let mut chars = line.chars();
+        if let Some(marker @ (' ' | '-' | '+')) = chars.next() {
+            hunk.push((marker, chars.as_str()));
         }
     }
-    Some(hunks)
+    hunks
 }
 
 /// UTF-16 length of `text`.
@@ -142,14 +123,57 @@ fn position_in(block: &str, offset: usize, first_line: usize) -> (u64, u64) {
 /// Start and end `(line, utf16 column)` (end exclusive) and replacement.
 type Location = ((u64, u64), (u64, u64), String);
 
-/// The replaced range (start/end `(line, utf16 column)`, end exclusive) and
-/// replacement text of a one-hunk diff against `source_lines`, or the reason
-/// it cannot be located.
-fn locate(diff: &str, source_lines: &[&str]) -> Result<Location, &'static str> {
-    let hunks = hunks(diff).ok_or(UNLOCATABLE_DIFF)?;
-    let changed: Vec<&Hunk<'_>> = hunks
+/// Whether checkout line `source` holds function-relative line `line` at
+/// `indent`: blank matches blank, and a line inside a multi-line string keeps
+/// its own indentation, so it may also match verbatim.
+fn line_matches(source: &str, indent: &str, line: &str) -> bool {
+    if line.trim().is_empty() {
+        return source.trim().is_empty();
+    }
+    source.strip_prefix(indent) == Some(line) || source == line
+}
+
+/// Every `(start index, indent)` at which `old` (the hunk's original side)
+/// occurs in `source_lines`.
+fn placements<'s>(old: &[&str], source_lines: &[&'s str]) -> Vec<(usize, &'s str)> {
+    let Some((anchor, anchor_text)) = old
         .iter()
-        .filter(|hunk| !hunk.removed.is_empty() || !hunk.added.is_empty())
+        .enumerate()
+        .find(|(_, line)| !line.trim().is_empty())
+    else {
+        return Vec::new();
+    };
+    let mut found: Vec<(usize, &str)> = Vec::new();
+    for (index, source) in source_lines.iter().enumerate() {
+        let Some(indent) = source.strip_suffix(*anchor_text) else {
+            continue;
+        };
+        if !indent.chars().all(char::is_whitespace) {
+            continue;
+        }
+        let Some(start) = index.checked_sub(anchor) else {
+            continue;
+        };
+        let fits = old.iter().enumerate().all(|(offset, line)| {
+            source_lines
+                .get(start + offset)
+                .is_some_and(|source| line_matches(source, indent, line))
+        });
+        if fits && !found.iter().any(|(at, _)| *at == start) {
+            found.push((start, indent));
+        }
+    }
+    found
+}
+
+/// The replaced range (start/end `(line, utf16 column)`, end exclusive) and
+/// replacement text of a one-hunk function-relative diff against
+/// `source_lines`, or the reason it cannot be located.
+fn locate(diff: &str, source_lines: &[&str]) -> Result<Location, &'static str> {
+    let hunks = hunks(diff);
+    let changed: Vec<&Vec<(char, &str)>> = hunks
+        .iter()
+        .filter(|hunk| hunk.iter().any(|(marker, _)| *marker != ' '))
         .collect();
     let [hunk] = changed.as_slice() else {
         return Err(if changed.is_empty() {
@@ -158,38 +182,58 @@ fn locate(diff: &str, source_lines: &[&str]) -> Result<Location, &'static str> {
             UNLOCATABLE_MULTIHUNK
         });
     };
-    // Every original-side line must match the checkout.
-    let matches = |(at, text): (usize, &str)| {
-        at.checked_sub(1)
-            .and_then(|index| source_lines.get(index))
-            .is_some_and(|line| *line == text)
+    // One contiguous change block: context, then -/+ lines, then context.
+    let first_change = hunk.iter().position(|(m, _)| *m != ' ');
+    let last_change = hunk.iter().rposition(|(m, _)| *m != ' ');
+    let (Some(first_change), Some(last_change)) = (first_change, last_change) else {
+        return Err(UNLOCATABLE_DIFF);
     };
-    if !hunk.context.iter().copied().all(matches)
-        || !hunk
-            .removed_at
-            .iter()
-            .copied()
-            .zip(hunk.removed.iter().copied())
-            .all(matches)
-    {
-        return Err(UNLOCATABLE_DIFF);
-    }
-    // A pure insertion or deletion of whole lines has no in-line range the
-    // join can express; mutmut does not produce one for a viable mutant.
-    if hunk.removed.is_empty() || hunk.added.is_empty() {
-        return Err(UNLOCATABLE_DIFF);
-    }
-    let first = *hunk.removed_at.first().ok_or(UNLOCATABLE_DIFF)?;
-    if hunk
-        .removed_at
+    if hunk[first_change..=last_change]
         .iter()
-        .enumerate()
-        .any(|(i, at)| *at != first + i)
+        .any(|(m, _)| *m == ' ')
     {
+        return Err(UNLOCATABLE_MULTIHUNK);
+    }
+    let old: Vec<&str> = hunk
+        .iter()
+        .filter(|(m, _)| *m != '+')
+        .map(|(_, text)| *text)
+        .collect();
+    let added: Vec<&str> = hunk
+        .iter()
+        .filter(|(m, _)| *m == '+')
+        .map(|(_, text)| *text)
+        .collect();
+    // Index in `old` of the first removed line, and how many there are.
+    let removed_at = hunk[..first_change].len();
+    let removed_count = old.len() - removed_at - (hunk.len() - last_change - 1);
+    // A pure insertion or deletion of whole lines has no in-line range the
+    // join can express.
+    if removed_count == 0 || added.is_empty() {
         return Err(UNLOCATABLE_DIFF);
     }
-    let old = hunk.removed.join("\n");
-    let new = hunk.added.join("\n");
+    let found = placements(&old, source_lines);
+    let (start, indent) = match found.as_slice() {
+        [one] => *one,
+        [] => return Err(UNLOCATABLE_DIFF),
+        _ => return Err(UNLOCATABLE_AMBIGUOUS),
+    };
+    let first = start + removed_at;
+    let old = source_lines[first..first + removed_count].join("\n");
+    let new = added
+        .iter()
+        .map(|line| {
+            if line.trim().is_empty() {
+                String::new()
+            } else {
+                format!("{indent}{line}")
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    if old == new {
+        return Err(UNLOCATABLE_DIFF);
+    }
     let prefix = old
         .char_indices()
         .zip(new.chars())
@@ -204,13 +248,10 @@ fn locate(diff: &str, source_lines: &[&str]) -> Result<Location, &'static str> {
         .take_while(|(a, b)| a == b)
         .map(|(a, _)| a.len_utf8())
         .sum();
-    if old == new {
-        return Err(UNLOCATABLE_DIFF);
-    }
-    let start = position_in(&old, prefix, first);
-    let end = position_in(&old, old.len() - suffix, first);
+    let start_pos = position_in(&old, prefix, first + 1);
+    let end_pos = position_in(&old, old.len() - suffix, first + 1);
     let replacement = new[prefix..new.len() - suffix].to_string();
-    Ok((start, end, replacement))
+    Ok((start_pos, end_pos, replacement))
 }
 
 /// Parse a mutmut dump into sources (sorted by path, mutants by position) and
@@ -312,7 +353,7 @@ pub(crate) fn parse_mutmut_dump(
         sources,
         json!({
             "name": "mutmut",
-            "report_format": "mutmut apply + git diff dump",
+            "report_format": "mutmut show dump",
             "version": version,
             "records": records,
             "records_without_diff": without_diff,
@@ -322,9 +363,33 @@ pub(crate) fn parse_mutmut_dump(
 
 #[cfg(test)]
 mod tests {
+    use super::super::synthetic_diff::synthesize_edit;
     use super::*;
 
-    const SOURCE: &str = "def f(x):\n    return x >= 1\n\ndef g(s):\n    return \"é\" + s + 'é'\n\ndef h(a, b):\n    return call(\n        a,\n        b,\n    )\n";
+    const SOURCE: &str = concat!(
+        "def f(x):\n",
+        "    return x >= 1\n",
+        "\n",
+        "class A:\n",
+        "    def __init__(self, s):\n",
+        "        \"\"\"Doc\n",
+        "        more doc.\"\"\"\n",
+        "        self.s = \"é\" + s + 'é'\n",
+        "\n",
+        "class B:\n",
+        "    def __init__(self, s):\n",
+        "        self.s = call(\n",
+        "            s,\n",
+        "            1,\n",
+        "        )\n",
+        "\n",
+        "class C:\n",
+        "    def __init__(self, s):\n",
+        "        self.s = call(\n",
+        "            s,\n",
+        "            1,\n",
+        "        )\n",
+    );
 
     fn read(path: &str) -> Option<String> {
         (path == "src/m.py").then(|| SOURCE.to_string())
@@ -334,25 +399,24 @@ mod tests {
         json!({"name": name, "status": status, "diff": diff}).to_string()
     }
 
-    fn one_line_diff(line: usize, old: &str, new: &str) -> String {
-        format!(
-            "diff --git a/src/m.py b/src/m.py\nindex 1..2 100644\n--- a/src/m.py\n+++ b/src/m.py\n@@ -{line} +{line} @@\n-{old}\n+{new}\n"
-        )
+    /// `mutmut show` output: a status comment, then a function-relative diff
+    /// of the dedented function.
+    fn show(body: &str) -> String {
+        format!("# m.x: survived\n--- src/m.py\n+++ src/m.py\n@@ -1,4 +1,4 @@\n{body}") // ripr-allow: static-language: mutmut status name
     }
 
     #[test]
-    fn recovers_the_smallest_replaced_span_from_a_real_file_diff() -> Result<(), String> {
+    fn locates_a_top_level_function_mutant_by_its_text() -> Result<(), String> {
         let dump = record(
             "m.x_f__mutmut_1",
             "survived", // ripr-allow: static-language: mutmut status name
-            &one_line_diff(2, "    return x >= 1", "    return x > 1"),
+            &show(" def f(x):\n-    return x >= 1\n+    return x > 1"),
         );
         let (sources, tool) = parse_mutmut_dump(&dump, &read, Some("3.8.1"))?;
         assert_eq!(sources.len(), 1);
         assert_eq!(sources[0].path, "src/m.py");
         let mutant = &sources[0].mutants[0];
         // The smallest span, not the operator token: `>=` -> `>` deletes `=`.
-        // The join only needs the changed lines, which are identical.
         assert_eq!(mutant.replacement, "");
         assert_eq!(
             (
@@ -372,23 +436,30 @@ mod tests {
     }
 
     #[test]
-    fn the_span_reproduces_the_diff_through_the_synthetic_join() -> Result<(), String> {
-        let diff = one_line_diff(
-            5,
-            "    return \"é\" + s + 'é'",
-            "    return \"XXéXX\" + s + 'é'",
-        );
-        let dump = record("m.x_g__mutmut_2", "killed", &diff); // ripr-allow: static-language: mutmut status name
+    fn a_dedented_method_is_re_indented_and_its_docstring_matches_verbatim() -> Result<(), String> {
+        // mutmut renders a method at column 0; the docstring's continuation
+        // line keeps its own indentation inside the string.
+        let diff = show(concat!(
+            " def __init__(self, s):\n",
+            "     \"\"\"Doc\n",
+            "         more doc.\"\"\"\n",
+            "-    self.s = \"é\" + s + 'é'\n",
+            "+    self.s = \"XXéXX\" + s + 'é'",
+        ));
+        let dump = record("m.xǁAǁ__init____mutmut_2", "killed", &diff); // ripr-allow: static-language: mutmut status name
         let (sources, _) = parse_mutmut_dump(&dump, &read, None)?;
         let mutant = &sources[0].mutants[0];
         // Columns count UTF-16 units; the shared prefix ends before `é`.
         assert_eq!(mutant.replacement, "XXéXX");
-        assert_eq!((mutant.start_col, mutant.end_col), (12, 13));
+        assert_eq!(
+            (mutant.start_line, mutant.start_col, mutant.end_col),
+            (8, 18, 19)
+        );
         assert_eq!(mutant.outcome, "caught");
-        let edit = super::super::synthetic_diff::synthesize_edit("src/m.py", SOURCE, mutant)
-            .map_err(str::to_string)?;
+        let edit = synthesize_edit("src/m.py", SOURCE, mutant).map_err(str::to_string)?;
         assert!(
-            edit.mutated.contains("    return \"XXéXX\" + s + 'é'\n"),
+            edit.mutated
+                .contains("        self.s = \"XXéXX\" + s + 'é'\n"),
             "{}",
             edit.mutated
         );
@@ -396,24 +467,35 @@ mod tests {
     }
 
     #[test]
+    fn code_repeated_verbatim_is_ambiguous_and_never_scored() -> Result<(), String> {
+        let diff = show(concat!(
+            " def __init__(self, s):\n",
+            "     self.s = call(\n",
+            "         s,\n",
+            "-        1,\n",
+            "+        2,\n",
+            "     )",
+        ));
+        let dump = record("m.xǁBǁ__init____mutmut_1", "survived", &diff); // ripr-allow: static-language: mutmut status name
+        let (sources, _) = parse_mutmut_dump(&dump, &read, None)?;
+        assert_eq!(sources[0].mutants[0].outcome, UNLOCATABLE_AMBIGUOUS);
+        Ok(())
+    }
+
+    #[test]
     fn multi_line_mutants_are_located_exactly() -> Result<(), String> {
-        let diff = "--- a/src/m.py\n+++ b/src/m.py\n@@ -9,2 +9,2 @@\n-        a,\n-        b,\n+        a,\n+        None,\n";
-        let dump = record("m.x_h__mutmut_1", "survived", diff); // ripr-allow: static-language: mutmut status name
-        let (sources, _) = parse_mutmut_dump(&dump, &read, None)?;
-        let mutant = &sources[0].mutants[0];
-        assert_eq!(mutant.replacement, "None");
-        assert_eq!(
-            (
-                mutant.start_line,
-                mutant.start_col,
-                mutant.end_line,
-                mutant.end_col
-            ),
-            (10, 8, 10, 9)
-        );
-        let spanning = "--- a/src/m.py\n+++ b/src/m.py\n@@ -9,2 +9,1 @@\n-        a,\n-        b,\n+        b,\n";
-        let dump = record("m.x_h__mutmut_2", "killed", spanning); // ripr-allow: static-language: mutmut status name
-        let (sources, _) = parse_mutmut_dump(&dump, &read, None)?;
+        let src = "def h(a, b):\n    return call(\n        a,\n        b,\n    )\n";
+        let read_h = |_: &str| Some(src.to_string());
+        let diff = show(concat!(
+            " def h(a, b):\n",
+            "     return call(\n",
+            "-        a,\n",
+            "-        b,\n",
+            "+        b,\n",
+            "     )",
+        ));
+        let dump = record("m.x_h__mutmut_2", "killed", &diff); // ripr-allow: static-language: mutmut status name
+        let (sources, _) = parse_mutmut_dump(&dump, &read_h, None)?;
         let mutant = &sources[0].mutants[0];
         assert_eq!(mutant.replacement, "");
         assert_eq!(
@@ -423,10 +505,9 @@ mod tests {
                 mutant.end_line,
                 mutant.end_col
             ),
-            (9, 8, 10, 8)
+            (3, 8, 4, 8)
         );
-        let edit = super::super::synthetic_diff::synthesize_edit("src/m.py", SOURCE, mutant)
-            .map_err(str::to_string)?;
+        let edit = synthesize_edit("src/m.py", src, mutant).map_err(str::to_string)?;
         assert!(
             edit.mutated
                 .contains("    return call(\n        b,\n    )\n")
@@ -436,11 +517,14 @@ mod tests {
 
     #[test]
     fn stale_multihunk_and_empty_diffs_are_kept_but_never_scored() -> Result<(), String> {
-        let stale = one_line_diff(1, "    return x >= 1", "    return x > 1");
-        let two = "--- a/src/m.py\n+++ b/src/m.py\n@@ -2 +2 @@\n-    return x >= 1\n+    return x > 1\n@@ -5 +5 @@\n-    return \"é\" + s + 'é'\n+    return \"é\" - s + 'é'\n";
+        let stale = show(" def f(x):\n-    return x >= 2\n+    return x > 2");
+        let two = show(concat!(
+            " def f(x):\n-    return x >= 1\n+    return x > 1\n",
+            "@@ -9 +9 @@\n-    y = 1\n+    y = 2",
+        ));
         let dump = [
             record("m.x_f__mutmut_1", "killed", &stale), // ripr-allow: static-language: mutmut status name
-            record("m.x_f__mutmut_2", "survived", two), // ripr-allow: static-language: mutmut status name
+            record("m.x_f__mutmut_2", "survived", &two), // ripr-allow: static-language: mutmut status name
             record("m.x_f__mutmut_3", "timeout", &stale),
             record("m.x_f__mutmut_4", "survived", ""), // ripr-allow: static-language: mutmut status name
             record("m.x_f__mutmut_5", "no tests", ""),
@@ -483,7 +567,7 @@ mod tests {
 
     #[test]
     fn malformed_records_and_unreadable_files_fail_the_parse() -> Result<(), String> {
-        let other = "--- a/src/other.py\n+++ b/src/other.py\n@@ -1 +1 @@\n-a\n+b\n";
+        let other = "--- src/other.py\n+++ src/other.py\n@@ -1 +1 @@\n-a\n+b\n";
         let no_diff = r#"{"name": "a", "status": "killed"}"#; // ripr-allow: static-language: mutmut status name
         let unreadable = record("o", "killed", other); // ripr-allow: static-language: mutmut status name
         for dump in ["", "not json", no_diff, unreadable.as_str()] {
