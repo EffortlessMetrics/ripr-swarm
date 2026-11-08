@@ -447,6 +447,11 @@ fn insert_cached_file_batches<B: AsRef<[(PathBuf, Vec<u8>)]>>(
             content_hash.push_digest(file, key.content_hash());
             match load {
                 CacheLoad::Hit(facts) => {
+                    if stats.hits == 0 {
+                        // #7047: record this build's last use so the
+                        // stale-build prune does not evict a hit-only build.
+                        cache.note_build_use();
+                    }
                     stats.hits += 1;
                     pending.push(Pending::Ready {
                         facts: Box::new(facts),
