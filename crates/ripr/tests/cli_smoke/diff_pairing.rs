@@ -227,14 +227,14 @@ fn pure_short_conjunct_pairing_keeps_current_arms_and_unpaired_history()
                 ),
                 (
                     Some("./src/d.rs"),
-                    Some(2),
+                    Some(3),
                     Some("match_arm"),
                     Some("n if m > 0 && n <= 0 => -1,"),
                     Some("base_deleted")
                 ),
                 (
                     Some("./src/d.rs"),
-                    Some(2),
+                    Some(3),
                     Some("predicate"),
                     Some("n if m > 0 && n <= 0 => -1,"),
                     Some("base_deleted")

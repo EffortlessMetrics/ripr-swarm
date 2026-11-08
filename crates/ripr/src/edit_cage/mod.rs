@@ -229,6 +229,20 @@ impl AttemptBaseline {
         &self.policy
     }
 
+    /// The governed inline test module's name when the policy confines the
+    /// target to one (the focused-run binding reads it, #13203).
+    pub(crate) fn inline_test_module_name(&self) -> Option<&str> {
+        self.inline_test_region
+            .as_ref()
+            .map(|region| region.module_name.as_str())
+    }
+
+    /// The new-test proposal the attempt follows, when its policy records one
+    /// (#13205: the manifest discloses the target's preflight state).
+    pub(crate) fn followed_new_test_proposal(&self) -> Option<&FollowedNewTestProposal> {
+        self.policy.new_test_proposal.as_ref()
+    }
+
     /// The baseline index entry metadata (`git ls-files --stage` shape) for
     /// one path, for consumers that must verify the index copy a checkout
     /// would restore is still the baseline's index copy.
@@ -247,6 +261,15 @@ impl AttemptBaseline {
                 WorktreeIdentity::File { digest, .. } => Some(digest.as_str()),
                 _ => None,
             })
+    }
+
+    /// Whether the baseline captured anything at `path` (a regular file, an
+    /// ignored file, a symlink or a special file): every identity but
+    /// `Missing`. A new-test proposal's premise is that nothing is there.
+    pub(crate) fn worktree_has_anything_at(&self, path: &str) -> bool {
+        self.paths
+            .get(path)
+            .is_some_and(|state| !matches!(state.worktree_identity, WorktreeIdentity::Missing))
     }
 
     /// Whether the capture recorded a condition that left the exact measured
@@ -320,6 +343,28 @@ pub(crate) fn capture_attempt_baseline(
         None
     };
     let mut baseline = capture_repository_state(root, policy.clone(), CaptureTraceLabel::Baseline)?;
+    // The proposal is stale at the moment it is bound when its premise is
+    // already false: an integration proposal names a file that must not
+    // exist yet, an inline proposal an existing production file.
+    if let Some(proposal) = &policy.new_test_proposal {
+        // An integration path holding any identity (a symlink or special file
+        // included) is existing, so the proposal is stale and fails closed.
+        let exists = match proposal.kind {
+            crate::analysis::new_test_target::NewTestKind::Integration => {
+                baseline.worktree_has_anything_at(&proposal.file)
+            }
+            crate::analysis::new_test_target::NewTestKind::InlineUnit => {
+                baseline.worktree_digest(&proposal.file).is_some()
+            }
+        };
+        if let Some(reason) = crate::analysis::new_test_target::proposal_premise_error(
+            proposal.kind,
+            &proposal.file,
+            exists,
+        ) {
+            return Err(reason);
+        }
+    }
     if let Some(region) = &inline_test_region
         && baseline.worktree_digest(&region.path)
             != Some(inline_test_region::digest_bytes(region.source.as_bytes()).as_str())
@@ -366,7 +411,22 @@ pub(crate) fn evaluate_repository_edit_cage_with_head_movement(
     baseline: &AttemptBaseline,
     movement: HeadMovement,
 ) -> Result<(AttemptDelta, EditCageVerdict), String> {
+    let (delta, verdict, _) =
+        evaluate_repository_edit_cage_with_captured_digest(baseline, movement, None)?;
+    Ok((delta, verdict))
+}
+
+/// Return the selected path's exact identity from the same capture that owns
+/// the verdict. A missing or non-regular file has no digest.
+pub(crate) fn evaluate_repository_edit_cage_with_captured_digest(
+    baseline: &AttemptBaseline,
+    movement: HeadMovement,
+    selected_path: Option<&str>,
+) -> Result<(AttemptDelta, EditCageVerdict, Option<String>), String> {
     let after = reevaluation_capture(baseline)?;
+    let selected_digest = selected_path
+        .and_then(|path| after.worktree_digest(path))
+        .map(str::to_string);
     let committed = match movement {
         HeadMovement::RequireBaselineHead => (baseline.head == after.head).then(Vec::new),
         HeadMovement::AdmitDescendantCommits => {
@@ -382,7 +442,7 @@ pub(crate) fn evaluate_repository_edit_cage_with_head_movement(
         delta.inline_test_region = Some(observe_inline_target(baseline, &after, region)?);
     }
     let verdict = evaluate_edit_cage(&baseline.policy, &delta);
-    Ok((delta, verdict))
+    Ok((delta, verdict, selected_digest))
 }
 
 /// Retained, independently validated producer bytes for one absent workflow
@@ -907,7 +967,7 @@ fn capture_repository_state(
                 .allowed_edit_surface
                 .iter()
                 .any(|rule| rule.matches(&path));
-        let exact_ignored = expected_write
+        let exact_ignored = (expected_write && !is_bulk_attempt_artifact(&root, &path))
             || policy.selected_target.matches(&path)
             || policy
                 .allowed_edit_surface
@@ -1014,10 +1074,11 @@ fn capture_repository_state(
             &mut remaining_work_bytes,
             ignored_paths.contains(path.as_str()),
             ignored_paths.contains(path.as_str())
-                && (policy
-                    .expected_operational_writes
-                    .iter()
-                    .any(|rule| rule.matches(path))
+                && ((!is_bulk_attempt_artifact(&root, path)
+                    && policy
+                        .expected_operational_writes
+                        .iter()
+                        .any(|rule| rule.matches(path)))
                     || policy.selected_target.matches(path)
                     || policy
                         .allowed_edit_surface
@@ -1068,8 +1129,19 @@ const IGNORED_LISTING: [&str; 5] = [
     "-z",
 ];
 
+/// Why the build-output precondition failed. Callers that map the hold to a
+/// typed refusal match the variant, never the rendered wording.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum BuildOutputPreconditionError {
+    /// The build directory is not effectively Git-ignored: a deliberate,
+    /// recoverable hold that started nothing.
+    NotIgnored(String),
+    /// The directory could not be inspected or git could not answer.
+    Inspection(String),
+}
+
 /// Before promising a Rust repair transaction, require Git to ignore the
-/// declared build directory itself. Both callers hold the repair-attempt lock,
+/// declared build directory itself. Its callers hold the repair-attempt lock,
 /// whose creation supplies the directory even before any Cargo build exists.
 /// Query the existing directory without a trailing slash: adding one can make
 /// a child wildcard look like a whole-directory rule despite reincluded output.
@@ -1077,25 +1149,26 @@ const IGNORED_LISTING: [&str; 5] = [
 /// Merely finding some ignored files would accept a partial `target/debug/`
 /// rule while Cargo's root-level output still becomes a terminal cage edit.
 /// This admission check does not change the inventory or verdict authority.
-pub(crate) fn validate_build_output_precondition(
+pub(crate) fn check_build_output_precondition(
     root: &Path,
     policy: &EditCagePolicy,
-) -> Result<(), String> {
+) -> Result<(), BuildOutputPreconditionError> {
+    use BuildOutputPreconditionError::{Inspection, NotIgnored};
     let Some(build_output) = &policy.ignored_build_output else {
         return Ok(());
     };
     let path = root.join(build_output.path());
     let metadata = fs::metadata(&path).map_err(|error| {
-        format!(
+        Inspection(format!(
             "inspect build-output directory {} before ignore admission: {error}",
             path.display()
-        )
+        ))
     })?;
     if !metadata.is_dir() {
-        return Err(format!(
+        return Err(Inspection(format!(
             "build-output path {} must be an existing directory before ignore admission",
             path.display()
-        ));
+        )));
     }
     let directory = format!("{}/", build_output.path());
     let args = [
@@ -1110,17 +1183,18 @@ pub(crate) fn validate_build_output_precondition(
         &args,
         Duration::from_secs(10),
         64 * 1024,
-    )?;
+    )
+    .map_err(|error| Inspection(String::from(error)))?;
     match output.status.code() {
         Some(0) => Ok(()),
-        Some(1) => Err(format!(
+        Some(1) => Err(NotIgnored(format!(
             "Rust repair requires Cargo's build directory `{directory}` to be Git-ignored before the test edit. Add `/{directory}` to the repository's .gitignore (or an equivalent Git exclude rule), then rerun --phase before. A rule for only a child directory is insufficient: Cargo also writes files at the build-directory root."
-        )),
-        _ => Err(format!(
+        ))),
+        _ => Err(Inspection(format!(
             "check build-output ignore precondition failed in {}: git {args:?}: {}",
             root.display(),
             String::from_utf8_lossy(&output.stderr).trim()
-        )),
+        ))),
     }
 }
 
@@ -1825,6 +1899,11 @@ fn canonical_repository_root(root: &Path) -> Result<PathBuf, String> {
     Ok(requested)
 }
 
+/// Repository-relative prefix of the repair-attempt store, the only place
+/// `write_bytes_atomic` publishes by hard link and so the only place a staged
+/// publication pair can legitimately appear.
+const ATTEMPT_STORE_PREFIX: &str = "target/ripr/repair-attempts/";
+
 fn writable_path_components_are_safe(root: &Path, relative: &str) -> Result<bool, String> {
     let mut current = root.to_path_buf();
     for component in relative.split('/') {
@@ -1845,12 +1924,152 @@ fn writable_path_components_are_safe(root: &Path, relative: &str) -> Result<bool
         #[cfg(unix)]
         if metadata.is_file() {
             use std::os::unix::fs::MetadataExt as _;
-            if metadata.nlink() != 1 {
+            // The staged-pair exemption exists for the attempt store's exclusive
+            // publisher only. A source or any other writable path with a
+            // `<stem>.tmp-<digits>-<digits>` twin is an unaccounted second name
+            // and stays refused (#12847).
+            if metadata.nlink() != 1
+                && !(relative.starts_with(ATTEMPT_STORE_PREFIX)
+                    && links_are_staged_publication_pair(&current, &metadata)?)
+            {
                 return Ok(false);
             }
         }
     }
     Ok(true)
+}
+
+/// True when every hard link of `metadata`'s file lives in its own directory
+/// and is the immutable destination plus the `<stem>.tmp-<pid>-<nonce>` staging
+/// name that `write_bytes_atomic` links into place before removing. A process
+/// stopped or terminated between the link and the removal leaves exactly this pair
+/// behind, and it aliases nothing outside the governed directory. Any other
+/// link (another directory, another name, an extra count) stays refused. When
+/// the listing shows a single name for the inode (a publisher finished after the
+/// caller read the link count), a fresh stat of the path decides: one link, same
+/// device and inode, is safe; anything else stays refused (#12848).
+#[cfg(unix)]
+fn links_are_staged_publication_pair(path: &Path, metadata: &fs::Metadata) -> Result<bool, String> {
+    use std::os::unix::fs::MetadataExt as _;
+    let Some(parent) = path.parent() else {
+        return Ok(false);
+    };
+    let mut names = Vec::new();
+    let entries = match fs::read_dir(parent) {
+        Ok(entries) => entries,
+        Err(_) => return Ok(false),
+    };
+    for entry in entries {
+        let Ok(entry) = entry else {
+            return Ok(false);
+        };
+        let Ok(candidate) = fs::symlink_metadata(entry.path()) else {
+            // Removed between listing and inspection: the pair is changing.
+            continue;
+        };
+        if candidate.is_file()
+            && candidate.dev() == metadata.dev()
+            && candidate.ino() == metadata.ino()
+        {
+            let Some(name) = entry.file_name().to_str().map(str::to_string) else {
+                return Ok(false);
+            };
+            names.push(name);
+        }
+    }
+    // A concurrently completing publisher unlinks its staging name after the
+    // caller read `nlink`. Re-read it after the listing: when the listing and
+    // the fresh count agree on a single remaining name, the pair is gone and
+    // the path has one link, which is safe; any other disagreement stays
+    // ambiguous and refused (#12848).
+    if names.len() == 1 {
+        let Ok(fresh) = fs::symlink_metadata(path) else {
+            return Ok(false);
+        };
+        return Ok(fresh.is_file()
+            && fresh.dev() == metadata.dev()
+            && fresh.ino() == metadata.ino()
+            && fresh.nlink() == 1);
+    }
+    if u64::try_from(names.len()).ok() != Some(metadata.nlink()) || names.len() != 2 {
+        return Ok(false);
+    }
+    let (Some(destination), Some(staging)) = (
+        names.iter().find(|name| !is_staging_name(name)),
+        names.iter().find(|name| is_staging_name(name)),
+    ) else {
+        return Ok(false);
+    };
+    let stem = Path::new(destination)
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .unwrap_or(destination);
+    Ok(staging.strip_prefix(stem).is_some_and(is_staging_suffix))
+}
+
+/// True when `directory` holds a `<name>.tmp-<pid>-<nonce>` staging name, the
+/// residue of a publication stopped between its link and its removal. A
+/// directory that cannot be read counts as having residue: currentness fails
+/// closed.
+pub(crate) fn directory_has_staged_publication_residue(directory: &Path) -> bool {
+    #[cfg(unix)]
+    {
+        match fs::read_dir(directory) {
+            Ok(entries) => entries.into_iter().any(|entry| match entry {
+                Ok(entry) => entry.file_name().to_str().is_none_or(is_staging_name),
+                Err(_) => true,
+            }),
+            Err(error) => error.kind() != std::io::ErrorKind::NotFound,
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = directory;
+        false
+    }
+}
+
+/// The `<name>.tmp-<pid>-<nonce>` staging names in `directory`, sorted, so a
+/// refusal can name the file whose removal restores currentness. A directory
+/// that cannot be read yields none: the caller already failed closed on it.
+pub(crate) fn staged_publication_residue_names(directory: &Path) -> Vec<String> {
+    #[cfg(unix)]
+    {
+        let Ok(entries) = fs::read_dir(directory) else {
+            return Vec::new();
+        };
+        let mut names: Vec<String> = entries
+            .filter_map(Result::ok)
+            .filter_map(|entry| entry.file_name().to_str().map(str::to_string))
+            .filter(|name| is_staging_name(name))
+            .collect();
+        names.sort();
+        names
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = directory;
+        Vec::new()
+    }
+}
+
+#[cfg(unix)]
+fn is_staging_name(name: &str) -> bool {
+    name.rsplit_once(".tmp-")
+        .is_some_and(|(_, tail)| is_staging_suffix(&format!(".tmp-{tail}")))
+}
+
+/// `.tmp-<pid>-<nonce>` with decimal digits only.
+#[cfg(unix)]
+fn is_staging_suffix(rest: &str) -> bool {
+    rest.strip_prefix(".tmp-")
+        .and_then(|tail| tail.split_once('-'))
+        .is_some_and(|(pid, nonce)| {
+            !pid.is_empty()
+                && !nonce.is_empty()
+                && pid.bytes().all(|byte| byte.is_ascii_digit())
+                && nonce.bytes().all(|byte| byte.is_ascii_digit())
+        })
 }
 
 pub(crate) fn workflow_path_components_are_safe(
@@ -1970,6 +2189,26 @@ fn eol_normalized_file_digest(bytes: &[u8]) -> Option<String> {
     }
     normalized.extend_from_slice(rest);
     Some(format!("{:x}", Sha256::digest(&normalized)))
+}
+
+/// Largest retained attempt-store file still hashed exactly. Manifests,
+/// receipts and packets stay under it; sibling attempts bind their exact bytes.
+const ATTEMPT_STORE_EXACT_MAX_BYTES: u64 = 1024 * 1024;
+
+/// A large retained repair-attempt artifact (`target/ripr/repair-attempts/**`,
+/// such as a `before.repo-exposure.json` snapshot). Each attempt retains about
+/// 9 MB of these on a ~1000-seam repository; hashing every retained byte
+/// exactly spent the shared capture budget, so after a handful of attempts
+/// every new baseline came back ambiguous and the attempt could not be scored.
+/// They get the same bounded identity as other ignored files. The rule reads
+/// only the path and the file length, so baseline and after captures treat
+/// an unchanged file identically; a file crossing the size threshold between
+/// captures changes identity and fails closed.
+fn is_bulk_attempt_artifact(root: &Path, path: &str) -> bool {
+    path.starts_with(ATTEMPT_STORE_PREFIX)
+        && fs::symlink_metadata(root.join(path)).is_ok_and(|metadata| {
+            metadata.is_file() && metadata.len() > ATTEMPT_STORE_EXACT_MAX_BYTES
+        })
 }
 
 fn worktree_identity(
@@ -2357,6 +2596,20 @@ pub(crate) struct EditCagePolicy {
     /// other policy, which keeps their serialized form unchanged.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub(crate) inline_test_module_target: bool,
+    /// The producer-owned new-test proposal this attempt follows (#13203),
+    /// recorded in the retained baseline policy. Absent for an existing-test
+    /// repair, which keeps every other policy's serialized form unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) new_test_proposal: Option<FollowedNewTestProposal>,
+}
+
+/// The proposal an attempt follows: its kind and the one file it names. The
+/// file is always the policy's selected target; the baseline refuses a policy
+/// where they differ.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub(crate) struct FollowedNewTestProposal {
+    pub(crate) kind: crate::analysis::new_test_target::NewTestKind,
+    pub(crate) file: String,
 }
 
 impl EditCagePolicy {
@@ -2431,6 +2684,10 @@ pub(crate) enum EditCageViolationKind {
     SelectedTargetNotChanged,
     UnexpectedDeletionOrRename,
     OutsideInlineTestRegion,
+    /// The followed new-test proposal no longer describes the repository: an
+    /// integration file that already existed, or an inline target created
+    /// rather than edited (#13203).
+    StaleNewTestProposal,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Serialize, Deserialize)]
@@ -2527,6 +2784,10 @@ pub(crate) fn evaluate_edit_cage(policy: &EditCagePolicy, delta: &AttemptDelta) 
         }
     }
 
+    if let Some(proposal) = &policy.new_test_proposal {
+        violations.extend(proposal_violations(policy, proposal, delta));
+    }
+
     changed_paths.sort();
     changed_paths.dedup();
     violations.sort();
@@ -2541,6 +2802,38 @@ pub(crate) fn evaluate_edit_cage(policy: &EditCagePolicy, delta: &AttemptDelta) 
         changed_paths,
         violations,
     }
+}
+
+/// Verdict-time check of the followed proposal against the observed delta: an
+/// integration proposal is realized only by a file the attempt created, and an
+/// inline proposal only by editing an existing file. Anything else leaves the
+/// proposal stale, so the attempt is refused rather than credited.
+fn proposal_violations(
+    policy: &EditCagePolicy,
+    proposal: &FollowedNewTestProposal,
+    delta: &AttemptDelta,
+) -> Vec<EditCageViolation> {
+    use crate::analysis::new_test_target::NewTestKind;
+    delta
+        .changes
+        .iter()
+        .filter(|change| {
+            policy.selected_target.matches(&change.path.to_string_lossy())
+                && matches!(
+                    (proposal.kind, change.kind),
+                    (NewTestKind::Integration, AttemptPathChangeKind::Modified)
+                        | (NewTestKind::InlineUnit, AttemptPathChangeKind::Added)
+                )
+        })
+        .map(|change| EditCageViolation {
+            kind: EditCageViolationKind::StaleNewTestProposal,
+            path: change.path.to_string_lossy().to_string(),
+            reason: match proposal.kind {
+                NewTestKind::Integration => "the proposal named a new integration test file, but the path already existed before the attempt".to_string(),
+                NewTestKind::InlineUnit => "the proposal named an existing file's inline test module, but the attempt created the file".to_string(),
+            },
+        })
+        .collect()
 }
 
 /// True when an `OutsideInlineTestRegion` refusal reports that the selected
@@ -2723,6 +3016,21 @@ fn validate_policy(policy: &EditCagePolicy) -> Vec<EditCageViolation> {
             &selected_path,
             "the selected target overlaps an explicit forbidden path",
         ));
+    }
+    if let Some(proposal) = &policy.new_test_proposal {
+        use crate::analysis::new_test_target::NewTestKind;
+        if proposal.file != selected_path {
+            violations.push(invalid_policy_violation(
+                &selected_path,
+                "the followed new-test proposal names a file other than the selected target",
+            ));
+        }
+        if (proposal.kind == NewTestKind::InlineUnit) != policy.inline_test_module_target {
+            violations.push(invalid_policy_violation(
+                &selected_path,
+                "the followed new-test proposal kind disagrees with the selected target's inline-module confinement",
+            ));
+        }
     }
     if policy.inline_test_module_target
         && Path::new(&selected_path).extension() != Some(std::ffi::OsStr::new("rs"))
@@ -3296,7 +3604,185 @@ mod tests {
             ignored_build_output: None,
             untracked_build_lockfile: None,
             inline_test_module_target: false,
+            new_test_proposal: None,
         })
+    }
+
+    fn integration_proposal_policy() -> Result<EditCagePolicy, String> {
+        let mut policy = policy()?;
+        policy.selected_target = CagePathRule::exact("tests/price.rs")?;
+        policy.allowed_edit_surface = vec![CagePathRule::exact("tests/price.rs")?];
+        policy.new_test_proposal = Some(FollowedNewTestProposal {
+            kind: crate::analysis::new_test_target::NewTestKind::Integration,
+            file: "tests/price.rs".to_string(),
+        });
+        Ok(policy)
+    }
+
+    /// #13203: a created file at the proposed path is credited; a file at any
+    /// other path, even another test surface, is not.
+    #[test]
+    fn integration_proposal_is_bound_only_by_the_created_proposed_file() -> Result<(), String> {
+        let fixture = git_fixture("proposal-bound")?;
+        let policy = integration_proposal_policy()?;
+        let baseline = capture_attempt_baseline(&fixture.root, &policy)?;
+        fs::write(fixture.root.join("tests/price.rs"), "#[test]\nfn t() {}\n")
+            .map_err(|err| format!("create proposed file: {err}"))?;
+        let (_, verdict) = evaluate_repository_edit_cage_with_delta(&baseline)?;
+        if verdict.status != EditCageVerdictStatus::Compliant {
+            return Err(format!("the proposed file was not credited: {verdict:?}"));
+        }
+
+        let fixture = git_fixture("proposal-other-file")?;
+        let baseline = capture_attempt_baseline(&fixture.root, &policy)?;
+        fs::write(
+            fixture.root.join("tests/elsewhere.rs"),
+            "#[test]\nfn t() {}\n",
+        )
+        .map_err(|err| format!("create out-of-cage file: {err}"))?;
+        let (_, verdict) = evaluate_repository_edit_cage_with_delta(&baseline)?;
+        let kinds: Vec<_> = verdict.violations.iter().map(|v| v.kind).collect();
+        if verdict.status != EditCageVerdictStatus::Violated
+            || !kinds.contains(&EditCageViolationKind::OutsideAllowedSurface)
+            || !kinds.contains(&EditCageViolationKind::SelectedTargetNotChanged)
+        {
+            return Err(format!("an out-of-cage file was credited: {verdict:?}"));
+        }
+        Ok(())
+    }
+
+    /// #13203: an integration proposal whose file already exists is stale at
+    /// the moment it is bound, and an existing file later seen as modified is
+    /// stale at the verdict.
+    #[test]
+    fn integration_proposal_for_an_existing_file_is_stale() -> Result<(), String> {
+        let fixture = git_fixture("proposal-stale")?;
+        fs::write(fixture.root.join("tests/price.rs"), "fn existing() {}\n")
+            .map_err(|err| format!("pre-create proposed file: {err}"))?;
+        git_ok(&fixture.root, &["add", "."])?;
+        git_ok(&fixture.root, &["commit", "-qm", "file appeared"])?;
+        let policy = integration_proposal_policy()?;
+        match capture_attempt_baseline(&fixture.root, &policy) {
+            Err(error) if error.contains("proposal is stale") => {}
+            other => {
+                return Err(format!(
+                    "a stale proposal was bound: {:?}",
+                    other.map(|_| ())
+                ));
+            }
+        }
+        let delta = AttemptDelta {
+            comparable: true,
+            changes: vec![AttemptPathChange::modified("tests/price.rs")],
+            inline_test_region: None,
+        };
+        let verdict = evaluate_edit_cage(&policy, &delta);
+        if verdict.status != EditCageVerdictStatus::Violated
+            || !verdict
+                .violations
+                .iter()
+                .any(|v| v.kind == EditCageViolationKind::StaleNewTestProposal)
+        {
+            return Err(format!(
+                "a modified proposed file was credited: {verdict:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    fn inline_proposal_policy(file: &str, confined: bool) -> Result<EditCagePolicy, String> {
+        let mut policy = policy()?;
+        policy.selected_target = CagePathRule::exact(file)?;
+        policy.allowed_edit_surface = vec![CagePathRule::exact(file)?];
+        policy.forbidden_paths = vec![CagePathRule::exact("Cargo.toml")?];
+        policy.inline_test_module_target = confined;
+        policy.new_test_proposal = Some(FollowedNewTestProposal {
+            kind: crate::analysis::new_test_target::NewTestKind::InlineUnit,
+            file: file.to_string(),
+        });
+        Ok(policy)
+    }
+
+    /// #13203: an inline proposal names an existing production file. Missing
+    /// at bind time is refused (by the region capture when the module is
+    /// confined, by the proposal's own check otherwise), and a created inline
+    /// target is stale at the verdict.
+    #[test]
+    fn inline_proposal_for_a_missing_file_is_stale() -> Result<(), String> {
+        let fixture = git_fixture("inline-proposal-missing")?;
+        let confined = inline_proposal_policy("src/absent.rs", true)?;
+        if capture_attempt_baseline(&fixture.root, &confined).is_ok() {
+            return Err("an inline proposal for a missing file was bound".to_string());
+        }
+        let unconfined = inline_proposal_policy("src/absent.rs", false)?;
+        match capture_attempt_baseline(&fixture.root, &unconfined) {
+            Err(error) if error.contains("proposal is stale") => {}
+            other => {
+                return Err(format!(
+                    "a stale inline proposal was bound: {:?}",
+                    other.map(|_| ())
+                ));
+            }
+        }
+        let policy = inline_proposal_policy("src/pricing.rs", true)?;
+        let delta = AttemptDelta {
+            comparable: true,
+            changes: vec![AttemptPathChange::added("src/pricing.rs")],
+            inline_test_region: None,
+        };
+        let verdict = evaluate_edit_cage(&policy, &delta);
+        if verdict.status != EditCageVerdictStatus::Violated
+            || !verdict
+                .violations
+                .iter()
+                .any(|v| v.kind == EditCageViolationKind::StaleNewTestProposal)
+        {
+            return Err(format!("a created inline target was credited: {verdict:?}"));
+        }
+        Ok(())
+    }
+
+    /// #13203: a symlink at the integration path is something there, so the
+    /// proposal is stale at bind time and fails closed.
+    #[cfg(unix)]
+    #[test]
+    fn integration_proposal_over_a_symlink_is_stale() -> Result<(), String> {
+        let fixture = git_fixture("proposal-symlink")?;
+        std::os::unix::fs::symlink("pricing.rs", fixture.root.join("tests/price.rs"))
+            .map_err(|err| format!("create symlink: {err}"))?;
+        match capture_attempt_baseline(&fixture.root, &integration_proposal_policy()?) {
+            Err(error) if error.contains("proposal is stale") => Ok(()),
+            other => Err(format!(
+                "a proposal over a symlink was bound: {:?}",
+                other.map(|_| ())
+            )),
+        }
+    }
+
+    /// #13203: the followed proposal must agree with the cage's own shape; a
+    /// disagreement fails closed as an invalid policy, never a credited edit.
+    #[test]
+    fn proposal_kind_must_agree_with_the_cage_shape() -> Result<(), String> {
+        let mut inline_without_confinement = integration_proposal_policy()?;
+        if let Some(proposal) = inline_without_confinement.new_test_proposal.as_mut() {
+            proposal.kind = crate::analysis::new_test_target::NewTestKind::InlineUnit;
+        }
+        let mut other_file = integration_proposal_policy()?;
+        if let Some(proposal) = other_file.new_test_proposal.as_mut() {
+            proposal.file = "tests/other.rs".to_string();
+        }
+        let delta = AttemptDelta {
+            comparable: true,
+            changes: vec![AttemptPathChange::added("tests/price.rs")],
+            inline_test_region: None,
+        };
+        for policy in [inline_without_confinement, other_file] {
+            let verdict = evaluate_edit_cage(&policy, &delta);
+            if verdict.status != EditCageVerdictStatus::Incomparable {
+                return Err(format!("a disagreeing proposal was credited: {verdict:?}"));
+            }
+        }
+        Ok(())
     }
 
     #[test]
@@ -3850,13 +4336,13 @@ mod tests {
                     "fixture did not expose reincluded build output for {rule:?}"
                 ));
             }
-            match validate_build_output_precondition(&fixture.root, &build_output_policy()?) {
+            match check_build_output_precondition(&fixture.root, &build_output_policy()?) {
                 Ok(()) => return Err(format!("child wildcard unexpectedly admitted for {rule:?}")),
-                Err(error)
-                    if error.contains("Rust repair requires") && error.contains("Git-ignored") => {}
+                // The hold is its own variant: callers never match wording.
+                Err(BuildOutputPreconditionError::NotIgnored(_)) => {}
                 Err(error) => {
                     return Err(format!(
-                        "unexpected precondition failure for {rule:?}: {error}"
+                        "unexpected precondition failure for {rule:?}: {error:?}"
                     ));
                 }
             }
@@ -3923,6 +4409,7 @@ mod tests {
             ignored_build_output: None,
             untracked_build_lockfile: None,
             inline_test_module_target: false,
+            new_test_proposal: None,
         };
         Ok((fixture, policy))
     }
@@ -4973,6 +5460,219 @@ mod tests {
         Ok(())
     }
 
+    /// Retained repair-attempt artifacts accumulate (about 9 MB per attempt on
+    /// a ~1000-seam repository). Their total size must not spend the exact
+    /// content budget and make every later baseline ambiguous.
+    #[test]
+    fn retained_attempt_store_larger_than_the_capture_budget_is_not_ambiguous() -> Result<(), String>
+    {
+        let fixture = git_fixture("retained-attempt-store-budget")?;
+        commit_target_ignore(&fixture)?;
+        let store = fixture
+            .root
+            .join("target/ripr/repair-attempts/repair-attempt-old/artifacts");
+        fs::create_dir_all(&store).map_err(|err| format!("create attempt store: {err}"))?;
+        let chunk = vec![b'x'; (MAX_CAPTURE_FILE_BYTES / 2) as usize];
+        let files = (MAX_CAPTURE_TOTAL_FILE_BYTES / chunk.len() as u64) + 2;
+        for index in 0..files {
+            fs::write(store.join(format!("before.{index}.json")), &chunk)
+                .map_err(|err| format!("write retained artifact: {err}"))?;
+        }
+        let baseline = capture_attempt_baseline(&fixture.root, &policy()?)?;
+        assert!(
+            !baseline.is_ambiguous(),
+            "retained attempt artifacts beyond the exact-capture budget must not make the baseline ambiguous"
+        );
+        fs::write(fixture.root.join("tests/pricing.rs"), "fn repaired() {}\n")
+            .map_err(|err| format!("write selected test: {err}"))?;
+        assert_eq!(
+            evaluate_repository_edit_cage(&baseline)?.status,
+            EditCageVerdictStatus::Compliant
+        );
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn staged_publication_pair_left_by_an_interrupted_writer_is_not_ambiguous() -> Result<(), String>
+    {
+        let fixture = git_fixture("staged-publication-pair")?;
+        commit_target_ignore(&fixture)?;
+        let dir = fixture
+            .root
+            .join("target/ripr/repair-attempts/attempt-1/artifacts");
+        fs::create_dir_all(&dir).map_err(|err| format!("create artifacts dir: {err}"))?;
+        let destination = dir.join("after.check-findings.json");
+        fs::write(&destination, "{}\n").map_err(|err| format!("write destination: {err}"))?;
+        fs::hard_link(&destination, dir.join("after.check-findings.tmp-441-3"))
+            .map_err(|err| format!("link staging name: {err}"))?;
+
+        assert!(writable_path_components_are_safe(
+            &fixture.root,
+            "target/ripr/repair-attempts/attempt-1/artifacts/after.check-findings.json"
+        )?);
+        assert!(writable_path_components_are_safe(
+            &fixture.root,
+            "target/ripr/repair-attempts/attempt-1/artifacts/after.check-findings.tmp-441-3"
+        )?);
+        Ok(())
+    }
+
+    /// The pair rule is limited to the attempt store (#12847): the same
+    /// destination-plus-staging-name shape elsewhere is an unaccounted second
+    /// name for the file and stays refused.
+    #[cfg(unix)]
+    #[test]
+    fn staged_publication_pair_outside_the_attempt_store_stays_unsafe() -> Result<(), String> {
+        let fixture = git_fixture("staged-pair-outside-store")?;
+        commit_target_ignore(&fixture)?;
+        // The sibling spellings share the store's name as a prefix without the
+        // trailing separator (#13553): they are not the store.
+        for dir_relative in [
+            "src",
+            "target/ripr/artifacts",
+            "target/ripr/workflow",
+            "target/ripr/repair-attempts-old",
+            "target/ripr/repair-attempts-old/attempt-1/artifacts",
+        ] {
+            let dir = fixture.root.join(dir_relative);
+            fs::create_dir_all(&dir).map_err(|err| format!("create {dir_relative}: {err}"))?;
+            let destination = dir.join("lib.rs");
+            fs::write(&destination, "{}\n")
+                .map_err(|err| format!("write {dir_relative}: {err}"))?;
+            fs::hard_link(&destination, dir.join("lib.tmp-1-1"))
+                .map_err(|err| format!("link staging name in {dir_relative}: {err}"))?;
+            assert!(
+                !writable_path_components_are_safe(
+                    &fixture.root,
+                    &format!("{dir_relative}/lib.rs")
+                )?,
+                "{dir_relative}: a staged pair outside the attempt store must stay unsafe"
+            );
+        }
+        // The same shape inside the attempt store is still accepted.
+        let store = fixture
+            .root
+            .join("target/ripr/repair-attempts/attempt-1/artifacts");
+        fs::create_dir_all(&store).map_err(|err| format!("create store: {err}"))?;
+        let destination = store.join("lib.rs");
+        fs::write(&destination, "{}\n").map_err(|err| format!("write store file: {err}"))?;
+        fs::hard_link(&destination, store.join("lib.tmp-1-1"))
+            .map_err(|err| format!("link store staging name: {err}"))?;
+        assert!(writable_path_components_are_safe(
+            &fixture.root,
+            "target/ripr/repair-attempts/attempt-1/artifacts/lib.rs"
+        )?);
+        Ok(())
+    }
+
+    /// A live publisher removes its staging name between the caller's `nlink`
+    /// read and the directory listing (#12848). The stale two-link metadata
+    /// must resolve to the single remaining link, not a transient refusal; a
+    /// destination that still has a second link elsewhere stays refused.
+    #[cfg(unix)]
+    #[test]
+    fn staging_name_removed_after_the_nlink_read_is_not_ambiguous() -> Result<(), String> {
+        use std::os::unix::fs::MetadataExt as _;
+        let fixture = git_fixture("staged-pair-live-writer")?;
+        let external = external_fixture("staged-pair-live-writer")?;
+        commit_target_ignore(&fixture)?;
+        let dir = fixture
+            .root
+            .join("target/ripr/repair-attempts/attempt-1/artifacts");
+        fs::create_dir_all(&dir).map_err(|err| format!("create store: {err}"))?;
+        let destination = dir.join("after.json");
+        fs::write(&destination, "{}\n").map_err(|err| format!("write destination: {err}"))?;
+        let staging = dir.join("after.tmp-7-1");
+        fs::hard_link(&destination, &staging).map_err(|err| format!("link staging: {err}"))?;
+        let stale = fs::symlink_metadata(&destination).map_err(|err| format!("stat: {err}"))?;
+        assert_eq!(stale.nlink(), 2, "fixture must read two links first");
+
+        fs::remove_file(&staging).map_err(|err| format!("publisher unlink: {err}"))?;
+        assert!(
+            links_are_staged_publication_pair(&destination, &stale)?,
+            "a pair that completed after the nlink read is one safe link"
+        );
+
+        // A second link outside the directory is not a completed publication.
+        let outside = external.root.join("outside.json");
+        fs::hard_link(&destination, &outside).map_err(|err| format!("link outside: {err}"))?;
+        assert!(
+            !links_are_staged_publication_pair(&destination, &stale)?,
+            "an external second link must stay refused"
+        );
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn staged_publication_residue_is_reported_for_currentness() -> Result<(), String> {
+        let fixture = git_fixture("staged-publication-residue")?;
+        let dir = fixture
+            .root
+            .join("target/ripr/repair-attempts/attempt-1/artifacts");
+        assert!(!directory_has_staged_publication_residue(&dir));
+        fs::create_dir_all(&dir).map_err(|err| format!("create artifacts dir: {err}"))?;
+        let destination = dir.join("after.check-findings.json");
+        fs::write(&destination, "{}\n").map_err(|err| format!("write destination: {err}"))?;
+        assert!(!directory_has_staged_publication_residue(&dir));
+        fs::write(dir.join("notes.tmp-x-1"), "{}\n").map_err(|err| format!("write: {err}"))?;
+        assert!(!directory_has_staged_publication_residue(&dir));
+        fs::hard_link(&destination, dir.join("after.check-findings.tmp-441-3"))
+            .map_err(|err| format!("link staging name: {err}"))?;
+        assert!(directory_has_staged_publication_residue(&dir));
+        assert_eq!(
+            staged_publication_residue_names(&dir),
+            vec!["after.check-findings.tmp-441-3".to_string()]
+        );
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn hard_links_that_are_not_a_staged_publication_pair_stay_unsafe() -> Result<(), String> {
+        let fixture = git_fixture("unstaged-hardlinks")?;
+        let external = external_fixture("unstaged-hardlinks")?;
+        commit_target_ignore(&fixture)?;
+        let dir = fixture
+            .root
+            .join("target/ripr/repair-attempts/attempt-1/artifacts");
+        fs::create_dir_all(&dir).map_err(|err| format!("create artifacts dir: {err}"))?;
+        let destination = dir.join("after.check-findings.json");
+        fs::write(&destination, "{}\n").map_err(|err| format!("write destination: {err}"))?;
+
+        // A staging-shaped name for another stem, a non-numeric suffix, a third
+        // link, and a link outside the directory each keep the path unsafe.
+        for (label, extra) in [
+            ("other stem", dir.join("receipt.tmp-1-1")),
+            ("non-numeric", dir.join("after.check-findings.tmp-x-1")),
+            ("plain alias", dir.join("alias.json")),
+            ("external", external.root.join("outside.json")),
+        ] {
+            fs::hard_link(&destination, &extra).map_err(|err| format!("link {label}: {err}"))?;
+            assert!(
+                !writable_path_components_are_safe(
+                    &fixture.root,
+                    "target/ripr/repair-attempts/attempt-1/artifacts/after.check-findings.json"
+                )?,
+                "{label} link must stay unsafe"
+            );
+            fs::remove_file(&extra).map_err(|err| format!("unlink {label}: {err}"))?;
+        }
+        fs::hard_link(&destination, dir.join("after.check-findings.tmp-1-1"))
+            .map_err(|err| format!("link first staging name: {err}"))?;
+        fs::hard_link(&destination, dir.join("after.check-findings.tmp-2-1"))
+            .map_err(|err| format!("link second staging name: {err}"))?;
+        assert!(
+            !writable_path_components_are_safe(
+                &fixture.root,
+                "target/ripr/repair-attempts/attempt-1/artifacts/after.check-findings.json"
+            )?,
+            "a third link must stay unsafe"
+        );
+        Ok(())
+    }
+
     #[cfg(unix)]
     #[test]
     fn unchanged_expected_write_symlink_escape_is_incomparable() -> Result<(), String> {
@@ -5569,6 +6269,7 @@ mod tests {
             ignored_build_output: None,
             untracked_build_lockfile: None,
             inline_test_module_target: false,
+            new_test_proposal: None,
         };
         let verdict = evaluate_edit_cage(
             &subtree_policy,

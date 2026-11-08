@@ -11,6 +11,7 @@ const SHARDED_TEST_COMMAND: &str =
     "cargo nextest run --workspace --profile ci --partition hash:${{ matrix.shard }}/4";
 const SHARDED_LIST_COMMAND: &str = "cargo nextest list --workspace --profile ci --partition hash:${{ matrix.shard }}/4 --color never --message-format oneline 2> /dev/null | sort > target/nextest/ci/list-${{ matrix.shard }}.txt";
 const SHARDED_RECEIPT_COMMAND: &str = "printf 'profile=ci\\nshard=%s/4\\ncommand=cargo nextest run --workspace --profile ci --partition hash:%s/4\\n' \"${{ matrix.shard }}\" \"${{ matrix.shard }}\"";
+const COMBINED_PR_EVIDENCE_PRINTF: &str = "printf '| pr_evidence | %s |\\n| pr_evidence scope | %s |\\n' \"${PR_EVIDENCE_RESULT:-not_reported}\" \"${PR_EVIDENCE_SCOPE:-not_reported}\"";
 const REQUIRED_GATES: &[(&str, &str)] = &[
     ("formatting", "cargo fmt --check"),
     ("agent_skills", "cargo policy preflight"),
@@ -24,7 +25,7 @@ const REQUIRED_GATES: &[(&str, &str)] = &[
     ("network_policy", "cargo xtask check-network-policy"),
     (
         "all_features_check",
-        "cargo check -p ripr --all-targets --all-features",
+        "cargo clippy -p ripr --all-targets --all-features -- -D warnings",
     ),
     (
         "clippy",
@@ -113,12 +114,23 @@ fn contract_violations(workflow: &str) -> Vec<String> {
     {
         let variable = format!("{}_RESULT", id.replace('-', "_").to_ascii_uppercase());
         let binding = format!("          {variable}: ${{{{ steps.{id}.outcome }}}}");
-        let row =
-            format!("            printf '| {id} | %s |\\n' \"${{{variable}:-not_reported}}\"");
+        // The two pr_evidence rows share one printf to preserve the workflow's
+        // reviewed executable-line budget. Pin both argument positions so the
+        // compact form cannot swap or fabricate the required outcome.
+        let row = if id == "pr_evidence" {
+            format!("            {COMBINED_PR_EVIDENCE_PRINTF}")
+        } else {
+            format!("            printf '| {id} | %s |\\n' \"${{{variable}:-not_reported}}\"")
+        };
         if !summary.lines().any(|line| line == binding) || !summary.lines().any(|line| line == row)
         {
             findings.push(format!("summary: {id} must retain its actual outcome"));
         }
+    }
+    if !summary.lines().any(|line| {
+        line == "          PR_EVIDENCE_SCOPE: ${{ steps.pr_evidence.outputs.evidence }}"
+    }) {
+        findings.push("summary: pr_evidence scope must retain its actual output".to_owned());
     }
     findings
 }
@@ -146,6 +158,36 @@ fn rust_gate_workflow_rejects_duplicate_required_command() {
     );
     let findings = contract_violations(&changed);
     assert!(findings.contains(&"rust-tests: expected one command invocation".to_owned()));
+}
+
+#[test]
+fn hosted_formatting_cannot_disappear_when_ci_policy_omits_its_duplicate() {
+    for changed in [
+        WORKFLOW.replace("        run: cargo fmt --check", "        run: true"),
+        WORKFLOW.replace(
+            "        id: formatting",
+            "        id: formatting\n        if: false",
+        ),
+        WORKFLOW.replace(
+            "        id: formatting",
+            "        id: formatting\n        continue-on-error: true",
+        ),
+        WORKFLOW.replace("run: cargo fmt --check", "run: cargo fmt --check || true"),
+        format!("{WORKFLOW}\n      - name: Duplicate formatter\n        run: cargo fmt --check\n"),
+        WORKFLOW.replace(
+            "FORMATTING_RESULT: ${{ steps.formatting.outcome }}",
+            "FORMATTING_RESULT: success",
+        ),
+    ] {
+        assert_ne!(changed, WORKFLOW, "negative must change the real workflow");
+        let findings = contract_violations(&changed);
+        assert!(
+            findings
+                .iter()
+                .any(|finding| finding.contains("formatting")),
+            "missing, softened, duplicate or fabricated formatting accepted: {findings:?}"
+        );
+    }
 }
 
 #[test]
@@ -236,9 +278,55 @@ fn rust_gate_workflow_rejects_fabricated_success_or_missing_outcome() {
 }
 
 #[test]
+fn combined_pr_evidence_summary_cannot_swap_or_fabricate_its_outcome() {
+    for changed in [
+        WORKFLOW.replace(
+            COMBINED_PR_EVIDENCE_PRINTF,
+            "printf '| pr_evidence | %s |\\n| pr_evidence scope | %s |\\n' \"success\" \"${PR_EVIDENCE_SCOPE:-not_reported}\"",
+        ),
+        WORKFLOW.replace(
+            COMBINED_PR_EVIDENCE_PRINTF,
+            "printf '| pr_evidence | %s |\\n| pr_evidence scope | %s |\\n' \"${PR_EVIDENCE_SCOPE:-not_reported}\" \"${PR_EVIDENCE_RESULT:-not_reported}\"",
+        ),
+        WORKFLOW.replace(
+            "PR_EVIDENCE_SCOPE: ${{ steps.pr_evidence.outputs.evidence }}",
+            "PR_EVIDENCE_SCOPE: fabricated",
+        ),
+    ] {
+        assert_ne!(changed, WORKFLOW, "negative must mutate the current summary");
+        let findings = contract_violations(&changed);
+        assert!(
+            findings.iter().any(|finding| finding.starts_with("summary: pr_evidence")),
+            "fabricated summary was accepted: {findings:?}"
+        );
+    }
+}
+
+#[test]
 fn rust_gate_workflow_rejects_local_convenience_clippy_composition() {
     let changed = WORKFLOW.replace("run: cargo xtask ci-policy", "run: cargo xtask precommit");
     assert!(contract_violations(&changed).contains(&"precommit: exact command missing".to_owned()));
+}
+
+#[test]
+fn rust_gate_workflow_rejects_losing_optional_feature_lint_coverage() {
+    for command in [
+        "cargo check -p ripr --all-targets --all-features",
+        "cargo clippy -p ripr --all-targets -- -D warnings",
+        "cargo clippy -p ripr --all-features -- -D warnings",
+        "cargo clippy -p ripr --all-targets --all-features",
+        "cargo clippy -p ripr --all-targets -- -D warnings --all-features",
+    ] {
+        let changed = WORKFLOW.replace(
+            "cargo clippy -p ripr --all-targets --all-features -- -D warnings",
+            command,
+        );
+        assert_ne!(changed, WORKFLOW, "negative must change the live command");
+        assert!(
+            contract_violations(&changed)
+                .contains(&"all_features_check: exact command missing".to_owned())
+        );
+    }
 }
 
 #[test]
@@ -247,11 +335,14 @@ fn rust_gate_workflow_rejects_narrowing_explicit_clippy_coverage() {
         "cargo clippy -p xtask --all-targets -- -D warnings",
         "cargo clippy --workspace -- -D warnings",
         "cargo clippy --workspace --all-targets",
+        // Enabling everything here drops cfg(not(feature = ...)) branches.
+        "cargo clippy --workspace --all-targets --all-features -- -D warnings",
     ] {
         let changed = WORKFLOW.replace(
             "cargo clippy --workspace --all-targets -- -D warnings",
             command,
         );
+        assert_ne!(changed, WORKFLOW, "negative must change the live command");
         assert!(
             contract_violations(&changed).contains(&"clippy: exact command missing".to_owned())
         );

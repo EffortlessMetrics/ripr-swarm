@@ -159,6 +159,12 @@ should precede blocking CI promotion.
 
 ### Local Rust gate selection roots
 
+The existing local fast gate is discoverable through `cargo xtask help --all`,
+`cargo xtask help check-fast`, and the command catalog. Detailed help names its
+committed-diff selection, live-worktree execution, local reports, compilation
+cost, and boundary against broader validation. It remains local-only and is
+not marked CI-enforced.
+
 `check-fast` records the local `origin/main` commit, `HEAD` commit, effective
 merge-base and selected path count before executing gates and in its report.
 The path inventory is computed from those captured commits. Strict receipt
@@ -273,6 +279,11 @@ leaf, strict dispatch rejects the receipt. Given unrelated near-match paths or
 no changed paths, support-tier validation is not applicable.
 
 ## Test Mapping
+
+`xtask/tests/help_hierarchy.rs::check_fast_is_discoverable_with_its_local_proof_boundary`
+exercises the built binary's exhaustive and detailed help. It rejects an omitted
+or duplicate command, a false CI-enforcement marker, and missing selector, report, build-cost,
+or broader-validation boundaries.
 
 Focused tests for `cargo xtask check-doc-artifacts` include:
 

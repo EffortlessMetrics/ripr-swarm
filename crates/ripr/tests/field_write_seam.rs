@@ -2,8 +2,9 @@
 //! whose required check is the written field. Only an exact read of that field
 //! on the binding that ran the owner grades it; a sibling read, a read on
 //! another binding, a later write or no read never does. No case here starts a
-//! repair: a field write has no start policy, so `check` and `repair` give the
-//! same specific refusal that names the field check.
+//! repair: the only field-write start is a weak relational read (#11870, see
+//! `repair_check_recommended_start.rs`), so for these shapes `check` and
+//! `repair` give the same specific refusal that names the field check.
 
 use std::path::PathBuf;
 use std::process::{Command, Output};

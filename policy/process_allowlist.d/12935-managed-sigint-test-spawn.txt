@@ -1,0 +1,1 @@
+crates/ripr-contract/src/analysis/cancellation.rs|Command::new|1|12935-managed-sigint-test-spawn|#12935: test-only child (`sh -c "kill -INT $$"`) raises SIGINT on itself so the test holds a real signal-death ExitStatus; waited to completion, no descendants, network or file writes, no production spawn authority.
