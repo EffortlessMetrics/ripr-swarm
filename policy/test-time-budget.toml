@@ -24,8 +24,11 @@
 # comment above its entry; this records the exceptions, it does not reduce
 # the tests. Entries whose test now measures at or under 30s were deleted
 # (ratchet); entries between 30s and 60s keep their previous standing and are
-# refreshed to the same measurement. The 30s budget, mode, regression factor
-# and enforcement trigger are unchanged.
+# refreshed to the same measurement. Regressed entries past the 2x factor
+# kept their prior recorded reference so the regression stays visible in
+# the report until the test is reduced or the regression is explicitly
+# accepted in a separate reviewed change. The 30s budget, mode, regression
+# factor and enforcement trigger are unchanged.
 
 schema = "ripr_slow_test_budget.v1"
 
@@ -46,15 +49,15 @@ ratchet = "advisory; baseline allowlist shrinks by deletion; enforce (fail only 
 test = "xtask::bin/xtask tests::policy_checker_facade_runs_current_repo_checks"
 recorded_seconds = 178.694
 
-# Packages ripr and ripr-contract, compiles the extracted help tests with rustc, and runs all 39 portable cases plus a missing-asset recompile.
+# Packages ripr and ripr-contract, compiles the extracted help tests with rustc, and runs all 39 portable cases plus a missing-asset recompile. Measured 272.742s on 2026-11-08 in run 42511871092; the prior recorded reference is retained so the regression stays visible in the report until the test is reduced or the regression is explicitly accepted in a separate reviewed change.
 [[baseline]]
 test = "xtask::ripr_public_guide_contract packaged_help_target_runs_every_case_and_rejects_missing_shared_asset"
-recorded_seconds = 272.742
+recorded_seconds = 111.768
 
-# Builds the candidate ripr binary with cargo and renders its default help five times, checking clean-checkout guidance on each surface.
+# Builds the candidate ripr binary with cargo and renders its default help five times, checking clean-checkout guidance on each surface. Measured 267.431s on 2026-11-08 in run 42511871092; the prior recorded reference is retained so the regression stays visible in the report until the test is reduced or the regression is explicitly accepted in a separate reviewed change.
 [[baseline]]
 test = "xtask::ripr_public_guide_contract first_run_surfaces_require_clean_checkout_guidance"
-recorded_seconds = 267.431
+recorded_seconds = 125.866
 
 # Builds the candidate ripr binary with cargo to render calibrate cargo-mutants help against the targeted-test workflow guide.
 [[baseline]]
@@ -86,15 +89,15 @@ recorded_seconds = 230.676
 test = "xtask::bin/xtask reports::dx_scoreboard::tests::consumer_checkout::measured_consumers_use_the_private_pin_and_preserve_the_cached_source"
 recorded_seconds = 228.098
 
-# Builds ripr with cargo and runs the golden-comparing fixture check pipeline against the cleared cache.
+# Builds ripr with cargo and runs the golden-comparing fixture check pipeline against the cleared cache. Measured 218.417s on 2026-11-08 in run 42511871092; the prior recorded reference is retained so the regression stays visible in the report until the test is reduced or the regression is explicitly accepted in a separate reviewed change.
 [[baseline]]
 test = "xtask::bin/xtask tests::golden_comparison_runs_consume_the_cache_the_runner_cleared"
-recorded_seconds = 218.417
+recorded_seconds = 81.767
 
-# Builds the candidate ripr binary with cargo and renders help for every command the public guides cite.
+# Builds the candidate ripr binary with cargo and renders help for every command the public guides cite. Measured 206.836s on 2026-11-08 in run 42511871092; the prior recorded reference is retained so the regression stays visible in the report until the test is reduced or the regression is explicitly accepted in a separate reviewed change.
 [[baseline]]
 test = "xtask::ripr_public_guide_contract public_docs_only_pass_flags_the_command_help_lists"
-recorded_seconds = 206.836
+recorded_seconds = 76.654
 
 # Builds the candidate ripr binary with cargo and renders its default help four ways.
 [[baseline]]
