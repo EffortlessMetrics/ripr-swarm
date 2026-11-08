@@ -216,7 +216,7 @@ jobs:
             gates="$(cat "$RUNNER_TEMP/main-health-sentinel/gates.md" 2>/dev/null || true)"
             # One comment per new piece of evidence, not one per fire.
             probe_fp="${GITHUB_SHA::7}:$check_status:$smoke_status"
-            [ "$check_status" != 0 ] || [ "$smoke_status" != 0 ] || probe_fp=green
+            [ "$check_status" != 0 ] || [ "$smoke_status" != 0 ] || ! grep -Eq '^test result: [a-z]+\. [1-9]' "$RUNNER_TEMP/main-health-sentinel/smoke.log" 2>/dev/null || probe_fp=green
             fingerprint="fingerprint: probe=$probe_fp gates=$(cat "$RUNNER_TEMP/main-health-sentinel/gates.fp" 2>/dev/null || true)"
             body="$marker
           The scheduled main-health sentinel found main red at \`${GITHUB_SHA::7}\`.
@@ -232,9 +232,9 @@ jobs:
             if [ -z "$number" ]; then
               gh api "repos/$REPOSITORY/issues" -f title="$title" -f body="$body" > /dev/null
             else
-              last="$(gh api "repos/$REPOSITORY/issues/$number/comments?per_page=100" --jq '[.[] | select(.body | contains("main-health-sentinel-tracker"))][-1].body // ""' 2>/dev/null || true)"
-              [ -n "$last" ] || last="$(gh api "repos/$REPOSITORY/issues/$number" --jq '.body // ""' 2>/dev/null || true)"
-              if ! printf '%s' "$last" | grep -qxF "$fingerprint"; then
+              # Every page: a tracker can outgrow one page of comments.
+              seen="$( { gh api "repos/$REPOSITORY/issues/$number" --jq '.body // ""'; gh api --paginate "repos/$REPOSITORY/issues/$number/comments?per_page=100" --jq '.[].body'; } 2>/dev/null || true)"
+              if ! printf '%s\n' "$seen" | grep -qxF "$fingerprint"; then
                 gh api "repos/$REPOSITORY/issues/$number/comments" -f body="$body" > /dev/null
               fi
             fi
