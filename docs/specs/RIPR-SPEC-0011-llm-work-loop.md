@@ -1032,8 +1032,11 @@ that attempt's status document. `ripr continue --json` prints the after-phase
 document, or the attempt's status document when it is already complete; a
 typed after-phase refusal or failure prints its `repair_after_refusal`,
 `repair_after_failure` or verify document beside the same exit code and
-stderr prose. Repair refusals, continue selection refusals, operational
-errors before verify and usage errors keep empty stdout.
+stderr prose. Repair refusals, continue selection refusals and operational
+errors before verify keep empty stdout. An unknown flag (or, for `continue`,
+a stray positional argument) under `--json` keeps exit 2 and its stderr prose
+and writes the standalone `cli_refusal` document to stdout (#6834 decision);
+other argv usage errors keep empty stdout.
 
 ## Amendment (#13833): line-ending-only files are named, not silently dropped
 
@@ -1198,7 +1201,7 @@ committed change also touches are not listed.
 - `crates/ripr/tests/task_first_facade.rs::repair_json_prints_the_packet_with_the_attempt_id` (#11584)
 - `crates/ripr/tests/task_first_facade.rs::continue_json_prints_its_after_phase_document` (#11584)
 - `crates/ripr/tests/task_first_facade.rs::continue_json_prints_the_typed_after_refusal_document` (#11584)
-- `crates/ripr/tests/task_first_facade.rs::repair_and_continue_json_keep_refusals_and_usage_errors_prose_only` (#11584)
+- `crates/ripr/tests/task_first_facade.rs::repair_and_continue_json_keep_refusals_prose_and_usage_errors_cli_refusal` (#11584)
 
 ## Implementation Mapping
 
