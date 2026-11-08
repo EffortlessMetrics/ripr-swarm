@@ -300,7 +300,7 @@ Current inputs contain exposure or ledger evidence only. They do not establish
 complete test-efficiency measurement, bind that evidence to current candidate
 bytes, or dispose of blocked and unsupported scope. Known actionable counts remain informational; complete unresolved debt
 and candidate authority remain indeterminate, so --check cannot pass from these
-inputs. No ripr command produces the missing inputs yet (tracked in #7222), so
+inputs. No ripr command produces the missing inputs yet, so
 these receipts stay indeterminate until that lands. This command does not scan a
 repository or turn raw seams into debt.
 ";

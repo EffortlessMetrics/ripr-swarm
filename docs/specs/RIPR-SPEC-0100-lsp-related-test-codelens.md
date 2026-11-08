@@ -78,6 +78,12 @@ Forbidden words in any codeLens title (enforced by `check-static-language`):
 `killed`, `survived`, `proven`, `adequate`, `covered`, `passing`, and the
 runtime-mutation-testing synonym for "no related tests found".
 
+A producer-typed file parse failure overrides the related-test title: one lens
+at row zero says that related tests are unknown and asks to fix syntax and save
+(#13374). Findings on multiple lines collapse to this single file marker; its
+semantic refresh identity also collapses, and removing the parse limitation
+restores ordinary finding lenses. Other per-file limitations keep ordinary titles.
+
 ### Click action
 
 A lens click does something useful for its own row (#13389):

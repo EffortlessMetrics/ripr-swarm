@@ -1456,6 +1456,25 @@ mutant calibrates the rule; ripr reports only the static shape.
     `outer.inner`". A call whose value may be returned, bound, passed or
     asserted keeps the credit, and so does a related test that calls the
     nested name itself.
+32. **An assertion helper called as a module attribute reads like an
+    imported helper only when the module binding is provably stable**
+    (#13629). A call statement `module.helper(args)` substitutes `helper`'s
+    single straight-line assertion, exactly as `from M import helper` does,
+    when `module` is bound by exactly one import in the test file and that
+    import names a workspace module file: `from . import conftest`, a
+    relative import inside a nested package, `from pkg import helpers` or
+    `import pkg.helpers as helpers`. It stays unresolved (no assertion) when:
+    any other import, `del`, assignment or walrus binds `module` anywhere in
+    the test file; the test file assigns or deletes the helper attribute; the
+    test file or the helper's own module has a star import, a walrus, or names
+    a patcher or dynamic namespace writer (`patch`, `setattr`, `globals`,
+    `sys.modules`, ...) anywhere, which covers module-level patches, autouse
+    fixtures and decorators; the package `__init__` binds the same name by
+    assignment, def, import or star import; the import is an undotted absolute
+    module (`import conftest`, `import conftest as c`), which resolves through
+    `sys.path`; a relative import escapes the package; or the call passes
+    keyword arguments. Over-refusal is accepted: a wrong substituted assertion
+    would be a wrong credit.
 
 ### Verdict ladder
 
@@ -2004,6 +2023,22 @@ and the test is `tests/test_subject.py`, which imports each owner from
     `assert len(str(f(3))) == 1` are each `weakly_exposed` (today `exposed`;
     `py-coarse-sign`, `py-coarse-residue`, `py-coarse-text-length`), and
     `assert f(3) == 6` stays `exposed` (`py-coarse-exact-control`).
+
+- example `package-init-ancestor`: `shapes/rates/table.py` changes
+  `RATE_TABLE = {"gold": 10, "silver": 5}` to gold 11. The ancestor
+  `shapes/__init__.py` loads the real table, then rebinds `rates` to an
+  alternate package whose `table.lookup` returns 10 independently. A test
+  imports `shapes.rates.table as t` and asserts `t.lookup("gold") == 10`:
+  no credit for the real table; the runtime mutant passes.
+- example `package-init-reexport`: The same table edit with
+  `shapes/rates/__init__.py` containing `from . import table` and an empty
+  ancestor initializer: the same exact assertion credits the real table;
+  the runtime mutant fails that assertion.
+- example `package-init-shadow`: The same table edit with the immediate
+  package initializer loading `table`, then binding `from . import alternate
+  as table`, where `alternate.lookup` returns 10 independently: the same
+  exact assertion gives no credit for the real table; the runtime mutant
+  passes. Import and test execution succeed in both negative cases.
 
 ## Test Mapping
 
