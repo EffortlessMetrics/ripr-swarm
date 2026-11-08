@@ -386,6 +386,7 @@ fn direct_candidates<'a>(
     let mut named_omissions = 0;
     let mut omitted_by_policy = 0usize;
     let mut more_omissions: Vec<(AgentBriefOmission, usize)> = Vec::new();
+    let mut named_groups: Vec<(AgentBriefOmission, String)> = Vec::new();
     let normalized_working_set = NormalizedAgentBriefWorkingSet::new(working_set);
     for entry in classified {
         let Some(why_now) = why_now_for(entry, &normalized_working_set) else {
@@ -398,12 +399,14 @@ fn direct_candidates<'a>(
             // the first few and count the rest per reason.
             if named_omissions < AGENT_BRIEF_MAX_NAMED_OMISSIONS {
                 named_omissions += 1;
-                warnings.push(format!(
-                    "seam {} at {}:{} {}",
-                    entry.seam.id().as_str(),
-                    display_path(entry.seam.file()),
-                    entry.seam.display_line(),
-                    omission.reason()
+                named_groups.push((
+                    omission,
+                    format!(
+                        "{} at {}:{}",
+                        entry.seam.id().as_str(),
+                        display_path(entry.seam.file()),
+                        entry.seam.display_line()
+                    ),
                 ));
             } else if let Some((_, count)) = more_omissions
                 .iter_mut()
@@ -417,6 +420,7 @@ fn direct_candidates<'a>(
         }
         candidates.push(selected(entry, why_now));
     }
+    warnings.extend(grouped_omission_warnings(named_groups));
     warnings.extend(
         more_omissions
             .into_iter()
@@ -953,6 +957,32 @@ impl AgentBriefOmission {
         }
     }
 
+    /// Predicate shared by several named seams: "seams X at f:l, Y at f:l <reason>".
+    fn plural_reason(self) -> String {
+        match self {
+            Self::ConfiguredOff(class) => format!(
+                "are configured off for {} seams and are not included in agent brief results",
+                class.as_str()
+            ),
+            Self::NotActionable(class) => format!(
+                "are {} and are not included in agent brief results",
+                class.as_str()
+            ),
+            Self::EvidenceLimited(class) => format!(
+                "are {} but their evidence is opaque or unknown at a stage, so they are static limitations and are not included in agent brief results",
+                class.as_str()
+            ),
+            Self::PanicOutcomeUnresolved(class) => format!(
+                "are {} but ripr cannot tell whether the changed code causes the expected panic, so they are static limitations and are not included in agent brief results",
+                class.as_str()
+            ),
+            Self::FrameworkOracleUnresolved(class) => format!(
+                "are {} but ripr cannot tell whether the framework oracle notices the changed field, so they are static limitations and are not included in agent brief results",
+                class.as_str()
+            ),
+        }
+    }
+
     /// Count line for omitted seams past the per-seam warning bound.
     fn more(self, count: usize) -> String {
         let (noun, verb) = if count == 1 {
@@ -984,6 +1014,29 @@ impl AgentBriefOmission {
             ),
         }
     }
+}
+
+/// Seams sharing one omission reason state its sentence once: a single seam
+/// reads "seam X at f:l is ...", several read "seams X at f:l, Y at f:l are
+/// ..." (#13673: the repeated sentence dominated brief warnings).
+fn grouped_omission_warnings(
+    named: impl IntoIterator<Item = (AgentBriefOmission, String)>,
+) -> Vec<String> {
+    let mut groups: Vec<(AgentBriefOmission, Vec<String>)> = Vec::new();
+    for (omission, name) in named {
+        if let Some((_, names)) = groups.iter_mut().find(|(seen, _)| *seen == omission) {
+            names.push(name);
+        } else {
+            groups.push((omission, vec![name]));
+        }
+    }
+    groups
+        .into_iter()
+        .map(|(omission, names)| match names.as_slice() {
+            [only] => format!("seam {only} {}", omission.reason()),
+            _ => format!("seams {} {}", names.join(", "), omission.plural_reason()),
+        })
+        .collect()
 }
 
 fn agent_brief_omission_reason(
@@ -2316,14 +2369,18 @@ weakly_gripped = "off"
         let selection = select_with_config(&seams, &working_set, 3, &config);
 
         assert!(selection.top_seams.is_empty());
-        let named = selection
-            .warnings
-            .iter()
-            .filter(|warning| warning.starts_with("seam "))
-            .count();
-        assert_eq!(named, AGENT_BRIEF_MAX_NAMED_OMISSIONS);
+        // The ten named seams share one reason, so they share one sentence.
+        let named = selection.warnings[0]
+            .strip_prefix("seams ")
+            .and_then(|rest| {
+                rest.strip_suffix(
+                    " are configured off for weakly_gripped seams and are not included in agent brief results",
+                )
+            })
+            .ok_or_else(|| format!("grouped named warning: {:?}", selection.warnings))?;
+        assert_eq!(named.split(", ").count(), AGENT_BRIEF_MAX_NAMED_OMISSIONS);
         assert_eq!(
-            selection.warnings[AGENT_BRIEF_MAX_NAMED_OMISSIONS..],
+            selection.warnings[1..],
             [
                 "2 more matching seams are configured off for weakly_gripped seams and not \
                  included in agent brief results",

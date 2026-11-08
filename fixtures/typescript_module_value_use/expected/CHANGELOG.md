@@ -229,3 +229,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — typescript_module_value_use (20)
+
+Reason:
+RIPR-SPEC-0122: describe unestablished test reach without claiming owner invocation (#7330)
+
+Command:
+`cargo xtask goldens bless typescript_module_value_use --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

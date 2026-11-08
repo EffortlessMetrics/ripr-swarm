@@ -13,7 +13,9 @@ use super::{
     GeneratedRustSources, LanguageId, RustAdapter, apply_repo_classified_finding, oracles,
     positive_limit_from_env, probe_shape, push_retained_finding,
 };
-use crate::analysis::diagnostic_origin::{OriginBuildContext, origins_for_rust_findings};
+use crate::analysis::diagnostic_origin::{
+    OriginBuildContext, origin_sources, origins_for_rust_findings,
+};
 use crate::config::OraclePolicy;
 use crate::domain::SourceCurrentness;
 use std::collections::{BTreeMap, BTreeSet};
@@ -127,6 +129,9 @@ impl RustAdapter {
             eprintln!("{disclosure}");
         }
         rust_index::apply_oracle_policy(&mut index, oracle_policy);
+        // #13703: keep raw bytes only for files whose indexed text differs;
+        // origin capture borrows the rest from the index.
+        let loaded_rust_files = origin_sources(loaded_rust_files, &index);
         let mut related_test_candidate_index = None;
         let property_macro_mentions =
             oracles::PropertyMacroMentionIndex::new(&index, &options.root);
