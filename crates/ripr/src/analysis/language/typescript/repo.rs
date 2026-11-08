@@ -73,6 +73,10 @@ pub(super) struct RepoInput {
     pub(super) tests: Vec<PathBuf>,
     /// Type-only declaration files (counted, never probed).
     pub(super) declarations: usize,
+    /// Production files under a `docs` site directory that the shared
+    /// adapter exclusion refuses (#13088), unless declared hand-written.
+    /// Counted as skipped so the exclusion is disclosed, not silent.
+    pub(super) docs_site: usize,
     /// Production files beyond the working-set limit. Test files are the
     /// evidence index and are not capped here; the read bounds govern them.
     pub(super) capped: usize,
@@ -117,6 +121,13 @@ pub(super) fn select_repo_input(
             input.declarations += 1;
         } else if is_test_file(&file) {
             input.tests.push(file);
+        } else if crate::config::is_typescript_docs_site_path(&file)
+            && !crate::config::is_declared_handwritten_typescript_path(
+                &typescript_config.handwritten_files,
+                &file,
+            )
+        {
+            input.docs_site += 1;
         } else if input.production.len() < limit {
             input.production.push(file);
         } else {
@@ -141,15 +152,15 @@ pub(super) struct RepoSelection {
 /// nothing, so every count stays unknown. A truncated walk saw an unknown
 /// total, so `discovered`, `skipped` and `omitted` (lower bounds only) are
 /// unknown while `selected` stays exact.
-/// Declaration files are the only non-cap exclusion; tests are evidence and
-/// are selected. The walk cap precedes the working-set cap, so it is the
+/// Declaration files and docs-site production files are the only non-cap
+/// exclusions; tests are evidence and are selected. The walk cap precedes the working-set cap, so it is the
 /// first limiting stage when both fired.
 fn file_accounting(input: &RepoInput, limit: usize, walk_limit: usize) -> RepoFileAccounting {
     if input.root_unreadable {
         return RepoFileAccounting::default();
     }
     let selected = input.production.len() + input.tests.len();
-    let discovered = selected + input.declarations + input.capped;
+    let discovered = selected + input.declarations + input.docs_site + input.capped;
     let first_cap_fired = if input.discovery_truncated {
         Some(RepoCapFired {
             name: TS_MAX_WORKSPACE_FILES_ENV,
@@ -170,7 +181,7 @@ fn file_accounting(input: &RepoInput, limit: usize, walk_limit: usize) -> RepoFi
         selected: Some(selected),
         // A truncated walk never saw the rest of the workspace, so the
         // declaration and cap counts are only lower bounds there.
-        skipped: (!input.discovery_truncated).then_some(input.declarations),
+        skipped: (!input.discovery_truncated).then_some(input.declarations + input.docs_site),
         omitted: (!input.discovery_truncated).then_some(input.capped),
         first_cap_fired,
     }

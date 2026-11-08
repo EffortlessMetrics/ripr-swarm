@@ -2090,9 +2090,16 @@ fn missing_discriminator_facts(
         probe.family,
         ProbeFamily::SideEffect | ProbeFamily::CallDeletion | ProbeFamily::ErrorPath
     ) || (matches!(probe.family, ProbeFamily::ReturnValue)
-        && flow_sinks
+        // RIPR-SPEC-0263 (#11147): an error-variant return under an
+        // unentered `if` reads the guard on any diff shape.
+        && (flow_sinks
             .iter()
-            .any(|sink| sink.kind == FlowSinkKind::ErrorVariant)))
+            .any(|sink| sink.kind == FlowSinkKind::ErrorVariant)
+            // #12414: an inserted return value reads the same guard. Its
+            // line is new, so the #8659 baseline fold has no before-text to
+            // substitute and cannot refuse it; the SPEC-0263 refusals below
+            // still hold.
+            || probe.before.is_none())))
         && let Some(fact) = missing_guard_entry_discriminator(
             probe,
             owner_fn,
@@ -2573,6 +2580,27 @@ fn missing_boundary_discriminator(
     unresolved: &mut Option<String>,
 ) -> Option<MissingDiscriminatorFact> {
     let owner = owner_fn?;
+    // #12414: a pure insertion whose changed line is itself a predicate
+    // names the inserted guard's activating domain, not the changed
+    // comparison's equality boundary: the equality point passes on both
+    // sides of the insertion (`amount == 0` under `if amount < 0` returns
+    // the same value before and after), so it discriminates nothing. Only
+    // the narrow readable shape speaks: one comparison between an immutable
+    // integer owner parameter and an integer bound, with every related
+    // test's input provably leaving the guard false. A readable test input
+    // that enters the guard already activates the change. Every other shape
+    // keeps the boundary reading below (fail-closed).
+    if probe.before.is_none() && matches!(probe.family, ProbeFamily::Predicate) {
+        match inserted_guard_reading(probe, owner, related_tests, index) {
+            InsertedGuardReading::Unentered(guard, inputs) => {
+                return Some(guard_unentered_fact(&guard, inputs, flow_sinks));
+            }
+            InsertedGuardReading::Entered => {
+                return None;
+            }
+            InsertedGuardReading::Unread => {}
+        }
+    }
     let parameters = function_parameters(owner);
     let owner_source = index
         .files()
@@ -3101,7 +3129,90 @@ fn missing_boundary_discriminator(
         value: format!("{left} == {right}"),
         reason,
         flow_sink: first_visible_flow_sink(flow_sinks).cloned(),
+        shape: DiscriminatorShape::Boundary,
+        drafted_boundary: None,
     })
+}
+
+/// What the related tests prove about a pure insertion whose changed line
+/// is itself a predicate (#12414).
+enum InsertedGuardReading {
+    /// Every related test's input provably leaves the inserted guard false,
+    /// with the shown input values that stay outside it.
+    Unentered(super::arm_selection::GuardEntry, Vec<String>),
+    /// A readable related test input enters the guard: it activates the
+    /// changed line, so this seam has no missing input.
+    Entered,
+    /// The inserted line is not a readable parameter-vs-integer-bound
+    /// guard, or some test's owner calls cannot be read: the boundary
+    /// reading keeps its previous path.
+    Unread,
+}
+
+/// The inserted-guard reading of a predicate probe on a pure insertion
+/// (#12414): the probe's own expression is the inserted condition, read by
+/// the RIPR-SPEC-0263 machinery, and every related test's input must
+/// provably leave the guard false for the domain to be named.
+fn inserted_guard_reading(
+    probe: &Probe,
+    owner: &FunctionSummary,
+    related_tests: &[&TestSummary],
+    index: &crate::analysis::rust_index::RustIndex,
+) -> InsertedGuardReading {
+    if related_tests.is_empty() {
+        return InsertedGuardReading::Unread;
+    }
+    let Some(guard) =
+        super::arm_selection::GuardEntry::establish_inserted_predicate(probe, owner, |name| {
+            super::arm_selection::named_integer_bound(index, owner, name)
+        })
+    else {
+        return InsertedGuardReading::Unread;
+    };
+    let mut inputs = Vec::new();
+    for test in related_tests {
+        match guard.evidence_for(test) {
+            super::arm_selection::GuardEntryEvidence::Unentered(test_inputs) => {
+                inputs.extend(test_inputs);
+            }
+            super::arm_selection::GuardEntryEvidence::Enters => {
+                return InsertedGuardReading::Entered;
+            }
+            super::arm_selection::GuardEntryEvidence::Unreadable => {
+                return InsertedGuardReading::Unread;
+            }
+        }
+    }
+    InsertedGuardReading::Unentered(guard, inputs)
+}
+
+/// The RIPR-SPEC-0263 fact: the guard no related test's input enters, with
+/// the observed values that stay outside it. Shared by
+/// [`missing_guard_entry_discriminator`] and the inserted-guard predicate
+/// reading (#12414) so both name the same value, reason and shape.
+fn guard_unentered_fact(
+    guard: &super::arm_selection::GuardEntry,
+    mut inputs: Vec<String>,
+    flow_sinks: &[FlowSinkFact],
+) -> MissingDiscriminatorFact {
+    inputs.sort();
+    inputs.dedup();
+    let condition = format!("if {}", guard.condition());
+    MissingDiscriminatorFact {
+        reason: format!(
+            "{GUARD_UNENTERED_REASON_PREFIX} `{condition}`; observed `{}` values: {}",
+            guard.parameter(),
+            inputs
+                .iter()
+                .map(|input| format!("`{input}`"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        value: condition,
+        flow_sink: first_visible_flow_sink(flow_sinks).cloned(),
+        shape: DiscriminatorShape::GuardDomain,
+        drafted_boundary: None,
+    }
 }
 
 /// RIPR-SPEC-0265 rule 1: a changed comparison that is the whole closure
@@ -3345,6 +3456,8 @@ fn element_boundary_discriminator(
             "No related test call passes `{parameter}` an element {element} equal to {boundary}{short_circuit}; observed {element} values: {observed}; target {boundary} value: {target}"
         ),
         flow_sink: first_visible_flow_sink(flow_sinks).cloned(),
+        shape: DiscriminatorShape::Boundary,
+        drafted_boundary: None,
     })
 }
 
@@ -3577,6 +3690,8 @@ fn missing_error_variant_discriminator(
             .find(|sink| sink.kind == FlowSinkKind::ErrorVariant)
             .or_else(|| first_visible_flow_sink(flow_sinks))
             .cloned(),
+        shape: DiscriminatorShape::Other,
+        drafted_boundary: None,
     })
 }
 
@@ -3649,6 +3764,8 @@ fn missing_match_arm_discriminator(
             .find(|sink| sink.kind == FlowSinkKind::MatchArm)
             .or_else(|| first_visible_flow_sink(flow_sinks))
             .cloned(),
+        shape: DiscriminatorShape::Other,
+        drafted_boundary: None,
     })
 }
 
@@ -3719,22 +3836,7 @@ fn missing_guard_entry_discriminator(
         }
         inputs.extend(guard.unentered_inputs(test)?);
     }
-    inputs.sort();
-    inputs.dedup();
-    let condition = format!("if {}", guard.condition());
-    Some(MissingDiscriminatorFact {
-        reason: format!(
-            "{GUARD_UNENTERED_REASON_PREFIX} `{condition}`; observed `{}` values: {}",
-            guard.parameter(),
-            inputs
-                .iter()
-                .map(|input| format!("`{input}`"))
-                .collect::<Vec<_>>()
-                .join(", ")
-        ),
-        value: condition,
-        flow_sink: first_visible_flow_sink(flow_sinks).cloned(),
-    })
+    Some(guard_unentered_fact(&guard, inputs, flow_sinks))
 }
 
 /// Whether a function the owner reaches through its calls names the owner
@@ -4212,6 +4314,8 @@ fn missing_field_value_discriminator(
             .iter()
             .find(|sink| sink.kind == FlowSinkKind::StructField)
             .cloned(),
+        shape: DiscriminatorShape::Other,
+        drafted_boundary: None,
     })
 }
 
@@ -4305,33 +4409,48 @@ pub(in crate::analysis) fn assigned_field_weak_read_start(
                 || test.attrs.iter().any(|attr| attr.contains("should_panic"))
         })
         || macro_names_rebound(index, &["assert", "assert_ne"])
-        // The test's binding is the impl's `Self` type, which a `&mut self`
-        // signature never names: ask about it explicitly (an owner with no
-        // established impl type withholds).
-        || crate::analysis::test_grip_evidence::names_non_plain_drop_type(
-            owner,
-            &format!("{expression} Self"),
-            index,
-        )
     {
         return false;
     }
     let Some(call) = super::builder_override::OwnerCall::from_symbol(&owner.id.0) else {
         return false;
     };
+    // #11870: a non-public field is read only by a test that can name it.
+    let mut reach = None;
     let mut weak = false;
     for test in tests {
-        let direct = super::related_tests::owner_call_is_direct(test, owner, index);
+        // Every test that runs the owner must itself be a placed weak read:
+        // a test that reaches the owner another way (a helper, a loop, an
+        // alias), or that reads the write through a getter, `Display`, a
+        // helper-held assertion or an `if`/`panic!` check, may be the exact
+        // check these rules do not place.
+        if !super::related_tests::owner_call_is_direct(test, owner, index) {
+            return false;
+        }
         // Pass one: the weak reads, as (assertion index, binding).
         let mut weak_reads: Vec<(usize, String)> = Vec::new();
         for (at, assertion) in test.assertions.iter().enumerate() {
             if assigned_field_read_confirms(owner, path, test, assertion, index) {
                 return false;
             }
-            if direct && let Some(binding) = weak_assigned_field_read(owner, path, test, assertion)
-            {
+            if let Some(binding) = weak_assigned_field_read(owner, path, test, assertion) {
                 weak_reads.push((at, binding));
             }
+        }
+        if weak_reads.is_empty() {
+            return false;
+        }
+        if reach
+            .get_or_insert_with(|| super::field_reach::declared_field_reach(owner, path, index))
+            .is_some_and(|reach| {
+                !super::field_reach::test_can_name_field(
+                    reach,
+                    owner.file.as_path(),
+                    test.file.as_path(),
+                )
+            })
+        {
+            return false;
         }
         // Pass two: any other assertion that reads the written field or names
         // a binding it was weakly read from may be the exact check the rules
@@ -4355,9 +4474,34 @@ pub(in crate::analysis) fn assigned_field_weak_read_start(
         if test_body_may_check_field_elsewhere(test, &weak_reads, call.name(), path) {
             return false;
         }
-        weak = weak || !weak_reads.is_empty();
+        weak = true;
     }
-    weak
+    // No other mention of the owner's name anywhere in the index (another
+    // test, a helper, a `macro_rules!` body, a doctest, production code, an
+    // alias path, a method value, a turbofish call) than in the placed weak
+    // reads: such a mention may be a runner that observes the write exactly,
+    // which no relation or per-test rule places. A name shared with another
+    // type only over-withholds.
+    let mut placed: Vec<(&std::path::Path, usize)> = Vec::new();
+    let mut in_placed = 0;
+    for test in tests {
+        if !placed.contains(&(test.file.as_path(), test.start_line)) {
+            placed.push((test.file.as_path(), test.start_line));
+            in_placed += super::field_reach::mentions_in(test.body.as_ref(), &owner.name);
+        }
+    }
+    if weak && super::field_reach::owner_name_mentions(index, &owner.name) != in_placed {
+        return false;
+    }
+    // The type walk is the costly check, so it runs last, only for a start
+    // every cheaper rule allowed. The test's binding is the impl's `Self`
+    // type, which a `&mut self` signature never names: ask about it
+    // explicitly (an owner with no established impl type withholds).
+    weak && !crate::analysis::test_grip_evidence::names_non_plain_drop_type(
+        owner,
+        &format!("{expression} Self"),
+        index,
+    )
 }
 
 /// Whether `test`'s body, with the weak-read assertions (`weak_reads`) cut
@@ -5896,7 +6040,10 @@ fn bind_hop_step(
         // The owner (step 0) has no lower hop to read it, so no `self`
         // cell ever lands in an owner row.
         if include_receiver
-            && let Some(receiver) = &hop.receiver
+            && let Some(receiver) = hop
+                .receiver
+                .as_ref()
+                .and_then(super::helper_transfer::HopReceiver::parameter)
             && let Some(cell) = row.iter().find(|cell| cell.parameter == *receiver)
             && super::helper_transfer::is_receiver_cell(&cell.value)
         {
@@ -6040,7 +6187,13 @@ fn chain_entry_rows(
         })
     };
     let receivers = ReceiverParameters {
-        names: entry.receiver.iter().cloned().collect(),
+        names: entry
+            .receiver
+            .as_ref()
+            .and_then(super::helper_transfer::HopReceiver::parameter)
+            .map(str::to_string)
+            .into_iter()
+            .collect(),
         value: Some(&receiver_reader),
         text_cells: false,
         index: Some(index),
@@ -6651,15 +6804,20 @@ pub(in crate::analysis) fn returned_comparison_view(probe: &Probe) -> Option<Pro
     if !matches!(probe.family, ProbeFamily::ReturnValue) {
         return None;
     }
-    let (expression, explicit) = strip_explicit_return(&probe.expression);
-    if explicit && !is_top_level_comparison(&expression) {
+    let (expression, _) = strip_explicit_return(&probe.expression);
+    // A genuine returned comparison only: the operator must sit at the top
+    // level of both texts, explicit `return` or implicit tail alike. A
+    // turbofish `sum::<u64>() + 25 * 2`, a call/index-nested comparison or
+    // any other arithmetic rewrite contains comparison-shaped tokens
+    // without being one, and keeps the return-value reading.
+    if !is_top_level_comparison(&expression) {
         return None;
     }
     let before = probe.before.as_deref().map(|before| {
         let (before, before_explicit) = strip_explicit_return(before);
         (before, before_explicit)
     });
-    if let Some((before, true)) = &before
+    if let Some((before, _)) = &before
         && !is_top_level_comparison(before)
     {
         return None;
@@ -9816,7 +9974,10 @@ mod tests {
     fn activation_evidence_reports_missing_boundary_discriminator() {
         let owner = function("pub fn score(amount: i32) -> bool {\n    amount > 10\n}");
         let test = test_with_call("score_uses_adjacent_value", "score(9);");
-        let probe = probe(ProbeFamily::Predicate, "amount > 10");
+        // A changed comparison (`>= 10` to `> 10`), not a pure insertion:
+        // an inserted guard names its domain instead (#12414).
+        let mut probe = probe(ProbeFamily::Predicate, "amount > 10");
+        probe.before = Some("amount >= 10".to_string());
         let flow_sinks = vec![FlowSinkFact {
             kind: FlowSinkKind::ReturnValue,
             text: "amount > 10".to_string(),
@@ -9848,6 +10009,190 @@ mod tests {
                 .map(|sink| &sink.kind),
             Some(&FlowSinkKind::ReturnValue)
         );
+    }
+
+    /// #12414: a pure insertion whose changed line is itself a predicate
+    /// names the inserted guard's activating domain, not the equality point
+    /// that passes on both sides of the insertion.
+    #[test]
+    fn inserted_guard_predicate_names_the_guard_domain() {
+        let owner = function(
+            "pub fn score(amount: i32, discount_threshold: i32) -> i32 {
+    if amount < 0 {
+        return 0;
+    }
+    if amount >= discount_threshold {
+        amount - 10
+    } else {
+        amount
+    }
+}",
+        );
+        let below = test_with_call("below_threshold", "score(50, 100);");
+        let above = test_with_call("far_above", "score(10_000, 100);");
+        let probe = probe(ProbeFamily::Predicate, "amount < 0");
+
+        let activation = activation_evidence(
+            &probe,
+            Some(&owner),
+            &[&below, &above],
+            &[],
+            None,
+            &crate::analysis::rust_index::RustIndex::default(),
+            false,
+        );
+
+        assert_eq!(activation.missing_discriminators.len(), 1);
+        let fact = &activation.missing_discriminators[0];
+        assert_eq!(fact.value, "if amount < 0");
+        assert_eq!(fact.shape, DiscriminatorShape::GuardDomain);
+        assert!(
+            fact.reason
+                .starts_with(crate::domain::GUARD_UNENTERED_REASON_PREFIX)
+        );
+        assert!(
+            fact.reason
+                .contains("observed `amount` values: `10_000`, `50`")
+        );
+        assert!(!fact.reason.contains("amount == 0"));
+    }
+
+    /// #12414: the non-strict insertion is read the same way; the equality
+    /// point alone never names the region that runs the changed line.
+    #[test]
+    fn inserted_non_strict_guard_predicate_names_the_guard_domain() {
+        let owner = function(
+            "pub fn score(amount: i32, discount_threshold: i32) -> i32 {
+    if amount <= 0 {
+        return 0;
+    }
+    if amount >= discount_threshold {
+        amount - 10
+    } else {
+        amount
+    }
+}",
+        );
+        let below = test_with_call("below_threshold", "score(50, 100);");
+        let probe = probe(ProbeFamily::Predicate, "amount <= 0");
+
+        let activation = activation_evidence(
+            &probe,
+            Some(&owner),
+            &[&below],
+            &[],
+            None,
+            &crate::analysis::rust_index::RustIndex::default(),
+            false,
+        );
+
+        assert_eq!(activation.missing_discriminators.len(), 1);
+        let fact = &activation.missing_discriminators[0];
+        assert_eq!(fact.value, "if amount <= 0");
+        assert_eq!(fact.shape, DiscriminatorShape::GuardDomain);
+    }
+
+    /// #12414: a flipped-operator diff (`before` present) is not an
+    /// insertion, so the flipped-comparison equality convention and its
+    /// goldens stay.
+    #[test]
+    fn a_flipped_operator_diff_keeps_the_equality_boundary() {
+        let owner = function(
+            "pub fn score(amount: i32, threshold: i32) -> i32 {
+    if amount >= threshold {
+        amount - 10
+    } else {
+        amount
+    }
+}",
+        );
+        let below = test_with_call("below_threshold", "score(50, 100);");
+        let above = test_with_call("far_above", "score(10_000, 100);");
+        let mut probe = probe(ProbeFamily::Predicate, "amount > threshold");
+        probe.before = Some("amount < threshold".to_string());
+
+        let activation = activation_evidence(
+            &probe,
+            Some(&owner),
+            &[&below, &above],
+            &[],
+            None,
+            &crate::analysis::rust_index::RustIndex::default(),
+            false,
+        );
+
+        assert_eq!(activation.missing_discriminators.len(), 1);
+        let fact = &activation.missing_discriminators[0];
+        assert_eq!(fact.value, "amount == threshold");
+        assert_eq!(fact.shape, DiscriminatorShape::Boundary);
+    }
+
+    /// #12414: a bound outside the parsed shape (a parameter bound, a call)
+    /// declines the guard reading and keeps the boundary reading below.
+    #[test]
+    fn an_inserted_predicate_with_an_unread_bound_keeps_the_boundary_reading() {
+        let owner = function(
+            "pub fn score(amount: i32, discount_threshold: i32) -> i32 {
+    if amount < discount_threshold {
+        return 0;
+    }
+    if amount >= discount_threshold {
+        amount - 10
+    } else {
+        amount
+    }
+}",
+        );
+        let below = test_with_call("below_threshold", "score(50, 100);");
+        let above = test_with_call("far_above", "score(10_000, 100);");
+        let probe = probe(ProbeFamily::Predicate, "amount < discount_threshold");
+
+        let activation = activation_evidence(
+            &probe,
+            Some(&owner),
+            &[&below, &above],
+            &[],
+            None,
+            &crate::analysis::rust_index::RustIndex::default(),
+            false,
+        );
+
+        assert_eq!(activation.missing_discriminators.len(), 1);
+        let fact = &activation.missing_discriminators[0];
+        assert_eq!(fact.value, "amount == discount_threshold");
+        assert_eq!(fact.shape, DiscriminatorShape::Boundary);
+    }
+
+    /// #12414: a readable test input that enters the inserted guard already
+    /// activates the change, so no missing input is named for the seam.
+    #[test]
+    fn a_test_input_entering_the_inserted_guard_suppresses_the_fact() {
+        let owner = function(
+            "pub fn score(amount: i32, discount_threshold: i32) -> i32 {
+    if amount < 0 {
+        return 0;
+    }
+    if amount >= discount_threshold {
+        amount - 10
+    } else {
+        amount
+    }
+}",
+        );
+        let negative = test_with_call("enters_the_guard", "score(-1, 100);");
+        let probe = probe(ProbeFamily::Predicate, "amount < 0");
+
+        let activation = activation_evidence(
+            &probe,
+            Some(&owner),
+            &[&negative],
+            &[],
+            None,
+            &crate::analysis::rust_index::RustIndex::default(),
+            false,
+        );
+
+        assert!(activation.missing_discriminators.is_empty());
     }
 
     #[test]
@@ -9887,7 +10232,10 @@ mod tests {
             "pub fn score(amount: i32) -> Result<bool, AuthError> {\n    if amount > 10 { return Err(AuthError::Bad); }\n    Ok(true)\n}",
         );
         let test = test_with_call("score_uses_adjacent_value", "score(9);");
-        let probe = probe(ProbeFamily::Predicate, "amount > 10");
+        // A changed comparison (`>= 10` to `> 10`), not a pure insertion:
+        // an inserted guard names its domain instead (#12414).
+        let mut probe = probe(ProbeFamily::Predicate, "amount > 10");
+        probe.before = Some("amount >= 10".to_string());
         let flow_sinks = vec![FlowSinkFact {
             kind: FlowSinkKind::ErrorVariant,
             text: "Result::Err(AuthError::Bad)".to_string(),
@@ -10890,6 +11238,19 @@ assert_eq!(input.amount, 100);"#
         );
         assert_eq!(view("return x > 1 && y", "return x > 2 && y"), None);
         assert_eq!(view("return x == 100", "return x > 101"), None);
+        // Implicit tails need the same top-level operator: a turbofish
+        // arithmetic rewrite (`sum::<u64>() + 50` -> `.. + 25 * 2`) or a
+        // nested comparison is not a returned bare comparison.
+        assert_eq!(
+            view(
+                "lines.iter().map(|l| l.cents).sum::<u64>() + 50",
+                "lines.iter().map(|l| l.cents).sum::<u64>() + 25 * 2"
+            ),
+            None
+        );
+        assert_eq!(view("f(x > 100)", "f(x > 101)"), None);
+        assert_eq!(view("v[x > 1]", "v[x > 2]"), None);
+        assert_eq!(view("x.parse::<i32>() > 5", "x.parse::<i32>() > 6"), None);
     }
 
     /// #9145 keyword boundary: `return` is stripped before any whitespace, never
@@ -11697,7 +12058,10 @@ assert_eq!(input.amount, 100);"#
         let owner = function(
             "pub fn score(amount: u64) -> u64 {\n    if amount > 999 { 25 } else { 0 }\n}",
         );
-        let predicate = probe(ProbeFamily::Predicate, "amount > 999");
+        // A changed comparison (`>= 999` to `> 999`), not a pure insertion:
+        // an inserted guard names its domain instead (#12414).
+        let mut predicate = probe(ProbeFamily::Predicate, "amount > 999");
+        predicate.before = Some("amount >= 999".to_string());
         let gap = |body: &str, lines: &[(usize, &str)]| {
             let test = test_with_body_calls(body, lines);
             let gathered = boundary_input(&owner, &predicate, &[&test]);

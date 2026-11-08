@@ -1438,6 +1438,11 @@ impl AnalysisSnapshot {
             .into_iter()
             .filter(|(primary, _)| {
                 super::diagnostics::finding_is_visible_in_profile(self.diagnostic_profile, primary)
+                    && !super::diagnostics::file_has_parse_failure(
+                        &self.root,
+                        &primary.probe.location.file,
+                        self.analysis_outcome.as_ref(),
+                    )
             })
             .count();
         !self.root.as_os_str().is_empty()

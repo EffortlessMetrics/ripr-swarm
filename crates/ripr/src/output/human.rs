@@ -141,6 +141,15 @@ pub(crate) fn stub_route_subjects<'a>(
     (triage.selected, triage::hidden_stub_route_findings(&triage))
 }
 
+/// The JSON `finding_routes` entry for one finding (#11976); see
+/// [`triage::finding_routes_json`].
+pub(crate) fn finding_routes_json(
+    navigation: &crate::app::FindingNavigation,
+    finding: &crate::domain::Finding,
+) -> serde_json::Value {
+    triage::finding_routes_json(navigation, finding)
+}
+
 /// Project the check producer's canonical next action for a navigation-aware
 /// render. `None` when the producer cannot bind a subject; JSON callers omit
 /// the member rather than inventing a committed-source default or executable
@@ -468,7 +477,10 @@ pub(crate) fn render_full_with_config_and_navigation(
             output.source_value_files(finding),
             false,
         ));
-        if let Some(FindingDrillIn::Commands(navigation)) = drill_in {
+        // #13502: a candidate-tree subject cannot be replayed by `explain`.
+        if let Some(FindingDrillIn::Commands(navigation)) = drill_in
+            && !navigation.finding_routes_withheld()
+        {
             out.push_str("Drill in:\n");
             // #12431: the same finding-id label the bounded digest prints,
             // through the same shared helper so the two blocks cannot drift.
@@ -489,6 +501,7 @@ pub(crate) fn render_full_with_config_and_navigation(
     // route to the same run's ids without pointing at ids that are absent.
     if findings_rendered == 0
         && let Some(FindingDrillIn::Commands(navigation)) = drill_in
+        && !navigation.finding_routes_withheld()
     {
         out.push_str(&format!(
             "Drill in: every finding in this run is suppressed by policy, so none printed above. List this run's finding ids with:\n  {}\n\n",
@@ -1524,12 +1537,12 @@ mod tests {
     use crate::app::{CheckOutput, Mode};
     use crate::config::RiprConfig;
     use crate::domain::{
-        ActivationEvidence, CALLEE_ONLY_REACH_PREFIX, Confidence, DeltaKind, ExposureClass,
-        Finding, FindingCanonicalGap, FlowSinkFact, FlowSinkKind, LanguageFileCount, LanguageId,
-        LanguageStatus, MISSING_DISCRIMINATOR_VALUE_PREFIX, MissingDiscriminatorFact, OracleKind,
-        OracleStrength, Probe, ProbeFamily, ProbeId, RelatedTest, RevealEvidence, RiprEvidence,
-        SourceLocation, StageEvidence, StageState, StopReason, Summary, SymbolId, ValueContext,
-        ValueFact,
+        ActivationEvidence, CALLEE_ONLY_REACH_PREFIX, Confidence, DeltaKind, DiscriminatorShape,
+        ExposureClass, Finding, FindingCanonicalGap, FlowSinkFact, FlowSinkKind, LanguageFileCount,
+        LanguageId, LanguageStatus, MISSING_DISCRIMINATOR_VALUE_PREFIX, MissingDiscriminatorFact,
+        OracleKind, OracleStrength, Probe, ProbeFamily, ProbeId, RelatedTest, RevealEvidence,
+        RiprEvidence, SourceLocation, StageEvidence, StageState, StopReason, Summary, SymbolId,
+        ValueContext, ValueFact,
     };
     use std::path::{Path, PathBuf};
 
@@ -4949,6 +4962,8 @@ mod tests {
             value: "end == start".to_string(),
             reason: "no related test call uses end equal to start".to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Boundary,
+            drafted_boundary: None,
         }];
         finding.missing = vec!["No strong discriminator was detected".to_string()];
         let digest = super::sections::render_finding_digest_with_config(
@@ -5085,6 +5100,45 @@ mod tests {
         assert!(
             digest.contains("  Missing check (1 of 2): No strong assertion was detected\n"),
             "prose entries must render unchanged; got:\n{digest}"
+        );
+    }
+
+    /// #13037: a weak finding whose next step says a related test already has
+    /// an exact assertion must not also say "No strong assertion was detected";
+    /// the default line names the missing link instead, while a finding with no
+    /// such next step keeps the fixed wording.
+    #[test]
+    fn digest_missing_line_does_not_contradict_an_exact_assertion_next_step() {
+        let mut finding = sample_finding();
+        finding.class = ExposureClass::WeaklyExposed;
+        finding.missing = vec!["No strong discriminator was detected".to_string()];
+        finding.recommended_next_step = Some(
+            "The related test `t` already has an exact assertion; this does not establish observation of the returned value."
+                .to_string(),
+        );
+        let digest = super::sections::render_finding_digest_with_config(
+            &finding,
+            &crate::config::RiprConfig::default(),
+            Path::new("."),
+        );
+        assert!(
+            digest.contains("No assertion was tied to the changed value"),
+            "{digest}"
+        );
+        assert!(
+            !digest.contains("No strong assertion was detected"),
+            "{digest}"
+        );
+
+        finding.recommended_next_step = Some("Add a boundary test.".to_string());
+        let plain = super::sections::render_finding_digest_with_config(
+            &finding,
+            &crate::config::RiprConfig::default(),
+            Path::new("."),
+        );
+        assert!(
+            plain.contains("No strong assertion was detected"),
+            "{plain}"
         );
     }
 
@@ -5543,6 +5597,8 @@ mod tests {
                 value: "amount == 100".to_string(),
                 reason: "boundary".to_string(),
                 flow_sink: None,
+                shape: DiscriminatorShape::Boundary,
+                drafted_boundary: None,
             }];
         assert!(crate::output::python_repair_card::python_repair_card(&diff).is_none());
         let scope_reason = "repo-mode findings have no repair routing (python/any/repo/repair_routing is not_proven)";
@@ -5565,6 +5621,8 @@ mod tests {
             value: "amount == 100".to_string(),
             reason: "boundary".to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Boundary,
+            drafted_boundary: None,
         }];
         assert!(render(&single_finding_output(placed)).contains(
             "has no repair card (its test placement or related-test evidence is incomplete)"
@@ -5726,6 +5784,8 @@ mod tests {
                     reason: "changed TypeScript equality-boundary lacks a concrete discriminator"
                         .to_string(),
                     flow_sink: None,
+                    shape: DiscriminatorShape::Boundary,
+                    drafted_boundary: None,
                 });
             finding.related_tests.push(RelatedTest {
                 name: "applies discount at threshold".to_string(),
@@ -7228,6 +7288,8 @@ mod tests {
             value: "amount >= threshold".to_string(),
             reason: "no related test call uses an amount at the threshold".to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Other,
+            drafted_boundary: None,
         }];
 
         let digest = super::sections::render_finding_digest_with_config(
@@ -8115,6 +8177,8 @@ mod tests {
             value: "not (x > 0)".to_string(),
             reason: "every observed input takes the unchanged if arm".to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Other,
+            drafted_boundary: None,
         }];
         let digest = super::sections::render_finding_digest_with_config(
             &finding,
@@ -8226,6 +8290,8 @@ mod tests {
             value: "amount == discount_threshold".to_string(),
             reason: "no related test call uses the boundary value".to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Boundary,
+            drafted_boundary: None,
         }];
 
         let digest = super::sections::render_finding_digest_with_config(
@@ -8260,6 +8326,8 @@ mod tests {
             value: "AuthError::RevokedToken".to_string(),
             reason: "No exact error variant assertion for AuthError::RevokedToken".to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Other,
+            drafted_boundary: None,
         }];
         let digest = super::sections::render_finding_digest_with_config(
             &finding,
@@ -8432,6 +8500,8 @@ mod tests {
             reason: "Related Perl test reaches the owner but lacks an exact return discriminator"
                 .to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Other,
+            drafted_boundary: None,
         }];
         finding.related_tests = vec![RelatedTest {
             name: "discount_smoke".to_string(),
@@ -8702,6 +8772,8 @@ mod tests {
             value: "observation_unverified".to_string(),
             reason: "r".to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Other,
+            drafted_boundary: None,
         }];
         let rendered = super::evidence_lines::evidence_path_lines(
             &finding,
@@ -8796,6 +8868,8 @@ mod tests {
                     value: "enabled == false".to_string(),
                     reason: "related tests do not use the changed value".to_string(),
                     flow_sink: None,
+                    shape: DiscriminatorShape::Boundary,
+                    drafted_boundary: None,
                 }],
             },
             stop_reasons: vec![],

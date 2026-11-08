@@ -9,6 +9,7 @@ use crate::analysis;
 use crate::app::Mode;
 use crate::cli::CommandError;
 use crate::cli::help;
+use crate::cli::parse::reconcile_root;
 use crate::cli::suggest::{unknown_argument, unknown_value};
 use crate::config::language_detection::{
     detect_languages, is_skipped_walk_dir, is_walkable_dir, perl_project_detected,
@@ -73,15 +74,22 @@ pub(in crate::cli) fn doctor(args: &[String]) -> Result<(), CommandError> {
                         ));
                     }
                 };
-                // #4318: a repeated documented flag is a usage mistake with a
-                // name of its own; accusing `--root` of being unknown sends
-                // the user to help for a flag they already used.
-                if let Some(existing) = &root {
-                    return Err(CommandError::from(format!(
-                        "doctor accepts at most one --root; found both {existing:?} and {value:?}. Run `ripr doctor --help`."
-                    )));
-                }
-                root = Some(value.to_string());
+                // #4318: a known doctor flag in the value position means the
+                // root was omitted; consuming it ran the report against a
+                // directory named after the flag (#4318 review). The
+                // pre-#4318 parser answered `missing value for --root`
+                // here. Other dash-prefixed paths stay legitimate values.
+                // #9008/#10542: a second `--root` reconciles instead of
+                // refusing blindly — an identical repeat is absorbed for
+                // scripted double-root invocations, a conflicting value is
+                // a usage error naming both values.
+                let reconciled = reconcile_root(
+                    Path::new(root.as_deref().unwrap_or(".")),
+                    root.is_some(),
+                    value,
+                    "doctor",
+                )?;
+                root = Some(reconciled.display().to_string());
             }
             other if other.starts_with('-') => {
                 return Err(CommandError::from(unknown_argument("doctor", other)));
@@ -2185,8 +2193,9 @@ fn perl_preview_lines(preview: &output::doctor::DoctorPerlPreview) -> Vec<String
         ));
     }
 
-    // Find a compatible exporter: one that answers `--version` AND accepts
-    // the managed `ripr-facts` subcommand. A binary that only answers
+    // Find a compatible exporter: one that accepts the managed `ripr-facts`
+    // subcommand (`--version` only supplies the reported version; the
+    // canonical exporter has none). A binary that only answers
     // `--version` (for example the published perllsp LSP server) is reported
     // as found-but-incompatible, never as a working exporter.
     lines.extend(perl_exporter_lines(&preview.exporter));
@@ -2338,12 +2347,13 @@ fn perl_producer_configured(config: Option<&RiprConfig>) -> Option<String> {
 /// Result of probing for a Perl fact exporter.
 #[derive(Debug, PartialEq, Eq)]
 enum PerlExporterProbe {
-    /// Answers `--version` and accepts the managed `ripr-facts` subcommand.
+    /// Accepts the managed `ripr-facts` subcommand. `version` is
+    /// "version unknown" when `--version` did not answer.
     Compatible { bin: String, version: String },
     /// Answers `--version` but rejects `ripr-facts`, so managed mode would
     /// fail against it. Not an exporter ripr can use.
     Incompatible { bin: String, version: String },
-    /// No candidate answered `--version`.
+    /// No candidate answered `--version` or accepted `ripr-facts`.
     NotFound,
     /// A PATH hit canonicalized inside the analyzed root and was not run
     /// (#5349). Carries the resolved program path for the report.
@@ -2503,7 +2513,10 @@ fn probe_perl_exporter(root: &Path, config: Option<&RiprConfig>) -> PerlExporter
         }
         let program = judged;
         let bin = program.display().to_string();
-        let Some(version) = run_exporter_probe(&program, &["--version"], timeout)
+        // The canonical exporter has no top-level `--version` (it exits 1 on
+        // it), so a failed version probe is not "missing": the capability
+        // probe below decides compatibility and the version reads unknown.
+        let version_answer = run_exporter_probe(&program, &["--version"], timeout)
             .filter(|output| output.status.success())
             .map(|output| {
                 String::from_utf8_lossy(&output.stdout)
@@ -2512,19 +2525,20 @@ fn probe_perl_exporter(root: &Path, config: Option<&RiprConfig>) -> PerlExporter
                     .unwrap_or("")
                     .trim()
                     .to_string()
-            })
-        else {
-            continue;
-        };
-        let version = if version.is_empty() {
-            "version unknown".to_string()
-        } else {
-            version
+            });
+        let answered_version = version_answer.is_some();
+        let version = match version_answer {
+            Some(version) if !version.is_empty() => version,
+            _ => "version unknown".to_string(),
         };
         if exporter_accepts_ripr_facts(&program, timeout) {
             return PerlExporterProbe::Compatible { bin, version };
         }
-        first_incompatible.get_or_insert(PerlExporterProbe::Incompatible { bin, version });
+        // Only a binary that answered `--version` is reported as an
+        // incompatible exporter; a silent non-exporter stays not found.
+        if answered_version {
+            first_incompatible.get_or_insert(PerlExporterProbe::Incompatible { bin, version });
+        }
     }
     // A refusal is a security decision and must not be masked by an
     // incompatible hit for the other candidate name (#5349 finding 3).
@@ -2911,8 +2925,9 @@ fn preemptive_artifact_ignore(
 /// check` in a project. A newcomer who runs `check` before `doctor` otherwise
 /// meets `?? target/` in `git status` with no hint. Returns the warning only
 /// when git positively reports the artifact root unignored; a covered root,
-/// a missing repository or an unavailable git yield `None`. The default root
-/// is probed; a relocated cache dir is `doctor`'s to report.
+/// a missing repository or an unavailable git yield `None`. The probed roots
+/// are the ones `doctor` probes: the default `target/ripr` plus a
+/// `RIPR_CACHE_DIR` base relocated inside the repository.
 ///
 /// #12432: when the artifact roots are not only unignored but ALREADY
 /// tracked, the ignore line alone cannot cure the trap — adding it silences
@@ -2923,7 +2938,8 @@ fn preemptive_artifact_ignore(
 /// wrong actionable repair signal is worse than a missed advisory.
 pub(crate) fn first_check_artifact_ignore_note(root: &Path) -> Option<String> {
     use output::doctor::DoctorArtifactIgnore;
-    let roots = analysis::ripr_artifact_roots(root, &root.join("target/ripr/cache"), None);
+    let roots =
+        analysis::ripr_artifact_roots(root, &analysis::seam_cache::cache_base_dir(root), None);
     let verdict = match ripr_artifact_ignore(root, &roots) {
         DoctorArtifactIgnore::NoArtifacts => preemptive_artifact_ignore(root, &roots),
         verdict => verdict,
@@ -7845,15 +7861,16 @@ mod tests {
         );
     }
 
-    /// #4318: a repeated documented flag is not an unknown argument. The
-    /// error names the real condition and echoes both values.
+    /// #4318: a repeated documented flag is not an unknown argument; #9008:
+    /// a *conflicting* second `--root` is a usage error naming both values
+    /// (an identical repeat is absorbed per #10542, so only the conflict
+    /// refuses).
     #[test]
     fn doctor_rejects_a_second_root_by_naming_the_condition() {
         assert_eq!(
             doctor(&args(&["--root", "a", "--root", "b"])),
             Err(CommandError::Failure(
-                "doctor accepts at most one --root; found both \"a\" and \"b\". Run `ripr doctor --help`."
-                    .to_string()
+                "doctor takes --root once (got 'a' and 'b')".to_string()
             ))
         );
     }
