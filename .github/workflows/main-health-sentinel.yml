@@ -56,6 +56,7 @@ jobs:
     # Write scopes live on this job only: the one write is the main-red
     # tracking issue. No workflow/dispatch authority of any kind.
     permissions:
+      actions: read
       contents: read
       issues: write
     steps:
@@ -89,6 +90,39 @@ jobs:
           echo "${PIPESTATUS[0]}" > "$d/smoke.status"
           exit 0
 
+      # Test-level breaks pass the bounded probe (#13793 stale CLI reference,
+      # #13639 Perl test, #13783 editor smoke all sat on main with a green
+      # sentinel). Main's push gates do finish: their concurrency supersedes
+      # only queued runs, so roughly one run per gate completes per hour. Read
+      # the latest completed, non-cancelled main-push run of each gate instead
+      # of building anything again: zero extra runner time. An unreadable or
+      # absent gate run is shown as `unknown` and claims neither red nor green;
+      # the probe above stays the fail-closed half of the verdict.
+      - name: Read the latest completed main push gates
+        timeout-minutes: 5
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -uo pipefail
+          d="$RUNNER_TEMP/main-health-sentinel"
+          mkdir -p "$d"
+          : > "$d/gates.tsv"
+          for wf in routed-rust.yml ci.yml; do
+            run="$(gh api -X GET "repos/$REPOSITORY/actions/workflows/$wf/runs" -f branch=main -f event=push -f status=completed -f per_page=100 --jq '[.workflow_runs[] | select(.conclusion != "cancelled" and .conclusion != "skipped")][0] // empty | [.id, .conclusion, .head_sha, .html_url] | @tsv' 2>/dev/null)"
+            if [ -z "$run" ]; then
+              printf '%s\tunknown\t-\t-\t-\t-\n' "$wf" >> "$d/gates.tsv"
+              continue
+            fi
+            IFS=$'\t' read -r id conclusion sha url <<<"$run"
+            failed="-"
+            if [ "$conclusion" != success ]; then
+              failed="$(gh api "repos/$REPOSITORY/actions/runs/$id/jobs?per_page=100" --jq '[.jobs[] | select(.conclusion == "failure" or .conclusion == "timed_out") | .name] | join(", ")' 2>/dev/null)"
+            fi
+            printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$wf" "$conclusion" "${sha::7}" "$id" "$url" "${failed:-unreadable}" >> "$d/gates.tsv"
+          done
+          exit 0
+
       # Missing evidence is a verdict, not a skip: a step terminated at its
       # timeout (a hanging build or test is a plausible broken-main mode)
       # leaves no status file, so it reads as 124 and classifies red with a
@@ -116,6 +150,16 @@ jobs:
             echo "| cargo check --locked -p ripr | $check_status | bounded probe, not the push gate; 124 = timed out |"
             echo "| smoke: cli_smoke version_is_exact_and_precedes_help_or_output_flags | $smoke_status | ${result_line:-no test result line} |"
           } >> "$GITHUB_STEP_SUMMARY"
+          gates_red=0
+          [ -f "$d/gates.tsv" ] || : > "$d/gates.tsv"
+          while IFS=$'\t' read -r wf conclusion sha id url failed; do
+            [ -n "$wf" ] || continue
+            echo "| latest completed main push: $wf | $conclusion | $sha $url failed jobs: $failed |" >> "$GITHUB_STEP_SUMMARY"
+            case "$conclusion" in
+              success|unknown) ;;
+              *) gates_red=1 ;;
+            esac
+          done < "$d/gates.tsv"
           passed="${passed:-0}"
           if [ "$smoke_status" -eq 0 ] && [ "$passed" -eq 0 ]; then
             echo "::error::the smoke selector executed zero tests; a probe that runs nothing proves nothing"
@@ -124,6 +168,10 @@ jobs:
           if [ "$missing" -ne 0 ] || [ "$check_status" -ne 0 ] || [ "$smoke_status" -ne 0 ] || [ "$passed" -eq 0 ]; then
             verdict=red
             echo "::error title=Main is red::the scheduled main-health probe failed on ${GITHUB_SHA::7}; see the step summary and the main-red tracker"
+          fi
+          if [ "$gates_red" -ne 0 ]; then
+            verdict=red
+            echo "::error title=Main is red::the latest completed main push gate run failed; see the step summary and the main-red tracker"
           fi
           echo "verdict=$verdict" >> "$GITHUB_OUTPUT"
           [ "$verdict" = green ] || exit 1
@@ -149,20 +197,34 @@ jobs:
           if [ "$VERDICT" = red ]; then
             check_status="$(cat "$RUNNER_TEMP/main-health-sentinel/check.status" 2>/dev/null || echo 124)"
             smoke_status="$(cat "$RUNNER_TEMP/main-health-sentinel/smoke.status" 2>/dev/null || echo 124)"
+            gates="$(awk -F'\t' 'NF >= 2 && $2 != "success" && $2 != "unknown" { printf "- latest completed main push `%s`: %s at `%s` (%s); failed jobs: %s\n", $1, $2, $3, $5, $6 }' "$RUNNER_TEMP/main-health-sentinel/gates.tsv" 2>/dev/null || true)"
+            # One comment per new piece of evidence, not one per fire: the
+            # fingerprint names the probe result and the failing gate run ids.
+            fingerprint="fingerprint: probe=${GITHUB_SHA::7}:$check_status:$smoke_status gates=$(awk -F'\t' 'NF >= 4 && $2 != "success" && $2 != "unknown" { printf "%s:%s,", $1, $4 }' "$RUNNER_TEMP/main-health-sentinel/gates.tsv" 2>/dev/null || true)"
+            if [ "$check_status" -eq 0 ] && [ "$smoke_status" -eq 0 ]; then
+              fingerprint="fingerprint: probe=green gates=${fingerprint#*gates=}"
+            fi
             body="$marker
           The scheduled main-health sentinel found main red at \`${GITHUB_SHA::7}\`.
 
           - probe run: $run_url
           - \`cargo check --locked -p ripr\` exit $check_status; focused smoke exit $smoke_status
+          $gates
 
           Opened and closed automatically by the sentinel (#10991); the repair
-          travels through the ordinary PR gate, not this issue."
+          travels through the ordinary PR gate, not this issue.
+
+          $fingerprint"
             if [ -z "$number" ]; then
               gh api "repos/$REPOSITORY/issues" -f title="$title" -f body="$body" > /dev/null
             else
-              gh api "repos/$REPOSITORY/issues/$number/comments" -f body="$body" > /dev/null
+              last="$(gh api "repos/$REPOSITORY/issues/$number/comments?per_page=100" --jq '[.[] | select(.body | contains("main-health-sentinel-tracker"))][-1].body // ""' 2>/dev/null || true)"
+              [ -n "$last" ] || last="$(gh api "repos/$REPOSITORY/issues/$number" --jq '.body // ""' 2>/dev/null || true)"
+              if ! printf '%s' "$last" | grep -qxF "$fingerprint"; then
+                gh api "repos/$REPOSITORY/issues/$number/comments" -f body="$body" > /dev/null
+              fi
             fi
           elif [ -n "$number" ]; then
-            gh api "repos/$REPOSITORY/issues/$number/comments" -f body="Recovered: the probe passed on main at \`${GITHUB_SHA::7}\` ($run_url). Closing the tracker." > /dev/null
+            gh api "repos/$REPOSITORY/issues/$number/comments" -f body="Recovered: the probe and the latest completed main push gates passed on main at \`${GITHUB_SHA::7}\` ($run_url). Closing the tracker." > /dev/null
             gh api -X PATCH "repos/$REPOSITORY/issues/$number" -f state=closed > /dev/null
           fi

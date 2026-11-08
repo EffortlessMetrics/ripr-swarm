@@ -26,6 +26,7 @@ const FORBIDDEN_FRAGMENTS: &[&str] = &[
     "/protection",
     "/rules/",
     "create-pull-request",
+    "/rerun",
 ];
 
 fn repo_file(path: &str) -> Result<String, String> {
@@ -238,5 +239,45 @@ fn sentinel_run_block_budget_is_registered() -> Result<(), String> {
         "check-workflows requires a run-block budget row for every workflow; \
          the sentinel's row in policy/workflow_allowlist.txt is part of its contract"
             .to_string(),
+    )
+}
+
+/// Test-level breaks pass the bounded probe (#13793, #13639, #13783), so the
+/// sentinel also judges the latest completed, non-cancelled main-push run of
+/// each push gate. It reads results only: it never re-runs, dispatches or
+/// rebuilds them, and a failed gate run must turn the verdict red.
+#[test]
+fn sentinel_judges_the_latest_completed_main_push_gates() -> Result<(), String> {
+    let source = repo_file(WORKFLOW)?;
+    let lines = executable_lines(&source);
+    require(
+        &lines,
+        "actions: read",
+        "reading workflow-run results needs only the read scope",
+    )?;
+    require(
+        &lines,
+        "for wf in routed-rust.yml ci.yml; do",
+        "the required Rust gate and the CI lane (Rust-only features, editor e2e) are both judged",
+    )?;
+    require(
+        &lines,
+        "-f branch=main -f event=push -f status=completed",
+        "only finished main-push runs are evidence about main",
+    )?;
+    require(
+        &lines,
+        "select(.conclusion != \"cancelled\" and .conclusion != \"skipped\")",
+        "a superseded run says nothing about main; skip it and read the latest finished one",
+    )?;
+    require(
+        &lines,
+        "gates_red=1",
+        "a failed latest gate run must turn the verdict red, not only the summary",
+    )?;
+    require(
+        &lines,
+        "grep -qxF \"$fingerprint\"",
+        "a red tracker gets one comment per new piece of evidence, not one per fire",
     )
 }
