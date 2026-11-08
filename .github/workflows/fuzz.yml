@@ -2,10 +2,10 @@ name: Fuzz
 
 # Scheduled and manual panic/hang fuzzing (#11439): runs the proptest suites
 # in crates/ripr/tests (source, diff and config mutation through `ripr check`;
-# MCP and LSP stdio frame mutation; the same mutation through the CLI adapter
-# in-process on a worker thread, which fits far more cases per minute) and the stage-derivation metamorphic
-# suite (#12917, in-process through the library API) with a much higher case count than the
-# default test run. Not part of the required PR workflow and not a required
+# MCP and LSP stdio frame mutation; the same source, diff and config mutation
+# through the CLI adapter in-process, #13651) and the stage-derivation
+# metamorphic suite (#12917, in-process through the library API) with a much
+# higher case count than the default test run. Not part of the required PR workflow and not a required
 # check. A failure prints the shrunk edit list and exact input bytes; the
 # workspaces of cases that aborted the test binary stay in the temp directory
 # and are uploaded as an artifact.

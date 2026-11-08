@@ -3,9 +3,11 @@
 //!
 //! `fuzz_panic_freedom` runs `ripr check` as a child process per case, which
 //! contains stack-overflow aborts but costs tens of milliseconds of process
-//! start per case. This suite drives the same surfaces through the public
-//! library API ([`ripr::check_workspace`]) on a worker thread with the CLI's
-//! 8 MiB stack, so far more mutated inputs fit in the same wall-clock budget.
+//! start per case. This suite drives the same CLI adapter in-process
+//! ([`ripr::cli::run`]) on a worker thread with the CLI's 8 MiB stack, so
+//! more mutated inputs fit in the same wall-clock budget (3,000 cases per
+//! property ran in about five minutes on a debug build). Rust analysis still
+//! starts `cargo metadata`, so the case deadline stays generous.
 //! The mutated diff, `ripr.toml` and Rust, Python and TypeScript sources are
 //! the proptest input. An `Err` is a fine answer for hostile input; a panic,
 //! a pass that exceeds the case deadline, or an abort (which ends the test
@@ -22,23 +24,29 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
-const CASE_DEADLINE: Duration = Duration::from_mins(1);
+const CASE_DEADLINE: Duration = Duration::from_mins(3);
 const WORKER_STACK_BYTES: usize = 8 * 1024 * 1024;
 const MAX_INPUT_BYTES: usize = 200_000;
 const DEFAULT_CASES: u32 = 24;
 
 const CARGO_TOML: &str =
     "[package]\nname = \"fuzz-subject\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[workspace]\n";
+#[cfg(feature = "lang-python")]
 const PYPROJECT_TOML: &str = "[project]\nname = \"fuzz-subject\"\nversion = \"0.0.0\"\n";
+#[cfg(feature = "lang-typescript")]
 const PACKAGE_JSON: &str = "{\"name\":\"fuzz-subject\",\"version\":\"0.0.0\"}\n";
 
 const RUST_OLD: &str = "pub fn price(amount: u64, years: u32) -> u64 {\n    if years >= 5 && amount > 100 {\n        amount - amount * 5 / 100\n    } else {\n        match amount { 0 => 0, _ => amount }\n    }\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n    #[test]\n    fn discounts() {\n        assert_eq!(price(200, 5), 190);\n    }\n}\n";
 const RUST_NEW: &str = "pub fn price(amount: u64, years: u32) -> u64 {\n    if years >= 4 && amount >= 100 {\n        amount - amount * 6 / 100\n    } else {\n        match amount { 0 => 0, _ => amount }\n    }\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n    #[test]\n    fn discounts() {\n        assert_eq!(price(200, 5), 190);\n    }\n}\n";
 
+#[cfg(feature = "lang-python")]
 const PYTHON_OLD: &str = "def price(amount, years):\n    if years >= 5 and amount > 100:\n        return amount - amount * 5 // 100\n    return amount\n\n\ndef test_discounts():\n    assert price(200, 5) == 190\n";
+#[cfg(feature = "lang-python")]
 const PYTHON_NEW: &str = "def price(amount, years):\n    if years >= 4 and amount >= 100:\n        return amount - amount * 6 // 100\n    return amount\n\n\ndef test_discounts():\n    assert price(200, 5) == 190\n";
 
+#[cfg(feature = "lang-typescript")]
 const TS_OLD: &str = "export function price(amount: number, years: number): number {\n  if (years >= 5 && amount > 100) {\n    return amount - amount * 0.05;\n  }\n  return amount;\n}\n\ntest(\"discounts\", () => {\n  expect(price(200, 5)).toBe(190);\n});\n";
+#[cfg(feature = "lang-typescript")]
 const TS_NEW: &str = "export function price(amount: number, years: number): number {\n  if (years >= 4 && amount >= 100) {\n    return amount - amount * 0.06;\n  }\n  return amount;\n}\n\ntest(\"discounts\", () => {\n  expect(price(200, 5)).toBe(190);\n});\n";
 
 const CONFIG_SEED: &str = "[languages]\nenabled = [\"rust\", \"python\", \"typescript\"]\n\n[analysis]\ninclude_unchanged_tests = true\n\n[suppressions]\npaths = [\"target/**\", \"**/generated/**\"]\n\n[output]\nformat = \"human\"\n";
@@ -205,7 +213,9 @@ impl Workspace {
     }
 
     /// Runs one check on a worker thread. `Ok(())` covers both a result and a
-    /// clean error; a panic or a missed deadline is `Err`.
+    /// clean error; a panic or a missed deadline is `Err`. On a missed
+    /// deadline the worker is left detached; it cannot keep the test binary
+    /// alive, and the failing input bytes are already in the message.
     fn check_within_deadline(&self) -> Result<(), String> {
         let args = self.args();
         let (sender, receiver) = std::sync::mpsc::channel();
@@ -226,14 +236,17 @@ impl Workspace {
             )),
             // The sender dropped without a result: the worker panicked.
             Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => match worker.join() {
-                Err(payload) => Err(format!("check panicked: {}", panic_message(&payload))),
+                Err(payload) => Err(format!(
+                    "check panicked: {}",
+                    panic_message(payload.as_ref())
+                )),
                 Ok(()) => Err("worker ended without a result".to_string()),
             },
         }
     }
 }
 
-fn panic_message(payload: &Box<dyn std::any::Any + Send>) -> String {
+fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
     payload
         .downcast_ref::<&str>()
         .map(|message| (*message).to_string())
@@ -286,7 +299,7 @@ proptest! {
 
     #[test]
     fn rust_sources_never_panic_or_hang(edits in edits()) {
-        source_case((  "Cargo.toml", CARGO_TOML), "src/lib.rs", RUST_OLD, RUST_NEW, &edits)?;
+        source_case(("Cargo.toml", CARGO_TOML), "src/lib.rs", RUST_OLD, RUST_NEW, &edits)?;
     }
 
     #[cfg(feature = "lang-python")]
@@ -332,13 +345,19 @@ proptest! {
     }
 }
 
-/// The unmutated seeds must be accepted, and a broken config must be
-/// refused; otherwise every property above would pass by failing before any
-/// parser ran, or without the config ever being read.
+/// The unmutated seeds must be accepted, the Rust seed's diff must reach the
+/// front-end and produce findings, and a broken config must be refused;
+/// otherwise every property above could pass by failing before any parser
+/// ran, or without the config ever being read. The CLI adapter writes its
+/// report to stdout, so finding-level reach is asserted through the library
+/// entry point, which shares the diff and Rust pipeline; the sibling
+/// `fuzz_panic_freedom` canary asserts Python and TypeScript findings for
+/// child-process runs.
 #[test]
 fn unmutated_seeds_run_and_config_is_consumed() -> Result<(), String> {
-    let cases: [(&str, &str, &str, &str, &str); 3] = [
+    let cases: Vec<(&str, &str, &str, &str, &str)> = vec![
         ("Cargo.toml", CARGO_TOML, "src/lib.rs", RUST_OLD, RUST_NEW),
+        #[cfg(feature = "lang-python")]
         (
             "pyproject.toml",
             PYPROJECT_TOML,
@@ -346,6 +365,7 @@ fn unmutated_seeds_run_and_config_is_consumed() -> Result<(), String> {
             PYTHON_OLD,
             PYTHON_NEW,
         ),
+        #[cfg(feature = "lang-typescript")]
         ("package.json", PACKAGE_JSON, "src/index.ts", TS_OLD, TS_NEW),
     ];
     for (manifest, manifest_body, path, old, new) in cases {
@@ -359,7 +379,26 @@ fn unmutated_seeds_run_and_config_is_consumed() -> Result<(), String> {
         ripr::cli::run(workspace.args())
             .map_err(|error| format!("{path}: seed refused: {error}"))?;
     }
+
     let diff = replace_diff("src/lib.rs", RUST_OLD, RUST_NEW.as_bytes());
+    let workspace = Workspace::create(&[
+        ("Cargo.toml", CARGO_TOML.as_bytes()),
+        ("src/lib.rs", RUST_NEW.as_bytes()),
+        ("fuzz.diff", &diff),
+    ])?;
+    let output = ripr::check_workspace(ripr::CheckInput {
+        root: workspace.root.clone(),
+        diff_file: Some(workspace.root.join("fuzz.diff")),
+        mode: ripr::Mode::Ready,
+        format: ripr::OutputFormat::Json,
+        include_unchanged_tests: true,
+        ..ripr::CheckInput::default()
+    })
+    .map_err(|error| format!("Rust seed refused by the library: {error}"))?;
+    if output.findings.is_empty() {
+        return Err("Rust seed diff produced no findings".to_string());
+    }
+
     let workspace = Workspace::create(&[
         ("Cargo.toml", CARGO_TOML.as_bytes()),
         ("src/lib.rs", RUST_NEW.as_bytes()),
