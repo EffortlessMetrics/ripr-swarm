@@ -14,8 +14,7 @@ import {
 } from 'vscode-languageclient/node';
 import { explicitSetting, getConfig, RiprConfig } from './config';
 import {
-  compareVersions,
-  parseVersion,
+  compareReportedVersions,
   requestedServerVersion,
   resolveServer,
   ResolveFailure,
@@ -3479,12 +3478,11 @@ function riprServerVersionState(context: RiprStatusContext): { state: RiprSetupS
   if (!version || version.trim() === '') {
     return { state: 'ripr_version_unknown', detail: 'server did not report --version output' };
   }
-  const actual = parseVersion(version);
-  const expected = parseVersion(context.expectedServerVersion);
-  if (!actual || !expected) {
+  const order = compareReportedVersions(version, context.expectedServerVersion);
+  if (order === undefined) {
     return { state: 'ripr_version_unknown', detail: `reported ${version}` };
   }
-  if (compareVersions(actual, expected) < 0) {
+  if (order < 0) {
     return { state: 'ripr_version_too_old', detail: `reported ${version}; expected ${context.expectedServerVersion}` };
   }
   return { state: 'ripr_version_ok', detail: version };

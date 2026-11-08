@@ -362,6 +362,16 @@ suite('Server resolver stale PATH version (#13638)', () => {
     assert.strictEqual(serverVersionOlderThan(undefined, '0.10.0'), false);
   });
 
+  test('a release candidate is older than its release, and successive candidates order by SemVer', () => {
+    assert.strictEqual(serverVersionOlderThan('ripr 0.11.0-rc.1', '0.11.0'), true);
+    assert.strictEqual(serverVersionOlderThan('ripr 0.11.0-rc.1', '0.11.0-rc.2'), true);
+    assert.strictEqual(serverVersionOlderThan('ripr 0.11.0-rc.10', '0.11.0-rc.2'), false);
+    assert.strictEqual(serverVersionOlderThan('ripr 0.11.0', '0.11.0-rc.2'), false);
+    assert.strictEqual(serverVersionOlderThan('ripr 0.11.0-rc.2', '0.11.0-rc.2'), false);
+    assert.strictEqual(serverVersionOlderThan('ripr 0.11.0+build.5 (abc123)', '0.11.0'), false);
+    assert.strictEqual(serverVersionOlderThan('ripr 0.10.9-rc.1', '0.10.0'), false);
+  });
+
   test('an older PATH ripr does not skip the managed download, and stays the warned fallback', async function () {
     if (!currentRiprPlatform()) {
       this.skip();

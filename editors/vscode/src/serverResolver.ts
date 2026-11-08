@@ -587,12 +587,65 @@ export function staleServerVersionWarning(
   return `${where} reports ${resolved.binaryVersion}, older than the expected ripr ${expectedVersion}; some editor features may not work. ${update}`;
 }
 
+/**
+ * The SemVer prerelease identifiers that follow the first `x.y.z` in `value`
+ * (`0.11.0-rc.1` -> `['rc', '1']`), `[]` for a release, or `undefined` when no
+ * version parses. Build metadata (`+...`) is ignored, as SemVer requires.
+ */
+export function parsePrerelease(value: string): string[] | undefined {
+  const match = /(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?/.exec(value);
+  if (!match) {
+    return undefined;
+  }
+  return match[4] ? match[4].split('.') : [];
+}
+
+function comparePrerelease(left: string[], right: string[]): number {
+  // A release (no identifiers) has higher precedence than any prerelease.
+  if (left.length === 0 || right.length === 0) {
+    return right.length - left.length;
+  }
+  for (let index = 0; index < Math.min(left.length, right.length); index += 1) {
+    const a = left[index];
+    const b = right[index];
+    const aNumeric = /^\d+$/.test(a);
+    const bNumeric = /^\d+$/.test(b);
+    if (aNumeric && bNumeric) {
+      const diff = Number(a) - Number(b);
+      if (diff !== 0) {
+        return diff;
+      }
+    } else if (aNumeric !== bNumeric) {
+      return aNumeric ? -1 : 1;
+    } else if (a !== b) {
+      return a < b ? -1 : 1;
+    }
+  }
+  return left.length - right.length;
+}
+
+/**
+ * SemVer precedence of two reported version strings, or `undefined` when either
+ * does not parse. Shared by resolution and the setup diagnosis so a release
+ * candidate (`0.11.0-rc.1`) is older than its release (`0.11.0`).
+ */
+export function compareReportedVersions(reported: string, expected: string): number | undefined {
+  const actual = parseVersion(reported);
+  const wanted = parseVersion(expected);
+  const actualPre = parsePrerelease(reported);
+  const wantedPre = parsePrerelease(expected);
+  if (!actual || !wanted || !actualPre || !wantedPre) {
+    return undefined;
+  }
+  const core = compareVersions(actual, wanted);
+  return core !== 0 ? core : comparePrerelease(actualPre, wantedPre);
+}
+
 /** True only when both versions parse and `reported` is strictly older. */
 export function serverVersionOlderThan(reported: string | undefined, expected: string): boolean {
   if (!reported) {
     return false;
   }
-  const actual = parseVersion(reported);
-  const wanted = parseVersion(expected);
-  return Boolean(actual && wanted && compareVersions(actual, wanted) < 0);
+  const order = compareReportedVersions(reported, expected);
+  return order !== undefined && order < 0;
 }
