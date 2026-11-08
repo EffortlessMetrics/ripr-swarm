@@ -640,6 +640,18 @@ fn a_test_that_can_still_run_is_never_reported_as_never_running() -> Result<(), 
         format!(
             "{header}class Base:\n    pass\nBase = unittest.IsolatedAsyncioTestCase\nclass TestScore(Base):\n    @pytest.mark.skip(reason='off')\n    def test_score(self):\n        self.assertEqual(score(0), 8)\n"
         ),
+        // A skip name the file rebinds is not the runner's skip.
+        format!(
+            "{header}from unittest import skip\ndef skip(reason):\n    return lambda fn: fn\n@skip('x')\ndef test_score():\n    assert score(0) == 8\n"
+        ),
+        format!(
+            "{header}from unittest import skip\nif True:\n    skip = lambda reason: (lambda fn: fn)\n@skip('x')\ndef test_score():\n    assert score(0) == 8\n"
+        ),
+        // A class/method duplicate argname under a base outside the file: the
+        // collection error is pytest's; `python -m unittest` still runs it.
+        format!(
+            "{header}@pytest.mark.parametrize('x', [1])\nclass TestScore(AsyncBase):\n    @pytest.mark.parametrize('x', [2])\n    def test_score(self, x=None):\n        self.assertEqual(score(0), 8)\n"
+        ),
         // An alias taken before the rebinding is collected and runs.
         format!(
             "{header}def test_score():\n    assert score(0) == 8\ntest_score_kept = test_score\ntest_score = None\n"

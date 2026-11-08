@@ -64,7 +64,10 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 /// or aliased rebinding of a test name and a test class with a base outside
 /// the file are recorded under their own control names; `20` entries lack
 /// them.
-pub(crate) const PYTHON_FILE_FACT_SCHEMA_VERSION: &str = "21";
+/// `22`: a skip whose decorator name the file rebinds and a hidden-`TestCase`
+/// class marker applied after the class collection error are recorded; `21`
+/// entries lack them.
+pub(crate) const PYTHON_FILE_FACT_SCHEMA_VERSION: &str = "22";
 
 /// Approximate per-run ceiling on newly persisted fact bytes. The parse
 /// already happened by store time, so exhausting the budget only skips the

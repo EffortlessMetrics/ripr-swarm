@@ -1270,9 +1270,6 @@ pub(super) fn collect_tests_from_statements(
                                 .flatten()
                                 .cloned(),
                         );
-                        if unresolved_base {
-                            super::test_activation::mark_unresolved_class_base(test);
-                        }
                         test.direct_parametrized.extend(
                             local_classes
                                 .class_direct_parametrized
@@ -1321,6 +1318,11 @@ pub(super) fn collect_tests_from_statements(
                                     test.unsettled_indirect.push(name.clone());
                                 }
                             }
+                        }
+                        // After every class control, the collection error
+                        // included, so the marker sees the final controls.
+                        if unresolved_base {
+                            super::test_activation::mark_unresolved_class_base(test);
                         }
                         test.decorators.extend(
                             local_classes

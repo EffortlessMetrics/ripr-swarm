@@ -45,32 +45,28 @@ fn effective_controls(test: &PythonTest) -> impl Iterator<Item = &PythonActivati
         })
 }
 
-/// The control that provably keeps the test's body from running under the
-/// default invocation, read from source alone: an unconditional skip
-/// (`@pytest.mark.skip`, `@unittest.skip`, a module-level
-/// `pytest.skip(..., allow_module_level=True)` or a `pytestmark` skip), an
-/// empty parametrize table, a parametrize mark pytest refuses at collection,
-/// a later binding that replaces the definition, or a literal
-/// `__test__ = False`. Such a test cannot fail on any edit, so it is no
-/// evidence either way and a finding reached only through it is a gap, the
-/// way an `#[ignore]`d Rust test is.
+/// The control that provably keeps the test's body from running under
+/// pytest and `python -m unittest`, read from source alone: an unconditional
+/// `@pytest.mark.skip` or `@unittest.skip`, a module-level
+/// `pytest.skip(..., allow_module_level=True)` (importing the module raises),
+/// an empty parametrize table, a parametrize mark pytest refuses at
+/// collection, or a later non-loop, unaliased binding that replaces an
+/// undecorated (or marks-only) definition. Such a test cannot fail on any
+/// edit, so it is no evidence either way and a finding reached only through
+/// it is a gap, the way an `#[ignore]`d Rust test is.
 ///
 /// Every other control stays unestablished: a `skipif`/`xfail` condition is
 /// not evaluated, `xfail` passes or fails by `strict` and the project's
-/// `xfail_strict`, `importorskip` depends on what is installed, and the
-/// project-level collection rules can be bypassed by naming the file on the
-/// command line.
-///
-/// A unittest-style test may run under `python -m unittest` (the verify
-/// command ripr prints for it), which ignores pytest marks, parametrize and
-/// `__test__`, so only the runner-neutral controls count for it: `unittest.skip`,
-/// a module-level `pytest.skip` (the import itself fails) and a later binding.
-///
-/// A module-site skip or switch (`pytestmark`, module `__test__ = False`)
-/// applies only to the defining module's collection: a test another module
-/// imports (including one with no tests of its own) is collected there
-/// without it, so module-site controls never count. A module-level
-/// `pytest.skip` does, because importing the module raises.
+/// `xfail_strict`, `importorskip` depends on what is installed, project-level
+/// collection rules can be bypassed by naming the file, any `__test__` switch
+/// can be re-enabled by a subclass or another module, and a module-site
+/// `pytestmark` does not travel with a test another module imports (even one
+/// with no tests of its own). A unittest-style test may run under
+/// `python -m unittest`, which ignores pytest marks and parametrize, so only
+/// the runner-neutral controls count for it; a class with a base outside the
+/// file may be such a test ([`mark_unresolved_class_base`]); and a skip whose
+/// decorator name the file rebinds ([`withhold_shadowed_skips`]) may not be
+/// the runner's skip.
 pub(super) fn never_runs(test: &PythonTest) -> Option<&str> {
     if test
         .activation_controls
@@ -113,6 +109,79 @@ pub(super) fn mark_unresolved_class_base(test: &mut PythonTest) {
             name: UNRESOLVED_CLASS_BASE.to_string(),
             site: DeclarationSite::Class,
         });
+    }
+}
+
+const SHADOWED_SKIP: &str = "skip decorator whose name the file rebinds";
+
+/// Downgrade a definite skip whose decorator root name (`skip`, `pytest`,
+/// `unittest`, an alias) the file also binds outside an import statement, at
+/// any depth of module or class blocks (`def skip(...)`, `skip = ...`, under
+/// an `if`): import tracking alone would resolve it to the runner's skip.
+pub(super) fn withhold_shadowed_skips(statements: &[Stmt], tests: &mut [PythonTest]) {
+    fn collect<'a>(body: &'a [Stmt], out: &mut std::collections::BTreeSet<&'a str>) {
+        let mut names = Vec::new();
+        for stmt in body {
+            if !matches!(stmt, Stmt::Import(_) | Stmt::ImportFrom(_)) {
+                names.clear();
+                names_rebound_by(stmt, &mut names);
+                out.extend(names.iter().copied());
+            }
+            match stmt {
+                Stmt::ClassDef(class) => collect(&class.body, out),
+                Stmt::If(node) => {
+                    collect(&node.body, out);
+                    collect(&node.orelse, out);
+                }
+                Stmt::Try(node) => {
+                    collect(&node.body, out);
+                    collect(&node.orelse, out);
+                    collect(&node.finalbody, out);
+                    for handler in &node.handlers {
+                        let ast::ExceptHandler::ExceptHandler(handler) = handler;
+                        collect(&handler.body, out);
+                    }
+                }
+                Stmt::TryStar(node) => {
+                    collect(&node.body, out);
+                    collect(&node.orelse, out);
+                    collect(&node.finalbody, out);
+                    for handler in &node.handlers {
+                        let ast::ExceptHandler::ExceptHandler(handler) = handler;
+                        collect(&handler.body, out);
+                    }
+                }
+                Stmt::With(node) => collect(&node.body, out),
+                Stmt::For(node) => {
+                    collect(&node.body, out);
+                    collect(&node.orelse, out);
+                }
+                Stmt::While(node) => {
+                    collect(&node.body, out);
+                    collect(&node.orelse, out);
+                }
+                Stmt::Match(node) => node.cases.iter().for_each(|case| collect(&case.body, out)),
+                _ => {}
+            }
+        }
+    }
+    let mut bound = std::collections::BTreeSet::new();
+    collect(statements, &mut bound);
+    if bound.is_empty() {
+        return;
+    }
+    for test in tests {
+        let shadowed = test.decorators.iter().any(|decorator| {
+            bound.contains(decorator.split(['.', '(']).next().unwrap_or(decorator))
+        });
+        if !shadowed {
+            continue;
+        }
+        for control in &mut test.activation_controls {
+            if matches!(control.name.as_str(), "unittest.skip" | "pytest.mark.skip") {
+                control.name = SHADOWED_SKIP.to_string();
+            }
+        }
     }
 }
 

@@ -1139,7 +1139,7 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
         )
     } else if !has_oracle_eligible_relation {
         // Every related test provably never runs (an unconditional skip, an
-        // empty parametrize table, `__test__ = False`, a later binding): the
+        // empty or refused parametrize table, a replacing later binding): the
         // repair is an active test, not a stronger assertion in a dead one.
         let never_run: Vec<(&str, &str)> = related_candidates
             .iter()
