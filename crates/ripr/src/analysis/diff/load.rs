@@ -2009,11 +2009,23 @@ fn missing_ref_repair(
 ) -> String {
     // An unborn HEAD has no commit for any ref, `HEAD` included: spelling and
     // remote advice would blame a name that is not the problem.
-    if matches!(
-        probe_head_ref_state(root, git_timeout),
-        HeadRefState::Unborn
-    ) {
-        return "This repository has no commits yet, so no base can resolve: commit once, \
+    // Only when no other ref exists either: an orphan branch in a repository
+    // with history can still have a mistyped ref worth the spelling advice.
+    let has_any_ref = crate::git::run_git_output_with_deadline(
+        root,
+        &["for-each-ref", "--count=1", "--format=%(refname)"],
+        git_timeout,
+    )
+    .map_or(true, |output| {
+        !output.status.success() || !output.stdout.iter().all(u8::is_ascii_whitespace)
+    });
+    if !has_any_ref
+        && matches!(
+            probe_head_ref_state(root, git_timeout),
+            HeadRefState::Unborn
+        )
+    {
+        return "This repository has no commits yet, so no revision can resolve: commit once, \
          then re-run"
             .to_string();
     }
