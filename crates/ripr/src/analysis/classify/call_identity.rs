@@ -160,6 +160,13 @@ pub(crate) struct CallIdentityMemos {
     /// from a crate outside the workspace. The answer depends on the file's
     /// syntax alone, so the per-(probe, test) receiver check reads it once.
     external_imports: Mutex<BTreeMap<(std::path::PathBuf, String), bool>>,
+    /// Per (trait name, receiver head), whether some indexed source may
+    /// implement the trait for a std-headed type. The answer reads every
+    /// indexed file's syntax and depends on the index alone, so the
+    /// per-related-test receiver check pays one workspace pass per pair
+    /// instead of one per test (and does not cycle the bounded file-snapshot
+    /// memo once per test).
+    std_impl_sources: Mutex<BTreeMap<(String, String), bool>>,
 }
 
 impl CallIdentityMemos {
@@ -179,6 +186,28 @@ impl CallIdentityMemos {
         }
         let answer = compute();
         if let Ok(mut cache) = self.external_imports.lock() {
+            cache.insert(key, answer);
+        }
+        answer
+    }
+
+    /// The memoized std-impl source answer for (`trait_name`, `head`),
+    /// computed by `compute` on first use (recomputed, not cached, if the
+    /// lock is poisoned).
+    pub(in crate::analysis) fn std_impl_source(
+        &self,
+        trait_name: &str,
+        head: &str,
+        compute: impl FnOnce() -> bool,
+    ) -> bool {
+        let key = (trait_name.to_string(), head.to_string());
+        if let Ok(cache) = self.std_impl_sources.lock()
+            && let Some(found) = cache.get(&key)
+        {
+            return *found;
+        }
+        let answer = compute();
+        if let Ok(mut cache) = self.std_impl_sources.lock() {
             cache.insert(key, answer);
         }
         answer
