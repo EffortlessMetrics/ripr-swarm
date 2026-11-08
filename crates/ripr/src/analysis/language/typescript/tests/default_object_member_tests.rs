@@ -173,7 +173,9 @@ fn a_file_level_or_setup_replacement_of_the_member_credits_nothing() -> Result<(
             "{label}"
         );
     }
-    // A sibling member's direct call no longer withholds (#6653, amended rule 5).
+    // A sibling member's direct call no longer withholds (#6653, amended rule 5):
+    // a direct call cannot replace `merge`, and the owner already runs with
+    // `this === utils`, so a sibling call adds no new way to lose the credit.
     assert_eq!(
         class_of(
             "other-member-call",
@@ -253,6 +255,15 @@ fn calls_of_several_members_still_credit_each_called_member() -> Result<(), Stri
         class_of("two-members", OWNER, &two)?,
         ExposureClass::Exposed
     );
+    // The real axios shape: the default object holds both members.
+    let both = OWNER.replace(
+        "export default { merge };",
+        "function extend(a: any, b: any): any {\n  return { ...a, ...b };\n}\n\nexport default { merge, extend };",
+    );
+    assert_eq!(
+        class_of("two-members-both-exported", &both, &two)?,
+        ExposureClass::Exposed
+    );
     // A sibling use that is not a direct call still withholds the credit.
     let leaked = test_with(&format!(
         "{CALL}\n  const other = utils.extend;\n  other({{}}, {{}});"
@@ -268,5 +279,28 @@ fn calls_of_several_members_still_credit_each_called_member() -> Result<(), Stri
         class_of("sibling-only", OWNER, &unrelated)?,
         ExposureClass::Exposed
     );
+    Ok(())
+}
+
+#[test]
+fn a_call_beside_a_non_direct_use_of_the_local_credits_nothing() -> Result<(), String> {
+    // Each form sits next to a plain `utils.merge(...)` call; any use that is
+    // not a direct `local.member(` call withholds every member (rule 5).
+    for (label, extra) in [
+        ("optional-call", "  utils.merge?.({}, {});"),
+        ("computed-call", "  utils['merge']({}, {});"),
+        (
+            "destructure",
+            "  const { merge } = utils;\n  merge({}, {});",
+        ),
+        ("value-pass", "  [1].map(() => utils);"),
+    ] {
+        let test = test_with(&format!("{CALL}\n{extra}"));
+        assert_ne!(
+            class_of(label, OWNER, &test)?,
+            ExposureClass::Exposed,
+            "{label}"
+        );
+    }
     Ok(())
 }

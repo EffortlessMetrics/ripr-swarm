@@ -175,7 +175,8 @@ pub(crate) struct TypeScriptTest {
     /// `(local, member)` pairs for default imports of the containing test
     /// file whose local appears nowhere in the whole file (setup hooks and
     /// file-level code included) except as its own import binding and as
-    /// calls `local.member(`, all of one member (RIPR-SPEC-0243 rule 5).
+    /// direct calls `local.member(`; one pair per directly called member, so
+    /// calls of several members credit each of them (RIPR-SPEC-0243 rule 5).
     /// Populated once per file by `extract_tests`.
     pub(crate) default_member_only_locals_in_file: Shared<(String, String)>,
     /// Names the containing test file writes more than once (their
