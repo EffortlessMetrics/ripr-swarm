@@ -4663,8 +4663,10 @@ fn generated_install_windows_zip_route_replays_securely() -> Result<(), Box<dyn 
     assert!(out.contains(&format!("not ripr {version}")), "{out}");
     assert!(wrong_version.cargo_calls().is_empty());
 
-    // Falsifier 4: an ambient ripr/ripr.exe on PATH never stands in for a
-    // broken extracted candidate.
+    // Falsifier 4: an ambient ripr/ripr.exe on PATH that does not report the
+    // pinned version never stands in for a broken extracted candidate. (One
+    // that reports exactly the pinned version is reused before any download;
+    // `tests/ripr_check_action.rs` covers that path, #5409.)
     let broken = Case::new("zip-broken-exe", &version)?;
     broken.serve_verified(&asset, &payload(b"#!/bin/sh\nexit 3")?)?;
     let run = broken.run(&install, "Windows", "X64")?;

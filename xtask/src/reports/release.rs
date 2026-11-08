@@ -3006,16 +3006,20 @@ pub(crate) fn init_generator_self_pin_problems(
             "generated workflow must not carry an unreleased-generator pin comment".to_string(),
         );
     }
-    let cargo_pin = format!("cargo install ripr --version {version} --locked");
-    if !stdout.contains(&cargo_pin) {
+    // #5409: the workflow installs through the release's ripr-check action;
+    // the tag and the `version` input both carry the pin.
+    let action_pin =
+        format!("uses: EffortlessMetrics/ripr/.github/actions/ripr-check@v{version}\n");
+    if !stdout.contains(&action_pin) {
         problems.push(format!(
-            "generated workflow must include `{cargo_pin}` on the fallback install route"
+            "generated workflow must install through `{}`",
+            action_pin.trim_end()
         ));
     }
-    let prebuilt_pin = format!("version={version}");
-    if !stdout.contains(&prebuilt_pin) {
+    let input_pin = format!("          version: {version}\n");
+    if !stdout.contains(&input_pin) {
         problems.push(format!(
-            "generated workflow must pin `{prebuilt_pin}` on the prebuilt install route"
+            "generated workflow must pass `version: {version}` to the install action"
         ));
     }
     problems
@@ -5202,7 +5206,7 @@ mod tests {
     fn init_generator_self_pin_problems_passes_quiet_self_pin_output() -> Result<(), String> {
         let version = "0.11.0";
         let stdout = format!(
-            "Would write .github/workflows/ripr.yml\n          version={version}\n            cargo install ripr --version {version} --locked\n"
+            "Would write .github/workflows/ripr.yml\n        uses: EffortlessMetrics/ripr/.github/actions/ripr-check@v{version}\n        with:\n          version: {version}\n          install-only: true\n"
         );
         let problems = init_generator_self_pin_problems(version, &stdout, "");
         if !problems.is_empty() {
@@ -5219,7 +5223,7 @@ mod tests {
             "ripr: note: this build of ripr ({version}) is a development version, so the generated workflow installs ripr {pinned}, the latest published release.\n"
         );
         let stdout = format!(
-            "Would write .github/workflows/ripr.yml\n      # Pinned to released ripr {pinned} ({version} is unreleased). The steps below use\n          version={pinned}\n            cargo install ripr --version {pinned} --locked\n"
+            "Would write .github/workflows/ripr.yml\n      # Pinned to released ripr {pinned} ({version} is unreleased). The steps below use\n        uses: EffortlessMetrics/ripr/.github/actions/ripr-check@v{pinned}\n        with:\n          version: {pinned}\n          install-only: true\n"
         );
         let problems = init_generator_self_pin_problems(version, &stdout, &stderr);
         if problems.len() < 3 {

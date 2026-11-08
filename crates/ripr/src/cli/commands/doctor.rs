@@ -3338,15 +3338,30 @@ fn generated_workflow_advisory(root: &Path) -> Option<String> {
 /// (#5409); its tag names the pinned release.
 const GENERATED_INSTALL_ACTION: &str = "uses: EffortlessMetrics/ripr/.github/actions/ripr-check@v";
 
-/// The version the generated workflow's install step pins: `Some(Some(v))`
-/// for a pin, `Some(None)` for the unpinned 0.10-and-earlier `cargo install`,
-/// `None` when no generated install step is recognized.
-fn generated_workflow_pin(workflow: &str) -> Option<Option<&str>> {
-    if let Some(tag) = workflow.lines().find_map(|line| {
+/// The action step's tag and `version` input, read from the lines after
+/// its `uses:`; the input is `None` when the step passes none.
+fn generated_install_action(workflow: &str) -> Option<(&str, Option<&str>)> {
+    let mut lines = workflow.lines();
+    let tag = lines.by_ref().find_map(|line| {
         let rest = line.trim().strip_prefix(GENERATED_INSTALL_ACTION)?;
         rest.split_whitespace().next()
-    }) {
-        return Some(Some(tag));
+    })?;
+    let input = lines
+        .take_while(|line| !line.trim_start().starts_with("- "))
+        .find_map(|line| line.trim().strip_prefix("version:"))
+        .and_then(|value| value.split_whitespace().next())
+        .map(|value| value.trim_matches(|c| c == '\'' || c == '"'));
+    Some((tag, input))
+}
+
+/// The version the generated workflow's install step pins: `Some(Some(v))`
+/// for a pin, `Some(None)` for the unpinned 0.10-and-earlier `cargo install`,
+/// `None` when no generated install step is recognized. For the action
+/// route the `version` input is the release CI installs, so it wins over
+/// the tag (#5409); `generated_workflow_line` flags the two disagreeing.
+fn generated_workflow_pin(workflow: &str) -> Option<Option<&str>> {
+    if let Some((tag, input)) = generated_install_action(workflow) {
+        return Some(Some(input.unwrap_or(tag)));
     }
     let install = workflow.lines().find_map(|line| {
         let command = line.trim().trim_start_matches("run:").trim();
@@ -3371,6 +3386,13 @@ fn generated_workflow_line(root: &Path, workflow: &str, current_version: &str) -
     let pinned = generated_workflow_pin(workflow)?;
     let refresh =
         super::init::workflow_refresh_guidance(root, crate::cli::commands_options::InitCi::Github);
+    if let Some((tag, Some(input))) = generated_install_action(workflow)
+        && tag != input
+    {
+        return Some(format!(
+            "{GENERATED_WORKFLOW_PATH} runs the ripr-check action from v{tag} but installs ripr {input}; the action and the release it installs should match; {refresh}"
+        ));
+    }
     match pinned {
         None => Some(format!(
             "{GENERATED_WORKFLOW_PATH} installs ripr without a version (the ripr 0.10-and-earlier template), so CI runs whatever release is newest against these steps; {refresh}"
@@ -6123,6 +6145,18 @@ mod tests {
             generated_workflow_line(Path::new("."), &action("0.11.0"), "0.11.0"),
             None
         );
+        // The `version` input is what CI installs: a hand-edited input
+        // that leaves the tag behind is named, not hidden behind the tag.
+        let split = concat!(
+            "      - name: Install ripr\n        id: install\n        uses: EffortlessMetrics/ripr/.github/actions/ripr-check@v0.11.0\n        with:\n          version: 0.12.0\n          install-only: true\n\n      - name: Run RIPR\n        run: ripr reports ci-packet --root .\n"
+        );
+        let split_line = generated_workflow_line(Path::new("."), split, "0.11.0");
+        assert!(
+            split_line.as_deref().is_some_and(|line| line
+                .contains("runs the ripr-check action from v0.11.0 but installs ripr 0.12.0")),
+            "{split_line:?}"
+        );
+        assert_eq!(generated_workflow_pin(split), Some(Some("0.12.0")));
         let stale_action = generated_workflow_line(Path::new("."), &action(stale), current);
         assert!(
             stale_action
