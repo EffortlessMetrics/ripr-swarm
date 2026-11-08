@@ -2722,6 +2722,20 @@ mod tests {
                 function("f", vec![call(2, "a", line), call(2, "b", line)]),
                 function("g", vec![call(2, "a", line), call(3, "c", "    c();")]),
             ],
+            tests: vec![TestFact {
+                name: "t".to_string(),
+                file: PathBuf::from("src/lib.rs"),
+                start_line: 5,
+                end_line: 6,
+                body: SourceText::owned(String::new()),
+                calls: vec![call(6, "a", line)].into(),
+                assertions: Vec::new(),
+                literals: crate::analysis::facts::SharedFactSlice::empty(),
+                attrs: crate::analysis::facts::SharedFactSlice::empty(),
+                nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+                let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
+                generated: None,
+            }],
             source: Arc::from(""),
             ..FileFacts::default()
         };
@@ -2732,6 +2746,8 @@ mod tests {
         let g = &decoded.functions[1].calls;
         assert!(f[0].text.shares_allocation(&f[1].text));
         assert!(f[0].text.shares_allocation(&g[0].text));
+        // Tests share with functions in the same file.
+        assert!(f[0].text.shares_allocation(&decoded.tests[0].calls[0].text));
         assert!(!f[0].text.shares_allocation(&g[1].text));
         assert_eq!(g[1].text, "    c();");
         Ok(())
