@@ -182,6 +182,26 @@ records that distinction.
 Bump rules below apply per contract: a breaking change to one family bumps
 that family's version only.
 
+Breaking-change gate (#1720): `cargo xtask check-verification-contracts` also
+compares every published schema with its copy at the merge base with
+`origin/main` and fails when the edit narrows what existing consumers accept
+without changing `properties.schema_version.const`. Treated as breaking: a
+removed or renamed schema file; a removed property, enum value or `$defs`
+entry; a newly required field; a narrowed `type`; a tightened bound, a new or
+changed `pattern`, or `uniqueItems`; closing or constraining
+`additionalProperties`, or adding a constrained property to an object that
+accepted extra properties; a changed `const`; fewer `anyOf`/`oneOf`
+alternatives (compared by position, so reordering counts), an added `oneOf`
+alternative (it may overlap an existing one), or more `allOf` conjuncts; and any other keyword whose non-annotation content changed.
+Widening edits pass, as does a new property on an object with
+`additionalProperties: false`, `const` widening to an `enum` that contains it,
+a dropped `pattern`, and annotation-only edits (`description`, `title`,
+`examples`, ...) at any depth. Changing the version pin accepts a breaking edit
+explicitly; deleting the pin does not. A schema with no pin (the Shields badge
+schema) cannot take a breaking edit at all. With no merge base the gate prints
+`schema compatibility not established`; it passes locally but fails when `CI`
+is set, so a shallow CI checkout cannot silently skip the comparison.
+
 ### `json-terse`: semantically compacted check JSON
 
 `ripr check --format json-terse` renders the same findings as `json` for

@@ -85,6 +85,7 @@ mod readiness_snapshot;
 mod repo_readiness;
 mod repository_orientation;
 mod ripr_agent_disposition;
+mod schema_compat;
 mod schema_pattern;
 mod size_scaling;
 mod termination_qualification;
