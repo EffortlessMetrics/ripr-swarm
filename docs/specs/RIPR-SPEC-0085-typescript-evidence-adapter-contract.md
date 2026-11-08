@@ -218,6 +218,27 @@ t.equal / t.deepEqual              -> exact_value
 
 #### Execution-context (`t.*`) assertion shapes
 
+The bounded node-tap profile (#9187) admits only a named `test` export,
+including `require('tap').test`, destructured `{ test }`, and named ESM
+imports. Namespace/default imports and other tap exports remain assertion
+packages. Jest-style registration chains are not tap registrations.
+An inline callback may supply two-argument `equal` / `strictEqual` evidence
+only when its context is used solely for those calls and completion: a
+synchronous callback needs one final `t.end()`, while an async callback can
+return its lifetime without `end`. Rebinding, matcher replacement, context
+escape, opaque code, early completion, skipped assertion options and other
+methods (including `same`) withhold oracle credit. Existing registration
+skip/todo and detached-callback fences still apply. This profile does not
+establish general tap coverage, runtime adequacy, or a support-tier change.
+Tap callbacks without a modeled oracle keep unresolved assertion admission;
+the profile does not establish absence of runner plan/completion checks.
+Tap registration arguments with ambiguous option or callback roles withhold
+oracle credit. A uniquely bound, preceding top-level `const` string literal
+remains a supported computed name; literal options must be simple data and
+may not supply a prototype.
+Tap does not establish an ambient Jest `expect`; assertion-library imports
+retain their independently verified bindings.
+
 AVA, tape, and `node:test` do not use the global `expect(...)`; they assert
 on the execution context passed as the test callback's first parameter
 (conventionally `t`):

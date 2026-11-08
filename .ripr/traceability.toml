@@ -8123,6 +8123,13 @@ id = "RIPR-SPEC-0085"
 name = "TypeScript evidence adapter contract"
 spec = "docs/specs/RIPR-SPEC-0085-typescript-evidence-adapter-contract.md"
 tests = [
+  "crates/ripr/src/analysis/language/typescript/admission_tests.rs::assertion_admission_separates_no_assertion_from_unresolved_assertion_like_forms",
+  "crates/ripr/src/analysis/language/typescript/tests_extract_tests.rs::tap_named_test_binding_registers_callback_equal_assertions",
+  "crates/ripr/src/analysis/language/typescript/tests_extract_tests.rs::tap_options_aliases_do_not_credit_skipped_callbacks",
+  "crates/ripr/src/analysis/language/typescript/tests_extract_tests.rs::tap_registration_keeps_namespace_and_binding_refusals",
+  "crates/ripr/src/analysis/language/typescript/tests_extract_tests.rs::tap_callback_assertion_profile_keeps_completion_and_receiver_fences",
+  "crates/ripr/src/analysis/language/typescript/tests_extract_tests.rs::tap_renamed_binding_and_local_shadow_have_distinct_authority",
+  "crates/ripr/src/analysis/language/typescript/tests_extract_tests.rs::tap_retains_explicit_assertion_imports_without_borrowing_globals",
   "crates/ripr/tests/cli_smoke/structural_workspace_markers.rs::typescript_workspace_evidence_uses_structural_markers_and_package_fallback",
   "crates/ripr/src/analysis/language/typescript/bounded_read.rs::tests::capped_workspace_read_reports_every_budget_refusal",
   "crates/ripr/src/analysis/language/typescript/bounded_read.rs::tests::workspace_budget_refusals_preserve_later_fitting_sources",
