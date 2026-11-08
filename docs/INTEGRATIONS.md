@@ -15,6 +15,7 @@ surfaces where a developer would feel ripr in the inner loop.
 | GitHub Actions and code scanning | Where most Rust PRs are reviewed | `ripr init --ci github`, SARIF upload ([CI quickstart](QUICKSTART.md#ci-first-hour)) |
 | VS Code, Zed, Neovim and other LSP editors | Inner loop; diagnostics on save | [Editor quickstart](QUICKSTART.md#vs-code-first-hour), [Neovim](interop/neovim-lsp.md), [others](interop/other-editors-lsp.md) |
 | Coding agents (MCP) | Agents write the tests ripr points at | [MCP status server](interop/mcp.md) |
+| Muse | Guided setup and one bounded test repair | [Native package guide](../plugins/muse/ripr/README.md): two skills and an explicitly approved MCP server; requires an MCP-capable RIPR build |
 | pre-commit framework | Catches the gap before the push | Snippet below; no hook ships for users |
 | GitLab CI and other hosted CI | Not everyone is on GitHub | Snippet below; no generator |
 | cargo-nextest | The standard Rust test runner | Ordering guidance below; ripr never runs tests |

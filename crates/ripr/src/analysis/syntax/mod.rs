@@ -64,8 +64,9 @@ pub(crate) use macro_scope::{
 };
 pub(crate) use module_tree::{RustModuleTreeEdge, RustModuleTreeScan, rust_module_tree_scan};
 pub(crate) use name_scope::{
-    NameScope, NameScopes, UseBinding, fn_call_has_local_binding, function_type_param_names,
-    name_scope_for_file, name_scope_for_items, name_scopes_for_fn, use_item_bindings,
+    NameScope, NameScopes, UseBinding, expansion_declares_items, fn_call_has_local_binding,
+    function_type_param_names, name_scope_for_file, name_scope_for_items, name_scopes_for_fn,
+    use_item_bindings,
 };
 pub(crate) use nesting::{
     block_comment_only_lines, non_code_token_end, parse_clean_source_file,

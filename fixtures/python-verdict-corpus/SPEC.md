@@ -3,6 +3,14 @@
 Spec: RIPR-SPEC-0245 (per-language corpora), with cases drawn from
 RIPR-SPEC-0028 and the RIPR-SPEC-0238 acceptance examples.
 
+Package-init receiver acceptance (#12237) uses three isolated unittest
+subjects `authored-py-unittest-init-{shadow,reexport,ancestor}`. Their retained
+runtime transcript is `evidence/12237-runtime.txt`. Each baseline executes one
+passing exact assertion. The real-table gold-value mutant survives both shadow
+receivers and fails the valid `from . import table` control. These label the
+three `package-init-*` examples in RIPR-SPEC-0238; they do not cover every
+binding syntax in the production unit tests.
+
 ## Given
 
 Small authored Python projects under `subjects/`, our own code under

@@ -193,6 +193,22 @@ WSL cannot prove Windows behavior (see [Environment and
 shell](#environment-and-shell)); it exists here to produce Linux bytes from a
 Windows machine.
 
+The hosted decision is also automated: `goldens-rebless.yml` (#11736,
+Proposal A, documented in [CI](../CI.md), "Golden Re-bless") dispatches a
+hosted Linux job that judges a PR's golden drift with workflow-layer gates
+(drain `golden-drift.json` for status `warn`, zero `check.json`-surface
+entries, empty semantic arrays, plus a byte-identity `git diff --no-index`
+witness stricter than the classifier's `formatting_only` label), blesses
+all-or-nothing per fixture with reasons derived from each fixture's own
+`SPEC.md` id, requires a clean second `goldens check`, and pushes one
+bot-authored commit on the PR head, then comments the command to re-arm
+`merge-ready` (a `GITHUB_TOKEN` push starts no workflows, so the route cannot
+re-arm it itself). Use it when the drift is renderer-prose formatting-only
+and a human has decided the flip is intended; a refused dispatch pushes
+nothing and the manual WSL route above remains the local fallback. Semantic
+drift (`check.json` or any non-empty semantic array) is never auto-blessed;
+it keeps the human route.
+
 Formatting-only versus semantic drift. After a renderer merge (for example
 #9657, #10886), prose lines drift across many fixtures at once; the re-bless
 keeps `check.json` unchanged and cites the landed renderer change as the
@@ -218,6 +234,32 @@ Do not assert Cargo test/nextest equivalence without comparing subject inventory
 features, doctests, ignored tests, configuration, retries and execution behavior.
 
 ## Workflow policy
+
+Run semantic workflow validation before paying for hosted qualification:
+
+```text
+uvx --from jactionlint==2.5.0 jactionlint --config-file .github/jactionlint.yaml --profile correctness --no-online --shellcheck= --pyflakes=
+```
+
+Run from the repository root so the complete workflow/action/config set is
+checked, not only changed lines. This matches the initial `workflow-lint.yml`
+scope: Actions correctness, explicitly excluding external ShellCheck/Pyflakes.
+Both commands explicitly load the repository-owned, unsuppressed configuration;
+personal global configuration cannot disable rules in this check. Node 20 or
+newer on `PATH` is needed for the `github-script-syntax` check. If Node is
+unavailable, record that dimension as omitted; a successful local exit does not
+then establish the same JavaScript syntax coverage as the hosted Ubuntu run.
+Keep any separate script/security checks. It neither proves concurrency or
+release independence nor measures cold/warm hosted-cache behavior.
+
+A user-level `uv tool install jactionlint` exposes `jactionlint` directly; verify
+`jactionlint --version` before comparing it with the hosted pin. If an existing
+agent session cannot find it, inspect `uv tool dir --bin` or use the pinned
+`uvx --from` command above. Do not fall back to a Python YAML parse because
+`actionlint` is absent. Record the actual version, command, exit status, findings
+and omitted coverage; do not add blanket ignores or a baseline to make it green.
+
+The semantic linter supplements the existing repository workflow policy:
 
 ```bash
 cargo xtask check-workflows
