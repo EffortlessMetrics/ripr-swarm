@@ -73,6 +73,19 @@ root_cause = "The export input witness reads the effective seam limit before and
 guard = "pilot_default_guard_excludes_concurrent_mutators_until_dropped"
 
 [[flake]]
+id = "seam-inventory-key-tests-moved-seam-limit"
+test = "analysis::seam_inventory::tests::same_key_fingerprint_payload_edit_declines_and_rehashes_source_truth"
+lane = "Rust-only feature lane (cargo test --no-default-features --features lang-rust)"
+class = "shared-state"
+status = "fixed"
+issue = 13393
+first_seen = "2026-11-06"
+evidence = ["run 42151407929 (PR #13370 head 475c9ee7, failed 1 of 13689)", "run 42156162873 (PR #13388, streaming_collect_matches_legacy_hash_key_and_order)", "run 42154025547 (main 2a86f7c, passed)"]
+symptom = "A seam_inventory test that builds the workspace cache key twice fails with a key or evidence mismatch on a PR that does not touch seam_inventory, and passes on rerun."
+root_cause = "The workspace cache key embeds the effective seam limit, which resolves through the process-wide PILOT_INVENTORY_DEFAULT. A concurrent in-process pilot or repair test in the same cargo test binary moves it between the test's two reads, so the keys differ. #12421 held the mutator lock only in the cache export tests; every other seam_inventory test that compares keys, mappings or inventories from separate reads now holds it too."
+guard = "pilot_default_guard_excludes_concurrent_mutators_until_dropped"
+
+[[flake]]
 id = "managed-sigint-exporter-failure-misclassified"
 test = "ripr::chaos_interrupted_runs managed_producer::interruption::managed_sigint_reaps_partial_and_repeats"
 lane = "Test Analytics (cargo nextest run --workspace --all-features)"
@@ -163,13 +176,14 @@ id = "ts-binding-names-wall-clock-bound"
 test = "analysis::language::typescript::loop_count_guard::tests::binding_names_skip_defaults_and_keys"
 lane = "Required nextest lane"
 class = "wall-clock-bound"
-status = "open"
+status = "fixed"
 issue = 10483
 timing_dependent = true
 first_seen = "2026-10-25"
-evidence = ["run 40236320956 (job 121298726158, PR #10478)"]
+evidence = ["run 40236320956 (job 121298726158, PR #10478; original failure)", "PR #10493 merged as 8ba2eed9e2cddfb270f377011bf9c68649efd160; required run 40241738076", "PR #10493 comment 6404897841: correct reducer accepted, input-scaled-budget mutant assertion rejected", "issue #10483 comment 6680899281: bounded acceptance reconciliation"]
 symptom = "A 2 s wall-clock bound on 20,000-deep reductions failed under a loaded runner (about 0.2 s per unit locally)."
-root_cause = "A wall-clock bound cannot tell a slow runner from a quadratic reduction. Bound the work (steps or rescans, depth N versus 2N) instead."
+root_cause = "The original absolute 2 s ceiling was replaced by a calibrated 10k/20k depth comparison in #10493. The retained control accepted the correct reducer and rejected an input-scaled-budget mutant. This completes the original absolute-threshold claim; the replacement remains timing-dependent and establishes neither scheduler causality, universal scheduling immunity nor asymptotic proof."
+guard = "binding_names_skip_defaults_and_keys"
 
 [[flake]]
 id = "rust-only-routing-timeout-windows"

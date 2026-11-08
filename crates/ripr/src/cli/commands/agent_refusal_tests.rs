@@ -32,6 +32,7 @@ fn sample_policy(inline_test_module_target: bool) -> Result<EditCagePolicy, Stri
         ignored_build_output: None,
         untracked_build_lockfile: None,
         inline_test_module_target,
+        new_test_proposal: None,
     })
 }
 
@@ -318,6 +319,7 @@ fn before_phase_refuses_dirty_production_premise_before_the_seam_inventory() -> 
                 authority: None,
             },
             verify_rollback: false,
+            test_result: None,
             store: None,
             json: false,
             quiet: false,

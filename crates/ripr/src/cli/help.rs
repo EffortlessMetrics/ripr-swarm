@@ -933,7 +933,8 @@ mod tests {
         assert!(CHECK_HELP.contains("percentage or ETA"));
         assert!(CHECK_HELP.contains("processed_<n>_of_<total>"));
         assert!(CHECK_HELP.contains("does not mean analysis is faster"));
-        assert!(CHECK_HELP.contains("json, sarif, github"));
+        assert!(CHECK_HELP.contains("json, json-compact, sarif,"));
+        assert!(CHECK_HELP.contains("github) keep stdout byte-clean"));
         assert!(!CHECK_HELP.contains("json, sarif, markdown"));
         assert!(DIFF_HELP.contains("Usage: ripr diff"));
         assert!(DIFF_HELP.contains("full-repo-limited"));

@@ -1187,7 +1187,64 @@ fn normalize_agent_verify_fixture(text: &str) -> Result<String, Box<dyn std::err
 }
 
 fn normalize_agent_receipt_fixture(text: &str) -> Result<String, Box<dyn std::error::Error>> {
+    let root = printed_path(&workspace_root().canonicalize()?);
+    normalize_agent_receipt_fixture_for_root(text, &root)
+}
+
+fn normalize_agent_receipt_fixture_for_root(
+    text: &str,
+    root: &str,
+) -> Result<String, Box<dyn std::error::Error>> {
     let mut value: serde_json::Value = serde_json::from_str(text)?;
+    // Normalize only the path in the producer's own analysis-outcome error,
+    // then only its exact repetition in guidance. Other paths and wording stay
+    // visible. Windows `printed_path` and `Path::display` use different slashes.
+    let windows = root.as_bytes().get(1) == Some(&b':') || root.starts_with("//");
+    let root = root.trim_end_matches(['/', '\\']);
+    let error = value
+        .get("analysis_outcome_error")
+        .and_then(serde_json::Value::as_str);
+    let normalized_error = error.and_then(|error| {
+        let rest = error.strip_prefix("Analysis outcome artifact ")?;
+        let (path, reason) = rest
+            .split_once(" is unavailable:")
+            .or_else(|| rest.split_once(" is malformed JSON:"))?;
+        if root.is_empty() {
+            return None;
+        }
+        let normalized_path = if windows {
+            let path = path.replace('\\', "/");
+            if let Some(share) = path.strip_prefix("//?/UNC/") {
+                format!("//{share}")
+            } else {
+                path.strip_prefix("//?/").unwrap_or(&path).to_string()
+            }
+        } else {
+            path.to_string()
+        };
+        let suffix = normalized_path.strip_prefix(root)?.strip_prefix('/')?;
+        let delimiter = if rest.contains(" is unavailable:") {
+            " is unavailable:"
+        } else {
+            " is malformed JSON:"
+        };
+        Some((
+            error.trim_end_matches('.').to_string(),
+            format!("Analysis outcome artifact <workspace>/{suffix}{delimiter}{reason}")
+                .trim_end_matches('.')
+                .to_string(),
+        ))
+    });
+    if let Some((original, normalized)) = normalized_error {
+        for pointer in [
+            "/summary/next_recommendation",
+            "/summary/next_action/recommended_action",
+        ] {
+            if let Some(serde_json::Value::String(guidance)) = value.pointer_mut(pointer) {
+                *guidance = guidance.replace(&original, &normalized);
+            }
+        }
+    }
     if let Some(provenance) = value
         .get_mut("provenance")
         .and_then(serde_json::Value::as_object_mut)
@@ -1230,6 +1287,136 @@ fn normalize_agent_receipt_fixture(text: &str) -> Result<String, Box<dyn std::er
     let mut rendered = serde_json::to_string_pretty(&value)?;
     rendered.push('\n');
     Ok(rendered)
+}
+
+#[test]
+fn receipt_fixture_normalization_preserves_missing_outcome_guidance()
+-> Result<(), Box<dyn std::error::Error>> {
+    let make_receipt = |root: &str, separator: &str| {
+        let error = format!(
+            "Analysis outcome artifact {root}{separator}results{separator}analysis-outcome.json is unavailable: No such file."
+        );
+        let guidance = format!(
+            "This receipt is incomplete ({}); do not include it in review; rerun analysis",
+            error.trim_end_matches('.')
+        );
+        serde_json::json!({
+            "status": "incomplete", "analysis_outcome_error": error,
+            "summary": {"next_recommendation": guidance, "next_action": {"recommended_action": guidance},
+                        "remaining_gap": "unrelated field remains unchanged"}
+        })
+    };
+    let normalize = |value: &serde_json::Value,
+                     root: &str|
+     -> Result<serde_json::Value, Box<dyn std::error::Error>> {
+        Ok(serde_json::from_str(
+            &normalize_agent_receipt_fixture_for_root(&value.to_string(), root)?,
+        )?)
+    };
+    let expected = normalize(&make_receipt("/tmp/one", "/"), "/tmp/one")?;
+    assert_eq!(
+        expected,
+        normalize(&make_receipt("/tmp/two", "/"), "/tmp/two")?
+    );
+    assert_eq!(
+        expected,
+        normalize(
+            &make_receipt(concat!(r"C:", r"\work\repo"), r"\"),
+            concat!("C:", "/work/repo")
+        )?
+    );
+    assert_eq!(
+        expected,
+        normalize(
+            &make_receipt(concat!(r"\\?\C:", r"\work\repo"), r"\"),
+            concat!("C:", "/work/repo"),
+        )?
+    );
+    assert_eq!(
+        expected,
+        normalize(
+            &make_receipt(r"\\?\UNC\server\share\repo", r"\"),
+            "//server/share/repo"
+        )?
+    );
+    let guidance = expected["summary"]["next_recommendation"]
+        .as_str()
+        .ok_or("guidance")?;
+    assert!(
+        guidance.contains("<workspace>/results/analysis-outcome.json is unavailable: No such file")
+    );
+    assert!(
+        guidance.contains("incomplete")
+            && guidance.contains("do not include it in review")
+            && guidance.contains("rerun analysis")
+    );
+    assert_eq!(expected["status"], "incomplete");
+    assert_eq!(
+        expected["summary"]["remaining_gap"],
+        "unrelated field remains unchanged"
+    );
+    // A changed filename, reason, warning, recovery, or status must remain observable.
+    for (from, to) in [
+        ("analysis-outcome.json", "different.json"),
+        ("No such file", "Permission denied"),
+        ("do not include it in review", "include it in review"),
+        ("rerun analysis", "skip analysis"),
+        ("incomplete", "complete"),
+    ] {
+        let changed: serde_json::Value =
+            serde_json::from_str(&make_receipt("/tmp/one", "/").to_string().replace(from, to))?;
+        assert_ne!(
+            expected,
+            normalize(&changed, "/tmp/one")?,
+            "lost change {from:?}"
+        );
+    }
+    let mut wrong_status = make_receipt("/tmp/one", "/");
+    wrong_status["status"] = serde_json::json!("complete");
+    assert_ne!(
+        expected,
+        normalize(&wrong_status, "/tmp/one")?,
+        "lost status-only change"
+    );
+    for (from, to) in [
+        ("do not include it in review", "include it in review"),
+        ("rerun analysis", "skip analysis"),
+    ] {
+        let mut wrong_guidance = make_receipt("/tmp/one", "/");
+        let recommendation = wrong_guidance["summary"]["next_recommendation"]
+            .as_str()
+            .ok_or("guidance")?
+            .replace(from, to);
+        wrong_guidance["summary"]["next_recommendation"] = serde_json::json!(recommendation);
+        assert_ne!(
+            expected,
+            normalize(&wrong_guidance, "/tmp/one")?,
+            "lost guidance-only change {from:?}"
+        );
+    }
+    // A path outside the workspace, including an adjacent prefix, is not normalized.
+    let external = make_receipt("/tmp/one-other", "/");
+    let external = normalize(&external, "/tmp/one")?;
+    assert!(
+        external["summary"]["next_recommendation"]
+            .as_str()
+            .ok_or("external")?
+            .contains("/tmp/one-other/results/")
+    );
+    let embedded = normalize(&make_receipt("/outside/tmp/one", "/"), "/tmp/one")?;
+    assert!(
+        embedded["summary"]["next_recommendation"]
+            .as_str()
+            .ok_or("embedded external path")?
+            .contains("/outside/tmp/one/results/analysis-outcome.json")
+    );
+    let foreign_guidance = serde_json::json!({"status": "incomplete", "analysis_outcome_error": "other error", "summary": {"next_recommendation": "inspect /tmp/one/unrelated", "next_action": {"recommended_action": "inspect /tmp/one/unrelated"}}});
+    let foreign = normalize(&foreign_guidance, "/tmp/one")?;
+    assert_eq!(
+        foreign["summary"]["next_recommendation"],
+        "inspect /tmp/one/unrelated"
+    );
+    Ok(())
 }
 
 fn normalize_unchanged_repo_exposure_producer_fixture(
@@ -9461,6 +9648,48 @@ fn agent_repair_before_requires_effective_cargo_build_directory_ignore()
                 "refused before phase must not publish a packet or completion: {before:?}"
             )
             .into());
+        }
+        // The Git-ignore hold shares the commit-first start-refusal shape:
+        // one `next:` line, then the typed `refusal code=` line last.
+        let lines: Vec<&str> = stderr.lines().collect();
+        if lines.last()
+            != Some(&"ripr: refusal code=build_output_not_ignored disposition=not_started")
+            || !lines.iter().any(|line| line.starts_with("next: "))
+        {
+            return Err(format!("missing next/refusal lines, rule {rule:?}: {stderr}").into());
+        }
+        // The advanced spelling keeps exit 2; the facade maps it to decision 3.
+        if before.status.code() != Some(2) {
+            return Err(format!("advanced spelling must exit 2: {before:?}").into());
+        }
+        let facade = run_ripr(&[
+            "repair",
+            BOUNDARY_GAP_SEAM_ID,
+            "--root",
+            &root.display().to_string(),
+        ]);
+        if facade.status.code() != Some(3) || !facade.stdout.is_empty() {
+            return Err(format!(
+                "facade Git-ignore refusal must exit 3 with empty stdout: {facade:?}"
+            )
+            .into());
+        }
+        let facade_stderr = String::from_utf8_lossy(&facade.stderr);
+        let next_line = |text: &str| {
+            text.lines()
+                .find(|line| line.starts_with("next: "))
+                .map(str::to_string)
+        };
+        if next_line(&facade_stderr).is_none() || next_line(&facade_stderr) != next_line(&stderr) {
+            return Err(format!(
+                "facade and advanced spellings must print the same `next:` line: {facade_stderr} vs {stderr}"
+            )
+            .into());
+        }
+        if !facade_stderr.lines().any(|line| {
+            line == "ripr: refusal code=build_output_not_ignored disposition=not_started"
+        }) {
+            return Err(format!("facade refusal lacks the typed line: {facade_stderr}").into());
         }
         for artifact in [
             "target/ripr/workflow/workflow.json",
@@ -27601,6 +27830,58 @@ fn check_default_base_with_clean_worktree_keeps_no_scope_note_only() -> Result<(
     Ok(())
 }
 
+/// First-run walk: a clean base branch holding only a new, never-staged source
+/// file used to answer "edit a tracked source file", contradicting the header
+/// that already named the untracked file. Start-here now leads with the
+/// staging repair; a tracked-only clean tree keeps the old wording (above).
+#[test]
+fn check_clean_base_branch_with_untracked_source_leads_with_staging_repair() -> Result<(), String> {
+    let root = unique_temp_workspace("untracked-only-on-base-branch");
+    std::fs::create_dir_all(root.join("src")).map_err(|err| format!("create src: {err}"))?;
+    run_git(&root, &["init", "-b", "main"])?;
+    run_git(&root, &["config", "user.email", "test@test.com"])?;
+    run_git(&root, &["config", "user.name", "Test"])?;
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "pub fn add(a: i32, b: i32) -> i32 { a + b }\n",
+    )
+    .map_err(|err| format!("write lib.rs: {err}"))?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"untracked-only-base\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|err| format!("write Cargo.toml: {err}"))?;
+    run_git(&root, &["add", "."])?;
+    run_git(&root, &["commit", "-m", "initial"])?;
+    std::fs::write(
+        root.join("src/extra.rs"),
+        "pub fn sub(a: i32, b: i32) -> i32 { a - b }\n",
+    )
+    .map_err(|err| format!("write untracked source: {err}"))?;
+    let root_str = root.to_string_lossy().into_owned();
+
+    let human = run_ripr(&["check", "--root", &root_str]);
+    assert_success(&human);
+    let stdout = String::from_utf8_lossy(&human.stdout);
+    let safe_line = stdout
+        .lines()
+        .find(|line| line.contains("Safe next action:"))
+        .ok_or_else(|| format!("missing Safe next action line; got:\n{stdout}"))?;
+    if !safe_line.contains("src/extra.rs") || !safe_line.contains("git add -N") {
+        return Err(format!(
+            "Start-here must name the untracked file and the staging repair; got: {safe_line}"
+        ));
+    }
+    if safe_line.contains("edit a tracked source file") {
+        return Err(format!(
+            "Start-here must not tell the user to edit a tracked file when an untracked one is the cause; got: {safe_line}"
+        ));
+    }
+
+    ignore_remove_dir_all(&root);
+    Ok(())
+}
+
 /// RIPR-SPEC-0112: `ripr check --base HEAD` with a CLEAN worktree (no uncommitted changes)
 /// must NOT show the unanalyzed-working-tree disclosure. A genuinely clean worktree
 /// means no uncommitted edits — the disclosure must not fire.
@@ -34779,6 +35060,54 @@ fn unusable_cache_directory_is_reported_once_per_build() -> Result<(), Box<dyn s
     Ok(())
 }
 
+fn assert_unusable_cache_warns_once(
+    label: &str,
+    format_args: &[&str],
+) -> Result<(), Box<dyn std::error::Error>> {
+    let workspace = unique_temp_workspace(label);
+    std::fs::create_dir_all(&workspace)?;
+    let not_a_directory = workspace.join("cache-is-a-file");
+    std::fs::write(&not_a_directory, "not a directory\n")?;
+    let fixture = workspace_root().join("fixtures/boundary_gap");
+    let fixture_input = fixture.join("input").to_string_lossy().into_owned();
+    let diff = fixture.join("diff.patch").to_string_lossy().into_owned();
+    let mut args = vec!["check", "--root", &fixture_input, "--diff", &diff];
+    args.extend_from_slice(format_args);
+    let output = run_command_with_env(
+        env!("CARGO_BIN_EXE_ripr"),
+        &workspace,
+        &args,
+        &[("RIPR_CACHE_DIR", &not_a_directory.to_string_lossy())],
+    )?;
+    assert_success(&output);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let cache_lines: Vec<&str> = stderr
+        .lines()
+        .filter(|line| line.contains("repo file fact cache entr"))
+        .collect();
+    assert_eq!(
+        cache_lines.len(),
+        1,
+        "expected one cache warning line, got {cache_lines:#?}"
+    );
+    assert!(
+        cache_lines[0].contains("entries ignored; first: ("),
+        "the warning must name the count and the first reason: {}",
+        cache_lines[0]
+    );
+    ignore_remove_dir_all(&workspace);
+    Ok(())
+}
+
+/// The follow-up route passes of the human screen and of `--output-dir`
+/// (#11976) must not repeat the analysis build's warning either.
+#[test]
+fn unusable_cache_directory_is_reported_once_for_human_and_output_dir()
+-> Result<(), Box<dyn std::error::Error>> {
+    assert_unusable_cache_warns_once("unusable-cache-dir-human", &["--format", "human"])?;
+    assert_unusable_cache_warns_once("unusable-cache-dir-fanout", &["--output-dir", "out"])
+}
+
 /// docs/EXIT_CODES.md: a reader that closes stdout early gets a quiet exit 2
 /// (#4728). The reader closes before ripr writes anything, so the JSON write
 /// always meets the closed pipe.
@@ -35612,6 +35941,12 @@ fn repair_refuses_uncommitted_inline_target_before_writing_artifacts_and_status_
             "No repair attempt started. Commit or stash `src/lib.rs`, then run `ripr repair "
         ) && stderr.contains("--root"),
         "{stderr}"
+    );
+    assert!(
+        stderr
+            .lines()
+            .any(|line| line.starts_with("next: commit or stash `src/lib.rs`")),
+        "the hold prints one `next:` line like the Git-ignore hold: {stderr}"
     );
     for artifact in [
         "workflow.json",

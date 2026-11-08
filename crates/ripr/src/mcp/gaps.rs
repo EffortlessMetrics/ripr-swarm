@@ -32,6 +32,10 @@ pub(crate) struct RepairFixSite {
     pub(crate) line: usize,
     pub(crate) oracle: Option<String>,
     pub(crate) oracle_kind: &'static str,
+    /// Wire strength of the fix-site test's oracle: `strong` for an
+    /// already-pinning test, a weaker grade for the weak test a named-missing
+    /// discriminator repair extends.
+    pub(crate) oracle_strength: &'static str,
     /// The governed inline `#[cfg(test)]` module the repair is confined to,
     /// when the fix site is the seam's own production file (#5516). `None`
     /// for a test-surface fix site.
@@ -57,7 +61,10 @@ pub(crate) struct RepairFixSite {
 ///    refuses as `discriminator_not_populated_for_language`, so one document
 ///    cannot contradict its own `discriminator_availability` block (#5268);
 /// 3. an established fix site — a strong, high-confidence directly-related
-///    test, on a path the shared edit-cage test-surface predicate accepts.
+///    test, on a path the shared edit-cage test-surface predicate accepts;
+///    for a weakly exposed finding that names its missing discriminator, the
+///    high-confidence directly-related test of any graded (non-strong)
+///    oracle strength that the repair extends.
 ///
 /// The first failing gate in this fixed order is the typed reason.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -72,6 +79,10 @@ pub(crate) struct RepairReadiness {
     /// The shared repair validator's own explanation when the seam-level
     /// admission refused an otherwise finding-ready item (#8717).
     pub(crate) seam_detail: Option<String>,
+    /// The producer-owned new-test proposal the seam's repair would follow
+    /// (#13204): the shared projection, disclosed beside the readiness. It
+    /// never changes `ready` or `ineligibility`.
+    pub(crate) proposed_new_test: Option<crate::analysis::new_test_target::SelectedProposal>,
 }
 
 impl RepairReadiness {
@@ -112,6 +123,83 @@ impl RepairReadiness {
         self
     }
 
+    /// Discloses the producer-owned new-test proposal when the shared gate's
+    /// verdict names one and the item is either ready or held only because the
+    /// finding has no existing fix site (`fix_site_not_established`), which is
+    /// the proposal-only case: the seam's one repair target is the new test, so
+    /// the finding-level gate has no usable existing test to name. Disclosure only:
+    /// readiness and the refusal code are untouched (the held item stays not
+    /// ready), and an item held by any other gate names no proposal.
+    pub(crate) fn with_selected_proposal(mut self, verdict: Option<&SeamVerdict>) -> Self {
+        if (self.ready || self.ineligibility == Some("fix_site_not_established"))
+            && let Some(SeamVerdict::AdmittedProposed(selected)) = verdict
+        {
+            self.proposed_new_test = Some(selected.clone());
+        }
+        self
+    }
+
+    /// Pin the fix site to the test the shared repair gate recommends
+    /// (`ripr repair`'s "test to extend"), so MCP never names a different edit
+    /// file than the CLI when several related tests qualify. The finding's
+    /// candidates are searched for the recommended file; none matching is a
+    /// fail-closed refusal naming that file rather than an alternative target.
+    pub(crate) fn with_recommended_target(
+        mut self,
+        finding: &Finding,
+        root: &Path,
+        verdict: Option<&SeamVerdict>,
+    ) -> Self {
+        let Some(SeamVerdict::AdmittedExisting { file: recommended }) = verdict else {
+            return self;
+        };
+        let Some(site) = self.fix_site.as_ref() else {
+            return self;
+        };
+        if !self.ready || site.inline_test_module.is_some() {
+            return self;
+        }
+        let named_missing = !finding.activation.missing_discriminators.is_empty()
+            || finding
+                .missing
+                .iter()
+                .any(|entry| entry.starts_with(crate::domain::MISSING_DISCRIMINATOR_VALUE_PREFIX));
+        let named_missing_is_repair_target =
+            named_missing && finding.class == crate::domain::ExposureClass::WeaklyExposed;
+        let same_file = |candidate: &str| {
+            candidate == recommended
+                || crate::output::path::repository_relative_path_text(root, Path::new(candidate))
+                    == crate::output::path::repository_relative_path_text(
+                        root,
+                        Path::new(recommended),
+                    )
+        };
+        let matching = fix_site_candidates(finding, root, named_missing_is_repair_target)
+            .into_iter()
+            .find(|candidate| same_file(&candidate.file));
+        match matching {
+            // The pinned candidate meets every per-candidate `from_finding`
+            // condition (strength and relation confidence are applied by
+            // `fix_site_candidates`); the test-surface predicate is re-applied
+            // here so swapping candidates can never widen the edit surface.
+            Some(candidate) if !crate::analysis::is_test_surface_path(&candidate.file) => {
+                self.ready = false;
+                self.fix_site = Some(candidate);
+                self.ineligibility = Some("fix_site_not_test_surface");
+            }
+            Some(candidate) => self.fix_site = Some(candidate),
+            None => {
+                self.ready = false;
+                self.fix_site = None;
+                self.ineligibility = Some("fix_site_not_established");
+                self.seam_detail = Some(format!(
+                    "the shared repair gate (`ripr repair`) names `{recommended}` as the test to extend, which is not among this item's high-confidence directly-related tests, so no matching fix site is established"
+                ));
+            }
+        }
+        self
+    }
+
     /// The human sentence for this readiness: the shared validator's own
     /// explanation when it refused, else the finding-level gate sentence.
     pub(crate) fn detail(&self) -> String {
@@ -128,6 +216,7 @@ impl RepairReadiness {
                 fix_site: None,
                 ineligibility: Some("not_candidate_actionable"),
                 seam_detail: None,
+                proposed_new_test: None,
             };
         }
         let producer_named_missing_discriminator =
@@ -150,6 +239,7 @@ impl RepairReadiness {
                 fix_site: None,
                 ineligibility: Some("missing_discriminator"),
                 seam_detail: None,
+                proposed_new_test: None,
             };
         }
         let discriminator_unpopulated = finding
@@ -173,34 +263,29 @@ impl RepairReadiness {
                 fix_site: None,
                 ineligibility: Some(ineligibility),
                 seam_detail: None,
+                proposed_new_test: None,
             };
         }
         // The gate contract is "a strong, high-confidence directly-related
         // test on a shared edit-cage test-surface path", so the path
         // predicate joins the search: a qualifying test-surface candidate
         // later in the list wins over a non-surface candidate earlier.
-        let candidates = finding
-            .related_tests
-            .iter()
-            .filter(|test| {
-                test.oracle_strength == crate::domain::OracleStrength::Strong
-                    && test.relation_confidence == Some(crate::domain::RelationConfidence::High)
-            })
-            .map(|test| RepairFixSite {
-                test_name: test.name.clone(),
-                file: crate::output::path::repository_relative_path_text(root, &test.file),
-                line: test.line,
-                oracle: test.oracle.clone(),
-                oracle_kind: test.oracle_kind.as_str(),
-                inline_test_module: None,
-            })
-            .collect::<Vec<_>>();
+        //
+        // The weak-test repair target (#8717) is extended, not replaced: the
+        // test that reaches the changed behavior without pinning the named
+        // value IS the fix site, exactly as `ripr repair` names it ("test to
+        // extend"). Demanding a strong oracle there would contradict the
+        // class (a strong direct test makes the item exposed) and refuse every
+        // such item that the shared gate admits. A graded oracle is required;
+        // an ungraded one cannot be extended into a discriminator.
+        let candidates = fix_site_candidates(finding, root, named_missing_is_repair_target);
         let Some(first) = candidates.first().cloned() else {
             return Self {
                 ready: false,
                 fix_site: None,
                 ineligibility: Some("fix_site_not_established"),
                 seam_detail: None,
+                proposed_new_test: None,
             };
         };
         let Some(fix_site) = candidates
@@ -212,6 +297,7 @@ impl RepairReadiness {
                 fix_site: Some(first),
                 ineligibility: Some("fix_site_not_test_surface"),
                 seam_detail: None,
+                proposed_new_test: None,
             };
         };
         Self {
@@ -219,6 +305,7 @@ impl RepairReadiness {
             fix_site: Some(fix_site),
             ineligibility: None,
             seam_detail: None,
+            proposed_new_test: None,
         }
     }
 
@@ -237,7 +324,7 @@ impl RepairReadiness {
                 "the producer withheld this finding's canonical gap behind a typed static limitation on the finding itself; the limitation, not the language, explains why no normalized discriminator is established"
             }
             Some("fix_site_not_established") => {
-                "no strong, high-confidence directly-related test establishes an exact fix site"
+                "no strong, high-confidence directly-related test establishes an exact fix site (for a weakly exposed finding that names its missing discriminator, no high-confidence directly-related test with a graded oracle to extend)"
             }
             Some("fix_site_not_test_surface") => {
                 "the strongest established fix site is not a test-surface path, and the shared repair gate did not admit it as the seam's one governed inline `#[cfg(test)]` module; only test-surface paths or that admitted module can be the authored edit target"
@@ -256,6 +343,13 @@ impl RepairReadiness {
             None if self
                 .fix_site
                 .as_ref()
+                .is_some_and(|site| site.oracle_strength != "strong") =>
+            {
+                "every evaluated producer fact is established: candidate-current source, an established discriminator, and a high-confidence directly-related test of weaker oracle strength that the repair extends to pin the named missing discriminator"
+            }
+            None if self
+                .fix_site
+                .as_ref()
                 .is_some_and(|site| site.inline_test_module.is_some()) =>
             {
                 "every evaluated producer fact is established: candidate-current source, an established discriminator, and a strong directly-related test fix site inside the seam's own governed inline `#[cfg(test)]` module, which the shared repair gate admitted"
@@ -265,6 +359,44 @@ impl RepairReadiness {
             }
         }
     }
+}
+
+/// High-confidence directly-related tests that can be the fix site, strongest
+/// oracle first (stable within a strength, so first-match among equals). A
+/// weakly exposed finding that names its missing discriminator also accepts
+/// the graded weaker oracles it extends (see `from_finding`).
+fn fix_site_candidates(
+    finding: &Finding,
+    root: &Path,
+    named_missing_is_repair_target: bool,
+) -> Vec<RepairFixSite> {
+    use crate::domain::OracleStrength;
+    let rank = |strength: &OracleStrength| match strength {
+        OracleStrength::Strong => Some(0),
+        OracleStrength::Medium if named_missing_is_repair_target => Some(1),
+        OracleStrength::Weak if named_missing_is_repair_target => Some(2),
+        OracleStrength::Smoke if named_missing_is_repair_target => Some(3),
+        _ => None,
+    };
+    let mut ranked = finding
+        .related_tests
+        .iter()
+        .filter(|test| test.relation_confidence == Some(crate::domain::RelationConfidence::High))
+        .filter_map(|test| rank(&test.oracle_strength).map(|rank| (rank, test)))
+        .collect::<Vec<_>>();
+    ranked.sort_by_key(|(rank, _)| *rank);
+    ranked
+        .into_iter()
+        .map(|(_, test)| RepairFixSite {
+            test_name: test.name.clone(),
+            file: crate::output::path::repository_relative_path_text(root, &test.file),
+            line: test.line,
+            oracle: test.oracle.clone(),
+            oracle_kind: test.oracle_kind.as_str(),
+            oracle_strength: test.oracle_strength.as_str(),
+            inline_test_module: None,
+        })
+        .collect()
 }
 
 pub(crate) struct GapItem {
@@ -332,6 +464,22 @@ fn static_limit_token(kind: crate::domain::StaticLimitKind) -> String {
         .unwrap_or_else(|| "static_limitation".to_string())
 }
 
+/// The wire shape of the shared proposal projection on a gap item: snake_case
+/// kind, file, the inline module only when one exists, and a plain statement.
+pub(crate) fn proposed_new_test_json(
+    selected: &crate::analysis::new_test_target::SelectedProposal,
+) -> serde_json::Value {
+    let mut value = json!({
+        "kind": selected.kind,
+        "file": selected.file,
+        "summary": selected.statement(),
+    });
+    if let Some(module) = &selected.module {
+        value["module"] = json!(module);
+    }
+    value
+}
+
 impl GapItem {
     /// `root` is the analyzed workspace root: item locations render through
     /// the shared finding-location owner (#5996), so an MCP item names the
@@ -367,7 +515,9 @@ impl GapItem {
         let line = finding.probe.location.line;
 
         let repair_readiness = RepairReadiness::from_finding(finding, root)
-            .with_seam_verdict(admission.verdict(&finding.id).as_ref());
+            .with_seam_verdict(admission.verdict(&finding.id).as_ref())
+            .with_recommended_target(finding, root, admission.verdict(&finding.id).as_ref())
+            .with_selected_proposal(admission.verdict(&finding.id).as_ref());
         let mut list_summary = json!({
             "canonical_id": canonical_id,
             "class": class,
@@ -377,6 +527,12 @@ impl GapItem {
             "repair_packet_ready": repair_readiness.ready,
             "repair_ineligibility": repair_readiness.ineligibility,
         });
+        // Additive (#13204): present only when the shared gate's target is the
+        // producer-owned new-test proposal; the same projection the repair
+        // card and packet read.
+        if let Some(selected) = &repair_readiness.proposed_new_test {
+            list_summary["proposed_new_test"] = proposed_new_test_json(selected);
+        }
         // Additive (#12921): present only for a `no_static_path` item reached
         // solely by a proof harness ripr does not evaluate. It is a disclosure,
         // never test coverage; the class above is unchanged.
@@ -1559,6 +1715,8 @@ mod tests {
                 value: "total == 10000".to_string(),
                 reason: "boundary not asserted".to_string(),
                 flow_sink: None,
+                shape: crate::domain::DiscriminatorShape::Boundary,
+                drafted_boundary: None,
             },
         );
         // #8717: on a weakly exposed finding the named value is the repair
@@ -1647,6 +1805,179 @@ mod tests {
         Ok(())
     }
 
+    /// A weakly exposed finding that names its missing discriminator is
+    /// repaired by extending the weak test that already reaches the changed
+    /// behavior, so that test is the fix site; requiring a strong one would
+    /// make the repair target contradict its own gate. Every other fix-site
+    /// condition stays fail-closed.
+    #[test]
+    fn weak_named_discriminator_finding_takes_its_weak_test_as_fix_site() -> Result<(), String> {
+        let mut weak = finding()?;
+        weak.activation
+            .missing_discriminators
+            .push(crate::domain::MissingDiscriminatorFact {
+                value: "total == 10000".to_string(),
+                reason: "boundary not asserted".to_string(),
+                flow_sink: None,
+                shape: crate::domain::DiscriminatorShape::Boundary,
+                drafted_boundary: None,
+            });
+        for test in &mut weak.related_tests {
+            test.oracle_strength = crate::domain::OracleStrength::Weak;
+            test.oracle_kind = crate::domain::OracleKind::RelationalCheck;
+        }
+        let item = GapItem::from_finding(&weak, Path::new("."))?;
+        let readiness = &item.repair_readiness;
+        let site = readiness
+            .fix_site
+            .as_ref()
+            .ok_or("a weak repair target must carry its fix site")?;
+        if !readiness.ready
+            || readiness.ineligibility.is_some()
+            || site.file != "tests/checkout.rs"
+            || site.oracle_strength != "weak"
+        {
+            return Err(format!("weak repair target is not ready: {readiness:?}"));
+        }
+        let ids = [
+            crate::domain::OracleStrength::Medium,
+            crate::domain::OracleStrength::Smoke,
+        ];
+        for strength in ids {
+            let mut other = weak.clone();
+            other.related_tests[0].oracle_strength = strength;
+            if !GapItem::from_finding(&other, Path::new("."))?
+                .repair_readiness
+                .ready
+            {
+                return Err("a reaching test of any graded strength is the repair target".into());
+            }
+        }
+        // Discriminating negatives: an ungraded oracle, a weaker relation, a
+        // non-test-surface site, or no named discriminator all stay refused.
+        for strength in [
+            crate::domain::OracleStrength::None,
+            crate::domain::OracleStrength::Unknown,
+        ] {
+            let mut other = weak.clone();
+            other.related_tests[0].oracle_strength = strength;
+            let item = GapItem::from_finding(&other, Path::new("."))?;
+            if item.repair_readiness.ready
+                || item.repair_readiness.ineligibility != Some("fix_site_not_established")
+            {
+                return Err("an ungraded oracle cannot be the repair target".into());
+            }
+        }
+        let mut indirect = weak.clone();
+        indirect.related_tests[0].relation_confidence =
+            Some(crate::domain::RelationConfidence::Medium);
+        if GapItem::from_finding(&indirect, Path::new("."))?
+            .repair_readiness
+            .ready
+        {
+            return Err("a non-high-confidence relation cannot be the repair target".into());
+        }
+        let mut off_surface = weak.clone();
+        off_surface.related_tests[0].file = std::path::PathBuf::from("src/checkout.rs");
+        let item = GapItem::from_finding(&off_surface, Path::new("."))?;
+        if item.repair_readiness.ready
+            || item.repair_readiness.ineligibility != Some("fix_site_not_test_surface")
+        {
+            return Err("a weak site off the test surface stays refused".into());
+        }
+        let mut unnamed = weak.clone();
+        unnamed.activation.missing_discriminators.clear();
+        let item = GapItem::from_finding(&unnamed, Path::new("."))?;
+        if item.repair_readiness.ready
+            || item.repair_readiness.ineligibility != Some("fix_site_not_established")
+        {
+            return Err("a weak test without a named discriminator stays refused".into());
+        }
+        Ok(())
+    }
+
+    /// With several qualifying weak tests the fix site is the one the shared
+    /// repair gate recommends (`ripr repair`'s "test to extend"), never the
+    /// first match; a recommendation outside the item's tests fails closed.
+    #[test]
+    fn fix_site_is_the_shared_gates_recommended_test_among_several() -> Result<(), String> {
+        let mut weak = finding()?;
+        weak.activation
+            .missing_discriminators
+            .push(crate::domain::MissingDiscriminatorFact {
+                value: "total == 10000".to_string(),
+                reason: "boundary not asserted".to_string(),
+                flow_sink: None,
+                shape: crate::domain::DiscriminatorShape::Boundary,
+                drafted_boundary: None,
+            });
+        let mut second = weak.related_tests[0].clone();
+        second.name = "second".to_string();
+        second.file = std::path::PathBuf::from("tests/second.rs");
+        weak.related_tests.push(second);
+        for test in &mut weak.related_tests {
+            test.oracle_strength = crate::domain::OracleStrength::Weak;
+        }
+        let root = Path::new(".");
+        let site_for = |recommended: Option<&str>| {
+            let verdict = recommended.map(|file| SeamVerdict::AdmittedExisting {
+                file: file.to_string(),
+            });
+            RepairReadiness::from_finding(&weak, root)
+                .with_seam_verdict(verdict.as_ref())
+                .with_recommended_target(&weak, root, verdict.as_ref())
+        };
+        let first_match = site_for(None);
+        if first_match.fix_site.as_ref().map(|site| site.file.as_str()) != Some("tests/checkout.rs")
+        {
+            return Err(format!(
+                "no recommendation keeps first match: {first_match:?}"
+            ));
+        }
+        let pinned = site_for(Some("tests/second.rs"));
+        if !pinned.ready
+            || pinned.fix_site.as_ref().map(|site| site.file.as_str()) != Some("tests/second.rs")
+        {
+            return Err(format!("recommended test must be the fix site: {pinned:?}"));
+        }
+        let elsewhere = site_for(Some("tests/other.rs"));
+        if elsewhere.ready
+            || elsewhere.fix_site.is_some()
+            || elsewhere.ineligibility != Some("fix_site_not_established")
+            || !elsewhere.detail().contains("tests/other.rs")
+        {
+            return Err(format!(
+                "unrelated recommendation must refuse: {elsewhere:?}"
+            ));
+        }
+        // A strong candidate outranks a weak one when nothing is recommended.
+        let mut mixed = weak.clone();
+        mixed.related_tests[1].oracle_strength = crate::domain::OracleStrength::Strong;
+        let ranked = RepairReadiness::from_finding(&mixed, root);
+        if ranked.fix_site.as_ref().map(|site| site.file.as_str()) != Some("tests/second.rs") {
+            return Err(format!("strongest candidate must lead: {ranked:?}"));
+        }
+        // The pinned candidate must itself be on a test surface: a ready
+        // first candidate cannot launder an off-surface recommendation.
+        let mut off_surface = weak.clone();
+        let mut off = off_surface.related_tests[0].clone();
+        off.name = "off".to_string();
+        off.file = std::path::PathBuf::from("src/off.rs");
+        off_surface.related_tests.push(off);
+        let verdict = SeamVerdict::AdmittedExisting {
+            file: "src/off.rs".to_string(),
+        };
+        let launder = RepairReadiness::from_finding(&off_surface, root)
+            .with_seam_verdict(Some(&verdict))
+            .with_recommended_target(&off_surface, root, Some(&verdict));
+        if launder.ready || launder.ineligibility != Some("fix_site_not_test_surface") {
+            return Err(format!(
+                "off-surface recommendation must refuse: {launder:?}"
+            ));
+        }
+        Ok(())
+    }
+
     fn not_test_surface_readiness(file: &str) -> RepairReadiness {
         let mut readiness = ready_readiness();
         readiness.ready = false;
@@ -1713,10 +2044,12 @@ mod tests {
                 line: 2,
                 oracle: Some("assert_eq!(f(), 1);".to_string()),
                 oracle_kind: "exact_value",
+                oracle_strength: "strong",
                 inline_test_module: None,
             }),
             ineligibility: None,
             seam_detail: None,
+            proposed_new_test: None,
         }
     }
 
@@ -1739,7 +2072,99 @@ mod tests {
         {
             return Err(format!("refused verdict must block readiness: {blocked:?}"));
         }
-        for verdict in [Some(&SeamVerdict::Admitted), None] {
+        let proposed =
+            SeamVerdict::AdmittedProposed(crate::analysis::new_test_target::SelectedProposal {
+                kind: crate::analysis::new_test_target::NewTestKind::Integration,
+                file: "tests/new.rs".to_string(),
+                module: None,
+            });
+        // The proposal disclosure never changes the admission decision: the
+        // proposed verdict keeps readiness exactly as `Admitted` does.
+        let admitted_same = ready_readiness().with_seam_verdict(Some(&SeamVerdict::Admitted));
+        let proposed_same = ready_readiness().with_seam_verdict(Some(&proposed));
+        if (
+            admitted_same.ready,
+            admitted_same.ineligibility,
+            admitted_same.fix_site.is_some(),
+        ) != (
+            proposed_same.ready,
+            proposed_same.ineligibility,
+            proposed_same.fix_site.is_some(),
+        ) {
+            return Err(
+                "a proposed verdict must decide readiness exactly like Admitted".to_string(),
+            );
+        }
+        let disclosed = ready_readiness().with_selected_proposal(Some(&proposed));
+        let undisclosed = ready_readiness().with_selected_proposal(Some(&SeamVerdict::Admitted));
+        if disclosed.proposed_new_test.is_none() || undisclosed.proposed_new_test.is_some() {
+            return Err("only a proposed verdict discloses the proposal".to_string());
+        }
+        // The proposal-only case: no existing fix site is the finding gate's
+        // refusal, the proposal is still disclosed, and the item stays held.
+        let mut proposal_only = ready_readiness();
+        proposal_only.ready = false;
+        proposal_only.fix_site = None;
+        proposal_only.ineligibility = Some("fix_site_not_established");
+        let held = proposal_only.with_selected_proposal(Some(&proposed));
+        if held.proposed_new_test.is_none() || held.ready || held.ineligibility.is_none() {
+            return Err(format!(
+                "a proposal-only item discloses the proposal and stays held: {held:?}"
+            ));
+        }
+        // Negative: an item held by any other gate, or a refused verdict, names
+        // no proposal.
+        for gate in [
+            "not_candidate_actionable",
+            "missing_discriminator",
+            "static_limitation",
+            "fix_site_not_test_surface",
+        ] {
+            let mut not_ready = ready_readiness();
+            not_ready.ready = false;
+            not_ready.ineligibility = Some(gate);
+            if not_ready
+                .with_selected_proposal(Some(&proposed))
+                .proposed_new_test
+                .is_some()
+            {
+                return Err(format!(
+                    "an item held by `{gate}` must not disclose a proposal"
+                ));
+            }
+        }
+        let refused_here = SeamVerdict::Refused {
+            code: crate::mcp::repair_admission::SEAM_ALREADY_GRIPPED,
+            detail: "refused".to_string(),
+        };
+        if ready_readiness()
+            .with_selected_proposal(Some(&refused_here))
+            .proposed_new_test
+            .is_some()
+        {
+            return Err("a refused verdict must not disclose a proposal".to_string());
+        }
+        // The wire shape: snake_case kind, no null module.
+        let wire = proposed_new_test_json(&crate::analysis::new_test_target::SelectedProposal {
+            kind: crate::analysis::new_test_target::NewTestKind::Integration,
+            file: "tests/new.rs".to_string(),
+            module: None,
+        });
+        if wire
+            != json!({"kind": "integration", "file": "tests/new.rs", "summary": "add a new integration test file `tests/new.rs`"})
+        {
+            return Err(format!("unexpected proposed_new_test shape: {wire}"));
+        }
+        let inline_wire =
+            proposed_new_test_json(&crate::analysis::new_test_target::SelectedProposal {
+                kind: crate::analysis::new_test_target::NewTestKind::InlineUnit,
+                file: "src/lib.rs".to_string(),
+                module: Some("tests".to_string()),
+            });
+        if inline_wire["kind"] != "inline_unit" || inline_wire["module"] != "tests" {
+            return Err(format!("unexpected inline shape: {inline_wire}"));
+        }
+        for verdict in [Some(&SeamVerdict::Admitted), Some(&proposed), None] {
             let kept = ready_readiness().with_seam_verdict(verdict);
             if !kept.ready || kept.ineligibility.is_some() || kept.fix_site.is_none() {
                 return Err(format!("admitted/unevaluated must keep ready: {kept:?}"));
@@ -1750,6 +2175,7 @@ mod tests {
             fix_site: None,
             ineligibility: Some("missing_discriminator"),
             seam_detail: None,
+            proposed_new_test: None,
         }
         .with_seam_verdict(Some(&refused));
         // #10718: the shared validator is the one authority for the cause, so
@@ -1774,6 +2200,7 @@ mod tests {
             fix_site: None,
             ineligibility: Some("missing_discriminator"),
             seam_detail: None,
+            proposed_new_test: None,
         }
         .with_seam_verdict(Some(&withheld));
         if worktree.ineligibility != Some("missing_discriminator") || worktree.seam_detail.is_some()
@@ -1871,6 +2298,7 @@ mod tests {
             fix_site: None,
             ineligibility: Some("discriminator_not_populated_for_language"),
             seam_detail: None,
+            proposed_new_test: None,
         };
         let truncated = unready.clone().with_seam_verdict(Some(&refused));
         if truncated.ineligibility != Some(SEAM_INVENTORY_TRUNCATED)
@@ -1949,6 +2377,7 @@ mod tests {
             fix_site: None,
             ineligibility: Some("fix_site_not_test_surface"),
             seam_detail: None,
+            proposed_new_test: None,
         };
         let reason = readiness.reason();
         for needle in [
@@ -2305,6 +2734,8 @@ mod tests {
                 value: "total == 100".to_string(),
                 reason: "no test call pins the equality boundary".to_string(),
                 flow_sink: None,
+                shape: crate::domain::DiscriminatorShape::Boundary,
+                drafted_boundary: None,
             });
         // Weak + named missing discriminator + populated gap: the repair
         // target, ready at the finding level (#8717).

@@ -26,14 +26,16 @@
 //! reviewed overrides file, never by editing a row.
 
 use serde::Deserialize;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use super::capture::{CommitFacts, GitFacts};
 use super::dto::{
     ADJUDICATION_BASIS, AuditRef, BLOCKING, ClaimRow, DISPOSITIONS, HISTORY_NO_BLOB_EFFECT, KIND,
-    Ledger, OpenPr, PRESENT_BUT_SUPERSEDED, Record, SCHEMA_VERSION, SelectedClaims,
+    Ledger, LedgerPathInventories, OpenPr, PRESENT_BUT_SUPERSEDED, RANGE_TOUCHED_SOURCE,
+    RECORD_PATH_SOURCE, Record, SCHEMA_VERSION, SelectedClaims,
 };
 use super::validate::{SelectionPacket, compute_digests};
+use crate::reports::path_inventory::path_inventory;
 
 pub(super) const RULE_VERSION: &str = "v1";
 const RULE_OWNER: &str = "rule:ledger-v1";
@@ -304,6 +306,7 @@ pub(super) fn derive(input: &DeriveInput<'_>) -> Result<Ledger, String> {
     let facts = input.facts;
     let overrides = index_overrides(input.overrides, facts)?;
     let mut records = Vec::with_capacity(facts.commits.len());
+    let mut range_touched = BTreeSet::new();
     for commit in &facts.commits {
         let mut decision = decide(commit, input.packet);
         let mut disposition = decision.disposition.to_string();
@@ -327,6 +330,12 @@ pub(super) fn derive(input: &DeriveInput<'_>) -> Result<Ledger, String> {
                 decision.disposition, entry.note
             ));
         }
+        // #4006 item 6: count and digest each record's touched paths through
+        // the shared NUL-record authority, from the captured raw records. The
+        // paths are already sorted and unique; recomputing through the
+        // authority keeps one grammar and one recipe spelling.
+        let record_inventory = path_inventory(&commit.paths, RECORD_PATH_SOURCE);
+        range_touched.extend(commit.paths.iter().cloned());
         records.push(Record {
             commit_sha: commit.commit_sha.clone(),
             parent_shas: commit.parent_shas.clone(),
@@ -340,6 +349,8 @@ pub(super) fn derive(input: &DeriveInput<'_>) -> Result<Ledger, String> {
             release_disposition: disposition,
             final_tree_effect: commit.final_tree_effect.clone(),
             effect_basis: commit.effect_basis.clone(),
+            path_record_count: record_inventory.path_record_count as u64,
+            path_record_sha256: record_inventory.path_record_sha256,
             acceptance_owner: owner,
             review_proof_refs: commit
                 .pr_refs
@@ -395,6 +406,15 @@ pub(super) fn derive(input: &DeriveInput<'_>) -> Result<Ledger, String> {
             reachable: String::new(),
             records: String::new(),
             tree: String::new(),
+        },
+        path_inventories: LedgerPathInventories {
+            // Derive the retained recipe through the same authority, so the
+            // ledger and its validator cannot drift apart on the spelling.
+            record_recipe: path_inventory(&[], RECORD_PATH_SOURCE).path_record_recipe,
+            range_touched: path_inventory(
+                &range_touched.into_iter().collect::<Vec<_>>(),
+                RANGE_TOUCHED_SOURCE,
+            ),
         },
         audit: input.audit.clone(),
         records,
