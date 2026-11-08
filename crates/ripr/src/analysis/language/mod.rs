@@ -71,8 +71,8 @@ pub(crate) use rust::{
     positive_limit_from_env, select_partial_diff_scope,
 };
 pub use rust::{
-    PARTIAL_DIFF_LANGUAGE_TIER_VERSION, PARTIAL_DIFF_SELECTION_VERSION, PartialDiffScope,
-    PartialDiffStopReason,
+    OverLimitFile, PARTIAL_DIFF_LANGUAGE_TIER_VERSION, PARTIAL_DIFF_SELECTION_VERSION,
+    PartialDiffScope, PartialDiffStopReason,
 };
 #[cfg(feature = "lang-typescript")]
 pub(crate) use typescript::TypeScriptAdapter;

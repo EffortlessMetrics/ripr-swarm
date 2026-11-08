@@ -491,7 +491,7 @@ pub(crate) fn render_with_config(
             let paths: Vec<String> = scope
                 .over_limit_files
                 .iter()
-                .map(|(path, _)| path.clone())
+                .map(|file| file.path.clone())
                 .collect();
             array_field(&mut out, 2, "over_limit_files", &paths, true);
         }

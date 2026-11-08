@@ -1497,6 +1497,7 @@ fn run_pipeline_for_diff_text_with_language_config(
     // non-success compatibility projection.
     let mut diff_outcomes: Vec<LanguageAnalysisOutcomeV1> = Vec::new();
     let mut partial_scope: Option<PartialDiffScope> = None;
+    let mut rust_not_selected_files: Option<usize> = None;
     let mut candidate_line_count = 0usize;
 
     // Rust (the stable reference adapter) runs first, ahead of the preview
@@ -1588,15 +1589,12 @@ fn run_pipeline_for_diff_text_with_language_config(
         // advisory below covers only preview languages, so the reference
         // adapter's exclusion is recorded here as a typed limitation.
         limitations.push(limitation);
-        diff_outcomes.push(LanguageAnalysisOutcomeV1::not_selected(
-            LanguageId::Rust.as_str(),
+        rust_not_selected_files = Some(
             analysis_changed_files
                 .iter()
                 .filter(|file| route(&file.path) == Some(LanguageId::Rust))
                 .count(),
-            "rust is not in the effective [languages].enabled set",
-            &diff_scope_label(None),
-        ));
+        );
     }
     // #13641: without the Rust adapter nothing selected a partition, so a
     // preview-only diff over its changed-line guard selects one here through
@@ -1609,6 +1607,16 @@ fn run_pipeline_for_diff_text_with_language_config(
     {
         partial_scope =
             super::language::select_partial_diff_scope(&analysis_changed_files, languages)?;
+    }
+    // #13641: the Rust not-selected outcome is recorded once the run's scope
+    // is settled, so a preview-only partial run labels it partial too.
+    if let Some(count) = rust_not_selected_files {
+        diff_outcomes.push(LanguageAnalysisOutcomeV1::not_selected(
+            LanguageId::Rust.as_str(),
+            count,
+            "rust is not in the effective [languages].enabled set",
+            &diff_scope_label(partial_scope.as_ref()),
+        ));
     }
     // When a partial partition exists, preview adapters analyze only the
     // selected files; uninspected accounting lives on the scope record.
@@ -9196,8 +9204,8 @@ index 0000000..1111111 100644
             .ok_or("the run must be limited_partial_scope")?;
         assert_eq!(scope.selected_files, vec!["src/lib.rs".to_string()]);
         assert_eq!(
-            scope.over_limit_files,
-            vec![("src/big.rs".to_string(), 2_100)]
+            over_limit_summary(scope),
+            vec![("src/big.rs", 2_100, "RIPR_MAX_DIFF_CHANGED_RUST_LINES")]
         );
         assert_eq!(
             scope.stop_reason,
@@ -9900,12 +9908,150 @@ index 0000000..1111111 100644
             .ok_or("the run must be limited_partial_scope")?;
         assert_eq!(scope.selected_files, vec!["pkg/b.py".to_string()]);
         assert_eq!(
-            scope.over_limit_files,
-            vec![("pkg/a.py".to_string(), 2_100)]
+            over_limit_summary(scope),
+            vec![("pkg/a.py", 2_100, DIFF_CHANGED_PYTHON_LINE_LIMIT_ENV)]
         );
         assert_eq!(
             scope.stop_reason,
             super::super::language::PartialDiffStopReason::FileExceedsAnalysisLimit
+        );
+        Ok(())
+    }
+
+    /// `(path, changed lines, limit env)` of each over-limit file (#13641).
+    fn over_limit_summary(scope: &PartialDiffScope) -> Vec<(&str, usize, &'static str)> {
+        scope
+            .over_limit_files
+            .iter()
+            .map(|file| (file.path.as_str(), file.changed_lines, file.limit_env))
+            .collect()
+    }
+
+    #[test]
+    fn lowered_python_limit_leaves_an_over_limit_py_out_beside_rust() -> Result<(), String> {
+        // #13641 review: each file is judged against its own language limit.
+        // With `RIPR_MAX_DIFF_CHANGED_PYTHON_LINES=500`, an 800-line `.py`
+        // beside small Rust files is left out (it is within the Rust limit),
+        // and the Rust files are analyzed. Python-only, the same rule holds.
+        for (label, languages) in [
+            ("with-rust", vec![LanguageId::Rust, LanguageId::Python]),
+            ("python-only", vec![LanguageId::Python]),
+        ] {
+            let root = temp_root(&format!("py-lowered-limit-{label}"))?;
+            write(
+                root.join("src/lib.rs").as_path(),
+                "pub fn seed() -> u32 { 0 }\n",
+            )?;
+            let mut diff = multi_file_diff(&["src/lib.rs"], 10, |index| {
+                format!("pub fn f_{index}(x: u32) -> bool {{ x > {index} }}")
+            });
+            diff.push_str(&multi_file_diff(&["pkg/big.py"], 800, |index| {
+                format!("v_{index} = {index}")
+            }));
+            diff.push_str(&multi_file_diff(&["pkg/small.py"], 10, |index| {
+                format!("w_{index} = {index}")
+            }));
+            let result =
+                with_forced_diff_limit_env(&[(DIFF_CHANGED_PYTHON_LINE_LIMIT_ENV, "500")], || {
+                    run_pipeline_for_diff_text(
+                        &sample_rust_diff_options(root.clone()),
+                        &OraclePolicy::default(),
+                        &languages,
+                        &crate::config::RustLanguageConfig::default(),
+                        &diff,
+                    )
+                })
+                .map_err(|error| format!("{label}: must degrade, not refuse: {error}"))?;
+            let scope = result
+                .partial_scope
+                .as_ref()
+                .ok_or_else(|| format!("{label}: the run must be limited_partial_scope"))?;
+            assert_eq!(
+                over_limit_summary(scope),
+                vec![("pkg/big.py", 800, DIFF_CHANGED_PYTHON_LINE_LIMIT_ENV)],
+                "{label}"
+            );
+            assert!(
+                scope.selected_files.contains(&"pkg/small.py".to_string()),
+                "{label}: {:?}",
+                scope.selected_files
+            );
+            assert_eq!(
+                scope.selected_files.contains(&"src/lib.rs".to_string()),
+                languages.contains(&LanguageId::Rust),
+                "{label}: {:?}",
+                scope.selected_files
+            );
+            assert!(
+                scope
+                    .widen_instruction()
+                    .contains("RIPR_MAX_DIFF_CHANGED_PYTHON_LINES to at least 800"),
+                "{label}: {}",
+                scope.widen_instruction()
+            );
+            if !languages.contains(&LanguageId::Rust) {
+                // F5: the Rust not-selected child carries the partial label.
+                let aggregate = captured_aggregate(&root)?;
+                let rust = aggregate
+                    .outcomes
+                    .get("rust")
+                    .ok_or("rust not-selected child missing")?;
+                assert!(
+                    rust.scope
+                        .as_deref()
+                        .is_some_and(|scope| scope.starts_with("partial:")),
+                    "{:?}",
+                    rust.scope
+                );
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn raised_typescript_limit_never_runs_over_limit_files_as_full_scope() -> Result<(), String> {
+        // #13641 review (F2): two 2,100-line `.ts` files are each over the
+        // Rust limit. Judged by a raised TS limit they fit, so the run is a
+        // bounded partition; under the default TS limit nothing fits and the
+        // run refuses. Neither combination may run as full scope.
+        let diff = multi_file_diff(&["web/a.ts", "web/b.ts"], 2_100, |index| {
+            format!("export const v_{index} = {index};")
+        });
+        let languages = [LanguageId::Rust, LanguageId::TypeScript];
+        let root = temp_root("ts-raised-limit")?;
+        let raised = with_forced_diff_limit_env(
+            &[(DIFF_CHANGED_TYPESCRIPT_LINE_LIMIT_ENV, "5000")],
+            || {
+                run_pipeline_for_diff_text(
+                    &sample_rust_diff_options(root),
+                    &OraclePolicy::default(),
+                    &languages,
+                    &crate::config::RustLanguageConfig::default(),
+                    &diff,
+                )
+            },
+        )?;
+        let scope = raised
+            .partial_scope
+            .as_ref()
+            .ok_or("a raised-limit over-budget diff must be partial, never full scope")?;
+        assert_eq!(scope.selected_files, vec!["web/a.ts".to_string()]);
+        assert!(scope.over_limit_files.is_empty());
+
+        let root = temp_root("ts-default-limit")?;
+        let refusal = run_pipeline_for_diff_text(
+            &sample_rust_diff_options(root),
+            &OraclePolicy::default(),
+            &languages,
+            &crate::config::RustLanguageConfig::default(),
+            &diff,
+        )
+        .err()
+        .ok_or("every file over its limit must refuse, never run as full scope")?;
+        assert!(is_diff_scope_oversized(&refusal), "{refusal}");
+        assert!(
+            refusal.contains(DIFF_CHANGED_TYPESCRIPT_LINE_LIMIT_ENV),
+            "{refusal}"
         );
         Ok(())
     }
@@ -9925,7 +10071,12 @@ index 0000000..1111111 100644
         .err()
         .ok_or("an oversized Python diff must be refused")?;
         assert!(is_diff_scope_oversized(&refusal), "{refusal}");
-        assert!(refusal.contains("changed Python lines"), "{refusal}");
+        // #13641: no file fits, so the explicit nothing-fits refusal names
+        // the Python limit (the `--json` basis follows it).
+        assert!(
+            refusal.contains("2100 changed lines over the RIPR_MAX_DIFF_CHANGED_PYTHON_LINES"),
+            "{refusal}"
+        );
         assert!(
             refusal.contains(DIFF_CHANGED_PYTHON_LINE_LIMIT_ENV),
             "{refusal}"
@@ -9950,7 +10101,10 @@ index 0000000..1111111 100644
         .err()
         .ok_or("an oversized TypeScript diff must be refused")?;
         assert!(is_diff_scope_oversized(&refusal), "{refusal}");
-        assert!(refusal.contains("changed TypeScript lines"), "{refusal}");
+        assert!(
+            refusal.contains("2100 changed lines over the RIPR_MAX_DIFF_CHANGED_TYPESCRIPT_LINES"),
+            "{refusal}"
+        );
         assert!(
             refusal.contains(DIFF_CHANGED_TYPESCRIPT_LINE_LIMIT_ENV),
             "{refusal}"

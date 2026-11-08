@@ -1549,8 +1549,8 @@ Since #13641 the per-language changed-line limits
 `RIPR_MAX_DIFF_CHANGED_TYPESCRIPT_LINES`) measure the files a run actually
 analyzes. A diff over them degrades into the bounded
 `analysis_scope.run_status: "limited_partial_scope"` result (RIPR-PROP-0019)
-instead of this refusal. A file that alone exceeds the analysis-cost line
-limit is never split or analyzed: it is left out, named in
+instead of this refusal. A file that alone exceeds its own language's
+changed-line limit is never split or analyzed: it is left out, named in
 `analysis_scope.over_limit_files` (emitted only when non-empty), counted as
 uninspected and disclosed under `budget_disclosures`; when nothing else
 stopped selection the stop reason is `file_exceeds_analysis_limit`. The

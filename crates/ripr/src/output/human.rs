@@ -927,8 +927,9 @@ fn render_partial_scope_disclosure(out: &mut String, output: &CheckOutput) {
              the first selected file alone exceeded it and was analyzed whole"
         ),
         crate::analysis::PartialDiffStopReason::FileExceedsAnalysisLimit => format!(
-            "the analysis-cost line limit ({budget_env}); every file that fits was selected \
-             and {} file(s) that each exceed the limit on their own were left out",
+            "the changed-line limit ({}); every file that fits was selected and {} file(s) \
+             that each exceed their language's limit on their own were left out",
+            scope.over_limit_envs().join(", "),
             scope.over_limit_files.len()
         ),
     };
@@ -961,10 +962,13 @@ fn render_partial_scope_disclosure(out: &mut String, output: &CheckOutput) {
         // the terminal-facing display is escaped (#2142 review).
         out.push_str(&format!("  selected: {}\n", escape_terminal_display(file)));
     }
-    for (file, lines) in &scope.over_limit_files {
+    for file in &scope.over_limit_files {
         out.push_str(&format!(
-            "  over limit (not analyzed): {} ({lines} changed lines)\n",
-            escape_terminal_display(file)
+            "  over limit (not analyzed): {} ({} changed lines over {}={})\n",
+            escape_terminal_display(&file.path),
+            file.changed_lines,
+            file.limit_env,
+            file.limit
         ));
     }
     for disclosure in &scope.budget_disclosures {

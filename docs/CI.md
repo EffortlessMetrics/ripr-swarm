@@ -1925,13 +1925,29 @@ outside-the-packet hand-off needs the full findings array.
 
 #### Large pull requests
 
-A PR whose diff exceeds a scope budget is a declined run, not a clean result:
-`ripr check` refuses before analyzing anything (exit 2) and writes a typed
-refusal envelope to `target/ripr/pr/check.json` — for example
-`analysis_scope.run_status = diff_scope_oversized` with the producer's message
-naming the measured lines and the `RIPR_MAX_DIFF_CHANGED_RUST_LINES` limit
-(currently 2000). The envelope also carries its repair route
-(`analysis_scope.repair_route` and `run_limitations[].repair_route`).
+A PR whose diff is larger than the per-language changed-line limits
+(`RIPR_MAX_DIFF_CHANGED_RUST_LINES`, `RIPR_MAX_DIFF_CHANGED_PYTHON_LINES`,
+`RIPR_MAX_DIFF_CHANGED_TYPESCRIPT_LINES`, each 2000 by default) is analyzed
+as a bounded partition instead of refused (#13641). `ripr check` analyzes a
+deterministic subset of whole files within the partial budgets
+(`RIPR_PARTIAL_DIFF_FILE_BUDGET`, `RIPR_PARTIAL_DIFF_LINE_BUDGET`, the line
+budget clamped to the smallest enabled limit) and reports
+`analysis_scope.run_status = limited_partial_scope` with the selected files,
+lower-bound uninspected counts, the stop reason, and
+`gate_eligibility = ineligible`. A file that alone exceeds its language's
+limit is never split or analyzed: it is left out, listed in
+`analysis_scope.over_limit_files`, and counted as uninspected. A partial
+result is advisory — never a gate, baseline, badge, or RIPR Zero input.
+
+A run is still declined, not a clean result, when no changed file fits its
+language limit, or when a memory guard fires (the streaming diff-parse guards
+such as `RIPR_MAX_DIFF_CHANGED_LINES`, or `RIPR_MAX_DIFF_INDEX_FILES`).
+`ripr check` then refuses before analyzing anything (exit 2) and writes a
+typed refusal envelope to `target/ripr/pr/check.json` — for example
+`analysis_scope.run_status = diff_scope_oversized` with the producer's
+message naming the measured lines and the limit that fired. The envelope also
+carries its repair route (`analysis_scope.repair_route` and
+`run_limitations[].repair_route`).
 
 Downstream packets name the refusal instead of discarding it (#11161):
 
@@ -1942,13 +1958,16 @@ Downstream packets name the refusal instead of discarding it (#11161):
   `producer refusal (run_status: …)` error carrying the same message and
   next step, instead of the generic `missing analysis_outcome`.
 
-Under a blocking `RIPR_GATE_MODE` the refusal still fails the gate closed —
-naming the cause does not admit the PR. To get guidance on a large PR,
-either split it into smaller stacked PRs, run a narrower diff
-(`ripr check --path <glob>` and/or `--exclude <glob>` to analyze a subset;
-files left out are reported as not analyzed), or raise the limit for a single
-command on a machine with enough memory
-(`RIPR_MAX_DIFF_CHANGED_RUST_LINES=<number>`). See
+Under a blocking `RIPR_GATE_MODE` both a refusal and a partial result fail
+the gate closed — naming the cause does not admit the PR. To get complete
+guidance on a large PR, either split it into smaller stacked PRs, run a
+narrower diff (`ripr check --path <glob>` and/or `--exclude <glob>` to analyze
+a subset; files left out are reported as not analyzed), or raise both the
+language limit and the partial budgets for a single command on a machine
+with enough memory (for example
+`RIPR_MAX_DIFF_CHANGED_RUST_LINES=5000 RIPR_PARTIAL_DIFF_LINE_BUDGET=5000`;
+raising the limit alone keeps the default 1000-line partial budget). The
+partial result's widen instruction names the exact values. See
 [Configuration](CONFIGURATION.md) for the budget variables.
 
 ```yaml
