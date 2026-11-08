@@ -5539,6 +5539,20 @@ fn inherent_receiver_call_resolves_with(
     let owner_local = index
         .zip(owner)
         .is_some_and(|(index, owner)| owner_impl_is_root_item_of(index, owner, &test.file));
+    // An explicit `use` that binds the receiver type's name in the test file
+    // can bring a different type of that name (#13525). The constructor
+    // resolves by that name alone, so credit it only when the #8999
+    // method-entry authority confirms the import names the owner's own type.
+    // A file with no such import (glob, qualified or same-file use) is
+    // unchanged.
+    if let Some((index, owner)) = index.zip(owner)
+        && !owner_local
+        && file_explicitly_imports_name(index, &test.file, impl_type)
+        && !super::call_identity::inherent_entry_type_identity(index, owner)
+            .is_some_and(|identity| identity.binds_inherent_entry_type(test, index))
+    {
+        return false;
+    }
     let factory = |ty: &str, name: &str| {
         index.is_some_and(|index| {
             if ty.is_empty() {
@@ -6560,6 +6574,32 @@ fn owner_impl_is_root_item_of(index: &RustIndex, owner: &FunctionSummary, file: 
 /// Whether `file` has a `use` that names `ty` or a glob other than `self::*` /
 /// `super::*`, or a `type` alias called `ty`: any of which can make a bare
 /// `ty` mean a type declared elsewhere.
+/// Whether `file` has a non-glob `use` whose bound name (its alias, else its
+/// last segment) is `name`.
+fn file_explicitly_imports_name(index: &RustIndex, file: &Path, name: &str) -> bool {
+    let Some(tree) = index.source_syntax.get(index, file).and_then(|s| s.tree()) else {
+        return false;
+    };
+    tree.syntax()
+        .descendants()
+        .filter_map(ast::Use::cast)
+        .any(|item| {
+            let text = item.syntax().text().to_string();
+            super::reveal::flattened_use_paths(&text)
+                .iter()
+                .any(|import| {
+                    let last = import.path.rsplit("::").next().unwrap_or("");
+                    last != "*"
+                        && import
+                            .alias
+                            .as_deref()
+                            .unwrap_or(last)
+                            .trim_start_matches("r#")
+                            == name
+                })
+        })
+}
+
 fn file_rebinds_type(index: &RustIndex, file: &Path, ty: &str) -> bool {
     let Some(tree) = index.source_syntax.get(index, file).and_then(|s| s.tree()) else {
         return true;
