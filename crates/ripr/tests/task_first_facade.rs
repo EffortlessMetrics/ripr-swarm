@@ -523,14 +523,14 @@ fn repair_with_python_not_enabled_says_it_was_not_analyzed() -> Result<(), Strin
         "must say Python was not analyzed and how to enable it:\n{stderr}"
     );
     assert!(
-        !stderr.contains("works from Rust gaps only") && !stderr.contains("verify command"),
+        !stderr.contains("seam flow is Rust only") && !stderr.contains("verify command"),
         "must not promise a by-hand route that check cannot back:\n{stderr}"
     );
     // Control: enabling the adapter restores the enabled-language guidance.
     enable_preview_languages(root)?;
     let enabled = nonrust_repair_stderr(root, &root_arg)?;
     assert!(
-        enabled.contains("is Python, and `ripr repair` works from Rust gaps only"),
+        enabled.contains("is Python.\nThe `ripr repair` seam flow is Rust only."),
         "enabled Python keeps the gap-bound guidance:\n{enabled}"
     );
     Ok(())
@@ -588,18 +588,148 @@ fn repair_with_changed_non_rust_code_says_rust_only() -> Result<(), String> {
     assert_exit(&repair, 3, "repair with changed non-Rust code");
     let stderr = stderr_text(&repair);
     assert!(
-        stderr.contains("is Python and TypeScript, and `ripr repair` works from Rust gaps only"),
-        "must say plainly that repair start is Rust only:\n{stderr}"
+        stderr.contains("is Python and TypeScript.\nThe `ripr repair` seam flow is Rust only."),
+        "must say plainly that the seam flow is Rust only:\n{stderr}"
     );
+    // #13790: the gap-bound start is named as the one `ripr check` prints
+    // when a gap is ready, never composed here, and the by-hand route stays.
     assert!(
-        stderr.contains("`ripr check --root")
-            && stderr.contains("verify command")
-            && stderr.contains("--phase before"),
-        "must point at the check finding's route:\n{stderr}"
+        stderr.contains(
+            "Python and TypeScript preview gaps start with the `ripr agent repair --gap-id ...` command that `ripr check --root .` prints when one is ready."
+        ) && stderr.contains(
+            "Otherwise, add the test by hand: `ripr check --root .` names the test and its verify command."
+        ),
+        "must point at the check finding's start and manual route:\n{stderr}"
+    );
+    // #13790: short lines with a root relative to the working directory, not
+    // the old run-on sentence with the absolute path.
+    assert!(
+        !stderr.contains(&root_arg)
+            && !stderr.contains("works from Rust gaps only")
+            && !stderr.contains("repair packet is complete"),
+        "must not repeat the old run-on wording or the absolute root:\n{stderr}"
     );
     assert!(
         !stderr.contains("analyze the workspace") && !stderr.contains("ripr pilot"),
         "must not loop back through pilot:\n{stderr}"
+    );
+    Ok(())
+}
+
+/// #13790: a Python project whose committed change edits a two-comparison
+/// predicate (`rate < 0 or rate >= 1`) and a single-boundary one
+/// (`amount >= 100`) in the same function.
+#[cfg(feature = "lang-python")]
+fn python_two_boundary_fixture(label: &str) -> Result<Fixture, String> {
+    let fixture = Fixture::dir(label)?;
+    let root = &fixture.root;
+    init_repo(root)?;
+    std::fs::create_dir_all(root.join("shop")).map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(root.join("tests")).map_err(|e| e.to_string())?;
+    std::fs::write(
+        root.join("pyproject.toml"),
+        "[project]\nname = \"shop\"\nversion = \"0.1.0\"\n",
+    )
+    .map_err(|e| e.to_string())?;
+    std::fs::write(root.join("shop/__init__.py"), "").map_err(|e| e.to_string())?;
+    let source = |rate: &str, amount: &str| {
+        format!(
+            "def discount(amount, rate):\n    if rate < 0 or rate {rate} 1:\n        raise ValueError(\"bad rate\")\n    if amount {amount} 100:\n        return amount * (1 - rate)\n    return amount\n"
+        )
+    };
+    std::fs::write(root.join("shop/pricing.py"), source(">", ">")).map_err(|e| e.to_string())?;
+    std::fs::write(
+        root.join("tests/test_pricing.py"),
+        "from shop.pricing import discount\n\n\ndef test_discount_large():\n    assert discount(200, 0.5) == 100\n\n\ndef test_discount_small():\n    assert discount(50, 0.5) == 50\n",
+    )
+    .map_err(|e| e.to_string())?;
+    run_git(root, &["add", "-A"])?;
+    git_commit(root, "base")?;
+    std::fs::write(root.join("shop/pricing.py"), source(">=", ">=")).map_err(|e| e.to_string())?;
+    run_git(root, &["add", "-A"])?;
+    git_commit(root, "change both boundaries")?;
+    Ok(fixture)
+}
+
+/// #13790: when the shared readiness owner refuses a Python gap whose
+/// predicate holds several comparisons, the refusal names that reason and the
+/// by-hand shape (one row per boundary), and `ripr check` still offers no
+/// start for it (fail-closed). Control: the single-boundary gap in the same
+/// file keeps its start and its refusal-free check route.
+#[test]
+#[cfg(feature = "lang-python")]
+fn agent_repair_refusal_names_a_multi_comparison_predicate() -> Result<(), String> {
+    let fixture = python_two_boundary_fixture("facade-python-two-boundary")?;
+    let root = &fixture.root;
+    let multi =
+        "gap:python:shop/pricing.py:discount:predicate_boundary:predicate:rate<0_or_rate>=1";
+    let single = "gap:python:shop/pricing.py:discount:predicate_boundary:predicate:amount>=100";
+
+    let check = run_ripr(root, &["check", "--quiet", "--base", "HEAD~1"])?;
+    let human = stdout_text(&check);
+    let starts = |gap: &str| {
+        human
+            .lines()
+            .any(|line| line.contains("ripr agent repair --gap-id") && line.contains(gap))
+    };
+    assert!(
+        starts(single),
+        "control: the single-boundary gap keeps its start:\n{human}"
+    );
+    assert!(
+        !starts(multi),
+        "the multi-comparison gap must get no start:\n{human}"
+    );
+
+    let refused = run_ripr(
+        root,
+        &[
+            "agent", "repair", "--gap-id", multi, "--base", "HEAD~1", "--phase", "before",
+        ],
+    )?;
+    assert_exit(&refused, 2, "agent repair on a multi-comparison gap");
+    let stderr = stderr_text(&refused);
+    assert!(
+        stderr.contains("not_repairable")
+            && stderr.contains(
+                "the changed predicate `rate < 0 or rate >= 1` holds 2 comparisons, so static evidence cannot tell which boundary a test pins"
+            )
+            && stderr.contains("By hand: add one test row per boundary (`rate == 0`, `rate == 1`)")
+            && stderr.contains("no repair attempt was started"),
+        "the refusal must name the reason and the by-hand shape:\n{stderr}"
+    );
+    Ok(())
+}
+
+/// #13790 negative (CLI): an unknown-gap refusal in a repo that holds a
+/// multi-comparison gap keeps its own reason and gains no multi-comparison
+/// wording. The not-ready decline for a non-multi-comparison record is pinned
+/// by the unit test `other_declines_keep_the_owner_reason_unchanged`.
+#[test]
+#[cfg(feature = "lang-python")]
+fn agent_repair_refusal_for_an_unknown_python_gap_keeps_its_own_reason() -> Result<(), String> {
+    let fixture = python_two_boundary_fixture("facade-python-unknown-gap")?;
+    let root = &fixture.root;
+    let refused = run_ripr(
+        root,
+        &[
+            "agent",
+            "repair",
+            "--gap-id",
+            "gap:python:shop/pricing.py:discount:predicate_boundary:predicate:amount>=999",
+            "--base",
+            "HEAD~1",
+            "--phase",
+            "before",
+        ],
+    )?;
+    assert_exit(&refused, 2, "agent repair on an unknown Python gap");
+    let stderr = stderr_text(&refused);
+    assert!(
+        stderr.contains("names no current Python gap")
+            && !stderr.contains("comparisons")
+            && !stderr.contains("one test row per boundary"),
+        "an unrelated refusal must keep its own reason:\n{stderr}"
     );
     Ok(())
 }
@@ -631,7 +761,7 @@ fn repair_with_committed_only_non_rust_change_says_rust_only() -> Result<(), Str
     git_commit(root, "change ts")?;
     let stderr = nonrust_repair_stderr(root, &root_arg)?;
     assert!(
-        stderr.contains("is TypeScript, and `ripr repair` works from Rust gaps only"),
+        stderr.contains("is TypeScript.\nThe `ripr repair` seam flow is Rust only."),
         "committed-only change must be named:\n{stderr}"
     );
     assert!(!stderr.contains("ripr pilot"), "no pilot loop:\n{stderr}");
@@ -652,7 +782,7 @@ fn repair_with_quoted_non_rust_filename_says_rust_only() -> Result<(), String> {
     std::fs::write(root.join("café.ts"), "export const t = 11;\n").map_err(|e| e.to_string())?;
     let stderr = nonrust_repair_stderr(root, &root_arg)?;
     assert!(
-        stderr.contains("is TypeScript, and `ripr repair` works from Rust gaps only"),
+        stderr.contains("is TypeScript.\nThe `ripr repair` seam flow is Rust only."),
         "quoted filename must still be recognised:\n{stderr}"
     );
     Ok(())
@@ -723,7 +853,9 @@ fn repair_with_rust_only_change_keeps_the_generic_message() -> Result<(), String
         .map_err(|e| e.to_string())?;
     let stderr = nonrust_repair_stderr(root, &root_arg)?;
     assert!(
-        stderr.contains("no gaps visible") && !stderr.contains("Rust gaps only"),
+        stderr.contains("no gaps visible")
+            && !stderr.contains("seam flow is Rust only")
+            && !stderr.contains("preview gaps start with"),
         "Rust-only change must keep the generic message:\n{stderr}"
     );
     Ok(())
@@ -7036,11 +7168,13 @@ fn continue_json_prints_its_after_phase_document() -> Result<(), String> {
     Ok(())
 }
 
-/// #11584: `--json` does not change refusal or usage behavior. Argv usage
-/// errors stay prose-only (#6834) and a facade refusal keeps its exit code,
-/// empty stdout and stderr prose.
+/// #11584: `--json` does not change refusal behavior: a facade refusal keeps
+/// its exit code, empty stdout and stderr prose. An unknown flag under the
+/// explicit `--json` request writes the standalone `cli_refusal` document to
+/// stdout (#6834 decision); its exit code 2 and stderr prose are unchanged.
 #[test]
-fn repair_and_continue_json_keep_refusals_and_usage_errors_prose_only() -> Result<(), String> {
+fn repair_and_continue_json_keep_refusals_prose_and_usage_errors_cli_refusal() -> Result<(), String>
+{
     let fixture = Fixture::empty("facade-json-refusals")?;
     let root = &fixture.root;
     let root_arg = root.to_string_lossy().into_owned();
@@ -7062,13 +7196,43 @@ fn repair_and_continue_json_keep_refusals_and_usage_errors_prose_only() -> Resul
     ] {
         let output = run_ripr(root, &argv)?;
         assert_exit(&output, 2, &format!("usage error {argv:?}"));
-        assert!(
-            stdout_text(&output).is_empty(),
-            "usage error must keep stdout empty:\n{}",
-            stdout_text(&output)
-        );
         assert!(stderr_text(&output).contains("--bogus-flag-11584"));
+        let document: serde_json::Value = serde_json::from_slice(&output.stdout).map_err(|error| {
+            format!(
+                "usage error {argv:?} under --json must print a cli_refusal document: {error}\n{}",
+                stdout_text(&output)
+            )
+        })?;
+        assert_eq!(document["schema_version"], "0.1", "{document:#}");
+        assert_eq!(document["tool"], "ripr", "{document:#}");
+        assert_eq!(document["status"], "refused", "{document:#}");
+        assert_eq!(
+            document["error"]["code"], "unknown_argument",
+            "{document:#}"
+        );
+        assert_eq!(
+            document["error"]["token"], "--bogus-flag-11584",
+            "{document:#}"
+        );
+        assert_eq!(
+            document["error"]["next"]["command"],
+            format!("ripr {} --help", argv[0]),
+            "{document:#}"
+        );
+        assert_eq!(
+            document.as_object().map_or(0, serde_json::Map::len),
+            4,
+            "the cli_refusal document must stay minimal:\n{document:#}"
+        );
     }
+    // Negative control: without --json the same usage error keeps stdout empty.
+    let prose = run_ripr(root, &["repair", "--bogus-flag-11584", "--root", &root_arg])?;
+    assert_exit(&prose, 2, "usage error without --json");
+    assert!(
+        stdout_text(&prose).is_empty(),
+        "usage error without --json must keep stdout empty:\n{}",
+        stdout_text(&prose)
+    );
     let refused = run_ripr(root, &["repair", "--root", &root_arg, "--json"])?;
     assert_exit(&refused, 3, "repair --json with no eligible gap");
     assert_refusal_code(
