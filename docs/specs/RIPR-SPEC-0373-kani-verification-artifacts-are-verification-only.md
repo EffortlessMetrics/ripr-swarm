@@ -21,6 +21,7 @@ Linked plan:
 Linked issues:
 
 - #10749
+- #13736
 
 Linked PRs:
 
@@ -75,8 +76,21 @@ are **Kani verification artifacts**, and their lines are verification-only
 - a `#[cfg_attr(kani, ..)]` whose every introduced attribute is a Kani
   contract (`kani::requires`, `ensures`, `modifies`, `decreases`), with its
   multi-line span.
+- every line of a file that out-of-line `mod` declarations, each guarded by
+  exactly `#[cfg(kani)]`, resolve to (`m.rs`, `m/mod.rs` or a literal
+  `#[path]`), and of every file below it in the module tree (#13736). The
+  declaration-to-file edge is resolved by the module-composition owner
+  (`facts/role_composition.rs`), the same pass that makes the child of an
+  out-of-line `#[cfg(test)] mod tests;` test-only; exclusive
+  `#[cfg(kani)]` / `#[cfg(not(kani))]` alternatives stay production; a file both declared and
+  included is Kani-only only when both contexts are. Ambiguous, cyclic or
+  unresolved edges answer "not Kani-only". Function source roles are not
+  changed: a helper there stays a plain function, and the file seeds no probe
+  because it is verification source.
 
-Fail closed: `cfg(not(kani))`, `cfg(any(kani, ..))`, a `cfg(kani)`-gated
+Fail closed: `cfg(not(kani))`, `cfg(any(kani, ..))`, several cfg attributes
+or a `cfg_attr` on an out-of-line declaration, a module merely *named* like a
+proof module (`mod kani_proofs;` without the gate), a `cfg(kani)`-gated
 function or impl, a `cfg_attr`-introduced harness, a `cfg_attr` introducing anything else, another crate's
 `proof` path, and an item sharing its closing line with other code are not
 matched and keep prior behavior.
@@ -97,6 +111,12 @@ findings of its runtime lines.
 - Negative controls (a deleted ungated module without a harness attribute,
   `cfg(not(kani))`, a production edit beside a deleted harness) keep their
   findings and add no limitation.
+- A plain helper `fn` changed inside the file of an out-of-line
+  `#[cfg(kani)] mod proofs;` (and inside an inline `#[cfg(kani)] mod`, and in
+  a file nested below the out-of-line module) seeds no production probe and is
+  disclosed as `verification_only_change`; the same edit under
+  `#[cfg(not(kani))]`, `#[cfg(any(kani, feature = "x"))]` or an ungated
+  `mod kani_proofs;` keeps its production probe and no disclosure.
 
 ## Known Limits
 
@@ -134,6 +154,10 @@ See `.ripr/traceability.d/kani-verification-artifacts-0373.toml`.
   (`kani_item_extents`, `is_kani_contract_cfg_attr`), reused by
   `probes/diff.rs` for both added and removed lines and by
   `language/rust/mod.rs` for the aggregate disclosure.
+- `crates/ripr/src/analysis/facts/role_composition.rs`: resolves exact
+  `#[cfg(kani)]` out-of-line module edges into `RustIndex::cfg_kani_module_files`
+  (#13736); `verification_erased::in_cfg_kani_module` reads it for
+  `probes/diff.rs` and the aggregate count.
 
 ## Metrics
 

@@ -15,11 +15,20 @@ tests = [
   "crates/ripr/tests/kani_proof_only_change.rs::a_deleted_ungated_module_without_a_harness_attribute_stays_probed",
   "crates/ripr/tests/kani_proof_only_change.rs::a_gated_module_that_is_not_kani_stays_probed",
   "crates/ripr/tests/kani_proof_only_change.rs::a_production_edit_beside_a_deleted_harness_is_still_probed",
+  "crates/ripr/src/analysis/language/rust/cfg_kani_module_tests.rs::out_of_line_cfg_kani_module_helper_is_verification_only",
+  "crates/ripr/src/analysis/language/rust/cfg_kani_module_tests.rs::a_file_below_a_cfg_kani_module_is_verification_only",
+  "crates/ripr/src/analysis/language/rust/cfg_kani_module_tests.rs::inline_cfg_kani_module_helper_is_verification_only",
+  "crates/ripr/src/analysis/language/rust/cfg_kani_module_tests.rs::cfg_not_kani_module_keeps_production_probes",
+  "crates/ripr/src/analysis/language/rust/cfg_kani_module_tests.rs::cfg_any_kani_module_keeps_production_probes",
+  "crates/ripr/src/analysis/language/rust/cfg_kani_module_tests.rs::ungated_module_named_kani_proofs_keeps_production_probes",
+  "crates/ripr/src/analysis/language/rust/cfg_kani_module_tests.rs::exclusive_cfg_kani_alternatives_keep_production_probes",
 ]
 code = [
   "crates/ripr/src/analysis/probes/verification_erased.rs",
   "crates/ripr/src/analysis/probes/diff.rs",
   "crates/ripr/src/analysis/language/rust/mod.rs",
+  "crates/ripr/src/analysis/facts/role_composition.rs",
+  "crates/ripr/src/analysis/facts/index.rs",
 ]
 metrics = [
   "unit_test_pass_rate",

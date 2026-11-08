@@ -63,6 +63,9 @@ struct ModuleEdge {
     declaration: String,
     line: usize,
     requires_test: bool,
+    /// The declaration's only cfg guard is exactly `#[cfg(kani)]` (#13736):
+    /// the child exists only in a Kani verification build.
+    cfg_kani: bool,
 }
 
 /// The effective test requirement of a file's composition context.
@@ -106,13 +109,15 @@ pub(super) fn compose_index_source_roles(index: &mut RustIndex, workspace_root: 
     // Phase 1 (immutable): resolve every file's context and provenance.
     // The resolver borrows `include_parents`, so all mutations wait for it
     // to go out of scope.
+    let cfg_kani_files: BTreeSet<PathBuf>;
     let resolutions: Vec<(PathBuf, Context, SourceRoleProvenance)> = {
         let mut resolver = ContextResolver {
             module_edges,
             include_parents: &index.include_parents,
             memo: BTreeMap::new(),
+            kani_memo: BTreeMap::new(),
         };
-        index
+        let resolutions = index
             .files
             .keys()
             .cloned()
@@ -120,8 +125,16 @@ pub(super) fn compose_index_source_roles(index: &mut RustIndex, workspace_root: 
                 let (context, provenance) = resolver.context_with_provenance(&file);
                 (file, context, provenance)
             })
-            .collect()
+            .collect::<Vec<_>>();
+        cfg_kani_files = index
+            .files
+            .keys()
+            .filter(|file| resolver.cfg_kani_only(file, 0))
+            .cloned()
+            .collect::<BTreeSet<_>>();
+        resolutions
     };
+    index.cfg_kani_module_files = cfg_kani_files;
 
     let outside_module_tree = files_outside_module_tree(index, workspace_root, &resolutions);
 
@@ -483,6 +496,16 @@ fn resolved_module_edges(
                 )
                 .collect(),
         );
+        // Only the exact positive `#[cfg(kani)]` guard: `not(kani)`,
+        // `any(kani, ..)`, several cfgs and `cfg_attr` carry no simple guard
+        // or a negated one, and keep the child in production. Every admitted
+        // owner must carry it: exclusive `cfg(kani)` / `cfg(not(kani))`
+        // alternatives compile the child in ordinary builds too.
+        let cfg_kani = owners.iter().all(|(parent, line, _, _)| {
+            guards
+                .get(&(parent.clone(), *line))
+                .is_some_and(|(predicate, negated)| predicate == "kani" && !negated)
+        });
         if let Some((parent, line, declaration, requires_test)) = owners.into_iter().next() {
             edges.insert(
                 child,
@@ -491,6 +514,7 @@ fn resolved_module_edges(
                     declaration,
                     line,
                     requires_test,
+                    cfg_kani,
                 }),
             );
         }
@@ -937,9 +961,47 @@ struct ContextResolver<'index> {
     module_edges: BTreeMap<PathBuf, Result<ModuleEdge, &'static str>>,
     include_parents: &'index BTreeMap<PathBuf, ResolvedIncludeParent>,
     memo: BTreeMap<PathBuf, (Context, SourceRoleProvenance)>,
+    kani_memo: BTreeMap<PathBuf, bool>,
 }
 
 impl ContextResolver<'_> {
+    /// True when `file` is compiled only under Kani (#13736): its resolved
+    /// module edge is an exact `#[cfg(kani)]` declaration, or its module or
+    /// include parent is itself Kani-only. A file both declared and included
+    /// is Kani-only only when both contexts are. Unresolved, cyclic or
+    /// over-deep chains answer `false`, which keeps production probing.
+    fn cfg_kani_only(&mut self, file: &Path, depth: usize) -> bool {
+        if let Some(&cached) = self.kani_memo.get(file) {
+            return cached;
+        }
+        if depth > MAX_CONTEXT_CHAIN_DEPTH {
+            return false;
+        }
+        // Seed `false` so a cycle through this file answers fail-closed.
+        self.kani_memo.insert(file.to_path_buf(), false);
+        let module_edge = match self.module_edges.get(file) {
+            Some(Ok(edge)) => Some((edge.cfg_kani, edge.parent.clone())),
+            Some(Err(_)) => {
+                return false;
+            }
+            None => None,
+        };
+        let include_parent = self
+            .include_parents
+            .get(file)
+            .map(|include| include.parent.clone());
+        let module_kani =
+            module_edge.map(|(gated, parent)| gated || self.cfg_kani_only(&parent, depth + 1));
+        let include_kani = include_parent.map(|parent| self.cfg_kani_only(&parent, depth + 1));
+        let kani = match (module_kani, include_kani) {
+            (Some(module), Some(include)) => module && include,
+            (Some(only), None) | (None, Some(only)) => only,
+            (None, None) => false,
+        };
+        self.kani_memo.insert(file.to_path_buf(), kani);
+        kani
+    }
+
     fn context_with_provenance(&mut self, file: &Path) -> (Context, SourceRoleProvenance) {
         let mut visiting = BTreeSet::new();
         self.resolve(file, &mut visiting, 0)
