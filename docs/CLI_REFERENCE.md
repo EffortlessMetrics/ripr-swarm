@@ -292,7 +292,7 @@ complete canonical packet stays behind the card's explicit packet route
 path. It remains advisory and static; it does not run mutation testing,
 generate tests, edit files, change cache behavior, or touch LSP/MCP surfaces.
 
-Refusal contract (#5007): a deliberate named refusal — seam id not found,
+Refusal contract: a deliberate named refusal — seam id not found,
 policy-omitted seam, witness analysis unavailable, unnameable portable
 workspace identity, or builder/budget refusal — exits `3`. Under `--json`
 stdout carries one versioned `agent_card_refusal` envelope (`schema_version`
@@ -522,7 +522,7 @@ TypeScript test-file conventions), and the cage authorizes it whole-file.
 One exception: when a seam's only tests live in one inline `#[cfg(test)]`
 module of the production file, the before phase can bind that module's
 body as the edit cage instead — production code outside the module stays
-untouched, and the file must be committed before the start (#5210, #9033).
+untouched, and the file must be committed before the start.
 Seams with no test-surface file and no such single inline module are out
 of repair scope; the before phase refuses them before creating anything.
 
@@ -754,7 +754,7 @@ artifacts — names the cause on stderr, exits `3`, and leaves stdout empty
 . Other rejections (unreadable or invalid artifacts, lineage
 or metadata mismatches) exit `2`.
 
-Movement vocabulary (#2648): the JSON output uses two related fields:
+Movement vocabulary: the JSON output uses two related fields:
   - `change` (per-item): improved | changed | regressed | unchanged | new | resolved
   - `gap_movement` (per-item): closed | persisted | new
 Precedence: `change: improved` means the grip class moved up; `gap_movement: closed`
@@ -2104,8 +2104,7 @@ Options:
                                       ledger is a config_error (fail-closed).
   --acknowledgements PATH             Optional structured acknowledgement ledger (TOML,
                                       schema_version = 1). Scoped rows bind to canonical_gap_id;
-                                      legacy labels retain global compatibility disclosure
-                                      (#1966).
+                                      legacy labels retain global compatibility disclosure.
   --mode MODE                         visible-only, acknowledgeable, baseline-check, or calibrated-gate. Defaults to visible-only.
   --acknowledgement-label LABEL       Repeatable acknowledgement label. Defaults to ripr-waive.
   --out PATH                          JSON output path. Defaults to target/ripr/reports/gate-decision.json.
@@ -2512,7 +2511,7 @@ Timeout exit-code contract: a timeout partial run still exits 0 — the packet,
 not the exit code, is the verdict, and a stderr line discloses this at the
 time it happens. CI must gate on pilot-summary.json's top-level `status`
 field (`complete` vs `partial`), never on the exit code alone, or a timed-out
-run reads as success (#9368).
+run reads as success.
 
 Examples:
   ripr pilot --root .
@@ -2559,7 +2558,7 @@ Current inputs contain exposure or ledger evidence only. They do not establish
 complete test-efficiency measurement, bind that evidence to current candidate
 bytes, or dispose of blocked and unsupported scope. Known actionable counts remain informational; complete unresolved debt
 and candidate authority remain indeterminate, so --check cannot pass from these
-inputs. No ripr command produces the missing inputs yet (tracked in #7222), so
+inputs. No ripr command produces the missing inputs yet, so
 these receipts stay indeterminate until that lands. This command does not scan a
 repository or turn raw seams into debt.
 
@@ -4095,7 +4094,7 @@ Options:
   --current-head SHA    Optional 40-character hex SHA asserted as the repository
                         HEAD at write time. When --root is also provided, the
                         receipt writer validates this sha against the actual git
-                        HEAD at that root and rejects mismatches (#1941).
+                        HEAD at that root and rejects mismatches.
   --root PATH           Repository root for git HEAD validation. When provided
                         alongside --current-head, the writer resolves the actual
                         git rev-parse HEAD and rejects if the caller-provided

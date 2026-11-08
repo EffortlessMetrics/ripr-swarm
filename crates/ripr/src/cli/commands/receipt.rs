@@ -337,7 +337,7 @@ Options:
   --current-head SHA    Optional 40-character hex SHA asserted as the repository
                         HEAD at write time. When --root is also provided, the
                         receipt writer validates this sha against the actual git
-                        HEAD at that root and rejects mismatches (#1941).
+                        HEAD at that root and rejects mismatches.
   --root PATH           Repository root for git HEAD validation. When provided
                         alongside --current-head, the writer resolves the actual
                         git rev-parse HEAD and rejects if the caller-provided
