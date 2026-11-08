@@ -613,6 +613,13 @@ fn render_agent_brief(options: &AgentBriefOptions) -> Result<String, CoreError> 
 /// would help. The seam inventory is Rust-only, so none would. Only the
 /// empty-scope warning is replaced; a brief that shows seams, or a scope
 /// with Rust or other changed code, keeps its wording.
+///
+/// The route's `check` replays the brief's own input: a saved patch through
+/// `--diff` (resolved by the brief's diff path owner), a base through
+/// `--base`, and a `--files` selection as the current diff, worded so it is
+/// not presented as equivalent. A diff-derived scope classifies every path
+/// the diff changed, so a Rust file whose hunks only remove lines keeps the
+/// generic wording; a diff that deletes a whole file keeps it too.
 fn route_preview_only_empty_brief(
     root: &Path,
     config: &RiprConfig,
@@ -622,13 +629,44 @@ fn route_preview_only_empty_brief(
     if !selection.top_seams.is_empty() {
         return;
     }
-    let languages = app::task_first::preview_only_scope_languages(
-        &working_set.files,
-        &config.languages.enabled,
-    );
+    use app::agent_brief::AgentBriefWorkingSetSource;
+    let scope_paths = match working_set.source {
+        AgentBriefWorkingSetSource::Diff | AgentBriefWorkingSetSource::Base => {
+            match working_set.changed_paths.as_deref() {
+                Some(paths) => paths,
+                None => return,
+            }
+        }
+        AgentBriefWorkingSetSource::Files | AgentBriefWorkingSetSource::SeamId => {
+            &working_set.files
+        }
+    };
+    let languages =
+        app::task_first::preview_only_scope_languages(scope_paths, &config.languages.enabled);
     if languages.is_empty() {
         return;
     }
+    let resolved_diff = match working_set.diff.as_deref() {
+        Some(diff) => {
+            match crate::cli::commands_agent_support::validate_agent_brief_diff_path(root, diff) {
+                Ok(resolved) => Some(resolved),
+                Err(_) => return,
+            }
+        }
+        None => None,
+    };
+    let input = match (
+        working_set.source,
+        &resolved_diff,
+        working_set.base.as_deref(),
+    ) {
+        (_, Some(diff), _) => app::task_first::PreviewCheckInput::Diff(diff),
+        (_, None, Some(base)) => app::task_first::PreviewCheckInput::Base(base),
+        (AgentBriefWorkingSetSource::Files, None, None) => {
+            app::task_first::PreviewCheckInput::CurrentDiffNotFiles
+        }
+        _ => app::task_first::PreviewCheckInput::Default,
+    };
     let prefix = "No seams matched the requested scope (source: ";
     let Some(warning) = selection
         .warnings
@@ -641,7 +679,7 @@ fn route_preview_only_empty_brief(
         "No seams matched the requested scope (source: {}): the changed code is {} preview code; {}.",
         working_set.source.as_str(),
         languages.join(" and "),
-        app::task_first::preview_seam_route(root, working_set.base.as_deref(), &languages)
+        app::task_first::preview_seam_route(root, input, &languages)
     );
 }
 
@@ -920,10 +958,9 @@ pub(in crate::cli) fn translate_seam_id_for(
             // would repeat the refusal that failed; name the stale state in
             // this command's terms instead (#8685).
             let language = crate::app::task_first::non_rust_item_language(seam_id);
-            let message = if let Some(language) = language.filter(|language| {
-                matches!(surface, SeamIdSurface::Card | SeamIdSurface::Packet)
-                    && matches!(*language, "TypeScript" | "Python")
-            }) {
+            let preview = crate::app::task_first::preview_item_language(seam_id)
+                .filter(|_| matches!(surface, SeamIdSurface::Card | SeamIdSurface::Packet));
+            let message = if let Some(language) = preview {
                 // #13791: the inspection surfaces name the id's family (a
                 // finding or gap id, not a seam id) by its shape alone, so the
                 // wording says "shaped like" rather than vouching that the
@@ -938,7 +975,11 @@ pub(in crate::cli) fn translate_seam_id_for(
                 };
                 format!(
                     "{label} --seam-id `{seam_id}` is shaped like a {language} preview {family} from ripr check, not a seam ID; {}",
-                    crate::app::task_first::preview_seam_route(root, None, &[language])
+                    crate::app::task_first::preview_seam_route(
+                        root,
+                        crate::app::task_first::PreviewCheckInput::Default,
+                        &[language]
+                    )
                 )
             } else if let Some(language) = language {
                 format!(

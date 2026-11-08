@@ -3317,22 +3317,77 @@ pub(crate) fn preview_only_scope_languages(
     languages
 }
 
+/// The TypeScript/Python subset of [`non_rust_item_language`] (#13791): the
+/// preview languages whose finding and gap ids the seam surfaces route to
+/// `ripr check --format agent`. Other non-Rust ids keep their terminal
+/// no-seam-inventory wording.
+pub(crate) fn preview_item_language(item: &str) -> Option<&'static str> {
+    non_rust_item_language(item).filter(|language| matches!(*language, "TypeScript" | "Python"))
+}
+
+/// The input a preview route's `ripr check --format agent` replays (#13791).
+/// A brief that selected a saved patch replays that patch, a `--base` brief
+/// replays its base, and a `--files` brief can only point at the current
+/// diff, which the wording qualifies instead of presenting as equivalent.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PreviewCheckInput<'a> {
+    /// No working set to replay: `check`'s own default diff.
+    Default,
+    /// The brief's `--base` revision.
+    Base(&'a str),
+    /// The brief's saved patch, already resolved by the brief's own diff
+    /// path owner; rendered absolute so it reads the same from any cwd.
+    Diff(&'a Path),
+    /// A `--files` selection: `check` reads the current diff, which need not
+    /// match the selected files.
+    CurrentDiffNotFiles,
+}
+
+/// The single owner of the preview route's `ripr check ... --format agent`
+/// command (#13791). The brief warning, the card/packet prose and the card's
+/// typed `remedy_route` all render it here so their machine remedies agree.
+pub(crate) fn preview_check_command(root: &Path, input: PreviewCheckInput<'_>) -> String {
+    let root_arg = shell_arg(&bound_root(&root.to_string_lossy()));
+    let scope = match input {
+        PreviewCheckInput::Base(base) => format!(" --base {}", shell_arg(base)),
+        PreviewCheckInput::Diff(diff) => {
+            format!(
+                " --diff {}",
+                shell_arg(&bound_root(&diff.to_string_lossy()))
+            )
+        }
+        PreviewCheckInput::Default | PreviewCheckInput::CurrentDiffNotFiles => String::new(),
+    };
+    format!("ripr check --root {root_arg}{scope} --format agent")
+}
+
 /// The one-line working route for a seam-addressed agent command (`agent
 /// brief`, `agent card`, `agent packet`) whose subject is TypeScript/Python
 /// preview code (#13791). The seam inventory those commands read covers
 /// Rust files only, so no seam exists and no config change adds one; the
-/// route that works is `ripr check --format agent`, then the gap-bound start
-/// `check` prints only when the shared readiness owner admits it. This names
-/// that start conditionally and never claims one is ready.
-pub(crate) fn preview_seam_route(root: &Path, base: Option<&str>, languages: &[&str]) -> String {
+/// route that works is `ripr check --format agent` over the same input,
+/// then the gap-bound start `check` prints only when the shared readiness
+/// owner admits it. This names that start conditionally and never claims
+/// one is ready.
+pub(crate) fn preview_seam_route(
+    root: &Path,
+    input: PreviewCheckInput<'_>,
+    languages: &[&str],
+) -> String {
     let subject = format!("{} preview code", languages.join(" and "));
-    let root_arg = shell_arg(&bound_root(&root.to_string_lossy()));
-    let base_arg = base
-        .map(|base| format!(" --base {}", shell_arg(base)))
-        .unwrap_or_default();
-    let base_value = base.map(shell_arg).unwrap_or_else(|| "<base>".to_string());
+    let command = preview_check_command(root, input);
+    let base_value = match input {
+        PreviewCheckInput::Base(base) => shell_arg(base),
+        _ => "<base>".to_string(),
+    };
+    let findings = match input {
+        PreviewCheckInput::CurrentDiffNotFiles => {
+            "for the current diff's findings (that diff need not match the --files selection)"
+        }
+        _ => "for its findings",
+    };
     format!(
-        "run `ripr check --root {root_arg}{base_arg} --format agent` for its findings, and when that prints a `ripr agent repair --gap-id <gap> --base {base_value} --phase before` start, run that start. The seam inventory behind `agent brief`, `agent card` and `agent packet` covers Rust files only, so no seam exists for {subject} and no config change adds one",
+        "run `{command}` {findings}, and when that prints a `ripr agent repair --gap-id <gap> --base {base_value} --phase before` start, run that start. The seam inventory behind `agent brief`, `agent card` and `agent packet` covers Rust files only, so no seam exists for {subject} and no config change adds one",
     )
 }
 
@@ -6231,7 +6286,11 @@ pub(crate) mod tests {
     /// refusal envelope derives) and the gap-bound start only conditionally.
     #[test]
     fn preview_seam_route_names_check_agent_first_and_the_start_conditionally() {
-        let route = preview_seam_route(Path::new("repo"), Some("main"), &["TypeScript"]);
+        let route = preview_seam_route(
+            Path::new("repo"),
+            PreviewCheckInput::Base("main"),
+            &["TypeScript"],
+        );
         assert!(
             route.starts_with("run `ripr check --root ")
                 && route.contains(" --base main --format agent` for its findings")
@@ -6242,13 +6301,63 @@ pub(crate) mod tests {
                 && !route.contains('\n'),
             "{route}"
         );
-        let unbased = preview_seam_route(Path::new("repo"), None, &["Python"]);
+        let unbased =
+            preview_seam_route(Path::new("repo"), PreviewCheckInput::Default, &["Python"]);
         assert!(
             unbased.starts_with("run `ripr check --root ")
                 && unbased.contains("repo --format agent` for its findings")
                 && unbased.contains("--base <base> --phase before"),
             "{unbased}"
         );
+    }
+
+    /// #13791 review: a saved-patch brief's route replays that patch with
+    /// `--diff <absolute path>` (never `--base`), and a `--files` brief's
+    /// route says the current diff need not match the selection.
+    #[test]
+    fn preview_seam_route_replays_a_saved_patch_and_qualifies_a_files_scope() {
+        let diff = Path::new("/work/repo dir/change.diff");
+        let route = preview_seam_route(
+            Path::new("repo"),
+            PreviewCheckInput::Diff(diff),
+            &["TypeScript"],
+        );
+        let expected = preview_check_command(Path::new("repo"), PreviewCheckInput::Diff(diff));
+        assert!(
+            route.starts_with(&format!("run `{expected}` for its findings"))
+                && expected.ends_with(&format!(
+                    " --diff {} --format agent",
+                    shell_arg(&bound_root("/work/repo dir/change.diff"))
+                ))
+                && (cfg!(windows) || expected.contains(" --diff '/work/repo dir/change.diff' "))
+                && !expected.contains("--base")
+                && route.contains("--base <base> --phase before")
+                && !route.contains('\n'),
+            "{route}"
+        );
+        let files = preview_seam_route(
+            Path::new("repo"),
+            PreviewCheckInput::CurrentDiffNotFiles,
+            &["Python"],
+        );
+        assert!(
+            files.contains("repo --format agent` for the current diff's findings (that diff need not match the --files selection)")
+                && !files.contains("--diff")
+                && !files.contains(" --base main"),
+            "{files}"
+        );
+        assert_eq!(
+            preview_check_command(Path::new("repo"), PreviewCheckInput::Base("main")),
+            preview_check_command(Path::new("repo"), PreviewCheckInput::Default)
+                .replace(" --format agent", " --base main --format agent")
+        );
+        assert_eq!(
+            preview_item_language("probe:src_a.ts:typescript_preview:abcd1234"),
+            Some("TypeScript")
+        );
+        assert_eq!(preview_item_language("gap:python:a.py:f:x"), Some("Python"));
+        assert_eq!(preview_item_language("probe:src_lib.rs:12:predicate"), None);
+        assert_eq!(preview_item_language("seam-discount"), None);
     }
 
     #[test]

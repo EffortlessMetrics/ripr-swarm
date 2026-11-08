@@ -5,10 +5,15 @@ id = "RIPR-SPEC-0311"
 tests = [
   "crates/ripr/src/app/task_first.rs::preview_only_scope_languages_requires_every_routed_file_to_be_enabled_preview",
   "crates/ripr/src/app/task_first.rs::preview_seam_route_names_check_agent_first_and_the_start_conditionally",
+  "crates/ripr/src/app/task_first.rs::preview_seam_route_replays_a_saved_patch_and_qualifies_a_files_scope",
+  "crates/ripr/src/cli/commands/agent_card.rs::seam_not_found_remedy_route_names_check_for_preview_shaped_ids",
   "crates/ripr/tests/cli_smoke/agent_seam_preview_route.rs::typescript_preview_scope_names_the_working_route",
   "crates/ripr/tests/cli_smoke/agent_seam_preview_route.rs::python_preview_scope_names_the_working_route",
 ]
 code = [
   "crates/ripr/src/app/task_first.rs",
+  "crates/ripr/src/app/agent_brief.rs",
   "crates/ripr/src/cli/commands/agent.rs",
+  "crates/ripr/src/cli/commands/agent_card.rs",
+  "crates/ripr/src/cli/commands_agent_support.rs",
 ]
