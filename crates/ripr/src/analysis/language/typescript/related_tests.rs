@@ -6369,25 +6369,22 @@ pub(crate) fn line_prefix_looks_like_comment_or_string(body_text: &str, idx: usi
 
 /// `true` when `idx` falls inside an unclosed `/* ... */` comment.
 ///
-/// A `/*` written inside a `//` line comment or a string on its line opens
-/// nothing (a comment such as `// a trailing /* after a segment`), so it
-/// must not hide the code after it (#13592 follow-up). The scan is a line
-/// lexer without regex or multi-line template awareness, so it fails closed:
-/// an uncertain `/*` still opens a comment and hides what follows.
-///
-/// - A quote suppresses a `/*` only when the same quote closes later on its
-///   line; a regex `"`, a JSX apostrophe or the closing backtick of a
-///   multi-line template opens no string.
-/// - `//` starts a line comment only at the start of a line or after
-///   whitespace, `;`, `)` or `}`; the `\//` ending a regex such as
-///   `/^https?:\/\//` is not one.
+/// A `/*` written in a whole-line `//` comment or a plain string opens
+/// nothing (`// a trailing /* after a segment`, `const glob = "/*";`), so it
+/// must not hide the code after it (#13592 follow-up). The scan has no regex,
+/// JSX or multi-line template awareness, so it fails closed: a `/*` still
+/// opens a comment unless it follows a `//` that starts its line (after
+/// indentation) or sits in a [`plain_string_end`] string. A regex
+/// (`/^https?:\/\//`, `/[ //]/`), a JSX apostrophe or a template's closing
+/// backtick can make any finer reading wrong.
 pub(crate) fn inside_block_comment(body_text: &str, idx: usize) -> bool {
     let Some(prefix) = body_text.get(..idx) else {
         return false;
     };
     let bytes = prefix.as_bytes();
     let mut in_block = false;
-    let mut quote: Option<u8> = None;
+    let mut line_blank = true;
+    let mut line_start = 0usize;
     let mut i = 0usize;
     while i < bytes.len() {
         let byte = bytes[i];
@@ -6395,21 +6392,15 @@ pub(crate) fn inside_block_comment(body_text: &str, idx: usize) -> bool {
         if in_block {
             if byte == b'*' && next == Some(b'/') {
                 in_block = false;
+                line_blank = false;
                 i += 2;
                 continue;
             }
         } else if byte == b'\n' {
-            quote = None;
-        } else if let Some(open) = quote {
-            if byte == b'\\' {
-                i += 2;
-                continue;
-            }
-            if byte == open {
-                quote = None;
-            }
-        } else if byte == b'/' && next == Some(b'/') && starts_line_comment(bytes, i) {
-            // Line comment: skip to the end of the line.
+            line_blank = true;
+            line_start = i + 1;
+        } else if byte == b'/' && next == Some(b'/') && line_blank {
+            // Whole-line comment: skip to the end of the line.
             match bytes[i..].iter().position(|&b| b == b'\n') {
                 Some(offset) => {
                     i += offset;
@@ -6417,45 +6408,66 @@ pub(crate) fn inside_block_comment(body_text: &str, idx: usize) -> bool {
                 }
                 None => return false,
             }
+        } else if byte == b'\\' {
+            // Outside strings a backslash belongs to a regex (`/^\/*/`) or an
+            // identifier escape; the byte it escapes never opens a comment.
+            line_blank = false;
+            i += 2;
+            continue;
         } else if byte == b'/' && next == Some(b'*') {
             in_block = true;
             i += 2;
             continue;
-        } else if matches!(byte, b'\'' | b'"' | b'`') && closes_on_line(bytes, i) {
-            quote = Some(byte);
+        } else {
+            if let Some(end) = plain_string_end(bytes, line_start, i) {
+                i = end;
+            }
+            if !byte.is_ascii_whitespace() {
+                line_blank = false;
+            }
         }
         i += 1;
     }
     in_block
 }
 
-/// `true` when the `//` at `at` reads as a line comment: at the start of its
-/// line or after whitespace, `;`, `)` or `}`.
-fn starts_line_comment(bytes: &[u8], at: usize) -> bool {
-    let line_start = bytes[..at]
-        .iter()
-        .rposition(|&b| b == b'\n')
-        .map_or(0, |offset| offset + 1);
-    match bytes[line_start..at].iter().rev().next() {
-        None => true,
-        Some(&before) => before.is_ascii_whitespace() || matches!(before, b';' | b')' | b'}'),
+/// The index of the closing quote when the quote at `at` opens a string this
+/// line lexer can trust: nothing before it on the line is a quote, backtick or
+/// `/` (no earlier string, regex or comment to misread), it follows `=`, `(`,
+/// `,`, `[` or `:` (optionally spaced), its text holds no backslash, and its
+/// first matching quote is followed (optionally spaced) by `;`, `,`, `)`, `]`
+/// or the end of the line. A JSX apostrophe, a regex quote or a template's
+/// closing backtick fails one of these.
+fn plain_string_end(bytes: &[u8], line_start: usize, at: usize) -> Option<usize> {
+    let open = *bytes.get(at)?;
+    if !matches!(open, b'\'' | b'"' | b'`') {
+        return None;
     }
-}
-
-/// `true` when the quote byte at `at` is closed by the same quote later on
-/// its line, honouring backslash escapes.
-fn closes_on_line(bytes: &[u8], at: usize) -> bool {
-    let open = bytes[at];
-    let mut i = at + 1;
-    while let Some(&byte) = bytes.get(i) {
-        match byte {
-            b'\n' => return false,
-            b'\\' => i += 2,
-            _ if byte == open => return true,
-            _ => i += 1,
+    let before = bytes.get(line_start..at)?;
+    if before
+        .iter()
+        .any(|b| matches!(b, b'\'' | b'"' | b'`' | b'/'))
+    {
+        return None;
+    }
+    let delimiter = before.iter().rev().find(|b| !b.is_ascii_whitespace())?;
+    if !matches!(delimiter, b'=' | b'(' | b',' | b'[' | b':') {
+        return None;
+    }
+    let mut end = at + 1;
+    loop {
+        match *bytes.get(end)? {
+            b'\\' | b'\n' => return None,
+            b'$' if open == b'`' => return None,
+            byte if byte == open => break,
+            _ => end += 1,
         }
     }
-    false
+    let follower = bytes
+        .get(end + 1..)?
+        .iter()
+        .find(|b| !matches!(b, b' ' | b'\t'));
+    matches!(follower, None | Some(b';' | b',' | b')' | b']' | b'\n')).then_some(end)
 }
 
 /// `true` when `prefix` ends inside a string or template literal's text.
@@ -6476,12 +6488,19 @@ fn has_unclosed_quote_or_template(prefix: &str) -> bool {
     }
     let mut stack: Vec<Mode> = vec![Mode::Code(0)];
     let mut escaped = false;
+    // The last non-space character read as code, to tell a division from a
+    // regex opener inside a substitution.
+    let mut previous_code = ' ';
     let mut chars = prefix.chars().peekable();
     while let Some(ch) = chars.next() {
         let nested = stack.len() > 1;
         let Some(mode) = stack.last_mut() else {
             return false;
         };
+        let after = previous_code;
+        if matches!(*mode, Mode::Code(_)) && !ch.is_whitespace() {
+            previous_code = ch;
+        }
         match *mode {
             Mode::Single | Mode::Double | Mode::Template if escaped => escaped = false,
             Mode::Single | Mode::Double | Mode::Template if ch == '\\' => escaped = true,
@@ -6503,10 +6522,14 @@ fn has_unclosed_quote_or_template(prefix: &str) -> bool {
                 '\'' => stack.push(Mode::Single),
                 '"' => stack.push(Mode::Double),
                 '`' => stack.push(Mode::Template),
-                // A `/` inside a substitution may open a regex whose
-                // braces or quotes this scan cannot follow; fail closed
-                // and read the rest as text.
-                '/' if nested => return true,
+                // A `/` inside a substitution that is not a division may
+                // open a regex whose braces or quotes this scan cannot
+                // follow; fail closed and read the rest as text.
+                '/' if nested
+                    && !(is_javascript_identifier_char(after) || matches!(after, ')' | ']')) =>
+                {
+                    return true;
+                }
                 '{' => *mode = Mode::Code(depth + 1),
                 '}' if depth > 0 => *mode = Mode::Code(depth - 1),
                 // Closes a template substitution and resumes the template
