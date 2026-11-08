@@ -70,7 +70,10 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 /// `23`: a test whose decorators include a non-mark wrapper and a module skip
 /// called through a rebound root are recorded under their own control names;
 /// `22` entries lack them.
-pub(crate) const PYTHON_FILE_FACT_SCHEMA_VERSION: &str = "23";
+/// `24`: the wrapper marker is recorded on every test with a non-mark
+/// decorator, not only beside its own controls, and an attribute-patched
+/// module skip root is withheld; `23` entries lack both.
+pub(crate) const PYTHON_FILE_FACT_SCHEMA_VERSION: &str = "24";
 
 /// Approximate per-run ceiling on newly persisted fact bytes. The parse
 /// already happened by store time, so exhausting the budget only skips the
