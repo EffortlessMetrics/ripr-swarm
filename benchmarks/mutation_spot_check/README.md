@@ -170,6 +170,11 @@ join rule. The report is advisory and is not a suite adequacy measure.
 
 ## TypeScript: real Stryker mutants (synthetic-diff verdict join)
 
+The hosted run installs with `--no-package-lock`, so transitive dependencies
+resolve fresh each week; the receipt records the package revision and Stryker
+version but not resolved dependency versions, so weekly results can drift for
+reasons outside ripr. The lane is advisory.
+
 `ripr check --format repo-exposure-json` lists no seams for TypeScript (or
 Python), which are diff-first, so the Rust seam-span join cannot score them.
 `--stryker-report <name>=<mutation.json>` (with the matching

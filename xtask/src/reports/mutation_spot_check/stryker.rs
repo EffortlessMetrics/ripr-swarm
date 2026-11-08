@@ -14,10 +14,11 @@
 use super::synthetic_diff::{MutationSource, SyntheticMutant};
 use serde_json::{Value, json};
 
-/// Join outcome token for a Stryker status. Only the detected status is
+/// Join outcome token for a Stryker status. Only the killed status is
 /// `caught` and only the undetected and no-coverage statuses are `missed`;
-/// every other status keeps
-/// its own token and is never scored.
+/// every other status keeps its own token and is never scored. Stryker counts
+/// `Timeout` as detected, but it stays unscored here: the conservative choice
+/// slightly lowers the scored population.
 pub(crate) fn outcome_of_status(status: &str) -> String {
     match status {
         "Killed" => "caught", // ripr-allow: static-language: Stryker status name
