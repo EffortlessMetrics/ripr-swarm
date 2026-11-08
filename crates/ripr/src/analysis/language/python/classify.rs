@@ -336,6 +336,7 @@ fn classify_change_full<'a>(
 /// Where a change is classified: its file, the line its evidence names, and
 /// the owner that holds it. A deleted line (#7587) names its own projected
 /// line while its owner is resolved from a live neighbour.
+#[derive(Clone)]
 pub(super) struct ChangeSite<'a> {
     pub(super) file: &'a Path,
     pub(super) line: usize,
@@ -348,6 +349,7 @@ pub(super) struct ChangeSite<'a> {
 /// to old-side coordinates and the old line number. The guarded-arm reader
 /// walks the guards around that line exactly as it does for a live one, so a
 /// deleted line that no observed input could enter is not credited.
+#[derive(Clone)]
 pub(super) struct OldGuardView<'a> {
     pub(super) owner: PythonOwner,
     pub(super) source: &'a str,
@@ -358,6 +360,11 @@ pub(super) struct OldGuardView<'a> {
 }
 
 /// Classify a change at a resolved owner.
+///
+/// A non-substituting related test is credited independently of mock-patched
+/// siblings (#13633): the finding is first read with the siblings set aside,
+/// and kept only when that reading is `exposed`. Any weaker reading falls back
+/// to the full read, where the siblings still keep their `mocked_module` limit.
 #[allow(
     clippy::too_many_arguments,
     reason = "resolved owner inputs plus explicit run-local origin context"
@@ -370,8 +377,59 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
     all_tests: &'a [PythonTest],
     no_behavior: PythonNoBehaviorContext,
     owner_source: Option<&str>,
+    mut value_origins: Option<&mut crate::value_origins::ValueOrigins>,
+    mut related: Option<&mut RelatedCandidateMemo<'a>>,
+) -> Option<Finding> {
+    let mut dropped = false;
+    let independent = classify_change_for_owner_inner(
+        site.clone(),
+        line_text,
+        old_line_text,
+        owners,
+        all_tests,
+        no_behavior,
+        owner_source,
+        value_origins.as_deref_mut(),
+        related.as_deref_mut(),
+        Some(&mut dropped),
+    );
+    if !dropped {
+        return independent;
+    }
+    if let Some(finding) = independent
+        && finding.class == ExposureClass::Exposed
+    {
+        return Some(finding);
+    }
+    classify_change_for_owner_inner(
+        site,
+        line_text,
+        old_line_text,
+        owners,
+        all_tests,
+        no_behavior,
+        owner_source,
+        value_origins,
+        related,
+        None,
+    )
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "resolved owner inputs plus explicit run-local origin context"
+)]
+fn classify_change_for_owner_inner<'a>(
+    site: ChangeSite<'_>,
+    line_text: &str,
+    old_line_text: Option<&str>,
+    owners: &[PythonOwner],
+    all_tests: &'a [PythonTest],
+    no_behavior: PythonNoBehaviorContext,
+    owner_source: Option<&str>,
     value_origins: Option<&mut crate::value_origins::ValueOrigins>,
     mut related: Option<&mut RelatedCandidateMemo<'a>>,
+    set_aside_mock_siblings: Option<&mut bool>,
 ) -> Option<Finding> {
     let ChangeSite {
         file,
@@ -433,6 +491,15 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
             relation: candidate.relation,
         })
         .collect();
+    if let Some(dropped) = set_aside_mock_siblings {
+        *dropped = super::callee_patch::drop_substituting_siblings(
+            &mut related_candidates,
+            owner,
+            owner_source.unwrap_or(""),
+            old_line_text,
+            line_text,
+        );
+    }
     // A module-level constant edit has no callable owner. A test whose
     // assertion provably holds under the old value and fails under the new one
     // (`module_value.rs`, #9423) is related through that value, and its
