@@ -9,6 +9,8 @@ export interface RootExpectation {
   testContents: string;
   symbol: string;
   changedExpression: string;
+  /** Drafted boundary assertion (#13461): equality-boundary input from the related tests, folded owner value. */
+  suggestedAssertion: string;
   relatedTest: string;
   testNames: readonly string[];
 }
@@ -146,8 +148,7 @@ export function assertActionTargets(commands: CommandObservation[], expected: Ro
         assert.ok(target.brief.includes(`- Suggested file: ${expected.relatedTest}\n`));
       }
       if (command.command === 'ripr.copySuggestedAssertion') {
-        assert.strictEqual(target.assertion,
-          `assert_eq!(${expected.symbol}(/* boundary input where ${expected.changedExpression} */), /* expected */)`);
+        assert.strictEqual(target.assertion, expected.suggestedAssertion);
       }
     }
   }

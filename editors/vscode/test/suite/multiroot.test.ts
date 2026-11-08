@@ -61,6 +61,7 @@ if (process.env.RIPR_TEST_MULTIROOT === '1') {
         sourceContents: 'pub fn alpha_discount(amount: i32, threshold: i32) -> i32 {\n    if amount >= threshold {\n        amount - 10\n    } else {\n        amount\n    }\n}\n',
         testContents: 'use root_alpha::alpha_discount;\n\n#[test]\nfn alpha_below_boundary() {\n    assert_eq!(alpha_discount(50, 100), 50);\n}\n\n#[test]\nfn alpha_far_above_boundary() {\n    assert_eq!(alpha_discount(10_000, 100), 9_990);\n}\n',
         symbol: 'alpha_discount', changedExpression: 'amount >= threshold',
+        suggestedAssertion: 'assert_eq!(alpha_discount(100, 100), 90)',
         relatedTest: 'tests/alpha_contract.rs',
         testNames: ['alpha_below_boundary', 'alpha_far_above_boundary'],
       };
@@ -69,6 +70,7 @@ if (process.env.RIPR_TEST_MULTIROOT === '1') {
         sourceContents: 'pub fn beta_shipping(weight: i32, cutoff: i32) -> i32 {\n    if weight >= cutoff {\n        weight * 3\n    } else {\n        7\n    }\n}\n',
         testContents: 'use root_beta::beta_shipping;\n\n#[test]\nfn beta_light_parcel() {\n    assert_eq!(beta_shipping(5, 10), 7);\n}\n\n#[test]\nfn beta_heavy_parcel() {\n    assert_eq!(beta_shipping(100, 10), 300);\n}\n',
         symbol: 'beta_shipping', changedExpression: 'weight >= cutoff',
+        suggestedAssertion: 'assert_eq!(beta_shipping(10, 10), 30)',
         relatedTest: 'tests/beta_contract.rs',
         testNames: ['beta_light_parcel', 'beta_heavy_parcel'],
       };
