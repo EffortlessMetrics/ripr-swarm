@@ -1341,7 +1341,7 @@ const DYNAMIC_NAMESPACE_WRITERS: [&str; 11] = [
     "patch",
 ];
 
-fn writes_namespace_in_text(text: &str) -> bool {
+pub(super) fn writes_namespace_in_text(text: &str) -> bool {
     DYNAMIC_NAMESPACE_WRITERS
         .into_iter()
         .any(|identifier| mentions_identifier(text, identifier))

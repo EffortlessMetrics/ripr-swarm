@@ -15,7 +15,7 @@ use super::*;
 /// The three clauses of a counted `for (init; test; update)` header, or
 /// `None` when the line is not one. A label (`outer: for (...)`) is skipped,
 /// and a `;` or `)` inside a string or template literal does not end a clause.
-fn for_header_clauses(line: &str) -> Option<[&str; 3]> {
+pub(super) fn for_header_clauses(line: &str) -> Option<[&str; 3]> {
     let mut rest = line.trim();
     if let Some((label, after)) = rest.split_once(':')
         && !label.is_empty()

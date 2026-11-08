@@ -53,7 +53,7 @@ use crate::domain::{OracleKind, Probe, ProbeFamily};
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 mod recording;
 
@@ -712,6 +712,54 @@ impl<'a> SelfTypeMethods<'a> {
     }
 }
 
+/// Run-local source for the method names consulted by carrier admission.
+pub(in crate::analysis) struct EffectMethodNames<'a> {
+    index: &'a RustIndex,
+    cached: OnceLock<Arc<BTreeSet<String>>>,
+    #[cfg(test)]
+    visits: std::sync::atomic::AtomicUsize,
+}
+
+impl<'a> EffectMethodNames<'a> {
+    pub(super) fn new(index: &'a RustIndex) -> Self {
+        Self {
+            index,
+            cached: OnceLock::new(),
+            #[cfg(test)]
+            visits: std::sync::atomic::AtomicUsize::new(0),
+        }
+    }
+
+    fn names(&self, index: &RustIndex) -> Arc<BTreeSet<String>> {
+        // A reach context normally shares the classifier's index. If a caller
+        // supplies a different one, preserve the original per-index answer.
+        if !std::ptr::eq(self.index, index) {
+            return self.collect(index);
+        }
+        Arc::clone(self.cached.get_or_init(|| self.collect(index)))
+    }
+
+    fn collect(&self, index: &RustIndex) -> Arc<BTreeSet<String>> {
+        Arc::new(
+            index
+                .functions()
+                .iter()
+                .filter(|function| {
+                    #[cfg(test)]
+                    self.visits
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    function.item.has_self_param
+                        || matches!(
+                            function.item.container,
+                            FunctionContainer::Unknown | FunctionContainer::Trait { .. }
+                        )
+                })
+                .map(|function| function.name.clone())
+                .collect(),
+        )
+    }
+}
+
 type TestBodyCacheKey = (PathBuf, usize, u64);
 type TestBodyTokenCache = RefCell<BTreeMap<TestBodyCacheKey, Arc<[Tok]>>>;
 
@@ -728,7 +776,7 @@ pub(in crate::analysis) struct EffectStateCarrier {
     /// the receiver itself.
     self_fields: BTreeSet<String>,
     /// Every name defined as a method anywhere in the workspace.
-    any_method: BTreeSet<String>,
+    any_method: Arc<BTreeSet<String>>,
     /// Reader methods other than the owner that take `&mut self`: a test
     /// that calls one can move the written state into any field before it
     /// asserts (`inv.reorder()` turning `low_stock` into log entries).
@@ -753,11 +801,28 @@ impl EffectStateCarrier {
     }
 
     /// `None` unless every gate in the module docs holds.
-    pub(in crate::analysis) fn establish(
+    #[cfg(test)]
+    fn establish(
         probe: &Probe,
         owner: &FunctionSummary,
         index: &RustIndex,
         workspace_complete: bool,
+    ) -> Option<Self> {
+        Self::establish_with_names(
+            probe,
+            owner,
+            index,
+            workspace_complete,
+            &EffectMethodNames::new(index),
+        )
+    }
+
+    pub(in crate::analysis) fn establish_with_names(
+        probe: &Probe,
+        owner: &FunctionSummary,
+        index: &RustIndex,
+        workspace_complete: bool,
+        method_names: &EffectMethodNames<'_>,
     ) -> Option<Self> {
         // An omitted file may hold a same-name method, a `Drop` impl or the
         // self type's definition, so a partial index proves nothing bounded
@@ -878,18 +943,7 @@ impl EffectStateCarrier {
             })
             .cloned()
             .collect();
-        let any_method = index
-            .functions()
-            .iter()
-            .filter(|function| {
-                function.item.has_self_param
-                    || matches!(
-                        function.item.container,
-                        FunctionContainer::Unknown | FunctionContainer::Trait { .. }
-                    )
-            })
-            .map(|function| function.name.clone())
-            .collect();
+        let any_method = method_names.names(index);
         Some(Self {
             self_ty,
             written_fields,

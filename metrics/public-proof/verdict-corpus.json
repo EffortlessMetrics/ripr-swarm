@@ -1,96 +1,141 @@
 {
   "schema_version": "ripr_verdict_corpus_report.v1",
   "spec": "RIPR-SPEC-0219",
-  "cases_total": 846,
+  "cases_total": 853,
   "by_truth": {
-    "discriminated": 433,
-    "not_discriminated": 282,
+    "discriminated": 436,
+    "not_discriminated": 286,
     "partially_discriminated": 131
   },
   "by_outcome": {
-    "abstained": 321,
-    "ideal": 525
+    "abstained": 327,
+    "ideal": 526
   },
   "by_observed_verdict": {
-    "credited": 268,
+    "credited": 269,
     "gap": 257,
-    "limited": 308,
+    "limited": 314,
     "silent": 13
   },
   "false_verdict_rate": {
     "numerator": 0,
-    "denominator": 846,
+    "denominator": 853,
     "rate": "0.0000"
   },
   "false_actionable_rate": {
     "numerator": 0,
-    "denominator": 433,
+    "denominator": 436,
     "rate": "0.0000"
   },
   "false_exposed_rate": {
     "numerator": 0,
-    "denominator": 413,
+    "denominator": 417,
     "rate": "0.0000"
   },
   "false_silent_rate": {
     "numerator": 0,
-    "denominator": 413,
+    "denominator": 417,
     "rate": "0.0000"
   },
   "ideal_rate": {
-    "numerator": 525,
-    "denominator": 846,
-    "rate": "0.6206"
+    "numerator": 526,
+    "denominator": 853,
+    "rate": "0.6166"
   },
   "abstention_rate": {
-    "numerator": 321,
-    "denominator": 846,
-    "rate": "0.3794"
+    "numerator": 327,
+    "denominator": 853,
+    "rate": "0.3834"
   },
   "contradiction_rate": {
     "numerator": 0,
-    "denominator": 1035,
+    "denominator": 1042,
     "rate": "0.0000"
   },
   "contradictions_by_code": {},
+  "abstention_by_cause": {
+    "credit_missed:infection_unknown": 25,
+    "credit_missed:infection_unknown+propagation_unknown": 13,
+    "credit_missed:infection_unknown+static_unknown": 1,
+    "credit_missed:infection_unknown+weakly_exposed": 6,
+    "credit_missed:no_static_path": 14,
+    "credit_missed:no_static_path+static_unknown": 1,
+    "credit_missed:none": 13,
+    "credit_missed:propagation_unknown": 13,
+    "credit_missed:reachable_unrevealed": 6,
+    "credit_missed:static_unknown": 62,
+    "credit_missed:weakly_exposed": 13,
+    "gap_missed:infection_unknown": 26,
+    "gap_missed:infection_unknown+propagation_unknown": 4,
+    "gap_missed:infection_unknown+static_unknown": 1,
+    "gap_missed:infection_unknown+weakly_exposed": 1,
+    "gap_missed:no_static_path": 39,
+    "gap_missed:propagation_unknown": 20,
+    "gap_missed:propagation_unknown+static_unknown": 1,
+    "gap_missed:reachable_unrevealed": 3,
+    "gap_missed:static_unknown": 61,
+    "gap_missed:weakly_exposed": 4
+  },
   "by_origin": {
     "authored": {
-      "cases_total": 805,
+      "cases_total": 812,
       "by_observed_verdict": {
-        "credited": 265,
+        "credited": 266,
         "gap": 255,
-        "limited": 272,
+        "limited": 278,
         "silent": 13
       },
       "false_verdict_rate": {
         "numerator": 0,
-        "denominator": 805,
+        "denominator": 812,
         "rate": "0.0000"
       },
       "false_actionable_rate": {
         "numerator": 0,
-        "denominator": 411,
+        "denominator": 414,
         "rate": "0.0000"
       },
       "false_exposed_rate": {
         "numerator": 0,
-        "denominator": 394,
+        "denominator": 398,
         "rate": "0.0000"
       },
       "false_silent_rate": {
         "numerator": 0,
-        "denominator": 394,
+        "denominator": 398,
         "rate": "0.0000"
       },
       "ideal_rate": {
-        "numerator": 520,
-        "denominator": 805,
-        "rate": "0.6460"
+        "numerator": 521,
+        "denominator": 812,
+        "rate": "0.6416"
       },
       "abstention_rate": {
-        "numerator": 285,
-        "denominator": 805,
-        "rate": "0.3540"
+        "numerator": 291,
+        "denominator": 812,
+        "rate": "0.3584"
+      },
+      "abstention_by_cause": {
+        "credit_missed:infection_unknown": 20,
+        "credit_missed:infection_unknown+propagation_unknown": 11,
+        "credit_missed:infection_unknown+static_unknown": 1,
+        "credit_missed:infection_unknown+weakly_exposed": 6,
+        "credit_missed:no_static_path": 10,
+        "credit_missed:none": 13,
+        "credit_missed:propagation_unknown": 12,
+        "credit_missed:reachable_unrevealed": 6,
+        "credit_missed:static_unknown": 56,
+        "credit_missed:weakly_exposed": 13,
+        "gap_missed:infection_unknown": 21,
+        "gap_missed:infection_unknown+propagation_unknown": 4,
+        "gap_missed:infection_unknown+static_unknown": 1,
+        "gap_missed:infection_unknown+weakly_exposed": 1,
+        "gap_missed:no_static_path": 28,
+        "gap_missed:propagation_unknown": 20,
+        "gap_missed:propagation_unknown+static_unknown": 1,
+        "gap_missed:reachable_unrevealed": 3,
+        "gap_missed:static_unknown": 60,
+        "gap_missed:weakly_exposed": 4
       }
     },
     "upstream": {
@@ -129,6 +174,17 @@
         "numerator": 36,
         "denominator": 41,
         "rate": "0.8780"
+      },
+      "abstention_by_cause": {
+        "credit_missed:infection_unknown": 5,
+        "credit_missed:infection_unknown+propagation_unknown": 2,
+        "credit_missed:no_static_path": 4,
+        "credit_missed:no_static_path+static_unknown": 1,
+        "credit_missed:propagation_unknown": 1,
+        "credit_missed:static_unknown": 6,
+        "gap_missed:infection_unknown": 5,
+        "gap_missed:no_static_path": 11,
+        "gap_missed:static_unknown": 1
       }
     }
   },
@@ -9083,9 +9139,9 @@
       "ideal_verdict": "credited",
       "observed_verdict": "limited",
       "followed_retarget": false,
-      "changed_since_labeling": false,
+      "changed_since_labeling": true,
       "observed_classifications": [
-        "no_static_path"
+        "infection_unknown"
       ],
       "outcome": "abstained",
       "contradictions": [],
@@ -18126,6 +18182,160 @@
       "changed_since_labeling": true,
       "observed_classifications": [
         "infection_unknown"
+      ],
+      "outcome": "abstained",
+      "contradictions": [],
+      "findings_scored": 1,
+      "findings_contradicted": 0,
+      "contradiction_counts": {}
+    },
+    {
+      "case_id": "tier-flow-13037-direct",
+      "subject_id": "authored-tier-flow-13037",
+      "origin": "authored",
+      "anchor": "src/lib.rs:9",
+      "behavior_family": "return_value",
+      "test_shape": "exact_pin_assert",
+      "hard_case": false,
+      "truth": "discriminated",
+      "ideal_verdict": "credited",
+      "observed_verdict": "credited",
+      "followed_retarget": false,
+      "changed_since_labeling": true,
+      "observed_classifications": [
+        "exposed"
+      ],
+      "outcome": "ideal",
+      "contradictions": [],
+      "findings_scored": 1,
+      "findings_contradicted": 0,
+      "contradiction_counts": {}
+    },
+    {
+      "case_id": "tier-flow-13037-masked",
+      "subject_id": "authored-tier-flow-13037",
+      "origin": "authored",
+      "anchor": "src/lib.rs:45",
+      "behavior_family": "return_value",
+      "test_shape": "false_credit_trap",
+      "hard_case": false,
+      "truth": "not_discriminated",
+      "ideal_verdict": "gap",
+      "observed_verdict": "limited",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "static_unknown"
+      ],
+      "outcome": "abstained",
+      "contradictions": [],
+      "findings_scored": 1,
+      "findings_contradicted": 0,
+      "contradiction_counts": {}
+    },
+    {
+      "case_id": "tier-flow-13037-sideways",
+      "subject_id": "authored-tier-flow-13037",
+      "origin": "authored",
+      "anchor": "src/lib.rs:57",
+      "behavior_family": "return_value",
+      "test_shape": "false_credit_trap",
+      "hard_case": false,
+      "truth": "not_discriminated",
+      "ideal_verdict": "gap",
+      "observed_verdict": "limited",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "static_unknown"
+      ],
+      "outcome": "abstained",
+      "contradictions": [],
+      "findings_scored": 1,
+      "findings_contradicted": 0,
+      "contradiction_counts": {}
+    },
+    {
+      "case_id": "tier-flow-13037-transformed",
+      "subject_id": "authored-tier-flow-13037",
+      "origin": "authored",
+      "anchor": "src/lib.rs:33",
+      "behavior_family": "return_value",
+      "test_shape": "exact_pin_assert",
+      "hard_case": false,
+      "truth": "discriminated",
+      "ideal_verdict": "credited",
+      "observed_verdict": "limited",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "static_unknown"
+      ],
+      "outcome": "abstained",
+      "contradictions": [],
+      "findings_scored": 1,
+      "findings_contradicted": 0,
+      "contradiction_counts": {}
+    },
+    {
+      "case_id": "tier-flow-13037-uncertain",
+      "subject_id": "authored-tier-flow-13037",
+      "origin": "authored",
+      "anchor": "src/lib.rs:69",
+      "behavior_family": "return_value",
+      "test_shape": "exact_pin_assert",
+      "hard_case": false,
+      "truth": "discriminated",
+      "ideal_verdict": "credited",
+      "observed_verdict": "limited",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "static_unknown"
+      ],
+      "outcome": "abstained",
+      "contradictions": [],
+      "findings_scored": 1,
+      "findings_contradicted": 0,
+      "contradiction_counts": {}
+    },
+    {
+      "case_id": "tier-flow-13037-unrelated",
+      "subject_id": "authored-tier-flow-13037",
+      "origin": "authored",
+      "anchor": "src/lib.rs:81",
+      "behavior_family": "return_value",
+      "test_shape": "false_credit_trap",
+      "hard_case": false,
+      "truth": "not_discriminated",
+      "ideal_verdict": "gap",
+      "observed_verdict": "limited",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "no_static_path"
+      ],
+      "outcome": "abstained",
+      "contradictions": [],
+      "findings_scored": 1,
+      "findings_contradicted": 0,
+      "contradiction_counts": {}
+    },
+    {
+      "case_id": "tier-flow-13037-wrong_input",
+      "subject_id": "authored-tier-flow-13037",
+      "origin": "authored",
+      "anchor": "src/lib.rs:21",
+      "behavior_family": "return_value",
+      "test_shape": "false_credit_trap",
+      "hard_case": false,
+      "truth": "not_discriminated",
+      "ideal_verdict": "gap",
+      "observed_verdict": "limited",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "static_unknown"
       ],
       "outcome": "abstained",
       "contradictions": [],
