@@ -1,0 +1,25 @@
+{
+  "subject_id": "authored-ts-stage-zero",
+  "origin": "authored",
+  "version_label": "authored@12922",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "package.json",
+      "sha256": "b4292255acc4c9a1d026417e4e54f258439d592ea8112f2a2cbb73082725e9c0"
+    },
+    {
+      "path": "ripr.toml",
+      "sha256": "fd4bef0be0af8666a5f559a03d235c19c6ab225d5eb26a1c6ea5cf022bf00043"
+    },
+    {
+      "path": "src/price.ts",
+      "sha256": "18f6bbf7120272825f445309e8d15e1abf4252fa67687181d022341a74496d31"
+    },
+    {
+      "path": "test/price.test.ts",
+      "sha256": "3cd62e92635da521ee9bdf75d22b932005544cb22c9138a3573cde75a21bcb56"
+    }
+  ]
+}

@@ -1,0 +1,12 @@
+diff --git a/src/price.ts b/src/price.ts
+--- a/src/price.ts
++++ b/src/price.ts
+@@ -1,7 +1,7 @@
+ export function price(qty: number, coupon?: string): number {
+   let total = qty * 10;
+   if (coupon === "HALF") {
+-    total = total * 3;
++    total = total * qty;
+   }
+   return total;
+ }
