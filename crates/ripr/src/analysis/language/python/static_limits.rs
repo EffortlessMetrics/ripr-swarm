@@ -9,10 +9,10 @@ use super::fixtures::{inert_tool_fixture, literal_owner_instance_fixture};
 use super::forwarding_decorator::is_forwarding_decorator;
 use super::literal_patch::{literal_patch_calls, without_calls};
 use super::related_tests::{
-    PythonRelatedCandidate, PythonRelationKind, body_calls_owner, dunder_method_class,
-    import_source_module_matches_owner, is_python_identifier_char,
+    PythonRelatedCandidate, PythonRelationKind, body_calls_owner, body_exercises_dunder_protocol,
+    dunder_method_class, import_source_module_matches_owner, is_python_identifier_char,
     line_prefix_looks_like_comment_or_string, test_imports_owner_module,
-    test_may_reach_owner_class,
+    test_may_reach_owner_class, test_references_owner_class,
 };
 use super::sink_alignment::CreditedAssertion;
 use super::source_utils::{SourceText, signature_colon_end};
@@ -410,7 +410,11 @@ pub(super) fn implicit_dunder_dispatch_limit(
     }
     // A helper only a dunder of its own class calls through `self.` /
     // `cls.` (`Cache.getsizeof` via `__setitem__`, `LFUCache.__touch` via
-    // `__getitem__`) is reached by the same syntax (#13776).
+    // `__getitem__`) is reached by the same syntax (#13776). The reading
+    // needs both an import-provenanced reference to the owner's class and
+    // test syntax that runs one of the reaching dunders: a test that only
+    // builds the class, or names a same-named class from another module,
+    // keeps `no_static_path` (RIPR-SPEC-0201).
     let entry = owner.class_facts.dunder_entries.first()?;
     if owner.class_path.is_empty()
         || !matches!(
@@ -423,7 +427,13 @@ pub(super) fn implicit_dunder_dispatch_limit(
     let class = owner.class_path.as_str();
     all_tests
         .iter()
-        .any(|test| test_may_reach_owner_class(test, owner, class))
+        .any(|test| {
+            test_references_owner_class(test, owner, class)
+                && body_exercises_dunder_protocol(
+                    &test.body_text,
+                    &owner.class_facts.dunder_entries,
+                )
+        })
         .then(|| PythonStaticLimit {
             kind: StaticLimitKind::DynamicDispatch,
             evidence: format!(
@@ -431,7 +441,7 @@ pub(super) fn implicit_dunder_dispatch_limit(
                 owner.qualified_name
             ),
             missing: format!(
-                "Static limit `dynamic_dispatch`: `{}` is reached from dunder method `{entry}` of `{class}` through a same-class call path, and Python invokes that dunder through syntax on an instance of `{class}`; tests import `{class}`, its module or its package, or name `{class}`, but the preview adapter cannot bind the instance a test builds to the class, so it does not claim that no test reaches the owner.",
+                "Static limit `dynamic_dispatch`: `{}` is reached from dunder method `{entry}` of `{class}` through a same-class call path, and Python invokes that dunder through syntax on an instance of `{class}`; a test references `{class}` through an import of its module and runs that dunder through syntax, but the preview adapter cannot bind the instance to the class, so it does not claim that no test reaches the owner.",
                 owner.qualified_name
             ),
         })

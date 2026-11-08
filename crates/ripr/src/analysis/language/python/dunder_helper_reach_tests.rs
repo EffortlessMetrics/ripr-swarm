@@ -43,6 +43,8 @@ fn finding_at(source: &str, tests_source: &str, needle: &str) -> Result<Finding,
     let mut owners = extract_owners(Path::new("src/cachetools/__init__.py"), source);
     apply_class_facts(&mut owners);
     let tests = extract_tests(Path::new("tests/test_cache.py"), tests_source);
+    // A fixture that collects no test would read as an honest unknown.
+    assert_eq!(tests.len(), 1, "fixture must collect exactly one test");
     let (index, line) = source
         .lines()
         .enumerate()
@@ -125,17 +127,71 @@ fn given_subscript_read_when_mangled_helper_changes_then_reached_not_exposed() -
 }
 
 #[test]
-fn given_unbound_mixin_receiver_when_helper_changes_then_honest_unknown() -> Result<(), String> {
-    let tests = "from cachetools import Cache\n\n\nclass CacheTestMixin:\n    Cache = None\n\n    def test_setitem(self):\n        cache = self.Cache(maxsize=2)\n        cache[1] = 1\n        assert cache is not None\n";
+fn given_unbound_mixin_receiver_when_helper_changes_then_no_reach_claimed() -> Result<(), String> {
+    // `self.Cache` is not an import-provenanced reference to the owner's
+    // class, so the adapter claims nothing: wrong reach is worse than a miss.
+    let tests = "from cachetools import Cache\n\n\nclass TestCache:\n    Cache = None\n\n    def test_setitem(self):\n        cache = self.Cache(maxsize=2)\n        cache[1] = 1\n        assert cache is not None\n";
 
     let finding = finding_at(CACHE_PY, tests, "return 1")?;
 
-    assert_reached_without_credit(&finding);
+    assert_eq!(finding.class, ExposureClass::NoStaticPath, "{finding:?}");
+    assert_eq!(finding.static_limit_kind, None, "{finding:?}");
+    Ok(())
+}
+
+#[test]
+fn given_same_named_class_from_another_module_when_helper_changes_then_no_static_path()
+-> Result<(), String> {
+    let tests = "from other.models import Cache\n\n\ndef test_setitem():\n    cache = Cache(maxsize=2)\n    cache[1] = 1\n    assert cache is not None\n";
+
+    let finding = finding_at(CACHE_PY, tests, "return 1")?;
+
+    assert_eq!(finding.class, ExposureClass::NoStaticPath, "{finding:?}");
+    assert_eq!(finding.static_limit_kind, None, "{finding:?}");
+    Ok(())
+}
+
+#[test]
+fn given_class_only_constructed_when_helper_changes_then_no_static_path() -> Result<(), String> {
+    let tests = "from cachetools import Cache\n\n\ndef test_construct():\n    cache = Cache(maxsize=2)\n    assert cache is not None\n";
+
+    let finding = finding_at(CACHE_PY, tests, "return 1")?;
+
+    assert_eq!(finding.class, ExposureClass::NoStaticPath, "{finding:?}");
+    // The existing same-class limitation names it; no reach is claimed.
     assert_eq!(
         finding.static_limit_kind,
-        Some(StaticLimitKind::DynamicDispatch),
+        Some(StaticLimitKind::PythonTransitiveReachUnresolved),
         "{finding:?}"
     );
+    assert!(finding.related_tests.is_empty(), "{finding:?}");
+    Ok(())
+}
+
+#[test]
+fn given_dunder_of_another_class_when_helper_changes_then_no_static_path() -> Result<(), String> {
+    // `Beta.__getitem__` calls `self.__touch`, but `Alpha.__touch` is Alpha's own
+    // name-mangled helper: no dunder of Alpha reaches it.
+    let source = "class Alpha:\n    def __touch(self, key):\n        return 1\n\n\nclass Beta:\n    def __getitem__(self, key):\n        return self.__touch(key)\n\n    def __touch(self, key):\n        return 2\n";
+    let mut owners = extract_owners(Path::new("src/cachetools/__init__.py"), source);
+    apply_class_facts(&mut owners);
+    let entries_of = |qualified: &str| {
+        owners
+            .iter()
+            .find(|owner| owner.qualified_name == qualified)
+            .map(|owner| owner.class_facts.dunder_entries.clone())
+    };
+    assert_eq!(entries_of("Alpha.__touch"), Some(Vec::new()));
+    assert_eq!(
+        entries_of("Beta.__touch"),
+        Some(vec!["__getitem__".to_string()])
+    );
+    let tests = "from cachetools import Alpha, Beta\n\n\ndef test_getitem():\n    b = Beta()\n    b[1]\n    assert Alpha is not None\n";
+
+    let finding = finding_at(source, tests, "return 1")?;
+
+    assert_eq!(finding.class, ExposureClass::NoStaticPath, "{finding:?}");
+    assert_eq!(finding.static_limit_kind, None, "{finding:?}");
     Ok(())
 }
 

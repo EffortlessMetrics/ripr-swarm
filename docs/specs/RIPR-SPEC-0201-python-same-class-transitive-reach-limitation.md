@@ -103,7 +103,9 @@ Leave the finding exactly as the direct-call classifier produced it.
 - Relating the witnessing test at medium confidence (`helper_owner_call`).
 - Tracing dunder protocol dispatch (`console.print(table)` → `__rich_console__`)
   except insofar as constructing the class plus an internal `self.` path is
-  enough to *name* the limitation.
+  enough to *name* the limitation. The one exception is a syntactically
+  exercised protocol dunder of the helper's own class (example 7, #13776),
+  which stays `static_unknown` and earns no relation or credit.
 - Function-to-helper and cross-module façade reach (#4568).
 - Promoting classification, emitting a repair packet, or claiming coverage.
 
@@ -121,10 +123,24 @@ read as written below.
 4. `table._get_padding_width(` in the test: related test; this limitation does not attach.
 5. `requests.post(...)` without constructing `PreparedRequest`: silent `no_static_path` (#4568).
 6. six-hop `self.` chain: silent `no_static_path`.
+7. A non-dunder helper that only a same-class dunder reaches through `self.`
+   (`Cache.getsizeof` via `Cache.__setitem__`, `LFUCache.__touch` via
+   `LFUCache.__getitem__`; #13776) and a test that references the class through
+   an import of the owner's module and runs one of those dunders by syntax
+   (`cache[key] = value`, `len(cache)`, `with cache:`, `a == b`, ...): the
+   finding reads `static_unknown` with `dynamic_dispatch` (or `weakly_exposed`
+   when the explicit dunder call relates the test), never `exposed`, and no
+   oracle credit. A test that only constructs the class (as in examples 1 and
+   2), imports a same-named class from another module, or exercises no
+   protocol of a reaching dunder stays `no_static_path`; a dunder with no
+   syntactic protocol (`__rich_console__`, `__init__`, `__new__`, `__repr__`,
+   `__call__`) never satisfies the rule, and dunders never reach another
+   class's helper (name mangling keys the helper to its own class).
 
 ## Test Mapping
 
 - `crates/ripr/src/analysis/language/python/transitive_reach.rs`
+- `crates/ripr/src/analysis/language/python/dunder_helper_reach_tests.rs`
 - `crates/ripr-contract/src/domain/language.rs::tests::static_limit_kind_wire_strings_are_stable`
 - `fixtures/python_transitive_reach_positive/`
 - `fixtures/python_transitive_reach_negative/`

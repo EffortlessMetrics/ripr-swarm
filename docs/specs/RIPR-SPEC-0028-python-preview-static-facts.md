@@ -545,7 +545,16 @@ comments, strings, and docstrings:
   `module.Class(...)`) relates `__init__`, `__new__`, and `__post_init__` as
   `constructor_call`, an oracle-eligible relation; for any other dunder it
   relates as `dunder_protocol`, which stays uncertain because syntax cannot
-  bind `obj[key] = value` or `a == b` to the constructed instance. The one
+  bind `obj[key] = value` or `a == b` to the constructed instance. A
+  non-dunder helper that only a same-class dunder reaches through `self.` /
+  `cls.` (at most five hops, keyed by file and class so name-mangled helpers
+  never cross classes) reads `static_unknown` (`dynamic_dispatch`) only when a
+  test both references the helper's class through an import of its module and
+  runs one of the reaching dunders by syntax (subscript, `in`, `len(`, `iter(`,
+  `for ... in`, `next(`, `with`, `==` / `!=`, `hash(`, `str(`); a test that only
+  constructs the class, or a dunder without a syntactic protocol, keeps
+  `no_static_path`, and the reach never earns an oracle or `exposed`
+  (RIPR-SPEC-0201, #13776). The one
   exception is a builtin protocol entry applied to a sole argument bound to the
   owner class (`reversed(Class(0))` for `__reversed__`, likewise `len`, `bool`,
   `iter`, `next`, `hash`, `str`, `repr`): it relates as `protocol_entry_call`,

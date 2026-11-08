@@ -6451,7 +6451,8 @@ fn transitive_reach_witness_silences_with_no_link_guidance() -> Result<(), Strin
         .position(|line| line == changed)
         .ok_or_else(|| "fixture source must contain the changed line".to_string())?
         + 1;
-    let owners = extract_owners(Path::new("src/table.py"), source);
+    let mut owners = extract_owners(Path::new("src/table.py"), source);
+    super::related_tests::apply_class_facts(&mut owners);
     let tests = extract_tests(
         Path::new("tests/test_table.py"),
         "from src.table import Table\n\ndef test_print_table():\n    table = Table()\n    assert table is not None\n",

@@ -17,9 +17,11 @@ use std::rc::Rc;
 mod verify_command_tests;
 
 mod dunder_entries;
+mod dunder_protocol;
 pub(super) use dunder_entries::{
     PythonClassFacts, apply_class_facts, operator_entry_in_text, with_entry,
 };
+pub(super) use dunder_protocol::body_exercises_dunder_protocol;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum PythonRelationKind {
@@ -1550,7 +1552,11 @@ pub(super) fn test_imports_owner_module(test: &PythonTest, owner: &PythonOwner) 
 /// import (`from pkg.cache import Cache as C`), or a member of an imported
 /// owner module (`cache.Cache`). A bare `Cache` with no such import, or one
 /// imported from another module, is a different class.
-fn test_references_owner_class(test: &PythonTest, owner: &PythonOwner, class: &str) -> bool {
+pub(super) fn test_references_owner_class(
+    test: &PythonTest,
+    owner: &PythonOwner,
+    class: &str,
+) -> bool {
     test_uses_owner_class(
         test,
         owner,
