@@ -3163,6 +3163,9 @@ impl RustAdapter {
                 parser_spans: &parser_spans,
             },
         );
+        // #13819: the changed owner's own `#[mutants::skip]` is an explicit
+        // opt-out; the app layer withholds and discloses these findings.
+        let owner_opt_outs = crate::analysis::owner_opt_out::rust_owner_opt_outs(&index, &findings);
 
         Ok(LanguageDiffResult {
             value_origins: value_origins.into_inner().unwrap_or_default(),
@@ -3204,6 +3207,7 @@ impl RustAdapter {
             rust_diagnostic_origins,
             rust_consumed_sources,
             preview_fact_cache: Default::default(),
+            owner_opt_outs,
         })
     }
 }
@@ -3486,13 +3490,19 @@ fn lexical_fallback_limitations<'a>(
                 crate::analysis_outcome::RUST_NOT_UTF8_RECOVERY,
             )
         } else {
-            (
-                crate::analysis::syntax::rust_nesting_refusal(&facts.source).unwrap_or_else(|| {
+            match crate::analysis::syntax::rust_nesting_refusal(&facts.source) {
+                // A typed static-limit decline of valid Rust is not a syntax
+                // error: its recovery names the budget, not a parse fix (#13660).
+                Some(reason) => (
+                    reason,
+                    crate::analysis_outcome::RUST_NESTING_BUDGET_RECOVERY,
+                ),
+                None => (
                     "the Rust parser reported syntax errors, so the file was read lexically"
-                        .to_string()
-                }),
-                crate::analysis_outcome::RUST_PARSE_FAILURE_RECOVERY,
-            )
+                        .to_string(),
+                    crate::analysis_outcome::RUST_PARSE_FAILURE_RECOVERY,
+                ),
+            }
         };
         let limitation = AnalysisLimitation::new(
             AnalysisLimitationKind::ProducerFailure,

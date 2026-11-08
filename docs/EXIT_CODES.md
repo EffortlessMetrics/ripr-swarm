@@ -13,7 +13,9 @@ ripr uses three ordinary command exit codes, plus standalone Unix check interrup
 `exposed` and `weakly_exposed` findings. A non-zero exit from `check` means the
 analysis did not complete, not that it disapproved of your diff. The blocking
 decision belongs to `ripr gate evaluate`, which exits `3` when the gate blocks
-after writing its report. Do not build a CI gate on `check`'s exit code; read
+after writing its report. `ripr gate check --base REV` runs `review-comments`
+and then the same evaluation, with the same exit codes. If `review-comments`
+cannot complete, gate check exits `2` (config_error); it never passes. Do not build a CI gate on `check`'s exit code; read
 its output, or run the gate.
 
 ## Why codes 2 and 3?
@@ -162,8 +164,9 @@ reached the caller.
 
 ## When you see exit code 3
 
-- **Gate failure**: `ripr gate evaluate` evaluated successfully and blocked
-  the PR; the full report was still written to `--out`.
+- **Gate failure**: `ripr gate evaluate` or `ripr gate check` evaluated
+  successfully and blocked the PR; the full report was still written to
+  `--out`.
 - **Doctor findings**: `ripr doctor` completed its diagnosis and at least
   one check failed; the full report was already written (human screen or
   `--json` document) and stderr names `doctor found issues` (#5102). A
