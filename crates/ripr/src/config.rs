@@ -32,7 +32,7 @@ pub(crate) mod verification_contract;
 // always-compiled Python authorities), so the module compiles unconditionally.
 // Only the detection surface below stays feature-gated: without
 // `lang-typescript` no-config detection must never select the adapter.
-mod typescript;
+use ripr_contract::config::typescript;
 
 pub(crate) use diagnostic::ConfigDiagnostic;
 #[cfg(test)]

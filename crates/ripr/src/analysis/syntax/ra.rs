@@ -41,8 +41,8 @@ use super::{
     name_scope::path_segments, name_scope_for_items, parse_clean_source_file, rust_nesting_refusal,
 };
 use crate::analysis::rust_index::{
-    FunctionFact, LazyDecls, OracleFact, ProbeShapeFact, ProbeShapeKind, SourceText, TestFact,
-    classify_assertion_with, err_return_guard_oracles, extract_call_facts,
+    FunctionFact, LazyDecls, OracleFact, ProbeShapeFact, ProbeShapeKind, SharedFactSlice,
+    SourceText, TestFact, classify_assertion_with, err_return_guard_oracles, extract_call_facts,
     extract_identifier_tokens, extract_line_scanned_oracles, extract_literal_facts,
     extract_return_facts, guarded_result_match_scan_with_shadow_authority,
     is_inline_unwrap_err_error_assertion, is_unwrap_err_bound_error_assertion,
@@ -137,6 +137,114 @@ pub(crate) struct RustEmbedResourceDirective {
     pub(crate) expression: String,
     pub(crate) literal_path: Option<PathBuf>,
     pub(crate) macro_kind: RustEmbedResourceMacro,
+    /// An unqualified spelling that a visible `macro_rules!`, macro 2.0
+    /// definition or `use` import may shadow; it is not the std embed macro.
+    pub(crate) shadowed: bool,
+}
+
+/// Which std embed macros some definition or import in a scope may shadow.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct EmbedMacroShadows {
+    include_str: bool,
+    include_bytes: bool,
+}
+
+impl EmbedMacroShadows {
+    pub(crate) fn merge(&mut self, other: Self) {
+        self.include_str |= other.include_str;
+        self.include_bytes |= other.include_bytes;
+    }
+
+    fn shadows(self, kind: RustEmbedResourceMacro) -> bool {
+        match kind {
+            RustEmbedResourceMacro::IncludeStr => self.include_str,
+            RustEmbedResourceMacro::IncludeBytes => self.include_bytes,
+        }
+    }
+
+    fn mark(&mut self, name: &str) {
+        match name {
+            "include_str" => self.include_str = true,
+            "include_bytes" => self.include_bytes = true,
+            _ => {}
+        }
+    }
+}
+
+/// Shadowing definitions and imports of `include_str` / `include_bytes` in one
+/// file: `macro_rules!`, `macro` (2.0) items and `use` imports or renames that
+/// bind the name (std/core/alloc re-imports bind the same macro and are
+/// ignored). A file that does not parse fails closed: a name it mentions at
+/// all counts as shadowed.
+pub(crate) fn rust_embed_macro_shadows(text: &str) -> EmbedMacroShadows {
+    let mut shadows = EmbedMacroShadows::default();
+    let Some(parse) = parse_clean_source_file(text) else {
+        for name in ["include_str", "include_bytes"] {
+            if text.contains(name) {
+                shadows.mark(name);
+            }
+        }
+        return shadows;
+    };
+    for node in parse.tree().syntax().descendants() {
+        if let Some(definition) = ast::MacroRules::cast(node.clone()) {
+            if let Some(name) = definition.name() {
+                shadows.mark(name.text().trim_start_matches("r#"));
+            }
+        } else if let Some(definition) = ast::MacroDef::cast(node.clone()) {
+            if let Some(name) = definition.name() {
+                shadows.mark(name.text().trim_start_matches("r#"));
+            }
+        } else if let Some(tree) = ast::UseTree::cast(node)
+            && tree.use_tree_list().is_none()
+            && tree.star_token().is_none()
+            && !use_tree_is_std_rooted(&tree)
+            && let Some(bound) = use_tree_bound_name(&tree)
+        {
+            shadows.mark(&bound);
+        }
+    }
+    shadows
+}
+
+/// The name a leaf `use` tree binds: its `as` rename, or the last path
+/// segment. `as _` binds nothing.
+fn use_tree_bound_name(tree: &ast::UseTree) -> Option<String> {
+    if let Some(rename) = tree.rename() {
+        return rename
+            .name()
+            .map(|name| name.text().trim_start_matches("r#").to_string());
+    }
+    let segment = tree.path()?.segment()?;
+    Some(
+        segment
+            .name_ref()?
+            .text()
+            .trim_start_matches("r#")
+            .to_string(),
+    )
+}
+
+/// Whether the full path of a leaf `use` tree starts at `std`, `core` or
+/// `alloc`, joining the paths of enclosing nested trees.
+fn use_tree_is_std_rooted(tree: &ast::UseTree) -> bool {
+    let root = tree
+        .syntax()
+        .ancestors()
+        .filter_map(ast::UseTree::cast)
+        .filter_map(|ancestor| ancestor.path())
+        .last()
+        .and_then(|path| {
+            let mut first = path.clone();
+            while let Some(qualifier) = first.qualifier() {
+                first = qualifier;
+            }
+            first
+                .segment()?
+                .name_ref()
+                .map(|name| name.text().to_string())
+        });
+    matches!(root.as_deref(), Some("std" | "core" | "alloc"))
 }
 
 /// Extract `include_str!` / `include_bytes!` macro nodes from parser-backed
@@ -145,11 +253,14 @@ pub(crate) fn rust_embed_resource_directives(
     _path: &Path,
     text: &str,
     max_directives: usize,
+    scope_shadows: EmbedMacroShadows,
 ) -> Result<Vec<RustEmbedResourceDirective>, String> {
     let Some(parse) = parse_clean_source_file(text) else {
         return Err("rust_embed_resource_parent_parse_unavailable".to_string());
     };
     let line_index = LineIndex::new(text);
+    let mut shadows = rust_embed_macro_shadows(text);
+    shadows.merge(scope_shadows);
     let mut directives = Vec::new();
     for macro_call in parse
         .tree()
@@ -168,15 +279,14 @@ pub(crate) fn rust_embed_resource_directives(
         let Some(macro_kind) = embed_resource_macro_callee(&path) else {
             continue;
         };
-        if embed_resource_call_may_be_shadowed(text, &path) {
-            continue;
-        }
+        let shadowed = path.segments().count() == 1 && shadows.shadows(macro_kind);
         let expression = slice_text(text, call_start, call_range.end());
         directives.push(RustEmbedResourceDirective {
             line: line_index.line(call_start),
             literal_path: include_literal_path_from_macro_call(&macro_call),
             macro_kind,
             expression,
+            shadowed,
         });
         if directives.len() > max_directives {
             break;
@@ -594,27 +704,6 @@ fn embed_resource_macro_callee(path: &ast::Path) -> Option<RustEmbedResourceMacr
     }
 }
 
-/// Unqualified `include_str!` / `include_bytes!` spellings can be shadowed by
-/// a same-file `macro_rules!` definition; skip those calls rather than emit
-/// a false exact resource edge.
-///
-/// Known limit: only a `macro_rules!` defined in the same file is seen. A
-/// shadowing macro imported through `#[macro_use]`, `use`, or defined in another
-/// module is not detected, so such a call can still yield an exact edge.
-fn embed_resource_call_may_be_shadowed(source: &str, path: &ast::Path) -> bool {
-    if path.segments().count() > 1 {
-        return false;
-    }
-    let Some(kind) = embed_resource_macro_callee(path) else {
-        return false;
-    };
-    let name = match kind {
-        RustEmbedResourceMacro::IncludeStr => "include_str",
-        RustEmbedResourceMacro::IncludeBytes => "include_bytes",
-    };
-    source.contains(&format!("macro_rules! {name}"))
-}
-
 pub(super) fn include_literal_path_from_macro_call(call: &ast::MacroCall) -> Option<PathBuf> {
     let tree = call.token_tree()?;
     let tokens: Vec<_> = tree
@@ -810,21 +899,29 @@ fn summarize_file_with_collectors(
         file_literals.extend(literals.clone());
         file_probe_shapes.extend(probe_shapes);
 
+        let shared_calls = SharedFactSlice::from_vec(calls);
+        let shared_literals = SharedFactSlice::from_vec(literals);
+        let shared_attrs = SharedFactSlice::from_vec(attrs.clone());
+        let shared_nested_fn_names = SharedFactSlice::from_vec(nested_fn_names.clone());
+        let shared_let_bindings = SharedFactSlice::from_vec(let_bindings.clone());
+        let shared_body =
+            SourceText::shared_or_owned(&shared_source, u32::from(fn_start) as usize, &body);
+
         let function_fact = FunctionFact {
             id: parser_symbol_id(path, &function, &name),
             name: name.clone(),
             file: path_buf.clone(),
             start_line,
             end_line,
-            body: SourceText::shared_or_owned(&shared_source, u32::from(fn_start) as usize, &body),
-            calls: calls.clone(),
+            body: shared_body.clone(),
+            calls: shared_calls.clone(),
             returns: returns.clone(),
-            literals: literals.clone(),
+            literals: shared_literals.clone(),
             source_role,
-            attrs: attrs.clone(),
+            attrs: shared_attrs.clone(),
             impl_attrs: collect_impl_attr_syntax(&function),
-            nested_fn_names: nested_fn_names.clone(),
-            let_bindings: let_bindings.clone(),
+            nested_fn_names: shared_nested_fn_names.clone(),
+            let_bindings: shared_let_bindings.clone(),
             item: function_item_fact(&function),
             impl_context: function_impl_context(&function),
         };
@@ -835,12 +932,8 @@ fn summarize_file_with_collectors(
                 file: path_buf.clone(),
                 start_line,
                 end_line,
-                body: SourceText::shared_or_owned(
-                    &shared_source,
-                    u32::from(fn_start) as usize,
-                    &body,
-                ),
-                calls,
+                body: shared_body,
+                calls: shared_calls,
                 assertions: {
                     let mut assertions = extract_parser_oracles(
                         &function,
@@ -852,10 +945,10 @@ fn summarize_file_with_collectors(
                     assertions.extend(arrow_row_oracles_for_fn(&attrs, &function, start_line));
                     assertions
                 },
-                literals,
-                attrs,
-                nested_fn_names,
-                let_bindings,
+                literals: shared_literals,
+                attrs: shared_attrs,
+                nested_fn_names: shared_nested_fn_names,
+                let_bindings: shared_let_bindings,
                 generated: None,
             });
         }
@@ -1423,6 +1516,13 @@ pub(crate) fn has_test_attribute(function: &ast::Fn) -> bool {
         if cfg_predicates::attribute_introduces_only_test(&attr.syntax().text().to_string()) {
             return true;
         }
+        if let Some(path) = attribute_harness_path(&attr)
+            && (names_exact_harness_path(&path, "test")
+                || names_exact_harness_path(&path, "tokio::test")
+                || names_exact_harness_path(&path, "async_std::test"))
+        {
+            return true;
+        }
         let compact = attr
             .syntax()
             .text()
@@ -1430,12 +1530,23 @@ pub(crate) fn has_test_attribute(function: &ast::Fn) -> bool {
             .chars()
             .filter(|ch| !ch.is_whitespace())
             .collect::<String>();
-        compact == "#[test]"
-            || compact.starts_with("#[tokio::test")
-            || compact.starts_with("#[async_std::test")
-            || compact == "#[rstest]"
-            || compact.starts_with("#[rstest(")
+        compact == "#[rstest]" || compact.starts_with("#[rstest(")
     })
+}
+
+fn attribute_harness_path(attr: &ast::Attr) -> Option<String> {
+    attr.path().map(|path| {
+        path.syntax()
+            .text()
+            .to_string()
+            .chars()
+            .filter(|ch| !ch.is_whitespace())
+            .collect::<String>()
+    })
+}
+
+fn names_exact_harness_path(path: &str, harness: &str) -> bool {
+    path.strip_prefix("::").unwrap_or(path) == harness
 }
 
 /// Returns whether a function is nested in a module gated by a test-only cfg.
@@ -3494,10 +3605,10 @@ pub fn fee() -> u64 { 5 }
                 .find(|function| function.name == name)
         };
         let charge = function("charge").ok_or("charge not summarized")?;
-        assert_eq!(charge.attrs, vec!["#[getter]".to_string()]);
+        assert_eq!(charge.attrs.to_vec(), vec!["#[getter]".to_string()]);
         assert_eq!(charge.impl_attrs, vec!["#[pymethods]".to_string()]);
         let fee = function("fee").ok_or("fee not summarized")?;
-        assert_eq!(fee.attrs, vec!["#[pyfunction]".to_string()]);
+        assert_eq!(fee.attrs.to_vec(), vec!["#[pyfunction]".to_string()]);
         assert!(
             fee.impl_attrs.is_empty(),
             "a free function has no impl attributes"
@@ -4245,7 +4356,7 @@ pub fn wrap(value: u64) -> Result<Option<u64>, ()> {
             functions: vec![],
             tests: vec![],
             returns: vec![],
-            literals: vec![],
+            literals: Vec::new(),
             probe_shapes: vec![],
             used_lexical_fallback: false,
             module_declarations: Vec::new(),
@@ -4788,7 +4899,9 @@ mod guard_pipeline_debug_tests {
 
 #[cfg(test)]
 mod embed_resource_directive_tests {
+    use super::EmbedMacroShadows;
     use super::RustEmbedResourceMacro;
+    use super::rust_embed_macro_shadows;
     use super::rust_embed_resource_directives;
     use std::path::Path;
 
@@ -4802,7 +4915,12 @@ fn read() {
     let _ = include_bytes!(concat!(env!("OUT_DIR"), "/x.bin"));
 }
 "#;
-        let directives = rust_embed_resource_directives(Path::new("src/lib.rs"), source, 16)?;
+        let directives = rust_embed_resource_directives(
+            Path::new("src/lib.rs"),
+            source,
+            16,
+            EmbedMacroShadows::default(),
+        )?;
         assert_eq!(directives.len(), 2);
         assert_eq!(
             directives[0].literal_path.as_deref(),
@@ -4817,8 +4935,15 @@ fn read() {
         Ok(())
     }
 
+    fn directives(
+        source: &str,
+        scope: EmbedMacroShadows,
+    ) -> Result<Vec<super::RustEmbedResourceDirective>, String> {
+        rust_embed_resource_directives(Path::new("src/lib.rs"), source, 16, scope)
+    }
+
     #[test]
-    fn shadowed_include_str_macro_is_not_a_resource_directive() -> Result<(), String> {
+    fn same_file_macro_rules_flags_only_the_unqualified_call() -> Result<(), String> {
         let source = r#"
 macro_rules! include_str {
     ($path:literal) => { "fixed" };
@@ -4826,12 +4951,69 @@ macro_rules! include_str {
 const DATA: &str = include_str!("data.json");
 const TRUSTED: &str = std::include_str!("data.json");
 "#;
-        let directives = rust_embed_resource_directives(Path::new("src/lib.rs"), source, 16)?;
-        assert_eq!(directives.len(), 1);
+        let found = directives(source, EmbedMacroShadows::default())?;
+        assert_eq!(found.len(), 2);
+        assert!(found[0].shadowed, "unqualified call is shadowed");
+        assert!(!found[1].shadowed, "std-qualified call is the real macro");
+        Ok(())
+    }
+
+    #[test]
+    fn shadow_scan_sees_definitions_and_imports_in_any_position() {
+        let flags = |source: &str| {
+            let shadows = rust_embed_macro_shadows(source);
+            (
+                shadows.shadows(RustEmbedResourceMacro::IncludeStr),
+                shadows.shadows(RustEmbedResourceMacro::IncludeBytes),
+            )
+        };
+        // Module-scoped macro_rules!, #[macro_use] module, macro 2.0.
         assert_eq!(
-            directives[0].literal_path.as_deref(),
-            Some(Path::new("data.json"))
+            flags("mod m { macro_rules! include_str { () => {}; } }"),
+            (true, false)
         );
+        assert_eq!(
+            flags("#[macro_use] mod macros { macro_rules! include_bytes { () => {}; } }"),
+            (false, true)
+        );
+        assert_eq!(flags("pub macro include_str() {}"), (true, false));
+        // Imports and renames that bind the name, flat or nested.
+        assert_eq!(flags("use crate::macros::include_str;"), (true, false));
+        assert_eq!(
+            flags("use crate::macros::{include_bytes, other};"),
+            (false, true)
+        );
+        assert_eq!(
+            flags("use crate::macros::mine as include_str;"),
+            (true, false)
+        );
+        // Controls: std re-imports, unrelated names, `as _`, mentions in strings and comments.
+        assert_eq!(flags("use std::include_str;"), (false, false));
+        assert_eq!(
+            flags("use std::{include_bytes, include_str};"),
+            (false, false)
+        );
+        assert_eq!(
+            flags("use crate::macros::include_str as _;"),
+            (false, false)
+        );
+        assert_eq!(flags("use crate::macros::include_string;"), (false, false));
+        assert_eq!(
+            flags("// macro_rules! include_str\nconst S: &str = \"macro_rules! include_str\";"),
+            (false, false)
+        );
+    }
+
+    #[test]
+    fn scope_shadows_from_another_file_flag_the_call() -> Result<(), String> {
+        let source = r#"const DATA: &str = include_str!("data.json");"#;
+        assert!(!directives(source, EmbedMacroShadows::default())?[0].shadowed);
+        let other = rust_embed_macro_shadows("macro_rules! include_str { () => {}; }");
+        let flagged = directives(source, other)?;
+        assert!(flagged[0].shadowed);
+        // A shadowed include_bytes does not flag include_str.
+        let bytes_only = rust_embed_macro_shadows("macro_rules! include_bytes { () => {}; }");
+        assert!(!directives(source, bytes_only)?[0].shadowed);
         Ok(())
     }
 }

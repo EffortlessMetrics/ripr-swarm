@@ -4,13 +4,16 @@ use super::RustIndex;
 use super::includes::repository_relative_target;
 use crate::analysis::stable_path_text;
 use crate::analysis::syntax::ra::{
-    RustEmbedResourceDirective, RustEmbedResourceMacro, rust_embed_resource_directives,
+    EmbedMacroShadows, RustEmbedResourceDirective, RustEmbedResourceMacro,
+    rust_embed_macro_shadows, rust_embed_resource_directives,
 };
+use crate::analysis::workspace::package_root;
 use crate::domain::{
     ResourceAccessKindV1, ResourceCompletenessClassV1, ResourceDependencyEdgeV1, ResourceKindV1,
     ResourcePresenceV1, SymbolId,
 };
 use sha2::{Digest, Sha256};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 const MAX_RESOURCE_EDGES: usize = 4096;
@@ -37,6 +40,7 @@ pub(crate) fn collect_resource_dependency_edges(
     let mut facts = ResourceDependencyFacts::default();
     let canonical_root = std::fs::canonicalize(root).ok();
     let mut edge_count = 0usize;
+    let package_shadows = package_embed_macro_shadows(index);
 
     for (parent, file_facts) in &index.files {
         if file_facts.used_lexical_fallback {
@@ -52,20 +56,37 @@ pub(crate) fn collect_resource_dependency_edges(
         if !source.contains("include_str!") && !source.contains("include_bytes!") {
             continue;
         }
-        let directives =
-            match rust_embed_resource_directives(parent, &file_facts.source, MAX_RESOURCE_EDGES) {
-                Ok(directives) => directives,
-                Err(reason_code) => {
-                    facts.limitations.push(limitation(
-                        parent,
-                        0,
-                        "include_str!/include_bytes!",
-                        &reason_code,
-                    ));
-                    continue;
-                }
-            };
+        let scope_shadows = package_shadows
+            .get(&shadow_scope(parent))
+            .copied()
+            .unwrap_or_default();
+        let directives = match rust_embed_resource_directives(
+            parent,
+            &file_facts.source,
+            MAX_RESOURCE_EDGES,
+            scope_shadows,
+        ) {
+            Ok(directives) => directives,
+            Err(reason_code) => {
+                facts.limitations.push(limitation(
+                    parent,
+                    0,
+                    "include_str!/include_bytes!",
+                    &reason_code,
+                ));
+                continue;
+            }
+        };
         for directive in directives {
+            if directive.shadowed {
+                facts.limitations.push(limitation(
+                    parent,
+                    directive.line,
+                    &directive.expression,
+                    "rust_resource_macro_shadowed",
+                ));
+                continue;
+            }
             edge_count += 1;
             if edge_count > MAX_RESOURCE_EDGES {
                 facts.limitations.push(limitation(
@@ -186,6 +207,32 @@ pub(crate) fn collect_resource_dependency_edges(
             .then(left.consumer_line.cmp(&right.consumer_line))
     });
     facts
+}
+
+/// The package a file's macros are visible in. Files outside a conventional
+/// package layout form a scope of their own, so only same-file shadows apply.
+fn shadow_scope(file: &Path) -> String {
+    package_root(file).unwrap_or_else(|| format!("file:{}", stable_path_text(file)))
+}
+
+/// Per-package union of the `include_str` / `include_bytes` shadows defined or
+/// imported anywhere in the package. Module-scoped, `#[macro_use]` and
+/// `use`-imported shadows all reduce to this: it fails closed, so a shadow in
+/// any file of the package flags every unqualified call in that package.
+/// Files the parser could not read still count, by textual mention.
+fn package_embed_macro_shadows(index: &RustIndex) -> BTreeMap<String, EmbedMacroShadows> {
+    let mut scopes: BTreeMap<String, EmbedMacroShadows> = BTreeMap::new();
+    for (path, file_facts) in &index.files {
+        let source = file_facts.source.as_ref();
+        if !source.contains("include_str") && !source.contains("include_bytes") {
+            continue;
+        }
+        scopes
+            .entry(shadow_scope(path))
+            .or_default()
+            .merge(rust_embed_macro_shadows(source));
+    }
+    scopes
 }
 
 /// Attach producer-owned resource dependency facts to a finished parse tree.
@@ -321,6 +368,116 @@ mod tests {
         index.finalize()?;
         let _ = root;
         Ok(index)
+    }
+
+    fn shadow_fixture(
+        sources: &[(&str, &str)],
+    ) -> Result<(ResourceDependencyFacts, PathBuf), Box<dyn std::error::Error>> {
+        let root = std::env::temp_dir().join(format!(
+            "ripr-resource-shadow-{}-{}",
+            std::process::id(),
+            NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir_all(root.join("crates/a/fixtures"))?;
+        fs::create_dir_all(root.join("crates/b/fixtures"))?;
+        fs::write(root.join("crates/a/fixtures/data.json"), "{}\n")?;
+        fs::write(root.join("crates/b/fixtures/data.json"), "{}\n")?;
+        let index = manual_index(&root, sources)?;
+        Ok((collect_resource_dependency_edges(&root, &index), root))
+    }
+
+    const EMBED: &str = "const D: &str = include_str!(\"../fixtures/data.json\");\n";
+
+    #[test]
+    fn cross_file_macro_rules_shadow_produces_no_exact_edge()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = std::env::temp_dir().join(format!(
+            "ripr-resource-deps-macro-shadow-{}-{}",
+            std::process::id(),
+            NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir_all(root.join("fixtures"))?;
+        fs::create_dir_all(root.join("src"))?;
+        fs::write(root.join("fixtures/data.json"), "{}\n")?;
+        let macros = "macro_rules! include_str {\n    ($path:literal) => { \"fixed\" };\n}\n";
+        fs::write(root.join("src/macros.rs"), macros)?;
+        let lib = "const DATA: &str = include_str!(\"../fixtures/data.json\");\n";
+        fs::write(root.join("src/lib.rs"), lib)?;
+        let sources = [("src/macros.rs", macros), ("src/lib.rs", lib)];
+        let index = manual_index(&root, &sources)?;
+        let facts = collect_resource_dependency_edges(&root, &index);
+        assert!(
+            facts.edges.is_empty(),
+            "unqualified include_str! shadowed crate-wide must not yield an exact edge: {:?}",
+            facts.edges
+        );
+        fs::remove_dir_all(&root)?;
+        Ok(())
+    }
+
+    #[test]
+    fn cross_file_macro_shadow_in_the_package_withholds_the_exact_edge()
+    -> Result<(), Box<dyn std::error::Error>> {
+        // The consumer and the shadowing macro live in different files of
+        // one package; the old same-file check missed this.
+        let (facts, root) = shadow_fixture(&[
+            ("crates/a/src/lib.rs", EMBED),
+            (
+                "crates/a/src/macros.rs",
+                "macro_rules! include_str { ($p:literal) => { \"fixed\" }; }\n",
+            ),
+        ])?;
+        assert!(facts.edges.is_empty(), "{:?}", facts.edges);
+        assert!(
+            facts
+                .limitations
+                .iter()
+                .any(|l| l.reason_code == "rust_resource_macro_shadowed"
+                    && l.consumer_file == Path::new("crates/a/src/lib.rs")),
+            "{:?}",
+            facts.limitations
+        );
+        let _ = fs::remove_dir_all(root);
+        Ok(())
+    }
+
+    #[test]
+    fn use_imported_shadow_withholds_the_exact_edge() -> Result<(), Box<dyn std::error::Error>> {
+        let (facts, root) = shadow_fixture(&[
+            (
+                "crates/a/src/lib.rs",
+                "use crate::macros::include_str;\nconst D: &str = include_str!(\"../fixtures/data.json\");\n",
+            ),
+            ("crates/a/src/macros.rs", "pub fn unrelated() {}\n"),
+        ])?;
+        assert!(facts.edges.is_empty(), "{:?}", facts.edges);
+        let _ = fs::remove_dir_all(root);
+        Ok(())
+    }
+
+    #[test]
+    fn shadow_in_another_package_and_other_macro_name_leave_the_exact_edge()
+    -> Result<(), Box<dyn std::error::Error>> {
+        // Controls: a shadow of include_str in crate b does not touch crate
+        // a, and a shadow of include_bytes does not touch an include_str call.
+        let (facts, root) = shadow_fixture(&[
+            ("crates/a/src/lib.rs", EMBED),
+            (
+                "crates/a/src/bytes.rs",
+                "macro_rules! include_bytes { () => {}; }\n",
+            ),
+            (
+                "crates/b/src/macros.rs",
+                "macro_rules! include_str { () => {}; }\n",
+            ),
+        ])?;
+        assert_eq!(facts.edges.len(), 1, "{:?}", facts);
+        assert_eq!(
+            facts.edges[0].consumer_file,
+            PathBuf::from("crates/a/src/lib.rs")
+        );
+        let _ = fs::remove_dir_all(root);
+        Ok(())
     }
 
     #[test]

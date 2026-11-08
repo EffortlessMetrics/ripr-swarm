@@ -4629,14 +4629,14 @@ fn producer_rejects_same_file_production_helper_as_test_target() -> Result<(), S
         start_line: 10,
         end_line: 12,
         body: "fn discounted_total_helper() {}".into(),
-        calls: Vec::new(),
+        calls: crate::analysis::facts::SharedFactSlice::empty(),
         returns: Vec::new(),
-        literals: Vec::new(),
+        literals: crate::analysis::facts::SharedFactSlice::empty(),
         source_role: FunctionSourceRole::Production,
-        attrs: Vec::new(),
+        attrs: crate::analysis::facts::SharedFactSlice::empty(),
         impl_attrs: Vec::new(),
-        nested_fn_names: Vec::new(),
-        let_bindings: Vec::new(),
+        nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+        let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
         item: Default::default(),
         impl_context: Default::default(),
     };
@@ -4646,12 +4646,12 @@ fn producer_rejects_same_file_production_helper_as_test_target() -> Result<(), S
         start_line: 10,
         end_line: 12,
         body: function.body.clone(),
-        calls: Vec::new(),
+        calls: crate::analysis::facts::SharedFactSlice::empty(),
         assertions: Vec::new(),
-        literals: Vec::new(),
-        attrs: Vec::new(),
-        nested_fn_names: Vec::new(),
-        let_bindings: Vec::new(),
+        literals: crate::analysis::facts::SharedFactSlice::empty(),
+        attrs: crate::analysis::facts::SharedFactSlice::empty(),
+        nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+        let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
         generated: None,
     };
     let mut index = RustIndex::default();
@@ -11396,6 +11396,7 @@ enum FlowSinkKind {
 
 struct MissingDiscriminatorFact {
     flow_sink: Option<FlowSinkFact>,
+drafted_boundary: None
 }
 
 fn activation_evidence(flow_sinks: &[FlowSinkFact]) -> Option<MissingDiscriminatorFact> {
@@ -11405,6 +11406,7 @@ fn activation_evidence(flow_sinks: &[FlowSinkFact]) -> Option<MissingDiscriminat
 fn missing_boundary_discriminator(flow_sinks: &[FlowSinkFact]) -> Option<MissingDiscriminatorFact> {
     Some(MissingDiscriminatorFact {
         flow_sink: first_visible_flow_sink(flow_sinks).cloned(),
+    drafted_boundary: None
     })
 }
 
@@ -13068,12 +13070,12 @@ fn assertion_targets_seam_returns_false_for_empty_token_list() {
         start_line: 1,
         end_line: 5,
         body: "assert_eq!(1, 1);".into(),
-        calls: Vec::new(),
+        calls: crate::analysis::facts::SharedFactSlice::empty(),
         assertions: Vec::new(),
-        literals: Vec::new(),
-        attrs: Vec::new(),
-        nested_fn_names: Vec::new(),
-        let_bindings: Vec::new(),
+        literals: crate::analysis::facts::SharedFactSlice::empty(),
+        attrs: crate::analysis::facts::SharedFactSlice::empty(),
+        nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+        let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
         generated: None,
     };
     assert!(!assertion_targets_seam(&test, &[]));
@@ -13986,6 +13988,125 @@ fn exact_error_pin_is_not_published_as_an_oracle_on_the_ok_value_seam() -> Resul
     Ok(())
 }
 
+/// #12836: on an `error_variant` seam, an exact error-variant pin that names a
+/// sibling variant is not a discriminator for this seam. The classify stage
+/// already grades it weak (`kind-match false`); the related-test record must
+/// not publish the same assertion at strong, so both views agree. The seam the
+/// pin does name keeps its strong credit.
+#[test]
+fn sibling_variant_pin_reads_weak_in_the_stage_and_the_related_test_record() -> Result<(), String> {
+    let prod = "#[derive(Debug, PartialEq)]\npub enum Fault {\n    Zero,\n    One,\n}\n\
+         pub fn classify(n: u8) -> Result<u8, Fault> {\n    \
+         if n == 0 { return Err(Fault::Zero); }\n    \
+         if n == 1 { return Err(Fault::One); }\n    Ok(n)\n}\n\
+         #[cfg(test)]\nmod tests {\n    use super::*;\n    \
+         #[test] fn zero_is_fault_zero() { assert_eq!(classify(0).unwrap_err(), Fault::Zero); }\n}\n";
+    let files: Vec<(PathBuf, &str)> = vec![(PathBuf::from("src/lib.rs"), prod)];
+    let index = index_from_files(&files)?;
+    let seams = inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &index);
+    let evidence = |expression: &str| -> Result<TestGripEvidence, String> {
+        let seam = seams
+            .iter()
+            .find(|s| s.kind() == SeamKind::ErrorVariant && s.expression() == expression)
+            .ok_or_else(|| format!("error_variant seam {expression} present"))?;
+        Ok(evidence_for_seam(seam, &index))
+    };
+
+    let one = evidence("Err(Fault::One)")?;
+    let [grip] = one.related_tests.as_slice() else {
+        return Err(format!(
+            "one related test expected: {:?}",
+            one.related_tests
+        ));
+    };
+    assert_eq!(grip.oracle_kind, OracleKind::ExactErrorVariant);
+    assert_eq!(
+        grip.oracle_strength,
+        OracleStrength::Weak,
+        "a sibling-variant pin must not read strong on this seam"
+    );
+    assert_eq!(
+        one.discriminate.state,
+        StageState::Weak,
+        "stage and record agree: {}",
+        one.discriminate.summary
+    );
+
+    let zero = evidence("Err(Fault::Zero)")?;
+    assert_eq!(
+        zero.related_tests[0].oracle_strength,
+        OracleStrength::Strong,
+        "the pin still credits the variant it names"
+    );
+    assert_eq!(zero.discriminate.state, StageState::Yes);
+    Ok(())
+}
+
+/// #12897: a guarded `Result` match that names a sibling variant is the same
+/// shape as the exact pin above, so the related-test record grades it weak as
+/// the classify stage does, and the seam it does name keeps its grade.
+#[test]
+fn sibling_variant_guarded_match_reads_weak_in_the_stage_and_the_related_test_record()
+-> Result<(), String> {
+    let prod = "#[derive(Debug, PartialEq)]\npub enum Fault {\n    Zero,\n    One,\n}\n\
+         pub fn classify(n: u8) -> Result<u8, Fault> {\n    \
+         if n == 0 { return Err(Fault::Zero); }\n    \
+         if n == 1 { return Err(Fault::One); }\n    Ok(n)\n}\n\
+         #[cfg(test)]\nmod tests {\n    use super::*;\n    \
+         #[test] fn zero_is_fault_zero() {\n        \
+         match classify(0) { Err(Fault::Zero) => {} other => panic!(\"unexpected {other:?}\") }\n    }\n}\n";
+    let files: Vec<(PathBuf, &str)> = vec![(PathBuf::from("src/lib.rs"), prod)];
+    let index = index_from_files(&files)?;
+    let seams = inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &index);
+    let evidence = |expression: &str| -> Result<TestGripEvidence, String> {
+        let seam = seams
+            .iter()
+            .find(|s| s.kind() == SeamKind::ErrorVariant && s.expression() == expression)
+            .ok_or_else(|| format!("error_variant seam {expression} present"))?;
+        Ok(evidence_for_seam(seam, &index))
+    };
+
+    let zero = evidence("Err(Fault::Zero)")?;
+    let [zero_grip] = zero.related_tests.as_slice() else {
+        return Err(format!(
+            "one related test expected: {:?}",
+            zero.related_tests
+        ));
+    };
+    assert_eq!(
+        zero_grip.oracle_kind,
+        OracleKind::GuardedResultMatch,
+        "fixture shape: the test must extract a guarded Result match"
+    );
+    assert_eq!(
+        zero_grip.oracle_strength,
+        OracleStrength::Strong,
+        "the match still credits the variant it names"
+    );
+    assert_eq!(zero.discriminate.state, StageState::Yes);
+
+    let one = evidence("Err(Fault::One)")?;
+    let [grip] = one.related_tests.as_slice() else {
+        return Err(format!(
+            "one related test expected: {:?}",
+            one.related_tests
+        ));
+    };
+    assert_eq!(grip.oracle_kind, OracleKind::GuardedResultMatch);
+    assert_eq!(
+        grip.oracle_strength,
+        OracleStrength::Weak,
+        "a sibling-variant guarded match must not read strong on this seam"
+    );
+    assert_eq!(
+        one.discriminate.state,
+        StageState::Weak,
+        "stage and record agree: {}",
+        one.discriminate.summary
+    );
+    Ok(())
+}
+
 /// #12733 / #12734: the skipped error-variant pin must read the same in every
 /// view of the `Ok(n)` seam. The classify stage's discriminate evidence agrees
 /// with the related-test record (no oracle credited), and the record says the
@@ -14260,14 +14381,14 @@ fn closure_boundary_operand_route_ignores_comment_only_closure_pattern() {
             start_line: 1,
             end_line: 5,
             body: "pub fn score(raw_amount: i32, threshold: i32) -> bool {\n    // values.iter().any(|amount| amount >= threshold)\n    let amount = raw_amount + 1;\n    amount >= threshold\n}".into(),
-            calls: Vec::new(),
+            calls: crate::analysis::facts::SharedFactSlice::empty(),
             returns: Vec::new(),
-            literals: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
             source_role: FunctionSourceRole::Production,
-            attrs: Vec::new(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
             impl_attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             item: Default::default(),
             impl_context: Default::default(),
         };
@@ -15315,14 +15436,14 @@ fn same_file_test_helper_call_counts_as_owner_call_evidence() {
                 start_line: 1,
                 end_line: 5,
                 body: "pub fn discounted_total(amount: i32, threshold: i32) -> i32 { if amount >= threshold { amount - 10 } else { amount } }".into(),
-                calls: Vec::new(),
+                calls: crate::analysis::facts::SharedFactSlice::empty(),
                 returns: Vec::new(),
-                literals: Vec::new(),
+                literals: crate::analysis::facts::SharedFactSlice::empty(),
                 source_role: FunctionSourceRole::Production,
-                attrs: Vec::new(),
+                attrs: crate::analysis::facts::SharedFactSlice::empty(),
                 impl_attrs: Vec::new(),
-                nested_fn_names: Vec::new(),
-                let_bindings: Vec::new(),
+                nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+                let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
                 item: Default::default(),
                 impl_context: Default::default(),
             }, FunctionSummary {
@@ -15336,14 +15457,14 @@ fn same_file_test_helper_call_counts_as_owner_call_evidence() {
                     line: 11,
                     name: "discounted_total".to_string(),
                     text: "discounted_total(100, 100)".to_string().into(),
-                }],
+                }].into(),
                 returns: Vec::new(),
-                literals: Vec::new(),
+                literals: crate::analysis::facts::SharedFactSlice::empty(),
                 source_role: FunctionSourceRole::Production,
-                attrs: Vec::new(),
+                attrs: crate::analysis::facts::SharedFactSlice::empty(),
                 impl_attrs: Vec::new(),
-                nested_fn_names: Vec::new(),
-                let_bindings: Vec::new(),
+                nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+                let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
                 item: Default::default(),
                 impl_context: Default::default(),
             }],
@@ -15357,7 +15478,7 @@ fn same_file_test_helper_call_counts_as_owner_call_evidence() {
                     line: 21,
                     name: "case_at_threshold".to_string(),
                     text: "case_at_threshold()".to_string().into(),
-                }],
+                }].into(),
                 assertions: vec![OracleFact {
                     line: 21,
                     kind: OracleKind::ExactValue,
@@ -15366,10 +15487,10 @@ fn same_file_test_helper_call_counts_as_owner_call_evidence() {
                     observed_tokens: Vec::new(),
                     ok_value_observed: None,
                 }],
-                literals: Vec::new(),
-                attrs: Vec::new(),
-                nested_fn_names: Vec::new(),
-                let_bindings: Vec::new(),
+                literals: crate::analysis::facts::SharedFactSlice::empty(),
+                attrs: crate::analysis::facts::SharedFactSlice::empty(),
+                nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+                let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
                 generated: None,
             }],
             ..Default::default()
@@ -22406,6 +22527,7 @@ fn inline_unwrap_err_equality_discriminates_an_error_variant_seam() -> Result<()
         let prod = format!(
             "#[derive(Debug, PartialEq)]\npub enum Fault {{ Odd, Bad }}\n\
              pub fn parse(text: &str) -> Result<u8, Fault> {{\n    if text.len() % 2 != 0 {{\n        return Err(Fault::Odd);\n    }}\n    Ok(1)\n}}\n\
+             fn id<T>(v: T) -> T {{ v }}\n\
              #[cfg(test)]\nmod tests {{\n    use super::*;\n    {test}\n}}\n"
         );
         let files: Vec<(PathBuf, &str)> = vec![(PathBuf::from("src/lib.rs"), prod.as_str())];
@@ -22483,6 +22605,36 @@ fn inline_unwrap_err_equality_discriminates_an_error_variant_seam() -> Result<()
             spaced.0,
             StageState::Yes,
             "an Err constructor spelled with spacing or a comment is still the test's own error: {spelled}"
+        );
+    }
+    for wrapper in [
+        "assert_eq!(parse(\"1\").or(Some(Err(Fault::Odd))).unwrap_err(), Fault::Odd);",
+        "assert_eq!(Result::or(parse(\"1\"), id(Err(Fault::Odd))).unwrap_err(), Fault::Odd);",
+        "assert_eq!(Err(Fault::Odd).unwrap_err(), Fault::Odd);",
+        "assert_eq!(Some(Err(Fault::Odd)).unwrap().unwrap_err(), Fault::Odd);",
+        "assert_eq!(std::mem::replace(&mut parse(\"1\"), Err(Fault::Odd)), Err(Fault::Odd));",
+    ] {
+        let wrapped = read(&format!("#[test] fn odd() {{ {wrapper} }}"))?;
+        assert_ne!(
+            wrapped.0,
+            StageState::Yes,
+            "a test-written Err wrapper must not discriminate the seam (#12474): {wrapper}"
+        );
+    }
+    // Positive controls for the allowlist (#12474): a direct `Err(..)` compare or
+    // match against the owner's own result still discriminates, including when a
+    // call wraps the whole assertion rather than the `Err(..)`.
+    for direct in [
+        "assert_eq!(parse(\"1\"), Err(Fault::Odd));",
+        "assert_eq!(Err(Fault::Odd), parse(\"1\"));",
+        "assert!(matches!(parse(\"1\"), Err(Fault::Odd)));",
+        "[1].iter().for_each(|_| assert_eq!(parse(\"1\"), Err(Fault::Odd)));",
+    ] {
+        let direct_pin = read(&format!("#[test] fn odd() {{ {direct} }}"))?;
+        assert_eq!(
+            direct_pin.0,
+            StageState::Yes,
+            "a direct Err(..) compare keeps its credit: {direct}"
         );
     }
     let grouped =

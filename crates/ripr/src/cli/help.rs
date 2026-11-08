@@ -60,6 +60,7 @@ const REGISTERED_COMMAND_PATHS: &[&str] = &[
     "cache status",
     "calibrate cargo-mutants",
     "check",
+    "completions",
     "config validate",
     "context",
     "continue",
@@ -142,6 +143,7 @@ pub(super) fn help_text_for(command: &str) -> Option<&'static str> {
         "calibrate cargo-mutants" => CALIBRATE_HELP,
         "capabilities" => CAPABILITIES_HELP,
         "check" => CHECK_HELP,
+        "completions" => COMPLETIONS_HELP,
         "config validate" => CONFIG_HELP,
         "context" => CONTEXT_HELP,
         "continue" => CONTINUE_HELP,
@@ -510,6 +512,10 @@ pub(super) fn print_context_help() {
 
 pub(super) fn print_capabilities_help() {
     println!("{}", render_command_help(CAPABILITIES_HELP, &[]));
+}
+
+pub(super) fn print_completions_help() {
+    println!("{}", render_command_help(COMPLETIONS_HELP, &[]));
 }
 
 pub(super) fn print_doctor_help() {
@@ -933,7 +939,8 @@ mod tests {
         assert!(CHECK_HELP.contains("percentage or ETA"));
         assert!(CHECK_HELP.contains("processed_<n>_of_<total>"));
         assert!(CHECK_HELP.contains("does not mean analysis is faster"));
-        assert!(CHECK_HELP.contains("json, sarif, github"));
+        assert!(CHECK_HELP.contains("json, json-compact, sarif,"));
+        assert!(CHECK_HELP.contains("github) keep stdout byte-clean"));
         assert!(!CHECK_HELP.contains("json, sarif, markdown"));
         assert!(DIFF_HELP.contains("Usage: ripr diff"));
         assert!(DIFF_HELP.contains("full-repo-limited"));
@@ -1446,6 +1453,7 @@ mod tests {
     const CI_SUMMARY_PARSER_RS: &str = include_str!("commands/ci_summary.rs");
     const REVIEW_COMMENTS_PARSER_RS: &str = include_str!("commands/review_comments.rs");
     const CAPABILITIES_PARSER_RS: &str = include_str!("commands/capabilities.rs");
+    const COMPLETIONS_PARSER_RS: &str = include_str!("commands/completions.rs");
     const CONTEXT_PARSER_RS: &str = include_str!("commands/context.rs");
     const CONFIG_PARSER_RS: &str = include_str!("commands/config.rs");
     const DOCTOR_PARSER_RS: &str = include_str!("commands/doctor.rs");
@@ -1581,6 +1589,7 @@ mod tests {
             &["parse_calibrate_cargo_mutants_options"],
         ),
         ("capabilities", CAPABILITIES_PARSER_RS, &["capabilities"]),
+        ("completions", COMPLETIONS_PARSER_RS, &["completions"]),
         ("check", CHECK_PARSER_RS, &["check_inner"]),
         (
             "config validate",

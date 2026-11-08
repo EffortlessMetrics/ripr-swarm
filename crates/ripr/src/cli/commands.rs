@@ -165,6 +165,10 @@ pub(super) use reports::reports;
 mod capabilities;
 pub(super) use capabilities::capabilities;
 
+#[path = "commands/completions.rs"]
+mod completions;
+pub(super) use completions::completions;
+
 #[path = "commands/doctor.rs"]
 mod doctor;
 pub(super) use doctor::doctor;
@@ -1021,6 +1025,9 @@ fn read_calibration_text(path: &Path, kind: SnapshotCaptureKind) -> Result<Strin
     })
 }
 
+const OUTCOME_BEFORE_REFUSAL: &str = "outcome requires --before <path>; pass the snapshot saved before your edit (capture one with `ripr check --format repo-exposure-json > before.json` before editing, not after)";
+const OUTCOME_AFTER_REFUSAL: &str = "outcome requires --after <path>; after your edit run `ripr check --format repo-exposure-json > after.json`, then pass `--after after.json`";
+
 fn parse_outcome_options(args: &[String]) -> Result<OutcomeOptions, String> {
     let mut before: Option<PathBuf> = None;
     let mut after: Option<PathBuf> = None;
@@ -1051,8 +1058,8 @@ fn parse_outcome_options(args: &[String]) -> Result<OutcomeOptions, String> {
         i += 1;
     }
 
-    let before = before.ok_or_else(|| "outcome requires --before <path>".to_string())?;
-    let after = after.ok_or_else(|| "outcome requires --after <path>".to_string())?;
+    let before = before.ok_or_else(|| OUTCOME_BEFORE_REFUSAL.to_string())?;
+    let after = after.ok_or_else(|| OUTCOME_AFTER_REFUSAL.to_string())?;
     Ok(OutcomeOptions {
         before,
         after,
@@ -2457,9 +2464,7 @@ fn parse_explain_format(value: &str) -> Result<app::ExplainFormat, String> {
             "`ripr explain --format json` is not offered; use `ripr context --at <finding-id>` for the JSON packet, or `--format agent` for compact lines"
                 .to_string(),
         ),
-        other => Err(format!(
-            "unknown explain format `{other}`; expected `human` or `agent`"
-        )),
+        other => Err(unknown_value("explain format", other, &["human", "text", "agent"])),
     }
 }
 
@@ -4997,11 +5002,11 @@ language = "rust"
     fn outcome_requires_before_and_after() {
         assert_eq!(
             parse_outcome_options(&args(&["--after", "after.json"])),
-            Err("outcome requires --before <path>".to_string())
+            Err(OUTCOME_BEFORE_REFUSAL.to_string())
         );
         assert_eq!(
             parse_outcome_options(&args(&["--before", "before.json"])),
-            Err("outcome requires --after <path>".to_string())
+            Err(OUTCOME_AFTER_REFUSAL.to_string())
         );
     }
     #[test]
