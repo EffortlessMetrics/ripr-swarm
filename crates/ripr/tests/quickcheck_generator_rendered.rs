@@ -59,15 +59,21 @@ fn rendered(source: &str, generator: bool) -> Result<(), String> {
         !output.findings.is_empty(),
         "changed subject remains visible"
     );
-    let expected = if generator {
-        ExposureClass::StaticUnknown
+    // A product gap on an `Arbitrary` impl (a foreign trait) may run through
+    // generic code, so it reads `infection_unknown` rather than ruled out;
+    // a plain function or workspace trait still reads `no_static_path`.
+    let allowed: &[ExposureClass] = if generator {
+        &[ExposureClass::StaticUnknown]
     } else {
-        ExposureClass::NoStaticPath
+        &[ExposureClass::NoStaticPath, ExposureClass::InfectionUnknown]
     };
-    assert!(output.findings.iter().all(|f| f.class == expected));
+    assert!(output.findings.iter().all(|f| allowed.contains(&f.class)));
     for format in [OutputFormat::Json, OutputFormat::HumanFull] {
         let text = render_check(&output, &format)?;
-        assert!(text.contains(expected.as_str()), "{text}");
+        assert!(
+            allowed.iter().any(|class| text.contains(class.as_str())),
+            "{text}"
+        );
         assert_eq!(
             text.contains("test-input generator changes test stimulus"),
             generator,
