@@ -270,6 +270,23 @@ fn a_wrapper_that_drops_the_owner_operand_keeps_the_gap() -> Result<(), String> 
 }
 
 #[test]
+fn an_owner_call_in_a_discarded_operand_keeps_the_gap() -> Result<(), String> {
+    assert_gap(&Case {
+        arm: "($a:expr, $b:expr) => {{ std::assert_eq!($a, 4); }};",
+        statement: "check_eq!(gauge(), Widget::new().read());",
+        ..Case::default()
+    })
+}
+
+#[test]
+fn an_owner_call_elsewhere_in_the_test_keeps_the_gap() -> Result<(), String> {
+    assert_gap(&Case {
+        statement: "let _unchecked = Widget::new().read();\n    check_eq!(Other::new().read(), 4);",
+        ..Case::default()
+    })
+}
+
+#[test]
 fn a_cfg_gated_wrapper_keeps_the_gap() -> Result<(), String> {
     assert_gap(&Case {
         gate: "#[cfg(feature = \"never\")]\n",
