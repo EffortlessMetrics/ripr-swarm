@@ -354,8 +354,14 @@ fn init_plan(options: &InitOptions) -> Result<Vec<InitTarget>, String> {
     if let Some(path) = cursor_mcp_path {
         targets.push(plan_mcp_target(path, options.force)?);
     }
+    let agent_languages = init_agents::AgentLanguages::detect(&options.root);
     for (agent, path) in options.agents.iter().zip(agent_paths) {
-        targets.push(init_agents::plan_agent_target(*agent, path, options.force)?);
+        targets.push(init_agents::plan_agent_target(
+            *agent,
+            path,
+            options.force,
+            agent_languages,
+        )?);
     }
     Ok(targets)
 }

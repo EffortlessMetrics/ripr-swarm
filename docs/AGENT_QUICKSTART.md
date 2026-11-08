@@ -19,6 +19,17 @@ ripr init --agents all       # all three
 Add `--dry-run` first to see exactly what would be written. Then commit the file
 so every session sees it.
 
+## Python and TypeScript repos
+
+`--agents` looks at the repo root for `Cargo.toml`, `pyproject.toml` / `setup.py`
+/ `pytest.ini`, and `package.json` / `tsconfig.json`. A Rust repo gets the Rust
+block below. A Python or TypeScript/JavaScript repo gets a variant with the
+test command (`pytest` or `unittest`, `jest` or `vitest`) and assertion advice
+that fit, and no promise of guided `ripr repair`, which covers Rust only; the
+route is `ripr check --format agent`, then a hand-written test. A repo with
+Rust plus another language keeps the Rust block and adds a short note. The
+Cursor rule's `globs` and description follow the detected languages.
+
 ## What `--agents` does to your files
 
 - It writes a short block (about 700 tokens) between `<!-- ripr:agents:begin ... -->`

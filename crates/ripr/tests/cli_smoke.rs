@@ -17255,6 +17255,57 @@ fn init_agents_appends_marked_section_idempotently_and_never_clobbers() -> Resul
     Ok(())
 }
 
+/// #13596: a Python or TypeScript root gets pytest/jest advice and matching
+/// Cursor globs instead of the Rust text; a Rust root keeps the Rust text.
+#[test]
+fn init_agents_writes_language_appropriate_instructions() -> Result<(), String> {
+    let cases: [(&str, &str, &[&str], &[&str]); 3] = [
+        (
+            "pyproject.toml",
+            "[project]\nname = \"x\"\n",
+            &["pytest -k", "(Python, preview)", "**/*.py"],
+            &["cargo test", "assert_eq!", "**/*.rs"],
+        ),
+        (
+            "package.json",
+            "{\"devDependencies\":{\"jest\":\"^29\"}}\n",
+            &["npx jest", "npx vitest", "**/*.ts", "**/*.tsx"],
+            &["cargo test", "assert_eq!", "**/*.rs", "ripr repair <"],
+        ),
+        (
+            "Cargo.toml",
+            "[package]\nname = \"x\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+            &["cargo test", "assert_eq!", "**/*.rs"],
+            &["pytest", "jest", "**/*.py"],
+        ),
+    ];
+    for (marker, text, wanted, banned) in cases {
+        let workspace = unique_temp_workspace("init-agents-language");
+        std::fs::create_dir_all(&workspace).map_err(|e| e.to_string())?;
+        std::fs::write(workspace.join(marker), text).map_err(|e| e.to_string())?;
+        let root = workspace.display().to_string();
+        let out = run_ripr(&["init", "--root", &root, "--agents", "all"]);
+        assert_success(&out);
+        let mut combined = String::new();
+        for file in ["CLAUDE.md", "AGENTS.md", ".cursor/rules/ripr.mdc"] {
+            combined.push_str(
+                &std::fs::read_to_string(workspace.join(file)).map_err(|e| e.to_string())?,
+            );
+        }
+        for needle in wanted {
+            assert!(combined.contains(needle), "{marker}: missing {needle:?}");
+        }
+        for needle in banned {
+            assert!(
+                !combined.contains(needle),
+                "{marker}: unexpected {needle:?}"
+            );
+        }
+        ignore_remove_dir_all(&workspace);
+    }
+    Ok(())
+}
+
 /// #4378: on Windows the init preview mixed a forward-slash argv prefix with the
 /// joined `\ripr.toml` suffix, and doctor mixed `.\`-relative lines with a
 /// verbatim `\\?\` executable. Both surfaces render one slash convention.

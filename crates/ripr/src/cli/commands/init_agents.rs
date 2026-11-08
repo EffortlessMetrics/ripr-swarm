@@ -20,8 +20,6 @@ const BEGIN_PREFIX: &str = "<!-- ripr:agents:begin";
 const BEGIN_LINE: &str = "<!-- ripr:agents:begin (written by `ripr init --agents`; `--force` refreshes this section, keep your own notes outside the markers) -->";
 const END_LINE: &str = "<!-- ripr:agents:end -->";
 
-const CURSOR_FRONTMATTER: &str = "---\ndescription: ripr static test-gap finder; run it after changing Rust behavior\nalwaysApply: false\nglobs: [\"**/*.rs\"]\n---\n";
-
 pub(super) const FOLLOW_UP: &str = "Commit the agent instruction file(s) so every session sees them. Register the MCP server only if your agent prefers tools over the CLI: see docs/AGENT_QUICKSTART.md.";
 
 /// The instruction block. `docs/AGENT_QUICKSTART.md` carries the identical
@@ -68,6 +66,160 @@ Do not read target/ripr/pilot/*.json (2-4 MB) or docs/OUTPUT_SCHEMA.md (1 MB).
 MCP is optional and read-only; the CLI above is cheaper. Setup: ripr init --mcp
 "#;
 
+/// Languages the written instructions cover. A Rust-only (or undetected) root
+/// keeps the Rust text byte for byte; Python and TypeScript/JavaScript get the
+/// verify command and assertion advice that fit them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct AgentLanguages {
+    pub(super) rust: bool,
+    pub(super) python: bool,
+    pub(super) typescript: bool,
+}
+
+impl AgentLanguages {
+    #[cfg(test)]
+    pub(super) const RUST: Self = Self {
+        rust: true,
+        python: false,
+        typescript: false,
+    };
+
+    /// Detect from the file markers `ripr check` uses. Nothing detected means
+    /// Rust, the primary language.
+    pub(super) fn detect(root: &Path) -> Self {
+        use crate::domain::LanguageId;
+        let found = crate::config::language_detection::detect_languages(root);
+        let python = found.contains(&LanguageId::Python);
+        let typescript =
+            found.contains(&LanguageId::TypeScript) || found.contains(&LanguageId::JavaScript);
+        let rust = found.contains(&LanguageId::Rust) || !(python || typescript);
+        Self {
+            rust,
+            python,
+            typescript,
+        }
+    }
+
+    fn preview_label(self) -> &'static str {
+        match (self.python, self.typescript) {
+            (true, true) => "Python and TypeScript/JavaScript",
+            (true, false) => "Python",
+            _ => "TypeScript/JavaScript",
+        }
+    }
+
+    fn verify_command(self) -> &'static str {
+        match (self.python, self.typescript) {
+            (true, true) => {
+                "your test runner on the new test (Python: `pytest -k <name>` or `python -m unittest <module.Class.test_name>`; TypeScript: `npx jest -t \"<name>\"` or `npx vitest run -t \"<name>\"`)"
+            }
+            (true, false) => {
+                "`pytest -k <your_test_name>` (or `python -m unittest <module.Class.test_name>`)"
+            }
+            _ => "`npx jest -t \"<name>\"` (or `npx vitest run -t \"<name>\"`)",
+        }
+    }
+
+    fn assertion_advice(self) -> &'static str {
+        match (self.python, self.typescript) {
+            (true, true) => {
+                "Python: `assert result == expected` or `self.assertEqual`, not bare\n           `assert result`, `is not None` or `len(x) > 0`. TypeScript: `toBe` / `toEqual` on\n           exact values, not `toBeTruthy()` or `toBeDefined()`."
+            }
+            (true, false) => {
+                "Use `assert result == expected` (or `self.assertEqual`)\n           on exact values, not bare `assert result`, `is not None` or `len(x) > 0`."
+            }
+            _ => {
+                "Use `toBe` / `toEqual` on exact values, not `toBeTruthy()`,\n           `toBeDefined()` or `not.toThrow()` alone."
+            }
+        }
+    }
+
+    /// The instruction text written between the markers.
+    pub(super) fn block(self) -> String {
+        let preview = self.python || self.typescript;
+        if !preview {
+            return AGENT_BLOCK.to_string();
+        }
+        if self.rust {
+            return format!(
+                "{AGENT_BLOCK}\nPython/TypeScript files here are a preview: steps 1, 2 and 5 are the same, but\n`ripr repair` and `ripr agent stub` are Rust only. Write the test by hand next to the\nrelated test with exact values, and verify it with {}.\n",
+                self.verify_command()
+            );
+        }
+        format!(
+            r#"## ripr: static test-gap finder ({label}, preview). Run it after you change behavior.
+ripr reads your diff and says which changed lines no test would notice. It never runs
+tests; "exposed" is static evidence only. It does not edit files. {label} support is a
+preview, so results are advisory.
+
+Before you start: commit the source change (new files need `git add -N PATH`).
+Only edit tests. Never change production code to make a gap go away.
+Keep the same --base and source options for every check below.
+
+Loop (max 3 rounds per gap):
+1. FIND    `ripr check --quiet --format agent` (add `--base <branch>` if no origin/main|master).
+           Read gap, test and next lines. Exit 0 can still mean gaps; 2/3 = stop (read stderr).
+           A `stop=` line about preview evidence is expected; it is not an error.
+2. DETAIL  Follow the printed `ripr explain ...` command as printed, then the `ripr context ...`
+           it names (JSON).
+3. WRITE   One focused test next to the related test. Assert exact changed values: every
+           changed field, branch and boundary (below, equal, above). {advice}
+4. VERIFY  Run {verify}; it must pass.
+           Then run `ripr check --quiet --format agent` again with the same root and base.
+5. DONE    Exit 0 and the header shows `gaps=0` with no `weakly_exposed`. If gaps remain,
+           return to FIND. Report the tests and the static result; this does not establish
+           runtime bug detection.
+
+STOP and report instead of looping when:
+- the same gap remains after 3 exact-assert tests (it may be an equivalent change, e.g. `>` vs
+  `>=` where both branches return the same value); or `ripr check` exits 2 or 3.
+
+`ripr repair` and `ripr agent repair --seam-id` cover Rust only, so do not run them here; the
+manual loop above is the route. Run `ripr agent repair --gap-id <gap> --base <base> --phase before`
+only if `ripr check` prints that exact command.
+
+Do not read target/ripr/pilot/*.json (2-4 MB) or docs/OUTPUT_SCHEMA.md (1 MB).
+MCP is optional and read-only; the CLI above is cheaper. Setup: ripr init --mcp
+"#,
+            label = self.preview_label(),
+            advice = self.assertion_advice(),
+            verify = self.verify_command(),
+        )
+    }
+
+    /// Cursor rule front matter: globs and description follow the languages.
+    fn cursor_frontmatter(self) -> String {
+        let mut globs: Vec<&str> = Vec::new();
+        let mut names: Vec<&str> = Vec::new();
+        if self.rust {
+            globs.push("\"**/*.rs\"");
+            names.push("Rust");
+        }
+        if self.python {
+            globs.push("\"**/*.py\"");
+            names.push("Python");
+        }
+        if self.typescript {
+            globs.extend([
+                "\"**/*.ts\"",
+                "\"**/*.tsx\"",
+                "\"**/*.mts\"",
+                "\"**/*.cts\"",
+                "\"**/*.js\"",
+                "\"**/*.jsx\"",
+                "\"**/*.mjs\"",
+                "\"**/*.cjs\"",
+            ]);
+            names.push("TypeScript");
+        }
+        format!(
+            "---\ndescription: ripr static test-gap finder; run it after changing {} behavior\nalwaysApply: false\nglobs: [{}]\n---\n",
+            names.join("/"),
+            globs.join(", ")
+        )
+    }
+}
+
 /// File each agent reads, relative to the init root.
 pub(super) fn instruction_file(agent: InitAgent) -> &'static str {
     match agent {
@@ -112,8 +264,8 @@ pub(super) fn parse_agents(value: &str, agents: &mut Vec<InitAgent>) -> Result<(
     Ok(())
 }
 
-fn marked_section() -> String {
-    format!("{BEGIN_LINE}\n{AGENT_BLOCK}{END_LINE}\n")
+fn marked_section(languages: AgentLanguages) -> String {
+    format!("{BEGIN_LINE}\n{}{END_LINE}\n", languages.block())
 }
 
 /// Byte range of an existing marked section, `None` when there is none.
@@ -157,13 +309,14 @@ pub(super) fn plan_agent_target(
     agent: InitAgent,
     path: PathBuf,
     force: bool,
+    languages: AgentLanguages,
 ) -> Result<InitTarget, String> {
     let shown = output::path::human_path(&path);
-    let section = marked_section();
+    let section = marked_section(languages);
     if !path_is_occupied(&path)? {
         let mut body = String::new();
         if agent == InitAgent::Cursor {
-            body.push_str(CURSOR_FRONTMATTER);
+            body.push_str(&languages.cursor_frontmatter());
         }
         body.push_str(&section);
         return Ok(InitTarget {
@@ -252,7 +405,7 @@ mod tests {
     }
 
     fn plan(agent: InitAgent, path: &Path, force: bool) -> Result<InitTarget, String> {
-        plan_agent_target(agent, path.to_path_buf(), force)
+        plan_agent_target(agent, path.to_path_buf(), force, AgentLanguages::RUST)
     }
 
     /// Plan, then apply the way `apply_init_plan` writes an update.
@@ -386,7 +539,7 @@ mod tests {
         assert_eq!(forced.action, InitAction::Update);
         assert_eq!(
             forced.body,
-            format!("before\n{}after\n", marked_section()),
+            format!("before\n{}after\n", marked_section(AgentLanguages::RUST)),
             "force must replace exactly the marked section and nothing else"
         );
         Ok(())
@@ -401,7 +554,132 @@ mod tests {
         let planned = plan(InitAgent::Claude, &path, true)?;
         assert_eq!(planned.action, InitAction::Update);
         assert!(planned.body.starts_with(&text), "user prose must be kept");
-        assert!(planned.body.ends_with(&marked_section()));
+        assert!(
+            planned
+                .body
+                .ends_with(&marked_section(AgentLanguages::RUST))
+        );
+        Ok(())
+    }
+
+    const PYTHON: AgentLanguages = AgentLanguages {
+        rust: false,
+        python: true,
+        typescript: false,
+    };
+    const TYPESCRIPT: AgentLanguages = AgentLanguages {
+        rust: false,
+        python: false,
+        typescript: true,
+    };
+
+    #[test]
+    fn rust_root_keeps_the_rust_text_and_globs() {
+        assert_eq!(AgentLanguages::RUST.block(), AGENT_BLOCK);
+        let front = AgentLanguages::RUST.cursor_frontmatter();
+        assert!(front.contains("changing Rust behavior"), "{front}");
+        assert!(front.contains("globs: [\"**/*.rs\"]"), "{front}");
+    }
+
+    #[test]
+    fn python_block_names_pytest_and_does_not_promise_guided_repair() {
+        let block = PYTHON.block();
+        for needle in [
+            "(Python, preview)",
+            "pytest -k",
+            "unittest",
+            "assert result == expected",
+        ] {
+            assert!(block.contains(needle), "python block lost {needle:?}");
+        }
+        for banned in [
+            "cargo",
+            "assert_eq!",
+            "/target/",
+            "Optional guided repair",
+            "(Rust",
+        ] {
+            assert!(!block.contains(banned), "python block mentions {banned:?}");
+        }
+        assert!(block.contains("cover Rust only, so do not run them"));
+        assert!(block.contains("ripr agent repair --gap-id"));
+        let front = PYTHON.cursor_frontmatter();
+        assert!(front.contains("changing Python behavior"), "{front}");
+        assert!(front.contains("globs: [\"**/*.py\"]"), "{front}");
+    }
+
+    #[test]
+    fn typescript_block_names_jest_and_vitest_and_globs_cover_ts_and_js() {
+        let block = TYPESCRIPT.block();
+        for needle in [
+            "TypeScript/JavaScript, preview",
+            "npx jest",
+            "npx vitest",
+            "toBe",
+        ] {
+            assert!(block.contains(needle), "typescript block lost {needle:?}");
+        }
+        for banned in [
+            "cargo",
+            "assert_eq!",
+            "/target/",
+            "Optional guided repair",
+            "pytest",
+        ] {
+            assert!(
+                !block.contains(banned),
+                "typescript block mentions {banned:?}"
+            );
+        }
+        let front = TYPESCRIPT.cursor_frontmatter();
+        for glob in ["**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx"] {
+            assert!(front.contains(glob), "{front}");
+        }
+        assert!(!front.contains("**/*.rs"), "{front}");
+    }
+
+    #[test]
+    fn mixed_rust_and_python_keeps_the_rust_block_and_adds_the_preview_note() {
+        let mixed = AgentLanguages {
+            rust: true,
+            python: true,
+            typescript: false,
+        };
+        let block = mixed.block();
+        assert!(block.starts_with(AGENT_BLOCK));
+        assert!(block.contains("`ripr repair` and `ripr agent stub` are Rust only"));
+        assert!(block.contains("pytest -k"));
+        let front = mixed.cursor_frontmatter();
+        assert!(front.contains("Rust/Python behavior"), "{front}");
+        assert!(front.contains("\"**/*.rs\", \"**/*.py\""), "{front}");
+    }
+
+    #[test]
+    fn detect_reads_the_root_markers() -> Result<(), String> {
+        let root = temp_root("detect")?;
+        assert_eq!(AgentLanguages::detect(&root), AgentLanguages::RUST);
+        std::fs::write(root.join("pyproject.toml"), "[project]\nname = \"x\"\n")
+            .map_err(|err| err.to_string())?;
+        assert_eq!(AgentLanguages::detect(&root), PYTHON);
+        std::fs::write(root.join("package.json"), "{}").map_err(|err| err.to_string())?;
+        assert_eq!(
+            AgentLanguages::detect(&root),
+            AgentLanguages {
+                rust: false,
+                python: true,
+                typescript: true
+            }
+        );
+        std::fs::write(root.join("Cargo.toml"), "[package]\nname = \"x\"\n")
+            .map_err(|err| err.to_string())?;
+        assert!(AgentLanguages::detect(&root).rust);
+        let planned = plan_agent_target(
+            InitAgent::Cursor,
+            root.join(CURSOR_RULE_FILE),
+            false,
+            AgentLanguages::detect(&root),
+        )?;
+        assert!(planned.body.contains("**/*.py"), "{}", planned.body);
         Ok(())
     }
 
