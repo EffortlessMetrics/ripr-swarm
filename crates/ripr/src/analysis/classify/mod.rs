@@ -189,8 +189,8 @@ pub(in crate::analysis) use reach::take_external_docs_parse_count;
 pub(in crate::analysis) use reach::{
     UnseenReachNames, includes_external_docs_with, invokes_opaque_macro, is_proximity_only,
     is_trait_impl_method, names_identifier_outside_fn_definition, owner_may_be_reached_unseen,
-    owner_runs_through_language_dispatch, owner_unreferenced_in_workspace, reach_evidence,
-    relation_establishes_reach,
+    owner_runs_through_language_dispatch, owner_tested_through_production_caller,
+    owner_unreferenced_in_workspace, reach_evidence, relation_establishes_reach,
 };
 pub(in crate::analysis) use receiver_unestablished::{
     mark_receiver_unestablished, withhold_receiver_unestablished_gap,

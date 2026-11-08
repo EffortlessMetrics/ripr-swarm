@@ -2225,6 +2225,7 @@ mod tests {
             base: Some("HEAD~1".to_string()),
             diff: None,
             seam_id: None,
+            changed_paths: None,
         };
 
         let python_only = RiprConfig {
