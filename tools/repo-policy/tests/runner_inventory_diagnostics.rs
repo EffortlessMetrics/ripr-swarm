@@ -192,7 +192,10 @@ fn unauthorized_after_transient_failure_stops_at_that_attempt() -> TestResult {
         "",
         "",
         false,
-        &[("ERR_1", "HTTP 502: transient"), ("ERR_2", "HTTP 401: rejected")],
+        &[
+            ("ERR_1", "HTTP 502: transient"),
+            ("ERR_2", "HTTP 401: rejected"),
+        ],
     )?;
     if attempts != 2 || !output.contains("runner_query_http=401\n") {
         return Err(format!("expected terminal second-attempt 401: {attempts}, {output}").into());
