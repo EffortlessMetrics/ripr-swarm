@@ -516,7 +516,7 @@ fn zero_seam_refusal_leads_with_the_unscoped_note() -> Result<(), String> {
             && repair.contains("could not tell which lines you changed"),
         "{repair}"
     );
-    assert!(!repair.contains("works from Rust gaps only"), "{repair}");
+    assert!(!repair.contains("seam flow is Rust only"), "{repair}");
     Ok(())
 }
 
@@ -526,7 +526,7 @@ fn an_explicit_base_reaches_the_non_rust_guidance() -> Result<(), String> {
     let repo = Repo::python_only(Form::NoResolvableBase)?;
     let explicit = repo.ripr(&["repair", "--root", ".", "--base", "HEAD~1"])?;
     assert!(
-        explicit.contains("is Python") && explicit.contains("works from Rust gaps only"),
+        explicit.contains("is Python") && explicit.contains("seam flow is Rust only"),
         "the named base finds the Python change:\n{explicit}"
     );
     Ok(())
