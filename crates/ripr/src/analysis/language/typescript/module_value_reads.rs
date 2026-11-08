@@ -91,6 +91,7 @@ const MUTATING_METHODS: &[&str] = &[
     "assign",
     "defineProperty",
     "defineProperties",
+    "deleteProperty",
     "setPrototypeOf",
 ];
 
@@ -110,22 +111,40 @@ pub(super) fn reads_unshadowed_value(masked_text: &str, scope: &str, name: &str)
         && mentions(scope, name).all(|mention| mention != Mention::Other)
 }
 
-/// `true` when the file never assigns, updates or mutates `name` through any
-/// of the shapes this module can see.
-pub(super) fn never_mutated_in_module(source: &str, name: &str) -> bool {
+/// `true` when nothing in the file can write `name` through a shape this
+/// module can see, and every mention of `name` outside its own declaration is
+/// an allowlisted read. `masked` is `source` with comments and literals
+/// masked. Fail-closed: an alias (`const a = NAME`), a value passed to another
+/// function, a re-export (`export { NAME }`) or any other non-read mention
+/// anywhere in the module disables the binding, since the value may then be
+/// mutated through a path this text scan cannot follow.
+pub(super) fn never_mutated_in_module(source: &str, masked: &str, name: &str) -> bool {
+    let only_reads = masked.match_indices(name).all(|(idx, _)| {
+        classify(masked, idx, name) != Mention::Other || is_own_declaration(masked, idx, name)
+    });
+    only_reads && no_write_shape(source, name)
+}
+
+fn is_own_declaration(text: &str, idx: usize, name: &str) -> bool {
+    bounded(text, idx, name)
+        && text[..idx]
+            .trim_end()
+            .strip_suffix("const")
+            .is_some_and(|rest| !rest.ends_with(is_javascript_identifier_char))
+}
+
+fn no_write_shape(source: &str, name: &str) -> bool {
     source.match_indices(name).all(|(idx, _)| {
         if !bounded(source, idx, name) {
             return true;
         }
         let before = source[..idx].trim_end();
+        let after = &source[idx + name.len()..];
         if before.ends_with('.') && !before.ends_with("...") {
+            // `other.NAME` is another binding.
             return true;
         }
-        // The binding's own declaration (`const NAME = ...`) is not a write.
-        if before
-            .strip_suffix("const")
-            .is_some_and(|rest| !rest.ends_with(is_javascript_identifier_char))
-        {
+        if is_own_declaration(source, idx, name) {
             return true;
         }
         let before_op = before.ends_with("++")
@@ -133,14 +152,48 @@ pub(super) fn never_mutated_in_module(source: &str, name: &str) -> bool {
             || before
                 .strip_suffix("delete")
                 .is_some_and(|rest| !rest.ends_with(is_javascript_identifier_char));
-        // `Object.assign(NAME, ...)`-style mutation of the binding's value.
+        // `Object.assign(NAME, ...)`, `Reflect.set(NAME, ...)`-style mutation.
         let mutating_argument = before.strip_suffix('(').is_some_and(|callee| {
             MUTATING_METHODS
                 .iter()
                 .any(|method| callee.ends_with(method))
         });
-        !(before_op || mutating_argument || chain_ends_in_write(&source[idx + name.len()..]))
+        !(before_op
+            || mutating_argument
+            || chain_ends_in_write(after)
+            || chain_is_destructuring_target(after))
     })
+}
+
+/// `[NAME.a] = ...`, `({ k: NAME.a } = ...)`, `for (NAME.a of ...)`: the
+/// access chain sits inside a pattern that is assigned to.
+fn chain_is_destructuring_target(after: &str) -> bool {
+    let (rest, _) = walk_chain(after);
+    let trimmed = rest.trim_start();
+    if trimmed.starts_with("of ") || trimmed.starts_with("in ") {
+        return true;
+    }
+    let mut depth = 0usize;
+    for (offset, ch) in rest.char_indices() {
+        match ch {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => {
+                if depth == 0 {
+                    if ch == ')' {
+                        return false;
+                    }
+                    let tail = rest[offset + 1..].trim_start();
+                    return tail
+                        .strip_prefix('=')
+                        .is_some_and(|r| !(r.starts_with('=') || r.starts_with('>')));
+                }
+                depth -= 1;
+            }
+            ';' if depth == 0 => return false,
+            _ => {}
+        }
+    }
+    false
 }
 
 fn mentions<'t>(text: &'t str, name: &'t str) -> impl Iterator<Item = Mention> + 't {
@@ -218,12 +271,53 @@ fn is_computed_key(raw_before: &str, after: &str) -> bool {
     let Some(open) = raw_before.strip_suffix('[') else {
         return false;
     };
-    after.trim_start().starts_with(']')
-        && open
-            .chars()
-            .next_back()
-            .is_some_and(|ch| is_javascript_identifier_char(ch) || ch == ')' || ch == ']')
+    if !after.trim_start().starts_with(']') {
+        return false;
+    }
+    let Some(last) = open.chars().next_back() else {
+        return false;
+    };
+    if last == ')' || last == ']' {
+        return true;
+    }
+    if !is_javascript_identifier_char(last) {
+        return false;
+    }
+    // `const[NAME] = arr`, `for (const[NAME] of arr)`: a keyword before `[`
+    // opens a destructuring pattern, not an index access.
+    let word_start = open
+        .char_indices()
+        .rev()
+        .take_while(|(_, ch)| is_javascript_identifier_char(*ch))
+        .last()
+        .map_or(open.len(), |(i, _)| i);
+    !NON_INDEX_KEYWORDS.contains(&&open[word_start..])
 }
+
+/// Words that may directly precede `[` without making it an index access.
+const NON_INDEX_KEYWORDS: &[&str] = &[
+    "const",
+    "let",
+    "var",
+    "of",
+    "in",
+    "return",
+    "typeof",
+    "void",
+    "new",
+    "delete",
+    "case",
+    "else",
+    "do",
+    "yield",
+    "await",
+    "throw",
+    "instanceof",
+    "extends",
+    "export",
+    "default",
+    "async",
+];
 
 /// Walk a `.member` / `?.member` / `[index]` chain starting at `after`.
 /// Returns the text following the chain and the member names that were called.
@@ -280,10 +374,59 @@ fn walk_chain(after: &str) -> (&str, Vec<(&str, bool)>) {
 }
 
 fn chain_calls_mutating_or_unknown(after: &str) -> bool {
-    let (_, members) = walk_chain(after);
-    members.iter().any(|(ident, called)| {
+    let (rest, members) = walk_chain(after);
+    if members.iter().any(|(ident, called)| {
         *called && !READ_METHODS.contains(ident) && !READ_ARGUMENT_METHODS.contains(ident)
+    }) {
+        return true;
+    }
+    // A call whose result is then navigated (`NAME.get(k).prop = 1`,
+    // `NAME.find(f)[0].x = 1`) may hand back an inner reference; only methods
+    // that return a primitive or a fresh match array may be navigated.
+    members.last().is_some_and(|(ident, called)| {
+        *called && !FRESH_RESULT_METHODS.contains(ident) && call_result_is_navigated(rest)
     })
+}
+
+/// Methods whose result is a primitive or a fresh array, never an inner
+/// reference of the receiver.
+const FRESH_RESULT_METHODS: &[&str] = &[
+    "test",
+    "exec",
+    "includes",
+    "indexOf",
+    "lastIndexOf",
+    "has",
+    "join",
+    "toString",
+    "startsWith",
+    "endsWith",
+];
+
+/// `rest` starts at the `(` of the last call in a chain; true when the text
+/// after the matching `)` continues with `.`, `?.`, `[` or an assignment.
+fn call_result_is_navigated(rest: &str) -> bool {
+    let Some(inner) = rest.trim_start().strip_prefix('(') else {
+        return false;
+    };
+    let mut depth = 1usize;
+    for (offset, ch) in inner.char_indices() {
+        match ch {
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth == 0 {
+                    let tail = inner[offset + 1..].trim_start();
+                    return tail.starts_with('.')
+                        || tail.starts_with("?.")
+                        || tail.starts_with('[')
+                        || chain_ends_in_write(tail);
+                }
+            }
+            _ => {}
+        }
+    }
+    true
 }
 
 /// Whether the access chain after a name is assigned, updated or deleted.

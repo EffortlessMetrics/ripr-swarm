@@ -920,8 +920,19 @@ Candidates come from the first non-empty tier:
    A parameter, local, destructured or callback binding of the name, an
    alias, a spread, a shorthand property, a returned or passed-along value,
    an assignment, update or mutating method call (`X.lastIndex = 0`,
-   `X.push(`) in the reader, `let`/`var`, or any assignment, update, `delete`
-   or mutating-call shape of the name anywhere in the module leaves no edge.
+   `X.push(`) in the reader, `let`/`var`, or any assignment, update, `delete`,
+   destructuring-assignment target, `Reflect.set`/`Reflect.deleteProperty`/
+   `Reflect.defineProperty`/`Object.defineProperty`/`Object.assign` first
+   argument, or a navigated call result (`X.get(k).p = 1`) of the name
+   anywhere in the module leaves no edge. Module-wide, every mention of the
+   name outside its own declaration must itself be an allowlisted read, so a
+   module-level alias, a value passed to another function and `export { X }`
+   also leave no edge, and an `export const` value is never followed because
+   another module may mutate it. Limits: an exported value, a value mutated
+   through an alias held by another module, and a keyword-prefixed index
+   (`const[X]`, `for (const[X] of ...)`, which is a pattern, not a read) are
+   not read edges; the scan is textual, so a mutation hidden behind dynamic
+   property names or `eval` is not seen.
    The relation is the same `ModuleEntryCall` and keeps all its limits: no
    direct test of the value, never `exposed`, and a test that never calls a
    reading function stays `no_static_path`. Reach through a factory const's

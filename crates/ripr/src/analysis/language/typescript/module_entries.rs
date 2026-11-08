@@ -113,12 +113,38 @@ pub(crate) fn module_entries_by_owner<'a>(
     let mut nodes: BTreeMap<&'a str, ModuleNode<'a>> = BTreeMap::new();
     let mut exports: BTreeMap<String, BTreeSet<TypeScriptModuleEntry>> = BTreeMap::new();
     let mut values: BTreeSet<&'a str> = BTreeSet::new();
+    let mut exported_values: BTreeSet<&'a str> = BTreeSet::new();
     for statement in statements {
-        collect_statement(statement, source, &mut nodes, &mut exports, &mut values);
+        collect_statement(
+            statement,
+            source,
+            &mut nodes,
+            &mut exports,
+            &mut values,
+            &mut exported_values,
+        );
     }
     // A value is followable only while nothing in the file writes it; a name
     // that is also a function/factory node keeps its bare-call edges only.
-    values.retain(|name| !nodes.contains_key(name) && never_mutated_in_module(source, name));
+    // Only values some node's code actually mentions are scanned (the mutation
+    // scan is whole-module), and an exported value is never followed: another
+    // module may import and mutate it.
+    let mentioned: std::collections::HashSet<&str> = nodes
+        .values()
+        .flat_map(|node| node.call_texts.iter().chain(node.returned_texts.iter()))
+        .flat_map(|text| {
+            text.calls
+                .split(|ch: char| !is_javascript_identifier_char(ch))
+                .filter(|token| !token.is_empty())
+        })
+        .collect();
+    values.retain(|name| {
+        !nodes.contains_key(name) && !exported_values.contains(name) && mentioned.contains(name)
+    });
+    if !values.is_empty() {
+        let masked_source = ts_mask_literals_and_comments(source);
+        values.retain(|name| never_mutated_in_module(source, &masked_source, name));
+    }
     let names: std::collections::HashSet<&'a str> = nodes.keys().copied().collect();
     let callees: BTreeMap<&'a str, BTreeSet<&'a str>> = nodes
         .iter()
@@ -150,6 +176,7 @@ fn collect_statement<'a>(
     nodes: &mut BTreeMap<&'a str, ModuleNode<'a>>,
     exports: &mut BTreeMap<String, BTreeSet<TypeScriptModuleEntry>>,
     values: &mut BTreeSet<&'a str>,
+    exported_values: &mut BTreeSet<&'a str>,
 ) {
     match statement {
         Statement::FunctionDeclaration(func) => {
@@ -171,6 +198,13 @@ fn collect_statement<'a>(
                 Some(Declaration::VariableDeclaration(decl)) => {
                     for name in collect_variables(decl, source, nodes, values) {
                         record_export(exports, name, name);
+                    }
+                    // An exported value may be imported and mutated by another
+                    // module, which this file cannot see: never followed.
+                    for declarator in &decl.declarations {
+                        if let Some(name) = binding_identifier_name(&declarator.id) {
+                            exported_values.insert(name);
+                        }
                     }
                 }
                 Some(_) => {}
@@ -453,6 +487,8 @@ fn node_callees<'a>(
     // on large modules (#10087).
     let mut callees = BTreeSet::new();
     for text in texts {
+        // Masked at most once per function text, not once per value.
+        let mut masked: Option<String> = None;
         let mut checked: std::collections::HashSet<&str> = std::collections::HashSet::new();
         for token in text
             .calls
@@ -465,7 +501,7 @@ fn node_callees<'a>(
                 // mis-masked declaration can only remove an edge.
                 if checked.insert(value)
                     && reads_unshadowed_value(
-                        &ts_mask_literals_and_comments(&text.calls),
+                        masked.get_or_insert_with(|| ts_mask_literals_and_comments(&text.calls)),
                         text.scope,
                         value,
                     )

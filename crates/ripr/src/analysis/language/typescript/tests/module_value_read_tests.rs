@@ -210,3 +210,66 @@ fn shadowed_reader_stays_no_static_path() -> Result<(), String> {
     assert_eq!(finding.class, ExposureClass::NoStaticPath);
     Ok(())
 }
+
+#[test]
+fn destructuring_pattern_is_not_an_index_access() {
+    for (label, head) in [
+        ("const", "const[SLASH_RE] = arr;"),
+        ("let", "let[SLASH_RE] = arr;"),
+        ("for-of", "for (const[SLASH_RE] of arr) {}"),
+    ] {
+        let source = format!(
+            "const SLASH_RE = /x/g;\nconst arr = [/y/];\nexport function f(t: string) {{\n  {head}\n  return SLASH_RE.test(t);\n}}\n"
+        );
+        assert!(entry_names(&source, "SLASH_RE").is_empty(), "{label}");
+    }
+}
+
+#[test]
+fn destructuring_and_reflect_writes_get_no_edge() {
+    for (label, tail) in [
+        ("array target", "[TABLE.a] = [2];"),
+        ("object target", "({ k: TABLE.a } = { k: 2 });"),
+        ("for-of target", "for (TABLE.a of [1, 2]) {}"),
+        ("reflect delete", "Reflect.deleteProperty(TABLE, \"a\");"),
+        ("reflect set", "Reflect.set(TABLE, \"a\", 2);"),
+        (
+            "reflect define",
+            "Reflect.defineProperty(TABLE, \"a\", {});",
+        ),
+        ("object define", "Object.defineProperty(TABLE, \"a\", {});"),
+    ] {
+        let source = format!(
+            "const TABLE = {{ a: 1 }};\nexport function f(k: string) {{\n  return TABLE[k];\n}}\nexport function g() {{\n  {tail}\n}}\n"
+        );
+        assert!(entry_names(&source, "TABLE").is_empty(), "{label}");
+    }
+}
+
+#[test]
+fn escaping_aliasing_or_exported_value_gets_no_edge() {
+    let reader = "export function f(k: string) {\n  return TABLE[k];\n}\n";
+    for (label, extra) in [
+        ("module alias", "const alias = TABLE;\nalias.a = 2;\n"),
+        ("passed to unknown", "mutate(TABLE);\n"),
+        ("call chain write", "TABLE.get(\"x\").prop = 1;\n"),
+        ("re-export", "export { TABLE as T };\n"),
+    ] {
+        let source = format!("const TABLE = {{ a: 1 }};\n{reader}{extra}");
+        assert!(entry_names(&source, "TABLE").is_empty(), "{label}");
+    }
+    let exported =
+        "export const TABLE = { a: 1 };\nexport function f(k: string) {\n  return TABLE[k];\n}\n";
+    assert_eq!(entry_names(exported, "TABLE"), Vec::<String>::new());
+}
+
+#[test]
+fn weak_oracle_through_same_module_caller_names_the_caller_not_an_exported_value()
+-> Result<(), String> {
+    let weak = TEST.replace(".toBe('a%2Fb')", ".toBeDefined()");
+    let finding = value_finding("b2-weak", SRC, &weak, "SLASH_RE")?;
+    let step = finding.recommended_next_step.clone().unwrap_or_default();
+    assert!(step.contains("only through a same-module caller"), "{step}");
+    assert!(!step.contains("exported value"), "{step}");
+    Ok(())
+}
