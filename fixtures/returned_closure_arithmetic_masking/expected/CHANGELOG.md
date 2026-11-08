@@ -220,3 +220,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — returned_closure_arithmetic_masking (19)
+
+Reason:
+union-head re-bless after main merge: additive evidence_stages rows (RIPR-SPEC-0423) unioned with main-side bless entries
+
+Command:
+`cargo xtask goldens bless returned_closure_arithmetic_masking --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

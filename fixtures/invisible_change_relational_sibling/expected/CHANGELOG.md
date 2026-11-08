@@ -103,3 +103,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — invisible_change_relational_sibling (9)
+
+Reason:
+union-head re-bless after main merge: additive evidence_stages rows (RIPR-SPEC-0423) unioned with main-side bless entries
+
+Command:
+`cargo xtask goldens bless invisible_change_relational_sibling --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

@@ -500,3 +500,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — python_adversarial_local_assignment_operator_input (40)
+
+Reason:
+union-head re-bless after main merge: additive evidence_stages rows (RIPR-SPEC-0423) unioned with main-side bless entries
+
+Command:
+`cargo xtask goldens bless python_adversarial_local_assignment_operator_input --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
