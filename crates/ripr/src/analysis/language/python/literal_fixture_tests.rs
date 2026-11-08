@@ -455,3 +455,20 @@ fn the_fixture_reads_like_the_inlined_construction_for_other_assertions() -> Res
     }
     Ok(())
 }
+
+#[test]
+fn a_conftest_fixture_built_from_nested_calls_stays_limited_with_non_circular_advice()
+-> Result<(), String> {
+    // The defined-in-conftest shape of #13628: the fixture exists and is
+    // found, but its value is built through another call, so it stays unread.
+    let nested = CONFTEST.replace("    return Account(100)", "    return Account(Money(100))");
+    let finding = with_conftest(&nested)?;
+    assert_fixture_limited(&finding, "nested construction");
+    let advice = StaticLimitKind::UnresolvedPytestFixture.next_step();
+    assert!(
+        !advice.starts_with("Define the fixture"),
+        "the fixture is already defined: {advice}"
+    );
+    assert!(advice.contains("inline"), "{advice}");
+    Ok(())
+}
