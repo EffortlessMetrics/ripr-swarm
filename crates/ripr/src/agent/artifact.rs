@@ -927,6 +927,7 @@ pub(crate) fn evaluate_gap_closure(
             "still reads `{}` in the after artifact{}",
             after_gap.classification,
             still_open_reason(before_gap.missing_discriminator.as_deref(), &after_gap)
+                + &python_assertion_form_hint(&after_gap)
         )));
     }
     Ok(GapClosure {
@@ -936,6 +937,16 @@ pub(crate) fn evaluate_gap_closure(
         file: after_gap.file,
         line: after_gap.line,
     })
+}
+
+/// #13620: a Python gap that stays open may be open only because of the
+/// assertion form. Name the forms the analyzer credits so the cause is not
+/// hidden; the text states the rule, not a diagnosis of the edited test.
+fn python_assertion_form_hint(gap: &CheckFindingsGap) -> String {
+    if !gap.file.ends_with(".py") || gap.missing_discriminator.is_none() {
+        return String::new();
+    }
+    "; if the edited test asserts a bool result, only these forms are credited: `assert f(x) == expected`, `assertEqual(f(x), expected)`, and, when `f` is a bool-returning function called with literal arguments, `assert f(x) is True`/`is False`, `assert f(x)`/`assert not f(x)`, `assertTrue`, `assertFalse` and `assertIs(f(x), True)`. Forms such as `is not None`, `isinstance` and a bare truthy check on a non-bool result are not credited; use `assert f(x) == expected`".to_string()
 }
 
 /// Why an open gap did not close, from what the two artifacts already state
@@ -2663,6 +2674,48 @@ mod tests {
         };
         if !bare.ends_with("still reads `weakly_exposed` in the after artifact") {
             return Err(format!("invented a reason: `{bare}`"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn still_open_python_refusal_names_the_accepted_assertion_forms() -> Result<(), String> {
+        let missing = "total == 50";
+        let python = |classification: &str, missing: Option<&str>| CheckFindingsGap {
+            file: "src/shipping.py".to_string(),
+            ..gap_missing("gap:a", classification, missing)
+        };
+        let before = [python("weakly_exposed", Some(missing))];
+        let Err(error) =
+            evaluate_gap_closure("gap:a", &before, &[python("weakly_exposed", Some(missing))])
+        else {
+            return Err("accepted".to_string());
+        };
+        for fragment in [
+            "assert f(x) == expected",
+            "is True",
+            "assertTrue",
+            "is not None",
+        ] {
+            if !error.contains(fragment) {
+                return Err(format!("`{error}` lacks `{fragment}`"));
+            }
+        }
+        // No discriminator, or a non-Python file: no assertion-form hint.
+        let Err(bare) = evaluate_gap_closure("gap:a", &before, &[python("weakly_exposed", None)])
+        else {
+            return Err("bare accepted".to_string());
+        };
+        let rust_before = [gap_missing("gap:a", "weakly_exposed", Some(missing))];
+        let Err(rust) = evaluate_gap_closure(
+            "gap:a",
+            &rust_before,
+            &[gap_missing("gap:a", "weakly_exposed", Some(missing))],
+        ) else {
+            return Err("rust accepted".to_string());
+        };
+        if bare.contains("assert f(x)") || rust.contains("assert f(x)") {
+            return Err(format!("hint leaked: `{bare}` / `{rust}`"));
         }
         Ok(())
     }

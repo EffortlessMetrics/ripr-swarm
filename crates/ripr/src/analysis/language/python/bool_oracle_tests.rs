@@ -730,3 +730,129 @@ fn given_an_escaped_or_dynamic_namespace_write_then_the_assertion_stays_smoke() 
         assert_eq!(strengths, vec![OracleStrength::Smoke], "{tests}");
     }
 }
+
+// #13620: identity and unittest boolean forms on a bool-returning owner.
+
+const COUNT_OWNER: &str = "def is_adult(age):\n    return age\n";
+
+fn pytest_body(lines: &[&str]) -> String {
+    let body: String = lines.iter().map(|line| format!("    {line}\n")).collect();
+    format!("from src.rules import is_adult\n\n\ndef test_adult():\n{body}")
+}
+
+fn unittest_body(lines: &[&str]) -> String {
+    let body: String = lines
+        .iter()
+        .map(|line| format!("        {line}\n"))
+        .collect();
+    format!(
+        "import unittest\nfrom src.rules import is_adult\n\n\nclass T(unittest.TestCase):\n    def test_adult(self):\n{body}"
+    )
+}
+
+#[test]
+fn given_identity_and_unittest_bool_forms_on_a_bool_owner_then_each_is_an_exact_pin() {
+    for source in [
+        pytest_body(&[
+            "assert is_adult(18) is True",
+            "assert is_adult(17) is False",
+        ]),
+        pytest_body(&["assert True is is_adult(18)"]),
+        unittest_body(&[
+            "self.assertTrue(is_adult(18))",
+            "self.assertFalse(is_adult(17))",
+        ]),
+        unittest_body(&[
+            "self.assertIs(is_adult(18), True)",
+            "self.assertIs(is_adult(17), False)",
+        ]),
+        pytest_body(&["assert not is_adult(17)"]),
+    ] {
+        let strengths = credited_strengths(BOOL_OWNER, &source);
+        assert!(
+            !strengths.is_empty(),
+            "no assertions extracted from {source}"
+        );
+        assert!(
+            strengths
+                .iter()
+                .all(|strength| *strength == OracleStrength::Strong),
+            "{source} -> {strengths:?}"
+        );
+    }
+}
+
+#[test]
+fn given_an_identity_form_pinning_the_boundary_then_the_changed_predicate_is_exposed()
+-> Result<(), String> {
+    let finding = is_adult_finding(&pytest_body(&[
+        "assert is_adult(18) is True",
+        "assert is_adult(17) is False",
+    ]))?;
+    assert_eq!(finding.class, ExposureClass::Exposed);
+    Ok(())
+}
+
+#[test]
+fn negative_control_given_is_not_none_or_other_uncredited_forms_then_nothing_is_credited() {
+    for source in [
+        pytest_body(&["assert is_adult(18) is not None"]),
+        pytest_body(&["assert is_adult(18) is not True"]),
+        pytest_body(&["assert is_adult(18) is not False"]),
+        pytest_body(&["assert isinstance(is_adult(18), bool)"]),
+        pytest_body(&["assert True"]),
+        pytest_body(&["assert is_adult(18) is None"]),
+        pytest_body(&["assert is_adult(18) is 1"]),
+        unittest_body(&["self.assertIsNotNone(is_adult(18))"]),
+        unittest_body(&["self.assertIsNot(is_adult(18), True)"]),
+        unittest_body(&["self.assertIs(is_adult(18), None)"]),
+        unittest_body(&["self.assertTrue(True)"]),
+        unittest_body(&["self.assertTrue(helper.is_adult(18))"]),
+        unittest_body(&["self.assertTrue(is_adult(18) and True)"]),
+        unittest_body(&["check.assertTrue(is_adult(18))"]),
+    ] {
+        let strengths = credited_strengths(BOOL_OWNER, &source);
+        assert!(
+            strengths
+                .iter()
+                .all(|strength| *strength != OracleStrength::Strong),
+            "{source} must not be credited, got {strengths:?}"
+        );
+    }
+}
+
+#[test]
+fn negative_control_given_a_non_bool_owner_then_truthy_and_identity_forms_are_not_credited() {
+    for source in [
+        pytest_body(&["assert is_adult(18)"]),
+        pytest_body(&["assert is_adult(18) is True"]),
+        pytest_body(&["assert not is_adult(0)"]),
+        unittest_body(&["self.assertTrue(is_adult(18))"]),
+        unittest_body(&["self.assertFalse(is_adult(0))"]),
+        unittest_body(&["self.assertIs(is_adult(18), True)"]),
+    ] {
+        let strengths = credited_strengths(COUNT_OWNER, &source);
+        assert!(
+            strengths
+                .iter()
+                .all(|strength| *strength != OracleStrength::Strong),
+            "{source} must not be credited, got {strengths:?}"
+        );
+    }
+}
+
+#[test]
+fn negative_control_given_a_non_literal_argument_then_the_identity_form_is_not_credited() {
+    for source in [
+        pytest_body(&["age = 18", "assert is_adult(age) is True"]),
+        unittest_body(&["age = 18", "self.assertTrue(is_adult(age))"]),
+    ] {
+        let strengths = credited_strengths(BOOL_OWNER, &source);
+        assert!(
+            strengths
+                .iter()
+                .all(|strength| *strength != OracleStrength::Strong),
+            "{source} -> {strengths:?}"
+        );
+    }
+}
