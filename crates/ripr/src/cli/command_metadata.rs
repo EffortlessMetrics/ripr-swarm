@@ -169,7 +169,7 @@ pub(crate) enum RefusalStdout {
     Empty,
     /// Refusal JSON document is on stdout (`agent verify-execute`).
     Document,
-    /// Refusal JSON is on stdout only with `--json` (`agent repair`, `agent card`, `agent stub`, `agent packet`).
+    /// Refusal JSON is on stdout only with `--json` (`agent repair`, `continue`, `agent card`, `agent stub`, `agent packet`).
     JsonOptional,
 }
 

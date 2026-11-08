@@ -89,7 +89,8 @@ Options:
                    verify document) beside the stderr prose and the same
                    exit code. Selection refusals (no current attempt,
                    several attempts, an ended attempt, a blocked baseline,
-                   an unanchored root) keep stdout empty.
+                   an unanchored root) and operational errors before
+                   the verify step keep stdout empty.
   --quiet          Drop the after phase's progress narration and `wrote
                    <path>` lines from stderr. Refusal prose and the result
                    stay. `RIPR_QUIET` does the same.

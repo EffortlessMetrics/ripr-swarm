@@ -77,7 +77,8 @@ document on stdout (`repair_after_refusal`, `repair_after_failure`, or the
 verify document) with the same exit code and stderr prose. Every other
 refusal is unchanged by `--json`: `repair` refusals, `continue` selection
 refusals (no current attempt, several attempts, an ended attempt, a blocked
-baseline, an unanchored root) and usage errors keep the same exit code, prose
+baseline, an unanchored root), operational errors before the verify step
+and usage errors keep the same exit code, prose
 on stderr and empty stdout.
 
 Keep the printed continuation command when changing sessions, or rerun

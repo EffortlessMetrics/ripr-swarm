@@ -4933,7 +4933,7 @@ fn continue_on_unsuccessful_terminal_attempts_refuses_without_completion() -> Re
             "a {state} attempt is never already complete:\n{stderr}"
         );
         // The refusal carries the status-shaped facts on stderr while
-        // stdout stays empty per `EXIT_TYPED_REFUSAL_EMPTY_STDOUT`. The
+        // stdout stays empty (an ended attempt is a selection refusal). The
         // flipped fixture keeps its terminal evidence by design, so the
         // test pins the status markers, not receipt absence: the
         // selector keys on state.
