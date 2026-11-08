@@ -375,13 +375,15 @@ pub(crate) fn check_droid_review_config() -> Result<(), String> {
     let droid_path = ".github/workflows/droid.yml";
     let droid_security_scan_path = ".github/workflows/droid-security-scan.yml";
 
-    if Path::new(droid_path)
-        .try_exists()
-        .map_err(|error| error.to_string())?
-    {
-        violations.push(format!(
-            "{droid_path}: mention-triggered development Actions are retired under #4984/#4842; invoke review in the owning session"
-        ));
+    for retired_path in [droid_path, ".github/workflows/droid.yaml"] {
+        if Path::new(retired_path)
+            .try_exists()
+            .map_err(|error| error.to_string())?
+        {
+            violations.push(format!(
+                "{retired_path}: mention-triggered development Actions are retired under #4984/#4842; invoke review in the owning session"
+            ));
+        }
     }
 
     if let Ok(text) = crate::read_text_lossy(Path::new(droid_security_scan_path)) {

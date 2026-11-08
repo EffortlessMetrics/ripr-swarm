@@ -159,8 +159,13 @@ pub fn violations(path: &str, source: &str) -> Vec<String> {
                 _ => false,
             };
             (!allowed).then(|| {
+                let schedule_hint = if event == "schedule" {
+                    "; retained schedules require their exact declared cadence as `- cron: '<cron>'` or `- cron: \"<cron>\"`"
+                } else {
+                    ""
+                };
                 format!(
-                    "{path}: `{event}` starts Actions outside the retained qualification/maintenance authorities; development checks and review belong in the owning session, not skipped-job wrappers (#4984, #4842)"
+                    "{path}: `{event}` starts Actions outside the retained qualification/maintenance authorities; development checks and review belong in the owning session, not skipped-job wrappers (#4984, #4842){schedule_hint}"
                 )
             })
         })
