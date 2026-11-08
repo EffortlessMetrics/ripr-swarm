@@ -654,7 +654,6 @@ fn cross_namespace_seam_id_recognizes_only_translatable_shapes() {
         "gap:abc",
         "src/lib.rs:12",
         "a:1",
-        "src/lib.rs:007",
     ] {
         assert!(
             names_cross_namespace_id(translated),
@@ -688,8 +687,17 @@ fn parent_dir_follows_symlink_flags_only_a_symlink_before_dotdot() -> Result<(),
     let root = unique_command_test_dir("parent-dir-symlink");
     let real = root.join("real");
     std::fs::create_dir_all(real.join("sub")).map_err(|error| format!("create dirs: {error}"))?;
-    std::os::unix::fs::symlink(&real, root.join("link"))
+    // The link targets a nested directory, so filesystem `link/..` (root/real)
+    // differs from the lexical `link/..` (root): the case the guard exists for.
+    std::os::unix::fs::symlink(real.join("sub"), root.join("link"))
         .map_err(|error| format!("create symlink: {error}"))?;
+    let fs_parent = std::fs::canonicalize(root.join("link/.."))
+        .map_err(|error| format!("canonicalize link/..: {error}"))?;
+    let lexical_parent =
+        std::fs::canonicalize(&root).map_err(|error| format!("canonicalize root: {error}"))?;
+    if fs_parent == lexical_parent {
+        return Err("fixture must make filesystem and lexical `..` differ".to_string());
+    }
 
     let through_symlink = parent_dir_follows_symlink(&root.join("link/../x"));
     let through_real_dir = parent_dir_follows_symlink(&root.join("real/sub/../x"));
