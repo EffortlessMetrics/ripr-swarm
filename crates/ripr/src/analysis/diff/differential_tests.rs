@@ -229,44 +229,18 @@ fn normalise(rows: &mut Vec<Row>) {
 struct Expected {
     removed: Vec<(usize, usize, String)>,
     added: Vec<(usize, String)>,
-    /// Old-side numbers of removals whose `new_side_line` is the known
-    /// zero-count-hunk divergence (#13098). The default run
-    /// does not compare that one coordinate for them; the ignored regression
-    /// test does.
-    gaps: std::collections::BTreeSet<usize>,
 }
 
-/// Expected changed lines for one edit. Git writes the new-side start of a
-/// hunk with no new-side lines (`+S,0`) as the line before the gap, while the
-/// parser takes it as the next-line counter, so `new_side_line` of a removal
-/// in such a hunk is one low (zero when the new file is empty). Tracked as
-/// #13098.
-fn expected_for(rows: &[Row], context: u8) -> Expected {
+/// Expected changed lines for one edit. A removal's `new_side_line` is the
+/// next new-file line at that point, including in a `-U0` hunk whose new side
+/// is empty (`+S,0`, where git writes the line before the gap). That case was
+/// a parser divergence found by this suite (#13098), fixed in #13508 and now
+/// compared like every other coordinate.
+fn expected_for(rows: &[Row]) -> Expected {
     let mut expected = Expected::default();
-    let new_count = rows.iter().filter(|r| r.event != Event::Del).count();
-    // A removal sits in a zero-new-count hunk when its change block has no
-    // additions and there is no context, or the new file is empty.
-    let mut block_start = 0;
-    let mut gap_rows = vec![false; rows.len()];
-    while block_start < rows.len() {
-        if rows[block_start].event == Event::Keep {
-            block_start += 1;
-            continue;
-        }
-        let mut end = block_start;
-        while end < rows.len() && rows[end].event != Event::Keep {
-            end += 1;
-        }
-        let pure = rows[block_start..end].iter().all(|r| r.event == Event::Del);
-        for flag in &mut gap_rows[block_start..end] {
-            *flag = (pure && context == 0) || new_count == 0;
-        }
-        block_start = end;
-    }
     let mut old_line = 0;
     let mut new_line = 0;
-    for (row_index, row) in rows.iter().enumerate() {
-        let gap = gap_rows[row_index];
+    for row in rows {
         match row.event {
             Event::Keep => {
                 old_line += 1;
@@ -274,9 +248,6 @@ fn expected_for(rows: &[Row], context: u8) -> Expected {
             }
             Event::Del => {
                 old_line += 1;
-                if gap {
-                    expected.gaps.insert(old_line);
-                }
                 expected
                     .removed
                     .push((old_line, new_line + 1, row.text.clone()));
@@ -498,10 +469,7 @@ fn realise(scene: &Scene) -> Result<(String, BTreeMap<String, Expected>), String
     repo.commit("old")?;
 
     repo.write("src/edit.rs", &scene.edit.render(&edit_rows, false))?;
-    expected.insert(
-        "src/edit.rs".into(),
-        expected_for(&edit_rows, scene.context),
-    );
+    expected.insert("src/edit.rs".into(), expected_for(&edit_rows));
     if let (Some(plan), Some(rows)) = (&scene.rename, &rename_rows) {
         repo.remove("src/before name.rs")?;
         // A pure rename keeps the old bytes; otherwise apply the edit.
@@ -510,10 +478,7 @@ fn realise(scene: &Scene) -> Result<(String, BTreeMap<String, Expected>), String
             expected.insert("src/after name.rs".into(), Expected::default());
         } else {
             repo.write("src/after name.rs", &plan.render(rows, false))?;
-            expected.insert(
-                "src/after name.rs".into(),
-                expected_for(rows, scene.context),
-            );
+            expected.insert("src/after name.rs".into(), expected_for(rows));
         }
     }
     if scene.delete.is_some() {
@@ -528,7 +493,6 @@ fn realise(scene: &Scene) -> Result<(String, BTreeMap<String, Expected>), String
             "src/fresh.rs".into(),
             Expected {
                 removed: Vec::new(),
-                gaps: Default::default(),
                 added: lines
                     .iter()
                     .enumerate()
@@ -563,12 +527,7 @@ fn parse_with_deadline(input: String) -> Result<Vec<ChangedFile>, String> {
 }
 
 /// Compare the parser's answer for one path with the generating edit.
-fn compare(
-    path: &str,
-    files: &[ChangedFile],
-    expected: &Expected,
-    strict: bool,
-) -> Result<(), String> {
+fn compare(path: &str, files: &[ChangedFile], expected: &Expected) -> Result<(), String> {
     let found: Vec<&ChangedFile> = files
         .iter()
         .filter(|file| file.path == Path::new(path))
@@ -600,7 +559,6 @@ fn compare(
         .map(|line| (line.line, line.new_side_line, line.text.clone()))
         .collect();
     let actual = Expected {
-        gaps: Default::default(),
         removed: removed
             .into_iter()
             .map(|(old, new, text)| (old, new, normalise_text(&text)))
@@ -611,20 +569,10 @@ fn compare(
             .collect(),
     };
     let want = Expected {
-        gaps: Default::default(),
         removed: expected
             .removed
             .iter()
-            .map(|(old, new, text)| {
-                let mut new = *new;
-                if !strict && expected.gaps.contains(old) {
-                    // Known divergence: take the parser's coordinate.
-                    if let Some((_, parsed, _)) = actual.removed.iter().find(|r| r.0 == *old) {
-                        new = *parsed;
-                    }
-                }
-                (*old, new, normalise_text(text))
-            })
+            .map(|(old, new, text)| (*old, *new, normalise_text(text)))
             .collect(),
         added: expected
             .added
@@ -645,7 +593,7 @@ fn normalise_text(text: &str) -> String {
     text.trim_end_matches('\r').to_string()
 }
 
-fn check_scene(scene: &Scene, strict: bool) -> Result<(), String> {
+fn check_scene(scene: &Scene) -> Result<(), String> {
     let (diff, expected) = realise(scene)?;
 
     // Fixture assertions: git produced the sections the scene intended.
@@ -676,8 +624,7 @@ fn check_scene(scene: &Scene, strict: bool) -> Result<(), String> {
 
     let files = parse_with_deadline(diff.clone())?;
     for (path, want) in &expected {
-        compare(path, &files, want, strict)
-            .map_err(|error| format!("{error}\n--- diff ---\n{diff}"))?;
+        compare(path, &files, want).map_err(|error| format!("{error}\n--- diff ---\n{diff}"))?;
     }
     // Deleted and binary files carry no new-side lines.
     for file in &files {
@@ -698,7 +645,7 @@ proptest! {
     /// Real `git diff` output parses to the changed lines the edit made.
     #[test]
     fn git_diff_parses_to_the_generating_edit(scene in scene_strategy()) {
-        if let Err(error) = check_scene(&scene, false) {
+        if let Err(error) = check_scene(&scene) {
             return Err(TestCaseError::fail(error));
         }
     }
@@ -746,7 +693,7 @@ fn deterministic_scene_pins_the_harness() {
         new_file: Some((vec!["n1".into(), "n2".into()], true, false)),
         context: 1,
     };
-    let outcome = check_scene(&scene, false);
+    let outcome = check_scene(&scene);
     assert!(outcome.is_ok(), "{outcome:?}");
 }
 
@@ -931,11 +878,10 @@ fn seed_corpus_is_nonempty_and_parses() {
     assert!(with_lines > 0, "no fixture seed parsed to changed lines");
 }
 
-/// Shrunk repro for the zero-count-hunk divergence (#13098):
-/// `-U0` diff output has `@@ -2 +1,0 @@` for deleting line 2, and the parser
-/// reports the removal's `new_side_line` as 1 instead of 2.
+/// Shrunk repro for the zero-count-hunk divergence found by this suite
+/// (#13098, fixed in #13508): `-U0` diff output has `@@ -2 +1,0 @@` for
+/// deleting line 2, and the removal's `new_side_line` must be 2, not 1.
 #[test]
-#[ignore = "#13098: new_side_line of a removal in a +S,0 hunk is one low"]
 fn zero_count_hunk_removal_new_side_line_regression() {
     let scene = Scene {
         edit: Plan {
@@ -952,6 +898,6 @@ fn zero_count_hunk_removal_new_side_line_regression() {
         new_file: None,
         context: 0,
     };
-    let outcome = check_scene(&scene, true);
+    let outcome = check_scene(&scene);
     assert!(outcome.is_ok(), "{outcome:?}");
 }
