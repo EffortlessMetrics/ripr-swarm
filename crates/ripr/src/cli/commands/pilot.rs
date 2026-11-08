@@ -285,6 +285,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
                 current_change: None,
                 seam_limit: None,
                 repo_exposure_byte_bound: None,
+                inventory_evidence_limitations: &[],
             },
         )?;
         return Ok(());
@@ -511,6 +512,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
         current_change: Some(&current_change),
         seam_limit: summary_limit.as_ref(),
         repo_exposure_byte_bound: repo_exposure_byte_bound.as_ref(),
+        inventory_evidence_limitations: &inventory_evidence_limitations,
     };
 
     let ts_guidance = output::render::detect_ts_full_repo_guidance_pub(&input.root, &classified);
@@ -2163,6 +2165,7 @@ mod tests {
                 current_change: None,
                 seam_limit: None,
                 repo_exposure_byte_bound: None,
+                inventory_evidence_limitations: &[],
             },
         )?;
 

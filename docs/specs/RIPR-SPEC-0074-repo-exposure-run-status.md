@@ -280,6 +280,18 @@ second tuple element via `let (classified, _) = ...`.
     — runs twice with env=1; asserts both runs report
     `seam_limit_applied` (critical cache-honesty test).
 
+**Slice C (pilot summary, #13340)**:
+
+- `failed_inventory_evidence_warm_is_disclosed_in_every_pilot_rendering` in
+  `crates/ripr/src/output/pilot/tests.rs`: unarmed control on a separate root
+  (no field, no `producer_failure`), then `WarmPanicGuard::arm(1)` and `arm(2)`
+  on fresh roots disclose `inventory_evidence_limitations` in the summary JSON,
+  Markdown and terminal.
+- `agent_status_names_declined_files_when_pilot_ranks_and_withholds_nothing`
+  in `crates/ripr/src/app/agent_status.rs`: the declined-files-only stop names
+  a failed evidence pass read from the summary or the repo exposure report, and
+  keeps its plain message otherwise.
+
 **Both slices**:
 
 - `cargo xtask check-output-contracts` green.

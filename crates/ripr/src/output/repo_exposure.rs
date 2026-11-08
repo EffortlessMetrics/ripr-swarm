@@ -91,6 +91,40 @@ impl PythonRepoExposureGuidance {
          result is not a clean Python result (named limitation).";
 }
 
+/// One seam-evidence-pass limitation (#13340) as a JSON object whose braces
+/// sit at `indent` spaces, with no trailing newline. The one writer for the
+/// `limitations[]` entry in `repo-exposure.json` and the pilot summary's
+/// `inventory_evidence_limitations`, so the two cannot drift.
+pub(crate) fn evidence_limitation_json_object(
+    limitation: &AnalysisLimitation,
+    indent: usize,
+) -> String {
+    let outer = " ".repeat(indent);
+    let inner = " ".repeat(indent + 2);
+    let mut out = format!("{outer}{{\n");
+    out.push_str(&format!(
+        "{inner}\"category\": \"{}\",\n",
+        limitation.kind.as_str()
+    ));
+    out.push_str(&format!(
+        "{inner}\"producer_stage\": \"{}\",\n",
+        limitation.producer_stage.as_str()
+    ));
+    out.push_str(&format!("{inner}\"scope\": \"pass_wide\",\n"));
+    if let Some(detail) = limitation.bounded_detail.as_deref() {
+        out.push_str(&format!(
+            "{inner}\"detail\": \"{}\",\n",
+            json_escape(detail)
+        ));
+    }
+    out.push_str(&format!(
+        "{inner}\"repair_route\": \"{}\"\n",
+        json_escape(&limitation.recovery.detail)
+    ));
+    out.push_str(&format!("{outer}}}"));
+    out
+}
+
 /// `run_status` of a repo-exposure run whose seam-evidence pass failed
 /// (#13340): every seam carries the opaque stand-in, so the inventory is not a
 /// complete result. The one pass-wide `producer_failure` entry in
@@ -1145,23 +1179,8 @@ fn write_repo_exposure_json_document<W: io::Write>(
                 writeln!(out, "    ,")?;
             }
             first = false;
-            writeln!(out, "    {{")?;
-            writeln!(out, "      \"category\": \"{}\",", limitation.kind.as_str())?;
-            writeln!(
-                out,
-                "      \"producer_stage\": \"{}\",",
-                limitation.producer_stage.as_str()
-            )?;
-            writeln!(out, "      \"scope\": \"pass_wide\",")?;
-            if let Some(detail) = limitation.bounded_detail.as_deref() {
-                writeln!(out, "      \"detail\": \"{}\",", json_escape(detail))?;
-            }
-            writeln!(
-                out,
-                "      \"repair_route\": \"{}\"",
-                json_escape(&limitation.recovery.detail)
-            )?;
-            writeln!(out, "    }}")?;
+            out.write_all(evidence_limitation_json_object(limitation, 4).as_bytes())?;
+            writeln!(out)?;
         }
         if let Some(bound) = byte_bound {
             if !first {
