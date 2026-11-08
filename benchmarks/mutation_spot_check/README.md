@@ -130,7 +130,10 @@ cargo-mutants mutant is also applied from its own recorded diff to a scratch
 copy of the checkout and run through `ripr check --diff`, using the same
 verdict join as TypeScript and Python (`agreement_method:
 synthetic_diff_verdict`, capped by `--max-mutants`). A recorded diff that no
-longer matches the checkout is the `recorded_diff_mismatch` exclusion. The
+longer matches the checkout is the `recorded_diff_mismatch` exclusion; a
+mutant with no recorded diff (cargo-mutants before 27) is
+`recorded_diff_missing`; a hunk that only deletes lines is
+`deletion_only_mutant`, because it has no new line to read a verdict from. The
 result is additive and never changes a span-join figure: a
 `rust_diff_mode_verdict` section with its own `repos` entries, and
 `recall_of_missed.by_language.rust_diff_mode`, which stays

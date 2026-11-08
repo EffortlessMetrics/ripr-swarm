@@ -16,6 +16,9 @@ use std::collections::BTreeMap;
 
 const RECORDED_DIFF_MISMATCH: &str = "recorded_diff_mismatch";
 const RECORDED_DIFF_INVALID: &str = "recorded_diff_invalid";
+/// A hunk that only removes lines has no new line of its own, so the verdict
+/// would be read from the neighbouring statement; such a mutant is excluded.
+const DELETION_ONLY_MUTANT: &str = "deletion_only_mutant";
 const LINE_ENDINGS_UNSUPPORTED: &str = "source_line_endings_unsupported";
 const NOOP_MUTANT: &str = "noop_mutant";
 /// The outcome of a mutant `outcomes.json` has no result for.
@@ -52,6 +55,7 @@ pub(crate) fn apply_recorded_diff(
     let mut cursor = 0usize;
     let mut in_hunk = false;
     let mut changed: Option<(usize, usize)> = None;
+    let mut added_any = false;
     let mut mark = |line: usize| {
         changed = Some(changed.map_or((line, line), |(lo, hi)| (lo.min(line), hi.max(line))));
     };
@@ -75,6 +79,7 @@ pub(crate) fn apply_recorded_diff(
             continue;
         } else if let Some(added) = line.strip_prefix('+') {
             out.push(added);
+            added_any = true;
             mark(out.len());
         } else if line.starts_with('\\') {
             continue;
@@ -105,6 +110,9 @@ pub(crate) fn apply_recorded_diff(
     } else {
         RECORDED_DIFF_INVALID
     })?;
+    if !added_any {
+        return Err(DELETION_ONLY_MUTANT);
+    }
     out.extend_from_slice(&lines[cursor..]);
     if out == lines {
         return Err(NOOP_MUTANT);
@@ -250,6 +258,16 @@ mod tests {
         assert_eq!(
             apply_recorded_diff("src/a.rs", &SOURCE.replace('\n', "\r\n"), DIFF),
             Err(LINE_ENDINGS_UNSUPPORTED)
+        );
+    }
+
+    #[test]
+    fn a_deletion_only_mutant_is_excluded_not_read_from_the_next_line() {
+        let source = "fn f(a: u8) -> u8 {\n    match a {\n        0 => 1,\n        _ => 2,\n    }\n}\n";
+        let diff = "--- src/a.rs\n+++ delete match arm 0 in f\n@@ -2,3 +2,2 @@\n     match a {\n-        0 => 1,\n         _ => 2,\n";
+        assert_eq!(
+            apply_recorded_diff("src/a.rs", source, diff).map(|_| ()),
+            Err(DELETION_ONLY_MUTANT)
         );
     }
 
