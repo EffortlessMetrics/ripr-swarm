@@ -9391,6 +9391,7 @@ id = "RIPR-SPEC-0108"
 name = "evidence-promotion honesty meta-gate"
 spec = "docs/specs/RIPR-SPEC-0108-evidence-promotion-honesty-meta-gate.md"
 tests = [
+  "crates/ripr/src/analysis/classifier.rs::tests::given_foreign_trait_impl_with_no_related_test_when_classified_then_reach_is_undecided",
   "crates/ripr/tests/operand_whitespace.rs::primitive_type_aliases_do_not_hide_observed_operator_effects",
   "crates/ripr/tests/operand_whitespace.rs::whitespace_does_not_supply_the_missing_shipping_discriminator",
   "crates/ripr/tests/operand_callee_identity.rs::a_genuine_primitive_call_retains_the_operand_pin_downgrade",
