@@ -43,6 +43,13 @@ treated as observing a different sink. Companion unit tests pin the inverse: an
 oracle that observes the changed key's value (`["port"] == 9090`) or the whole dict
 stays `exposed`.
 
+The expected static class per finding (machine-checked against
+`expected/check.json` by `check-fixture-contracts`, #12928):
+
+```expected-classes
+probe:src_conf.py:python_preview:932c667d -> weakly_exposed
+```
+
 ## Must Not
 
 - Credit `exposed` when the only strong oracle observes a sibling dict key (or an

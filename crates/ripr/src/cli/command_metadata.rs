@@ -169,7 +169,7 @@ pub(crate) enum RefusalStdout {
     Empty,
     /// Refusal JSON document is on stdout (`agent verify-execute`).
     Document,
-    /// Refusal JSON is on stdout only with `--json` (`agent repair`, `agent card`, `agent stub`, `agent packet`).
+    /// Refusal JSON is on stdout only with `--json` (`agent repair`, `continue`, `agent card`, `agent stub`, `agent packet`).
     JsonOptional,
 }
 
@@ -223,7 +223,10 @@ fn required_exit_contract(id: &str) -> Option<CommandExitContract> {
         // with prose on stderr and an empty stdout, like the card family.
         // #12417: the unanchored discovery refusal joins both, and status
         // spells it too instead of reporting state for a non-project.
-        "cmd:repair" | "cmd:continue" | "cmd:status" => Some(EXIT_TYPED_REFUSAL_EMPTY_STDOUT),
+        "cmd:repair" | "cmd:status" => Some(EXIT_TYPED_REFUSAL_EMPTY_STDOUT),
+        // #11584: selection-arm refusals leave stdout empty; under `--json`
+        // a typed after-phase refusal or failure prints its document.
+        "cmd:continue" => Some(EXIT_TYPED_REFUSAL_JSON_OPTIONAL_STDOUT),
         "cmd:agent.verify-execute" => Some(EXIT_TYPED_REFUSAL_STDOUT_DOCUMENT),
         "cmd:agent.repair" => Some(EXIT_TYPED_REFUSAL_JSON_OPTIONAL_STDOUT),
         "cmd:receipt.check" => Some(EXIT_RECEIPT_CHECK),
@@ -1897,7 +1900,7 @@ const METADATA: &[CommandMetadata] = &[
             optional: &[],
         },
         state_target: None,
-        accepts_json_flag: JsonFlag::None,
+        accepts_json_flag: JsonFlag::Json,
         writes_json_artifacts: false,
         example: "ripr repair [<item>] --root .",
         next_routes: &["continue", "status"],
@@ -1905,7 +1908,7 @@ const METADATA: &[CommandMetadata] = &[
             "several eligible seams print a bounded selection instead of starting (stderr code several_eligible_seams)",
             "no eligible seam prints the setup or limitation action instead of starting (stderr code no_eligible_seam)",
             "an explicit item that names no seam (item_names_no_seam), several seams (item_names_several_seams), or a seam that is not repair-eligible (seam_not_repair_eligible) starts nothing",
-            "a start held by an uncommitted focused test file (start_refused_uncommitted_target) or with no test route (no_test_route) starts nothing",
+            "a start held by an uncommitted focused test file (start_refused_uncommitted_target), a build directory that is not Git-ignored (build_output_not_ignored) or with no test route (no_test_route) starts nothing",
             "a bare `ripr repair` whose selector needs an explicit item (repair_needs_item) starts nothing",
             "no workspace, package or Git repository anchors the current directory (unanchored_root) starts nothing; run from inside the project or pass `--root <dir>`",
         ],
@@ -1927,7 +1930,7 @@ const METADATA: &[CommandMetadata] = &[
             optional: &[],
         },
         state_target: None,
-        accepts_json_flag: JsonFlag::None,
+        accepts_json_flag: JsonFlag::Json,
         writes_json_artifacts: false,
         example: "ripr continue [--attempt ID] --root .",
         next_routes: &["status", "receipt write"],
@@ -1935,11 +1938,12 @@ const METADATA: &[CommandMetadata] = &[
             "a receipt-ready attempt reports already-complete and exits 0, with or without --attempt (the newest attempt when none is named); one that ended without a receipt refuses with exit 3 (stderr code attempt_ended_without_receipt, or attempt_completion_unconfirmed when no compliant receipt confirms it)",
             "an attempt still awaiting the focused test edit refuses with exit 3 and code awaiting_edit; retry the same attempt after editing",
             "an attempt that spent its after-phase retry budget refuses with exit 3 and code retry_budget_exhausted (terminal): start a fresh `ripr repair`",
+            "an ambiguous or unavailable retained before baseline refuses ordinary continuation with exit 3 and code attempt_baseline_blocked (not_started); status retains the attempt and names the admitted recovery",
             "no current attempt (no_current_attempt) or several (ambiguous_attempts) starts nothing",
             "no workspace, package or Git repository anchors the current directory (unanchored_root) starts nothing; run from inside the project or pass `--root <dir>`",
             "an edit-cage violation exits 2 with code edit_cage_violation (attempt_stale or attempt_incomparable when HEAD moved or files cannot be compared): the attempt is terminal, start a fresh `ripr repair`",
         ],
-        exit: EXIT_TYPED_REFUSAL_EMPTY_STDOUT,
+        exit: EXIT_TYPED_REFUSAL_JSON_OPTIONAL_STDOUT,
         limitations: "records the after snapshot and composes static verification for one attempt; ripr never performs the edit and never runs project tests itself.",
         not_applicable_reason: None,
     },
@@ -3573,7 +3577,7 @@ mod tests {
             ("cmd:agent.packet", EXIT_TYPED_REFUSAL_JSON_OPTIONAL_STDOUT),
             ("cmd:agent.repair", EXIT_TYPED_REFUSAL_JSON_OPTIONAL_STDOUT),
             ("cmd:repair", EXIT_TYPED_REFUSAL_EMPTY_STDOUT),
-            ("cmd:continue", EXIT_TYPED_REFUSAL_EMPTY_STDOUT),
+            ("cmd:continue", EXIT_TYPED_REFUSAL_JSON_OPTIONAL_STDOUT),
             (
                 "cmd:agent.verify-execute",
                 EXIT_TYPED_REFUSAL_STDOUT_DOCUMENT,

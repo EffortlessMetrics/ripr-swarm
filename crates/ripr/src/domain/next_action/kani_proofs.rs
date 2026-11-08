@@ -15,11 +15,11 @@
 //! as its own harness and ran past 12 minutes and 4 GB or failed with an
 //! out-of-memory error.
 
-use super::super::command_spec::{
+use super::*;
+use ripr_contract::domain::command_spec::{
     CancellationPolicy, CommandAuthorityBoundary, CommandCostClass, EnvironmentPolicy,
     ExpectedResultParser, NetworkPolicy, StdinPolicy,
 };
-use super::*;
 
 /// `None`, `Some("a")` or `Some("b")`, selected by a symbolic index.
 fn any_opt_text() -> Option<String> {
@@ -147,6 +147,7 @@ fn base_input(spec: Option<&CommandSpec>) -> NextActionInput<'_> {
         transition_to: Some("to".to_string()),
         restart_route: "restart".to_string(),
         check_case: None,
+        check_repair_route: None,
         doctor_recovery: None,
         pilot_delegation: None,
         alternatives: Vec::new(),

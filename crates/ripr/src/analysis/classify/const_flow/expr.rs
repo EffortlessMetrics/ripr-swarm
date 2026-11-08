@@ -629,6 +629,16 @@ pub(in crate::analysis::classify) struct Reader {
 }
 
 impl Reader {
+    /// Construct a bounded branch reader after its caller has validated the
+    /// admitted operations and names. Unlike helpers, a branch reader may
+    /// contain conditionals; it still cannot contain calls.
+    pub(in crate::analysis::classify) fn from_branch_parts(
+        name: String,
+        params: Vec<(String, Ty)>,
+        body: Expr,
+    ) -> Option<Self> {
+        body.is_closed().then_some(Self { name, params, body })
+    }
     pub(in crate::analysis::classify) fn from_parts(
         name: String,
         params: Vec<(String, Ty)>,

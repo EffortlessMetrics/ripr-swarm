@@ -906,6 +906,8 @@ pub struct FileFacts {
     /// Opaque property blocks from the existing source parse. No expansion or
     /// executable-test authority is inferred from the macro's spelling.
     pub unresolved_property_macros: Vec<UnresolvedPropertyMacroFact>,
+    /// Owner-bound Verus guard facts admitted inside `verus! { .. }` (#10747).
+    pub verus_guard_facts: Vec<crate::analysis::verus::VerusGuardFact>,
     /// Source-role provenance for this file occurrence (#3533): the ordered
     /// edge chain from the compilation unit whose declarations and include
     /// edges composed this file's roles, plus the earliest edge in the chain
@@ -1000,6 +1002,11 @@ pub enum FunctionSourceRole {
     /// Ordinary production function: no test-defining attribute and not a
     /// member of a test-required module. The historical `is_test == false`.
     Production,
+    /// A manifest- and namespace-verified QuickCheck input generator. It is
+    /// stimulus support, not an executable test or production seam. Diff
+    /// analysis retains its changes as explicit uncertainty rather than
+    /// silently skipping them with ordinary test helpers (#11545).
+    TestInputGenerator,
     /// Carries an exact supported test-defining attribute (`#[test]`,
     /// `#[tokio::test]`, `#[async_std::test]`, `#[rstest]`, ...). Registers
     /// an executable `TestFact`. When the facts came from the lexical
@@ -1651,6 +1658,8 @@ pub(crate) struct FileFactsWire {
     pub used_lexical_fallback: bool,
     pub module_declarations: Vec<ModuleDeclarationFact>,
     pub unresolved_property_macros: Vec<UnresolvedPropertyMacroFact>,
+    #[serde(default)]
+    pub verus_guard_facts: Vec<crate::analysis::verus::VerusGuardFact>,
     pub source: String,
     #[serde(default)]
     pub(crate) item_scopes: Option<Box<ModuleItemScopes>>,
@@ -1811,6 +1820,7 @@ impl From<&FileFacts> for FileFactsWire {
             used_lexical_fallback: facts.used_lexical_fallback,
             module_declarations: facts.module_declarations.clone(),
             unresolved_property_macros: facts.unresolved_property_macros.clone(),
+            verus_guard_facts: facts.verus_guard_facts.clone(),
             source: facts.source.to_string(),
             item_scopes: facts.item_scopes.clone(),
             macro_candidates: facts.macro_candidates.clone(),
@@ -1900,6 +1910,7 @@ impl FileFactsWire {
             used_lexical_fallback: self.used_lexical_fallback,
             module_declarations: self.module_declarations,
             unresolved_property_macros: self.unresolved_property_macros,
+            verus_guard_facts: self.verus_guard_facts,
             role_provenance: SourceRoleProvenance::default(),
             source,
             item_scopes: self.item_scopes,
@@ -2088,6 +2099,8 @@ struct FileFactsWireRef<'a> {
     used_lexical_fallback: bool,
     module_declarations: &'a [ModuleDeclarationFact],
     unresolved_property_macros: &'a [UnresolvedPropertyMacroFact],
+    #[serde(default)]
+    verus_guard_facts: &'a [crate::analysis::verus::VerusGuardFact],
     source: &'a str,
     item_scopes: Option<&'a ModuleItemScopes>,
     macro_candidates: Option<&'a MacroBindingCandidates>,
@@ -2156,6 +2169,7 @@ impl<'a> From<&'a FileFacts> for FileFactsWireRef<'a> {
             used_lexical_fallback: facts.used_lexical_fallback,
             module_declarations: &facts.module_declarations,
             unresolved_property_macros: &facts.unresolved_property_macros,
+            verus_guard_facts: &facts.verus_guard_facts,
             source: &facts.source,
             item_scopes: facts.item_scopes.as_deref(),
             macro_candidates: facts.macro_candidates.as_deref(),
@@ -2389,6 +2403,7 @@ mod tests {
             used_lexical_fallback: false,
             module_declarations: Vec::new(),
             unresolved_property_macros: Vec::new(),
+            verus_guard_facts: Vec::new(),
             role_provenance: SourceRoleProvenance::default(),
             source: Arc::clone(&source),
             item_scopes: None,
@@ -2470,6 +2485,7 @@ mod tests {
             used_lexical_fallback: false,
             module_declarations: Vec::new(),
             unresolved_property_macros: Vec::new(),
+            verus_guard_facts: Vec::new(),
             role_provenance: SourceRoleProvenance::default(),
             source: Arc::clone(&source),
             item_scopes: None,
@@ -2679,6 +2695,7 @@ fn checks_helper() {
             used_lexical_fallback: false,
             module_declarations: Vec::new(),
             unresolved_property_macros: Vec::new(),
+            verus_guard_facts: Vec::new(),
             role_provenance: SourceRoleProvenance::default(),
             source: Arc::clone(&home),
             item_scopes: None,
@@ -2764,6 +2781,25 @@ fn checks_helper() {
             with_probe_shapes > 0,
             "no source reached the probe-shape branches"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn file_facts_wire_ref_roundtrips_verus_guard_facts() -> Result<(), serde_json::Error> {
+        let source = "verus! {\nfn inc(x: u32) -> (r: u32)\n    ensures r == x,\n{ x }\n}\n";
+        let mut facts = crate::analysis::rust_index::summarize_file(
+            PathBuf::from("src/lib.rs"),
+            source.to_string(),
+        );
+        facts.verus_guard_facts = crate::analysis::verus::verus_guard_facts(source);
+        assert_eq!(facts.verus_guard_facts.len(), 1);
+        let wire = serde_json::to_string(&FileFactsWireRef::from(&facts))?;
+        assert!(
+            wire.contains("\"verus_guard_facts\""),
+            "borrowed wire must serialize guard facts"
+        );
+        let decoded: FileFacts = serde_json::from_str(&wire)?;
+        assert_eq!(decoded.verus_guard_facts, facts.verus_guard_facts);
         Ok(())
     }
 

@@ -246,7 +246,8 @@ pub(crate) fn gather_seam_inventory(
                 crate::app::task_first::inventory_for_repair(root, config)
                     .map(|(_, limit_info)| limit_info),
             ),
-        };
+        }
+        .with_evidence_limitations(&scoped.evidence_limitations);
         consumed_sources = scoped.consumed_sources;
         candidate_seams = scoped.classified;
     }
@@ -415,7 +416,9 @@ fn unbound_item_refusal(item: &GapItem, producers: &SnapshotCardProducers) -> At
                 .candidate_seams
                 .iter()
                 .find(|entry| entry.seam.id().as_str() == seam_id)
-                .and_then(|entry| policy.omission_reason_for_class(entry.class))
+                .and_then(|entry| {
+                    policy.omission_reason_for_class(entry.class, Some(entry.seam.file()))
+                })
                 .map_or_else(unbound, |reason| policy_omitted_failure(&seam_id, &reason))
         }
         RepairSubjectOutcome::Unknown => agent_card_failure(AgentCardError::refusal(
@@ -555,8 +558,8 @@ impl WorkspaceSession {
         // `ripr agent card` applies the agent policy to the seam's class
         // before it assembles a card (#5007/#7736); the same gate, the same
         // typed `policy_omitted`, refuses here (#10718).
-        if let Some(reason) =
-            AgentBriefPolicy::from_config(&producers.config).omission_reason_for_class(entry.class)
+        if let Some(reason) = AgentBriefPolicy::from_config(&producers.config)
+            .omission_reason_for_class(entry.class, Some(entry.seam.file()))
         {
             return Err(policy_omitted_failure(entry.seam.id().as_str(), &reason));
         }
@@ -974,6 +977,67 @@ mod tests {
             .map_err(|error| format!("clock: {error}"))?
             .as_nanos();
         Ok(std::env::temp_dir().join(format!("ripr-mcp-repair-card-{nanos}")))
+    }
+
+    /// A committed repository whose one production file holds a boundary seam.
+    fn refresh_repo() -> Result<PathBuf, String> {
+        let root = temp_root()?;
+        std::fs::create_dir_all(root.join("src")).map_err(|error| error.to_string())?;
+        std::fs::write(
+            root.join("src/foo.rs"),
+            "pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }\n",
+        )
+        .map_err(|error| error.to_string())?;
+        let git = crate::testing::fixture_git::fixture_git_ok;
+        git(&root, &["init", "-q"])?;
+        git(
+            &root,
+            &["config", "user.email", "ripr-test@example.invalid"],
+        )?;
+        git(&root, &["config", "user.name", "RIPR Test"])?;
+        git(&root, &["add", "."])?;
+        git(&root, &["commit", "-q", "--no-gpg-sign", "-m", "fixture"])?;
+        Ok(root)
+    }
+
+    fn refresh_completeness(
+        root: &Path,
+    ) -> Result<super::super::repair_admission::InventoryCompleteness, String> {
+        let mut finding = super::super::gaps::test_finding()?;
+        finding.probe.location.file = root.join("src/foo.rs");
+        let inventory = gather_seam_inventory(root, &RiprConfig::default(), &[finding])
+            .map_err(|failure| format!("refresh inventory failed: {}", failure.code))?;
+        Ok(inventory.completeness)
+    }
+
+    /// #13340: a refresh whose scoped evidence pass failed closed (the
+    /// shared-table warm panicked) must not report a complete inventory; the
+    /// healthy control on a separate root stays complete.
+    #[test]
+    fn failed_evidence_warm_makes_the_refresh_inventory_unverified() -> Result<(), String> {
+        use super::super::repair_admission::InventoryCompleteness;
+        use crate::analysis::test_grip_evidence::WarmPanicGuard;
+        let control = refresh_repo()?;
+        let healthy = refresh_completeness(&control);
+        let _ = std::fs::remove_dir_all(&control);
+        assert_eq!(healthy?, InventoryCompleteness::Complete);
+
+        for point in [1, 2] {
+            let root = refresh_repo()?;
+            let armed = {
+                let _armed = WarmPanicGuard::arm(point);
+                refresh_completeness(&root)
+            };
+            let _ = std::fs::remove_dir_all(&root);
+            match armed? {
+                InventoryCompleteness::Unverified(detail) => assert!(
+                    detail.contains("seam evidence pass failed"),
+                    "arm({point}): {detail}"
+                ),
+                other => return Err(format!("arm({point}) must be Unverified: {other:?}")),
+            }
+        }
+        Ok(())
     }
 
     #[test]

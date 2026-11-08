@@ -53,7 +53,7 @@ pub(crate) fn render_with_config(output: &CheckOutput, config: &RiprConfig) -> S
             continue;
         }
         let Some(annotation_level) = config
-            .severity()
+            .severity_for_file(&finding.probe.location.file)
             .for_exposure(&finding.class)
             .github_annotation_level()
         else {
@@ -386,7 +386,7 @@ fn unanalyzed_state_warnings(output: &CheckOutput) -> Vec<String> {
                     str::to_string,
                 );
                 message.push_str(&format!(
-                    " Untracked files ({listing}) are invisible to both; stage them first \
+                    " Untracked files ({listing}) are not in either diff yet; stage them first \
                      (`git add <paths>`, or `git add -N <paths>` intent-to-add makes a new file \
                      visible to `--worktree`) and rerun `ripr check --worktree`, or pass \
                      `--diff PATH`."
@@ -649,10 +649,10 @@ mod tests {
     use super::render;
     use crate::app::{CheckOutput, Mode};
     use crate::domain::{
-        Confidence, DeltaKind, ExposureClass, Finding, FindingCanonicalGap, LanguageId,
-        LanguageStatus, MissingDiscriminatorFact, OracleKind, OracleStrength, Probe, ProbeFamily,
-        ProbeId, RelatedTest, RevealEvidence, RiprEvidence, SourceLocation, StageEvidence,
-        StageState, StaticLimitKind, StopReason, Summary, SymbolId,
+        Confidence, DeltaKind, DiscriminatorShape, ExposureClass, Finding, FindingCanonicalGap,
+        LanguageId, LanguageStatus, MissingDiscriminatorFact, OracleKind, OracleStrength, Probe,
+        ProbeFamily, ProbeId, RelatedTest, RevealEvidence, RiprEvidence, SourceLocation,
+        StageEvidence, StageState, StaticLimitKind, StopReason, Summary, SymbolId,
     };
     use std::path::PathBuf;
 
@@ -663,7 +663,7 @@ mod tests {
         // and repair route, never zero bytes.
         let notice =
             crate::core_error::CoreError::repository_root_unusable("not inside a Git work tree")
-                .refusal_notice();
+                .refusal_notice(&crate::config::config_error_summary);
         let rendered = super::render_refusal(&notice);
         assert!(
             rendered.starts_with("::error title=ripr refusal::"),
@@ -1452,7 +1452,7 @@ mod tests {
         let rendered = render(&output);
 
         assert!(
-            rendered.contains("Untracked files (src/new.rs, tests/new.rs, Cargo.toml and 1 more) are invisible to both"),
+            rendered.contains("Untracked files (src/new.rs, tests/new.rs, Cargo.toml and 1 more) are not in either diff yet"),
             "{rendered}"
         );
         assert!(rendered.contains("git add -N <paths>"), "{rendered}");
@@ -2139,6 +2139,8 @@ mod tests {
                     reason: "changed TypeScript equality-boundary lacks a concrete discriminator"
                         .to_string(),
                     flow_sink: None,
+                    shape: DiscriminatorShape::Boundary,
+                    drafted_boundary: None,
                 });
             finding.related_tests.push(RelatedTest {
                 name: "applies discount at threshold".to_string(),
@@ -2188,6 +2190,8 @@ mod tests {
             value: "amount == threshold".to_string(),
             reason: "no related test calls the equality boundary".to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Boundary,
+            drafted_boundary: None,
         }];
         finding.evidence = vec![
             "suggested_test_file: tests/test_pricing.py".to_string(),
@@ -2285,6 +2289,8 @@ mod tests {
             reason: "Related Perl test reaches the owner but lacks an exact return discriminator"
                 .to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Other,
+            drafted_boundary: None,
         }];
         finding.related_tests = vec![RelatedTest {
             name: "discount_smoke".to_string(),

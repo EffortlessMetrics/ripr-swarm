@@ -1,5 +1,6 @@
 use super::super::facts::FunctionContainer;
 use super::super::rust_index::{FunctionSummary, RustIndex, TestSummary};
+use super::related_tests::is_established_free_function;
 use crate::analysis::extract::mask_comments_and_strings;
 use crate::domain::{
     CALLEE_ONLY_REACH_PREFIX, Confidence, RelationReason, StageEvidence, StageState,
@@ -105,6 +106,19 @@ pub(in crate::analysis) fn reach_evidence(
     )
 }
 
+/// Whether `owner` is a method of a trait the workspace does not declare
+/// (`Display`, `Add`, `Deref`). The language dispatches those through
+/// operators, formatting macros and generic code that never spell the method
+/// name, so an owner no test is related to still may run under a test. This
+/// is the trait-impl clause of [`owner_may_be_reached_unseen`] on its own,
+/// for a caller that must not widen to "named elsewhere".
+pub(in crate::analysis) fn owner_runs_through_language_dispatch(
+    owner: &FunctionSummary,
+    index: &RustIndex,
+) -> bool {
+    is_trait_impl_method(owner) && !implements_workspace_trait(owner, index)
+}
+
 /// Whether a test could run `owner` without any indexed test body calling it
 /// by name.
 ///
@@ -142,7 +156,7 @@ pub(in crate::analysis) fn owner_may_be_reached_unseen(
             index
                 .files()
                 .values()
-                .map(|file| count_identifier_outside_fn_definition(&file.source, &owner.name))
+                .map(|file| count_namings_for_owner(&file.source, owner))
                 .sum(),
         )
         || index.files().values().any(|file| {
@@ -158,7 +172,7 @@ fn named_outside_own_body(owner: &FunctionSummary, total: usize) -> bool {
         return false;
     }
     let own = if owner.item.has_body {
-        count_identifier_outside_fn_definition(&owner.body, &owner.name)
+        count_namings_for_owner(&owner.body, owner)
     } else {
         0
     };
@@ -188,13 +202,16 @@ pub(in crate::analysis) struct UnseenReachNames {
     member_dirs: Vec<PathBuf>,
     /// How often sources name each identifier other than directly after `fn`.
     named: HashMap<String, usize>,
+    /// [`Self::named`] restricted to the spellings that can denote a
+    /// module-level free function (see [`free_function_namings`]), read for
+    /// an established free-function owner.
+    named_free: HashMap<String, usize>,
     /// Some file pulls external docs in as doctests.
     external_docs: bool,
 }
 
 impl UnseenReachNames {
     pub(in crate::analysis) fn build(index: &RustIndex) -> Self {
-        use rayon::prelude::*;
         let sources: Vec<&str> = index
             .files()
             .values()
@@ -219,37 +236,16 @@ impl UnseenReachNames {
         let external_docs = includes_external_docs_many(&with_clean)
             .into_iter()
             .any(|includes| includes);
-        fn collect_names<'a>(
-            mut names: HashMap<&'a str, usize>,
-            source: &'a str,
-        ) -> HashMap<&'a str, usize> {
-            for name in identifiers_outside_fn_definition(source) {
-                *names.entry(name).or_insert(0) += 1;
-            }
-            names
+        // Each source's tallies are a pure function of its text, and one diff
+        // run builds this struct over several overlapping indexes (admission,
+        // main, each widened reach index), so the run scope scans each
+        // distinct text once and every later build only sums the tallies.
+        let mut named: HashMap<String, usize> = HashMap::new();
+        let mut named_free: HashMap<String, usize> = HashMap::new();
+        for tallies in source_namings_many(&sources) {
+            add_tallies(&mut named, &tallies.named);
+            add_tallies(&mut named_free, &tallies.free);
         }
-        fn merge_names<'a>(
-            mut left: HashMap<&'a str, usize>,
-            mut right: HashMap<&'a str, usize>,
-        ) -> HashMap<&'a str, usize> {
-            if left.len() < right.len() {
-                std::mem::swap(&mut left, &mut right);
-            }
-            for (name, count) in right {
-                *left.entry(name).or_insert(0) += count;
-            }
-            left
-        }
-        let named: HashMap<&str, usize> = if super::owner_pin::nested_parallelism_allowed() {
-            sources
-                .par_iter()
-                .fold(HashMap::new, |names, source| collect_names(names, source))
-                .reduce(HashMap::new, merge_names)
-        } else {
-            sources
-                .iter()
-                .fold(HashMap::new(), |names, source| collect_names(names, source))
-        };
         let workspace_traits = workspace_trait_names(index);
         let workspace_crates = index.workspace_member_crates().clone();
         let foreign_imports = index
@@ -281,10 +277,8 @@ impl UnseenReachNames {
             workspace_crates,
             member_traits: OnceLock::new(),
             member_dirs: index.workspace_member_dirs.clone(),
-            named: named
-                .into_iter()
-                .map(|(name, count)| (name.to_string(), count))
-                .collect(),
+            named,
+            named_free,
             external_docs,
         }
     }
@@ -314,7 +308,15 @@ impl UnseenReachNames {
                 },
             ))
             || self.external_docs
-            || named_outside_own_body(owner, self.named.get(&owner.name).copied().unwrap_or(0))
+            || named_outside_own_body(
+                owner,
+                if is_established_free_function(owner) {
+                    self.named_free.get(&owner.name).copied()
+                } else {
+                    self.named.get(&owner.name).copied()
+                }
+                .unwrap_or(0),
+            )
     }
 }
 
@@ -652,6 +654,166 @@ fn count_identifier_outside_fn_definition(source: &str, name: &str) -> usize {
     identifiers_outside_fn_definition(source)
         .filter(|ident| *ident == name)
         .count()
+}
+
+/// [`count_identifier_outside_fn_definition`] for the spellings that can
+/// reach `owner`: for an established free function only the namings of
+/// [`free_function_namings`] count, otherwise every naming does.
+fn count_namings_for_owner(source: &str, owner: &FunctionSummary) -> usize {
+    if !is_established_free_function(owner) {
+        return count_identifier_outside_fn_definition(source, &owner.name);
+    }
+    if owner.name.is_empty() || !source.contains(owner.name.as_str()) {
+        return 0;
+    }
+    free_function_namings(source)
+        .filter(|ident| *ident == owner.name)
+        .count()
+}
+
+/// Whether a mention of `ident` at byte `at` inside a comment or string reads
+/// as a reference to a function rather than prose: it is followed by `(`, `)`,
+/// `,`, `;`, `}`, `]`, `:` or `as` (a doctest call, fn pointer or
+/// `use .. as` alias), or it is the whole path of a quoted string assigned with `=`
+/// (`#[serde(default = "kb")]`) or passed to a non-transparent macro
+/// (`twice!("kb")`), which names a function by
+/// string. `"4.1 kb"` is prose: it has a space before the name.
+fn reference_shaped_outside_code(source: &str, at: usize, ident: &str) -> bool {
+    let after = &source[at + ident.len()..];
+    let trimmed = after.trim_start();
+    if trimmed.starts_with(['(', ')', ',', ';', '}', ']', ':']) {
+        return true;
+    }
+    if trimmed
+        .strip_prefix("as")
+        .is_some_and(|rest| rest.chars().next().is_some_and(|c| c.is_whitespace()))
+    {
+        return true;
+    }
+    let path_start = source[..at]
+        .trim_end_matches(|c: char| c.is_alphanumeric() || c == '_' || c == ':')
+        .len();
+    if !after.starts_with('"') {
+        return false;
+    }
+    let Some(before_quote) = source[..path_start].strip_suffix('"') else {
+        return false;
+    };
+    // `default = "kb"`, `with = "m::kb"`: a path assigned by an attribute.
+    if before_quote.trim_end().ends_with('=') {
+        return true;
+    }
+    // A whole-string path passed to a macro (`twice!("kb")`) may dispatch by
+    // name; only a transparent macro (`assert_eq!("kb", ..)`, `format!`) takes
+    // the quoted word as a label. Without a macro on the line it is a label.
+    let line = before_quote.rsplit('\n').next().unwrap_or(before_quote);
+    let Some(bang) = line.rfind("!(").or_else(|| line.rfind("![")) else {
+        return false;
+    };
+    let macro_name = line[..bang]
+        .trim_end_matches(|c: char| c.is_alphanumeric() || c == '_')
+        .len();
+    !TRANSPARENT_TEST_MACROS.contains(&&line[macro_name..bang])
+}
+
+/// One source's identifier tallies for [`UnseenReachNames`]: how often it
+/// names each identifier outside a `fn` definition, and the subset of those
+/// spellings that can denote a module-level free function.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct SourceNamings {
+    named: HashMap<String, usize>,
+    free: HashMap<String, usize>,
+}
+
+fn tally<'a>(names: impl Iterator<Item = &'a str>) -> HashMap<String, usize> {
+    let mut counts: HashMap<String, usize> = HashMap::new();
+    for name in names {
+        match counts.get_mut(name) {
+            Some(count) => *count += 1,
+            None => {
+                counts.insert(name.to_string(), 1);
+            }
+        }
+    }
+    counts
+}
+
+fn scan_source_namings(source: &str) -> SourceNamings {
+    SourceNamings {
+        named: tally(identifiers_outside_fn_definition(source)),
+        free: tally(free_function_namings(source)),
+    }
+}
+
+fn add_tallies(total: &mut HashMap<String, usize>, part: &HashMap<String, usize>) {
+    for (name, count) in part {
+        match total.get_mut(name) {
+            Some(sum) => *sum += count,
+            None => {
+                total.insert(name.clone(), *count);
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    static SOURCE_NAMINGS_SCANS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Sources [`source_namings_many`] scanned on this thread's behalf since the
+/// last call (the scans run on pool workers; the owning thread is credited).
+#[cfg(test)]
+pub(in crate::analysis) fn take_source_namings_scans() -> usize {
+    SOURCE_NAMINGS_SCANS.with(|count| count.replace(0))
+}
+
+/// [`scan_source_namings`] for every source, in order. Inside a run scope the
+/// texts the scope has not seen scan on the rayon pool and are stored for the
+/// next index build of the run (see
+/// [`crate::analysis::syntax::run_memo::memoize_many`]); outside a scope every
+/// source scans, as before.
+fn source_namings_many(sources: &[&str]) -> Vec<std::sync::Arc<SourceNamings>> {
+    #[cfg(test)]
+    let scanned = std::sync::atomic::AtomicUsize::new(0);
+    let tallies = crate::analysis::syntax::run_memo::memoize_many(
+        crate::analysis::syntax::run_memo::Product::SourceNamings,
+        sources,
+        |source| {
+            #[cfg(test)]
+            scanned.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            std::sync::Arc::new(scan_source_namings(source))
+        },
+    );
+    #[cfg(test)]
+    SOURCE_NAMINGS_SCANS
+        .with(|count| count.set(count.get() + scanned.load(std::sync::atomic::Ordering::Relaxed)));
+    tallies
+}
+
+/// The identifiers of `source` (see [`identifiers_outside_fn_definition`])
+/// spelled so that they can denote a module-level free function.
+///
+/// A receiver selection (`ByteSize::kb(..)` is a path through a type, `x.kb()`
+/// a method) cannot name a free `kb`, so the many same-named associated
+/// functions of a crate do not keep its free helper "reachable unseen"
+/// (#13080). Code is judged by [`name_may_denote_free_function_at`] on the
+/// masked source. A mention inside a comment or string (a doctest, a stringly
+/// dispatch) stays a naming only when it is spelled like a reference rather
+/// than prose (see [`reference_shaped_outside_code`]), and the same qualifier
+/// rule holds, evaluated on the raw text.
+fn free_function_namings(source: &str) -> impl Iterator<Item = &str> {
+    let masked = mask_comments_and_strings(source);
+    identifiers_outside_fn_definition(source).filter(move |ident| {
+        let at = ident.as_ptr() as usize - source.as_ptr() as usize;
+        if !super::related_tests::name_may_denote_free_function_at(source, at, ident) {
+            return false;
+        }
+        let in_code = masked
+            .get(at..at + ident.len())
+            .is_some_and(|slice| slice == *ident);
+        in_code || reference_shaped_outside_code(source, at, ident)
+    })
 }
 
 /// Each whole identifier in `source` (a Unicode alphanumeric or `_` run, so
@@ -1119,6 +1281,74 @@ mod tests {
         assert!(UnseenReachNames::build(&docs_index).may_reach_unseen(&function("lonely")));
     }
 
+    /// #13577: one diff run builds this struct over several overlapping
+    /// indexes (one per distinct reach closure), and each build rescanned
+    /// every source. Inside a run scope each distinct text scans once; the
+    /// tallies equal an independent per-source reference, and a changed
+    /// source (a renamed free function) rescans only itself.
+    #[test]
+    fn unseen_reach_names_scan_each_source_once_per_run() {
+        let reference = |sources: &[&str]| {
+            let mut named: HashMap<String, usize> = HashMap::new();
+            let mut free: HashMap<String, usize> = HashMap::new();
+            for source in sources {
+                for name in identifiers_outside_fn_definition(source) {
+                    *named.entry(name.to_string()).or_insert(0) += 1;
+                }
+                for name in free_function_namings(source) {
+                    *free.entry(name.to_string()).or_insert(0) += 1;
+                }
+            }
+            (named, free)
+        };
+        let before = [
+            "pub fn price(w: u32) -> u32 { w }\nfn helper() { price(1); Money::price(2); }\n",
+            "pub fn lonely() {}\nfn other() { lonely(); }\n",
+            "fn third() { price(3); }\n",
+        ];
+        let renamed_text = before.map(|source| source.replace("price", "unit_price"));
+        let renamed = [
+            renamed_text[0].as_str(),
+            renamed_text[1].as_str(),
+            renamed_text[2].as_str(),
+        ];
+        let index_of = |sources: &[&str]| {
+            let files = sources
+                .iter()
+                .enumerate()
+                .map(|(position, source)| {
+                    let path = PathBuf::from(format!("src/f{position}.rs"));
+                    (
+                        path.clone(),
+                        FileFacts {
+                            path,
+                            source: (*source).into(),
+                            ..FileFacts::default()
+                        },
+                    )
+                })
+                .collect();
+            RustIndex::from_owned(OwnedRustIndex {
+                files,
+                ..Default::default()
+            })
+        };
+        let _ = take_source_namings_scans();
+        let _scope = crate::analysis::syntax::run_memo::enter();
+        for (round, sources) in [&before, &before, &before, &renamed, &renamed]
+            .into_iter()
+            .enumerate()
+        {
+            let names = UnseenReachNames::build(&index_of(sources));
+            let (named, free) = reference(sources);
+            assert_eq!(names.named, named, "round {round}");
+            assert_eq!(names.named_free, free, "round {round}");
+        }
+        // Three distinct texts, then the two the rename touched (the third is
+        // unchanged and stays served): not five builds times three files.
+        assert_eq!(take_source_namings_scans(), 5);
+    }
+
     /// #9169: a foreign trait's method runs through language dispatch that
     /// never spells its name, so it keeps the unseen-reach allowance; a
     /// workspace-declared trait's method does not.
@@ -1565,6 +1795,99 @@ mod tests {
         assert!(verdicts(
             "// trait Step\nconst S: &str = \"trait Step\";\n",
             vec![owner.clone()]
+        ));
+    }
+
+    /// #13080: a mention that cannot denote a module-level free function (a
+    /// receiver or `Type::`-qualified spelling, prose in a string) is no
+    /// unseen caller of one, while every spelling that can still is.
+    #[test]
+    fn only_free_function_capable_namings_keep_a_free_owner_unseen_reachable() {
+        let verdict = |source: &str, free: bool| {
+            let mut owner = function("kb");
+            owner.item.has_body = true;
+            owner.item.container = if free {
+                FunctionContainer::Free
+            } else {
+                FunctionContainer::Unknown
+            };
+            let start = source.find("fn kb").unwrap_or(0);
+            let end = start + source[start..].find('}').map_or(0, |close| close + 1);
+            owner.body = source[start..end].into();
+            let index = RustIndex::from_owned(OwnedRustIndex {
+                files: BTreeMap::from([(
+                    PathBuf::from("src/lib.rs"),
+                    FileFacts {
+                        path: PathBuf::from("src/lib.rs"),
+                        source: source.into(),
+                        ..FileFacts::default()
+                    },
+                )]),
+                functions: vec![owner.clone()],
+                ..Default::default()
+            });
+            let single = owner_may_be_reached_unseen(&owner, &index);
+            let batch = UnseenReachNames::build(&index).may_reach_unseen(&owner);
+            assert_eq!(single, batch, "{source}");
+            single
+        };
+        let free = "pub fn kb(n: u64) -> u64 { n * 1000 }\n";
+        // Negatives: only `Type::kb`, a receiver call and string prose.
+        assert!(!verdict(free, true));
+        assert!(!verdict(
+            &format!("{free}fn t() {{ assert_eq!(ByteSize::kb(4), ByteSize(4000)); }}\n"),
+            true
+        ));
+        assert!(!verdict(&format!("{free}fn t(x: X) {{ x.kb(); }}\n"), true));
+        assert!(!verdict(
+            &format!("{free}//! assert_eq!(\"4.1 kb\", s);\nconst S: &str = \"4.1 kb\";\n"),
+            true
+        ));
+        // Controls differing in one respect: each spelling that can name the
+        // free function keeps it possibly reached unseen.
+        assert!(verdict(&format!("{free}fn t() {{ kb(4); }}\n"), true));
+        assert!(verdict(
+            &format!("{free}fn t() {{ bytesize::kb(4); }}\n"),
+            true
+        ));
+        assert!(verdict(
+            &format!("{free}fn t() {{ [1u64].map(kb); }}\n"),
+            true
+        ));
+        assert!(verdict(&format!("{free}use bytesize::kb as k;\n"), true));
+        assert!(verdict(
+            &format!("{free}//! let n = bytesize::kb(4u64);\n"),
+            true
+        ));
+        // Review findings: a function named by string path (serde attributes)
+        // and a doctest alias still count; quoted prose does not.
+        assert!(verdict(
+            &format!("{free}#[derive(D)] struct S {{ #[serde(default = \"kb\")] a: u64 }}\n"),
+            true
+        ));
+        assert!(verdict(
+            &format!("{free}#[serde(default = \"defaults::kb\")]\nstruct S;\n"),
+            true
+        ));
+        assert!(verdict(
+            &format!("{free}/// use bytesize::kb as k;\n/// assert_eq!(k(4), 4000);\n"),
+            true
+        ));
+        // A quoted unit label in a call argument is not a path reference.
+        assert!(!verdict(
+            &format!("{free}fn t() {{ assert_eq!(\"kb\", \"kb\"); }}\n"),
+            true
+        ));
+        // A whole-string path handed to a macro may dispatch by name.
+        assert!(verdict(
+            &format!("{free}fn t() {{ twice!(\"kb\"); }}\n"),
+            true
+        ));
+        // The same `Type::kb` mention keeps a non-free (or unestablished) owner
+        // undecided: the rule is withheld unless the owner is a free function.
+        assert!(verdict(
+            &format!("{free}fn t() {{ assert_eq!(ByteSize::kb(4), ByteSize(4000)); }}\n"),
+            false
         ));
     }
 

@@ -5,7 +5,7 @@
 //! boundary call from one test and an exact oracle from another is a false
 //! `exposed` (#4828): `>=` → `>` still passes both tests.
 
-use super::super::facts::CallFact;
+use super::super::facts::{CallFact, FunctionContainer};
 use super::super::rust_index::{
     FunctionSummary, OracleFact, RustIndex, TestSummary, extract_literals,
 };
@@ -33,7 +33,7 @@ pub(in crate::analysis) const SAME_TEST_PAIRING_MISSING: &str = "same_test_pairi
 
 pub(in crate::analysis) fn same_test_pairing_missing_summary() -> String {
     format!(
-        "Discriminator unconfirmed: no admitted discriminating oracle is paired with the owner's boundary call ({SAME_TEST_PAIRING_MISSING}); a boundary input and a separate exact oracle do not establish that discriminator"
+        "Check unconfirmed: no supported assertion that distinguishes the changed behavior is paired with the owner's boundary call ({SAME_TEST_PAIRING_MISSING}); a boundary input and a separate exact assertion do not establish that pairing"
     )
 }
 
@@ -78,9 +78,28 @@ pub(in crate::analysis) fn wrapper_return_boundary_pinned(
     let literal = |text: &str| {
         matches!(text.trim(), "true" | "false") || argument_is_whole_numeric_literal(text.trim())
     };
+    // #13625: the entry may be spelled through a module path
+    // (`krate::inner::entry(10)`) exactly as through a bare import. A path
+    // spelling counts only when the shared call-identity authority settles
+    // that spelled path on this wrapper; a path that names another module's
+    // same-named function stays refused. Only a free wrapper qualifies:
+    // `qualified_owner_calls_resolve` admits every spelling of a non-free
+    // owner, so a method wrapper must not borrow a path-spelled `X::name(..)`.
+    let free_wrapper = hop.caller.item.container == FunctionContainer::Free;
+    let whole_call_of = |subject: &str| {
+        super::owner_pin::direct_call_name(subject) == Some(name)
+            || (free_wrapper
+                && path_qualified_whole_call(subject, name).is_some()
+                && super::call_identity::qualified_owner_calls_resolve(
+                    index,
+                    &hop.caller,
+                    test,
+                    subject,
+                    assertion.line,
+                ))
+    };
     let whole_call = assertion_comparison_operands(&assertion.text).is_some_and(|[left, right]| {
-        (super::owner_pin::direct_call_name(left) == Some(name) && literal(right))
-            || (super::owner_pin::direct_call_name(right) == Some(name) && literal(left))
+        (whole_call_of(left) && literal(right)) || (whole_call_of(right) && literal(left))
     });
     assertion.text.trim_start().starts_with("assert_eq!")
         && assertion.kind == OracleKind::ExactValue
@@ -307,6 +326,30 @@ fn assertion_names_one_entry_call(
         })
         && owner_call_count(&assertion.text, entry) == 1
         && owner_call_count(&assertion.text, &owner.name) == 0
+}
+
+/// `Some(prefix)` when `subject` is one whole call `a::b::name(..)` through a
+/// module path of plain identifiers: the same shape as
+/// `direct_call_name` with a non-empty path in front. The path is only
+/// shape-checked here; the caller settles what it names.
+fn path_qualified_whole_call<'a>(subject: &'a str, name: &str) -> Option<&'a str> {
+    let subject = subject.trim();
+    let open = subject.find('(')?;
+    let head = subject[..open].trim_end();
+    let prefix = head.strip_suffix(name)?.strip_suffix("::")?;
+    let plain_path = !prefix.is_empty()
+        && prefix.split("::").all(|segment| {
+            let mut chars = segment.chars();
+            chars
+                .next()
+                .is_some_and(|first| first.is_ascii_alphabetic() || first == '_')
+                && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+        });
+    if !plain_path {
+        return None;
+    }
+    let call = &subject[prefix.len() + 2..];
+    (super::owner_pin::direct_call_name(call) == Some(name)).then_some(prefix)
 }
 
 fn owner_call_count(text: &str, name: &str) -> usize {
@@ -669,7 +712,7 @@ fn fact_matches_fed_literals(value: &str, fed: &[(String, String)]) -> bool {
 /// past their spelling (`10u32` and `10`, `1_000` and `1000`); a hex, octal,
 /// binary, float or other form must match exactly, since a partial reader
 /// would equate `0x10` with `0`.
-fn same_scalar_literal(fed: &str, literal: &str) -> bool {
+pub(in crate::analysis) fn same_scalar_literal(fed: &str, literal: &str) -> bool {
     fed == literal
         || decimal_integer_value(fed)
             .is_some_and(|value| Some(value) == decimal_integer_value(literal))
@@ -691,6 +734,13 @@ fn decimal_integer_value(text: &str) -> Option<String> {
     ];
     (!digits.is_empty() && !rest.starts_with('_') && integer_suffix.contains(&suffix))
         .then(|| format!("{sign}{digits}"))
+}
+
+/// #13037: whether `text` is exactly one whole decimal integer literal
+/// (optional sign, `_` separators, integer type suffix), the only scalar
+/// shape the multi-exit scalar return gates read past its spelling.
+pub(in crate::analysis) fn is_whole_decimal_literal(text: &str) -> bool {
+    decimal_integer_value(text).is_some()
 }
 
 /// The helper call's arguments when each is a whole scalar literal and no
@@ -1564,6 +1614,37 @@ mod tests {
             None,
             &index,
         )
+    }
+
+    // #13625: only a whole call through a plain module path is a qualified
+    // entry spelling; anything else keeps the bare-name reading.
+    #[test]
+    fn path_qualified_whole_call_reads_only_a_whole_plain_path_call() {
+        assert_eq!(
+            path_qualified_whole_call("krate::inner::entry(10)", "entry"),
+            Some("krate::inner")
+        );
+        assert_eq!(
+            path_qualified_whole_call(" crate::entry (10) ", "entry"),
+            Some("crate")
+        );
+        for refused in [
+            "entry(10)",
+            "other::entry(10).wrapping_add(1)",
+            "krate::entry(10) * 0",
+            "krate::entry_two(10)",
+            "krate::sub_entry(10)",
+            "Type::<T>::entry(10)",
+            "x.krate::entry(10)",
+            "::entry(10)",
+            "krate::inner::entry",
+        ] {
+            assert_eq!(
+                path_qualified_whole_call(refused, "entry"),
+                None,
+                "{refused}"
+            );
+        }
     }
 
     #[test]

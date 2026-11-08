@@ -46,7 +46,7 @@
         {"kind":"error_variant","text":"Result::Err(ParseError::InvalidData)","line":9}
       ],
       "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches error variant: Result::Err(ParseError::InvalidData)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach expect_ready: rejects_short_payload_with_variant_pattern, rejects_unready_kind_with_exact_error_routing", "Strong oracle found: guarded Result match over the changed owner's result"],
-      "missing": ["Missing discriminator value: ParseError::InvalidData"],
+      "missing": ["Missing check value: ParseError::InvalidData"],
       "assertion_texts": {
         "5": "match expect_ready(..) { Err(..) => ParseError::InvalidData, _ => .. }",
         "13": "match expect_ready(..) { Ok(..) => .., Err(..) => Err(ParseError::UnexpectedEof) }",
@@ -218,7 +218,7 @@
         {"kind":"error_variant","text":"Result::Err(ParseError::InvalidData)","line":9}
       ],
       "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches error variant: Result::Err(ParseError::InvalidData)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach expect_ready: rejects_short_payload_with_variant_pattern, rejects_unready_kind_with_exact_error_routing", "Strong oracle found: guarded Result match over the changed owner's result"],
-      "missing": ["Missing discriminator value: ParseError::InvalidData"],
+      "missing": ["Missing check value: ParseError::InvalidData"],
       "assertion_texts": {
         "5": "match expect_ready(..) { Err(..) => ParseError::InvalidData, _ => .. }",
         "13": "match expect_ready(..) { Ok(..) => .., Err(..) => Err(ParseError::UnexpectedEof) }",

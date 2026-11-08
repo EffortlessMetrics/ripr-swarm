@@ -440,6 +440,7 @@ mod tests {
             used_lexical_fallback: true,
             module_declarations: Vec::new(),
             unresolved_property_macros: Vec::new(),
+            verus_guard_facts: Vec::new(),
             role_provenance: Default::default(),
             source: std::sync::Arc::from(source),
             item_scopes: None,
