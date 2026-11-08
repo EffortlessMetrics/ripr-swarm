@@ -229,6 +229,15 @@ that coexists with the failure still adds its own repair step. A per-file
 `producer_failure` without `"scope": "pass_wide"` is not this fact, and a
 healthy report keeps its message unchanged.
 
+The scoped (diff-scoped) inventory consumers that have no limitation channel
+refuse a failed warm through `ScopedClassifiedSeamInventory::
+require_complete_evidence`, which shares its `producer_failure` refusal text
+(pass-wide scope, bounded detail, repair route) with
+`ClassifiedSeamsReport::require_complete_evidence` (#13340): the canonical-gap
+`ripr rerun --gap` selection and the `--at` test stub. The stub's inventory
+class disclosure is omitted rather than read from a stand-in. A healthy run is
+byte-identical.
+
 ### Static-language boundary
 
 `run_status` and `category` values use static vocabulary only:
