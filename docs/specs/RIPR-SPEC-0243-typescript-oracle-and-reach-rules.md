@@ -911,6 +911,54 @@ Candidates come from the first non-empty tier:
    a prototype, `defineProperty`; the gate does not track which object a
    receiver names, so an assignment on an unrelated object withholds too) is not related through the chain; a bare
    call-through spy is. The relation stays weak and never reads `exposed`.
+   **Cross-module continuation (#13592).** The same chain continues across an
+   import: an exported function of module X that bare-calls a binding it
+   imported from module Y reaches the owner Y declares (or the owner Y's own
+   exports reach). The import must resolve through the existing
+   `ReExportIndex` identity (relative or aliased specifier, named, renamed or
+   default binding, bounded re-export barrels, rename exports) to the stand-in
+   owner's own declaration; a namespace import, an unresolved specifier, an
+   ambiguous `export *` or an over-deep barrel adds no edge. The importing
+   function must bare-call the binding with every mention of the name in its
+   scope a bare call, so a parameter, local or inner function of that name, an
+   alias (`const f = helper`), `helper.call(...)`, a value pass, a reassignment
+   and a name that is only mentioned (module level, string, comment) all add no
+   edge. The whole chain (X's calls to the call site, the import, and Y's calls
+   to the owner) is at most 3 call edges, counted once across modules, and
+   chains through further importers within the same total. A test that mocks
+   any module the chain imports through (the helper module, a barrel, the
+   importer), or fabricates any binding on it with a `spyOn` replacement, is
+   not related through it; the owner-module mock gate still covers the
+   importer's own module. Like every entry it is admitted only when no test
+   calls the owner itself. Reach that exists only through such cross-module
+   entries reads `static_unknown` whatever the oracle (a weak oracle is not an
+   actionable gap here, unlike a same-module entry), is never `exposed`, and
+   starts no repair; the missing-evidence line says "only through cross-module
+   callers". The difference from a same-module entry is deliberate: a
+   same-module entry with a weak or absent oracle reads `weakly_exposed`, but
+   a cross-module entry with the same oracle reads `static_unknown`, because
+   the assertion sits two modules away from the changed code and a
+   strengthened assertion there is not shown to reach it. Like the same-module
+   chain, the reach contract is text-level: a bare call to the helper inside
+   dead code, or inside a nested function or callback the importing export
+   never invokes, still counts as an edge and can credit `static_unknown`
+   (never `exposed`). Fan-in is capped: when more than 32 exports of other
+   modules call one owner (`MAX_CROSS_MODULE_ENTRIES`), none of them is
+   followed, so the per-test relation scan never grows with the importer
+   count. An owner that some other relation reaches keeps that reading. An
+   owner left with no relation reads `static_unknown`, not `no_static_path`:
+   reach, observe and discriminate are unknown, the first missing line says
+   reach through more than 32 importers was not checked, and the
+   discriminate summary and next step say so and offer no repair packet (an
+   empty relation set past the limit is not the confident negative). The
+   limit is carried on every changed-line path, deleted lines included. When
+   some related tests reach the owner through same-module callers and others
+   through other modules' exports, the text names both ("same-module or
+   cross-module callers"); the class follows the same-module rule because not
+   every test's reach is cross-module. Each related test records the entries
+   it reaches once, so per-line classification does not rescan them. The importer's calls ride in the per-file export facts
+   (file-fact schema 8), so resolution never re-parses an importer, and run
+   only for owners of changed files.
 3. **Heuristic relations** when tiers 1 and 2 are empty, package-filtered,
    for function, arrow and component owners, when the test body
    references the owner name and does not import that name from an
@@ -2444,6 +2492,19 @@ keys); do not take the next number.
   move from `gap` to `credited`; `ts-trap-swallowed-assert` and
   `ts-trap-wrapped-swallow` stay `gap`.
 
+- #13592 (rule 2, cross-module continuation): `crates/ripr/src/analysis/language/typescript/tests/cross_module_entry_tests.rs`
+  pins the credited chains (a direct, barrel-imported, renamed, default and
+  private-helper-via-export import; a three-module chain; the exact three-edge
+  bound) against each refusal (a shadowing parameter, local, inner function and
+  callback parameter; a same-named helper of an unrelated module; an ambiguous
+  star export; a mocked helper, importer or barrel; a fabricating spy; an alias,
+  `.call`, computed, value-pass and reassigned use; a name only mentioned; a
+  namespace and a type-only import; four edges; a helper no tested export
+  reaches). Each negative asserts its positive twin first, and the parsed owners
+  and resolved entries are asserted before any class. Fixtures
+  `ts_cross_module_reach_chain` and `ts_cross_module_reach_shadowed` pin the
+  production `check` output.
+
 ## Implementation Mapping
 
 - #10157: `call_removal_guard.rs` owns parsed receiver/order witnesses;
@@ -2500,6 +2561,17 @@ keys); do not take the next number.
   the receiver-call stand-in that tier 2 checks, and
   `tests/class_entry_tests.rs` pins the credited chains against each shape
   that records no edge.
+- #13592: `module_entries.rs` (`module_entries_and_outbound`) records, from the
+  same module graph as the entries, the imported bindings each export's code
+  bare-calls (`OutboundImportCall`, persisted in `ModuleExportFacts`);
+  `related_tests.rs` `ReExportIndex::cross_module_entries` resolves them through
+  `resolve_export` for owners of changed files (capped at
+  `MAX_CROSS_MODULE_ENTRIES`, disclosed through `CrossModuleEntries` and
+  `OwnerLineContext::cross_module_fan_in_limited`),
+  `reaching_module_entry_positions` refuses a test that mocks or fabricates the
+  chain and records the reached entries on the candidate, and `classifier.rs`
+  reads cross-module only reach as `static_unknown` with its own discriminate
+  summary and next step.
 - `crates/ripr/src/analysis/language/typescript/classifier.rs`: rules 6
   and 7 (`ts_changed_value_is_observed`,
   `ts_observed_local_aliases_owner`), and rule 8's `static_unknown` arm

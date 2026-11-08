@@ -19622,6 +19622,28 @@ tests = [
   "crates/ripr/src/app/tests/typescript_table_row_packets.rs::inline_each_object_rows_resolve_the_expected_value",
   "crates/ripr/src/app/tests/typescript_table_row_packets.rs::touched_partial_or_derived_tables_keep_the_dynamic_refusal",
   "crates/ripr/src/app/tests/typescript_table_row_packets.rs::resolved_table_off_the_boundary_does_not_expose_the_change",
+  "crates/ripr/src/analysis/language/typescript/tests/cross_module_entry_tests.rs::an_imported_helper_relates_through_the_exported_caller",
+  "crates/ripr/src/analysis/language/typescript/tests/cross_module_entry_tests.rs::a_barrel_import_of_the_exported_caller_relates",
+  "crates/ripr/src/analysis/language/typescript/tests/cross_module_entry_tests.rs::a_helper_imported_through_a_barrel_relates",
+  "crates/ripr/src/analysis/language/typescript/tests/cross_module_entry_tests.rs::a_renamed_import_and_a_renamed_export_relate",
+  "crates/ripr/src/analysis/language/typescript/tests/cross_module_entry_tests.rs::a_default_import_of_the_helper_relates",
+  "crates/ripr/src/analysis/language/typescript/tests/cross_module_entry_tests.rs::a_private_helper_of_the_imported_module_relates_through_its_export",
+  "crates/ripr/src/analysis/language/typescript/tests/cross_module_entry_tests.rs::a_chain_across_three_modules_relates_within_the_bound",
+  "crates/ripr/src/analysis/language/typescript/tests/cross_module_entry_tests.rs::the_chain_is_bounded_to_three_call_edges",
+  "crates/ripr/src/analysis/language/typescript/tests/cross_module_entry_tests.rs::a_chain_longer_than_three_edges_across_modules_is_refused",
+  "crates/ripr/src/analysis/language/typescript/tests/cross_module_entry_tests.rs::a_shadowed_helper_name_is_refused",
+  "crates/ripr/src/analysis/language/typescript/tests/cross_module_entry_tests.rs::a_same_named_helper_from_an_unrelated_module_is_refused",
+  "crates/ripr/src/analysis/language/typescript/tests/cross_module_entry_tests.rs::an_ambiguous_star_export_fails_closed",
+  "crates/ripr/src/analysis/language/typescript/tests/cross_module_entry_tests.rs::a_mocked_module_on_the_chain_is_refused",
+  "crates/ripr/src/analysis/language/typescript/tests/cross_module_entry_tests.rs::a_fabricating_spy_on_the_chain_is_refused",
+  "crates/ripr/src/analysis/language/typescript/tests/cross_module_entry_tests.rs::a_dynamic_or_computed_call_is_refused",
+  "crates/ripr/src/analysis/language/typescript/tests/cross_module_entry_tests.rs::a_name_that_is_only_mentioned_is_refused",
+  "crates/ripr/src/analysis/language/typescript/tests/cross_module_entry_tests.rs::a_namespace_import_of_the_helper_module_is_not_followed",
+  "crates/ripr/src/analysis/language/typescript/tests/cross_module_entry_tests.rs::a_helper_no_tested_export_reaches_is_refused",
+  "crates/ripr/src/analysis/language/typescript/tests/cross_module_entry_tests.rs::an_importer_that_only_a_type_import_names_is_refused",
+  "crates/ripr/src/analysis/language/typescript/tests/cross_module_entry_tests.rs::a_direct_owner_test_keeps_its_own_verdict_beside_the_importer_test",
+  "crates/ripr/src/analysis/language/typescript/tests/cross_module_entry_tests.rs::a_weak_oracle_behind_an_importer_is_unknown_not_an_actionable_gap",
+  "crates/ripr/src/analysis/language/typescript/tests/cross_module_entry_tests.rs::outbound_calls_are_persisted_with_the_file_facts",
 ]
 fixtures = [
   "fixtures/typescript_mock_count_nested_alias",
@@ -19656,6 +19678,8 @@ fixtures = [
   "fixtures/ts_class_getter_factory_rebound",
   "fixtures/ts_table_row_expected_credit",
   "fixtures/ts_table_row_expected_refused",
+  "fixtures/ts_cross_module_reach_chain",
+  "fixtures/ts_cross_module_reach_shadowed",
 ]
 code = [
   "crates/ripr/src/analysis/language/typescript/declaration_bindings.rs",
@@ -19678,6 +19702,7 @@ code = [
   "crates/ripr/src/analysis/language/typescript/tests_extract.rs",
   "crates/ripr/src/analysis/language/typescript/helper_inline.rs",
   "crates/ripr/src/analysis/language/typescript/object_rows.rs",
+  "crates/ripr/src/analysis/language/typescript/module_entries.rs",
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0243-typescript-oracle-and-reach-rules.md",
