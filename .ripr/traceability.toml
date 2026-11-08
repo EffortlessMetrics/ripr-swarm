@@ -8907,6 +8907,7 @@ spec = "docs/specs/RIPR-SPEC-0095-typescript-reexport-test-discovery.md"
 tests = [
   "crates/ripr/src/analysis/language/typescript/tests.rs",
   "crates/ripr/src/analysis/language/typescript/tests/reexport_chain_tests.rs",
+  "crates/ripr/src/analysis/language/typescript/tests/class_barrel_reexport_tests.rs",
   "crates/ripr-contract/src/domain/evidence.rs"
 ]
 fixtures = [
@@ -8915,7 +8916,9 @@ fixtures = [
   "fixtures/typescript_reexport_no_false_credit",
   "fixtures/typescript_reexport_two_hop_limit",
   "fixtures/typescript_reexport_directory_star_barrel",
-  "fixtures/typescript_reexport_barrel_other_name"
+  "fixtures/typescript_reexport_barrel_other_name",
+  "fixtures/typescript_reexport_class_receiver",
+  "fixtures/typescript_reexport_class_receiver_no_false_credit"
 ]
 code = [
   "crates/ripr/src/analysis/language/typescript/related_tests.rs",
@@ -8930,14 +8933,18 @@ outputs = [
   "fixtures/typescript_reexport_no_false_credit/expected/check.json",
   "fixtures/typescript_reexport_two_hop_limit/expected/check.json",
   "fixtures/typescript_reexport_directory_star_barrel/expected/check.json",
-  "fixtures/typescript_reexport_barrel_other_name/expected/check.json"
+  "fixtures/typescript_reexport_barrel_other_name/expected/check.json",
+  "fixtures/typescript_reexport_class_receiver/expected/check.json",
+  "fixtures/typescript_reexport_class_receiver_no_false_credit/expected/check.json"
 ]
 metrics = [
   "typescript_reexport_single_hop_credits_via_barrel",
   "typescript_reexport_no_false_credit_stays_no_path",
   "typescript_reexport_two_hop_credits_within_bound",
   "typescript_reexport_directory_star_barrel_credits",
-  "typescript_reexport_barrel_other_name_stays_no_path"
+  "typescript_reexport_barrel_other_name_stays_no_path",
+  "typescript_reexport_class_receiver_credits_via_barrel",
+  "typescript_reexport_class_receiver_same_name_stays_no_path"
 ]
 
 [[behavior]]
