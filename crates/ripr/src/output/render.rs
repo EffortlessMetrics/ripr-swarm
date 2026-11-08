@@ -2482,19 +2482,36 @@ fn happy_path_passes() {
             render_check_with_config(output, format, &RiprConfig::default())
         };
 
-        let control_output = check_output_with_temp_seam_workspace(Vec::new())?;
-        let control = render(&control_output, &OutputFormat::RepoBadgeJson)?;
-        assert!(!control.is_empty());
-        remove_temp_root(&control_output.root)?;
+        let control_output = TempRootGuard(check_output_with_temp_seam_workspace(Vec::new())?);
+        let control = render(&control_output.0, &OutputFormat::RepoBadgeJson)?;
+        let control_value: serde_json::Value = serde_json::from_str(&control)
+            .map_err(|err| format!("parse repo badge control: {err}"))?;
+        let analyzed = control_value["counts"]["analyzed_seams"].as_u64();
+        assert!(
+            analyzed.is_some_and(|count| count > 0),
+            "fixture must classify seams: {control}"
+        );
+        drop(control_output);
 
-        for (point, format) in [
-            (1u8, OutputFormat::RepoBadgeJson),
-            (2u8, OutputFormat::RepoBadgeShields),
+        let plus_control = TempRootGuard(check_output_with_temp_seam_workspace(Vec::new())?);
+        write_test_efficiency_report(&plus_control.0.root)?;
+        let plus = render(&plus_control.0, &OutputFormat::RepoBadgePlusJson)?;
+        assert!(!plus.is_empty());
+        drop(plus_control);
+
+        for (point, format, with_report) in [
+            (1u8, OutputFormat::RepoBadgeJson, false),
+            (2u8, OutputFormat::RepoBadgeShields, false),
+            (1u8, OutputFormat::RepoBadgePlusJson, true),
+            (2u8, OutputFormat::RepoBadgePlusShields, true),
         ] {
-            let output = check_output_with_temp_seam_workspace(Vec::new())?;
+            let output = TempRootGuard(check_output_with_temp_seam_workspace(Vec::new())?);
+            if with_report {
+                write_test_efficiency_report(&output.0.root)?;
+            }
             let result = {
                 let _armed = WarmPanicGuard::arm(point);
-                render(&output, &format)
+                render(&output.0, &format)
             };
             match result {
                 Ok(rendered) => {
@@ -2506,9 +2523,18 @@ fn happy_path_passes() {
                     assert!(error.contains("repo badge"), "point {point}: {error}");
                 }
             }
-            remove_temp_root(&output.root)?;
         }
         Ok(())
+    }
+
+    /// Removes the temp workspace root on drop so an early return or failed
+    /// assertion does not leak the directory.
+    struct TempRootGuard(CheckOutput);
+
+    impl Drop for TempRootGuard {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0.root);
+        }
     }
 
     /// #13340: a repo-sarif render whose seam-evidence warm failed reports
