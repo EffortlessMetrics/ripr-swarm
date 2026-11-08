@@ -175,7 +175,7 @@ jobs:
   rust-tests-combine:
     name: rust-tests-combine
     needs: rust-tests
-    if: ${{ !cancelled() }}
+    if: ${{ !cancelled() && needs.rust-tests.result != 'skipped' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
@@ -232,7 +232,7 @@ jobs:
       # Same artifact name, file and retention as the unsharded job, now with
       # the combined run context and shard-cover summary alongside.
       - name: Upload test results artifact
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && steps.verify-shards.outcome == 'success' }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: rust-junit
