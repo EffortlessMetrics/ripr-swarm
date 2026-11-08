@@ -518,3 +518,13 @@ commands = []
 estimated_lem = 5
 artifact_families = []
 description = "Reusable native Windows subset: test outcomes advisory, source/status/log/receipt and nonempty execution evidence mandatory. Called after merge-ready admission or explicit standalone diagnostics."
+
+[[lane]]
+id = "completions-smoke"
+posture = "advisory"
+workflow = ".github/workflows/completions-smoke.yml"
+jobs = ["completions"]
+commands = ["cargo test --locked -p ripr --test completions_command"]
+estimated_lem = 6
+artifact_families = []
+description = "Completion script smoke (#7438): on pull requests touching the completions command or catalog, and on dispatch, installs zsh and fish on a hosted Ubuntu runner and loads each `ripr completions` script in its shell (bash -n and source, zsh -n, fish --no-execute). A required shell that is missing fails the job."
