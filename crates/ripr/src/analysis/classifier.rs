@@ -269,12 +269,14 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index_and_origins_with_
         && let Some(facts) = find_file_facts(index, &owner.file)
     {
         let reader_tests: Vec<&TestSummary> = related_tests.iter().map(|(test, _)| *test).collect();
-        let import_owned: Vec<String> = std::iter::once(facts.source.to_string())
+        // Share the indexed source allocations: copying every related
+        // test file's text per probe held gigabytes across classify workers.
+        let import_owned: Vec<std::sync::Arc<str>> = std::iter::once(facts.source.clone())
             .chain(reader_tests.iter().filter_map(|test| {
-                find_file_facts(index, &test.file).map(|file| file.source.to_string())
+                find_file_facts(index, &test.file).map(|file| file.source.clone())
             }))
             .collect();
-        let import_sources: Vec<&str> = import_owned.iter().map(String::as_str).collect();
+        let import_sources: Vec<&str> = import_owned.iter().map(AsRef::as_ref).collect();
         binding_return_flow = evaluate_binding_return_flow(
             probe,
             owner,
@@ -1933,6 +1935,75 @@ pub(super) mod tests {
                 .iter()
                 .any(|reason| { reason.as_str() == StopReason::StaticProbeUnknown.as_str() })
         );
+    }
+
+    /// A changed `Display::fmt` body no test names runs through `format!`,
+    /// `to_string()` and generic helpers, so reach stays undecided; the same
+    /// body under a trait the workspace declares, and a plain function no
+    /// source names, keep `no_static_path`.
+    #[test]
+    fn given_foreign_trait_impl_with_no_related_test_when_classified_then_reach_is_undecided() {
+        let classify_owner = |trait_path: &str, id: &str, name: &str, declared: Option<&str>| {
+            let mut owner = function("src/lib.rs", name);
+            owner.id = SymbolId(id.to_string());
+            if !trait_path.is_empty() {
+                owner.item.container = crate::analysis::facts::FunctionContainer::TraitImpl {
+                    trait_path: trait_path.to_string(),
+                    self_ty: "Money".to_string(),
+                };
+            }
+            let mut functions = vec![owner.clone()];
+            if let Some(trait_name) = declared {
+                // A trait the workspace declares: its methods are called only
+                // by spelling their name, so they get no dispatch allowance.
+                let mut decl = function("src/lib.rs", name);
+                decl.id = SymbolId(format!("src/lib.rs::trait {trait_name}::{name}"));
+                decl.item.container = crate::analysis::facts::FunctionContainer::Trait {
+                    trait_name: trait_name.to_string(),
+                };
+                functions.push(decl);
+            }
+            let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+                functions,
+                ..Default::default()
+            });
+            let probe = Probe {
+                id: ProbeId("probe:src_lib_rs:2:return_value".to_string()),
+                location: SourceLocation::new("src/lib.rs", 2, 1),
+                owner: Some(owner.id.clone()),
+                family: ProbeFamily::ReturnValue,
+                delta: DeltaKind::Value,
+                before: None,
+                after: Some("self.0 + 1".to_string()),
+                expression: "self.0 + 1".to_string(),
+                expected_sinks: vec![],
+                required_oracles: vec![],
+            };
+            classify_probe(&probe, &index, true, None)
+        };
+
+        let display = classify_owner(
+            "Display",
+            "src/lib.rs::impl Display for Money::fmt",
+            "fmt",
+            None,
+        );
+        assert!(display.related_tests.is_empty());
+        assert_eq!(display.ripr.reach.state, StageState::Weak);
+        assert_eq!(display.class, ExposureClass::InfectionUnknown);
+
+        let workspace = classify_owner(
+            "Step",
+            "src/lib.rs::impl Step for Money::process",
+            "process",
+            Some("Step"),
+        );
+        assert_eq!(workspace.ripr.reach.state, StageState::No);
+        assert_eq!(workspace.class, ExposureClass::NoStaticPath);
+
+        let plain = classify_owner("", "src/lib.rs::fmt_money", "fmt_money", None);
+        assert_eq!(plain.ripr.reach.state, StageState::No);
+        assert_eq!(plain.class, ExposureClass::NoStaticPath);
     }
 
     /// #9871: a changed `const` with a same-file reader that a test calls.

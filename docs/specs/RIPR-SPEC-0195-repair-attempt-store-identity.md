@@ -104,12 +104,24 @@ Resolution law:
 - Recovery and status follow-up commands for an explicit store repeat `--store`
   / the portable locator. Status projections do not hardcode the default
   directory for an explicit-store attempt.
+- When a publisher finishes between the edit cage reading a file's link count
+  and listing its directory, the staging name is gone and the listing shows one
+  name for the inode. The cage re-stats the path and accepts it only if the
+  same device and inode now has exactly one link. A second link outside the
+  listed directory keeps the path refused (#12848).
 - An explicit store outside `target/ripr` is included in the edit cage's
   expected operational writes before baseline capture. Stores already under
   `target/ripr` stay covered by that subtree.
 - Equivalent supported spellings of the default locator collapse to one
   default identity. Equivalent supported spellings of one explicit locator
   collapse to that explicit identity.
+- The edit cage accepts a hard-link staged-publication pair (a destination
+  plus its `<stem>.tmp-<pid>-<nonce>` name, left by a publisher stopped between
+  the link and the removal) only under the default store
+  `target/ripr/repair-attempts/`. The same shape under any other writable path,
+  including other `target/ripr` subtrees and source files, is an unaccounted
+  second name and stays refused (#12847). An explicit store's interrupted pair
+  is not yet accepted; that follow-up is tracked in #13553.
 - Store identity does not prove an attempt is current, correct, or useful.
 
 Python trust/verify and edit-cage consumers share this resolver. There is no

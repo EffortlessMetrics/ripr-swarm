@@ -6924,12 +6924,14 @@ pub(crate) fn owner_line_context<'a>(
         relation_index,
     );
     let mock_paths = mock_paths_from_candidates(&related_candidates);
+    // One relation-index enumeration feeds both named-limitation scans
+    // (#10925); each used to enumerate the same candidates itself.
+    let index_candidates = relation_index.candidates(owner, all_tests);
     let named_limitations_from_ownership: Vec<TypeScriptNamedLimitation> =
         if let Some(root) = workspace_root {
-            named_limitations_for_unresolved_ownership(
+            named_limitations_for_unresolved_ownership_from_candidates(
                 owner,
-                all_tests,
-                relation_index,
+                &index_candidates,
                 root,
                 &related_candidates,
             )
@@ -6937,7 +6939,7 @@ pub(crate) fn owner_line_context<'a>(
             Vec::new()
         };
     let named_limitations_from_spy: Vec<TypeScriptNamedLimitation> =
-        named_limitations_for_spy_fabrication(owner, all_tests, relation_index);
+        named_limitations_for_spy_fabrication_from_candidates(owner, &index_candidates);
     OwnerLineContext {
         related_candidates,
         mock_paths,
@@ -7562,6 +7564,14 @@ pub(crate) fn classify_resolved_owner(
     ));
     pin_facts.extend(ts_boolean_pin_facts(
         &probe_shape.family,
+        owner,
+        related_candidates,
+        alias_map,
+        workspace_root,
+    ));
+    pin_facts.extend(ts_throw_boundary_pin_facts(
+        &probe_shape.family,
+        line_text,
         owner,
         related_candidates,
         alias_map,

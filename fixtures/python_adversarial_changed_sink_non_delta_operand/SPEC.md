@@ -49,6 +49,13 @@ the `@property` decorator keeps the class at `static_unknown`.
 inverse: when the oracle observes the changed VALUE (the actual delta, e.g.
 `status == "paid"` after `"settled"` -> `"paid"`), the change stays `exposed`.
 
+The expected static class per finding (machine-checked against
+`expected/check.json` by `check-fixture-contracts`, #12928):
+
+```expected-classes
+probe:src_account.py:python_preview:c7d70a2d -> static_unknown
+```
+
 ## Must Not
 
 - Credit `exposed` from a `changed_sink_token` match on an unchanged operand of

@@ -12,6 +12,9 @@
 //! - a gate-admitted weak repair target (named missing discriminator over a
 //!   weak direct test): ready on list, prepare, card and `ripr repair`, all
 //!   naming the one test file the repair extends;
+//! - a proposal-only seam (#13538): ready on list and prepare exactly when the
+//!   CLI start gate admits it, naming the CLI edit cage's file; a seam with no
+//!   proposal stays not ready on both;
 //! - an item no seam resolves (Python): `seam_not_found` carrying the CLI's
 //!   "covers Rust files only" cause on prepare and card alike.
 
@@ -755,6 +758,108 @@ fn proposed_target(value: &Value) -> Option<&Value> {
     }
 }
 
+/// The fixture's first repo-exposure seam id.
+fn first_seam_id(fixture: &Fixture) -> Result<String, String> {
+    let output = ripr()
+        .current_dir(&fixture.0)
+        .args([
+            "check",
+            "--root",
+            ".",
+            "--mode",
+            "draft",
+            "--format",
+            "repo-exposure-json",
+        ])
+        .output()
+        .map_err(|e| e.to_string())?;
+    if !output.status.success() {
+        return Err(format!(
+            "repo-exposure failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    let seams: Value = serde_json::from_slice(&output.stdout).map_err(|e| e.to_string())?;
+    seams
+        .pointer("/seams/0/seam_id")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .ok_or_else(|| format!("fixture produced no seam: {seams}"))
+}
+
+/// `ripr agent repair --phase before` on the fixture's first seam: the CLI
+/// start gate. `Ok(Some(path))` is the edit cage's `selected_target.path` of
+/// the started attempt; `Ok(None)` is a refusal that published no attempt.
+fn cli_start_cage_target(fixture: &Fixture) -> Result<Option<String>, String> {
+    Ok(cli_start_policy(fixture)?.and_then(|policy| {
+        policy
+            .pointer("/selected_target/path")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+    }))
+}
+
+/// The retained edit-cage policy of a started attempt, or `None` on refusal.
+fn cli_start_policy(fixture: &Fixture) -> Result<Option<Value>, String> {
+    let seam = first_seam_id(fixture)?;
+    let output = ripr()
+        .current_dir(&fixture.0)
+        .args([
+            "agent",
+            "repair",
+            "--json",
+            "--root",
+            ".",
+            "--seam-id",
+            &seam,
+            "--phase",
+            "before",
+        ])
+        .output()
+        .map_err(|e| e.to_string())?;
+    if !output.status.success() {
+        let published = std::fs::read_dir(fixture.0.join("target/ripr/repair-attempts"))
+            .map(|entries| {
+                entries
+                    .filter_map(Result::ok)
+                    .filter(|entry| !entry.file_name().to_string_lossy().starts_with('.'))
+                    .count()
+            })
+            .unwrap_or(0);
+        if published != 0 {
+            return Err("a refused start must publish no attempt".to_string());
+        }
+        return Ok(None);
+    }
+    let started: Value = serde_json::from_slice(&output.stdout).map_err(|e| e.to_string())?;
+    let attempt = started
+        .pointer("/repair_attempt/attempt_id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| format!("start named no attempt: {started}"))?;
+    let read = |path: PathBuf| -> Result<Value, String> {
+        let bytes = std::fs::read(&path).map_err(|e| format!("read {}: {e}", path.display()))?;
+        serde_json::from_slice(&bytes).map_err(|e| e.to_string())
+    };
+    let manifest = read(
+        fixture
+            .0
+            .join("target/ripr/repair-attempts")
+            .join(attempt)
+            .join("attempt.json"),
+    )?;
+    let baseline_path = manifest["artifacts"]
+        .as_array()
+        .and_then(|artifacts| artifacts.iter().find(|a| a["role"] == "edit_cage_baseline"))
+        .and_then(|a| a["path"].as_str())
+        .ok_or_else(|| format!("manifest has no edit_cage_baseline: {manifest}"))?;
+    let baseline = read(fixture.0.join(baseline_path))?;
+    baseline
+        .pointer("/policy")
+        .cloned()
+        .map(Some)
+        .ok_or_else(|| format!("baseline has no policy: {baseline}"))
+}
+
 /// `ripr agent card --json` for the fixture's first repo-exposure seam. Both
 /// commands must exit successfully so a failed command cannot pass as "none".
 fn cli_card_for_first_seam(fixture: &Fixture) -> Result<(Option<i32>, Value), String> {
@@ -850,16 +955,10 @@ fn proposed_new_test_is_disclosed_by_mcp_and_agrees_with_the_cli_card() -> Resul
         return Err(format!("fixture must yield exactly one item: {gaps}"));
     }
     let item = &items[0];
-    // The finding has no existing fix site, so MCP keeps the item held; the
-    // disclosure names the proposal without changing that readiness.
-    assert_eq!(
-        item["repair_packet_ready"], false,
-        "disclosure must not flip readiness: {item}"
-    );
-    assert_eq!(
-        item["repair_ineligibility"], "fix_site_not_established",
-        "{item}"
-    );
+    // #13538: the shared gate admits the proposal as the seam's one repair
+    // target, so the item is ready exactly when the CLI start gate admits it.
+    assert_eq!(item["repair_packet_ready"], true, "{item}");
+    assert!(item["repair_ineligibility"].is_null(), "{item}");
     let disclosed = &item["proposed_new_test"];
     assert_eq!(disclosed["kind"], "integration", "{item}");
     let mcp_file = disclosed["file"]
@@ -874,6 +973,24 @@ fn proposed_new_test_is_disclosed_by_mcp_and_agrees_with_the_cli_card() -> Resul
         .ok_or_else(|| format!("the CLI card projects no proposed target: {card}"))?;
     assert_eq!(cli["file"].as_str(), Some(mcp_file), "{cli} vs {item}");
     assert_eq!(cli["proposal_kind"], disclosed["kind"], "{cli} vs {item}");
+
+    // Readiness agreement: the CLI start gate admits the same seam, and the
+    // edit cage it enforces is the file `ripr_prepare_repair` names.
+    let cage = cli_start_cage_target(&fixture)?
+        .ok_or("the CLI start gate refused the seam MCP lists as ready")?;
+    assert_eq!(cage, mcp_file, "CLI cage vs MCP disclosure: {item}");
+    let canonical_id = item["canonical_id"].as_str().ok_or("item omitted id")?;
+    let prepare = mcp.tool(
+        "ripr_prepare_repair",
+        json!({ "canonical_id": canonical_id }),
+    )?;
+    assert_eq!(prepare["repair_packet_ready"], true, "{prepare}");
+    assert_eq!(prepare["allowed_edit_surface"], json!([cage]), "{prepare}");
+    assert_eq!(prepare["fix_site"]["file"], json!(cage), "{prepare}");
+    assert_eq!(
+        prepare["fix_site"]["new_test_kind"], "integration",
+        "{prepare}"
+    );
 
     // Negative: with no tests/ layout the producer admits no proposal to
     // propose into, so the same item is still held and both surfaces name
@@ -891,6 +1008,17 @@ fn proposed_new_test_is_disclosed_by_mcp_and_agrees_with_the_cli_card() -> Resul
         "control stays held: {item}"
     );
     assert!(
+        cli_start_cage_target(&no_layout)?.is_none(),
+        "the CLI start gate must also refuse the seam with no proposal"
+    );
+    let no_layout_id = item["canonical_id"].as_str().ok_or("item omitted id")?;
+    let held = mcp.tool(
+        "ripr_prepare_repair",
+        json!({ "canonical_id": no_layout_id }),
+    )?;
+    assert_eq!(held["repair_packet_ready"], false, "{held}");
+    assert!(held["allowed_edit_surface"].is_null(), "{held}");
+    assert!(
         item.get("proposed_new_test").is_none(),
         "no proposal may be disclosed without one: {item}"
     );
@@ -898,6 +1026,74 @@ fn proposed_new_test_is_disclosed_by_mcp_and_agrees_with_the_cli_card() -> Resul
     assert!(
         proposed_target(&card).is_none(),
         "the CLI card must also project no proposal: {card}"
+    );
+    Ok(())
+}
+
+/// #13538: the inline proposal-only path. A private owner with one governed,
+/// empty inline test module and no `tests/` layout has the module as its only
+/// producer-owned target. The shared verdict is the proposal (not a plain
+/// inline test), MCP lists the item ready, and `ripr_prepare_repair` stays
+/// confined to the governed module exactly as the CLI cage is, while naming the
+/// proposal (no existing test) as its fix site.
+#[test]
+fn inline_proposal_only_item_is_ready_and_confined_like_the_cli_cage() -> Result<(), String> {
+    let lib = |op: &str| {
+        format!(
+            "fn discounted_total(amount: i32, limit: i32) -> i32 {{\n    if amount {op} limit {{\n        amount - 10\n    }} else {{\n        amount\n    }}\n}}\n#[cfg(test)]\nmod tests {{\n    use super::*;\n}}\n"
+        )
+    };
+    let fixture = Fixture::create(
+        "inline-proposed",
+        &[
+            ("Cargo.toml", CARGO_TOML.to_string()),
+            ("src/lib.rs", lib(">=")),
+            (".gitignore", "target/\n.ripr/\n".to_string()),
+        ],
+        &[("src/lib.rs", lib(">"))],
+    )?;
+    let mut mcp = Mcp::spawn(&fixture.0)?;
+    mcp.tool("ripr_refresh", json!({}))?;
+    let gaps = mcp.tool("ripr_list_gaps", json!({}))?;
+    let [item] = gaps["items"]
+        .as_array()
+        .map(Vec::as_slice)
+        .unwrap_or_default()
+    else {
+        return Err(format!("fixture must yield exactly one item: {gaps}"));
+    };
+    assert_eq!(item["proposed_new_test"]["kind"], "inline_unit", "{item}");
+    assert_eq!(item["proposed_new_test"]["module"], "tests", "{item}");
+    assert_eq!(item["repair_packet_ready"], true, "{item}");
+    assert!(item["repair_ineligibility"].is_null(), "{item}");
+
+    let policy = cli_start_policy(&fixture)?
+        .ok_or("the CLI start gate refused the seam MCP lists as ready")?;
+    assert_eq!(policy["selected_target"]["path"], "src/lib.rs", "{policy}");
+    assert_eq!(policy["inline_test_module_target"], true, "{policy}");
+
+    let canonical_id = item["canonical_id"].as_str().ok_or("item omitted id")?;
+    let prepare = mcp.tool(
+        "ripr_prepare_repair",
+        json!({ "canonical_id": canonical_id }),
+    )?;
+    assert_eq!(prepare["repair_packet_ready"], true, "{prepare}");
+    assert_eq!(
+        prepare["allowed_edit_surface"],
+        json!(["src/lib.rs"]),
+        "{prepare}"
+    );
+    assert_eq!(
+        prepare["fix_site"]["new_test_kind"], "inline_unit",
+        "{prepare}"
+    );
+    assert_eq!(
+        prepare["inline_test_module"]["module"], "tests",
+        "{prepare}"
+    );
+    assert_eq!(
+        prepare["inline_test_module"]["file"], "src/lib.rs",
+        "{prepare}"
     );
     Ok(())
 }

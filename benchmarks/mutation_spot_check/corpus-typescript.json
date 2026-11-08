@@ -1,23 +1,19 @@
 {
   "schema_version": "ripr-mutation-spot-check-typescript-corpus-v1",
-  "status": "unrun",
-  "note": "Pinned for .github/workflows/mutation-spot-check-typescript.yml. The workflow has not run yet, so no package here has been confirmed to install, pass its own tests under Stryker, or produce a report. Revisions are the HEAD commits read with a read-only ls-remote on 2026-11-08; package contents were not inspected.",
+  "status": "run_once",
+  "note": "Pinned for .github/workflows/mutation-spot-check-typescript.yml. First hosted run 2026-11-08 (Stryker 9.6.1): defu and ufo installed, ran under Stryker and were scored; scule was dropped because its vitest crashes the Stryker 9.6.1 vitest runner (this.ctx.provide is not a function). Revisions are the HEAD commits read with a read-only ls-remote on 2026-11-08.",
   "stryker": {
-    "version": "8.7.1",
-    "packages": ["@stryker-mutator/core", "@stryker-mutator/vitest-runner"]
+    "version": "9.6.1",
+    "packages": [
+      "@stryker-mutator/core",
+      "@stryker-mutator/vitest-runner"
+    ]
   },
   "packages": [
     {
       "name": "defu",
       "url": "https://github.com/unjs/defu",
       "sha": "82632b66f5914e9946edce300e10633a3d5c0cb7",
-      "test_runner": "vitest",
-      "mutate": "src/**/*.ts"
-    },
-    {
-      "name": "scule",
-      "url": "https://github.com/unjs/scule",
-      "sha": "5bc68048caad7c0e7de35842c83a510e8e1a7c4f",
       "test_runner": "vitest",
       "mutate": "src/**/*.ts"
     },
