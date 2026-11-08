@@ -457,11 +457,14 @@ before compilation-bearing file-policy enumeration. It writes
 `target/ripr/reports/ci-policy.{json,md}` through the precommit report owner,
 identifies its composition, and leaves legacy `precommit.md` and structured
 local `precommit-v2` receipts untouched.
-Its pass excludes selected Clippy; the required producer retains explicit
-`cargo clippy --workspace --all-targets -- -D warnings`. The source/toolchain/input
-policy-preflight receipt is still verified. Formatting and the later dependency,
-process and network steps are retained; no duplicate-policy removal or measured
-savings is claimed. Ordinary local `precommit` keeps selected Clippy.
+Its pass excludes formatting and selected Clippy; the required producer retains
+explicit `cargo fmt --check` and
+`cargo clippy --workspace --all-targets -- -D warnings` obligations. The
+source/toolchain/input policy-preflight receipt is still verified and does not
+stand in for formatting proof. Formatting runs once in the hosted early step,
+instead of again inside `ci-policy` (#8198). The later dependency, process and
+network steps are retained. No measured duration saving or complete 20-minute
+route is claimed. Ordinary local `precommit` keeps formatting and selected Clippy.
 
 `precommit` is the cheap non-mutating guardrail. It checks formatting, spec
 format and numbering, and the policy surfaces that should fail quickly before
