@@ -5,7 +5,7 @@
 //! boundary call from one test and an exact oracle from another is a false
 //! `exposed` (#4828): `>=` → `>` still passes both tests.
 
-use super::super::facts::CallFact;
+use super::super::facts::{CallFact, FunctionContainer};
 use super::super::rust_index::{
     FunctionSummary, OracleFact, RustIndex, TestSummary, extract_literals,
 };
@@ -82,18 +82,21 @@ pub(in crate::analysis) fn wrapper_return_boundary_pinned(
     // (`krate::inner::entry(10)`) exactly as through a bare import. A path
     // spelling counts only when the shared call-identity authority settles
     // that spelled path on this wrapper; a path that names another module's
-    // same-named function stays refused.
+    // same-named function stays refused. Only a free wrapper qualifies:
+    // `qualified_owner_calls_resolve` admits every spelling of a non-free
+    // owner, so a method wrapper must not borrow a path-spelled `X::name(..)`.
+    let free_wrapper = hop.caller.item.container == FunctionContainer::Free;
     let whole_call_of = |subject: &str| {
         super::owner_pin::direct_call_name(subject) == Some(name)
-            || path_qualified_whole_call(subject, name).is_some_and(|_| {
-                super::call_identity::qualified_owner_calls_resolve(
+            || (free_wrapper
+                && path_qualified_whole_call(subject, name).is_some()
+                && super::call_identity::qualified_owner_calls_resolve(
                     index,
                     &hop.caller,
                     test,
                     subject,
                     assertion.line,
-                )
-            })
+                ))
     };
     let whole_call = assertion_comparison_operands(&assertion.text).is_some_and(|[left, right]| {
         (whole_call_of(left) && literal(right)) || (whole_call_of(right) && literal(left))
