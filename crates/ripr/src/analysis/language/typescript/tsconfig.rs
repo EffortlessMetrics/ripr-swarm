@@ -17,10 +17,11 @@
 //! - `extends` chains are followed up to 8 hops when every target is a
 //!   relative (`./`, `../`) regular file inside the workspace root; an
 //!   inherited `baseUrl` stays anchored at the config that declares it, as
-//!   `tsc` does (#11204). `references`, package-name `extends`, symlinked or
-//!   out-of-root bases, cycles, and missing targets fail closed, except that
-//!   an unfollowable base is ignored when the extending config declares both
-//!   `baseUrl` and `paths` itself (a cycle never is).
+//!   `tsc` does (#11204); an explicit `null` clears an inherited value.
+//!   `references`, package-name `extends`, bases outside the root or behind
+//!   a symlinked file or directory, cycles, and missing targets fail closed,
+//!   except that an unfollowable base is ignored when the extending config
+//!   declares a non-null `baseUrl` and `paths` itself (a cycle never is).
 //! - Resolution succeeds ONLY when a specifier matches a SINGLE existing
 //!   workspace file (.ts/.tsx/.js/.jsx/.mts/.cts/.mjs/.cjs).
 //!   Zero or >1 matches → `None`.
@@ -62,8 +63,21 @@ struct RawTsConfig {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct RawCompilerOptions {
-    base_url: Option<String>,
-    paths: Option<HashMap<String, Vec<String>>>,
+    /// `None` when absent, `Some(None)` for an explicit `null`, which
+    /// clears an inherited value as `tsc` does (#11204 review).
+    #[serde(default, deserialize_with = "explicit_null")]
+    base_url: Option<Option<String>>,
+    #[serde(default, deserialize_with = "explicit_null")]
+    paths: Option<Option<HashMap<String, Vec<String>>>>,
+}
+
+/// Keeps a present JSON `null` distinct from an absent key.
+fn explicit_null<'de, D, T>(deserializer: D) -> Result<Option<Option<T>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Option::<T>::deserialize(deserializer).map(Some)
 }
 
 // ── Public types ──────────────────────────────────────────────────────────────
@@ -623,7 +637,7 @@ pub(crate) fn load_alias_map_with_read_error(
                                 detail,
                             }
                         }
-                        TsAliasMapBlocker::ExtendsUnsupported => {
+                        TsAliasMapBlocker::ExtendsUnsupported | TsAliasMapBlocker::ExtendsCycle => {
                             TsAliasMapLoadGap::ExtendsUnsupported { config: filename }
                         }
                         TsAliasMapBlocker::IncompleteConfig => {
@@ -647,8 +661,13 @@ pub(crate) fn load_alias_map_with_read_error(
 /// successfully. Internal to `parse_alias_map`; surfaced to callers as
 /// a `TsAliasMapLoadGap`.
 enum TsAliasMapBlocker {
-    Unparseable { detail: String },
+    Unparseable {
+        detail: String,
+    },
     ExtendsUnsupported,
+    /// A cycle in the `extends` chain. Surfaced as `ExtendsUnsupported`, but
+    /// never tolerated by a self-sufficient config, since `tsc` rejects it.
+    ExtendsCycle,
     IncompleteConfig,
 }
 
@@ -665,6 +684,13 @@ struct MergedCompilerOptions {
     /// `(declaring config directory, raw baseUrl)`.
     base_url: Option<(PathBuf, String)>,
     paths: Option<HashMap<String, Vec<String>>>,
+}
+
+/// One chain level's merge state: `None` = not set by this chain,
+/// `Some(None)` = cleared by an explicit `null`, `Some(Some(_))` = set.
+struct ChainOptions {
+    base_url: Option<Option<(PathBuf, String)>>,
+    paths: Option<Option<HashMap<String, Vec<String>>>>,
 }
 
 /// Maximum `extends` hops followed from the workspace-root config.
@@ -704,10 +730,41 @@ fn merge_compiler_options(
     visited: &mut Vec<PathBuf>,
     depth: usize,
 ) -> Result<MergedCompilerOptions, TsAliasMapBlocker> {
-    if depth > MAX_EXTENDS_DEPTH || visited.iter().any(|seen| seen == config_path) {
+    let chain = merge_chain(root, config_path, text, visited, depth)?;
+    Ok(MergedCompilerOptions {
+        base_url: chain.base_url.flatten(),
+        paths: chain.paths.flatten(),
+    })
+}
+
+fn merge_chain(
+    root: &Path,
+    config_path: &Path,
+    text: &str,
+    visited: &mut Vec<PathBuf>,
+    depth: usize,
+) -> Result<ChainOptions, TsAliasMapBlocker> {
+    if visited.iter().any(|seen| seen == config_path) {
+        return Err(TsAliasMapBlocker::ExtendsCycle);
+    }
+    if depth > MAX_EXTENDS_DEPTH {
         return Err(TsAliasMapBlocker::ExtendsUnsupported);
     }
     visited.push(config_path.to_path_buf());
+    let merged = merge_chain_level(root, config_path, text, visited, depth);
+    // Pop on every outcome so a failed branch cannot flag a later sibling
+    // base as a cycle.
+    visited.pop();
+    merged
+}
+
+fn merge_chain_level(
+    root: &Path,
+    config_path: &Path,
+    text: &str,
+    visited: &mut Vec<PathBuf>,
+    depth: usize,
+) -> Result<ChainOptions, TsAliasMapBlocker> {
     let raw = parse_raw_tsconfig(text)?;
     if raw.references.is_some() {
         return Err(TsAliasMapBlocker::ExtendsUnsupported);
@@ -715,14 +772,15 @@ fn merge_compiler_options(
     let config_dir = config_path
         .parent()
         .ok_or(TsAliasMapBlocker::ExtendsUnsupported)?;
-    let mut merged = MergedCompilerOptions {
+    let mut merged = ChainOptions {
         base_url: None,
         paths: None,
     };
-    let self_sufficient = raw
-        .compiler_options
-        .as_ref()
-        .is_some_and(|options| options.base_url.is_some() && options.paths.is_some());
+    // Only a non-null own `baseUrl` AND own `paths` make inheritance
+    // irrelevant; a `null` clears instead of setting.
+    let self_sufficient = raw.compiler_options.as_ref().is_some_and(|options| {
+        matches!(options.base_url, Some(Some(_))) && matches!(options.paths, Some(Some(_)))
+    });
     if let Some(extends) = &raw.extends {
         let targets: Vec<Option<&str>> = match extends {
             serde_json::Value::String(single) => vec![Some(single.as_str())],
@@ -730,28 +788,25 @@ fn merge_compiler_options(
             _ => vec![None],
         };
         for target in targets {
-            let base_path = target.and_then(|target| extends_target_path(root, config_dir, target));
-            // A cycle is never tolerated: `tsc` rejects it outright.
-            if base_path
-                .as_ref()
-                .is_some_and(|base_path| visited.iter().any(|seen| seen == base_path))
-            {
-                return Err(TsAliasMapBlocker::ExtendsUnsupported);
-            }
-            let base = base_path
+            let base = target
+                .and_then(|target| extends_target_path(root, config_dir, target))
                 .ok_or(TsAliasMapBlocker::ExtendsUnsupported)
                 .and_then(|base_path| {
                     let base_text = read_config_capped(&base_path)
                         .map_err(|_read_err| TsAliasMapBlocker::ExtendsUnsupported)?;
-                    merge_compiler_options(root, &base_path, &base_text, visited, depth + 1)
+                    merge_chain(root, &base_path, &base_text, visited, depth + 1)
                 });
             let base = match base {
                 Ok(base) => base,
+                // A cycle anywhere below is never tolerated: `tsc` rejects it.
+                Err(TsAliasMapBlocker::ExtendsCycle) => {
+                    return Err(TsAliasMapBlocker::ExtendsCycle);
+                }
                 Err(_blocker) if self_sufficient => continue,
                 Err(blocker) => return Err(blocker),
             };
-            // Later array entries override earlier ones; the extending
-            // config itself is applied after the whole chain.
+            // Later array entries override earlier ones (a `null` included);
+            // the extending config itself is applied after the whole chain.
             if base.base_url.is_some() {
                 merged.base_url = base.base_url;
             }
@@ -762,13 +817,12 @@ fn merge_compiler_options(
     }
     if let Some(options) = raw.compiler_options {
         if let Some(base_url) = options.base_url {
-            merged.base_url = Some((config_dir.to_path_buf(), base_url));
+            merged.base_url = Some(base_url.map(|raw| (config_dir.to_path_buf(), raw)));
         }
         if options.paths.is_some() {
             merged.paths = options.paths;
         }
     }
-    visited.pop();
     Ok(merged)
 }
 
@@ -779,14 +833,47 @@ fn extends_target_path(root: &Path, config_dir: &Path, target: &str) -> Option<P
     if !target.starts_with("./") && !target.starts_with("../") {
         return None;
     }
-    let mut base_path = normalize_lexically(&config_dir.join(target))?;
-    if base_path.extension().is_none() {
-        base_path.set_extension("json");
+    let named = normalize_lexically(&config_dir.join(target))?;
+    let root = normalize_lexically(root)?;
+    // `tsc` appends `.json` to a target that does not end in it and uses
+    // that file when it exists, else the target as written.
+    let candidates = if named.to_string_lossy().ends_with(".json") {
+        vec![named]
+    } else {
+        let mut with_json = named.clone().into_os_string();
+        with_json.push(".json");
+        vec![PathBuf::from(with_json), named]
+    };
+    candidates
+        .into_iter()
+        .find(|candidate| regular_file_without_symlinks(&root, candidate))
+}
+
+/// `true` when `path` lies lexically inside `root`, every component below
+/// `root` (directories included) is not a symlink, and the last one is a
+/// regular file, so the read cannot leave the workspace.
+fn regular_file_without_symlinks(root: &Path, path: &Path) -> bool {
+    let Ok(below) = path.strip_prefix(root) else {
+        return false;
+    };
+    let mut current = root.to_path_buf();
+    let mut components = below.components().peekable();
+    while let Some(part) = components.next() {
+        current.push(part.as_os_str());
+        let Ok(meta) = std::fs::symlink_metadata(&current) else {
+            return false;
+        };
+        let file_type = meta.file_type();
+        let acceptable = if components.peek().is_some() {
+            file_type.is_dir()
+        } else {
+            file_type.is_file()
+        };
+        if !acceptable {
+            return false;
+        }
     }
-    let inside_root = normalize_lexically(root).is_some_and(|root| base_path.starts_with(root));
-    let regular_file =
-        std::fs::symlink_metadata(&base_path).is_ok_and(|meta| meta.file_type().is_file());
-    (inside_root && regular_file).then_some(base_path)
+    true
 }
 
 /// `path` with `.` dropped and `..` applied lexically; `None` when `..`
@@ -797,8 +884,10 @@ fn normalize_lexically(path: &Path) -> Option<PathBuf> {
     for part in path.components() {
         match part {
             Component::CurDir => {}
+            // Popping back to an empty path is fine (a relative root such
+            // as `.`); popping past it is an escape.
             Component::ParentDir => {
-                if !out.pop() || out.as_os_str().is_empty() {
+                if !out.pop() {
                     return None;
                 }
             }
@@ -1669,14 +1758,124 @@ mod tests {
                 "real/tsconfig.base.json",
                 r#"{"compilerOptions":{"baseUrl":".","paths":{"@/*":["src/*"]}}}"#,
             );
-            let _ = std::os::unix::fs::symlink(
-                linked.join("real/tsconfig.base.json"),
-                linked.join("base.json"),
+            assert!(
+                std::os::unix::fs::symlink(
+                    linked.join("real/tsconfig.base.json"),
+                    linked.join("base.json"),
+                )
+                .is_ok(),
+                "fixture symlink must be created"
             );
             write(&linked, "tsconfig.json", r#"{"extends":"./base.json"}"#);
             assert!(load_alias_map(&linked).is_none());
+            // Control: the same base reached through its real path loads.
+            write(
+                &linked,
+                "tsconfig.json",
+                r#"{"extends":"./real/tsconfig.base.json"}"#,
+            );
+            assert!(load_alias_map(&linked).is_some());
+            // A symlinked DIRECTORY in the middle of the path is refused too.
+            assert!(
+                std::os::unix::fs::symlink(linked.join("real"), linked.join("shared")).is_ok(),
+                "fixture directory symlink must be created"
+            );
+            write(
+                &linked,
+                "tsconfig.json",
+                r#"{"extends":"./shared/tsconfig.base.json"}"#,
+            );
+            assert!(load_alias_map(&linked).is_none());
+            let _ = std::fs::remove_dir_all(&linked);
         }
         let _ = std::fs::remove_dir_all(&outer);
+    }
+
+    #[test]
+    fn explicit_null_clears_an_inherited_option() {
+        let root = temp_dir("extends-null");
+        write(
+            &root,
+            "tsconfig.base.json",
+            r#"{"compilerOptions":{"baseUrl":".","paths":{"@/*":["src/*"]}}}"#,
+        );
+        write(&root, "src/x.ts", "export const x = 1;\n");
+        // Control: the inherited map resolves.
+        write(
+            &root,
+            "tsconfig.json",
+            r#"{"extends":"./tsconfig.base.json"}"#,
+        );
+        let map = load_alias_map(&root);
+        assert_eq!(
+            map.as_ref().and_then(|map| map.resolve("@/x")),
+            Some(PathBuf::from("src/x.ts"))
+        );
+        // `paths: null` clears the inherited paths: nothing resolves.
+        write(
+            &root,
+            "tsconfig.json",
+            r#"{"extends":"./tsconfig.base.json","compilerOptions":{"baseUrl":".","paths":null}}"#,
+        );
+        let map = load_alias_map(&root);
+        assert!(
+            map.as_ref().and_then(|map| map.resolve("@/x")).is_none(),
+            "a null paths must not keep the inherited aliases"
+        );
+        // `baseUrl: null` clears the inherited anchor: incomplete config.
+        write(
+            &root,
+            "tsconfig.json",
+            r#"{"extends":"./tsconfig.base.json","compilerOptions":{"baseUrl":null}}"#,
+        );
+        assert!(load_alias_map(&root).is_none());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn cycle_below_a_self_sufficient_config_still_fails_closed() {
+        let root = temp_dir("extends-nested-cycle");
+        write(&root, "b.json", r#"{"extends":"./tsconfig.json"}"#);
+        write(
+            &root,
+            "tsconfig.json",
+            r#"{"extends":"./b.json","compilerOptions":{"baseUrl":".","paths":{"@/*":["src/*"]}}}"#,
+        );
+        assert!(load_alias_map(&root).is_none());
+        // Control: a missing (not cyclic) base is ignored for the same config.
+        write(&root, "b.json", r#"{"extends":"./missing.json"}"#);
+        assert!(load_alias_map(&root).is_some());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn extensionless_target_and_relative_root_follow_the_chain() {
+        let root = temp_dir("extends-extensionless");
+        write(
+            &root,
+            "config/tsconfig.base.json",
+            r#"{"compilerOptions":{"baseUrl":".","paths":{"@/*":["src/*"]}}}"#,
+        );
+        write(&root, "config/src/x.ts", "export const x = 1;\n");
+        write(
+            &root,
+            "packages/a/tsconfig.json",
+            r#"{"extends":"../../config/tsconfig.base"}"#,
+        );
+        let target = extends_target_path(
+            &root,
+            &root.join("packages/a"),
+            "../../config/tsconfig.base",
+        );
+        assert_eq!(target, Some(root.join("config/tsconfig.base.json")));
+        // A relative root (`.`-style) normalizes to the empty path; a chain
+        // climbing back to it stays inside, one more `..` escapes.
+        assert_eq!(
+            normalize_lexically(Path::new("./packages/a/../..")),
+            Some(PathBuf::new())
+        );
+        assert_eq!(normalize_lexically(Path::new("./packages/../..")), None);
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
