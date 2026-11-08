@@ -838,6 +838,8 @@ Examples:
   ripr annotations --check
 ```
 
+<a id="assistant-loop-health"></a>
+<a id="assistant-loop-proof"></a>
 ### assistant-loop
 
 Shared help for `ripr assistant-loop`, `ripr assistant-loop health`, `ripr assistant-loop proof`.
@@ -1310,6 +1312,7 @@ Examples:
   ripr cache status --json
 ```
 
+<a id="calibrate-cargo-mutants"></a>
 ### calibrate
 
 Shared help for `ripr calibrate`, `ripr calibrate cargo-mutants`.
@@ -1434,6 +1437,7 @@ More:
   ripr check --help --all   Every option (--path/--exclude too), format, and env var.
 ```
 
+<a id="first-pr"></a>
 ### start-here
 
 Shared help for `ripr start-here`, `ripr first-pr`.
@@ -1492,6 +1496,7 @@ Examples:
   ripr first-pr --root . --base BASE --head HEAD
 ```
 
+<a id="config-validate"></a>
 ### config
 
 Shared help for `ripr config`, `ripr config validate`.
@@ -1624,6 +1629,7 @@ Examples:
   ripr continue [--attempt ID] --root .
 ```
 
+<a id="coverage-grip-frontier"></a>
 ### coverage-grip
 
 Shared help for `ripr coverage-grip`, `ripr coverage-grip frontier`.
@@ -2072,6 +2078,7 @@ Examples:
   ripr first-action --pr-guidance target/ripr/review/comments.json
 ```
 
+<a id="gate-evaluate"></a>
 ### gate
 
 Shared help for `ripr gate`, `ripr gate evaluate`.
@@ -3878,6 +3885,7 @@ Examples:
   ripr pr-evidence --base origin/main
 ```
 
+<a id="pr-ledger-record"></a>
 ### pr-ledger
 
 Shared help for `ripr pr-ledger`, `ripr pr-ledger record`.
@@ -3923,6 +3931,7 @@ Examples:
   ripr pr-ledger record --pr-number 123 --base SHA --head SHA --gate target/ripr/reports/gate-decision.json
 ```
 
+<a id="pr-review-front-panel"></a>
 ### pr-review
 
 Shared help for `ripr pr-review`, `ripr pr-review front-panel`.
@@ -5544,6 +5553,7 @@ Examples:
   ripr swarm queue --root .
 ```
 
+<a id="zero-status"></a>
 ### zero
 
 Shared help for `ripr zero`, `ripr zero status`.
