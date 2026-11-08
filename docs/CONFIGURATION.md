@@ -967,6 +967,14 @@ Analysis formats, diff-scoped:
 | `github` | `--format github` | GitHub Actions annotations. |
 | `sarif` | `--format sarif` | SARIF consumers, including GitHub code scanning. |
 
+Terminal behavior of `human` and `human-full`: the report is plain text with
+no ANSI color or cursor control, so `NO_COLOR`, pagers and redirected stdout
+all see the same bytes. Progress and heartbeat lines go to stderr only (silence
+them with `--quiet` or `RIPR_QUIET`); stdout carries only the report. Advisory
+prose wraps at a fixed 100 columns rather than the detected terminal width, so
+the report is byte-identical in a terminal, in CI logs, in goldens and in an
+agent's captured output (#7442).
+
 Badge formats, diff-scoped, for PR and CI artifacts only: `badge-json`,
 `badge-shields`, `badge-plus-json`, `badge-plus-shields`. These are not public
 README, crate-page, or store headline authority.
