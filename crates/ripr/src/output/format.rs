@@ -473,7 +473,8 @@ impl OutputFormat {
             | Self::RepoSeamsMd
             | Self::RepoExposureMd
             | Self::RepoSarif
-            | Self::RepoSarifCompact => false,
+            | Self::RepoSarifCompact
+            | Self::MissedTxt => false,
         }
     }
 
