@@ -966,3 +966,59 @@ fn cloned_callback_binding_chains_keep_the_existing_depth_limit() {
         assert_eq!(passes_call_making_closure(&text, "run"), expected, "{text}");
     }
 }
+
+#[test]
+fn memoized_callback_reads_match_uncached_and_key_on_text_and_helper() {
+    let test = "fn t() { run(1, || greet()); other(|| greet()); }";
+    let changed = "fn t() { run(1, 2); other(|| greet()); }";
+    let helper = "fn h(f: impl Fn() -> bool) { let g = f(); assert!(g); }";
+    let changed_helper = "fn h(f: impl Fn(), g: impl Fn()) { g(); }";
+    let params = |text: &str| {
+        invoked_callback_params(text).map(|params| {
+            params
+                .into_iter()
+                .map(|p| (p.position, p.name))
+                .collect::<Vec<_>>()
+        })
+    };
+    let params_uncached = |text: &str| {
+        invoked_callback_params_uncached(text).map(|params| {
+            params
+                .into_iter()
+                .map(|p| (p.position, p.name))
+                .collect::<Vec<_>>()
+        })
+    };
+    // Premise: the inputs give distinct answers, so a key that ignored text or helper name
+    // would return a stale value below.
+    assert_ne!(
+        closure_argument_positions_uncached(test, "run"),
+        closure_argument_positions_uncached(test, "other")
+    );
+    assert_ne!(
+        passes_call_making_closure_uncached(test, "run"),
+        passes_call_making_closure_uncached(changed, "run")
+    );
+    assert_ne!(params_uncached(helper), params_uncached(changed_helper));
+
+    for _scope in 0..2 {
+        let _memo = crate::analysis::syntax::run_memo::enter();
+        for _repeat in 0..2 {
+            for (text, name) in [(test, "run"), (test, "other"), (changed, "run")] {
+                assert_eq!(
+                    closure_argument_positions(text, name),
+                    closure_argument_positions_uncached(text, name),
+                    "{name}: {text}"
+                );
+                assert_eq!(
+                    passes_call_making_closure(text, name),
+                    passes_call_making_closure_uncached(text, name),
+                    "{name}: {text}"
+                );
+            }
+            for text in [helper, changed_helper] {
+                assert_eq!(params(text), params_uncached(text), "{text}");
+            }
+        }
+    }
+}
