@@ -439,6 +439,47 @@ impl OutputFormat {
         }
     }
 
+    /// Returns `true` for formats whose stdout is a JSON document a caller
+    /// parses as JSON: the `json` family and every `*-json` document. An
+    /// explicit `--format` naming one is a JSON request, so a usage error on
+    /// that run also writes the `cli_refusal` document (#11584). SARIF and
+    /// the Shields endpoint projections are their own external document
+    /// shapes and are not JSON requests. Exhaustive on purpose: a new format
+    /// must decide.
+    pub(crate) fn is_json_request(&self) -> bool {
+        match self {
+            Self::Json
+            | Self::JsonCompact
+            | Self::JsonTerse
+            | Self::CheckFindingsJson
+            | Self::BadgeJson
+            | Self::BadgePlusJson
+            | Self::RepoBadgeJson
+            | Self::RepoBadgePlusJson
+            | Self::RepoSeamsJson
+            | Self::RepoExposureJson
+            | Self::RepoExposureSummaryJson
+            | Self::AgentSeamPacketsJson => true,
+            Self::Human
+            | Self::HumanFull
+            | Self::Github
+            | Self::Agent
+            | Self::Sarif
+            | Self::SarifCompact
+            | Self::BadgeShields
+            | Self::BadgePlusShields
+            | Self::RepoBadgeShields
+            | Self::RepoBadgePlusShields
+            | Self::RepoSeamsMd
+            | Self::RepoExposureMd
+            | Self::RepoSarif
+            | Self::RepoSarifCompact
+            // #13666: missed-txt is plain one-line-per-gap text, not a JSON
+            // request document (#13720 raced the format in; the arm was lost).
+            | Self::MissedTxt => false,
+        }
+    }
+
     /// Returns `true` only when warm reruns of the format's walk can hit a
     /// seam-facts cache: the classified and compact-classified inventory
     /// paths. The raw `repo-seams-*` walks rebuild the corpus index on every

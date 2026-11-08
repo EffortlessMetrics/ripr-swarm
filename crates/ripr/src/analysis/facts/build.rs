@@ -5,6 +5,7 @@ mod incremental_edit_tests;
 
 use super::super::syntax::{LexicalRustSyntaxAdapter, RaRustSyntaxAdapter, RustSyntaxAdapter};
 use super::model::{RustIndex, WorkspaceRootAuthority};
+use super::process_memo::{ProcessFactMemo, process_fact_memo};
 use crate::analysis::cancellation::{self, WorkerError};
 use crate::analysis::seam_cache::{
     CacheLoad, FileFactCacheStats, FilesContentHashBuilder, KnownFilePaths, RepoFileFactCache,
@@ -196,12 +197,18 @@ fn build_index_from_paths_with_cache_and_adapters(
     let batches = paths
         .chunks(PARSE_BATCH_FILES)
         .map(|chunk| StreamedBatch::read(root, chunk, consumed.as_deref_mut()));
-    build_index_with_file_fact_cache_batches(root, batches, adapter, fallback, &cache, || {
-        match attribution {
+    build_index_with_file_fact_cache_batches(
+        root,
+        batches,
+        adapter,
+        fallback,
+        &cache,
+        process_fact_memo(),
+        || match attribution {
             MissAttribution::Named => cache.known_file_paths(),
             MissAttribution::Skipped => KnownFilePaths::default(),
-        }
-    })
+        },
+    )
 }
 
 fn build_index_with_file_fact_cache(
@@ -218,6 +225,7 @@ fn build_index_with_file_fact_cache(
         adapter,
         fallback,
         cache,
+        process_fact_memo(),
         load_known_file_paths,
     )
 }
@@ -281,6 +289,7 @@ fn build_index_with_file_fact_cache_batches<B: AsRef<[(PathBuf, Vec<u8>)]>>(
     adapter: &(dyn RustSyntaxAdapter + Send + Sync),
     fallback: &(dyn RustSyntaxAdapter + Send + Sync),
     cache: &RepoFileFactCache,
+    memo: Option<&ProcessFactMemo>,
     mut load_known_file_paths: impl FnMut() -> KnownFilePaths,
 ) -> Result<CachedRustIndex, String> {
     cancellation::checkpoint()?;
@@ -291,7 +300,7 @@ fn build_index_with_file_fact_cache_batches<B: AsRef<[(PathBuf, Vec<u8>)]>>(
         batches,
         adapter,
         fallback,
-        cache,
+        FactCaches { disk: cache, memo },
         &mut load_known_file_paths,
         &mut accounting,
     );
@@ -350,6 +359,14 @@ fn batch_end_error(stats: &FileFactCacheStats, error: String) -> String {
         .unwrap_or(error)
 }
 
+/// Where a build looks facts up: the per-process memo first, when enabled,
+/// then the on-disk file-fact cache.
+#[derive(Clone, Copy)]
+struct FactCaches<'a> {
+    disk: &'a RepoFileFactCache,
+    memo: Option<&'a ProcessFactMemo>,
+}
+
 /// Admit, parse, store, and insert one `PARSE_BATCH_FILES` slice at a time
 /// (#5029). Cache-hit facts and parsed misses live outside the canonical
 /// index only for the current batch; every batch temporary is dropped before
@@ -367,17 +384,25 @@ fn insert_cached_file_batches<B: AsRef<[(PathBuf, Vec<u8>)]>>(
     batches: impl Iterator<Item = Result<B, String>>,
     adapter: &(dyn RustSyntaxAdapter + Send + Sync),
     fallback: &(dyn RustSyntaxAdapter + Send + Sync),
-    cache: &RepoFileFactCache,
+    caches: FactCaches<'_>,
     load_known_file_paths: &mut impl FnMut() -> KnownFilePaths,
     accounting: &mut CacheAccounting,
 ) -> Result<(RustIndex, String), String> {
+    let FactCaches { disk: cache, memo } = caches;
     let CacheAccounting {
         stats,
         first_corrupt_reason,
     } = accounting;
     enum Pending {
-        Ready(Box<super::FileFacts>),
-        Parse { key: RepoFileFactCacheKey },
+        /// Facts served by a cache. `remembered` is true when they came from
+        /// the process memo, which therefore already holds them.
+        Ready {
+            facts: Box<super::FileFacts>,
+            remembered: bool,
+        },
+        Parse {
+            key: RepoFileFactCacheKey,
+        },
     }
     // Only genuine misses need historical paths for invalidation attribution.
     // All-hit, corrupt-only, empty, and already-cancelled builds must not walk
@@ -395,29 +420,43 @@ fn insert_cached_file_batches<B: AsRef<[(PathBuf, Vec<u8>)]>>(
         // the rayon workers; the outcomes are then accounted sequentially in
         // input order, exactly as a sequential lookup would.
         cancellation::checkpoint()?;
-        let lookups: Vec<Result<(RepoFileFactCacheKey, CacheLoad<super::FileFacts>), String>> =
-            batch
-                .par_iter()
-                .map(|(file, bytes)| {
-                    cancellation::with_optional_token(token.as_ref(), || {
-                        cancellation::checkpoint()?;
-                        let key = RepoFileFactCacheKey::new(file, bytes);
-                        let load = cache.load_file_facts(&key);
-                        Ok((key, load))
-                    })
+        // The process memo, when enabled, answers before the disk entry is
+        // read: it holds facts only for byte-identical sources (see
+        // `process_memo`).
+        type Lookup = (RepoFileFactCacheKey, CacheLoad<super::FileFacts>, bool);
+        let lookups: Vec<Result<Lookup, String>> = batch
+            .par_iter()
+            .map(|(file, bytes)| {
+                cancellation::with_optional_token(token.as_ref(), || {
+                    cancellation::checkpoint()?;
+                    let key = RepoFileFactCacheKey::new(file, bytes);
+                    if let Some(facts) = memo.and_then(|memo| memo.lookup(file, bytes)) {
+                        return Ok((key, CacheLoad::Hit(facts), true));
+                    }
+                    let load = cache.load_file_facts(&key);
+                    Ok((key, load, false))
                 })
-                .collect();
+            })
+            .collect();
         let mut pending: Vec<Pending> = Vec::with_capacity(batch.len());
         for ((file, _), lookup) in batch.iter().zip(lookups) {
             cancellation::checkpoint()?;
-            let (key, load) = lookup?;
+            let (key, load, remembered) = lookup?;
             // Folded sequentially in input order: the returned hash always
             // describes exactly the bytes this build parsed or looked up.
             content_hash.push_digest(file, key.content_hash());
             match load {
                 CacheLoad::Hit(facts) => {
+                    if stats.hits == 0 {
+                        // #7047: record this build's last use so the
+                        // stale-build prune does not evict a hit-only build.
+                        cache.note_build_use();
+                    }
                     stats.hits += 1;
-                    pending.push(Pending::Ready(Box::new(facts)));
+                    pending.push(Pending::Ready {
+                        facts: Box::new(facts),
+                        remembered,
+                    });
                 }
                 CacheLoad::Miss => {
                     stats.misses += 1;
@@ -503,7 +542,7 @@ fn insert_cached_file_batches<B: AsRef<[(PathBuf, Vec<u8>)]>>(
         uninserted_facts::record(
             pending
                 .iter()
-                .filter(|entry| matches!(entry, Pending::Ready(_)))
+                .filter(|entry| matches!(entry, Pending::Ready { .. }))
                 .count()
                 + parsed.iter().filter(|facts| facts.is_some()).count(),
         );
@@ -523,7 +562,12 @@ fn insert_cached_file_batches<B: AsRef<[(PathBuf, Vec<u8>)]>>(
                 index.non_utf8_sources.insert(file.clone());
             }
             let summary = match entry {
-                Pending::Ready(facts) => *facts,
+                Pending::Ready { facts, remembered } => {
+                    if !remembered && let Some(memo) = memo {
+                        memo.remember(file, bytes, &facts);
+                    }
+                    *facts
+                }
                 Pending::Parse { key } => {
                     let Some(facts) = parsed[position].take() else {
                         return Err(format!(
@@ -532,6 +576,9 @@ fn insert_cached_file_batches<B: AsRef<[(PathBuf, Vec<u8>)]>>(
                         ));
                     };
                     store_fresh_facts(cache, &key, &facts, file, stats);
+                    if let Some(memo) = memo {
+                        memo.remember(file, bytes, &facts);
+                    }
                     facts
                 }
             };
@@ -1783,6 +1830,69 @@ pub fn check(x: i32) -> bool {
         let invalid = rust_source_text(b"// \xFF\n");
         assert!(invalid.not_utf8);
         assert_eq!(invalid.text, "// \u{fffd}\n");
+    }
+
+    /// The process memo serves an unchanged file without reading its disk
+    /// entry, yields the same index as the disk path, and never serves a file
+    /// whose bytes moved (the saved file of an editor refresh).
+    #[test]
+    fn process_memo_serves_unchanged_files_and_reparses_changed_ones() -> Result<(), Box<dyn Error>>
+    {
+        let fixture = CacheInventoryFixture::new("process_fact_memo")?;
+        let memo = ProcessFactMemo::new();
+        let lib = PathBuf::from("src/lib.rs");
+        let other = PathBuf::from("src/other.rs");
+        let first = [
+            (lib.clone(), b"pub fn value() -> i32 { 1 }\n".to_vec()),
+            (
+                other.clone(),
+                b"pub fn other(x: i32) -> bool { x > 2 }\n".to_vec(),
+            ),
+        ];
+        let build = |files: &[(PathBuf, Vec<u8>)], memo: Option<&ProcessFactMemo>| {
+            build_index_with_file_fact_cache_batches(
+                &fixture.root,
+                files.chunks(PARSE_BATCH_FILES).map(Ok),
+                &RaRustSyntaxAdapter,
+                &LexicalRustSyntaxAdapter,
+                &fixture.cache,
+                memo,
+                KnownFilePaths::default,
+            )
+        };
+        let cold = build(&first, Some(&memo))?;
+        assert_eq!(cold.file_fact_cache.misses, 2);
+        assert_eq!(memo.len(), 2, "both parsed files are remembered");
+
+        // Without its disk entries, only the memo can answer.
+        fs::remove_dir_all(fixture.root.join("cache"))?;
+        fs::create_dir_all(fixture.root.join("cache"))?;
+        let warm = build(&first, Some(&memo))?;
+        assert_eq!(warm.file_fact_cache.hits, 2);
+        assert_eq!(warm.file_fact_cache.misses, 0);
+        assert_eq!(warm.file_fact_cache.stores, 0);
+        assert_eq!(warm.files_content_hash, cold.files_content_hash);
+        assert_eq!(warm.index.functions(), cold.index.functions());
+        assert_eq!(warm.index.tests(), cold.index.tests());
+        let without_memo = build(&first, None)?;
+        assert_eq!(without_memo.file_fact_cache.misses, 2, "the disk was empty");
+
+        // An edited file misses and is parsed from its new bytes.
+        let edited = [
+            (lib.clone(), b"pub fn value() -> i32 { 2 }\n".to_vec()),
+            first[1].clone(),
+        ];
+        let after_edit = build(&edited, Some(&memo))?;
+        assert_eq!(after_edit.file_fact_cache.hits, 1);
+        assert_eq!(after_edit.file_fact_cache.misses, 1);
+        let reparsed = after_edit
+            .index
+            .files()
+            .get(&lib)
+            .map(|facts| facts.data().source.to_string());
+        assert_eq!(reparsed.as_deref(), Some("pub fn value() -> i32 { 2 }\n"));
+        assert!(after_edit.index.files().get(&other).is_some());
+        Ok(())
     }
 
     #[test]
