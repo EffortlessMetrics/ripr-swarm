@@ -6922,6 +6922,38 @@ pub(in crate::analysis) fn inherent_owner_call_resolves_inside_unreadable_macro(
         && relation(true) == RelationReason::DirectOwnerCall
 }
 
+/// Whether `owner`'s inherent call resolves in `caller` once `body` stands in
+/// for the test's body: the relation the direct-call path applies, over a body
+/// where a cross-file forwarding macro call (#12886) was replaced by the
+/// operands it evaluates. The index is untouched and nothing is credited; the
+/// answer only lets the caller name a limit. Binding, shadow and receiver rules
+/// are the ones the direct relation applies.
+pub(in crate::analysis) fn inherent_owner_call_resolves_in_forwarded_body(
+    caller: &TestSummary,
+    body: String,
+    owner: &FunctionSummary,
+    index: &RustIndex,
+) -> bool {
+    if !requires_inherent_receiver_identity(owner) {
+        return false;
+    }
+    let mut rewritten = caller.clone();
+    rewritten.body = crate::analysis::facts::SourceText::owned(body);
+    owner_call_relation_reason_gated(
+        &rewritten,
+        Some(owner),
+        &owner.name,
+        &[],
+        index
+            .files()
+            .get(&caller.file)
+            .map(|facts| facts.data().source.as_ref()),
+        index,
+        false,
+        false,
+    ) == RelationReason::DirectOwnerCall
+}
+
 /// Whether the last call of `method` in `prefix` (masked test source cut at
 /// the end of one statement, with earlier calls of the same name blanked by
 /// the caller) has a receiver bound to `impl_type`, under the same receiver

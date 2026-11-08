@@ -68,6 +68,10 @@ pub(crate) struct MacroVisibility {
     /// the definition when it is a plain `#[macro_export]`; files that spell
     /// `macro_export` somewhere unlisted. Built on first use.
     exports: OnceLock<ExportIndex>,
+    /// Whether a call inside a function of the file's own top level counts as
+    /// reached by that file's `use crate::name;` (assertion wrappers, #12886).
+    /// The test-generator expander calls at item position and keeps `false`.
+    fn_nested_calls: bool,
 }
 
 #[derive(Debug, Default)]
@@ -132,6 +136,7 @@ impl Clone for MacroVisibility {
             scopes: SyncMemo::default(),
             attributed: SyncMemo::default(),
             exports: OnceLock::new(),
+            fn_nested_calls: self.fn_nested_calls,
         }
     }
 }
@@ -299,6 +304,23 @@ fn may_follow_attribute(item: &str) -> bool {
 
 impl MacroVisibility {
     pub(crate) fn new(files: impl Iterator<Item = (PathBuf, Arc<str>)>) -> Self {
+        Self::with_generator_marker(files, "test")
+    }
+
+    /// A resolver whose "generators" are the macros whose definition mentions
+    /// `assert`: the assertion-forwarding wrappers a test may call from
+    /// another file (#12886). Same resolution routes, same refusals.
+    pub(crate) fn for_assertion_wrappers(files: impl Iterator<Item = (PathBuf, Arc<str>)>) -> Self {
+        Self {
+            fn_nested_calls: true,
+            ..Self::with_generator_marker(files, "assert")
+        }
+    }
+
+    fn with_generator_marker(
+        files: impl Iterator<Item = (PathBuf, Arc<str>)>,
+        marker: &str,
+    ) -> Self {
         use rayon::prelude::*;
         let sources: BTreeMap<PathBuf, Arc<str>> = files.collect();
         // Each candidate's scope parse is independent and the result is a
@@ -306,7 +328,7 @@ impl MacroVisibility {
         // order-free and `shared_scope` is already a shared, locked memo.
         let candidates: Vec<&Arc<str>> = sources
             .values()
-            .filter(|source| source.contains("macro_rules") && source.contains("test"))
+            .filter(|source| source.contains("macro_rules") && source.contains(marker))
             .collect();
         let generators: BTreeSet<String> = candidates
             .par_iter()
@@ -316,7 +338,7 @@ impl MacroVisibility {
                         scope
                             .macros
                             .iter()
-                            .filter(|scoped| scoped.text.contains("test"))
+                            .filter(|scoped| scoped.text.contains(marker))
                             .map(|scoped| scoped.name.clone()),
                     );
                 }
@@ -332,6 +354,7 @@ impl MacroVisibility {
             scopes: SyncMemo::default(),
             attributed: SyncMemo::default(),
             exports: OnceLock::new(),
+            fn_nested_calls: false,
         }
     }
 
@@ -389,7 +412,11 @@ impl MacroVisibility {
             // extern-crate macro; the splice would shadow it. A file that
             // defines the name itself is not importing it.
             let usable = if by_use {
-                !calls.nested_bare
+                if self.fn_nested_calls {
+                    !calls.nested_in_module
+                } else {
+                    !calls.nested_bare
+                }
             } else {
                 !calls.bare && !calls.crate_prefixes.is_empty()
             };
