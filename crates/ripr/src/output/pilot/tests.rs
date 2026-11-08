@@ -2527,6 +2527,18 @@ fn pilot_offers_no_gap_or_repair_while_an_unreadable_path_was_skipped() -> Resul
     assert!(terminal.contains("no gap is ranked"), "{terminal}");
     assert!(!terminal.contains("some changed files"), "{terminal}");
     assert!(md.contains("no gap is ranked"), "{md}");
+    // The closing guidance must not offer the snapshot pair either (JSON nulls it).
+    for (name, text) in [("terminal", &terminal), ("markdown", &md)] {
+        assert!(
+            text.contains("Restore read access to the Rust path"),
+            "{name}\n{text}"
+        );
+        assert!(
+            !text.contains("ripr outcome"),
+            "{name} offered an outcome\n{text}"
+        );
+        assert!(!text.contains("--phase after"), "{name}\n{text}");
+    }
     Ok(())
 }
 
@@ -3363,6 +3375,34 @@ fn pilot_names_unanalyzed_languages_instead_of_an_empty_complete_ranking() -> Re
     );
     assert!(parsed["next"]["outcome_command"].is_string(), "{json}");
     Ok(())
+}
+
+/// #13624: Rust disabled and the only Rust lives in an unreadable directory.
+/// The readable count is 0 and must render as unknown, never a made-up count
+/// and never as "no Rust files".
+#[test]
+fn pilot_rust_exclusion_of_an_unreadable_only_tree_has_no_invented_count() {
+    use crate::domain::LanguageId;
+
+    let artifacts = pilot_artifacts();
+    let excluded =
+        PilotLanguageRoutes::from_discovered(Path::new("."), false, &[LanguageId::Python], &[])
+            .with_unanalyzed(Vec::new(), true)
+            .with_rust_exclusion(Some(0));
+    let context = PilotSummaryContext {
+        language_routes: Some(&excluded),
+        ..pilot_context(&artifacts)
+    };
+    let terminal = render_pilot_terminal(&[], context);
+    let md = render_pilot_summary_md(&[], context);
+    for (name, text) in [("terminal", &terminal), ("markdown", &md)] {
+        assert!(
+            text.contains("an unreadable path (file count unknown)"),
+            "{name}\n{text}"
+        );
+        assert!(!text.contains("0 files"), "{name}\n{text}");
+        assert!(!text.contains("1 file"), "{name}\n{text}");
+    }
 }
 
 #[test]

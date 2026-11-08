@@ -622,6 +622,13 @@ fn render_pilot_summary_md_with_target(
         }
         // #5497: with every seam withheld there is no gap to test, so the
         // snapshot pair would only measure an edit nobody was asked to make.
+        // #13624: nothing was ranked because a path was unreadable, so there is
+        // no edit to measure; the recovery is read access, not a snapshot pair.
+        (None, None) if top.is_empty() && unreadable_skips(context) > 0 => {
+            out.push_str(UNREADABLE_NEXT);
+            out.push('\n');
+            return out;
+        }
         (None, None) if top.is_empty() && withheld > 0 => {
             out.push_str(&withheld_only_next(context.seam_limit));
             out.push('\n');
@@ -1035,6 +1042,11 @@ fn render_pilot_terminal_with_target(
     }
     if unanalyzed_only(context).is_some() {
         out.push_str(NO_ANALYZED_LANGUAGE_COMMAND);
+        out.push('\n');
+        return out;
+    }
+    if top.is_empty() && unreadable_skips(context) > 0 {
+        out.push_str(UNREADABLE_NEXT);
         out.push('\n');
         return out;
     }
@@ -1696,6 +1708,8 @@ fn ranked_top<'a>(
     top_actionable_seams(classified, max_seams, context.current_change)
 }
 
+const UNREADABLE_NEXT: &str = "Restore read access to the Rust path(s) named above, then rerun `ripr pilot`; no snapshot or outcome comparison applies until a gap is ranked.";
+
 const UNREADABLE_RANKING_WITHHELD: &str = "a Rust path could not be read and was skipped, so a gap here may be only a test hidden in the skipped path; no gap is ranked and no repair is offered. Restore read access, then rerun `ripr pilot`.";
 
 /// Rust files excluded by `[languages] enabled`, when the exclusion emptied
@@ -1889,7 +1903,10 @@ const TERMINAL_NO_REPAIR_START_LINE: &str =
     "not available for this gap (ripr did not start a repair here); add the test by hand";
 
 fn file_count_label(count: usize) -> String {
-    if count == 1 {
+    if count == 0 {
+        // Only an unreadable-only tree reaches 0 (#13624): the count is unknown.
+        "an unreadable path (file count unknown)".to_string()
+    } else if count == 1 {
         "1 file".to_string()
     } else {
         format!("{count} files")
