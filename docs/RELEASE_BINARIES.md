@@ -94,6 +94,38 @@ the process is killed between the package and receipt writes, remove the
 incomplete output package before retrying; a package without its receipt is not
 a successful producer result.
 
+### Native Python wheel
+
+From the same clean committed checkout, any of the five contracted targets can
+wrap its staged final payload into a platform-tagged `ripr-rs` wheel without
+rebuilding or publishing. The inputs and identity binding are those of the npm
+producer above, for the target named by the payload identity:
+
+```bash
+cargo xtask release-server-archive --wheel-payload-dir <payload-directory> \
+  --payload-identity <payload-identity.json> --producer-receipt <producer-build.json> \
+  --build-identity <selected-target-build-identity.json> \
+  --qualified-archive <ripr-server-vVERSION-TARGET.tar.gz|zip> \
+  --out-dir <new-output-directory>
+```
+
+The qualified archive must be named `ripr-server-v<version>-<target>.<archive>`
+with the archive extension from the target's row in `policy/distribution.toml`.
+The command writes `ripr_rs-<pep440>-py3-none-<wheel_platform_tag>.whl` using
+the row's `wheel_platform_tag`. The wheel holds the payload executable under
+`.data/scripts/` (mode 0755), the two licenses under `dist-info/licenses/`,
+`WHEEL`, a `METADATA` generated from `packaging/python/pyproject.toml` and
+`packaging/python/README.md`, and `RECORD`, all with fixed timestamps in a fixed
+order so the same inputs give byte-identical output. `README-server.txt` is
+verified as a payload notice but is not packaged. After writing, the command
+re-opens the wheel and checks the exact entry set and order, RECORD digests, the
+executable and license digests against the payload identity, regenerated
+`WHEEL` and `METADATA`, and the script's execute mode, then writes
+`wheel-native-receipt-<target>.json` with the wheel digest next to the payload,
+producer, build-identity and archive digests. Existing output files are not
+overwritten. This is a local wheel artifact only: it does not establish
+installed-channel parity, a compatibility floor or publication.
+
 ## Exact-candidate qualification (read-only)
 
 Use `.github/workflows/server-archive-qualification.yml` when archive shape
