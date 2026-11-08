@@ -668,7 +668,9 @@ pub(crate) fn attributes_define_mutants_skip<'attribute>(
         normalized_test_attribute_path(attribute).as_deref() == Some(MUTANTS_SKIP_ATTRIBUTE_PATH)
             || cfg_attr_introduced_paths_with(&blank_string_literals(attribute), true)
                 .iter()
-                .any(|path| path == MUTANTS_SKIP_ATTRIBUTE_PATH)
+                // A leading `::` names the same crate path, as it does on the
+                // bare `#[::mutants::skip]` form above.
+                .any(|path| path.strip_prefix("::").unwrap_or(path) == MUTANTS_SKIP_ATTRIBUTE_PATH)
     })
 }
 

@@ -1966,6 +1966,8 @@ fn mutants_skip_attribute_path_is_exact_and_admits_cfg_attr() {
         "#[::mutants::skip]",
         "#[mutants :: skip]",
         "#[cfg_attr(test, mutants::skip)]",
+        "#[cfg_attr(test, ::mutants::skip)]",
+        "#[cfg_attr(test, inline, :: mutants :: skip)]",
         "#[cfg_attr(not(test), mutants::skip)]",
         "#[cfg_attr(feature = \"slow\", mutants::skip)]",
         "#[cfg_attr(all(test, feature = \"a,b\"), inline, mutants::skip)]",
@@ -1982,6 +1984,9 @@ fn mutants_skip_attribute_path_is_exact_and_admits_cfg_attr() {
     for attribute in [
         "#[inline]",
         "#[my::mutants::skip]",
+        "#[cfg_attr(test, my::mutants::skip)]",
+        "#[cfg_attr(test, ::my::mutants::skip)]",
+        "#[cfg_attr(test, ::::mutants::skip)]",
         "#[skip]",
         "#[mutants::skipped]",
         "#[mutants::exclude]",

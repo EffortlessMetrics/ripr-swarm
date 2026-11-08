@@ -828,8 +828,11 @@ A changed function or method that already carries cargo-mutants'
 `#[mutants::skip]` (or `#[cfg_attr(<predicate>, mutants::skip)]`) needs no
 entry here: `ripr check` reads the attribute as an owner opt-out, withholds
 that owner's findings and discloses the count with the `owner_mutants_skip`
-reason (#13819; see [Output schema](OUTPUT_SCHEMA.md)). There is no setting to
-turn this off; remove the attribute to see the findings again.
+reason (#13819; see [Output schema](OUTPUT_SCHEMA.md)). The human, JSON,
+GitHub, SARIF and diff-scope badge formats of `ripr check` withhold them; LSP
+diagnostics, MCP gaps and repair cards, `ripr explain` and repo-scope output
+still report them. There is no setting to turn this off; remove the attribute
+to see the findings again.
 
 Validated by `ripr check --format badge-*` (loaded relative to `--root`).
 Schema:

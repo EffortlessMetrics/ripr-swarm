@@ -3569,7 +3569,17 @@ Human output prints a `Withheld by owner opt-out (owner_mutants_skip)` block
 with one line per withheld finding (location, class, owner) and names the
 count on the `Summary` line; the findings leave the triage selection the same
 way policy-suppressed findings do. GitHub output skips their annotations and
-counts them in the denominator `::notice`. The canonical next-action stop
+counts them in the denominator `::notice`. SARIF (`sarif`, `sarif-compact`)
+emits no result for them and adds a `withheld_by_owner_opt_out` count to
+`runs[0].properties` (absent when zero). The diff-scope badges (`badge-json`,
+`badge-shields`, `badge-plus-json`, `badge-plus-shields`) do not count them
+as unsuppressed exposure gaps or calibrated unknowns; an explicit badge
+suppression that matches one still counts it as suppressed.
+
+Surfaces that still report withheld findings (not yet wired to the opt-out):
+LSP diagnostics, hover and code actions; MCP gaps and repair cards; `ripr
+explain`; and the repo-scope formats (`repo-*`), which do not read the
+attribute at all. The canonical next-action stop
 case for a run whose every finding is withheld stays `suppressed_by_policy`;
 the human `Safe next action` line names the owner opt-out.
 

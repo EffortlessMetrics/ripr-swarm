@@ -279,8 +279,26 @@ pub fn ripr_badge_summary_with_suppressions(
         .keys()
         .filter(|id| calibrated_ids.contains(id.as_str()))
         .count();
-    let unsuppressed_exposure_gaps = calibrated_gap_findings.len().saturating_sub(suppressed);
-    let calibrated_unknowns = calibrated_unknown_count(&output.findings);
+    // #13819: a gap whose changed owner carries `#[mutants::skip]` is
+    // withheld from actionable output, so it is not an unsuppressed gap.
+    // An explicit suppression that matches it still wins and counts as
+    // suppressed, mirroring `ripr check` where the policy wins.
+    let owner_withheld: BTreeSet<&str> = output
+        .owner_opt_outs
+        .iter()
+        .map(|opt_out| opt_out.finding_id.as_str())
+        .collect();
+    let unsuppressed_exposure_gaps = calibrated_gap_findings
+        .iter()
+        .filter(|finding| !suppressed_findings.contains_key(finding.id.as_str()))
+        .filter(|finding| !owner_withheld.contains(finding.id.as_str()))
+        .count();
+    let calibrated_unknowns = calibrated_unknown_count(
+        output
+            .findings
+            .iter()
+            .filter(|finding| !owner_withheld.contains(finding.id.as_str())),
+    );
 
     let counts = BadgeCounts {
         unsuppressed_exposure_gaps,
