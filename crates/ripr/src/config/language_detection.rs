@@ -61,6 +61,7 @@ pub(crate) fn nested_python_packages_unclaimed(root: &Path) -> Vec<std::path::Pa
 fn has_typescript_or_javascript_markers(root: &Path) -> bool {
     shallow_has_file(root, "package.json")
         || shallow_has_file(root, "tsconfig.json")
+        || shallow_has_file(root, "jsconfig.json")
         || analysis::TYPESCRIPT_SOURCE_EXTENSIONS
             .iter()
             .chain(analysis::JAVASCRIPT_SOURCE_EXTENSIONS.iter())
@@ -208,7 +209,9 @@ mod nested_python_tests {
         assert!(nested_python_packages_unclaimed(&rust).is_empty());
         let ts = scratch("ts", &["tsconfig.json", "tools/py/pyproject.toml"])?;
         assert!(!detect_languages(&ts).contains(&LanguageId::Python));
-        for root in [mono, rust, ts] {
+        let js = scratch("js", &["jsconfig.json", "tools/py/pyproject.toml"])?;
+        assert!(!detect_languages(&js).contains(&LanguageId::Python));
+        for root in [mono, rust, ts, js] {
             std::fs::remove_dir_all(&root).map_err(|err| format!("remove: {err}"))?;
         }
         Ok(())

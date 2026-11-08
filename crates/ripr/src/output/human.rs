@@ -1310,14 +1310,15 @@ fn nested_python_root_hint(
         .join(", ");
     Some(match containing {
         Some(package) => {
-            let target = if root == Path::new(".") || root.as_os_str().is_empty() {
-                std::path::PathBuf::from(package)
-            } else {
-                root.join(package)
-            };
+            // Bind the root to an absolute path with the shared helper so the
+            // command is cwd-independent, and shell-quote it so a hostile
+            // directory name cannot execute when pasted.
+            let target = crate::agent::loop_commands::bound_root_path(&root.join(package));
+            let target = crate::agent::loop_commands::shell_arg(
+                &crate::agent::loop_commands::root_path_display(&target),
+            );
             format!(
-                "\nPython packages found below this root: {names}. Or analyze the package with the changed files directly: `ripr check --root {}`.\n",
-                target.display().to_string().replace('\\', "/")
+                "\nPython packages found below this root: {names}. Or analyze the package with the changed files directly: `ripr check --root {target}`.\n"
             )
         }
         None => format!(
@@ -9093,16 +9094,27 @@ mod tests {
             })
         };
         let packages = ["services/a", "services/b"];
+        let cwd = std::env::current_dir().unwrap_or_default();
         let picked = render_with(".", &packages, "services/b/src/calc.py");
+        let expected = format!("ripr check --root {}/services/b`", cwd.display());
         assert!(
-            picked.contains("ripr check --root services/b`"),
-            "must pick the package with the changed file; got:\n{picked}"
+            picked.contains(&expected),
+            "must pick the changed package under the bound cwd; got:\n{picked}"
         );
-        assert!(!picked.contains("--root services/a"), "got:\n{picked}");
+        assert!(
+            !picked.contains("services/a`.") && !picked.contains("--root services/"),
+            "got:\n{picked}"
+        );
         let absolute = render_with("/work/mono", &packages, "services/a/x.py");
         assert!(
             absolute.contains("ripr check --root /work/mono/services/a`"),
             "got:\n{absolute}"
+        );
+        // A hostile directory name must arrive shell-quoted (security).
+        let hostile = render_with("/work/mono", &["$(touch pwned)"], "$(touch pwned)/x.py");
+        assert!(
+            hostile.contains("--root '/work/mono/$(touch pwned)'`"),
+            "got:\n{hostile}"
         );
         let unmatched = render_with(".", &packages, "tools/x.py");
         assert!(

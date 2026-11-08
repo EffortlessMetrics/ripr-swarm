@@ -7987,10 +7987,16 @@ tests = [
   "crates/ripr/src/app/tests/preview_analyzed_outcome.rs::unrelated_python_refusal_does_not_degrade_a_rust_only_diff",
   "crates/ripr/src/analysis/pipeline.rs::tests::typescript_advisory_counts_javascript_family_files",
   "crates/ripr/src/analysis/pipeline.rs::tests::repo_typescript_advisory_counts_javascript_after_exclusion",
-  "crates/ripr/src/output/human.rs::tests::typescript_advisory_names_javascript_and_mixed_files"
+  "crates/ripr/src/output/human.rs::tests::typescript_advisory_names_javascript_and_mixed_files",
+  "crates/ripr/src/output/human.rs::tests::render_python_not_enabled_note_uses_typed_nested_packages",
+  "crates/ripr/src/config/language_detection.rs::nested_python_tests::nested_package_detects_python_only_when_no_other_language_claims_the_root",
+  "crates/ripr/src/config/python.rs::tests::nested_python_package_roots_name_monorepo_packages_only",
+  "crates/ripr/src/output/first_pr.rs::tests::typescript_root_with_nested_python_package_still_names_the_missing_marker"
 ]
 fixtures = []
 code = [
+  "crates/ripr/src/config/language_detection.rs",
+  "crates/ripr/src/config/python.rs",
   "crates/ripr/src/analysis/mod.rs",
   "crates/ripr/src/analysis/pipeline.rs",
   "crates/ripr/src/analysis/workspace/discover.rs",
