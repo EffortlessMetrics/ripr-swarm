@@ -32,6 +32,13 @@ struct TempFixture {
 impl Drop for TempFixture {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.root);
+        for ext in [
+            "focused-result.json",
+            "trust-focused-result.json",
+            "changed-trust-focused-result.json",
+        ] {
+            let _ = std::fs::remove_file(self.root.with_extension(ext));
+        }
     }
 }
 
@@ -1505,6 +1512,680 @@ fn failed_apply_record_publication_stays_retryable() -> Result<(), String> {
     if apply.get("phase").and_then(Value::as_str) != Some("apply") {
         return Err("the retried apply record carries the wrong phase".to_string());
     }
+    Ok(())
+}
+
+#[test]
+fn failed_focused_apply_record_publication_stays_retryable() -> Result<(), String> {
+    let fixture = build_fixture("focused-record-retry")?;
+    let seam_id = find_seam_for_target(&fixture.root, TARGET_TEST_FILE)?;
+    let prepared = run_prepare(&fixture, &seam_id, "att-focused-retry")?;
+    require_success(&prepared, "bound before phase")?;
+    let attempt_id = sole_attempt(&fixture)?;
+    edit_target_file(&fixture)?;
+    let claim = serde_json::json!({
+        "schema_version": "0.1", "kind": "focused_test_result",
+        "attempt_id": attempt_id, "head": current_head(&fixture.root)?,
+        "test_file": TARGET_TEST_FILE,
+        "libtest_events": [{"type": "test", "event": "ok", "name": "boundary_discriminator"}],
+    });
+    let result_path = fixture.root.with_extension("focused-result.json");
+    std::fs::write(&result_path, claim.to_string()).map_err(|error| error.to_string())?;
+    let blocked = fixture
+        .root
+        .join("target/ripr/workflow/python-repair-driver-after.json");
+    std::fs::create_dir_all(&blocked).map_err(|error| error.to_string())?;
+    let result_arg = result_path.to_string_lossy().to_string();
+    let args = [
+        "agent",
+        "repair",
+        "--root",
+        ".",
+        "--attempt",
+        &attempt_id,
+        "--phase",
+        "after",
+        "--edit-authorized",
+        "--edit-authority",
+        AUTHORITY,
+        "--test-result",
+        &result_arg,
+    ];
+    let failed = run_ripr(&fixture.root, &args)?;
+    require_failure(
+        &failed,
+        "focused apply with blocked record",
+        "python-repair-driver-after",
+    )?;
+    let state = attempt_manifest(&fixture, &attempt_id)?;
+    assert_eq!(state["state"], "awaiting_edit", "{state:?}");
+    assert!(
+        state
+            .get("terminal_artifacts")
+            .and_then(Value::as_array)
+            .is_none_or(Vec::is_empty),
+        "{state:?}"
+    );
+    std::fs::remove_dir_all(&blocked).map_err(|error| error.to_string())?;
+    let retry = run_ripr(&fixture.root, &args)?;
+    require_success(&retry, "retry focused apply")?;
+    let state = attempt_manifest(&fixture, &attempt_id)?;
+    let focused = state["terminal_artifacts"]
+        .as_array()
+        .and_then(|items| {
+            items
+                .iter()
+                .find(|item| item["role"] == "focused_test_result")
+        })
+        .ok_or("focused result missing after retry")?;
+    let focused_bytes = std::fs::read(
+        fixture
+            .root
+            .join(focused["path"].as_str().ok_or("focused path missing")?),
+    )
+    .map_err(|error| error.to_string())?;
+    assert_eq!(
+        focused["sha256"],
+        format!("sha256:{}", sha256_hex(&focused_bytes))
+    );
+    let focused_record: Value =
+        serde_json::from_slice(&focused_bytes).map_err(|error| error.to_string())?;
+    assert_eq!(focused_record["attempt_id"], attempt_id);
+    assert_eq!(focused_record["head"], claim["head"]);
+    assert_eq!(focused_record["file"], TARGET_TEST_FILE);
+    let apply = apply_record(&fixture)?;
+    assert_eq!(apply["phase"], "apply");
+    assert_eq!(apply["durable_attempt_id"], attempt_id);
+    assert_eq!(
+        apply["apply"]["patch_sha256"].as_str(),
+        state["after"]["delta_sha256"]
+            .as_str()
+            .map(|digest| digest.trim_start_matches("sha256:"))
+    );
+    Ok(())
+}
+
+// Interpose after the selected atomic rename, without a timing-dependent poll.
+// The hook and fixture are private to this GNU/Linux test process.
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+fn focused_apply_with_hook(
+    fixture: &TempFixture,
+    attempt_id: &str,
+    result_path: &Path,
+    mode: &str,
+) -> Result<Output, String> {
+    let dir = fixture.root.join(".git/ripr-trust-test-hook");
+    std::fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
+    let source = dir.join("hook.c");
+    let library = dir.join("hook.so");
+    std::fs::write(
+        &source,
+        r#"
+#define _GNU_SOURCE
+#include <dlfcn.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+int rename(const char *old, const char *new) {
+    int (*next)(const char *, const char *) = dlsym(RTLD_NEXT, "rename");
+    int result = next(old, new);
+    const char *target = getenv("RIPR_TRUST_HOOK_TARGET");
+    if (result || !target || strcmp(new, target)) return result;
+    if (!strcmp(getenv("RIPR_TRUST_HOOK_MODE"), "stop-receipt")) _exit(79);
+    FILE *file = fopen(new, "r"); if (!file) _exit(90);
+    if (fseek(file, 0, SEEK_END)) _exit(94);
+    long size = ftell(file); if (size < 0 || size > 10485760) _exit(95);
+    rewind(file); char *body = malloc((size_t)size + 1); if (!body) _exit(96);
+    if (fread(body, 1, (size_t)size, file) != (size_t)size) _exit(97);
+    fclose(file); body[size] = 0;
+    int retained = strstr(body, "\"terminal_artifacts\"") && strstr(body, "\"role\": \"focused_test_result\"");
+    free(body);
+    if (retained && (!strcmp(getenv("RIPR_TRUST_HOOK_MODE"), "stop-retention") || !strcmp(getenv("RIPR_TRUST_HOOK_MODE"), "change-manifest"))) {
+        FILE *marker = fopen(getenv("RIPR_TRUST_HOOK_MARKER"), "w");
+        if (!marker) _exit(98); fclose(marker);
+        if (!strcmp(getenv("RIPR_TRUST_HOOK_MODE"), "stop-retention")) _exit(79);
+        unsetenv("LD_PRELOAD");
+        if (system("python3 \"$RIPR_TRUST_HOOK_SCRIPT\"") != 0) _exit(91);
+    }
+    return result;
+}
+ssize_t read(int fd, void *buffer, size_t count) {
+    ssize_t (*next)(int, void *, size_t) = dlsym(RTLD_NEXT, "read");
+    ssize_t result = next(fd, buffer, count);
+    static int replaced = 0, matched = 0;
+    const char *mode = getenv("RIPR_TRUST_HOOK_MODE");
+    const char *target = getenv("RIPR_TRUST_HOOK_SELECTION");
+    char linkname[64], path[4096];
+    snprintf(linkname, sizeof(linkname), "/proc/self/fd/%d", fd);
+    ssize_t size = readlink(linkname, path, sizeof(path)-1);
+    if (size >= 0) path[size] = 0; else path[0] = 0;
+    if (result == 0 && !replaced && mode && target && !strcmp(mode, "replace-selection") && !strcmp(path, target)) {
+        /* The third complete read occurs in reverify_for_apply, after the
+           live cage checks and before confirm_manifest_unchanged. */
+        if (++matched < 3) return result;
+        replaced = 1;
+        FILE *file = fopen(target, "a"); if (!file) _exit(99);
+        fputs(" ", file); fclose(file);
+        FILE *marker = fopen(getenv("RIPR_TRUST_HOOK_MARKER"), "w");
+        if (!marker) _exit(100); fclose(marker);
+    }
+    return result;
+}
+static void maybe_plant(const char *new) {
+    static int planted = 0;
+    const char *target = getenv("RIPR_TRUST_HOOK_TARGET");
+    const char *mode = getenv("RIPR_TRUST_HOOK_MODE");
+    if (!planted && target && mode && !strcmp(mode, "plant-apply") && !strcmp(new, target)) {
+        planted = 1;
+        FILE *file = fopen(new, "wx"); if (!file) _exit(92);
+        fputs("interposed foreign projection\n", file); fclose(file);
+        FILE *marker = fopen(getenv("RIPR_TRUST_HOOK_MARKER"), "w");
+        if (!marker) _exit(93); fclose(marker);
+    }
+}
+int link(const char *old, const char *new) {
+    int (*next)(const char *, const char *) = dlsym(RTLD_NEXT, "link");
+    maybe_plant(new);
+    return next(old, new);
+}
+int linkat(int olddir, const char *old, int newdir, const char *new, int flags) {
+    int (*next)(int, const char *, int, const char *, int) = dlsym(RTLD_NEXT, "linkat");
+    maybe_plant(new);
+    return next(olddir, old, newdir, new, flags);
+}
+"#,
+    )
+    .map_err(|error| error.to_string())?;
+    let compiled = Command::new("cc")
+        .args(["-shared", "-fPIC", "-o"])
+        .arg(&library)
+        .arg(&source)
+        .arg("-ldl")
+        .output()
+        .map_err(|error| error.to_string())?;
+    if !compiled.status.success() {
+        return Err(format!("compile trust hook: {}", stderr_text(&compiled)));
+    }
+    let script = dir.join("change-manifest.py");
+    std::fs::write(&script, "import json, os\np = os.environ['RIPR_TRUST_HOOK_TARGET']\nwith open(p, encoding='utf-8') as f: doc = json.load(f)\ndoc['after_refusal_count'] = doc.get('after_refusal_count', 0) + 1\nwith open(p, 'w', encoding='utf-8') as f: json.dump(doc, f, indent=2); f.write('\\n')\n").map_err(|error| error.to_string())?;
+    let target = if mode == "stop-receipt" {
+        fixture.root.join("target/ripr/reports/agent-receipt.json")
+    } else if mode == "plant-apply" {
+        fixture
+            .root
+            .join("target/ripr/workflow/python-repair-driver-after.json")
+    } else {
+        fixture
+            .root
+            .join("target/ripr/repair-attempts")
+            .join(attempt_id)
+            .join("attempt.json")
+    };
+    let marker = dir.join("marker");
+    if marker.exists() {
+        std::fs::remove_file(&marker).map_err(|error| error.to_string())?;
+    }
+    let output = Command::new(env!("CARGO_BIN_EXE_ripr"))
+        .current_dir(&fixture.root)
+        .env("LD_PRELOAD", &library)
+        .env("RIPR_TRUST_HOOK_TARGET", target)
+        .env("RIPR_TRUST_HOOK_MODE", mode)
+        .env(
+            "RIPR_TRUST_HOOK_SELECTION",
+            fixture.root.join("target/ripr/trust-manifest.json"),
+        )
+        .env("RIPR_TRUST_HOOK_SCRIPT", script)
+        .env("RIPR_TRUST_HOOK_MARKER", dir.join("marker"))
+        .args([
+            "agent",
+            "repair",
+            "--json",
+            "--root",
+            ".",
+            "--attempt",
+            attempt_id,
+            "--phase",
+            "after",
+            "--edit-authorized",
+            "--edit-authority",
+            AUTHORITY,
+            "--test-result",
+        ])
+        .arg(result_path)
+        .output()
+        .map_err(|error| error.to_string())?;
+    if matches!(mode, "change-manifest" | "stop-retention") && !dir.join("marker").is_file() {
+        return Err(format!(
+            "terminal retention hook did not run: {}",
+            stderr_text(&output)
+        ));
+    }
+    if matches!(mode, "plant-apply" | "replace-selection") && !dir.join("marker").is_file() {
+        return Err(format!(
+            "apply projection interposition did not run: {}",
+            stderr_text(&output)
+        ));
+    }
+    Ok(output)
+}
+
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+fn trust_focused_result(fixture: &TempFixture, attempt_id: &str) -> Result<PathBuf, String> {
+    let claim = serde_json::json!({"schema_version": "0.1", "kind": "focused_test_result",
+        "attempt_id": attempt_id, "head": current_head(&fixture.root)?, "test_file": TARGET_TEST_FILE,
+        "libtest_events": [{"type": "test", "event": "ok", "name": "boundary_discriminator"}]});
+    let path = fixture.root.with_extension("trust-focused-result.json");
+    std::fs::write(&path, claim.to_string()).map_err(|error| error.to_string())?;
+    Ok(path)
+}
+
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+#[test]
+fn focused_trust_interruption_after_receipt_retries_apply() -> Result<(), String> {
+    let fixture = build_fixture("focused-trust-interrupt")?;
+    let seam = find_seam_for_target(&fixture.root, TARGET_TEST_FILE)?;
+    require_success(&run_prepare(&fixture, &seam, "att-interrupt")?, "prepare")?;
+    let attempt = sole_attempt(&fixture)?;
+    edit_target_file(&fixture)?;
+    let result = trust_focused_result(&fixture, &attempt)?;
+    let stopped = focused_apply_with_hook(&fixture, &attempt, &result, "stop-receipt")?;
+    assert_eq!(stopped.status.code(), Some(79), "{}", stderr_text(&stopped));
+    let without = run_apply(&fixture, &attempt, Some(AUTHORITY))?;
+    require_failure(
+        &without,
+        "retry without focused result",
+        "same --test-result",
+    )?;
+    let pending = attempt_manifest(&fixture, &attempt)?;
+    assert!(
+        pending
+            .get("terminal_artifacts")
+            .and_then(Value::as_array)
+            .is_none_or(Vec::is_empty),
+        "{pending:?}"
+    );
+    let result_arg = result.to_string_lossy().to_string();
+    let missing_authority = run_ripr(
+        &fixture.root,
+        &[
+            "agent",
+            "repair",
+            "--root",
+            ".",
+            "--attempt",
+            &attempt,
+            "--phase",
+            "after",
+            "--test-result",
+            &result_arg,
+        ],
+    )?;
+    require_failure(
+        &missing_authority,
+        "retry without edit authorization",
+        "--edit-authorized",
+    )?;
+    assert_eq!(attempt_manifest(&fixture, &attempt)?, pending);
+    let wrong_authority = run_ripr(
+        &fixture.root,
+        &[
+            "agent",
+            "repair",
+            "--root",
+            ".",
+            "--attempt",
+            &attempt,
+            "--phase",
+            "after",
+            "--edit-authorized",
+            "--edit-authority",
+            "wrong-operator",
+            "--test-result",
+            &result_arg,
+        ],
+    )?;
+    require_failure(
+        &wrong_authority,
+        "retry with wrong edit authority",
+        "authority",
+    )?;
+    assert_eq!(attempt_manifest(&fixture, &attempt)?, pending);
+    let apply_path = fixture
+        .root
+        .join("target/ripr/workflow/python-repair-driver-after.json");
+    std::fs::write(&apply_path, b"foreign apply projection\n")
+        .map_err(|error| error.to_string())?;
+    let foreign = run_ripr(
+        &fixture.root,
+        &[
+            "agent",
+            "repair",
+            "--root",
+            ".",
+            "--attempt",
+            &attempt,
+            "--phase",
+            "after",
+            "--edit-authorized",
+            "--edit-authority",
+            AUTHORITY,
+            "--test-result",
+            &result_arg,
+        ],
+    )?;
+    assert!(!foreign.status.success(), "{}", stderr_text(&foreign));
+    assert_eq!(
+        std::fs::read(&apply_path).map_err(|error| error.to_string())?,
+        b"foreign apply projection\n"
+    );
+    assert_eq!(attempt_manifest(&fixture, &attempt)?, pending);
+    std::fs::remove_file(&apply_path).map_err(|error| error.to_string())?;
+    let retry = run_ripr(
+        &fixture.root,
+        &[
+            "agent",
+            "repair",
+            "--root",
+            ".",
+            "--attempt",
+            &attempt,
+            "--phase",
+            "after",
+            "--edit-authorized",
+            "--edit-authority",
+            AUTHORITY,
+            "--test-result",
+            &result_arg,
+        ],
+    )?;
+    require_success(&retry, "retry interrupted focused trust apply")?;
+    assert_eq!(apply_record(&fixture)?["durable_attempt_id"], attempt);
+    let state = attempt_manifest(&fixture, &attempt)?;
+    assert!(
+        state["terminal_artifacts"]
+            .as_array()
+            .is_some_and(|items| items
+                .iter()
+                .any(|item| item["role"] == "focused_test_result")),
+        "{state:?}"
+    );
+    Ok(())
+}
+
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+#[test]
+fn focused_pending_promotion_reports_replaced_trust_manifest_as_decision() -> Result<(), String> {
+    let fixture = build_fixture("focused-pending-replaced-trust")?;
+    let seam = find_seam_for_target(&fixture.root, TARGET_TEST_FILE)?;
+    require_success(
+        &run_prepare(&fixture, &seam, "att-pending-replaced")?,
+        "prepare",
+    )?;
+    let attempt = sole_attempt(&fixture)?;
+    edit_target_file(&fixture)?;
+    let result = trust_focused_result(&fixture, &attempt)?;
+    let stopped = focused_apply_with_hook(&fixture, &attempt, &result, "stop-receipt")?;
+    assert_eq!(stopped.status.code(), Some(79), "{}", stderr_text(&stopped));
+    let before = attempt_manifest(&fixture, &attempt)?;
+    let selection = fixture.root.join("target/ripr/trust-manifest.json");
+    let original = std::fs::read(&selection).map_err(|error| error.to_string())?;
+    let refused = focused_apply_with_hook(&fixture, &attempt, &result, "replace-selection")?;
+    assert_eq!(refused.status.code(), Some(3), "{}", stderr_text(&refused));
+    assert!(
+        stderr_text(&refused).contains("stale selection manifest"),
+        "{}",
+        stderr_text(&refused)
+    );
+    let doc: Value = serde_json::from_slice(&refused.stdout).map_err(|error| error.to_string())?;
+    assert_eq!(doc["kind"], "repair_after_refusal");
+    assert_eq!(attempt_manifest(&fixture, &attempt)?, before);
+    assert!(
+        !fixture
+            .root
+            .join("target/ripr/workflow/python-repair-driver-after.json")
+            .exists()
+    );
+    std::fs::write(&selection, original).map_err(|error| error.to_string())?;
+    let result_arg = result.to_string_lossy().to_string();
+    let retry = run_ripr(
+        &fixture.root,
+        &[
+            "agent",
+            "repair",
+            "--json",
+            "--root",
+            ".",
+            "--attempt",
+            &attempt,
+            "--phase",
+            "after",
+            "--edit-authorized",
+            "--edit-authority",
+            AUTHORITY,
+            "--test-result",
+            &result_arg,
+        ],
+    )?;
+    require_success(&retry, "retry after restoring pinned trust manifest")?;
+    Ok(())
+}
+
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+#[test]
+fn focused_trust_interruption_after_retention_recovers_missing_apply() -> Result<(), String> {
+    let fixture = build_fixture("focused-trust-retention-interrupt")?;
+    let seam = find_seam_for_target(&fixture.root, TARGET_TEST_FILE)?;
+    require_success(
+        &run_prepare(&fixture, &seam, "att-retention-interrupt")?,
+        "prepare",
+    )?;
+    let attempt = sole_attempt(&fixture)?;
+    edit_target_file(&fixture)?;
+    let result = trust_focused_result(&fixture, &attempt)?;
+    let stopped = focused_apply_with_hook(&fixture, &attempt, &result, "stop-retention")?;
+    assert_eq!(stopped.status.code(), Some(79), "{}", stderr_text(&stopped));
+    let retained = attempt_manifest(&fixture, &attempt)?;
+    assert_eq!(retained["state"], "ready_to_finish");
+    assert!(
+        retained["terminal_artifacts"]
+            .as_array()
+            .is_some_and(|items| items
+                .iter()
+                .any(|item| item["role"] == "focused_test_result"))
+    );
+    let result_arg = result.to_string_lossy().to_string();
+    let base_args = [
+        "agent",
+        "repair",
+        "--root",
+        ".",
+        "--attempt",
+        &attempt,
+        "--phase",
+        "after",
+        "--test-result",
+        &result_arg,
+    ];
+    let unauthorized = run_ripr(&fixture.root, &base_args)?;
+    require_failure(
+        &unauthorized,
+        "recover without authority",
+        "--edit-authorized",
+    )?;
+    assert_eq!(attempt_manifest(&fixture, &attempt)?, retained);
+    let mut changed_claim: Value =
+        serde_json::from_slice(&std::fs::read(&result).map_err(|error| error.to_string())?)
+            .map_err(|error| error.to_string())?;
+    changed_claim["libtest_events"][0]["event"] = serde_json::json!("failed");
+    let changed_path = fixture
+        .root
+        .with_extension("changed-trust-focused-result.json");
+    std::fs::write(&changed_path, changed_claim.to_string()).map_err(|error| error.to_string())?;
+    let changed_arg = changed_path.to_string_lossy().to_string();
+    let changed = run_ripr(
+        &fixture.root,
+        &[
+            "agent",
+            "repair",
+            "--json",
+            "--root",
+            ".",
+            "--attempt",
+            &attempt,
+            "--phase",
+            "after",
+            "--edit-authorized",
+            "--edit-authority",
+            AUTHORITY,
+            "--test-result",
+            &changed_arg,
+        ],
+    )?;
+    assert_eq!(changed.status.code(), Some(3), "{}", stderr_text(&changed));
+    let refusal: Value =
+        serde_json::from_slice(&changed.stdout).map_err(|error| error.to_string())?;
+    assert_eq!(refusal["kind"], "repair_after_refusal");
+    assert_eq!(refusal["attempt_id"], attempt);
+    assert_eq!(attempt_manifest(&fixture, &attempt)?, retained);
+    let apply_path = fixture
+        .root
+        .join("target/ripr/workflow/python-repair-driver-after.json");
+    let test_path = fixture.root.join(TARGET_TEST_FILE);
+    let original_test = std::fs::read(&test_path).map_err(|error| error.to_string())?;
+    let mut changed_test = original_test.clone();
+    changed_test.extend_from_slice(b"\n// changed after the captured finish\n");
+    std::fs::write(&test_path, changed_test).map_err(|error| error.to_string())?;
+    let drifted = run_ripr(
+        &fixture.root,
+        &[
+            "agent",
+            "repair",
+            "--root",
+            ".",
+            "--attempt",
+            &attempt,
+            "--phase",
+            "after",
+            "--edit-authorized",
+            "--edit-authority",
+            AUTHORITY,
+            "--test-result",
+            &result_arg,
+        ],
+    )?;
+    assert!(!drifted.status.success(), "{}", stderr_text(&drifted));
+    assert!(!apply_path.exists());
+    assert_eq!(attempt_manifest(&fixture, &attempt)?, retained);
+    std::fs::write(&test_path, &original_test).map_err(|error| error.to_string())?;
+    std::fs::write(&apply_path, b"foreign projection\n").map_err(|error| error.to_string())?;
+    let args = [
+        "agent",
+        "repair",
+        "--json",
+        "--root",
+        ".",
+        "--attempt",
+        &attempt,
+        "--phase",
+        "after",
+        "--edit-authorized",
+        "--edit-authority",
+        AUTHORITY,
+        "--test-result",
+        &result_arg,
+    ];
+    let foreign = run_ripr(&fixture.root, &args)?;
+    assert!(!foreign.status.success());
+    assert_eq!(
+        std::fs::read(&apply_path).map_err(|error| error.to_string())?,
+        b"foreign projection\n"
+    );
+    assert_eq!(attempt_manifest(&fixture, &attempt)?, retained);
+    std::fs::remove_file(&apply_path).map_err(|error| error.to_string())?;
+    let interposed = focused_apply_with_hook(&fixture, &attempt, &result, "plant-apply")?;
+    assert!(!interposed.status.success());
+    assert_eq!(
+        std::fs::read(&apply_path).map_err(|error| error.to_string())?,
+        b"interposed foreign projection\n"
+    );
+    assert_eq!(attempt_manifest(&fixture, &attempt)?, retained);
+    std::fs::remove_file(&apply_path).map_err(|error| error.to_string())?;
+    let recovered = run_ripr(&fixture.root, &args)?;
+    require_success(&recovered, "recover interrupted trust apply")?;
+    let output: Value =
+        serde_json::from_slice(&recovered.stdout).map_err(|error| error.to_string())?;
+    assert_eq!(output["kind"], "repair_after_result");
+    assert_eq!(apply_record(&fixture)?["durable_attempt_id"], attempt);
+    assert_eq!(attempt_manifest(&fixture, &attempt)?, retained);
+    // The human route recovers the same projection and retains its identity.
+    std::fs::remove_file(&apply_path).map_err(|error| error.to_string())?;
+    let human = run_ripr(
+        &fixture.root,
+        &[
+            "agent",
+            "repair",
+            "--root",
+            ".",
+            "--attempt",
+            &attempt,
+            "--phase",
+            "after",
+            "--edit-authorized",
+            "--edit-authority",
+            AUTHORITY,
+            "--test-result",
+            &result_arg,
+        ],
+    )?;
+    require_success(&human, "recover interrupted trust apply with human output")?;
+    assert!(
+        stdout_text(&human).contains("receipt:"),
+        "{}",
+        stdout_text(&human)
+    );
+    assert_eq!(apply_record(&fixture)?["durable_attempt_id"], attempt);
+    assert_eq!(attempt_manifest(&fixture, &attempt)?, retained);
+    Ok(())
+}
+
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+#[test]
+fn focused_apply_failure_does_not_restore_a_changed_terminal_manifest() -> Result<(), String> {
+    let fixture = build_fixture("focused-trust-foreign")?;
+    let seam = find_seam_for_target(&fixture.root, TARGET_TEST_FILE)?;
+    require_success(&run_prepare(&fixture, &seam, "att-foreign")?, "prepare")?;
+    let attempt = sole_attempt(&fixture)?;
+    edit_target_file(&fixture)?;
+    let result = trust_focused_result(&fixture, &attempt)?;
+    let blocked = fixture
+        .root
+        .join("target/ripr/workflow/python-repair-driver-after.json");
+    std::fs::create_dir_all(&blocked).map_err(|error| error.to_string())?;
+    let output = focused_apply_with_hook(&fixture, &attempt, &result, "change-manifest")?;
+    require_failure(
+        &output,
+        "apply after another manifest commit",
+        "custody changed",
+    )?;
+    let state = attempt_manifest(&fixture, &attempt)?;
+    assert_eq!(state["state"], "ready_to_finish", "{state:?}");
+    assert_eq!(state["after_refusal_count"], 1, "{state:?}");
+    let focused = state["terminal_artifacts"]
+        .as_array()
+        .and_then(|items| {
+            items
+                .iter()
+                .find(|item| item["role"] == "focused_test_result")
+        })
+        .ok_or("focused result was removed")?;
+    let bytes = std::fs::read(
+        fixture
+            .root
+            .join(focused["path"].as_str().ok_or("focused path missing")?),
+    )
+    .map_err(|error| error.to_string())?;
+    assert_eq!(focused["sha256"], format!("sha256:{}", sha256_hex(&bytes)));
     Ok(())
 }
 
