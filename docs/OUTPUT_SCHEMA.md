@@ -3362,6 +3362,13 @@ name the force intent-to-add repair (`git add -f -N <path>`). The exclusion
 itself is unchanged: `target/` and other ignored paths stay excluded, only
 disclosed.
 
+Gitignored dependency and build-output trees are not listed (#13597): a path
+with a `node_modules`, `.venv`, `venv`, `site-packages`, `bower_components` or
+`vendor` component, or whose first component is `dist` or `build`, is omitted
+from this array and from the human and GitHub notes. The list is therefore
+not a complete inventory of ignored routed files; those trees are still
+excluded from analysis.
+
 Example:
 
 ```json
@@ -19900,7 +19907,7 @@ top-level `source_subject`:
 
 - `digest_algorithm`: always `"sha256"`.
 - `corpus` (additive, full Rust inventory only): the analysis-owned
-  `{ "scope": "rust_workspace", "cache_schema_version": "1.170",
+  `{ "scope": "rust_workspace", "cache_schema_version": "1.171",
   "files_content_hash": "<16 lowercase hex digits>" }` from the actual
   classified inventory cache key, including both production and test Rust
   files after the existing generated-file exclusions. Repo-exposure producers
@@ -20685,7 +20692,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.170",
+      "schema_version": "1.171",
       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567+languages:rust=1,typescript=1,python=1,perl=0",
       "workspace_root_hash": "…",
       "files_content_hash": "…",

@@ -160,6 +160,10 @@ pub(crate) struct CallIdentityMemos {
     /// from a crate outside the workspace. The answer depends on the file's
     /// syntax alone, so the per-(probe, test) receiver check reads it once.
     external_imports: Mutex<BTreeMap<(std::path::PathBuf, String), bool>>,
+    /// #12886: the cross-file resolver for assertion-forwarding workspace
+    /// macros, built on first use by a gap that needs it.
+    assertion_wrapper_visibility:
+        std::sync::OnceLock<crate::analysis::facts::macro_visibility::MacroVisibility>,
 }
 
 impl CallIdentityMemos {
@@ -182,6 +186,14 @@ impl CallIdentityMemos {
             cache.insert(key, answer);
         }
         answer
+    }
+
+    /// The memoized assertion-wrapper resolver, built by `build` on first use.
+    pub(super) fn assertion_wrapper_visibility(
+        &self,
+        build: impl FnOnce() -> crate::analysis::facts::macro_visibility::MacroVisibility,
+    ) -> &crate::analysis::facts::macro_visibility::MacroVisibility {
+        self.assertion_wrapper_visibility.get_or_init(build)
     }
 
     pub(super) fn hidden_impls(&self, index: &RustIndex) -> &super::implicit_call::HiddenImpls {
