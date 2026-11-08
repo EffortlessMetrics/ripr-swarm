@@ -358,14 +358,18 @@ a gitlink (#10648).
 - (f) bare `ripr check --format human` (the default; `human-full` excluded)
   on a clean checkout of the resolved base branch analyzes the last commit
   (`--base HEAD~1`) and labels that on stderr (#13644). It applies only when
-  HEAD is that branch (or `origin/<branch>` is the base) at the same commit,
+  HEAD is that branch at the same commit (or `origin/<branch>` is the base and
+  `<branch>` is `main`/`master` or no other base candidate exists, so a
+  feature-branch clone keeps the #7644 base hedge),
   `HEAD~1` exists, no tracked source edit or untracked source file is
   pending (tracked, untracked or ignored), and no scope, output directory or artifact was requested. Drill-in
   commands then name `--base 'HEAD~1'`. Rationale (#13644): agents otherwise
   spend a dead-end call on "nothing in scope" before `--base HEAD~1`. Machine
   formats (JSON, SARIF, GitHub) keep the empty-range contract so CI runs on
   `main` are unchanged. When the retry fails or finds no changed file, the
-  original empty result and its `--base HEAD~1` next action are kept.
+  original empty result and its `--base HEAD~1` next action are kept. The
+  retry spends only the remaining `--timeout` (skipped below one second) and
+  is announced on stderr rather than through the progress stream.
 
 ## Metrics
 

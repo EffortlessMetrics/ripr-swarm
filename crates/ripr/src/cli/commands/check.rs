@@ -1929,31 +1929,24 @@ fn check_inner(
         let mut retry = limited_check_input.clone();
         retry.base = Some("HEAD~1".to_string());
         let retry_config = config.clone();
-        let retry_sink = progress.clone();
-        let abandon_sink = progress.clone();
-        // A disabled budget stays disabled; an exhausted one keeps the
-        // original empty result instead of starting another worker.
+        // Below this, a retry worker would only time out after its cancel
+        // grace; keep the original empty result instead.
+        const MIN_RETRY_BUDGET: std::time::Duration = std::time::Duration::from_secs(1);
         let remaining =
             check_timeout.map(|budget| budget.saturating_sub(analysis_started.elapsed()));
-        let retried = (remaining != Some(std::time::Duration::ZERO)).then(|| {
+        // The first run already held its success terminal on the shared
+        // progress sink; a second producer there could project `failed` or
+        // `cancelled` over a successful check. Disclose the retry on stderr
+        // instead, and run it without a sink.
+        let retried = remaining.is_none_or(|left| left >= MIN_RETRY_BUDGET).then(|| {
+            eprintln!(
+                "ripr: no diff against the comparison base (you are on it); analyzing the last commit (--base HEAD~1)"
+            );
             super::check_budget::run_with_budget(
                 remaining,
                 None,
-                move || {
-                    if let Some(sink) = &abandon_sink {
-                        sink.abandon();
-                    }
-                },
-                move || {
-                    app::check_with_progress_core(
-                        retry,
-                        &retry_config,
-                        progress_scope,
-                        retry_sink
-                            .as_ref()
-                            .map(|sink| &**sink as &dyn crate::app::AnalysisProgressSink),
-                    )
-                },
+                || {},
+                move || app::check_with_progress_core(retry, &retry_config, progress_scope, None),
             )
         });
         if let Some(Ok(retried)) = retried
@@ -1963,7 +1956,7 @@ fn check_inner(
                 .is_some_and(|outcome| outcome.counts.changed_file_count > 0)
         {
             eprintln!(
-                "ripr: no diff against the comparison base (you are on it); analyzed the last commit (--base HEAD~1). Pass --base to choose another range."
+                "ripr: analyzed the last commit (--base HEAD~1). Pass --base to choose another range."
             );
             output = retried;
             // Drill-in, stub and repair routes rebuild their commands from
@@ -2399,9 +2392,12 @@ fn last_commit_fallback_applies(
     // `<branch>`. That is also the shape of a feature-branch clone whose
     // `origin/HEAD` tracks the feature branch, where the real base is
     // elsewhere and the existing hedge names it (#7644); only narrow to the
-    // last commit when no other base candidate exists.
+    // last commit when the branch is a conventional default or no other base
+    // candidate exists (a full clone of `main` usually carries other remote
+    // branches, which must not disable the fallback).
     base.strip_prefix("origin/") == Some(branch.as_str())
-        && crate::analysis::another_base_candidate(root, git_timeout).is_none()
+        && (matches!(branch.as_str(), "main" | "master")
+            || crate::analysis::another_base_candidate(root, git_timeout).is_none())
 }
 
 /// The stderr warning for an empty default-base result when the default base

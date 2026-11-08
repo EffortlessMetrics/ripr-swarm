@@ -27992,7 +27992,9 @@ fn check_clean_base_branch_with_parent_analyzes_last_commit_in_human_only() -> R
     std::fs::remove_file(root.join("src/generated.rs"))
         .map_err(|err| format!("remove ignored source: {err}"))?;
 
-    // A clone resolves the default base to `origin/main` while HEAD is `main`.
+    // A clone resolves the default base to `origin/main` while HEAD is `main`;
+    // an older remote branch in that clone must not disable the fallback.
+    run_git(&root, &["branch", "older", "HEAD~1"])?;
     let clone = unique_temp_workspace("last-commit-fallback-clone");
     let clone_str = clone.to_string_lossy().into_owned();
     run_git(&root, &["clone", "--quiet", &root_str, &clone_str])?;
