@@ -2,7 +2,7 @@
 
 use super::MAX_CALL_FACTS_PER_LINE;
 use crate::analysis::facts::CallFact;
-use crate::analysis::syntax::source_binds_value_name;
+use crate::analysis::syntax::source_declares_value_name;
 
 /// Scan `masked` for bounded `literal.iter().map(path).collect::<Vec..>()` chains
 /// and append synthetic owner call facts (`path(first_literal)`) for reach only.
@@ -31,9 +31,11 @@ pub(super) fn add_path_value_map_calls(
             // A bare mapped name the test body binds itself (`let inc = |x| x;`)
             // is that local value, not the owner; a call fact for it would raise
             // reach on a function the test never runs (#12844). A path such as
-            // `module::inc` names no local binding, so it keeps its fact. A body
-            // that does not parse may bind anything, so it also withholds.
-            if bare && source_binds_value_name(body, &target) {
+            // `module::inc` names no local binding, so it keeps its fact. A glob
+            // import (`use super::*;`) is not a declaration the scan can see and
+            // routinely brings the owner itself, so it keeps the fact. A body
+            // that does not parse may bind anything, so it withholds.
+            if bare && source_declares_value_name(body, &target) {
                 continue;
             }
             if line_names.len() >= MAX_CALL_FACTS_PER_LINE {
@@ -307,6 +309,12 @@ mod tests {
         assert!(reach_names(&closure).is_empty());
         let nested = format!("fn t() {{\n    fn inc(x: i32) -> i32 {{ x }}\n    {chain}\n}}\n");
         assert!(reach_names(&nested).is_empty());
+    }
+
+    #[test]
+    fn a_glob_import_in_the_body_keeps_the_owner_call() {
+        let body = "fn t() {\n    use super::*;\n    assert_eq!(vec![1, 2].into_iter().map(inc).collect::<Vec<_>>(), vec![2, 3]);\n}\n";
+        assert_eq!(reach_names(body), vec!["inc".to_string()]);
     }
 
     #[test]
