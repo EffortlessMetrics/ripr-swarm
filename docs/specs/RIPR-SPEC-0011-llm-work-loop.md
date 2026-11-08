@@ -968,6 +968,12 @@ manifest (no `[package]`) does not own a proposed test, and a manifest that
 exists but cannot be read or parsed refuses rather than falling through to an
 ancestor.
 
+The limitation records the before-phase observation in historical language, so
+it remains accurate after the proposed test is created and the attempt finishes.
+Package-name syntax follows stable Cargo 1.95 (Unicode XID start or underscore,
+then XID continuation or hyphen), rather than cargo-new or registry restrictions.
+This check establishes name identity, not complete Cargo manifest validity.
+
 ## Amendment (#13204): one projection of the selected new-test proposal
 
 The selected producer-owned new-test proposal is read through one projection,
@@ -1056,6 +1062,8 @@ other argv usage errors keep empty stdout.
 - `crates/ripr/src/app/repair_card_handoff.rs::tests::a_proposal_names_the_workspace_only_when_the_evidence_admitted_it` (#13203)
 - `crates/ripr/tests/new_test_proposal_attempt.rs::created_proposed_file_binds_the_attempt_to_its_proposal` (#13203)
 - `crates/ripr/tests/new_test_proposal_attempt.rs::edit_outside_the_proposals_cage_is_refused` (#13203)
+- `crates/ripr/tests/proposal_only_repair_start.rs::inline_proposal_with_an_invalid_package_identity_leaves_no_attempt` (#13205)
+- `crates/ripr/tests/proposal_only_repair_start.rs::package_name_preflight_agrees_with_cargo_metadata` (#13205)
 - `crates/ripr/src/output/agent_seam_packets.rs::tests::selected_proposal_reads_the_same_in_card_packet_and_mcp` (#13204)
 - `crates/ripr/tests/new_test_proposal_attempt.rs::a_proposal_attempt_says_no_test_exists_yet` (#13205)
 - `crates/ripr/tests/new_test_proposal_attempt.rs::an_existing_test_target_attempt_has_no_not_yet_disclosure` (#13205)
