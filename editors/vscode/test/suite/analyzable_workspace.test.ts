@@ -75,6 +75,16 @@ suite('Analyzable workspace markers', () => {
     }
   });
 
+  test('jsconfig.json at the folder root is analyzable', async () => {
+    const root = tempWorkspaceDir('ripr-analyzable-js-');
+    try {
+      await writeMarker(root, 'jsconfig.json');
+      assert.strictEqual(await workspaceHasAnalyzableProject([workspaceFolder(root)]), true);
+    } finally {
+      fs.rmSync(root, { force: true, recursive: true });
+    }
+  });
+
   test('package.json alone is not analyzable', async () => {
     const root = tempWorkspaceDir('ripr-analyzable-pkgjson-');
     try {
