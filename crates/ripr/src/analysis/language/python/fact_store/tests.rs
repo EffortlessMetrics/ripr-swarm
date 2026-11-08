@@ -343,3 +343,88 @@ fn a_path_holding_a_backslash_is_neither_read_nor_persisted() -> Result<(), Stri
     checks?;
     cleanup.map_err(|err| err.to_string())
 }
+
+/// Plants a current-schema entry from another ripr `build`, last written
+/// `age` ago, in the framed `<digest>\n<json>` shape the store writes.
+fn plant_other_build_entry(
+    dir: &Path,
+    name: &str,
+    build: &str,
+    age: std::time::Duration,
+) -> Result<PathBuf, String> {
+    let path = dir.join(name);
+    let body = format!(
+        "0\n{{\"python_file_fact_schema_version\":\"{PYTHON_FILE_FACT_SCHEMA_VERSION}\",\"analyzer_version\":\"{build}\",\"file_path\":\"x.py\"}}"
+    );
+    std::fs::write(&path, body).map_err(|err| err.to_string())?;
+    let file = std::fs::File::options()
+        .write(true)
+        .open(&path)
+        .map_err(|err| err.to_string())?;
+    file.set_modified(std::time::SystemTime::now() - age)
+        .map_err(|err| err.to_string())?;
+    Ok(path)
+}
+
+#[test]
+fn store_prunes_old_builds_and_schemas_and_a_hit_marks_this_build_used() -> Result<(), String> {
+    let root = unique_tempdir("retention")?;
+    let store = PythonFileFactStore::at(&root);
+    let dir = store.dir_path().to_path_buf();
+    let layer = dir.parent().map(Path::to_path_buf).unwrap_or_default();
+    let hour = std::time::Duration::from_hours(1);
+    let checks = (|| -> Result<(), String> {
+        std::fs::create_dir_all(&dir).map_err(|err| err.to_string())?;
+        let newest = plant_other_build_entry(&dir, "a.json", "build-new", hour)?;
+        let middle = plant_other_build_entry(&dir, "b.json", "build-mid", hour * 2)?;
+        let oldest = plant_other_build_entry(&dir, "c.json", "build-old", hour * 3)?;
+        let stale_schema = layer.join("1");
+        std::fs::create_dir_all(&stale_schema).map_err(|err| err.to_string())?;
+        std::fs::write(stale_schema.join("old.json"), b"{}").map_err(|err| err.to_string())?;
+        // A newer schema belongs to a newer ripr that still reads it.
+        let newer_schema = layer.join("9999");
+        std::fs::create_dir_all(&newer_schema).map_err(|err| err.to_string())?;
+        std::fs::write(newer_schema.join("new.json"), b"{}").map_err(|err| err.to_string())?;
+        let reclaimable_before = store.reclaimable();
+
+        let relative = Path::new("src/geometry.py");
+        let key = PythonFileFactKey::new(relative, PRODUCTION, &root);
+        let facts = extract_source_facts(relative, PRODUCTION);
+        assert_eq!(store.store(&key, &facts), Ok(true));
+        assert!(
+            newest.is_file() && middle.is_file(),
+            "two most recent other builds kept"
+        );
+        assert!(!oldest.exists(), "a third, older build is pruned");
+        assert!(
+            !stale_schema.exists(),
+            "an older schema directory is pruned"
+        );
+        assert!(
+            newer_schema.join("new.json").is_file(),
+            "a newer schema directory is never pruned"
+        );
+        assert!(store.entry_path(relative, PRODUCTION).is_file());
+        assert_eq!(
+            reclaimable_before.entry_count, 5,
+            "three other-build entries and the two other-schema files were reclaimable"
+        );
+        assert_eq!(
+            store.reclaimable().entry_count,
+            3,
+            "the kept builds and the newer schema stay reclaimable"
+        );
+
+        assert!(matches!(store.load(&key), CacheLoad::Hit(_)));
+        let marker_dir = layer.join(".build-use");
+        let identity = crate::build_identity::cache_identity();
+        let marked = std::fs::read_dir(&marker_dir)
+            .map_err(|err| format!("a hit must create {}: {err}", marker_dir.display()))?
+            .flatten()
+            .any(|entry| std::fs::read_to_string(entry.path()).is_ok_and(|text| text == identity));
+        assert!(marked, "a hit records this build's use marker");
+        Ok(())
+    })();
+    let _ = std::fs::remove_dir_all(&root);
+    checks
+}

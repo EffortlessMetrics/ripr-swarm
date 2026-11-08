@@ -132,7 +132,7 @@ map is:
 | `ripr receipt write/check` | `schema_version` | `0.1` |
 | `ripr feedback record/export` | `schema_version` | `0.1` |
 | badge JSON | `schema_version` | `0.8` |
-| `ripr cache status --json` | `schema_version` | `0.2` |
+| `ripr cache status --json` | `schema_version` | `0.3` |
 | `ripr cache export` success stdout | `schema_version` | `0.1` |
 | `ripr mcp` status tool and resource | `schema_version` | `ripr-mcp-workspace-status-v1` (see [MCP workspace status server](interop/mcp.md)) |
 | `ripr_list_gaps` success and refusal | `schema_version` | `ripr-mcp-gap-list-v5`; strict v1 readers migrate via `tools/list` (see [MCP gap filters](interop/mcp.md)) |
@@ -918,14 +918,15 @@ Config parse errors stay redacted on this surface (RIPR-SPEC-0007): the
 `config` check's `evidence` keeps only the first line of the `toml` error, and no
 environment field above reproduces `ripr.toml` source text.
 
-`ripr cache status --json` (schema `0.2`) prints one object with
+`ripr cache status --json` (schema `0.3`) prints one object with
 `schema_version`, `cache_dir` (the directory as resolved from
 `RIPR_CACHE_DIR` or the workspace default), `real_cache_dir` (the resolved
 real directory when the configured cache path traverses a symlink or
 junction — as its leaf or through an ancestor component — otherwise
 `null`), `via_symlink` (`true` exactly when `real_cache_dir` is present),
-`status`, `entry_count`, `total_size_bytes`, `foreign_entry_count`, and
-`foreign_total_size_bytes`. `entry_count` and `total_size_bytes` cover only
+`status`, `entry_count`, `total_size_bytes`, `foreign_entry_count`,
+`foreign_total_size_bytes`, `reclaimable_entry_count`, and
+`reclaimable_size_bytes` (see below). `entry_count` and `total_size_bytes` cover only
 the recognized ripr cache layers — the recognized top-level layer
 directories, exactly the set `ripr cache clear` removes (schema `0.2`,
 #5987; earlier versions counted every regular file under the cache root). A
@@ -946,6 +947,14 @@ directory for inspection (#5989), matching the directory `ripr check` reads
 and writes through the alias; `cache clear` keeps its fail-closed symlink
 refusal for the leaf and for symlinked ancestors, and names the real path
 or offending component it protects.
+
+Schema `0.3` is additive on `0.2` (#7047): `reclaimable_entry_count` and
+`reclaimable_size_bytes` count the per-file fact entries (Rust, TypeScript,
+Python) this ripr never reads, because another ripr build or another cache
+schema wrote them. They are a subset of the recognized-layer totals. The next
+run that writes facts removes them, except the two most recently used other
+builds, any build that served a cache hit in the last 7 days, and any newer
+cache schema.
 
 `ripr cache export [--root PATH] --out NEW_DIRECTORY` prints a success JSON object
 with `schema_version: "0.1"`, `cache_dir` (absolute export directory),

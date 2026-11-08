@@ -590,6 +590,14 @@ the refresh duration, total diagnostic count, finding count, seam diagnostic
 count, published file count, and cleared file count. If a newer refresh
 supersedes an older one, the older result is not published.
 
+On Linux, the server rereads a file on a network or FUSE mount (NFS, SMB/CIFS,
+sshfs and similar) every time it compares the file with the saved disk copy,
+because that file's timestamps come from another machine's clock and can't
+show a change reliably (#12170). On macOS, BSD and Windows the server can't yet
+tell a network mount from a local disk, so it uses the same local-clock check
+for both. If a workspace on a network mount is edited from another machine,
+a diagnostic can lag until the file is saved again or `ripr.refresh` runs.
+
 Refresh failures clear previously published diagnostics and log a warning with
 the failure reason. Normal refreshes and one-off failures do not show user-facing
 popups; the output stream is the intended place to inspect refresh state.

@@ -1299,6 +1299,14 @@ otherwise target/ripr/cache under the Cargo workspace root).
             version of this status report, not of the on-disk cache layers
             (those carry their own version in their directory names).
 
+`reclaimable_entry_count` and `reclaimable_size_bytes` count the per-file
+fact entries (Rust, TypeScript, Python) this ripr never reads because another
+ripr build or another cache schema wrote them. They are a subset of the
+recognized-layer totals. The next run that writes facts removes them, except
+the two most recently used other builds, any build that served a cache hit
+in the last 7 days, and any newer cache schema, so an editor server on
+another ripr version keeps its entries.
+
 `entry_count` and `total_size_bytes` count only the recognized ripr cache
 layer directories, the same set `ripr cache clear` removes; files anywhere
 else under the cache root — including a regular file wearing a layer name —
