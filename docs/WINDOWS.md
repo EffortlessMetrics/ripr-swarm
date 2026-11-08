@@ -49,7 +49,7 @@ not normalize it, the flip counts as an edit.
 Windows refuses a process working directory longer than 258 UTF-16 units
 (`MAX_PATH`), even with `LongPathsEnabled=1`. If the workspace root is over that
 limit, ripr stops with "clone or move the repository to a shorter path". Move the
-repository somewhere shallower, for example `C:\src\repo`.
+repository to a shorter path closer to the drive root.
 
 ## Editor
 
