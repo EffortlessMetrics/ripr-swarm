@@ -70,6 +70,62 @@ fn test_module(imports: &str, body: &str) -> String {
     format!("{imports}\n\n\n{body}")
 }
 
+const GUARDED_VALUE_OWNER: &str = "def label(deprecated, text):\n    if deprecated:\n        text = f\"{text} (deprecated)\"\n    return text\n";
+const GUARDED_VALUE_TEST: &str = "from src.shop import label\n\n\ndef test_label():\n    assert label(True, \"x\") == \"x (deprecated)\"\n";
+
+#[test]
+fn a_value_edit_inside_an_unchanged_guard_is_value_shaped_not_a_predicate() -> Result<(), String> {
+    // #13587: the guard `if deprecated:` is untouched; only the assigned value
+    // changed. The finding must not say a condition changed.
+    let finding = classify_finding(
+        GUARDED_VALUE_OWNER,
+        3,
+        "        text = f\"{_(text)} (deprecated)\"",
+        GUARDED_VALUE_TEST,
+    )?;
+    assert_eq!(
+        finding.probe.family,
+        crate::domain::ProbeFamily::ReturnValue
+    );
+    assert_eq!(finding.probe.delta, crate::domain::DeltaKind::Value);
+    let gap = finding
+        .canonical_gap
+        .ok_or_else(|| "the value edit must carry a canonical gap".to_string())?;
+    assert_eq!(gap.behavior_kind, "return_value");
+    assert!(!gap.id.contains("predicate_boundary"), "{}", gap.id);
+    // The local value is not yet at the owner output boundary, so the shape
+    // alone never establishes propagation.
+    assert_eq!(
+        finding.ripr.propagate.state,
+        crate::domain::StageState::Weak
+    );
+    Ok(())
+}
+
+#[test]
+fn the_guard_line_edit_itself_stays_a_predicate() -> Result<(), String> {
+    // Negative control for #13587: editing the guard keeps the predicate shape.
+    let owner = "def label(deprecated, text):\n    if not deprecated:\n        text = f\"{text} (deprecated)\"\n    return text\n";
+    let finding = classify_finding(owner, 2, "    if deprecated:", GUARDED_VALUE_TEST)?;
+    assert_eq!(finding.probe.family, crate::domain::ProbeFamily::Predicate);
+    assert_eq!(finding.probe.delta, crate::domain::DeltaKind::Control);
+    let gap = finding
+        .canonical_gap
+        .ok_or_else(|| "the guard edit must carry a canonical gap".to_string())?;
+    assert_eq!(gap.behavior_kind, "predicate_boundary");
+    Ok(())
+}
+
+#[test]
+fn a_guarded_assignment_that_compares_stays_a_predicate() -> Result<(), String> {
+    // Fail closed: a right side that carries a comparison is not a plain value.
+    let owner =
+        "def label(deprecated, n):\n    if deprecated:\n        flag = n > 3\n    return flag\n";
+    let finding = classify_finding(owner, 3, "        flag = n > 2", GUARDED_VALUE_TEST)?;
+    assert_eq!(finding.probe.family, crate::domain::ProbeFamily::Predicate);
+    Ok(())
+}
+
 const FEE: &str = "def fee(amount):\n    return amount * 3\n\n\ndef charge(amount):\n    return amount + fee(amount)\n";
 const FEE_OLD: &str = "    return amount * 2";
 const FEE_IMPORT: &str = "from src.shop import charge, fee";

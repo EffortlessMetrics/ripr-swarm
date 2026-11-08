@@ -99,6 +99,9 @@ fn classify_probe_shape_gated(
         if looks_like_call_expression(rhs) {
             return (ProbeFamily::SideEffect, DeltaKind::Effect);
         }
+        if is_python_plain_local_value_assignment(trimmed) {
+            return (ProbeFamily::ReturnValue, DeltaKind::Value);
+        }
     }
     let call_candidate = trimmed.strip_prefix("await ").unwrap_or(trimmed).trim_end();
     if looks_like_call_expression(call_candidate)
@@ -110,6 +113,43 @@ fn classify_probe_shape_gated(
         return (ProbeFamily::SideEffect, DeltaKind::Effect);
     }
     (ProbeFamily::Predicate, DeltaKind::Control)
+}
+
+/// A single-name assignment whose right side is a plain value expression
+/// (#13587): `text = f"{text} {label}"`, `total = base - bonus`. It computes a
+/// value and neither tests a condition nor calls anything, so it is value
+/// shaped, whether or not an unchanged guard encloses it. The recognizer is
+/// closed: the target is one identifier, and any right side that could carry a
+/// comparison, boolean operator, membership test, conditional or lambda keeps
+/// the conservative predicate default. A guard line itself (`if ...:`) never
+/// reaches this check.
+pub(super) fn is_python_plain_local_value_assignment(line_text: &str) -> bool {
+    let trimmed = line_text.trim();
+    let Some((lhs, rhs)) = trimmed.split_once('=') else {
+        return false;
+    };
+    let lhs = lhs.trim();
+    let rhs = rhs.trim();
+    let mut lhs_chars = lhs.chars();
+    let identifier = lhs_chars
+        .next()
+        .is_some_and(|first| first.is_ascii_alphabetic() || first == '_')
+        && lhs_chars.all(|ch| ch.is_ascii_alphanumeric() || ch == '_');
+    if !identifier || rhs.is_empty() || rhs.starts_with('=') {
+        return false;
+    }
+    if matches!(
+        lhs,
+        "assert" | "return" | "raise" | "del" | "pass" | "import" | "from" | "global" | "print"
+    ) {
+        return false;
+    }
+    let rhs_padded = format!(" {rhs} ");
+    ![
+        "<", ">", "==", "!=", " if ", " else ", " and ", " or ", " not ", " in ", " is ", "lambda",
+    ]
+    .iter()
+    .any(|marker| rhs_padded.contains(marker))
 }
 
 pub(super) fn contains_mock_initializer(text: &str) -> bool {
@@ -244,6 +284,12 @@ pub(super) fn python_infection_evidence(
                 )
             }
         }
+        ProbeFamily::ReturnValue if is_python_plain_local_value_assignment(line_text) => {
+            format!(
+                "Changed Python local value can alter a value the owner computes: `{}`",
+                line_text.trim()
+            )
+        }
         ProbeFamily::ReturnValue => {
             format!(
                 "Changed Python return expression can alter the owner return value: `{}`",
@@ -298,6 +344,16 @@ pub(super) fn python_propagation_evidence(
     }
 
     match probe_family {
+        // A local value is not yet at the owner output boundary: whether it
+        // reaches the return value is not resolved, so propagation stays weak
+        // and the finding cannot be promoted by this shape alone.
+        ProbeFamily::ReturnValue if is_python_plain_local_value_assignment(line_text) => {
+            StageEvidence::new(
+                StageState::Weak,
+                Confidence::Low,
+                "Changed Python local value can propagate to the owner output; the flow from the local to a returned or observed value is not resolved.",
+            )
+        }
         ProbeFamily::ReturnValue => StageEvidence::new(
             StageState::Yes,
             Confidence::Low,
@@ -345,6 +401,9 @@ pub(super) fn python_flow_sink_for(
     line_text: &str,
 ) -> Option<FlowSinkFact> {
     let kind = match probe_family {
+        ProbeFamily::ReturnValue if is_python_plain_local_value_assignment(line_text) => {
+            FlowSinkKind::Unknown
+        }
         ProbeFamily::ReturnValue => FlowSinkKind::ReturnValue,
         ProbeFamily::ErrorPath => FlowSinkKind::ErrorVariant,
         ProbeFamily::FieldConstruction => FlowSinkKind::StructField,

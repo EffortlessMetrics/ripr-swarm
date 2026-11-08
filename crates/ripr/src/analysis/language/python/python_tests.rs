@@ -4301,14 +4301,43 @@ fn print_to_a_standard_stream_is_not_an_unresolved_import() {
 }
 
 #[test]
-fn classify_probe_shape_assign_with_non_call_rhs_falls_through_to_predicate() {
-    // `total = amount + 10` is an assignment whose LHS is a plain
-    // identifier and whose RHS does not look like a call. The
-    // classifier must fall through past the assign branches to the
-    // conservative predicate default.
+fn classify_probe_shape_assign_with_non_call_rhs_reads_as_a_value() {
+    // `total = amount + 10` is a single-name assignment whose right side is a
+    // plain value expression: it computes a value and tests no condition
+    // (#13587), so it is value shaped rather than a predicate.
     let (family, delta) = classify_probe_shape("    total = amount + 10");
-    assert_eq!(family, ProbeFamily::Predicate);
-    assert_eq!(delta, DeltaKind::Control);
+    assert_eq!(family, ProbeFamily::ReturnValue);
+    assert_eq!(delta, DeltaKind::Value);
+    let (family, delta) =
+        classify_probe_shape("        text = f\"{text} {label(self.deprecated)}\"");
+    assert_eq!(family, ProbeFamily::ReturnValue);
+    assert_eq!(delta, DeltaKind::Value);
+}
+
+#[test]
+fn classify_probe_shape_assign_that_could_carry_a_condition_stays_predicate() {
+    // The value shape is closed: anything that could test a condition, a
+    // non-name target, or an augmented assignment keeps the conservative
+    // predicate default (#13587).
+    for line in [
+        "    flag = amount > 10",
+        "    flag = amount == 10",
+        "    flag = amount != 10",
+        "    flag = a and b",
+        "    flag = a or b",
+        "    flag = not a",
+        "    flag = a in items",
+        "    flag = a is None",
+        "    flag = lambda x: x + 1",
+        "    total += amount",
+        "    first, second = pair",
+        "    if self.deprecated:",
+        "    elif amount > 2:",
+    ] {
+        let (family, delta) = classify_probe_shape(line);
+        assert_eq!(family, ProbeFamily::Predicate, "{line}");
+        assert_eq!(delta, DeltaKind::Control, "{line}");
+    }
 }
 
 #[test]

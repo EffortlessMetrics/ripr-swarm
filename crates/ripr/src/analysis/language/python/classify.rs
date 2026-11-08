@@ -871,7 +871,11 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
     // two-step `msg = "..."` / `raise Exc(msg)` form is a plain assignment
     // (predicate family) that the gate resolves through the owner's raise.
     let message_pin_gap = (static_limit.is_none()
-        && matches!(family, ProbeFamily::ErrorPath | ProbeFamily::Predicate)
+        && (matches!(family, ProbeFamily::ErrorPath | ProbeFamily::Predicate)
+            // A two-step `msg = "..."` message edit was a predicate-family
+            // plain assignment before #13587 gave it a value shape.
+            || (matches!(family, ProbeFamily::ReturnValue)
+                && super::probe_shape::is_python_plain_local_value_assignment(line_text)))
         && !no_behavior.multi_line_def_header_line)
         .then(|| {
             message_pin::python_message_pin_gap(
