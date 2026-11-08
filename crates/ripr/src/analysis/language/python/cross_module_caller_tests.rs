@@ -324,3 +324,30 @@ fn given_a_method_caller_in_another_module_then_a_same_named_bare_call_makes_no_
     assert!(finding.related_tests.is_empty(), "{finding:?}");
     Ok(())
 }
+
+#[test]
+fn given_a_method_behind_a_cross_module_hop_then_no_edge_is_made() -> Result<(), String> {
+    // Exact-head review of #13890: past the module boundary a method is not a
+    // caller at a later hop either, whether the test calls its name bare or on
+    // an unrelated receiver.
+    let tests = [
+        "from app.app import Checkout\n\n\ndef test_cart():\n    cart = object()\n    assert cart.checkout(100) == 90\n",
+        "def test_cart():\n    assert checkout(100) == 90\n",
+    ];
+    let wrappers = [
+        "from wscore.core import discount\n\n\ndef _apply(price):\n    return discount(price)\n\n\nclass Checkout:\n    def checkout(self, price):\n        return _apply(price)\n",
+        "from wscore.core import discount\n\n\nclass Checkout:\n    def checkout(self, price):\n        return discount(price)\n",
+    ];
+    for wrapper in wrappers {
+        for test in tests {
+            let finding = finding_with(&[("app/app.py", wrapper)], test)?;
+            assert_eq!(
+                finding.class,
+                ExposureClass::NoStaticPath,
+                "wrapper:\n{wrapper}\ntest:\n{test}\n{finding:?}"
+            );
+            assert!(finding.related_tests.is_empty(), "{finding:?}");
+        }
+    }
+    Ok(())
+}

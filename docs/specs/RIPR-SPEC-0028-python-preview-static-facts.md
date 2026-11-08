@@ -1773,10 +1773,11 @@ top-level definitions only: the import's module must be the helper's module
 under the same provenance rules a test import uses (src-layout ambiguity and
 rival definitions included); it must be the only top-level import binding that
 local name; and no top-level `def` or `class` of the caller's file may share
-it. A module-level assignment to that name or an import inside a `try`/`if`
-block is not seen, so it can still make an edge; that only moves
-`no_static_path` to `static_unknown`. An import inside a function or a
-`try`/`if` block makes no edge. A plain `import M` read as `M.helper(...)`, a star import, a parameter or
+it. A module-level assignment, or a second import inside a `try`/`if` block,
+that rebinds a name a top-level import already binds is not seen, so that
+top-level binding can still make an edge; that only moves `no_static_path` to
+`static_unknown`. A binding that exists only inside a function or a `try`/`if`
+block makes no edge. A plain `import M` read as `M.helper(...)`, a star import, a parameter or
 local rebinding, a binding passed as a value rather than called, and a
 same-named function of another module make no edge. When more than 32
 top-level functions of other modules call the helper, none of them is followed; with no
