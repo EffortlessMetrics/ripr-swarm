@@ -87,8 +87,8 @@ fn agent_facing_outputs_stay_inside_their_byte_budgets() -> TestResult {
         &project,
         &["check", "--diff", "change.diff", "--format", "github"],
     )?;
-    within("check (default human)", &human, 3_500);
-    within("check --format json", &json, 40_000);
-    within("check --format github", &github, 2_000);
+    within("check (default human)", &human, 3_100);
+    within("check --format json", &json, 38_000);
+    within("check --format github", &github, 1_950);
     Ok(())
 }
