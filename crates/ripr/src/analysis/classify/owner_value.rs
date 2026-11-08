@@ -604,6 +604,12 @@ fn scalar_field_owner(
     let lines: Vec<&str> = masked.lines().collect();
     let signature_line = masked[..item].matches('\n').count();
     let open_line = (signature_line..lines.len()).find(|at| lines[*at].contains('{'))?;
+    // Statements are scanned from the line after the opening brace, so anything
+    // sharing that line (`{ let n = n + 1;`) would be skipped and the field read
+    // from the unrebound parameter. Such an owner is not read.
+    if !lines[open_line].trim_end().ends_with('{') {
+        return None;
+    }
     let mut bindings: Vec<(String, String)> = Vec::new();
     let mut in_literal = false;
     for text in lines.get(open_line + 1..changed_line).unwrap_or_default() {
@@ -851,6 +857,22 @@ mod tests {
             "config",
             2,
             "        retries: n + 2,",
+            "retries",
+            "u32",
+        );
+        assert!(change.is_none());
+    }
+
+    /// #12865 review: a statement on the opening-brace line is not scanned, so the
+    /// field would be read from the unrebound parameter. The owner is not read.
+    #[test]
+    fn a_statement_on_the_opening_brace_line_leaves_the_owner_unread() {
+        let owner = "pub fn config(n: u32) -> Result<Config, ()> { let n = n + 1;\n    Ok(Config { retries: n + 1 })\n}\n";
+        let change = ClosedChange::read_field(
+            owner,
+            "config",
+            1,
+            "    Ok(Config { retries: n + 2 })",
             "retries",
             "u32",
         );
