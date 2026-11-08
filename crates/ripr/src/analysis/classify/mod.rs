@@ -144,6 +144,8 @@ pub(in crate::analysis) use indirect_owner::{
     oracle_owner_call_is_shadowed, related_tests_reach_owner_indirectly,
     withhold_indirect_owner_gap,
 };
+#[cfg(test)]
+pub(in crate::analysis) use indirect_owner::{owner_item_ask_count, owner_item_scan_count};
 pub(in crate::analysis) use infection::{
     OwnerInputs, exercised_bool_chain_return_sink, infection_evidence_for_owner,
 };

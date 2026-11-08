@@ -32,6 +32,7 @@ pub(crate) enum Product {
     ForeignEntryImport,
     SourceNamings,
     CallMakingClosure,
+    OwnerItemScan,
 }
 
 impl Product {
@@ -43,6 +44,7 @@ impl Product {
             Self::ForeignEntryImport => "foreign_entry_import",
             Self::SourceNamings => "source_namings",
             Self::CallMakingClosure => "call_making_closure",
+            Self::OwnerItemScan => "owner_item_scan",
         }
     }
 }
