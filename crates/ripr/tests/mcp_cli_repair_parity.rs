@@ -690,6 +690,16 @@ fn first_seam_id(fixture: &Fixture) -> Result<String, String> {
 /// start gate. `Ok(Some(path))` is the edit cage's `selected_target.path` of
 /// the started attempt; `Ok(None)` is a refusal that published no attempt.
 fn cli_start_cage_target(fixture: &Fixture) -> Result<Option<String>, String> {
+    Ok(cli_start_policy(fixture)?.and_then(|policy| {
+        policy
+            .pointer("/selected_target/path")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+    }))
+}
+
+/// The retained edit-cage policy of a started attempt, or `None` on refusal.
+fn cli_start_policy(fixture: &Fixture) -> Result<Option<Value>, String> {
     let seam = first_seam_id(fixture)?;
     let output = ripr()
         .current_dir(&fixture.0)
@@ -743,10 +753,10 @@ fn cli_start_cage_target(fixture: &Fixture) -> Result<Option<String>, String> {
         .ok_or_else(|| format!("manifest has no edit_cage_baseline: {manifest}"))?;
     let baseline = read(fixture.0.join(baseline_path))?;
     baseline
-        .pointer("/policy/selected_target/path")
-        .and_then(Value::as_str)
-        .map(|path| Some(path.to_string()))
-        .ok_or_else(|| format!("baseline has no selected target: {baseline}"))
+        .pointer("/policy")
+        .cloned()
+        .map(Some)
+        .ok_or_else(|| format!("baseline has no policy: {baseline}"))
 }
 
 /// `ripr agent card --json` for the fixture's first repo-exposure seam. Both
@@ -915,6 +925,74 @@ fn proposed_new_test_is_disclosed_by_mcp_and_agrees_with_the_cli_card() -> Resul
     assert!(
         proposed_target(&card).is_none(),
         "the CLI card must also project no proposal: {card}"
+    );
+    Ok(())
+}
+
+/// #13538: the inline proposal-only path. A private owner with one governed,
+/// empty inline test module and no `tests/` layout has the module as its only
+/// producer-owned target. The shared verdict is the proposal (not a plain
+/// inline test), MCP lists the item ready, and `ripr_prepare_repair` stays
+/// confined to the governed module exactly as the CLI cage is, while naming the
+/// proposal (no existing test) as its fix site.
+#[test]
+fn inline_proposal_only_item_is_ready_and_confined_like_the_cli_cage() -> Result<(), String> {
+    let lib = |op: &str| {
+        format!(
+            "fn discounted_total(amount: i32, limit: i32) -> i32 {{\n    if amount {op} limit {{\n        amount - 10\n    }} else {{\n        amount\n    }}\n}}\n#[cfg(test)]\nmod tests {{\n    use super::*;\n}}\n"
+        )
+    };
+    let fixture = Fixture::create(
+        "inline-proposed",
+        &[
+            ("Cargo.toml", CARGO_TOML.to_string()),
+            ("src/lib.rs", lib(">=")),
+            (".gitignore", "target/\n.ripr/\n".to_string()),
+        ],
+        &[("src/lib.rs", lib(">"))],
+    )?;
+    let mut mcp = Mcp::spawn(&fixture.0)?;
+    mcp.tool("ripr_refresh", json!({}))?;
+    let gaps = mcp.tool("ripr_list_gaps", json!({}))?;
+    let [item] = gaps["items"]
+        .as_array()
+        .map(Vec::as_slice)
+        .unwrap_or_default()
+    else {
+        return Err(format!("fixture must yield exactly one item: {gaps}"));
+    };
+    assert_eq!(item["proposed_new_test"]["kind"], "inline_unit", "{item}");
+    assert_eq!(item["proposed_new_test"]["module"], "tests", "{item}");
+    assert_eq!(item["repair_packet_ready"], true, "{item}");
+    assert!(item["repair_ineligibility"].is_null(), "{item}");
+
+    let policy = cli_start_policy(&fixture)?
+        .ok_or("the CLI start gate refused the seam MCP lists as ready")?;
+    assert_eq!(policy["selected_target"]["path"], "src/lib.rs", "{policy}");
+    assert_eq!(policy["inline_test_module_target"], true, "{policy}");
+
+    let canonical_id = item["canonical_id"].as_str().ok_or("item omitted id")?;
+    let prepare = mcp.tool(
+        "ripr_prepare_repair",
+        json!({ "canonical_id": canonical_id }),
+    )?;
+    assert_eq!(prepare["repair_packet_ready"], true, "{prepare}");
+    assert_eq!(
+        prepare["allowed_edit_surface"],
+        json!(["src/lib.rs"]),
+        "{prepare}"
+    );
+    assert_eq!(
+        prepare["fix_site"]["new_test_kind"], "inline_unit",
+        "{prepare}"
+    );
+    assert_eq!(
+        prepare["inline_test_module"]["module"], "tests",
+        "{prepare}"
+    );
+    assert_eq!(
+        prepare["inline_test_module"]["file"], "src/lib.rs",
+        "{prepare}"
     );
     Ok(())
 }

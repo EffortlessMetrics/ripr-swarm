@@ -978,10 +978,7 @@ impl WorkspaceSession {
             },
             "command_routes": Value::Array(Vec::new()),
             "command_route_limitation": "concrete typed CommandSpec routes are published only by the durable CLI before phase (`ripr agent repair --phase before`); this session never executes commands and never reconstructs argv from display prose",
-            "limitations": [
-                "the seam-pipeline target-admission authority has not run in this session; the fix site is the strongest producer test grip, not an admitted seam target",
-                "the transaction is in-memory: restarting the server drops it; durable attempts survive under the CLI repair workflow and are readable here with ripr_get_repair_attempt",
-            ],
+            "limitations": prepare_limitations(&fix_site),
             "non_claims": NON_CLAIMS,
             "links": {
                 "gap": format!("ripr://gap/{}", item.canonical_id),
@@ -1202,6 +1199,20 @@ impl WorkspaceSession {
             RECOVERY_REPAIR_TOO_LARGE,
         )
     }
+}
+
+/// The packet's limitations. The target-admission caveat applies only to an
+/// existing-test fix site; a proposal fix site is the shared gate's own
+/// admitted target, whose file-exists, symlink and manifest preflight runs at
+/// the CLI start (`ripr agent repair --phase before`), not here.
+fn prepare_limitations(fix_site: &RepairFixSite) -> Vec<&'static str> {
+    let mut limitations = vec![if fix_site.new_test_kind.is_none() {
+        "the seam-pipeline target-admission authority has not run in this session; the fix site is the strongest producer test grip, not an admitted seam target"
+    } else {
+        "the fix site is the new-test proposal the shared repair gate admitted; the file-exists, symlink and owning-manifest preflight runs at the CLI start (`ripr agent repair --phase before`), not in this session"
+    }];
+    limitations.push("the transaction is in-memory: restarting the server drops it; durable attempts survive under the CLI repair workflow and are readable here with ripr_get_repair_attempt");
+    limitations
 }
 
 /// The module confinement of an inline-test fix site (#5516), or null for a

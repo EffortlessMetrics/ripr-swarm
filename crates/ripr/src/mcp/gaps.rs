@@ -58,8 +58,13 @@ impl RepairFixSite {
     ) -> Option<Self> {
         use crate::analysis::new_test_target::NewTestKind;
         let (kind, inline_test_module) = match (selected.kind, &selected.module) {
+            _ if !crate::analysis::new_test_target::is_plain_relative_path(&selected.file) => {
+                return None;
+            }
             (NewTestKind::Integration, None)
-                if crate::analysis::is_test_surface_path(&selected.file) =>
+                if crate::analysis::new_test_target::is_integration_test_file_shape(
+                    &selected.file,
+                ) && crate::analysis::is_test_surface_path(&selected.file) =>
             {
                 ("integration", None)
             }
@@ -191,6 +196,17 @@ impl RepairReadiness {
             self.fix_site = Some(site);
             self.ineligibility = None;
             self.seam_detail = None;
+        } else if self.ready {
+            // The shared gate's target is the proposal, but it cannot take a
+            // fix-site shape: the existing-test fix site would name a file the
+            // CLI cage does not allow, so hold the item instead.
+            self.ready = false;
+            self.fix_site = None;
+            self.ineligibility = Some("fix_site_not_established");
+            self.seam_detail = Some(format!(
+                "the shared repair gate (`ripr repair`) targets the new-test proposal `{}`, which cannot be confined as a fix site here, so no matching fix site is established",
+                selected.file
+            ));
         }
         self
     }
@@ -2210,6 +2226,83 @@ mod tests {
             if held.ready || held.ineligibility != Some("fix_site_not_established") {
                 return Err(format!("an unshapeable proposal must stay held: {held:?}"));
             }
+        }
+        // Path-shape defense in depth (shared preflight helpers).
+        for bad_file in [
+            "../x/tests/a.rs",
+            "/abs/tests/a.rs",
+            "tests/sub/dir/a.rs",
+            "tests/.rs",
+            "tests/a.txt",
+        ] {
+            let bad = crate::analysis::new_test_target::SelectedProposal {
+                kind: crate::analysis::new_test_target::NewTestKind::Integration,
+                file: bad_file.to_string(),
+                module: None,
+            };
+            if RepairFixSite::from_proposal(&bad).is_some() {
+                return Err(format!("`{bad_file}` must not take a fix-site shape"));
+            }
+        }
+        // A READY item whose proposal cannot take a fix-site shape must be
+        // held, never keep the stale existing-test fix site.
+        for bad in [
+            crate::analysis::new_test_target::SelectedProposal {
+                kind: crate::analysis::new_test_target::NewTestKind::Integration,
+                file: "src/lib.rs".to_string(),
+                module: None,
+            },
+            crate::analysis::new_test_target::SelectedProposal {
+                kind: crate::analysis::new_test_target::NewTestKind::InlineUnit,
+                file: "src/lib.rs".to_string(),
+                module: None,
+            },
+        ] {
+            let held =
+                ready_readiness().with_selected_proposal(Some(&SeamVerdict::AdmittedProposed(bad)));
+            if held.ready
+                || held.fix_site.is_some()
+                || held.ineligibility != Some("fix_site_not_established")
+                || held.seam_detail.is_none()
+            {
+                return Err(format!("a ready unshapeable proposal must hold: {held:?}"));
+            }
+        }
+        // A ready item with an existing fix site takes the proposal fix site.
+        let swapped = ready_readiness().with_selected_proposal(Some(&proposed));
+        if !swapped.ready
+            || swapped.fix_site.as_ref().map(|site| site.file.as_str()) != Some("tests/new.rs")
+            || swapped
+                .fix_site
+                .as_ref()
+                .and_then(|site| site.new_test_kind)
+                != Some("integration")
+        {
+            return Err(format!("the ready existing site must swap: {swapped:?}"));
+        }
+        // fix_site_not_test_surface lifts on a shapeable proposal.
+        let mut off_surface = ready_readiness();
+        off_surface.ready = false;
+        off_surface.ineligibility = Some("fix_site_not_test_surface");
+        let lifted = off_surface.with_selected_proposal(Some(&proposed));
+        if !lifted.ready || lifted.ineligibility.is_some() {
+            return Err(format!("not_test_surface must lift: {lifted:?}"));
+        }
+        // An inline proposal naming its module lifts, confined to that module.
+        let inline =
+            SeamVerdict::AdmittedProposed(crate::analysis::new_test_target::SelectedProposal {
+                kind: crate::analysis::new_test_target::NewTestKind::InlineUnit,
+                file: "src/lib.rs".to_string(),
+                module: Some("tests".to_string()),
+            });
+        let inline_lifted = proposal_only.clone().with_selected_proposal(Some(&inline));
+        let inline_site = inline_lifted.fix_site.as_ref();
+        if !inline_lifted.ready
+            || inline_site.map(|site| site.file.as_str()) != Some("src/lib.rs")
+            || inline_site.and_then(|site| site.inline_test_module.as_deref()) != Some("tests")
+            || inline_site.and_then(|site| site.new_test_kind) != Some("inline_unit")
+        {
+            return Err(format!("an inline proposal must lift: {inline_lifted:?}"));
         }
         // No verdict, or an Admitted verdict, never lifts the hold.
         for verdict in [None, Some(&SeamVerdict::Admitted)] {

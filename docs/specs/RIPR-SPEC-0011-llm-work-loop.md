@@ -877,6 +877,17 @@ confines the edit cage to (`selected_target.path`), with `fix_site.new_test_kind
 set and `test_name`, `line` and `oracle` empty because no test exists yet. A
 proposal that cannot take that shape stays held, and a seam the producer admits
 no proposal for stays not ready on both surfaces. No MCP-side gate decides this.
+The proposal fix site additionally requires the filesystem-free part of the CLI
+preflight (`is_plain_relative_path`, `is_integration_test_file_shape`: no `..`,
+no absolute path, exactly `<dir>/tests/<name>.rs`); a ready item whose proposal
+cannot take that shape is held as `fix_site_not_established` rather than keeping
+a stale existing-test fix site. An inline proposal is read from the shared
+verdict before the plain inline-module verdict, so it is distinguished from an
+existing inline test and stays confined to its governed module
+(`inline_test_module`). The file-exists, symlink and owning-manifest checks stay
+at the CLI start preflight (`ripr agent repair --phase before`), not at MCP
+prepare. Prepare packets now carry `fix_site.new_test_kind` (`null` for an
+existing-test fix site).
 No renderer picks its own file or kind, no target is
 selected here and no test is generated. No insertion anchor exists yet; the only
 anchor-like fact is the governed inline module name, carried as `module` where
