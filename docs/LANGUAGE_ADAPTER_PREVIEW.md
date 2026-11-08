@@ -203,8 +203,8 @@ diagnostics look stale, run `ripr: Show Status`, `ripr: Show Output`,
 
 `ripr init --ci github` generates an advisory workflow. When preview languages
 are enabled, its job summary adds a `Language preview grouping` section with
-separate `typescript`, `javascript`, and `python` groups and
-`gate_impact = none`; Rust-only repositories do not see it. The summary is not
+one group per enabled preview language (`typescript`, `javascript`,
+`python`) and `gate_impact = none`; Rust-only repositories do not see it. The summary is not
 a gate: pass/fail authority stays with explicitly configured gate decisions.
 
 ## Roll Back Preview Evidence
