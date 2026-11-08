@@ -7,9 +7,9 @@
 //! `reachable_unrevealed` gap.
 //!
 //! This rule names that as `rust_future_never_polled`. It fires only when
-//! every test that names the owner, and every related test whose relation
-//! establishes reach, is a plain synchronous `#[test]` whose every owner call
-//! builds a future that is provably dropped unpolled:
+//! every test that names the owner, and every related test, is a directly
+//! related plain synchronous `#[test]` whose every owner call builds a future
+//! that is provably dropped unpolled:
 //!
 //! - the call is a bare expression statement (`fetch_len("abc");`), the sole
 //!   argument of `drop(..)`, or the initializer of a `let` whose pattern is
@@ -17,7 +17,16 @@
 //! - the test body holds no `.await`, `async` block, executor or runtime
 //!   spelling (`block_on`, `block_in_place`, `Runtime`, `Handle`, `spawn`,
 //!   `poll`), and every mention of the owner's name is one of those calls (a
-//!   mention inside a macro or a closure keeps today's reading).
+//!   mention inside a macro, or a closure whose tail expression is the call,
+//!   keeps today's reading; a closure whose body drops the call as a
+//!   statement still drops it unpolled).
+//!
+//! Every related test, whatever its relation, must be one of those judged
+//! tests, and every spelling of the owner's name anywhere in the indexed files
+//! must be the owner's declaration, a judged test body or a plain `use` leaf:
+//! a `use … as …` alias, a `macro_rules!` naming the owner or any other
+//! spelling keeps today's reading. A bare `drop(..)` counts only when no
+//! user-defined `drop` is indexed or brought into the test's file.
 //!
 //! An async test attribute (`#[tokio::test]`, `#[async_std::test]`), any
 //! attribute other than `#[test]` and lint attributes, an unreadable body, an
@@ -30,6 +39,7 @@ use super::decision::confidence_score;
 use super::gap_admission::{is_ignored, withhold_gap};
 use super::owner_pin::function_declaration_is_async;
 use crate::analysis::extract::mask_comments_and_strings;
+use crate::analysis::facts::FunctionImplContext;
 use crate::analysis::rust_index::{FunctionSummary, RustIndex, TestSummary};
 use crate::domain::*;
 use ra_ap_syntax::{
@@ -44,6 +54,13 @@ const JUDGED_TEST_LIMIT: usize = 3;
 
 /// Spellings that may drive a future to completion. Any of them in a test
 /// body keeps today's reading; the rule never decides which one would run it.
+///
+/// This is a redundant extra guard, not the deciding check: a future can only
+/// be polled through its value, and the value of every owner call is already
+/// followed by [`future_is_dropped`] (an `.await`, an executor or helper
+/// argument, or a binding mentioned again all answer "not dropped"), and every
+/// other spelling of the owner fails the mention count. No shape is known that
+/// only this list refuses; it stays as a second, independent refusal.
 const POLLING_SPELLINGS: [&str; 7] = [
     "await",
     "block_on",
@@ -161,21 +178,22 @@ fn label(test: &TestSummary) -> String {
 }
 
 /// The tests that reach the owner, when every one of them only drops an
-/// unpolled future: every related test whose relation establishes reach is a
-/// direct owner call, and every indexed test that names the owner at all is
+/// unpolled future: every related test, whatever its relation, is a direct
+/// owner call, no indexed file spells the owner outside its declaration, a
+/// judged test or a plain `use` leaf, and every indexed test that names the owner at all is
 /// listed and judged unpolled. `None` keeps today's reading.
 fn unpolled_reaching_tests<'a>(
     finding: &Finding,
     owner: &FunctionSummary,
     index: &'a RustIndex,
 ) -> Option<Vec<&'a TestSummary>> {
+    // Every related test, whatever its relation, must be one of the judged
+    // tests: a related test that is not judged (a helper, an alias or macro
+    // path, a relation that does not itself establish reach) may be the one
+    // that polls the owner without spelling its name in its own body.
     let mut reaching = Vec::new();
     for related in &finding.related_tests {
-        let reason = related.relation_reason?;
-        if !reason.establishes_reach(true) {
-            continue;
-        }
-        if reason != RelationReason::DirectOwnerCall {
+        if related.relation_reason? != RelationReason::DirectOwnerCall {
             return None;
         }
         let test = index.tests().iter().find(|test| {
@@ -211,10 +229,155 @@ fn unpolled_reaching_tests<'a>(
     }) {
         return None;
     }
+    // A test can reach the owner without spelling its name in its own body:
+    // through a `use … as …` alias, a `macro_rules!` whose body names it, a
+    // `const`/`static` holding it, or a renamed re-export. Every spelling of
+    // the owner anywhere in the indexed files must be the owner's own
+    // declaration, a judged test body, or a plain (not renamed) `use` leaf.
+    if !owner_spelled_only_where_judged(owner, &reaching, index) {
+        return None;
+    }
     reaching
         .iter()
         .all(|test| test_drops_owner_future_unpolled(test, &owner.name, index))
         .then_some(reaching)
+}
+
+/// Whether every identifier token spelling `owner` in every indexed file sits
+/// in the owner's own span, in a judged test's span, or is the last segment of
+/// a `use` tree that does not rename it. An unparseable file that spells the
+/// name, or a file whose source the index does not hold, answers `false`.
+fn owner_spelled_only_where_judged(
+    owner: &FunctionSummary,
+    judged: &[&TestSummary],
+    index: &RustIndex,
+) -> bool {
+    for (path, view) in index.files().iter() {
+        let source = &view.data().source;
+        if source.is_empty() {
+            if view.functions.is_empty() && view.tests.is_empty() {
+                continue;
+            }
+            return false;
+        }
+        if !names_identifier(source, &owner.name) {
+            continue;
+        }
+        let Some(snapshot) = index.source_syntax.get(index, path) else {
+            return false;
+        };
+        let Some(tree) = snapshot.tree() else {
+            return false;
+        };
+        let in_span = |file: &std::path::Path, start: usize, end: usize, line: usize| {
+            file == path.as_path() && (start..=end).contains(&line)
+        };
+        let all_allowed = identifier_tokens(tree.syntax(), &owner.name).all(|token| {
+            let line = snapshot.line(token.text_range().start());
+            in_span(&owner.file, owner.start_line, owner.end_line, line)
+                || judged
+                    .iter()
+                    .any(|test| in_span(&test.file, test.start_line, test.end_line, line))
+                || is_plain_use_leaf(&token)
+        });
+        if !all_allowed {
+            return false;
+        }
+    }
+    true
+}
+
+/// The identifier tokens of `root` (including those inside macro token trees)
+/// whose text, without a raw `r#` prefix, is `name`.
+fn identifier_tokens<'a>(
+    root: &SyntaxNode,
+    name: &'a str,
+) -> impl Iterator<Item = ra_ap_syntax::SyntaxToken> + use<'a> {
+    root.descendants_with_tokens()
+        .filter_map(|element| element.into_token())
+        .filter(move |token| {
+            token.kind() == ra_ap_syntax::SyntaxKind::IDENT
+                && token.text().trim_start_matches("r#") == name
+        })
+}
+
+/// `token` is the last path segment of a `use` tree with no rename, so a test
+/// that calls through this import still spells the name.
+fn is_plain_use_leaf(token: &ra_ap_syntax::SyntaxToken) -> bool {
+    let Some(segment) = token
+        .parent()
+        .and_then(ast::NameRef::cast)
+        .and_then(|name| name.syntax().parent())
+        .and_then(ast::PathSegment::cast)
+    else {
+        return false;
+    };
+    let Some(path) = segment.syntax().parent().and_then(ast::Path::cast) else {
+        return false;
+    };
+    let Some(tree) = path.syntax().parent().and_then(ast::UseTree::cast) else {
+        return false;
+    };
+    tree.path().is_some_and(|own| own == path)
+        && path.segment().is_some_and(|last| last == segment)
+        && tree.rename().is_none()
+        && tree.star_token().is_none()
+        && tree.use_tree_list().is_none()
+}
+
+/// Whether a bare `drop(..)` call in `test` can only be the prelude's
+/// `std::mem::drop`: no free or unknown-context function, test or nested fn
+/// named `drop` is indexed, and in the test's file every `drop` identifier is a
+/// reference (not a binding, a rename, a macro token or a `use` other than
+/// `std::mem::drop`/`core::mem::drop`) or the method of a trait impl.
+fn bare_drop_is_prelude(test: &TestSummary, index: &RustIndex) -> bool {
+    const DROP: &str = "drop";
+    let user_drop_fn = index.functions().iter().any(|function| {
+        (function.name == DROP
+            && !matches!(function.impl_context, FunctionImplContext::Impl { .. }))
+            || function.nested_fn_names.iter().any(|name| name == DROP)
+    });
+    let user_drop_test = index
+        .tests()
+        .iter()
+        .any(|other| other.name == DROP || other.nested_fn_names.iter().any(|name| name == DROP));
+    if user_drop_fn || user_drop_test {
+        return false;
+    }
+    let Some(snapshot) = index.source_syntax.get(index, &test.file) else {
+        return false;
+    };
+    let Some(tree) = snapshot.tree() else {
+        return false;
+    };
+    identifier_tokens(tree.syntax(), DROP).all(|token| {
+        let Some(parent) = token.parent() else {
+            return false;
+        };
+        if let Some(name_ref) = ast::NameRef::cast(parent.clone()) {
+            // A `use` leaf names `drop` into scope; only the std one is known.
+            return match name_ref.syntax().ancestors().find_map(ast::UseTree::cast) {
+                Some(tree) => {
+                    tree.rename().is_none()
+                        && tree.path().is_some_and(|path| {
+                            let text = path.syntax().text().to_string();
+                            text == "std::mem::drop" || text == "core::mem::drop"
+                        })
+                }
+                None => true,
+            };
+        }
+        // `fn drop(&mut self)` of a trait impl (`impl Drop for T`) cannot be
+        // called as a bare `drop(..)`.
+        ast::Name::cast(parent)
+            .and_then(|name| name.syntax().parent())
+            .and_then(ast::Fn::cast)
+            .and_then(|function| function.syntax().parent())
+            .and_then(ast::AssocItemList::cast)
+            .and_then(|list| list.syntax().parent())
+            .and_then(ast::Impl::cast)
+            .is_some_and(|item| item.trait_().is_some())
+    })
 }
 
 /// Whether `test` is a plain synchronous `#[test]` whose every mention of
@@ -259,7 +422,10 @@ fn test_drops_owner_future_unpolled(test: &TestSummary, owner: &str, index: &Rus
     if identifier_count(&body_code, owner) != calls.len() {
         return false;
     }
-    calls.iter().all(|call| future_is_dropped(call, &body_code))
+    let bare_drop_ok = bare_drop_is_prelude(test, index);
+    calls
+        .iter()
+        .all(|call| future_is_dropped(call, &body_code, bare_drop_ok))
 }
 
 /// Only `#[test]` plus lint attributes: an async test attribute, a runtime
@@ -297,10 +463,12 @@ fn call_name(node: &SyntaxNode) -> Option<String> {
 }
 
 /// The call's future is dropped without being polled: it is an expression
-/// statement, the sole argument of `drop(..)`, or the initializer of a `let`
-/// binding `_` or a name `body_code` never mentions again. Parentheses are
-/// transparent; every other consumer may poll it.
-fn future_is_dropped(call: &SyntaxNode, body_code: &str) -> bool {
+/// statement, the sole argument of `std::mem::drop(..)` / `core::mem::drop(..)`
+/// (or of a bare `drop(..)` when `bare_drop_ok` says it can only be the
+/// prelude's), or the initializer of a `let` binding `_` or a name `body_code`
+/// never mentions again. Parentheses are transparent; every other consumer may
+/// poll it.
+fn future_is_dropped(call: &SyntaxNode, body_code: &str, bare_drop_ok: bool) -> bool {
     let mut current = call.clone();
     while let Some(parent) = current.parent() {
         if ast::ParenExpr::can_cast(parent.kind()) {
@@ -321,10 +489,11 @@ fn future_is_dropped(call: &SyntaxNode, body_code: &str) -> bool {
             return match binding.pat() {
                 Some(ast::Pat::WildcardPat(_)) => true,
                 Some(ast::Pat::IdentPat(name)) => {
+                    // `r#f` and `f` are one name: count it without the prefix.
                     name.pat().is_none()
-                        && name
-                            .name()
-                            .is_some_and(|name| identifier_count(body_code, name.text()) == 1)
+                        && name.name().is_some_and(|name| {
+                            identifier_count(body_code, name.text().trim_start_matches("r#")) == 1
+                        })
                 }
                 _ => false,
             };
@@ -335,9 +504,11 @@ fn future_is_dropped(call: &SyntaxNode, body_code: &str) -> bool {
         let Some(outer) = arguments.syntax().parent().and_then(ast::CallExpr::cast) else {
             return false;
         };
+        // A user-defined `drop` may poll its argument: a bare `drop` counts
+        // only when the caller established it is the prelude's.
         let is_drop = matches!(
             outer.expr(),
-            Some(ast::Expr::PathExpr(path)) if path.syntax().text() == "drop"
+            Some(ast::Expr::PathExpr(path)) if (bare_drop_ok && path.syntax().text() == "drop")
                 || path.syntax().text() == "std::mem::drop"
                 || path.syntax().text() == "core::mem::drop"
         );

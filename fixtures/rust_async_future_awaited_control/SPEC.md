@@ -16,6 +16,13 @@ human output.
 
 The finding keeps its existing reading (`reachable_unrevealed`, reach `yes`, no assertion observes the value); it never carries `rust_future_never_polled`.
 
+The expected static class per finding (machine-checked against
+`expected/check.json` by `check-fixture-contracts`, #12928):
+
+```expected-classes
+probe:src_lib.rs:return_value:c12a1aa5 -> reachable_unrevealed
+```
+
 ## Must Not
 
 - Name the never-polled limitation for an awaited call or an async test attribute.

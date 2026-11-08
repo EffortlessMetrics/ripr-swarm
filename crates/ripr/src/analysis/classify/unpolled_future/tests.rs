@@ -3,8 +3,12 @@ use crate::analysis::syntax::parse_clean_source_file;
 use ra_ap_syntax::{AstNode, SyntaxNode, ast};
 
 /// Every owner call in `body` (the inside of a test fn) and whether each one
-/// drops its future unpolled.
+/// drops its future unpolled, with a bare `drop` read as the prelude's.
 fn dropped(body: &str) -> Result<Vec<bool>, String> {
+    dropped_with(body, true)
+}
+
+fn dropped_with(body: &str, bare_drop_ok: bool) -> Result<Vec<bool>, String> {
     let source = format!("fn t() {{\n{body}\n}}\n");
     let parse = parse_clean_source_file(&source).ok_or("premise: the test parses")?;
     let tree = parse.tree();
@@ -25,7 +29,7 @@ fn dropped(body: &str) -> Result<Vec<bool>, String> {
     }
     Ok(calls
         .iter()
-        .map(|call| future_is_dropped(call, &code))
+        .map(|call| future_is_dropped(call, &code, bare_drop_ok))
         .collect())
 }
 
@@ -68,6 +72,9 @@ fn a_future_that_is_awaited_passed_on_or_used_again_is_not_read_as_unpolled() ->
         "drop(fetch_len(\"abc\"), 1);",
         // a closure may run the call
         "let c = || fetch_len(\"abc\"); let _ = c;",
+        // `r#f` and `f` are one name, so the binding is used again
+        "let r#f = fetch_len(\"abc\"); drive(f);",
+        "let f = fetch_len(\"abc\"); drive(r#f);",
     ] {
         let read = dropped(body)?;
         assert!(read.iter().any(|dropped| !dropped), "{body}: {read:?}");
@@ -104,4 +111,43 @@ fn identifiers_count_only_whole_words() {
     );
     assert_eq!(identifier_count("a.await; await", "await"), 2);
     assert_eq!(identifier_count("anything", ""), 0);
+}
+
+#[test]
+fn a_bare_drop_counts_only_when_it_is_known_to_be_the_prelude() -> Result<(), String> {
+    assert_eq!(dropped_with("drop(fetch_len(\"abc\"));", true)?, vec![true]);
+    // a user-defined `drop` may poll its argument
+    assert_eq!(
+        dropped_with("drop(fetch_len(\"abc\"));", false)?,
+        vec![false]
+    );
+    // the std paths cannot be shadowed by a crate-local `fn drop`
+    for body in [
+        "std::mem::drop(fetch_len(\"abc\"));",
+        "core::mem::drop(fetch_len(\"abc\"));",
+    ] {
+        assert_eq!(dropped_with(body, false)?, vec![true], "{body}");
+    }
+    Ok(())
+}
+
+/// The polling-spelling list is a redundant guard: every shape it names is
+/// already refused by the future's own consumer (see `POLLING_SPELLINGS`).
+/// If a later change lets one of these through `future_is_dropped`, this test
+/// fails, and the list becomes the deciding check that needs its own grip.
+#[test]
+fn every_polling_spelling_shape_is_already_refused_by_the_consumer() -> Result<(), String> {
+    for body in [
+        "let _n = async { fetch_len(\"abc\").await };",
+        "let _n = block_on(fetch_len(\"abc\"));",
+        "let _n = tokio::task::block_in_place(|| fetch_len(\"abc\"));",
+        "let _n = Runtime::new().block_on(fetch_len(\"abc\"));",
+        "let _n = Handle::current().block_on(fetch_len(\"abc\"));",
+        "let _h = spawn(fetch_len(\"abc\"));",
+        "let mut f = Box::pin(fetch_len(\"abc\")); let _ = f.as_mut().poll(cx);",
+    ] {
+        let read = dropped(body)?;
+        assert!(read.iter().any(|dropped| !dropped), "{body}: {read:?}");
+    }
+    Ok(())
 }

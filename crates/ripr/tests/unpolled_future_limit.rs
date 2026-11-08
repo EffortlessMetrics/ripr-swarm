@@ -205,3 +205,42 @@ fn shapes_that_may_poll_the_future_keep_their_reading() -> Result<(), String> {
         "\npub fn fetch_len_now(s: &str) -> usize {\n    futures::executor::block_on(fetch_len(s))\n}\n",
     )
 }
+
+/// A test can poll the owner without spelling its name in its own body. The
+/// related test is then not one of the judged tests, or the owner's name is
+/// spelled outside every judged test body, so the reading is kept.
+#[test]
+fn a_test_that_polls_the_owner_through_an_alias_or_macro_keeps_its_reading() -> Result<(), String> {
+    for test_source in [
+        // a `use … as …` alias awaited in an async test
+        "use fx::fetch_len;\nuse fx::fetch_len as get;\n\n#[test]\nfn builds() {\n    let _f = fetch_len(\"abc\");\n}\n\n#[tokio::test]\nasync fn awaits_alias() {\n    assert_eq!(get(\"abc\").await, 4);\n}\n",
+        // a braced alias
+        "use fx::{fetch_len, fetch_len as get};\n\n#[test]\nfn builds() {\n    let _f = fetch_len(\"abc\");\n}\n\n#[test]\nfn blocks_alias() {\n    assert_eq!(futures::executor::block_on(get(\"abc\")), 4);\n}\n",
+        // a `macro_rules!` whose body drives the owner
+        "use fx::fetch_len;\n\nmacro_rules! go {\n    ($s:expr) => {\n        futures::executor::block_on(fx::fetch_len($s))\n    };\n}\n\n#[test]\nfn builds() {\n    let _f = fetch_len(\"abc\");\n}\n\n#[test]\nfn runs_via_macro() {\n    assert_eq!(go!(\"abc\"), 4);\n}\n",
+    ] {
+        assert_unchanged(test_source, "")?;
+    }
+    Ok(())
+}
+
+/// A crate-local `fn drop` may poll its argument, so a bare `drop(..)` of the
+/// future is not read as dropping it.
+#[test]
+fn a_user_defined_drop_keeps_its_reading() -> Result<(), String> {
+    assert_unchanged(
+        "use fx::fetch_len;\n\nfn drop<F: std::future::Future>(f: F) -> F::Output {\n    futures::executor::block_on(f)\n}\n\n#[test]\nfn builds() {\n    drop(fetch_len(\"abc\"));\n}\n",
+        "",
+    )?;
+    // imported under the name `drop`
+    assert_unchanged(
+        "use fx::fetch_len;\nuse futures::executor::block_on as drop;\n\n#[test]\nfn builds() {\n    drop(fetch_len(\"abc\"));\n}\n",
+        "",
+    )?;
+    // the std path is still read as dropping it
+    let finding = read(
+        "use fx::fetch_len;\n\nfn drop<F>(_f: F) {}\n\n#[test]\nfn builds() {\n    std::mem::drop(fetch_len(\"abc\"));\n}\n",
+    )?;
+    assert!(limited(&finding), "{:?}", finding.class);
+    Ok(())
+}
