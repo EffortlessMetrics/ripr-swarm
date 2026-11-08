@@ -225,11 +225,15 @@ src/pricing.rs:42:5: weakly_exposed predicate: amount >= threshold -> strong ora
   every state `--format github` treats as not clean, through the same shared
   helpers: an incomplete analysis outcome (`# ripr: analysis outcome <kind>;
   listed gaps cover only the analyzed scope, and the absence of lines is not a
-  clean result`, also when gaps are listed), advisory limitations on a complete
+  clean result`, followed by `. Limitation: <kind>: <recovery>` for each
+  limitation, also when gaps are listed), advisory limitations on a complete
   outcome, uncommitted, untracked or gitignored working-tree sources, no
-  analysis scope, and preview-language files not analyzed. Zero bytes is
-  printed only when the run is fully analyzed with none of those states and has
-  no listed gap. A refused run prints one
+  analysis scope, and preview-language files not analyzed. When findings are
+  left out because `--suppression-policy` suppressed them or they are not
+  current obligations of this change (base-side or unresolved evidence), one
+  `# ripr: <n> finding(s) not listed: ...` comment counts them. Zero bytes is
+  printed only when the run is fully analyzed with none of those states, omits
+  no finding, and has no listed gap. A refused run prints one
   `# ripr run refused: run_status=...; repair_route=...; ...` line and keeps
   its non-zero exit.
 - `--suppression-policy` is accepted, like `github`. The format is

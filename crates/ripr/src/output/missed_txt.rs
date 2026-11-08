@@ -64,8 +64,9 @@ pub(crate) fn render_with_config(output: &CheckOutput, config: &RiprConfig) -> S
     match output.analysis_outcome.as_ref() {
         Some(outcome) if !outcome.kind.is_complete() => {
             out.push_str(&format!(
-                "# ripr: analysis outcome {}; listed gaps cover only the analyzed scope, and the absence of lines is not a clean result\n",
-                outcome.kind.as_str()
+                "# ripr: analysis outcome {}; listed gaps cover only the analyzed scope, and the absence of lines is not a clean result{}\n",
+                outcome.kind.as_str(),
+                limitation_suffix(outcome)
             ));
         }
         Some(outcome) if !outcome.limitations.is_empty() => {
@@ -78,11 +79,70 @@ pub(crate) fn render_with_config(output: &CheckOutput, config: &RiprConfig) -> S
     for note in crate::output::github::unanalyzed_state_notes(output) {
         out.push_str(&comment_line(&format!("{}: {}", note.title, note.message)));
     }
+    if let Some(line) = omitted_findings_comment(output, &suppressed_ids) {
+        out.push_str(&line);
+    }
     for row in rows {
         out.push_str(&row.line());
         out.push('\n');
     }
     out
+}
+
+/// Findings deliberately left out of the list because they are suppressed
+/// by an explicit policy or are not current obligations of this change
+/// (base-side or unresolved evidence). Counting them keeps an empty list from
+/// reading as "no gaps" when the run did produce findings (github's #4393
+/// denominator rule). Exposed and severity-off findings are not counted:
+/// they are not gaps of this change.
+fn omitted_findings_comment(
+    output: &CheckOutput,
+    suppressed_ids: &std::collections::BTreeSet<&str>,
+) -> Option<String> {
+    let suppressed = output
+        .findings
+        .iter()
+        .filter(|finding| suppressed_ids.contains(finding.id.as_str()))
+        .count();
+    let not_current = output
+        .findings
+        .iter()
+        .filter(|finding| !suppressed_ids.contains(finding.id.as_str()))
+        .filter(|finding| !finding.is_candidate_actionable())
+        .count();
+    if suppressed == 0 && not_current == 0 {
+        return None;
+    }
+    let mut parts = Vec::new();
+    if suppressed > 0 {
+        let policy = output
+            .suppression
+            .as_ref()
+            .map(|outcome| outcome.policy_path.as_str())
+            .unwrap_or_default();
+        parts.push(format!("{suppressed} suppressed by policy {policy}"));
+    }
+    if not_current > 0 {
+        parts.push(format!(
+            "{not_current} not current in this change (base-side or unresolved evidence)"
+        ));
+    }
+    Some(comment_line(&format!(
+        "{} finding(s) not listed: {}. Run `ripr check --format json` to list every finding.",
+        suppressed + not_current,
+        parts.join("; ")
+    )))
+}
+
+/// `. Limitation: <kind>: <detail> ...` from the github renderer's shared
+/// limitation text, or empty when the outcome names no limitation.
+fn limitation_suffix(outcome: &crate::analysis_outcome::AnalysisOutcome) -> String {
+    let limitations = crate::output::github::incomplete_outcome_limitations(outcome);
+    if limitations.is_empty() {
+        String::new()
+    } else {
+        format!(". {}", single_line(&limitations))
+    }
 }
 
 fn comment_line(text: &str) -> String {
@@ -374,7 +434,26 @@ mod tests {
         let rendered = render_with_config(&out, &RiprConfig::default());
         assert_eq!(
             rendered,
-            "src/zeta.rs:9:5: weakly_exposed predicate: amount >= threshold -> -\n"
+            "# ripr: 2 finding(s) not listed: 1 suppressed by policy p.toml; 1 not current in this change (base-side or unresolved evidence). Run `ripr check --format json` to list every finding.\n\
+             src/zeta.rs:9:5: weakly_exposed predicate: amount >= threshold -> -\n"
+        );
+    }
+
+    #[test]
+    fn all_findings_omitted_is_never_an_empty_stream() {
+        let mut out = output(fixture());
+        for finding in &mut out.findings {
+            finding.source_currentness = SourceCurrentness::BaseDeleted;
+        }
+        let total = out.findings.len();
+        let rendered = render_with_config(&out, &RiprConfig::default());
+        assert_all_comments(&rendered);
+        assert_eq!(rendered.lines().count(), 1, "{rendered}");
+        assert!(
+            rendered.starts_with(&format!(
+                "# ripr: {total} finding(s) not listed: {total} not current in this change"
+            )),
+            "{rendered}"
         );
     }
 
@@ -410,7 +489,7 @@ mod tests {
     }
 
     #[test]
-    fn ignored_and_untracked_working_tree_paths_are_disclosed() {
+    fn gitignored_working_tree_paths_are_disclosed() {
         let mut out = output(Vec::new());
         out.ignored_working_tree_source_paths = vec!["target/gen.rs".to_string()];
         let rendered = render_with_config(&out, &RiprConfig::default());
@@ -474,7 +553,7 @@ mod tests {
         let rendered = render_with_config(&out, &RiprConfig::default());
         assert_eq!(
             rendered,
-            "# ripr: analysis outcome partial_with_limitations; listed gaps cover only the analyzed scope, and the absence of lines is not a clean result\n"
+            "# ripr: analysis outcome partial_with_limitations; listed gaps cover only the analyzed scope, and the absence of lines is not a clean result. Limitation: language_scope_unsupported: Not analyzed.\n"
         );
         Ok(())
     }
@@ -493,7 +572,9 @@ mod tests {
             "{rendered}"
         );
         assert!(
-            first.ends_with("the absence of lines is not a clean result"),
+            first.ends_with(
+                "the absence of lines is not a clean result. Limitation: language_scope_unsupported: Not analyzed."
+            ),
             "{rendered}"
         );
         assert_eq!(lines.filter(|line| !line.starts_with("# ")).count(), 3);

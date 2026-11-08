@@ -341,17 +341,27 @@ fn incomplete_outcome_warning(
         "Analysis outcome: {} (analysis incomplete). {scope}",
         outcome.kind.as_str()
     );
+    message.push_str(&incomplete_outcome_limitations(outcome));
+    format!(
+        "::warning title=ripr analysis incomplete::{}\n",
+        escape_data(&message)
+    )
+}
+
+/// Each limitation of an incomplete outcome with its recovery, as
+/// ` Limitation: <kind>: <detail>` segments. Shared with `missed-txt`.
+pub(crate) fn incomplete_outcome_limitations(
+    outcome: &crate::analysis_outcome::AnalysisOutcome,
+) -> String {
+    let mut text = String::new();
     for limitation in &outcome.limitations {
-        message.push_str(&format!(
+        text.push_str(&format!(
             " Limitation: {}: {}",
             limitation.kind.as_str(),
             limitation.recovery.detail
         ));
     }
-    format!(
-        "::warning title=ripr analysis incomplete::{}\n",
-        escape_data(&message)
-    )
+    text
 }
 
 /// The preview suffix must track the shared validator's own verdict, as the
