@@ -57,6 +57,7 @@ Current how-to docs:
 - [Sibling-tool interop and learning ledger](interop/sibling-tools.md)
 - [Integrations](INTEGRATIONS.md)
 - [Install channels](INSTALL_CHANNELS.md)
+- [Windows](WINDOWS.md)
 - [Security policy](../SECURITY.md)
 - [Repository settings](REPO_SETTINGS.md)
 - [Swarm development](swarm-development.md)
