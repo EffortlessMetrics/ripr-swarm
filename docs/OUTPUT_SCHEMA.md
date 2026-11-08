@@ -1030,7 +1030,8 @@ next=COMMAND
   left to fix from the test side, or no changed behavior was found in scope),
   `stop=` (every finding is base-side or unresolved, all are suppressed by
   policy, ripr cannot tell from reading the code, preview-only evidence, or
-  nothing was analyzed because no scope was given), or `open=` (no gap is
+  nothing was analyzed because no scope was given or the diff was empty,
+  unparseable or held no analyzable source, #13658), or `open=` (no gap is
   listed, but a reach-only limitation still carries a weak or smoke related
   test; it replaces `stop=` as described above). `done=` is static advisory
   evidence, not runtime mutation outcome or test adequacy.

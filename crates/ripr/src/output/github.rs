@@ -753,6 +753,18 @@ mod tests {
             "{rendered}"
         );
 
+        // A docs-only diff changed files but none ripr analyzes: also nothing
+        // examined, matching the human "Nothing to check" state.
+        let mut docs_only = output_with_unknown_finding();
+        docs_only.findings.clear();
+        docs_only.analysis_outcome = Some(outcome(AnalysisOutcomeKind::NoBehavioralCandidates, 1)?);
+        assert_eq!(docs_only.summary.changed_rust_files, 0);
+        let rendered = render(&docs_only);
+        assert!(
+            rendered.starts_with("::warning title=ripr nothing analyzed::"),
+            "{rendered}"
+        );
+
         let mut healthy = output_with_unknown_finding();
         healthy.findings.clear();
         healthy.summary.changed_rust_files = 1;
