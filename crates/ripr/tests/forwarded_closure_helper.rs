@@ -109,6 +109,22 @@ const DIRECT: &str = "    fn run_test(expected: &str, f: impl FnOnce() -> String
 
 const SAME_FILE_FORWARD: &str = "    fn with_default(f: impl FnOnce() -> String) -> String {\n        f()\n    }\n    fn run_test(expected: &str, fun: impl FnOnce() -> String) {\n        let got = with_default(fun);\n        assert_eq!(got, expected);\n    }\n";
 
+const ADD_ASSERTION: &str = "Add a meaningful assertion";
+const NO_ASSERTION_FOUND: &str = "No assertion found on related tests";
+const NO_OBSERVING_ASSERTION: &str = "Related tests were found, but no assertion appears to observe the changed value, error, field, or effect";
+/// RIPR-SPEC-0221's refused-context observe summary (the existing wording
+/// for an assertion ripr could not establish).
+const CONTEXT_UNESTABLISHED: &str = "No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)";
+
+/// The finding-level next step, and the observe and discriminate summaries.
+fn guidance(finding: &Finding) -> (String, String, String) {
+    (
+        finding.recommended_next_step.clone().unwrap_or_default(),
+        finding.ripr.reveal.observe.summary.clone(),
+        finding.ripr.reveal.discriminate.summary.clone(),
+    )
+}
+
 const NEVER_INVOKED: &str = "    fn run_test(expected: &str, _fun: impl FnOnce() -> String) {\n        assert_eq!(\"hello bob\", expected);\n    }\n";
 
 #[test]
@@ -151,6 +167,18 @@ fn forwarding_to_an_unresolved_callee_names_the_limit_instead_of_no_assertion() 
             .any(|line| line.starts_with("closure forwarded by helper: ")),
         "{control:?}"
     );
+    // The control keeps the old finding-level wording: a test with no
+    // assertion is still told to add one.
+    let (step, observe, discriminate) = guidance(&control);
+    assert!(step.starts_with(ADD_ASSERTION), "control next step: {step}");
+    assert_eq!(observe, NO_OBSERVING_ASSERTION, "control observe");
+    assert_eq!(discriminate, NO_ASSERTION_FOUND, "control discriminate");
+    assert!(
+        control
+            .evidence
+            .iter()
+            .any(|line| line == NO_ASSERTION_FOUND)
+    );
 
     for (callee, helper) in [
         (
@@ -185,6 +213,29 @@ fn forwarding_to_an_unresolved_callee_names_the_limit_instead_of_no_assertion() 
             finding.evidence.contains(&expected),
             "{callee}: {:?}",
             finding.evidence
+        );
+        // The finding-level guidance defers to the refused-context wording:
+        // no "add an assertion" for a test that has one.
+        let (step, observe, discriminate) = guidance(&finding);
+        assert!(!step.is_empty(), "{callee}: a next step is still offered");
+        assert!(!step.contains(ADD_ASSERTION), "{callee} next step: {step}");
+        assert_eq!(observe, CONTEXT_UNESTABLISHED, "{callee} observe");
+        assert_ne!(discriminate, NO_ASSERTION_FOUND, "{callee} discriminate");
+        assert!(
+            !finding
+                .evidence
+                .iter()
+                .any(|line| line == NO_ASSERTION_FOUND || line == NO_OBSERVING_ASSERTION),
+            "{callee}: {:?}",
+            finding.evidence
+        );
+        assert!(
+            !finding
+                .missing
+                .iter()
+                .any(|line| line.starts_with("No detected assertion")),
+            "{callee}: {:?}",
+            finding.missing
         );
     }
     Ok(())

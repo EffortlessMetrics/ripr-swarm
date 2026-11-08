@@ -1,8 +1,10 @@
 use crate::analysis::classify::{
-    ASSERTION_CONTEXT_UNESTABLISHED, ArmSelector, AssertionRefusal, BindingReturnFlow, ConstFlow,
-    EffectStateCarrier, HELPER_RESULT_NOT_FORWARDED, OwnerInputs, OwnerPinSyntax, OwnerReturnPin,
-    ProbeContext, PropagationWitnessV1, ReturnOracleAdmission, TransitiveReachIndex,
-    WrapperEntryPairing, activation_and_boundary_input, assertion_compares_hand_built_field,
+    ASSERTION_CONTEXT_UNESTABLISHED, ASSERTION_CONTEXT_UNESTABLISHED_DISCRIMINATE_SUMMARY,
+    ArmSelector, AssertionRefusal, BindingReturnFlow, ConstFlow, EffectStateCarrier,
+    HELPER_RESULT_NOT_FORWARDED, NO_ASSERTION_DISCRIMINATE_SUMMARY, NO_OBSERVING_ASSERTION_SUMMARY,
+    OwnerInputs, OwnerPinSyntax, OwnerReturnPin, ProbeContext, PropagationWitnessV1,
+    ReturnOracleAdmission, TransitiveReachIndex, WrapperEntryPairing,
+    activation_and_boundary_input, assertion_compares_hand_built_field,
     assertion_observes_collection_argument, assertion_observes_scope_end, assertion_out_parameter,
     assertion_pins_pushed_collection_count, body_contains_owner_call, call_parameter_names,
     callee_is_unique, chain_entry_pin_admits, chain_forwards_to_observed_hops,
@@ -1811,6 +1813,37 @@ impl ClassifiedProbeEvidence {
             )
         };
 
+        // #9981 forwarding residual: a related test whose helper asserts after
+        // forwarding its closure to an unresolved call has an assertion; the
+        // row reads `assertion_admission_unproven`. When those are the only
+        // assertions the related tests hold, the "no assertion" stage
+        // summaries are false too, so they defer to the existing
+        // refused-context wording (and, through it, its next step). Only the
+        // two exact no-assertion summaries are replaced; the states stay `no`.
+        let forwarded =
+            super::super::classify::name_forwarded_callback_limits(context, &mut related_tests);
+        let (observe, discriminate) = if forwarded.only_limits
+            && observe.state == StageState::No
+            && observe.summary == NO_OBSERVING_ASSERTION_SUMMARY
+            && discriminate.state == StageState::No
+            && discriminate.summary == NO_ASSERTION_DISCRIMINATE_SUMMARY
+        {
+            (
+                StageEvidence::new(
+                    StageState::No,
+                    observe.confidence.clone(),
+                    ASSERTION_CONTEXT_UNESTABLISHED,
+                ),
+                StageEvidence::new(
+                    StageState::No,
+                    discriminate.confidence.clone(),
+                    ASSERTION_CONTEXT_UNESTABLISHED_DISCRIMINATE_SUMMARY,
+                ),
+            )
+        } else {
+            (observe, discriminate)
+        };
+
         let ripr = RiprEvidence {
             reach: reach.clone(),
             infect: infect.clone(),
@@ -1822,6 +1855,7 @@ impl ClassifiedProbeEvidence {
         };
         let mut evidence =
             evidence_summaries([&reach, &infect, &propagate, &observe, &discriminate]);
+        evidence.extend(forwarded.evidence);
         // Disclose a refused related assertion whenever the refusal can
         // matter: the reveal is not fully established. See
         // `preferred_refusal_note` for which one.
@@ -2025,12 +2059,6 @@ impl ClassifiedProbeEvidence {
             pin_syntax,
             &mut related_tests,
         );
-        super::super::classify::name_forwarded_callback_limits(
-            context,
-            &mut related_tests,
-            &mut evidence,
-        );
-
         Self {
             ripr,
             evidence,

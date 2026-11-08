@@ -448,7 +448,7 @@ pub(in crate::analysis) fn reveal_outcome(
         StageEvidence::new(
             StageState::No,
             Confidence::Medium,
-            "No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)",
+            ASSERTION_CONTEXT_UNESTABLISHED_DISCRIMINATE_SUMMARY,
         )
     } else if needs_token_confirmation(&probe.family)
         && analysis.matched_any
@@ -5856,6 +5856,17 @@ fn is_name_only_relation(reason: RelationReason) -> bool {
 pub(in crate::analysis) const ASSERTION_CONTEXT_UNESTABLISHED: &str =
     crate::domain::ASSERTION_CONTEXT_UNESTABLISHED;
 
+/// The discriminate summary paired with [`ASSERTION_CONTEXT_UNESTABLISHED`].
+pub(in crate::analysis) const ASSERTION_CONTEXT_UNESTABLISHED_DISCRIMINATE_SUMMARY: &str = "No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)";
+
+/// The observe summary when related tests exist but none has an assertion
+/// that observes the change.
+pub(in crate::analysis) const NO_OBSERVING_ASSERTION_SUMMARY: &str = "Related tests were found, but no assertion appears to observe the changed value, error, field, or effect";
+
+/// The discriminate summary when no related test has any oracle.
+pub(in crate::analysis) const NO_ASSERTION_DISCRIMINATE_SUMMARY: &str =
+    "No assertion found on related tests";
+
 fn build_observe_evidence(matched_any: bool, refused_context: bool) -> StageEvidence {
     if matched_any {
         StageEvidence::new(
@@ -5870,7 +5881,7 @@ fn build_observe_evidence(matched_any: bool, refused_context: bool) -> StageEvid
             if refused_context {
                 ASSERTION_CONTEXT_UNESTABLISHED
             } else {
-                "Related tests were found, but no assertion appears to observe the changed value, error, field, or effect"
+                NO_OBSERVING_ASSERTION_SUMMARY
             },
         )
     }
@@ -5983,7 +5994,7 @@ fn build_discriminate_evidence(
         OracleStrength::None => StageEvidence::new(
             StageState::No,
             Confidence::Medium,
-            "No assertion found on related tests",
+            NO_ASSERTION_DISCRIMINATE_SUMMARY,
         ),
         OracleStrength::Unknown => StageEvidence::new(
             StageState::Unknown,

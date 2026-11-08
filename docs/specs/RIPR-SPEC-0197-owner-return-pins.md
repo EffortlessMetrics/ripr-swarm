@@ -2432,10 +2432,26 @@ nothing. The classifier reads it only for a row it would otherwise mark
 gains one line, `closure forwarded by helper: test `a` calls helper
 `run_test`, which asserts after forwarding the closure to `with_default`;
 whether it runs the closure is not established statically`. No oracle, kind,
-strength, stage or class changes, so no verdict can rise to `exposed` (or
-anywhere) from this path; the change withdraws a false absence claim and its
-"add an assertion" repair. A test credited by another helper, and a helper
+strength, stage state or class changes, so no verdict can rise to `exposed`
+(or anywhere) from this path; the change withdraws a false absence claim and
+its "add an assertion" repair. A test credited by another helper, and a helper
 that never runs or forwards the closure, keep their earlier readings.
+
+Finding-level guidance follows the rows only when every assertion the related
+tests hold is such a forwarded helper's: at least one row was rewritten, no
+`no_assertion` row is left and no row carries an oracle. Then, and only when
+the observe and discriminate stages carry exactly the no-assertion summaries
+("Related tests were found, but no assertion appears to observe ..." and "No
+assertion found on related tests"), those two summaries are replaced by the
+existing refused-context pair (`rust_assertion_context_unestablished`, as for
+a refused assertion). Both stages stay `no`. The existing consumers of that
+observe summary then give the finding the refused-assertion next step
+("Establish that the test is collected and enabled, that the assertion runs on
+its executed path, ...") instead of "Add a meaningful assertion ...", and drop
+the "No detected assertion observes ..." missing line. The analyzer-limit gap
+marker is not set (no refusal exists), so the class is not rewritten to
+`static_unknown`. A finding whose related tests include any other
+no-assertion row, such as the never-invoked control, keeps the old wording.
 
 ### Selected tier literals through a returned binding (#13037)
 

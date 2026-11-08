@@ -4,6 +4,8 @@
   assertion to the test like a helper that invokes the closure itself. When
   the helper forwards the closure to a call ripr cannot see (tracing's
   `with_default(subscriber, fun)`), the test is no longer reported as having
-  no assertion: its row reads `assertion_admission_unproven` and the finding
-  names the helper and callee, with no change to oracle credit or class
-  (#9981).
+  no assertion: its row reads `assertion_admission_unproven`, the finding
+  names the helper and callee, and when those are the only assertions the
+  related tests hold, the finding gives the existing unestablished-assertion
+  next step instead of "Add a meaningful assertion". Oracle credit and class
+  are unchanged (#9981).

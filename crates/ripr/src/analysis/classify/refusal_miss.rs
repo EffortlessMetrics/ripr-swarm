@@ -100,13 +100,20 @@ pub(in crate::analysis) fn split_assertion_not_credited_misses(
 /// an assertion; whether it observes the closure is what is unknown. Such a
 /// row becomes the analyzer-limit miss `assertion_admission_unproven`
 /// (RIPR-SPEC-0221) and the finding names the helper and callee. It grants no
-/// oracle, strength or stage, so no class can rise from it; only the false
+/// oracle, strength or class, so no class can rise from it; only the false
 /// absence claim (and its "add an assertion" repair) is withdrawn.
+///
+/// [`ForwardedCallbackLimits::only_limits`] is true when at least one row was
+/// rewritten, no `no_assertion` row is left and no row carries an oracle: the
+/// only assertions the related tests hold are the forwarded helpers'. Only
+/// then may the caller replace the "no assertion" stage summaries with the
+/// existing refused-context ones (RIPR-SPEC-0221), so the finding-level next
+/// step stops prescribing an assertion the test already has.
 pub(in crate::analysis) fn name_forwarded_callback_limits(
     context: &ProbeContext<'_>,
     related_tests: &mut [RelatedTest],
-    evidence: &mut Vec<String>,
-) {
+) -> ForwardedCallbackLimits {
+    let mut named = ForwardedCallbackLimits::default();
     for row in related_tests.iter_mut() {
         if row.miss != Some(RelatedTestMiss::NoAssertion) || row.oracle.is_some() {
             continue;
@@ -122,10 +129,24 @@ pub(in crate::analysis) fn name_forwarded_callback_limits(
             "{FORWARDED_CALLBACK_PREFIX}test `{}` calls helper `{}`, which asserts after forwarding the closure to `{}`; whether it runs the closure is not established statically",
             row.name, limit.helper, limit.callee
         );
-        if !evidence.contains(&line) {
-            evidence.push(line);
+        if !named.evidence.contains(&line) {
+            named.evidence.push(line);
         }
     }
+    named.only_limits = !named.evidence.is_empty()
+        && related_tests
+            .iter()
+            .all(|row| row.oracle.is_none() && row.miss != Some(RelatedTestMiss::NoAssertion));
+    named
+}
+
+/// What [`name_forwarded_callback_limits`] rewrote.
+#[derive(Default)]
+pub(in crate::analysis) struct ForwardedCallbackLimits {
+    /// One evidence line per rewritten test, naming the helper and callee.
+    pub(in crate::analysis) evidence: Vec<String>,
+    /// Every assertion the related tests hold is a forwarded helper's.
+    pub(in crate::analysis) only_limits: bool,
 }
 
 /// Evidence prefix of a [`name_forwarded_callback_limits`] line.

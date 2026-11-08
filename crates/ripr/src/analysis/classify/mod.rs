@@ -212,7 +212,9 @@ pub(in crate::analysis) use reveal::is_inline_expect_snapshot;
 pub(in crate::analysis) use reveal::unconditional_owner_insert_field;
 pub(in crate::analysis) use reveal::wrapper_error_seam_expression;
 pub(in crate::analysis) use reveal::{
-    ASSERTION_CONTEXT_UNESTABLISHED, FileUseStatements, oracle_crediting_relations,
+    ASSERTION_CONTEXT_UNESTABLISHED, ASSERTION_CONTEXT_UNESTABLISHED_DISCRIMINATE_SUMMARY,
+    FileUseStatements, NO_ASSERTION_DISCRIMINATE_SUMMARY, NO_OBSERVING_ASSERTION_SUMMARY,
+    oracle_crediting_relations,
 };
 pub(in crate::analysis) use reveal::{
     NO_REACHABLE_TEST_DISCRIMINATE_SUMMARY, NO_REACHABLE_TEST_OBSERVE_SUMMARY,
