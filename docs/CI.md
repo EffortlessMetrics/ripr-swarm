@@ -1353,7 +1353,7 @@ all-features workspace (`cargo xtask verify-test-shards --all-features`) before
 publishing the combined `rust-junit` artifact and advisory slow-test report.
 The Codecov test-results upload also requires a nonempty `CODECOV_TOKEN`.
 The retained fork predicates are dormant because PR events are retired; the
-lane remains advisory and the required shards retain blocking enforcement.
+lane remains advisory; required Rust proof remains with the queue caller.
 
 ### Historical merge-ready conflict notice
 
