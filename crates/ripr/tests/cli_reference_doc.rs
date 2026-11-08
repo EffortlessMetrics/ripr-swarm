@@ -14,11 +14,15 @@ use std::process::Command;
 
 const DOC_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../docs/CLI_REFERENCE.md");
 
-fn run(args: &[&str]) -> Result<String, String> {
-    let output = Command::new(env!("CARGO_BIN_EXE_ripr"))
+fn spawn(args: &[&str]) -> Result<std::process::Output, String> {
+    Command::new(env!("CARGO_BIN_EXE_ripr"))
         .args(args)
         .output()
-        .map_err(|error| format!("failed to run ripr {args:?}: {error}"))?;
+        .map_err(|error| format!("failed to run ripr {args:?}: {error}"))
+}
+
+fn run(args: &[&str]) -> Result<String, String> {
+    let output = spawn(args)?;
     if !output.status.success() {
         return Err(format!("ripr {args:?} failed: {:?}", output.status));
     }
@@ -31,10 +35,7 @@ fn extended_help(path: &str) -> Option<String> {
     let mut args = vec!["help"];
     args.extend(path.split(' '));
     args.push("--all");
-    let output = Command::new(env!("CARGO_BIN_EXE_ripr"))
-        .args(&args)
-        .output()
-        .ok()?;
+    let output = spawn(&args).ok()?;
     if !output.status.success() {
         return None;
     }
