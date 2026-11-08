@@ -1107,8 +1107,10 @@ verify=complete|outcome=O|findings=N|exposed=N
   Fields are whitespace-collapsed, the changed expression and oracle text are
   clipped to 80 characters, and a literal `|` inside a field is written `\|`.
   `missing=` is the first missing discriminator value, or `-`.
-- `tK` rows are the strongest contributing related test of each listed gap,
-  written once however many gaps it grips.
+- `tK` rows name the first contributing related test of each listed gap,
+  ranked by relation confidence first (a direct owner call ahead of a test
+  linked only by file location), then by oracle strength (#13603), written
+  once however many gaps it grips.
 - `limits=` counts the non-exposed findings that are not test-side gaps
   (`no_static_path`, `infection_unknown`, `propagation_unknown`,
   `static_unknown`, preview-only), so a short gap list never hides them.
@@ -1166,9 +1168,12 @@ done=... | open=... | stop=...
 next=ripr context ... --at SELECTOR
 ```
 
-- Exactly one record; `tK` is the strongest contributing related test (the
-  weak-assertion row for the limited `open=` case) and is absent when none
-  exists. `limit=` appears only when the producer named a static limit.
+- Exactly one record; `tK` is the first contributing related test, ranked by
+  relation confidence first (a direct owner call ahead of a test linked only by
+  file location), then by oracle strength (#13603). A `done=` record instead
+  names the strongest-oracle test that notices the change, and the limited
+  `open=` case names its weak-assertion row. `tK` is absent when none exists.
+  `limit=` appears only when the producer named a static limit.
 - Exactly one terminal line: `open=` for a candidate-current test-side gap
   (`weakly_exposed` or `reachable_unrevealed`, not limited) or for a
   reach-only limit that still carries a weak related test (the `check` `open=`
