@@ -275,7 +275,8 @@ hold, or the route refuses:
   `extern crate`, and no import or binding of the library identifier or
   of `T`;
 - every module on the chain is mounted from the library root by exactly
-  one out-of-line `mod seg;` in its parent, never declared inline, and
+  one module-level out-of-line `mod seg;` in its parent (a declaration
+  nested in an inline module does not count), never declared inline, and
   resolves to exactly one of `seg.rs` / `seg/mod.rs`; no library file uses
   `#[path]` or `include!`;
 - the module the test names holds one module-level `pub use` importing `T`
@@ -284,8 +285,10 @@ hold, or the route refuses:
   `crate::` path to a mounted module that holds one module-level `pub` (any
   `pub(..)` form) `use` importing `T` from that key. Longer chains refuse;
 - across the library every `use` naming `T` is a hop of that chain, no
-  library file declares an item named `T`, and no glob is rooted outside
-  the crate (`self`, `super`, `crate`) or the standard library.
+  library file declares an item named `T`, no glob is rooted outside the
+  crate (`self`, `super`, `crate`) or the standard library, and nothing
+  rebinds a dependency key (`use .. as key;`, an import ending in the key,
+  `mod key`, `extern crate`).
 
 The competitor and owner-crate foreign-import rules above still apply.
 

@@ -2212,7 +2212,23 @@ fn type_reexported_from_owner_dependency(
         {
             return false;
         }
-        naming_imports += super::reveal::flattened_use_paths(&stripped)
+        let library_imports = super::reveal::flattened_use_paths(&stripped);
+        // A library-local binding of a dependency key (`use x::y as crate_a;`,
+        // `mod crate_a`, `extern crate`) would rebind the terminal hop's root.
+        if stripped.contains("extern crate")
+            || reexport.library_dependency_names.iter().any(|dependency| {
+                file_may_bind_name(&stripped, dependency)
+                    || library_imports.iter().any(|import| {
+                        import.alias.as_deref() == Some(dependency.as_str())
+                            || (import.alias.is_none()
+                                && import.path.contains("::")
+                                && import.path.rsplit("::").next() == Some(dependency.as_str()))
+                    })
+            })
+        {
+            return false;
+        }
+        naming_imports += library_imports
             .iter()
             .filter(|import| {
                 import.path.rsplit("::").next() == Some(self_type)
@@ -2350,9 +2366,24 @@ fn declares_one_out_of_line_module(parent: &str, name: &str) -> bool {
     let bytes = parent.as_bytes();
     let (mut out_of_line, mut inline) = (0usize, 0usize);
     let mut search_from = 0usize;
+    let mut depth = 0usize;
+    let mut depth_scanned = 0usize;
     while let Some(relative) = parent[search_from..].find("mod") {
         let at = search_from + relative;
         search_from = at + 3;
+        // Only module-level declarations mount a child of this file: a
+        // `mod seg;` inside `mod inner { .. }` mounts `inner::seg`.
+        for byte in &bytes[depth_scanned..at] {
+            match byte {
+                b'{' => depth += 1,
+                b'}' => depth = depth.saturating_sub(1),
+                _ => {}
+            }
+        }
+        depth_scanned = at;
+        if depth != 0 {
+            continue;
+        }
         let starts_word = at == 0
             || bytes
                 .get(at - 1)
@@ -14223,6 +14254,32 @@ fn crate_c_score_test() {
             )?;
             assert_eq!(related, vec![RelationReason::DirectOwnerCall], "{level}");
         }
+        // A `crate::` or `super::` first hop to a sibling module.
+        for (filter_mod, sibling) in [
+            (
+                "pub use crate::level::LevelFilter;\n",
+                "crates/crate_c/src/level.rs",
+            ),
+            (
+                "pub use super::level::LevelFilter;\n",
+                "crates/crate_c/src/level.rs",
+            ),
+        ] {
+            let related = reexport_related(
+                TRACING_BODY,
+                &[
+                    ("crates/crate_c/src/lib.rs", "pub mod filter;\nmod level;\n"),
+                    ("crates/crate_c/src/filter.rs", filter_mod),
+                    (sibling, "pub(crate) use crate_a::metadata::LevelFilter;\n"),
+                ],
+                CRATE_C_MANIFEST,
+            )?;
+            assert_eq!(
+                related,
+                vec![RelationReason::DirectOwnerCall],
+                "{filter_mod}"
+            );
+        }
         Ok(())
     }
 
@@ -14273,6 +14330,37 @@ fn crate_c_score_test() {
             (
                 "use crate_c::filter::LevelFilter; fn t() { use external::LevelFilter; LevelFilter::current() }",
                 vec![(filter, filter_mod), (level, hop)],
+            ),
+            // The chain module rebinds the dependency key locally.
+            (
+                TRACING_BODY,
+                vec![
+                    (filter, filter_mod),
+                    (
+                        level,
+                        "use crate::other::ext as crate_a;\npub use crate_a::metadata::LevelFilter;\n",
+                    ),
+                ],
+            ),
+            // `mod level;` nested in an inline module mounts `inner::level`,
+            // not `filter::level`.
+            (
+                TRACING_BODY,
+                vec![
+                    (
+                        filter,
+                        "mod inner { mod level; }\npub use self::level::LevelFilter;\n",
+                    ),
+                    (level, hop),
+                ],
+            ),
+            // A `pub(crate)` first hop is invisible to the test crate.
+            (
+                TRACING_BODY,
+                vec![(
+                    "crates/crate_c/src/filter.rs",
+                    "pub(crate) use crate_a::metadata::LevelFilter;\n",
+                )],
             ),
         ];
         for (body, files) in cases {
