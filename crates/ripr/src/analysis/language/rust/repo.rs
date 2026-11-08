@@ -169,6 +169,7 @@ impl RustAdapter {
                         &transitive_reach,
                         None,
                         Some(&value_origins),
+                        None,
                     );
                 finding.language = Some(LanguageId::Rust);
                 finding.source_currentness = SourceCurrentness::CandidateCurrent;
