@@ -354,8 +354,25 @@ fn init_plan(options: &InitOptions) -> Result<Vec<InitTarget>, String> {
     if let Some(path) = cursor_mcp_path {
         targets.push(plan_mcp_target(path, options.force)?);
     }
+    // The instructions promise analysis only for languages `ripr check` will
+    // run: the config this run writes, else the one it keeps. A config that
+    // cannot be read enables nothing here (fail closed: no preview promise).
+    let enabled_languages = match targets[0].action {
+        InitAction::LeaveUnchanged => crate::config::load_for_root(&options.root)
+            .map(|config| config.languages().enabled().to_vec())
+            .unwrap_or_default(),
+        _ => crate::config::parse_config_diagnostic(&targets[0].body)
+            .map(|config| config.languages().enabled().to_vec())
+            .unwrap_or_default(),
+    };
+    let agent_languages = init_agents::AgentLanguages::detect(&options.root, &enabled_languages);
     for (agent, path) in options.agents.iter().zip(agent_paths) {
-        targets.push(init_agents::plan_agent_target(*agent, path, options.force)?);
+        targets.push(init_agents::plan_agent_target(
+            *agent,
+            path,
+            options.force,
+            agent_languages,
+        )?);
     }
     Ok(targets)
 }

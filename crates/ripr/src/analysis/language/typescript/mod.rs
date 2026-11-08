@@ -703,6 +703,27 @@ impl TypeScriptAdapter {
                 None => TsAliasMap::workspace_packages_only(&options.root, workspace_packages),
             })
         };
+        // Per-package `paths` configs (#12754): a nested `paths`-declaring
+        // config is resolved for its own importers, so its content joins the
+        // cache digest, and a map must exist even with no root config.
+        let nested_configs = if options.resolve_tsconfig_paths {
+            tsconfig::nested_configs_fingerprint(&options.root, &workspace_files)
+        } else {
+            None
+        };
+        let alias_map = match nested_configs {
+            Some(fingerprint) => Some(
+                alias_map
+                    .unwrap_or_else(|| {
+                        TsAliasMap::workspace_packages_only(
+                            &options.root,
+                            workspace_packages::WorkspacePackages::default(),
+                        )
+                    })
+                    .with_nested_configs(fingerprint),
+            ),
+            None => alias_map,
+        };
         let alias_map_ref: Option<&TsAliasMap> = alias_map.as_ref();
 
         // #10725: persistent per-file fact store. One content-keyed lookup
@@ -1015,12 +1036,11 @@ impl TypeScriptAdapter {
             Some(&options.root),
         );
 
-        // #13592 B3: a class imported through a barrel is rewritten to its
-        // declaring module so the receiver/constructor relations see it.
-        let class_exports = related_tests::class_export_keys(&all_owners);
+        // A named import of a class through a re-export barrel reads as the
+        // direct import of the declaring module (#13592 B3).
         reexport_index.rewrite_class_barrel_imports(
             &mut all_tests,
-            &class_exports,
+            &related_tests::ExportedClasses::from_owners(&all_owners),
             alias_map_ref,
             Some(&options.root),
         );
