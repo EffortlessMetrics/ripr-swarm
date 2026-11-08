@@ -258,6 +258,24 @@ impl<'a> CompactGripContext<'a> {
         memo(&self.shared_grips).release_unheld();
     }
 
+    /// Entry counts of the window-cleared and surviving memo families, for
+    /// the opt-in latency trace. Counts only: no keys, paths, or source text
+    /// leave the context, and nothing is recorded while tracing is off.
+    pub(crate) fn window_memo_lengths(&self) -> String {
+        format!(
+            "memo_cleared[owner_named={} same_module={} parsed_sources={} inherent_helper_reach={}] memo_surviving[source_digest={} evidence_functions_by_line={} owner_lookups={} fixture_names={} unresolved_reach={}]",
+            memo(&self.owner_named_cache).len(),
+            memo(&self.same_module_cache).len(),
+            memo(&self.parsed_sources).len(),
+            memo(&self.inherent_helper_reach).len(),
+            memo(&self.source_digest_cache).len(),
+            memo(&self.evidence_functions_by_line_cache).len(),
+            memo(&self.owner_lookups).len(),
+            memo(&self.fixture_names).len(),
+            memo(&self.unresolved_reach).len(),
+        )
+    }
+
     /// The run's shared copy of `grip`: an equal record already handed out,
     /// or `grip` itself, now shared.
     pub(in crate::analysis::test_grip_evidence) fn share_grip(

@@ -592,6 +592,15 @@ impl<'index> EvidencePass<'index> {
         }
     }
 
+    /// Memo entry counts at a window boundary, for the opt-in latency
+    /// trace; empty when the context could not be built.
+    pub(crate) fn window_memo_lengths(&self) -> String {
+        self.context
+            .as_ref()
+            .map(|context| context.window_memo_lengths())
+            .unwrap_or_default()
+    }
+
     /// Evidence for `seams`, sorted by `seam_id`; empty when the context
     /// could not be built. Carries the same cancellation contract as
     /// [`evidence_for_seams`].

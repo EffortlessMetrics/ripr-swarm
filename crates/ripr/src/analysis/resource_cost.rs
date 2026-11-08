@@ -374,6 +374,9 @@ fn parse_cpu_source_ticks(text: &str) -> Result<(u64, u64), ResourceUnavailableR
 const LINUX_STATUS_PEAK_RSS_FIELD: &str = "VmHWM:";
 
 #[cfg(any(target_os = "linux", test))]
+const LINUX_STATUS_CURRENT_RSS_FIELD: &str = "VmRSS:";
+
+#[cfg(any(target_os = "linux", test))]
 const LINUX_STATUS_VALUE_UNIT: &str = "kB";
 
 #[cfg(any(target_os = "linux", test))]
@@ -386,15 +389,25 @@ const BYTES_PER_KIBIBYTE: u64 = 1024;
 /// Linux parse path is covered by tests on any host.
 #[cfg(any(target_os = "linux", test))]
 fn parse_peak_resident_source_bytes(text: &str) -> Result<u64, ResourceUnavailableReason> {
-    let Some(line) = text
-        .lines()
-        .find(|line| line.starts_with(LINUX_STATUS_PEAK_RSS_FIELD))
-    else {
+    parse_status_rss_bytes(text, LINUX_STATUS_PEAK_RSS_FIELD)
+}
+
+/// Parse current resident set bytes out of a `/proc/self/status` body.
+///
+/// `VmRSS` is the resident set at the moment of the read, not a high-water
+/// mark, so a phase boundary can attribute retained growth instead of only
+/// reporting the run peak.
+#[cfg(any(target_os = "linux", test))]
+fn parse_current_resident_source_bytes(text: &str) -> Result<u64, ResourceUnavailableReason> {
+    parse_status_rss_bytes(text, LINUX_STATUS_CURRENT_RSS_FIELD)
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn parse_status_rss_bytes(text: &str, field: &str) -> Result<u64, ResourceUnavailableReason> {
+    let Some(line) = text.lines().find(|line| line.starts_with(field)) else {
         return Err(ResourceUnavailableReason::SourceFieldMissing);
     };
-    let rest = line
-        .get(LINUX_STATUS_PEAK_RSS_FIELD.len()..)
-        .unwrap_or_default();
+    let rest = line.get(field.len()..).unwrap_or_default();
     let mut parts = rest.split_whitespace();
     let (Some(amount), Some(unit), None) = (parts.next(), parts.next(), parts.next()) else {
         return Err(ResourceUnavailableReason::SourceValueMalformed);
@@ -432,6 +445,14 @@ fn peak_resident_source() -> Result<u64, ResourceUnavailableReason> {
     parse_peak_resident_source_bytes(&text)
 }
 
+/// This host's current resident set at this instant, in bytes.
+#[cfg(target_os = "linux")]
+fn current_resident_source() -> Result<u64, ResourceUnavailableReason> {
+    let text = std::fs::read_to_string("/proc/self/status")
+        .map_err(|_unreadable| ResourceUnavailableReason::SourceUnreadable)?;
+    parse_current_resident_source_bytes(&text)
+}
+
 /// This host's per-process CPU source, from the safe `winsafe` wrappers.
 ///
 /// `GetProcessTimes` returns `(creation, exit, kernel, user)`. Kernel time is
@@ -462,6 +483,15 @@ fn peak_resident_source() -> Result<u64, ResourceUnavailableReason> {
     Ok(counters.PeakWorkingSetSize as u64)
 }
 
+/// This host's current working set at this instant, in bytes.
+#[cfg(target_os = "windows")]
+fn current_resident_source() -> Result<u64, ResourceUnavailableReason> {
+    let counters = winsafe::HPROCESS::GetCurrentProcess()
+        .GetProcessMemoryInfo()
+        .map_err(|_query_failed| ResourceUnavailableReason::SourceQueryFailed)?;
+    Ok(counters.WorkingSetSize as u64)
+}
+
 #[cfg(not(any(target_os = "linux", target_os = "windows")))]
 fn cpu_source() -> Result<(CpuSourceUnit, u64, u64), ResourceUnavailableReason> {
     Err(ResourceUnavailableReason::PlatformNotSupported)
@@ -469,6 +499,11 @@ fn cpu_source() -> Result<(CpuSourceUnit, u64, u64), ResourceUnavailableReason> 
 
 #[cfg(not(any(target_os = "linux", target_os = "windows")))]
 fn peak_resident_source() -> Result<u64, ResourceUnavailableReason> {
+    Err(ResourceUnavailableReason::PlatformNotSupported)
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "windows")))]
+fn current_resident_source() -> Result<u64, ResourceUnavailableReason> {
     Err(ResourceUnavailableReason::PlatformNotSupported)
 }
 
@@ -490,6 +525,25 @@ pub(crate) fn observe_peak_resident_bytes() -> ResourceMeasurement {
     match peak_resident_source() {
         Ok(value) => ResourceMeasurement::Observed { value },
         Err(reason) => ResourceMeasurement::Unavailable { reason },
+    }
+}
+
+/// Current resident set size of this process in bytes, or the named reason
+/// it could not be read. Unlike the peak, this falls when retained state is
+/// released, so phase traces can distinguish growth from retention.
+pub(crate) fn observe_current_resident_bytes() -> ResourceMeasurement {
+    match current_resident_source() {
+        Ok(value) => ResourceMeasurement::Observed { value },
+        Err(reason) => ResourceMeasurement::Unavailable { reason },
+    }
+}
+
+/// Compact `current_rss_bytes=<n|unavailable>` fragment for a trace status
+/// string, so phase lines stay single-line and low-cardinality.
+pub(crate) fn current_rss_trace_fragment() -> String {
+    match observe_current_resident_bytes() {
+        ResourceMeasurement::Observed { value } => format!("current_rss_bytes={value}"),
+        ResourceMeasurement::Unavailable { .. } => "current_rss_bytes=unavailable".to_string(),
     }
 }
 
@@ -608,9 +662,10 @@ mod tests {
         BYTES_PER_KIBIBYTE, CpuCost, CpuSourceUnit, RESOURCE_COST_OBSERVER_SCOPE,
         RESOURCE_COST_SCHEMA_VERSION, ResourceCostObservation, ResourceMeasurement,
         ResourceUnavailableReason, latency_trace_line, observe_cpu_cost,
-        observe_peak_resident_bytes, parse_cpu_source_ticks, parse_peak_resident_source_bytes,
-        parse_resource_cost_receipt, receipt_serialization_failed_body, record_latency_phases,
-        source_to_ms, trace_latency_phase,
+        observe_peak_resident_bytes, parse_cpu_source_ticks, parse_current_resident_source_bytes,
+        parse_peak_resident_source_bytes, parse_resource_cost_receipt,
+        receipt_serialization_failed_body, record_latency_phases, source_to_ms,
+        trace_latency_phase,
     };
     use std::time::{Duration, Instant};
 
@@ -1021,6 +1076,23 @@ mod tests {
         assert_eq!(
             parse_peak_resident_source_bytes(&format!("VmHWM:\t{}\tkB\n", u64::MAX)),
             Err(ResourceUnavailableReason::SourceValueMalformed)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn current_resident_parses_vmrss_not_vmhwm() -> Result<(), String> {
+        let status =
+            "Name:\tripr\nVmPeak:\t  204800 kB\nVmHWM:\t   40960 kB\nVmRSS:\t   10240 kB\n";
+        assert_eq!(
+            parse_current_resident_source_bytes(status),
+            Ok(10240 * BYTES_PER_KIBIBYTE)
+        );
+        // The peak field must not substitute for a missing current value:
+        // retention attribution needs the value that can fall again.
+        assert_eq!(
+            parse_current_resident_source_bytes("Name:\tripr\nVmHWM:\t1 kB\n"),
+            Err(ResourceUnavailableReason::SourceFieldMissing)
         );
         Ok(())
     }
