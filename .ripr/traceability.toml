@@ -11041,6 +11041,8 @@ tests = [
   "crates/ripr/src/output/human/agent_tests.rs::explain_agent_record_cannot_be_forged_and_stays_static",
   "crates/ripr/src/output/human/agent_tests.rs::explain_agent_non_current_findings_fail_closed_with_a_currentness_stop",
   "crates/ripr/src/output/human/agent_tests.rs::explain_agent_suppressed_gap_is_not_open_but_unsuppressed_is",
+  "crates/ripr/src/output/human/agent_tests.rs::check_agent_exposed_preview_finding_reads_done_not_stop",
+  "crates/ripr/tests/cli_progress.rs::explain_agent_format_on_a_pipe_is_silent_by_default",
   "crates/ripr/tests/cli_smoke.rs::explain_format_agent_prints_compact_lines_and_json_is_refused",
   "crates/ripr/tests/cli_smoke.rs::explain_format_agent_from_artifact_replays_the_context_next_command",
   "crates/ripr/tests/check_dead_end_routes.rs::async_gap_with_no_route_says_to_write_the_test_by_hand",
