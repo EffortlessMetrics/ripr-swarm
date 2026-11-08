@@ -4351,32 +4351,22 @@ fn repair_after_trusted_surface_recovery_lines(
 /// outside the allowed test surface (#5262). Names the paths, states the
 /// production-vs-test boundary, and gives the commit-first route the late
 /// receipt refusal cannot offer because the attempt no longer exists. The
-/// caller has written nothing yet, so the tail says so explicitly.
+/// caller has written nothing yet, so the tail says so explicitly. The text
+/// is owned by `app::repair_attempt` (#13636) so `ripr check` and the editor
+/// can name the same blocker.
 fn before_phase_dirty_premise_refusal(
     seam_id: &str,
     root: &Path,
     store: Option<&Path>,
     violations: &[String],
 ) -> String {
-    use crate::agent::loop_commands::{bound_root, shell_arg};
-
-    let root_arg = shell_arg(&bound_root(&root.to_string_lossy()));
-    let seam_arg = shell_arg(seam_id);
-    let store_flag = crate::app::repair_attempt::quoted_store_flag(store);
-    let restart = format!(
-        "ripr agent repair --root {root_arg}{store_flag} --seam-id {seam_arg} --phase before"
-    );
-    before_phase_dirty_premise_refusal_with_restart(&restart, violations)
+    crate::app::repair_attempt::seam_dirty_premise_refusal(seam_id, root, store, violations)
 }
 
 /// [`before_phase_dirty_premise_refusal`] for any start spelling: the seam
 /// and gap-bound (#9103) starts differ only in the command they name.
 fn before_phase_dirty_premise_refusal_with_restart(restart: &str, violations: &[String]) -> String {
-    let first = violations.first().map(String::as_str).unwrap_or_default();
-    format!(
-        "ripr repair needs your source changes committed first, so it can tell your new test apart from them. Uncommitted: {}. Commit them (for example `git commit -- {first}`) or restore them, then rerun `{restart}`. A test file you are still editing is fine. Nothing was started.",
-        violations.join(", "),
-    )
+    crate::app::repair_attempt::dirty_premise_refusal(restart, violations)
 }
 
 /// Why a gap-bound attempt gets no receipt when ripr did not accept its

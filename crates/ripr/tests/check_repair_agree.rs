@@ -1017,3 +1017,48 @@ fn async_route_refusal_does_not_offer_a_stub_that_refuses() -> Result<(), String
     );
     Ok(())
 }
+
+/// #13636 (A): with the production change still uncommitted, `ripr repair`
+/// refuses to start, so `ripr check` names the commit step before the repair
+/// start it prints. Once the change is committed, the commit step disappears.
+#[test]
+fn uncommitted_change_check_names_the_commit_step_before_the_repair_start() -> Result<(), String> {
+    let dirty = Repo::create_uncommitted(CONST_OLD, CONST_NEW, CONST_TEST)?;
+    let check = dirty.ripr(&["check", "--base", "HEAD"])?;
+    let commit_at = check
+        .find("Commit your production change first")
+        .ok_or_else(|| format!("check must name the commit step:\n{check}"))?;
+    let start_at = check
+        .find("\n  ripr repair ")
+        .ok_or_else(|| format!("check must still name the repair start:\n{check}"))?;
+    assert!(
+        commit_at < start_at,
+        "the commit step must come before the repair start:\n{check}"
+    );
+    assert!(
+        check.contains("--literal-pathspecs commit -m \"<message>\" -- src/lib.rs"),
+        "the commit step must name the uncommitted production file:\n{check}"
+    );
+    // The commit step is the reason the start would refuse today.
+    let (code, repair) = dirty.ripr_status(&["repair", "--root", "."])?;
+    assert_ne!(code, Some(0), "repair must refuse while dirty:\n{repair}");
+    assert!(
+        repair.contains("ripr repair needs your source changes committed first")
+            && repair.contains("Uncommitted: src/lib.rs"),
+        "repair must refuse for the same file check names:\n{repair}"
+    );
+
+    let json = dirty.ripr(&["check", "--base", "HEAD", "--format", "json"])?;
+    assert!(
+        json.contains("\"blocked_uncommitted\"") && json.contains("\"uncommitted_files\""),
+        "the JSON repair route must say the start is blocked:\n{json}"
+    );
+
+    let committed = Repo::create(CONST_OLD, CONST_NEW, CONST_TEST)?;
+    let check = committed.ripr(&["check", "--base", "HEAD~1"])?;
+    assert!(
+        check.contains("\n  ripr repair ") && !check.contains("Commit your production change"),
+        "a committed change needs no commit step:\n{check}"
+    );
+    Ok(())
+}

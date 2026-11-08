@@ -54,6 +54,52 @@ pub(crate) struct RepairRoute {
     /// screen states the commit-or-stash requirement instead of offering the
     /// repair start as a runnable next action.
     pub(crate) uncommitted_target: Option<String>,
+    /// Tracked production files that differ from HEAD and make the start
+    /// refuse with "commit first" today (#13636), from the before phase's own
+    /// dirty-premise preflight (`app::repair_attempt::seam_start_dirty_premise`),
+    /// spelled relative to the analyzed root. Empty on a clean tree; when
+    /// set, the check screen prints their commit before the repair start.
+    pub(crate) uncommitted_files: Vec<String>,
+}
+
+impl RepairRoute {
+    /// The commit step that must precede `ripr repair` (#13636): the dirty
+    /// production premise plus a held inline target, so committing the named
+    /// files is enough for the start. `None` when no dirty premise holds.
+    pub(crate) fn commit_prerequisite(&self, root_display: &str) -> Option<String> {
+        if self.uncommitted_files.is_empty() {
+            return None;
+        }
+        let mut files = self.uncommitted_files.clone();
+        if let Some(target) = &self.uncommitted_target
+            && !files.contains(target)
+        {
+            files.push(target.clone());
+        }
+        commit_prerequisite_command(root_display, &files)
+    }
+}
+
+/// `git -C <root> --literal-pathspecs commit -m "<message>" -- <files>`: the
+/// one commit spelling every repair route prints before its start (#10698,
+/// #13636). `None` for an empty file list.
+///
+/// The command runs from any directory: `git -C <root>` anchors it at the
+/// analyzed root, `--literal-pathspecs` keeps names like `src/[ab].py`
+/// literal, and the files are shell-quoted and spelled relative to that root.
+fn commit_prerequisite_command(root_display: &str, files: &[String]) -> Option<String> {
+    if files.is_empty() {
+        return None;
+    }
+    let files = files
+        .iter()
+        .map(|file| shell_arg(file))
+        .collect::<Vec<_>>()
+        .join(" ");
+    Some(format!(
+        "git -C {} --literal-pathspecs commit -m \"<message>\" -- {files}",
+        shell_arg(root_display)
+    ))
 }
 
 /// The gap-bound repair start the check pipeline computed for a TypeScript
@@ -74,24 +120,8 @@ pub(crate) struct GapRepairRoute {
 impl GapRepairRoute {
     /// The commit step that must precede the gap-bound start when the analyzed
     /// tree has uncommitted production edits (#10698). `None` on a clean tree.
-    ///
-    /// The command runs from any directory: `git -C <root>` anchors it at the
-    /// analyzed root, `--literal-pathspecs` keeps names like `src/[ab].py`
-    /// literal, and the files are shell-quoted and spelled relative to that root.
     pub(crate) fn commit_prerequisite(&self, root_display: &str) -> Option<String> {
-        if self.uncommitted_files.is_empty() {
-            return None;
-        }
-        let files = self
-            .uncommitted_files
-            .iter()
-            .map(|file| shell_arg(file))
-            .collect::<Vec<_>>()
-            .join(" ");
-        Some(format!(
-            "git -C {} --literal-pathspecs commit -m \"<message>\" -- {files}",
-            shell_arg(root_display)
-        ))
+        commit_prerequisite_command(root_display, &self.uncommitted_files)
     }
 }
 
@@ -425,6 +455,12 @@ impl FindingNavigation {
     /// analyzed uncommitted production edits (#10698): the start refuses
     /// while tracked production files differ from HEAD.
     pub(crate) fn gap_repair_prerequisite(&self, route: &GapRepairRoute) -> Option<String> {
+        route.commit_prerequisite(&self.root_display)
+    }
+
+    /// The commit step that must precede the seam start when the tree holds
+    /// an uncommitted production change the start refuses (#13636).
+    pub(crate) fn repair_prerequisite(&self, route: &RepairRoute) -> Option<String> {
         route.commit_prerequisite(&self.root_display)
     }
 
@@ -937,6 +973,7 @@ mod tests {
         // The route only answers for its own finding.
         let routed = navigation.with_repair_route_outcome(CheckRepairRoute::Route(RepairRoute {
             uncommitted_target: None,
+            uncommitted_files: Vec::new(),
             finding_id: "probe:one".to_string(),
             seam_id: "67fc764ba37d77bd".to_string(),
         }));
@@ -947,6 +984,36 @@ mod tests {
             Some("67fc764ba37d77bd")
         );
         assert!(routed.repair_route_for("probe:two").is_none());
+    }
+
+    /// #13636: the seam start's commit step names the dirty production
+    /// premise plus any held inline target, and is absent on a clean tree.
+    #[test]
+    fn seam_route_commit_prerequisite_covers_premise_and_held_target() {
+        let route = |files: &[&str], target: Option<&str>| RepairRoute {
+            finding_id: "probe:one".to_string(),
+            seam_id: "67fc764ba37d77bd".to_string(),
+            uncommitted_target: target.map(str::to_string),
+            uncommitted_files: files.iter().map(|file| file.to_string()).collect(),
+        };
+        assert_eq!(route(&[], None).commit_prerequisite("."), None);
+        // A held target alone keeps its own wording, not this step.
+        assert_eq!(
+            route(&[], Some("src/lib.rs")).commit_prerequisite("."),
+            None
+        );
+        assert_eq!(
+            route(&["src/a.rs"], Some("src/b.rs"))
+                .commit_prerequisite(".")
+                .as_deref(),
+            Some("git -C . --literal-pathspecs commit -m \"<message>\" -- src/a.rs src/b.rs")
+        );
+        assert_eq!(
+            route(&["src/a.rs"], Some("src/a.rs"))
+                .commit_prerequisite(".")
+                .as_deref(),
+            Some("git -C . --literal-pathspecs commit -m \"<message>\" -- src/a.rs")
+        );
     }
 
     /// #8729: a named refusal renders a one-line advisory naming the state

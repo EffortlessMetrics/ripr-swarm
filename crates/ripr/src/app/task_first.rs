@@ -2960,11 +2960,36 @@ pub(crate) fn check_repair_route(
     // module and starts only from the committed file. Ask the edit cage's own
     // predicate so the check screen never offers a start the attempt refuses.
     let uncommitted_target = held_inline_target(root, &repair_packet_eligibility(entry).readiness);
+    // #13636: the before phase refuses a dirty production premise ("commit
+    // first ... Nothing was started"). Ask its own preflight so the screen
+    // names that commit before the start; an unreadable premise offers no
+    // start rather than one that may refuse.
+    let Ok(uncommitted_files) = seam_start_uncommitted_files(root) else {
+        return CheckRepairRoute::Refused(RepairRouteRefusal::GapRouteUnavailable {
+            reason: "could not validate the prerequisites for the repair start",
+        });
+    };
     CheckRepairRoute::Route(crate::app::RepairRoute {
         finding_id: finding.id.clone(),
         seam_id: entry.seam.id().as_str().to_string(),
         uncommitted_target,
+        uncommitted_files,
     })
+}
+
+/// The dirty production files the seam start refuses today (#13636), from the
+/// shared before-phase preflight, respelled relative to `root` for the printed
+/// `git -C <root> commit`.
+fn seam_start_uncommitted_files(root: &Path) -> Result<Vec<String>, String> {
+    let violations = crate::app::repair_attempt::seam_start_dirty_premise(root)?;
+    if violations.is_empty() {
+        return Ok(violations);
+    }
+    let prefix = repo_prefix(root)?;
+    Ok(violations
+        .iter()
+        .map(|path| relative_to_cwd_root(path, &prefix))
+        .collect())
 }
 
 fn ineligible_repair_item(root: &Path, item: &str, seam_id: &str, reason: &str) -> String {
@@ -4908,6 +4933,7 @@ pub(crate) mod tests {
                 finding_id: "f".to_string(),
                 seam_id: seam.to_string(),
                 uncommitted_target: uncommitted.map(str::to_string),
+                uncommitted_files: Vec::new(),
             })
         };
         assert_eq!(

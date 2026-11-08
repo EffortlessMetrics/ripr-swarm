@@ -1166,6 +1166,7 @@ mod tests {
             finding_id: finding.id.clone(),
             seam_id: "seam-abc".to_string(),
             uncommitted_target: uncommitted.map(str::to_string),
+            uncommitted_files: Vec::new(),
         })
     }
 
