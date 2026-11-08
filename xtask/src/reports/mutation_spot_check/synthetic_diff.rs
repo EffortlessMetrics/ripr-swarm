@@ -76,16 +76,29 @@ pub(crate) struct LanguageProfile {
     pub(crate) language: &'static str,
     /// Lowercase file extensions (no dot) the language's adapter analyzes.
     pub(crate) extensions: &'static [&'static str],
+    /// Build-output directories skipped when copying the scratch tree, on top
+    /// of the shared skip list.
+    pub(crate) skip_dirs: &'static [&'static str],
 }
 
 pub(crate) const TYPESCRIPT: LanguageProfile = LanguageProfile {
     language: "typescript",
     extensions: &["ts", "tsx", "mts", "cts"],
+    skip_dirs: &[],
 };
 
 pub(crate) const PYTHON: LanguageProfile = LanguageProfile {
     language: "python",
     extensions: &["py"],
+    skip_dirs: &[],
+};
+
+/// Rust scored through the diff path with each cargo-mutants mutant's own
+/// recorded diff (see [`super::cargo_mutants_diff`]).
+pub(crate) const RUST: LanguageProfile = LanguageProfile {
+    language: "rust",
+    extensions: &["rs"],
+    skip_dirs: &["target", "mutants.out", "mutants.out.old"],
 };
 
 /// One mutant in the join's language-neutral form.
@@ -106,6 +119,9 @@ pub(crate) struct SyntheticMutant {
     pub(crate) status: String,
     /// `caught`, `missed`, or another token that is never scored.
     pub(crate) outcome: String,
+    /// The tool's own unified diff for this mutant (cargo-mutants records
+    /// one); when present it is applied instead of synthesizing an edit.
+    pub(crate) recorded_diff: Option<String>,
 }
 
 /// A source file the report mutated, with the text the tool mutated.
@@ -215,6 +231,19 @@ pub(crate) fn synthesize_edit(
         first_line: first as u64 + 1,
         last_line: (first + new_lines.len()) as u64,
     })
+}
+
+/// The edit a mutant makes: the tool's recorded diff when it has one,
+/// otherwise a synthesized one-hunk diff.
+fn edit_for(
+    path: &str,
+    source: &str,
+    mutant: &SyntheticMutant,
+) -> Result<SyntheticEdit, &'static str> {
+    match &mutant.recorded_diff {
+        Some(diff) => super::cargo_mutants_diff::apply_recorded_diff(path, source, diff),
+        None => synthesize_edit(path, source, mutant),
+    }
 }
 
 /// What `ripr check` said about the mutated lines.
@@ -475,7 +504,7 @@ pub(crate) fn score_mutants(
                     } else if !SCOREABLE_OUTCOMES.contains(&mutant.outcome.as_str()) {
                         Some(UNSCOREABLE_OUTCOME)
                     } else {
-                        synthesize_edit(file, &source.source, mutant).err()
+                        edit_for(file, &source.source, mutant).err()
                     }
                 })
                 .collect(),
@@ -504,7 +533,7 @@ pub(crate) fn score_mutants(
                 records.push(excluded(OVER_CAP));
                 continue;
             }
-            let edit = match synthesize_edit(file, &source.source, mutant) {
+            let edit = match edit_for(file, &source.source, mutant) {
                 Ok(edit) => edit,
                 Err(reason) => {
                     records.push(excluded(reason));
@@ -588,7 +617,7 @@ pub(crate) fn checkout_relative(path: &str) -> Option<PathBuf> {
         .then(|| candidate.to_path_buf())
 }
 
-fn copy_tree(from: &Path, to: &Path) -> Result<(), String> {
+fn copy_tree(from: &Path, to: &Path, skip_dirs: &[&str]) -> Result<(), String> {
     fs::create_dir_all(to).map_err(|err| format!("create {}: {err}", to.display()))?;
     let entries = fs::read_dir(from).map_err(|err| format!("read {}: {err}", from.display()))?;
     for entry in entries {
@@ -602,10 +631,11 @@ fn copy_tree(from: &Path, to: &Path) -> Result<(), String> {
             continue;
         }
         if file_type.is_dir() {
-            if COPY_SKIP_DIRS.contains(&name.to_string_lossy().as_ref()) {
+            let name = name.to_string_lossy();
+            if COPY_SKIP_DIRS.contains(&name.as_ref()) || skip_dirs.contains(&name.as_ref()) {
                 continue;
             }
-            copy_tree(&entry.path(), &target)?;
+            copy_tree(&entry.path(), &target, skip_dirs)?;
         } else {
             fs::copy(entry.path(), &target)
                 .map_err(|err| format!("copy {}: {err}", entry.path().display()))?;
@@ -618,6 +648,9 @@ fn copy_tree(from: &Path, to: &Path) -> Result<(), String> {
 /// told otherwise (or a marker file is found), so the language under test is
 /// enabled explicitly. It replaces any `ripr.toml` the checkout carries.
 pub(crate) fn scratch_ripr_toml(profile: &LanguageProfile) -> String {
+    if profile.language == RUST.language {
+        return "[languages]\nenabled = [\"rust\"]\n".to_string();
+    }
     format!(
         "[languages]\nenabled = [\"rust\", \"{}\"]\n",
         profile.language
@@ -665,7 +698,7 @@ pub(crate) fn spot_check_synthetic_repo(repo: &SyntheticRepo<'_>) -> Result<Repo
     if tree.exists() {
         fs::remove_dir_all(&tree).map_err(|err| format!("clear {}: {err}", tree.display()))?;
     }
-    copy_tree(checkout, &tree)?;
+    copy_tree(checkout, &tree, profile.skip_dirs)?;
     fs::write(tree.join("ripr.toml"), scratch_ripr_toml(profile))
         .map_err(|err| format!("write scratch ripr.toml: {err}"))?;
     let diff_path = scratch.join(format!("{name}.synthetic.diff"));
@@ -779,6 +812,7 @@ mod tests {
             end_col: end.1,
             status: outcome.to_string(),
             outcome: outcome.to_string(),
+            recorded_diff: None,
         }
     }
 
@@ -1349,8 +1383,13 @@ mod tests {
         let python = LanguageProfile {
             language: "python",
             extensions: &["py"],
+            skip_dirs: &[],
         };
         assert!(scratch_ripr_toml(&python).contains("\"python\""));
+        assert_eq!(
+            scratch_ripr_toml(&RUST),
+            "[languages]\nenabled = [\"rust\"]\n"
+        );
         assert!(checkout_relative("src/a.ts").is_some());
         assert!(checkout_relative("../a.ts").is_none());
         assert!(checkout_relative("/etc/passwd").is_none());
