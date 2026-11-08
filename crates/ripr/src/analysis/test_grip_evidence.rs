@@ -639,9 +639,13 @@ impl<'index> EvidencePass<'index> {
             return self.incomplete_evidence(seams);
         }
         let processed = AtomicUsize::new(0);
+        // Each worker holds a run memo scope for its share of the seams, so a
+        // pure per-source product (the shadow check's item-syntax scan of a
+        // test body) is computed once per distinct source on that worker, not
+        // once per (seam, test, oracle) ask (#13577).
         let mut out: Vec<TestGripEvidence> = seams
             .par_iter()
-            .filter_map(|seam| {
+            .map_init(crate::analysis::syntax::run_memo::enter, |_scope, seam| {
                 cancellation::with_optional_token(token.as_ref(), || {
                     crate::analysis::committed_source::with_overlay(overlay.clone(), || {
                         cancellation::checkpoint().ok()?;
@@ -664,6 +668,7 @@ impl<'index> EvidencePass<'index> {
                     })
                 })
             })
+            .flatten()
             .collect();
         out.sort_by(|a, b| a.seam_id.as_str().cmp(b.seam_id.as_str()));
         if out.is_empty()
