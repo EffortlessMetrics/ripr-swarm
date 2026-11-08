@@ -54,7 +54,7 @@ fn assert_cross_module_unknown(finding: &Finding, caller: &str) {
         format!("cross_module_caller_call: {caller} calls discount (test_checkout_at_boundary)"),
     ] {
         assert!(
-            finding.evidence.iter().any(|line| *line == expected),
+            finding.evidence.contains(&expected),
             "missing `{expected}` in {:?}",
             finding.evidence
         );

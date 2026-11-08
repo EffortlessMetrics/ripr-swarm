@@ -10,9 +10,8 @@ use super::forwarding_decorator::is_forwarding_decorator;
 use super::literal_patch::{literal_patch_calls, without_calls};
 use super::related_tests::{
     HelperOwnerCallCandidate, MAX_CROSS_MODULE_CALLERS, PythonRelatedCandidate, PythonRelationKind,
-    body_calls_owner, cross_module_callers_exceed_cap, dunder_method_class,
-    import_source_module_matches_owner, is_python_identifier_char,
-    line_prefix_looks_like_comment_or_string, test_imports_owner_module,
+    body_calls_owner, dunder_method_class, import_source_module_matches_owner,
+    is_python_identifier_char, line_prefix_looks_like_comment_or_string, test_imports_owner_module,
     test_may_reach_owner_class,
 };
 use super::sink_alignment::CreditedAssertion;

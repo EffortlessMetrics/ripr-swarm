@@ -196,7 +196,7 @@ impl<'a> RelatedCandidateMemo<'a> {
 
     /// [`cross_module_callers_exceed_cap`] for the owner, once per run
     /// (#12955): it scans every owner's imports, which repeated per changed
-    /// line of an untested owner would cost a workspace scan per line.
+    /// line of an owner no test relates to would cost a workspace scan per line.
     pub(super) fn cross_module_over_cap(
         &mut self,
         owner: &PythonOwner,
