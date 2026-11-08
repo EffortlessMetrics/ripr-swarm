@@ -255,7 +255,13 @@ pub(crate) fn render_with_config(output: &CheckOutput, config: &RiprConfig) -> S
             out.push_str(&complete_outcome_limitation_notice(outcome));
         }
         if output.findings.is_empty() && state_warnings.is_empty() {
-            out.push_str("::notice title=ripr::No static exposure findings found\n");
+            if crate::output::human::no_source_examined(output) {
+                // #13658: nothing was parsed or analyzable; not a clean result.
+                *per_level.entry("warning").or_default() += 1;
+                out.push_str("::warning title=ripr nothing analyzed::No changed source was analyzed (empty or unparseable diff, or no analyzable source in scope). This is NOT a clean result; no behavior was examined.\n");
+            } else {
+                out.push_str("::notice title=ripr::No static exposure findings found\n");
+            }
         }
     }
     for warning in &state_warnings {
@@ -712,6 +718,50 @@ mod tests {
             rendered,
             "::notice title=ripr::No static exposure findings found\n"
         );
+    }
+
+    /// #13658: an empty or unparseable diff examined nothing, so the stream
+    /// must warn instead of printing the clean notice. The negative control is
+    /// a diff that did change an analyzable Rust file and found nothing.
+    #[test]
+    fn render_never_calls_a_nothing_analyzed_run_clean() -> Result<(), String> {
+        use crate::analysis_outcome::{
+            AnalysisIdentity, AnalysisOutcome, AnalysisOutcomeCounts, AnalysisOutcomeKind,
+        };
+        let outcome = |kind, changed_file_count| {
+            AnalysisOutcome::new(
+                kind,
+                AnalysisIdentity::default(),
+                AnalysisOutcomeCounts {
+                    changed_file_count,
+                    changed_line_count: changed_file_count,
+                    ..AnalysisOutcomeCounts::default()
+                },
+                Vec::new(),
+            )
+        };
+        let mut empty = output_with_unknown_finding();
+        empty.findings.clear();
+        empty.analysis_outcome = Some(outcome(AnalysisOutcomeKind::NoScope, 0)?);
+        let rendered = render(&empty);
+        assert!(
+            rendered.starts_with("::warning title=ripr nothing analyzed::"),
+            "{rendered}"
+        );
+        assert!(
+            !rendered.contains("No static exposure findings found"),
+            "{rendered}"
+        );
+
+        let mut healthy = output_with_unknown_finding();
+        healthy.findings.clear();
+        healthy.summary.changed_rust_files = 1;
+        healthy.analysis_outcome = Some(outcome(AnalysisOutcomeKind::NoBehavioralCandidates, 1)?);
+        assert_eq!(
+            render(&healthy),
+            "::notice title=ripr::No static exposure findings found\n"
+        );
+        Ok(())
     }
 
     fn revisions(working_tree: bool) -> crate::analysis::AnalyzedRevisions {

@@ -787,6 +787,47 @@ fn empty_scope_and_no_scope_are_distinct_terminal_states() {
     assert!(!stopped.contains("done="), "{stopped}");
 }
 
+/// #13658: an empty or unparseable `--diff` examined nothing, so the agent
+/// format stops (not established) instead of reporting `done=`. A diff that
+/// changed analyzable Rust source and found nothing keeps `done=`.
+#[test]
+fn empty_diff_stops_while_a_valid_diff_without_findings_stays_done() -> Result<(), String> {
+    use crate::analysis_outcome::{
+        AnalysisIdentity, AnalysisOutcome, AnalysisOutcomeCounts, AnalysisOutcomeKind,
+    };
+    let outcome = |kind, changed_file_count| {
+        AnalysisOutcome::new(
+            kind,
+            AnalysisIdentity::default(),
+            AnalysisOutcomeCounts {
+                changed_file_count,
+                changed_line_count: changed_file_count,
+                ..AnalysisOutcomeCounts::default()
+            },
+            Vec::new(),
+        )
+    };
+    let mut empty = output(Vec::new());
+    empty.analysis_outcome = Some(outcome(AnalysisOutcomeKind::NoScope, 0)?);
+    let stopped = rendered(&empty);
+    assert!(
+        stopped.contains("\nstop=nothing was analyzed (no changed source in scope)"),
+        "{stopped}"
+    );
+    assert!(!stopped.contains("done="), "{stopped}");
+
+    let mut healthy = output(Vec::new());
+    healthy.summary.changed_rust_files = 1;
+    healthy.analysis_outcome = Some(outcome(AnalysisOutcomeKind::NoBehavioralCandidates, 1)?);
+    let done = rendered(&healthy);
+    assert!(
+        done.contains("\ndone=no changed behavior found in scope"),
+        "{done}"
+    );
+    assert!(!done.contains("stop="), "{done}");
+    Ok(())
+}
+
 #[test]
 fn non_current_findings_are_never_listed_as_gaps() {
     let mut base_side = weak_gap("probe:old", 3);

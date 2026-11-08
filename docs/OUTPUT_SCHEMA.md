@@ -972,6 +972,14 @@ incomplete warning does not fire, on both the with-findings and the empty
 complete branches, and an empty complete stream still prints its
 `No static exposure findings found` notice (#10520).
 
+When nothing was analyzed (an empty or unparseable `--diff`, or no changed
+source in a language ripr analyzes; the same `nothing to check` state the human
+format names), the stream carries a `ripr nothing analyzed` warning instead of
+the clean notice (#13658). `--format agent` likewise prints
+`stop=nothing was analyzed (no changed source in scope); not a clean result`
+instead of `done=`. A diff that changed analyzable source and found nothing
+keeps the clean notice and `done=`.
+
 `ripr check --format agent` (#11580) is a compact, deterministic, line-oriented
 text report for coding agents. It is not JSON and carries no `schema_version`;
 its stability contract is the line grammar below. It is a pure projection of
