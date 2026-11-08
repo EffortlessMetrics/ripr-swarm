@@ -1864,6 +1864,9 @@ fn review_card_repair_start(
         .filter_map(|bucket| report.get(bucket).and_then(Value::as_array))
         .flatten();
     let mut outside_diff_starts = 0usize;
+    let mut changed_line_gaps_without_start: Vec<String> = Vec::new();
+    let cards_from_gap_ledger = string_path(&report, &["analysis_scope", "scope"]).as_deref()
+        == Some("gap_ledger_artifact");
     for card in cards {
         // A card with no safe changed-line placement is a seam whose line and
         // owner sit outside every hunk. It is a repository repair, not this
@@ -1879,6 +1882,45 @@ fn review_card_repair_start(
         if let Some(top_gap) = top_gap_from_review_card(card, options) {
             return Ok(top_gap);
         }
+        if !cards_from_gap_ledger && card_is_unrepaired_changed_line_gap(card) {
+            let place = match (
+                string_path(card, &["placement", "path"]),
+                card.get("placement")
+                    .and_then(|placement| placement.get("line"))
+                    .and_then(Value::as_u64),
+            ) {
+                (Some(file), Some(line)) => format!("{file}:{line}"),
+                (Some(file), None) => file,
+                _ => "a changed line".to_string(),
+            };
+            if !changed_line_gaps_without_start.contains(&place) {
+                changed_line_gaps_without_start.push(place);
+            }
+        }
+    }
+    if !changed_line_gaps_without_start.is_empty() && selected_head_is_live(root, options) {
+        // A weak or unrevealed changed-line finding with no machine repair
+        // start is not "no actionable gap": the diff-aware `check` names the
+        // missing check and its by-hand route, so stopping here would be a
+        // false all-clear. Hand over that one command instead.
+        let places = changed_line_gaps_without_start
+            .iter()
+            .map(|place| format!("`{place}`"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        return Err(CardFallback::Recover(Selection::blocked_with_reason(
+            "blocked_artifact",
+            "changed_gaps_without_repair_start",
+            format!(
+                "The review cards in `{path}` report {} weak or unrevealed changed-line finding(s) at {places}, but none carries a machine repair start, so first-pr cannot say `no actionable gap`. Read them with the one command below: it names the missing check and the by-hand route for each.",
+                changed_line_gaps_without_start.len()
+            ),
+            Some(format!(
+                "ripr check --root {} --base {}",
+                shell_arg(&options.command_root()),
+                shell_arg(&options.base)
+            )),
+        )));
     }
     if outside_diff_starts > 0 {
         return Err(CardFallback::NoCard(Some(format!(
@@ -2065,6 +2107,43 @@ fn top_gap_from_review_card(card: &Value, options: &FirstPrOptions) -> Option<To
         static_recheck_command: None,
         recommended_repair_command: None,
     })
+}
+
+/// A card placed on a changed line whose grip class says a test would not
+/// notice the change (weak, ungripped or reached-but-unrevealed). Static
+/// limitations and unknown states still carry these grip classes; only the
+/// repair start is missing.
+fn card_is_unrepaired_changed_line_gap(card: &Value) -> bool {
+    matches!(
+        string_path(card, &["grip_class"]).as_deref(),
+        Some("weakly_gripped" | "ungripped" | "reachable_unrevealed")
+    ) && matches!(
+        string_path(card, &["gap_state"]).as_deref(),
+        Some("static_limitation" | "unknown")
+    )
+}
+
+/// Whether the selected head is the live `HEAD`, the only case where a bare
+/// `ripr check --base <base>` (which analyzes the worktree) reads the same
+/// change first-pr was asked about.
+fn selected_head_is_live(root: &Path, options: &FirstPrOptions) -> bool {
+    let resolve = |revision: &str| {
+        let commit = format!("{revision}^{{commit}}");
+        run_git(
+            root,
+            &git_args(&[
+                "rev-parse",
+                "--verify",
+                "--quiet",
+                "--end-of-options",
+                &commit,
+            ]),
+        )
+        .ok()
+        .filter(CommandOutput::success)
+        .map(|output| output.stdout)
+    };
+    matches!((resolve(&options.head), resolve("HEAD")), (Some(a), Some(b)) if a == b)
 }
 
 fn current_evidence_strength_for_card(card: &Value) -> String {
@@ -6630,6 +6709,51 @@ mod tests {
         let text = packet.to_string();
         assert!(!text.contains("agent repair"), "{text}");
         assert!(!markdown.contains("Start repair"), "{markdown}");
+        Ok(())
+    }
+
+    /// A weak changed-line finding that is a static limitation (no machine
+    /// repair start) must not read as an all-clear: first-pr hands over the
+    /// one diff-aware `ripr check` command that names the by-hand route. The
+    /// same card in gap-ledger-scoped cards, or an ordinary actionable card
+    /// with no start, keeps the established no-action behavior.
+    #[test]
+    fn limited_changed_line_card_hands_over_the_check_command() -> Result<(), String> {
+        let limited_card = || {
+            let mut card = review_card("seam-a", None);
+            card["gap_state"] = json!("static_limitation");
+            card["placement"] =
+                json!({"path": "src/pricing.rs", "line": 88, "mode": "exact_seam_line"});
+            card
+        };
+        let repo = temp_repo("first-pr-limited-card")?;
+        write_no_top_gap_ledger(&repo)?;
+        write_json(
+            &repo.join(DEFAULT_REVIEW_COMMENTS),
+            review_comments_report(vec![limited_card()]),
+        )?;
+        let packet = render_start_here_packet(&repo, &FirstPrOptions::default());
+        let mut ledger_scoped = review_comments_report(vec![limited_card()]);
+        ledger_scoped["analysis_scope"] = json!({"scope": "gap_ledger_artifact"});
+        write_json(&repo.join(DEFAULT_REVIEW_COMMENTS), ledger_scoped)?;
+        let scoped_packet = render_start_here_packet(&repo, &FirstPrOptions::default());
+        cleanup(&repo)?;
+
+        assert_eq!(packet["status"], "blocked", "{packet}");
+        assert_eq!(
+            packet["selected"]["reason_code"], "changed_gaps_without_repair_start",
+            "{packet}"
+        );
+        let message = packet["selected"]["message"].as_str().unwrap_or_default();
+        assert!(message.contains("`src/pricing.rs:88`"), "{message}");
+        let next = packet["selected"]["next_command"]
+            .as_str()
+            .unwrap_or_default();
+        assert!(
+            next.starts_with("ripr check --root ") && next.ends_with("--base origin/main"),
+            "{next}"
+        );
+        assert_eq!(scoped_packet["status"], "no_action", "{scoped_packet}");
         Ok(())
     }
 
