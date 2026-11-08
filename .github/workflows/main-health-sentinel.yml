@@ -76,8 +76,11 @@ jobs:
 
       # Record native exit statuses next to the logs; the judge step decides.
       # A probe failure must reach the judge as evidence, not vanish in a pipe.
+      # A probe killed at its timeout must still reach the judge, which reads
+      # the missing status files as 124.
       - name: Probe main build and one focused binary smoke test
         timeout-minutes: 20
+        continue-on-error: true
         run: |
           set -euo pipefail
           d="$RUNNER_TEMP/main-health-sentinel"
@@ -113,14 +116,16 @@ jobs:
           : > "$d/gates.tsv"
           for wf in routed-rust.yml ci.yml; do
             run="$(timeout 60 gh api -X GET "repos/$REPOSITORY/actions/workflows/$wf/runs" -f branch=main -f event=push -f status=completed -f per_page=100 --jq '[.workflow_runs[] | select(.conclusion != "cancelled" and .conclusion != "skipped")][0] // empty | [.id, .conclusion, .head_sha, .html_url] | @tsv' 2>/dev/null)"
-            if [ -z "$run" ]; then
-              printf '%s\tunknown\t-\t-\t-\t-\n' "$wf" >> "$d/gates.tsv"
-              continue
-            fi
+            rc=$?
+            # A failed call prints its error body to stdout: read it as unknown.
             IFS=$'\t' read -r id conclusion sha url <<<"$run"
+            case "$rc:$conclusion" in
+              0:success|0:failure|0:timed_out|0:action_required|0:startup_failure) ;;
+              *) printf '%s\tunknown\t-\t-\t-\t-\n' "$wf" >> "$d/gates.tsv"; continue ;;
+            esac
             failed="-"
             if [ "$conclusion" != success ]; then
-              failed="$(timeout 60 gh api "repos/$REPOSITORY/actions/runs/$id/jobs?per_page=100" --jq '[.jobs[] | select(.conclusion == "failure" or .conclusion == "timed_out") | .name] | join(", ")' 2>/dev/null)"
+              failed="$(timeout 60 gh api "repos/$REPOSITORY/actions/runs/$id/jobs?per_page=100" --jq '[.jobs[] | select(.conclusion == "failure" or .conclusion == "timed_out") | .name] | join(", ")' 2>/dev/null)" || failed=unreadable
             fi
             printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$wf" "$conclusion" "${sha::7}" "$id" "$url" "${failed:-unreadable}" >> "$d/gates.tsv"
           done
@@ -202,8 +207,9 @@ jobs:
       # The durable record. Red: open the tracker once, then append one
       # comment per confirming probe. Green: comment the recovering run and
       # close, but only when both gate reads succeeded: an unknown gate is not
-      # recovery, so it keeps an open tracker open. Status files are read with the same 124 fallback as the judge,
-      # so a timed-out probe still lands its tracker record. Skipped only
+      # recovery, so it keeps an open tracker open. Status files are read with
+      # the same 124 fallback as the judge, so a timed-out probe still lands
+      # its tracker record. Skipped only
       # when the judge never ran (checkout, toolchain, cache): that failure
       # is visible as a red run and claims no main verdict.
       - name: Reconcile the main-red tracker

@@ -285,10 +285,36 @@ fn sentinel_judges_the_latest_completed_main_push_gates() -> Result<(), String> 
         "grep -qxF \"$fingerprint\"",
         "a red tracker gets one comment per new piece of evidence, not one per fire",
     )?;
+    let read_step = source
+        .split("- name: Read the latest completed main push gates")
+        .nth(1)
+        .and_then(|rest| rest.split("- name:").next())
+        .ok_or("the gate read step must exist")?;
+    if !read_step.contains("continue-on-error: true") {
+        return Err("a hung or failed gate read must not skip the probe judge and tracker".into());
+    }
+    let probe_step = source
+        .split("- name: Probe main build and one focused binary smoke test")
+        .nth(1)
+        .and_then(|rest| rest.split("- name:").next())
+        .ok_or("the probe step must exist")?;
+    if !probe_step.contains("continue-on-error: true") {
+        return Err("a probe killed at its timeout must still reach the judge".into());
+    }
     require(
         &lines,
-        "continue-on-error: true",
-        "a hung or failed gate read must not skip the probe judge and tracker",
+        "0:success|0:failure|0:timed_out|0:action_required|0:startup_failure) ;;",
+        "a failed read or an unexpected conclusion must become unknown, not red",
+    )?;
+    require(
+        &lines,
+        "[ \"$(grep -c . \"$d/gates.tsv\" || true)\" -ge 2 ] || echo 1 > \"$d/gates.unknown\"",
+        "a missing gate row must mark the gates unknown",
+    )?;
+    require(
+        &lines,
+        "unknown) echo 1 > \"$d/gates.unknown\" ;;",
+        "an unknown gate row must mark the gates unknown",
     )?;
     require(
         &lines,
