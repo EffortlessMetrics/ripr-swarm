@@ -505,3 +505,46 @@ fn a_fragment_included_by_a_cfg_kani_module_is_verification_only() -> Result<(),
     );
     Ok(())
 }
+
+/// An unresolved nested-module `include!` of a package `.rs` file is already
+/// in the text scan, so it keeps the verdict unless that file itself could
+/// declare the module.
+#[test]
+fn a_nested_include_blocks_the_verdict_only_when_it_could_declare_the_module() -> Result<(), String>
+{
+    for (label, body, kani_only) in [
+        (
+            "nested-include-clean",
+            "pub fn extra() -> u32 { 1 }\n",
+            true,
+        ),
+        ("nested-include-declares", "mod proofs;\n", false),
+    ] {
+        let fixture = Fixture::new(label)?;
+        fixture.write(
+            "src/lib.rs",
+            &format!(
+                "{}mod extra {{\n    include!(\"extra_body.rs\");\n}}\n",
+                parent_source("#[cfg(kani)]", "proofs")
+            ),
+        )?;
+        fixture.write("src/extra_body.rs", body)?;
+        fixture.write("src/proofs.rs", PROOF_FILE)?;
+        let index = fixture_index(&fixture)?;
+        assert!(
+            index.include_limitations.iter().any(|limitation| {
+                limitation.reason_code == "rust_include_nested_module_context"
+            }),
+            "{label}: the inline-module include is an unresolved include"
+        );
+        let path = "src/proofs.rs";
+        let observed = observe(&fixture, path, &helper_diff(path, "", 4))?;
+        if kani_only {
+            assert!(observed.kani_module_file, "{label}: verdict kept");
+            assert_verification_only(&observed, label);
+        } else {
+            assert_production(&observed, label);
+        }
+    }
+    Ok(())
+}

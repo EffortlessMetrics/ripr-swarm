@@ -28,6 +28,7 @@ tests = [
   "crates/ripr/src/analysis/language/rust/cfg_kani_module_tests.rs::an_invisible_owner_in_a_macro_token_tree_keeps_production_probes",
   "crates/ripr/src/analysis/language/rust/cfg_kani_module_tests.rs::a_file_also_included_from_production_keeps_production_probes",
   "crates/ripr/src/analysis/language/rust/cfg_kani_module_tests.rs::a_fragment_included_by_a_cfg_kani_module_is_verification_only",
+  "crates/ripr/src/analysis/language/rust/cfg_kani_module_tests.rs::a_nested_include_blocks_the_verdict_only_when_it_could_declare_the_module",
   "crates/ripr/src/analysis/facts/invisible_owners.rs::counts_out_of_line_declarations_and_path_literals",
   "crates/ripr/src/analysis/facts/invisible_owners.rs::unaccountable_shapes_fail_closed",
 ]

@@ -15,8 +15,11 @@
 //! equal the captured declarations of that name, the count of `#[path]`
 //! literals naming the child's file must equal the captured ones, and no
 //! file may hold a macro-generated (`mod $`) declaration, a non-literal
-//! `#[path]` or a `cfg_attr`-introduced `path`. Unreadable files, unresolved
-//! includes and an oversized package all answer "not visible".
+//! `#[path]` or a `cfg_attr`-introduced `path`. Unreadable files, an
+//! oversized package and an unresolved `include!` in the package all answer
+//! "not visible", except an `include!` of a literal `.rs` file of the same
+//! package inside an inline module whose text declares no `mod <name>;`: that
+//! file's text is already in the package scan.
 
 use super::model::{ModulePathTarget, RustIndex};
 use crate::analysis::extract::mask_comments_and_strings;
@@ -43,6 +46,7 @@ pub(super) struct InvisibleOwners<'index> {
     index: &'index RustIndex,
     workspace_root: &'index Path,
     packages: BTreeMap<PathBuf, Option<PackageText>>,
+    manifest_dirs: BTreeMap<PathBuf, Option<PathBuf>>,
 }
 
 impl<'index> InvisibleOwners<'index> {
@@ -51,27 +55,79 @@ impl<'index> InvisibleOwners<'index> {
             index,
             workspace_root,
             packages: BTreeMap::new(),
+            manifest_dirs: BTreeMap::new(),
         }
+    }
+
+    /// The package directory of `file`, memoized per containing directory.
+    fn package_of(&mut self, file: &Path) -> Option<PathBuf> {
+        let directory = file.parent()?.to_path_buf();
+        if let Some(known) = self.manifest_dirs.get(&directory) {
+            return known.clone();
+        }
+        let found = nearest_manifest_dir(self.workspace_root, file);
+        self.manifest_dirs.insert(directory, found.clone());
+        found
+    }
+
+    /// True when every unresolved include of `package` is a literal `.rs`
+    /// file of the same package, pasted into an inline module, whose text
+    /// declares no `mod <name>;`.
+    fn includes_accounted(&mut self, package: &Path, name: &str) -> bool {
+        let index = self.index;
+        for limitation in &index.include_limitations {
+            let Some(parent_package) = self.package_of(&limitation.parent) else {
+                return false;
+            };
+            if parent_package != package {
+                continue;
+            }
+            if limitation.reason_code != "rust_include_nested_module_context" {
+                return false;
+            }
+            let Some(literal) = include_literal(&limitation.expression) else {
+                return false;
+            };
+            let Some(target) = limitation
+                .parent
+                .parent()
+                .and_then(|directory| normalize_relative(&directory.join(literal)))
+            else {
+                return false;
+            };
+            if self.package_of(&target).as_deref() != Some(package) {
+                return false;
+            }
+            let Ok(source) = std::fs::read_to_string(self.workspace_root.join(&target)) else {
+                return false;
+            };
+            let mut text = PackageText::default();
+            if record_declarations(&source, &mut text).is_none()
+                || text.out_of_line_modules.contains_key(name)
+            {
+                return false;
+            }
+        }
+        true
     }
 
     /// True only when every declaration that could own `child` (declared as
     /// `mod <name>;`) is one the index captured.
     pub(super) fn all_owners_visible(&mut self, child: &Path, name: &str) -> bool {
-        if !self.index.include_limitations.is_empty() {
-            return false;
-        }
-        let Some(package) = nearest_manifest_dir(self.workspace_root, child) else {
+        let Some(package) = self.package_of(child) else {
             return false;
         };
+        if !self.includes_accounted(&package, name) {
+            return false;
+        }
         let Some(child_file_name) = child.file_name().and_then(|name| name.to_str()) else {
             return false;
         };
         let mut captured_modules = 0usize;
         let mut captured_paths = 0usize;
-        for (file, facts) in &self.index.files {
-            if !file.starts_with(&package)
-                || nearest_manifest_dir(self.workspace_root, file).as_ref() != Some(&package)
-            {
+        let index = self.index;
+        for (file, facts) in &index.files {
+            if !file.starts_with(&package) || self.package_of(file).as_ref() != Some(&package) {
                 continue;
             }
             if self.index.non_utf8_sources.contains(file) {
@@ -128,6 +184,33 @@ fn nearest_manifest_dir(workspace_root: &Path, file: &Path) -> Option<PathBuf> {
         }
     }
     None
+}
+
+/// The string literal of `include!("x.rs")` when it names a `.rs` file.
+fn include_literal(expression: &str) -> Option<&str> {
+    let start = expression.find('"')? + 1;
+    let end = start + expression[start..].find('"')?;
+    let literal = &expression[start..end];
+    let rest = &expression[end + 1..];
+    (literal.ends_with(".rs") && !literal.contains('\\') && !rest.contains('"')).then_some(literal)
+}
+
+/// `path` with `.` and `..` folded; `None` when it leaves its root.
+fn normalize_relative(path: &Path) -> Option<PathBuf> {
+    let mut out = PathBuf::new();
+    for component in path.components() {
+        match component {
+            std::path::Component::Normal(part) => out.push(part),
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                if !out.pop() {
+                    return None;
+                }
+            }
+            _ => return None,
+        }
+    }
+    Some(out)
 }
 
 fn final_component(path: &str) -> &str {
@@ -229,9 +312,45 @@ fn record_declarations(source: &str, text: &mut PackageText) -> Option<()> {
                 .path_file_names
                 .entry(final_component(&literal[..end]).to_string())
                 .or_default() += 1;
-        } else if opener.ends_with(',') || opener.ends_with('(') {
-            // `path = ..` as an argument (`cfg_attr(.., path = "..")`): the
-            // effective target depends on configuration.
+        }
+    }
+    // A `path = ..` introduced by `cfg_attr(..)`: the effective target
+    // depends on configuration. Named format arguments (`path = p`) outside
+    // a `cfg_attr` are ordinary code.
+    for (at, _) in masked.match_indices("cfg_attr") {
+        if at > 0 && ident(bytes[at - 1]) {
+            continue;
+        }
+        let Some(open) = masked[at + 8..].find('(').map(|offset| at + 8 + offset) else {
+            continue;
+        };
+        if !masked[at + 8..open].trim().is_empty() {
+            continue;
+        }
+        let mut depth = 0usize;
+        let mut close = masked.len();
+        for (offset, byte) in bytes[open..].iter().enumerate() {
+            match byte {
+                b'(' => depth += 1,
+                b')' => {
+                    depth = depth.saturating_sub(1);
+                    if depth == 0 {
+                        close = open + offset;
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        let inner = &masked[open..close];
+        let inner_bytes = inner.as_bytes();
+        let introduces_path = inner.match_indices("path").any(|(at, _)| {
+            let before_ok = at == 0 || !ident(inner_bytes[at - 1]);
+            let after_ok = inner_bytes.get(at + 4).is_none_or(|byte| !ident(*byte));
+            let rest = inner[at + 4..].trim_start();
+            before_ok && after_ok && rest.starts_with('=') && !rest.starts_with("==")
+        });
+        if introduces_path {
             return None;
         }
     }
@@ -268,5 +387,9 @@ mod tests {
         assert!(record("#[cfg_attr(kani, path = \"proofs.rs\")]\nmod proofs;\n").is_none());
         assert!(record("#[path = concat!(\"a\", \".rs\")]\nmod proofs;\n").is_none());
         assert!(record("fn module_path() {}\nlet path = 1;\n").is_some());
+        assert!(
+            record("fn f(p: &str) -> String { format!(\"{path}\", path = p) }\n").is_some(),
+            "a named format argument is not a cfg_attr path"
+        );
     }
 }

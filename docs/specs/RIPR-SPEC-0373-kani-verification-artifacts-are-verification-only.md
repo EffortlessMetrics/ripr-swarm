@@ -91,7 +91,9 @@ are **Kani verification artifacts**, and their lines are verification-only
   (`facts/invisible_owners.rs`): a `mod name;` inside an inline module or a
   macro token tree, in a lexical-fallback, non-UTF-8 or unindexed file, a
   macro-generated `mod $name;`, a non-literal or `cfg_attr` `#[path]`, or an
-  unresolved include anywhere in the index. The check compares masked
+  unresolved `include!` in the child's package (except an inline-module
+  include of a literal `.rs` file of the same package whose text declares no
+  `mod name;`, since that text is already scanned). The check compares masked
   `mod name;` and `#[path]` text across every `.rs` file of the child's
   package on disk with the captured declarations. Function source roles are not
   changed: a helper there stays a plain function, and the file seeds no probe
