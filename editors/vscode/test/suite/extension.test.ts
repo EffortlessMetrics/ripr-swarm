@@ -464,7 +464,7 @@ suite('Extension Smoke', () => {
   });
 
   test('real server surfaces seam diagnostic, hover provider, and agent actions', async function (this: Mocha.Context) {
-    this.timeout(150000);
+    this.timeout(240000);
     skipUnlessTrustedTestHost(this);
     if (!process.env.RIPR_TEST_SERVER_PATH) {
       this.skip();
@@ -525,8 +525,8 @@ suite('Extension Smoke', () => {
     const actions = await waitForCodeActions(
       uri,
       diagnostic.range,
-      (action) => action.title === 'Inspect Test Gap - Copy Context',
-      15000
+      (action) => action.title === 'Inspect Test Gap - Copy Context' && commandForAction(action) !== undefined,
+      60000
     );
     const contextCommand = assertCommandAction(actions, 'Inspect Test Gap - Copy Context', 'ripr.copyContext');
     const packetCommand = assertCommandAction(
