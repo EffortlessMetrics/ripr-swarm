@@ -1369,9 +1369,14 @@ where
         return (status, format!("{evidence} (PATH `python -m pytest`)"));
     }
     let venv = project_venv_python(root).unwrap_or(".venv/bin/python");
+    // `venv/bin/python` -> `venv/bin/activate`: name the detected directory.
+    let activate = venv.strip_suffix("python").map_or_else(
+        || ".venv/bin/activate".to_string(),
+        |bin| format!("{bin}activate"),
+    );
     let note = match project_venv_pytest(root) {
         VenvPytest::Present(_) => format!(
-            "pytest is installed in the project virtualenv ({venv}) but `python` on PATH lacks it; activate the venv (source .venv/bin/activate) before running the printed verify command"
+            "pytest is installed in the project virtualenv ({venv}) but `python` on PATH lacks it; activate the venv (source {activate}) before running the printed verify command"
         ),
         VenvPytest::Unknown => format!(
             "a project virtualenv ({venv}) exists but pytest there is not verified (layout not statically readable)"
@@ -3854,6 +3859,19 @@ mod tests {
         let (status, evidence) = python_pytest_runtime_probe(&without, &mut path_fail);
         assert_eq!(status, output::doctor::DoctorStatus::Fail);
         assert!(!evidence.contains("activate"), "{evidence}");
+        // A `venv/` (not `.venv/`) project is told to activate `venv/`.
+        let plain =
+            std::env::temp_dir().join(format!("ripr-doctor-venv-plain-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&plain);
+        std::fs::create_dir_all(plain.join("venv/bin"))?;
+        std::fs::write(plain.join("venv/bin/python"), "")?;
+        std::fs::create_dir_all(
+            plain.join("venv/lib/python3.13/site-packages/pytest-9.2.0.dist-info"),
+        )?;
+        let (_, evidence) = python_pytest_runtime_probe(&plain, &mut path_fail);
+        assert!(evidence.contains("source venv/bin/activate"), "{evidence}");
+        assert!(!evidence.contains(".venv/bin/activate"), "{evidence}");
+        let _ = std::fs::remove_dir_all(&plain);
         // PATH python with pytest passes and says which command was probed,
         // regardless of the venv.
         let (status, evidence) = python_pytest_runtime_probe(&with, &mut |_: &str| {

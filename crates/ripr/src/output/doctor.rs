@@ -2105,7 +2105,18 @@ pub(crate) fn doctor_tool_check_isolated(tool: &str) -> (DoctorStatus, String) {
 /// cwd nor a script directory reaches `sys.path`; user-site installs
 /// (`pip install --user`) stay visible, as they are for the verify command
 /// (#13617). `-P` is not used because it is rejected before Python 3.11.
-const DOCTOR_PYTEST_PROBE_ARGS: [&str; 2] = ["-m", "pytest"];
+///
+/// The probe only imports pytest; it never starts pytest itself. Running
+/// `python -m pytest --version` would let pytest search the ancestors of the
+/// probe directory for an ini file (for example a `/tmp/pytest.ini` planted by
+/// another local user), adopt that directory as rootdir and load its
+/// `conftest.py` or `-p` plugins. A bare import executes no project or temp
+/// directory code. The harness appends `--version`, which becomes an ignored
+/// `sys.argv[1]` of the `-c` script.
+const DOCTOR_PYTEST_PROBE_ARGS: [&str; 2] = [
+    "-c",
+    "import sys, pytest; sys.stdout.write('pytest ' + pytest.__version__)",
+];
 
 /// The probe command: `python -m pytest` in `dir` with safe-path env.
 fn doctor_pytest_probe_command(dir: &Path) -> std::process::Command {
@@ -2708,14 +2719,22 @@ mod tests {
     use std::sync::atomic::{AtomicU64, Ordering};
 
     #[test]
-    fn pytest_probe_command_is_python_dash_m_pytest_with_safe_path_in_private_dir()
-    -> std::io::Result<()> {
+    fn pytest_probe_command_imports_pytest_with_safe_path_in_private_dir() -> std::io::Result<()> {
         let dir = create_private_probe_dir()?;
         let other = create_private_probe_dir()?;
         assert_ne!(dir, other, "probe dirs must be unpredictable and distinct");
         let command = doctor_pytest_probe_command(&dir);
         let args: Vec<_> = command.get_args().collect();
-        assert_eq!(args, ["-m", "pytest"]);
+        // Import-only: never `-m pytest`, which would read ancestor ini files
+        // and conftest.py from the temp directory tree.
+        assert_eq!(args.first().copied(), Some(OsStr::new("-c")));
+        assert!(!args.iter().any(|arg| *arg == OsStr::new("-m")), "{args:?}");
+        assert!(
+            args.get(1)
+                .and_then(|script| script.to_str())
+                .is_some_and(|script| script.contains("import sys, pytest")),
+            "{args:?}"
+        );
         assert!(
             command
                 .get_envs()

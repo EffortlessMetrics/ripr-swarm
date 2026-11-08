@@ -1,11 +1,11 @@
-//! Project Python interpreter selection for the printed verify command and
-//! the doctor pytest probe (#13617).
+//! Static facts about a project virtualenv (`.venv` or `venv`) for the doctor
+//! pytest probe (#13617).
 //!
-//! The verify command is `python -m pytest <node>` run from the selected
-//! root. When the project carries a virtualenv (`.venv` or `venv`), that
-//! interpreter is the one that has the project's dependencies, so both the
-//! printed command and doctor use it. Detection is purely static: doctor and
-//! check never execute code from the checkout to learn this.
+//! Doctor always probes the PATH `python -m pytest` that the printed verify
+//! command runs. These facts only explain a PATH failure, for example by
+//! suggesting that the user activate a venv that has pytest. Choosing the venv
+//! interpreter for the printed command itself is #13801. Detection is purely
+//! static: doctor never executes code from the checkout to learn this.
 
 use std::path::Path;
 
