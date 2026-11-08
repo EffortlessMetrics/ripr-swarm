@@ -64,8 +64,8 @@ jobs:
               && git init -q && git remote add origin "$url" \
               && git fetch -q --depth 1 origin "$sha" && git checkout -q FETCH_HEAD \
               && [ "$(git rev-parse HEAD)" = "$sha" ] \
-              && npm install --ignore-scripts --no-audit --no-fund --no-package-lock \
-              && npm install --no-save --ignore-scripts --no-audit --no-fund --no-package-lock "@stryker-mutator/core@$stryker" "@stryker-mutator/vitest-runner@$stryker" \
+              && npm install --ignore-scripts --no-audit --no-fund --no-package-lock --legacy-peer-deps \
+              && npm install --no-save --ignore-scripts --no-audit --no-fund --no-package-lock --legacy-peer-deps "@stryker-mutator/core@$stryker" "@stryker-mutator/vitest-runner@$stryker" \
               && npx stryker run --testRunner vitest --plugins @stryker-mutator/vitest-runner --reporters json --mutate "$glob" --concurrency 2; } || rc=$?
             cd "$GITHUB_WORKSPACE"
             printf '%s\t%s\n' "$name" "$rc" >> "$status"
