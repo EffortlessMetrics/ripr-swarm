@@ -310,10 +310,15 @@ lines rendered beneath it:
 - `no_static_path` with reach `no` — `no related test was found that reaches
   this change` (the classifier's own reason; it never claims an output trace
   was attempted);
-- `reachable_unrevealed` with observe `no` — `a related test reaches this
-  change, but no assertion observes the changed behavior`;
-- any other stage combination for those classes falls back to wording that
-  does not deny a reaching test.
+- `reachable_unrevealed` with reach `yes` and observe `no` — `a related test
+  reaches this change, but no assertion observes the changed behavior`;
+- `weakly_exposed` or `reachable_unrevealed` whose reach is not `yes` (weak,
+  no, unknown, opaque or not applicable, including the weak-discriminator
+  shortcut and a guard refusal) — `test reach to this change is not
+  established`; callee-only reach keeps `no test is seen calling this change`
+  (#7003). Neither claims a reaching test (#7330);
+- any other stage combination for those classes, with reach `yes`, falls back
+  to wording that does not deny a reaching test.
 
 The bounded renderer selects at most one visible unsuppressed finding. The
 selector is deterministic:
@@ -949,6 +954,17 @@ unchanged, and the lines claim no runtime outcome.
   bounded default output.
 - Output-contract, static-language, traceability, and check-pr gates.
 
+### Agent related-test selection (#13603)
+
+The `tK` row an agent opens first is the contributing related test with the
+strongest relation confidence (the same `RelationConfidence` rank `ripr context`
+orders by), with oracle strength breaking ties. A direct owner caller is named
+ahead of a same-file neighbor even when the neighbor holds a stronger oracle,
+because the caller is the test an agent edits to grip the changed value. A
+`done=` line keeps oracle strength first: it names the test that notices the
+change, never a smoke-only caller. Rows without a recorded relation rank as
+`Opaque`, so their order falls back to oracle strength.
+
 ### `explain --format agent` (#12104)
 
 `ripr explain <finding> --format agent` prints the selected finding in the
@@ -997,6 +1013,9 @@ report with zero records still carries its route.
 - `crates/ripr/src/output/human/agent_tests.rs::static_limited_run_stops_and_names_the_limit_instead_of_a_gap` — #13594 negative: no `missing=-` record, `limits=` and drill-in kept.
 - `crates/ripr/src/output/human/agent_tests.rs::preview_limited_records_with_discriminators_cap_and_count_the_rest` — #13594 positive: discriminator records capped and counted.
 - `crates/ripr/src/output/human/agent_tests.rs::mixed_limited_run_drills_into_the_printed_record` — #13594: `next=` follows the printed record.
+- `crates/ripr/tests/weak_reach_hint.rs::producer_evidence_and_public_renderers_agree_about_reach` — real shadow and direct-owner findings: digest hint agrees with JSON and full human reach (#7330).
+- `crates/ripr/tests/weak_reach_hint.rs::unestablished_reach_never_takes_the_weak_discriminator_shortcut` — every non-`yes` reach state withholds the reaching-test hint (#7330).
+- `crates/ripr/tests/weak_reach_hint.rs::guard_refusal_does_not_override_unestablished_reach` — guard refusal positive and unestablished-reach controls (#7330).
 
 - `crates/ripr/src/output/human/agent_tests.rs::explain_agent_gap_is_one_record_one_test_open_terminal_and_context_next`
 - `crates/ripr/src/output/human/agent_tests.rs::explain_agent_exposed_finding_is_done_not_open`
