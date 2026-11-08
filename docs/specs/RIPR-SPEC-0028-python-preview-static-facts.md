@@ -358,6 +358,9 @@ import root is not applied inside a project, and a name another file of the
 same project also yields (`pkg.py` beside `pkg/__init__.py`) identifies
 neither. Bare file stems and arbitrary path suffixes never count as module
 identity.
+A src-layout short name that a plain module of the same project also produces
+(a repository-root `core.py`, or `<project>/core.py` beside `<project>/src/`)
+identifies neither module from any test (#13745).
 A test that imports a free-function owner's name from a workspace module that
 defines its own function of that name, when no import reaches the owner's module,
 is not related to the owner even if its call text matches the name (#8759). The

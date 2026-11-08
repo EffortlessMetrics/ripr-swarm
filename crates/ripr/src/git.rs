@@ -787,8 +787,8 @@ fn collect_output_with_optional_deadline_and_limit(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     let spawn_site = SpawnSite::of(&command);
-    let mut child =
-        OwnedProcess::spawn(command).map_err(|err| spawn_site.failure_message(describe, &err))?;
+    let mut child = OwnedProcess::spawn_without_console(command)
+        .map_err(|err| spawn_site.failure_message(describe, &err))?;
     #[cfg(test)]
     TEST_PROCESS_SPAWNS.with(|count| count.set(count.get() + 1));
     let stdout_exceeded = Arc::new(AtomicBool::new(false));
@@ -1012,7 +1012,7 @@ impl CatFileBatch {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         let spawn_site = SpawnSite::of(&command);
-        let mut child = OwnedProcess::spawn(command)
+        let mut child = OwnedProcess::spawn_without_console(command)
             .map_err(|err| spawn_site.failure_message(&describe, &err))?;
         let stdin = child
             .stdin_pipe()
@@ -1409,8 +1409,8 @@ fn collect_output_with_deadline(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     let spawn_site = SpawnSite::of(&command);
-    let mut child =
-        OwnedProcess::spawn(command).map_err(|err| spawn_site.failure_message(describe, &err))?;
+    let mut child = OwnedProcess::spawn_without_console(command)
+        .map_err(|err| spawn_site.failure_message(describe, &err))?;
     #[cfg(test)]
     TEST_PROCESS_SPAWNS.with(|count| count.set(count.get() + 1));
     let stdout_reader = child.stdout_pipe().take().map(spawn_pipe_reader);
