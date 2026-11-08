@@ -242,3 +242,21 @@ fn hidden_classes_gloss_only_listed_classes() {
     assert!(!rendered.contains("unknown:"), "{rendered}");
     assert!(!rendered.contains("no path ="), "{rendered}");
 }
+
+#[test]
+fn identical_hidden_rows_collapse_with_a_repeat_count() {
+    let findings = (0..3)
+        .map(|index| {
+            let mut finding = sample_finding();
+            finding.id = format!("finding-{index}");
+            finding.source_currentness = SourceCurrentness::BaseDeleted;
+            finding
+        })
+        .collect();
+    let rendered = render(&bounded_output_with_findings(findings));
+    assert_eq!(rendered.matches("    - ").count(), 1, "{rendered}");
+    assert!(
+        rendered.contains("reason: missing strong oracle (x3)\n"),
+        "{rendered}"
+    );
+}

@@ -623,13 +623,18 @@ pub(crate) fn render_human_triage(
             }
             categories.len() > 1
         };
+        // Identical consecutive rows (same location, class, kind and reason)
+        // collapse to one row with a repeat count so a diff with many
+        // equivalent base-side findings stays scannable.
+        let mut previous: Option<(String, usize)> = None;
         for finding in triage.omitted.iter().take(listed) {
             let currentness = if label_currentness {
                 format!(", {}", hidden_bullet_currentness(finding))
             } else {
                 String::new()
             };
-            out.push_str(&format!(
+            let mut row = String::new();
+            row.push_str(&format!(
                 "    - {}:{} ({}{}); kind: {}; reason: {}\n",
                 crate::analysis::finding_location_text(&output.root, &finding.probe.location.file),
                 finding.probe.location.line,
@@ -644,7 +649,7 @@ pub(crate) fn render_human_triage(
                 match navigation.stub_route_for(&finding.id) {
                     Some(StubRouteDecision::Ambiguous { reason, seam_ids }) => {
                         push_ambiguous_stub_choices(
-                            out,
+                            &mut row,
                             navigation,
                             &finding.id,
                             reason,
@@ -654,13 +659,25 @@ pub(crate) fn render_human_triage(
                     }
                     Some(StubRouteDecision::SeamStub { seam_id }) => {
                         let command = navigation.stub_seam_command(seam_id);
-                        out.push_str("      Write a test for it:\n");
-                        out.push_str(&format!("        {command}\n"));
-                        super::push_powershell_variant(out, "        ", &command);
+                        row.push_str("      Write a test for it:\n");
+                        row.push_str(&format!("        {command}\n"));
+                        super::push_powershell_variant(&mut row, "        ", &command);
                     }
                     _ => {}
                 }
             }
+            match previous.as_mut() {
+                Some((prev, count)) if *prev == row => *count += 1,
+                _ => {
+                    if let Some((prev, count)) = previous.take() {
+                        push_hidden_row(out, &prev, count);
+                    }
+                    previous = Some((row, 1));
+                }
+            }
+        }
+        if let Some((prev, count)) = previous.take() {
+            push_hidden_row(out, &prev, count);
         }
         // #9373: gloss each class named by a listed row, once, in the plain
         // vocabulary, so a run with several classes needs no `human-full`
@@ -3666,5 +3683,18 @@ mod tests {
             generic_action.contains("static evidence names no concrete missing check"),
             "{generic_action}"
         );
+    }
+}
+
+/// Append a hidden-finding block, annotating its first line with a repeat
+/// count when identical consecutive rows were collapsed.
+fn push_hidden_row(out: &mut String, row: &str, count: usize) {
+    if count <= 1 {
+        out.push_str(row);
+        return;
+    }
+    match row.split_once('\n') {
+        Some((first, rest)) => out.push_str(&format!("{first} (x{count})\n{rest}")),
+        None => out.push_str(&format!("{row} (x{count})")),
     }
 }
