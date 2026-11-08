@@ -61,17 +61,21 @@ cargo xtask mutation-spot-check --repo zola=../corpus/zola --run-mutants \
 ## Refreshing the corpus
 
 `.github/workflows/mutation-spot-check.yml` is the one place third-party crate
-build scripts and tests run for this harness. It clones the pinned checkouts in
+build scripts and tests run for this harness. A `plan` job turns
 `benchmarks/mutation_spot_check/corpus.json` (name, URL, revision, optional
-`mutants_args`), runs `cargo xtask mutation-spot-check --run-mutants` on a hosted
-runner with read-only permissions and no secrets, and uploads the receipt as the
-`mutation-spot-check` artifact. It runs weekly and on `workflow_dispatch`
-(optionally limited to a comma-separated `repos` list). It is advisory: it never
-writes the default branch, and its numbers gate nothing.
+`mutants_args`) into a per-crate matrix. Each `mutate` job pins one revision,
+runs `cargo xtask mutation-spot-check --run-mutants` on a hosted runner with
+read-only permissions and no secrets, and uploads that crate's receipt and
+`mutants.out` as `spot-<name>`; a lost or timed-out runner costs one crate
+(#13650). A final `score` job re-pins the crates whose `mutants.out` remained,
+scores them together through `--mutants-out`, and uploads the scoreboard receipt
+as the `mutation-spot-check` artifact (its `cargo_mutants_args` and
+`mutant_timeout_secs` read `null`, as for any supplied `--mutants-out`; the
+per-crate `spot-<name>` receipts keep them). It runs weekly and on
+`workflow_dispatch` (optionally limited to a comma-separated `repos` list). It is
+advisory: it never writes the default branch, and its numbers gate nothing.
 
-The harness writes the receipt only when the whole run finishes, and the job is
-capped at 350 minutes, so a run that times out uploads nothing. If the first
-full run does, split the manifest into smaller complete manifests and rerun each.
+A crate whose job times out, is lost, or fails before finishing is excluded from the final scoreboard receipt (only legs that wrote `LEG_COMPLETE` with full `outcomes.json` and `mutants.json` are scored) and is named in the `score` job's warnings; the others are still scored.
 A `repos` batch is for trying a crate, not for promotion: before promoting, check
 that the receipt's repository names and revisions exactly match `corpus.json`,
 and never promote a filtered receipt while the manifest still lists more crates.

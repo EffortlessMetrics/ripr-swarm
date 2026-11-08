@@ -118,3 +118,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — inherent_receiver_free_helper_identity (11)
+
+Reason:
+RIPR-SPEC-0122: describe unestablished test reach without claiming owner invocation (#7330)
+
+Command:
+`cargo xtask goldens bless inherent_receiver_free_helper_identity --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
