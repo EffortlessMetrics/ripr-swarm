@@ -342,6 +342,12 @@ pub enum NextActionStop {
         /// constructs the stop without a route.
         #[serde(default)]
         detail_route: String,
+        /// The guided `ripr agent repair` start for the selected finding,
+        /// present only when the check's shared repair-route decision says
+        /// the gap can be started. The class stays non-executable: this
+        /// names the route, it does not run it.
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        repair_route: String,
     },
     DoctorRecovery {
         check_name: String,
@@ -497,6 +503,11 @@ pub(crate) struct NextActionInput<'a> {
     pub(crate) restart_route: String,
     /// The check triage case, bound by the check producer only.
     pub(crate) check_case: Option<NextActionCheckCase>,
+    /// The `ripr agent repair` start command for the check's selected finding,
+    /// bound by the check producer only when the shared repair-route decision
+    /// says the gap can be started. Carried on the non-executable check stop
+    /// so JSON agrees with the human `Next` block; never an execution grant.
+    pub(crate) check_repair_route: Option<String>,
     /// The precise doctor recovery, bound by the doctor producer only.
     pub(crate) doctor_recovery: Option<NextActionDoctorRecovery>,
     /// The delegated check/repair transaction, bound by pilot only.
@@ -1181,6 +1192,7 @@ fn render_decision(
                 NextActionStop::CheckTriage {
                     case,
                     detail_route: input.detail_route.clone(),
+                    repair_route: input.check_repair_route.clone().unwrap_or_default(),
                 },
                 transition,
                 Vec::new(),
@@ -1386,6 +1398,7 @@ mod tests {
             transition_to: Some("packet_inspected".to_string()),
             restart_route: "ripr check --root .".to_string(),
             check_case: None,
+            check_repair_route: None,
             doctor_recovery: None,
             pilot_delegation: None,
             alternatives: Vec::new(),
@@ -2381,6 +2394,7 @@ mod tests {
                 Some(NextActionStop::CheckTriage {
                     case: bound,
                     detail_route,
+                    ..
                 }) => {
                     assert_eq!(*bound, case);
                     assert_eq!(
@@ -2749,6 +2763,7 @@ mod tests {
             NextActionStop::CheckTriage {
                 case: NextActionCheckCase::TopGap,
                 detail_route: "ripr explain finding:top".to_string(),
+                repair_route: String::new(),
             },
             NextActionStop::DoctorRecovery {
                 check_name: "c".to_string(),
@@ -2818,6 +2833,7 @@ mod tests {
             transition_to: offered.map(|_| "repair_started".to_string()),
             restart_route: "ripr repair --root .".to_string(),
             check_case: None,
+            check_repair_route: None,
             doctor_recovery: None,
             pilot_delegation: None,
             alternatives: Vec::new(),

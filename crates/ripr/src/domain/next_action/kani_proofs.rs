@@ -159,6 +159,7 @@ fn base_input(spec: Option<&CommandSpec>) -> NextActionInput<'_> {
         transition_to: Some("to".to_string()),
         restart_route: "restart".to_string(),
         check_case: None,
+        check_repair_route: None,
         doctor_recovery: None,
         pilot_delegation: None,
         alternatives: Vec::new(),

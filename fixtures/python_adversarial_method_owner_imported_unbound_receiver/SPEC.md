@@ -53,6 +53,13 @@ the inverse positives: `method_name_inline_construct_call_credits_exposed`,
 `method_name_with_class_import_identity_credits_exposed` (local binding) keep
 `exposed` when the receiver is genuinely bound to the owner class.
 
+The expected static class per finding (machine-checked against
+`expected/check.json` by `check-fixture-contracts`, #12928):
+
+```expected-classes
+probe:src_auth.py:python_preview:d982555b -> weakly_exposed
+```
+
 ## Must Not
 
 - Credit `exposed` from a bare method-name / bare `.method(` token match when the

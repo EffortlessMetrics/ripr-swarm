@@ -28,6 +28,13 @@ the weak fixtures `typescript_snapshot_effect_unrelated_subject`,
 `typescript_snapshot_effect_unrelated_committed` and
 `typescript_snapshot_effect_rebound_local`.
 
+The expected static class per finding (machine-checked against
+`expected/check.json` by `check-fixture-contracts`, #12928):
+
+```expected-classes
+probe:src_lib.ts:typescript_preview:1066bfb8 -> exposed
+```
+
 ## Must Not
 
 - Refuse a snapshot whose subject is the owner call result.
