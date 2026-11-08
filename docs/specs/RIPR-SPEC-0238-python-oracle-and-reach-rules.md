@@ -1207,7 +1207,13 @@ mutant calibrates the rule; ripr reports only the static shape.
     applies only the first base's `pytestmark` under multiple inheritance, is
     another named limit. A
     skip whose decorator root name the file also binds outside an import
-    (`def skip(...)`, `skip = ...`, at any block depth) is not counted. Two things are decidable from the source and
+    (`def skip(...)`, `skip = ...`, at any block depth) is not counted, nor
+    is a module-level `pytest.skip` called through a root the file rebinds.
+    A pytest mark (skip, empty or refused parametrize) on a test that also
+    carries a decorator other than a pytest mark or unittest decorator is not
+    counted: that wrapper may return a fresh callable without the mark, which
+    pytest collects and runs. `unittest.skip` replaces the body itself, so it
+    still counts under such a wrapper. Two things are decidable from the source and
     leave the test active: a condition that is itself the boolean literal
     that never triggers the mark and is the only condition, given with the
     string `reason` the runner requires for a boolean

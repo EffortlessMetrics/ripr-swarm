@@ -75,6 +75,10 @@ pub(super) fn never_runs(test: &PythonTest) -> Option<&str> {
     {
         return None;
     }
+    let wrapped = test
+        .activation_controls
+        .iter()
+        .any(|control| control.name == WRAPPING_DECORATOR);
     effective_controls(test)
         .find(|control| match (control.name.as_str(), control.site) {
             ("pytest.skip", _) => true,
@@ -83,8 +87,9 @@ pub(super) fn never_runs(test: &PythonTest) -> Option<&str> {
             // A class `__test__ = False` is not counted: the abstract-suite
             // idiom re-enables it in a subclass (`__test__ = True`), in this
             // file or another, which collects the inherited tests.
-            ("pytest.mark.skip" | EMPTY_TABLE | COLLECTION_ERROR, _) => {
+            ("pytest.mark.skip" | EMPTY_TABLE | COLLECTION_ERROR, site) => {
                 test.framework != PythonFramework::Unittest
+                    && !(wrapped && site == DeclarationSite::Function)
             }
             _ => false,
         })
@@ -119,56 +124,95 @@ const SHADOWED_SKIP: &str = "skip decorator whose name the file rebinds";
 /// any depth of module or class blocks (`def skip(...)`, `skip = ...`, under
 /// an `if`): import tracking alone would resolve it to the runner's skip.
 pub(super) fn withhold_shadowed_skips(statements: &[Stmt], tests: &mut [PythonTest]) {
-    fn collect<'a>(body: &'a [Stmt], out: &mut std::collections::BTreeSet<&'a str>) {
+    fn collect<'a>(
+        body: &'a [Stmt],
+        out: &mut std::collections::BTreeSet<&'a str>,
+        skip_roots: &mut std::collections::BTreeSet<&'a str>,
+    ) {
         let mut names = Vec::new();
         for stmt in body {
+            if let Stmt::Expr(expr) = stmt
+                && let Expr::Call(call) = expr.value.as_ref()
+                && call.keywords.iter().any(|keyword| {
+                    keyword
+                        .arg
+                        .as_ref()
+                        .is_some_and(|arg| arg.as_str() == "allow_module_level")
+                })
+                && let Some(root) = call_root(call.func.as_ref())
+            {
+                skip_roots.insert(root);
+            }
             if !matches!(stmt, Stmt::Import(_) | Stmt::ImportFrom(_)) {
                 names.clear();
                 names_rebound_by(stmt, &mut names);
                 out.extend(names.iter().copied());
             }
             match stmt {
-                Stmt::ClassDef(class) => collect(&class.body, out),
+                Stmt::ClassDef(class) => collect(&class.body, out, skip_roots),
                 Stmt::If(node) => {
-                    collect(&node.body, out);
-                    collect(&node.orelse, out);
+                    collect(&node.body, out, skip_roots);
+                    collect(&node.orelse, out, skip_roots);
                 }
                 Stmt::Try(node) => {
-                    collect(&node.body, out);
-                    collect(&node.orelse, out);
-                    collect(&node.finalbody, out);
+                    collect(&node.body, out, skip_roots);
+                    collect(&node.orelse, out, skip_roots);
+                    collect(&node.finalbody, out, skip_roots);
                     for handler in &node.handlers {
                         let ast::ExceptHandler::ExceptHandler(handler) = handler;
-                        collect(&handler.body, out);
+                        collect(&handler.body, out, skip_roots);
                     }
                 }
                 Stmt::TryStar(node) => {
-                    collect(&node.body, out);
-                    collect(&node.orelse, out);
-                    collect(&node.finalbody, out);
+                    collect(&node.body, out, skip_roots);
+                    collect(&node.orelse, out, skip_roots);
+                    collect(&node.finalbody, out, skip_roots);
                     for handler in &node.handlers {
                         let ast::ExceptHandler::ExceptHandler(handler) = handler;
-                        collect(&handler.body, out);
+                        collect(&handler.body, out, skip_roots);
                     }
                 }
-                Stmt::With(node) => collect(&node.body, out),
+                Stmt::With(node) => collect(&node.body, out, skip_roots),
                 Stmt::For(node) => {
-                    collect(&node.body, out);
-                    collect(&node.orelse, out);
+                    collect(&node.body, out, skip_roots);
+                    collect(&node.orelse, out, skip_roots);
                 }
                 Stmt::While(node) => {
-                    collect(&node.body, out);
-                    collect(&node.orelse, out);
+                    collect(&node.body, out, skip_roots);
+                    collect(&node.orelse, out, skip_roots);
                 }
-                Stmt::Match(node) => node.cases.iter().for_each(|case| collect(&case.body, out)),
+                Stmt::Match(node) => node
+                    .cases
+                    .iter()
+                    .for_each(|case| collect(&case.body, out, skip_roots)),
                 _ => {}
             }
         }
     }
+    fn call_root(func: &Expr) -> Option<&str> {
+        match func {
+            Expr::Name(name) => Some(name.id.as_str()),
+            Expr::Attribute(attribute) => call_root(attribute.value.as_ref()),
+            _ => None,
+        }
+    }
     let mut bound = std::collections::BTreeSet::new();
-    collect(statements, &mut bound);
+    let mut skip_roots = std::collections::BTreeSet::new();
+    collect(statements, &mut bound, &mut skip_roots);
     if bound.is_empty() {
         return;
+    }
+    // A module-level call through a rebound root (`pytest = ...`) may not be
+    // the runner's `pytest.skip`, so the import may complete.
+    let module_skip_shadowed = skip_roots.iter().any(|root| bound.contains(root));
+    for test in tests.iter_mut() {
+        if module_skip_shadowed {
+            for control in &mut test.activation_controls {
+                if control.name == "pytest.skip" && control.site == DeclarationSite::Module {
+                    control.name = SHADOWED_SKIP.to_string();
+                }
+            }
+        }
     }
     for test in tests {
         let shadowed = test.decorators.iter().any(|decorator| {
@@ -227,6 +271,46 @@ const TEST_SWITCH_UNRESOLVED: &str = "pytest.collection(__test__ unresolved)";
 /// Marks a test whose class may be a hidden unittest `TestCase`; see
 /// [`mark_unresolved_class_base`].
 const UNRESOLVED_CLASS_BASE: &str = "test class with a base outside this file";
+/// Marks a test whose own decorators include one that is neither a pytest
+/// mark nor a unittest decorator; see [`with_wrapping_decorator_marker`].
+const WRAPPING_DECORATOR: &str = "test decorator that may replace the marked function";
+
+/// Add [`WRAPPING_DECORATOR`] beside a test's own controls when one of its
+/// decorators is not a pytest mark or unittest decorator (or cannot be read).
+/// Pytest keeps a mark on the decorated function object, so such a decorator
+/// may return a fresh callable without the mark that pytest collects and runs
+/// (`@wrap` over `@pytest.mark.skip`). `unittest.skip` replaces the body
+/// itself, so it still never runs. The marker is only added beside an
+/// existing control, so it never makes an uncontrolled test controlled.
+pub(super) fn with_wrapping_decorator_marker(
+    decorators: &[Expr],
+    imports: &[PythonImport],
+    mut controls: Vec<PythonActivationControl>,
+) -> Vec<PythonActivationControl> {
+    let custom = decorators.iter().any(|decorator| {
+        !expr_full_name(decorator).is_some_and(|name| {
+            let (root, tail) = name.split_once('.').unwrap_or((name.as_str(), ""));
+            let resolved = match imports.iter().rev().find(|import| import.alias == root) {
+                Some(import) if import.source_module.is_empty() => {
+                    join_tail(&import.imported, tail)
+                }
+                Some(import) => join_tail(
+                    &format!("{}.{}", import.source_module, import.imported),
+                    tail,
+                ),
+                None => name.clone(),
+            };
+            resolved.starts_with("pytest.mark.") || resolved.starts_with("unittest.")
+        })
+    });
+    if custom && !controls.is_empty() {
+        controls.push(PythonActivationControl {
+            name: WRAPPING_DECORATOR.to_string(),
+            site: DeclarationSite::Function,
+        });
+    }
+    controls
+}
 
 pub(super) fn activation_controls(
     decorators: &[Expr],

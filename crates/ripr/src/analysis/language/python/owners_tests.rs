@@ -1010,28 +1010,32 @@ pub(super) fn collect_tests_from_statements(
                     simple_literal_parametrize: simple_literal_parametrize(
                         &function.decorator_list,
                     ),
-                    activation_controls: super::test_activation::activation_controls(
+                    activation_controls: super::test_activation::with_wrapping_decorator_marker(
                         &function.decorator_list,
                         &definition_imports,
-                        super::test_activation::DeclarationSite::Function,
-                    )
-                    .into_iter()
-                    .chain(super::test_activation::empty_parametrize_control(
-                        &function.decorator_list,
-                    ))
-                    .chain(
-                        (framework == PythonFramework::Pytest
-                            && super::parametrize::collection_error(
-                                &function.decorator_list,
-                                parametrize_scope,
-                            ))
-                        .then(|| {
-                            super::test_activation::parametrize_collection_error_control(
-                                super::test_activation::DeclarationSite::Function,
-                            )
-                        }),
-                    )
-                    .collect(),
+                        super::test_activation::activation_controls(
+                            &function.decorator_list,
+                            &definition_imports,
+                            super::test_activation::DeclarationSite::Function,
+                        )
+                        .into_iter()
+                        .chain(super::test_activation::empty_parametrize_control(
+                            &function.decorator_list,
+                        ))
+                        .chain(
+                            (framework == PythonFramework::Pytest
+                                && super::parametrize::collection_error(
+                                    &function.decorator_list,
+                                    parametrize_scope,
+                                ))
+                            .then(|| {
+                                super::test_activation::parametrize_collection_error_control(
+                                    super::test_activation::DeclarationSite::Function,
+                                )
+                            }),
+                        )
+                        .collect(),
+                    ),
                     fixtures,
                     setup_receivers: setup_receivers.clone(),
                     fixture_defs: Vec::new(),
@@ -1143,28 +1147,32 @@ pub(super) fn collect_tests_from_statements(
                     simple_literal_parametrize: simple_literal_parametrize(
                         &function.decorator_list,
                     ),
-                    activation_controls: super::test_activation::activation_controls(
+                    activation_controls: super::test_activation::with_wrapping_decorator_marker(
                         &function.decorator_list,
                         &definition_imports,
-                        super::test_activation::DeclarationSite::Function,
-                    )
-                    .into_iter()
-                    .chain(super::test_activation::empty_parametrize_control(
-                        &function.decorator_list,
-                    ))
-                    .chain(
-                        (framework == PythonFramework::Pytest
-                            && super::parametrize::collection_error(
-                                &function.decorator_list,
-                                parametrize_scope,
-                            ))
-                        .then(|| {
-                            super::test_activation::parametrize_collection_error_control(
-                                super::test_activation::DeclarationSite::Function,
-                            )
-                        }),
-                    )
-                    .collect(),
+                        super::test_activation::activation_controls(
+                            &function.decorator_list,
+                            &definition_imports,
+                            super::test_activation::DeclarationSite::Function,
+                        )
+                        .into_iter()
+                        .chain(super::test_activation::empty_parametrize_control(
+                            &function.decorator_list,
+                        ))
+                        .chain(
+                            (framework == PythonFramework::Pytest
+                                && super::parametrize::collection_error(
+                                    &function.decorator_list,
+                                    parametrize_scope,
+                                ))
+                            .then(|| {
+                                super::test_activation::parametrize_collection_error_control(
+                                    super::test_activation::DeclarationSite::Function,
+                                )
+                            }),
+                        )
+                        .collect(),
+                    ),
                     fixtures,
                     setup_receivers: setup_receivers.clone(),
                     fixture_defs: Vec::new(),

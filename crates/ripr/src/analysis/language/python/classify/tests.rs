@@ -521,6 +521,10 @@ fn a_test_that_provably_never_runs_leaves_a_gap_not_an_abstention() -> Result<()
             "{header}@pytest.mark.parametrize('n', [])\ndef test_score(n):\n    assert score(0) == 8\n"
         ),
         format!("{header}{body}test_score = None\n"),
+        // Other pytest marks keep the skip on the collected function, and
+        // `unittest.skip` replaces the body itself under any outer wrapper.
+        format!("{header}@pytest.mark.slow\n@pytest.mark.skip(reason='off')\n{body}"),
+        format!("{header}from helpers import wrap\n@wrap\n@unittest.skip('off')\n{body}"),
     ];
     for tests in &never_runs {
         let finding = classify_case(
@@ -651,6 +655,18 @@ fn a_test_that_can_still_run_is_never_reported_as_never_running() -> Result<(), 
         // collection error is pytest's; `python -m unittest` still runs it.
         format!(
             "{header}@pytest.mark.parametrize('x', [1])\nclass TestScore(AsyncBase):\n    @pytest.mark.parametrize('x', [2])\n    def test_score(self, x=None):\n        self.assertEqual(score(0), 8)\n"
+        ),
+        // A wrapper applied over a pytest mark may return a fresh callable
+        // without the mark, which pytest collects and runs.
+        format!(
+            "{header}from helpers import wrap\n@wrap\n@pytest.mark.skip(reason='off')\ndef test_score():\n    assert score(0) == 8\n"
+        ),
+        format!(
+            "{header}from helpers import wrap\n@wrap\n@pytest.mark.parametrize('x', [])\ndef test_score(x):\n    assert score(0) == 8\n"
+        ),
+        // A module-level skip through a rebound `pytest` lets the import finish.
+        format!(
+            "{header}from types import SimpleNamespace\npytest = SimpleNamespace(skip=lambda *a, **kw: None)\npytest.skip('off', allow_module_level=True)\ndef test_score():\n    assert score(0) == 8\n"
         ),
         // An alias taken before the rebinding is collected and runs.
         format!(
