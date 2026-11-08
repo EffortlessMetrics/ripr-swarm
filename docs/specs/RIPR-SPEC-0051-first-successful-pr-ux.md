@@ -482,6 +482,14 @@ Static limitation only:
 - Given report-only static limitation evidence with no bounded repair route,
   the packet selects a no-action or inspection state.
 - It does not render a PR repair instruction.
+- When current diff-scoped review cards place a weak, ungripped or
+  reached-but-unrevealed static-limitation (or unknown-state) finding on a
+  changed line and none carries a repair start, the packet selects the
+  inspection state (`blocked_artifact`, reason code
+  `changed_gaps_without_repair_start`) with one
+  `ripr check --root <root> --base <base> --format human-full` next command,
+  not no-action. Summary-only cards without a changed-line placement and
+  gap-ledger-scoped cards keep the no-action route.
 
 Configured gate:
 

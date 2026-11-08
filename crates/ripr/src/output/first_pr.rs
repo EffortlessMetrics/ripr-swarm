@@ -1882,19 +1882,27 @@ fn review_card_repair_start(
         if let Some(top_gap) = top_gap_from_review_card(card, options) {
             return Ok(top_gap);
         }
-        if !cards_from_gap_ledger && card_is_unrepaired_changed_line_gap(card) {
-            let place = match (
-                string_path(card, &["placement", "path"]),
-                card.get("placement")
+        // Only a card with a real changed-line placement counts; summary-only
+        // cards (no safe placement, navigation-only cross-language targets)
+        // carry no changed line to hand over.
+        if !cards_from_gap_ledger
+            && card.get("summary_reason").is_none_or(Value::is_null)
+            && card_is_unrepaired_changed_line_gap(card)
+        {
+            let placement = card.get("placement");
+            if let (Some(file), Some(line)) = (
+                placement
+                    .and_then(|placement| placement.get("path"))
+                    .and_then(Value::as_str)
+                    .filter(|file| !file.trim().is_empty()),
+                placement
                     .and_then(|placement| placement.get("line"))
                     .and_then(Value::as_u64),
             ) {
-                (Some(file), Some(line)) => format!("`{file}:{line}`"),
-                (Some(file), None) => format!("`{file}`"),
-                _ => "a changed line".to_string(),
-            };
-            if !changed_line_gaps_without_start.contains(&place) {
-                changed_line_gaps_without_start.push(place);
+                let place = format!("`{file}:{line}`");
+                if !changed_line_gaps_without_start.contains(&place) {
+                    changed_line_gaps_without_start.push(place);
+                }
             }
         }
     }
@@ -1912,7 +1920,7 @@ fn review_card_repair_start(
                 changed_line_gaps_without_start.len()
             ),
             Some(format!(
-                "ripr check --root {} --base {}",
+                "ripr check --root {} --base {} --format human-full",
                 shell_arg(&options.command_root()),
                 shell_arg(&options.base)
             )),
@@ -6724,9 +6732,11 @@ mod tests {
         };
         let repo = temp_repo("first-pr-limited-card")?;
         write_no_top_gap_ledger(&repo)?;
+        let mut second = limited_card();
+        second["placement"]["line"] = json!(90);
         write_json(
             &repo.join(DEFAULT_REVIEW_COMMENTS),
-            review_comments_report(vec![limited_card()]),
+            review_comments_report(vec![limited_card(), second]),
         )?;
         let packet = render_start_here_packet(&repo, &FirstPrOptions::default());
         let mut ledger_scoped = review_comments_report(vec![limited_card()]);
@@ -6741,12 +6751,16 @@ mod tests {
             "{packet}"
         );
         let message = packet["selected"]["message"].as_str().unwrap_or_default();
-        assert!(message.contains("`src/pricing.rs:88`"), "{message}");
+        assert!(
+            message.contains("2 weak or unrevealed changed-line finding(s) at `src/pricing.rs:88`, `src/pricing.rs:90`"),
+            "{message}"
+        );
         let next = packet["selected"]["next_command"]
             .as_str()
             .unwrap_or_default();
         assert!(
-            next.starts_with("ripr check --root ") && next.ends_with("--base origin/main"),
+            next.starts_with("ripr check --root ")
+                && next.ends_with("--base origin/main --format human-full"),
             "{next}"
         );
         assert_eq!(scoped_packet["status"], "no_action", "{scoped_packet}");
@@ -6769,7 +6783,22 @@ mod tests {
         strong["grip_class"] = json!("strongly_gripped");
         let mut settled = limited_card();
         settled["gap_state"] = json!("already_observed");
+        let mut unplaced = limited_card();
+        unplaced["placement"] = Value::Null;
+        let mut navigation_only = limited_card();
+        navigation_only["placement"] = Value::Null;
+        navigation_only["summary_reason"] = json!("navigation_only_cross_language_target");
         for (name, card, options) in [
+            (
+                "first-pr-limited-unplaced",
+                unplaced,
+                FirstPrOptions::default(),
+            ),
+            (
+                "first-pr-limited-navigation",
+                navigation_only,
+                FirstPrOptions::default(),
+            ),
             ("first-pr-limited-strong", strong, FirstPrOptions::default()),
             (
                 "first-pr-limited-settled",
