@@ -68,6 +68,7 @@ const ANALYSIS_INCOMPLETE: &str = "analysis_incomplete";
 const NO_FINDING: &str = "no_finding_on_mutated_lines";
 const AMBIGUOUS_VERDICT: &str = "ambiguous_verdict";
 const SYNTHETIC_SEAM_KIND: &str = "diff_probe";
+pub(crate) const RECORDED_DIFF_MISSING: &str = "recorded_diff_missing";
 
 /// The language a mutation report is scored for.
 #[derive(Clone, Copy, Debug)]
@@ -76,21 +77,29 @@ pub(crate) struct LanguageProfile {
     pub(crate) language: &'static str,
     /// Lowercase file extensions (no dot) the language's adapter analyzes.
     pub(crate) extensions: &'static [&'static str],
-    /// Build-output directories skipped when copying the scratch tree, on top
-    /// of the shared skip list.
+    /// Build-output directories skipped at the checkout root when copying the
+    /// scratch tree, on top of the shared skip list. Only the root: a source
+    /// module directory that happens to share a name (`src/target/`) is kept.
     pub(crate) skip_dirs: &'static [&'static str],
+    /// A mutant without a recorded diff is excluded as
+    /// `recorded_diff_missing` instead of being rebuilt from its span, because
+    /// the tool's edit cannot be reconstructed faithfully (cargo-mutants
+    /// before 27 records no diff).
+    pub(crate) requires_recorded_diff: bool,
 }
 
 pub(crate) const TYPESCRIPT: LanguageProfile = LanguageProfile {
     language: "typescript",
     extensions: &["ts", "tsx", "mts", "cts"],
     skip_dirs: &[],
+    requires_recorded_diff: false,
 };
 
 pub(crate) const PYTHON: LanguageProfile = LanguageProfile {
     language: "python",
     extensions: &["py"],
     skip_dirs: &[],
+    requires_recorded_diff: false,
 };
 
 /// Rust scored through the diff path with each cargo-mutants mutant's own
@@ -99,6 +108,7 @@ pub(crate) const RUST: LanguageProfile = LanguageProfile {
     language: "rust",
     extensions: &["rs"],
     skip_dirs: &["target", "mutants.out", "mutants.out.old"],
+    requires_recorded_diff: true,
 };
 
 /// One mutant in the join's language-neutral form.
@@ -239,9 +249,11 @@ fn edit_for(
     path: &str,
     source: &str,
     mutant: &SyntheticMutant,
+    profile: &LanguageProfile,
 ) -> Result<SyntheticEdit, &'static str> {
     match &mutant.recorded_diff {
         Some(diff) => super::cargo_mutants_diff::apply_recorded_diff(path, source, diff),
+        None if profile.requires_recorded_diff => Err(RECORDED_DIFF_MISSING),
         None => synthesize_edit(path, source, mutant),
     }
 }
@@ -510,7 +522,7 @@ pub(crate) fn score_mutants(
                     } else if !SCOREABLE_OUTCOMES.contains(&mutant.outcome.as_str()) {
                         Some(UNSCOREABLE_OUTCOME)
                     } else {
-                        edit_for(file, &source.source, mutant).err()
+                        edit_for(file, &source.source, mutant, profile).err()
                     }
                 })
                 .collect(),
@@ -539,7 +551,7 @@ pub(crate) fn score_mutants(
                 records.push(excluded(OVER_CAP));
                 continue;
             }
-            let edit = match edit_for(file, &source.source, mutant) {
+            let edit = match edit_for(file, &source.source, mutant, profile) {
                 Ok(edit) => edit,
                 Err(reason) => {
                     records.push(excluded(reason));
@@ -641,7 +653,8 @@ fn copy_tree(from: &Path, to: &Path, skip_dirs: &[&str]) -> Result<(), String> {
             if COPY_SKIP_DIRS.contains(&name.as_ref()) || skip_dirs.contains(&name.as_ref()) {
                 continue;
             }
-            copy_tree(&entry.path(), &target, skip_dirs)?;
+            // `skip_dirs` names root-level build output only.
+            copy_tree(&entry.path(), &target, &[])?;
         } else {
             fs::copy(entry.path(), &target)
                 .map_err(|err| format!("copy {}: {err}", entry.path().display()))?;
@@ -1322,6 +1335,42 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn a_rust_mutant_without_a_recorded_diff_is_excluded_not_rebuilt() {
+        let m = mutant("m", (2, 6), (2, 15), "qty < 10", "missed");
+        assert_eq!(
+            edit_for("src/price.ts", SOURCE, &m, &RUST),
+            Err(RECORDED_DIFF_MISSING)
+        );
+        // Tools that report columns and replacement text still synthesize.
+        assert!(edit_for("src/price.ts", SOURCE, &m, &TYPESCRIPT).is_ok());
+    }
+
+    #[test]
+    fn root_build_dirs_are_skipped_but_a_nested_module_of_the_same_name_is_kept()
+    -> Result<(), String> {
+        let from = scratch_dir("copy-from")?;
+        let to = scratch_dir("copy-to")?;
+        let _ = fs::remove_dir_all(&to);
+        for dir in ["target/debug", "src/target", "mutants.out"] {
+            fs::create_dir_all(from.join(dir)).map_err(|err| err.to_string())?;
+        }
+        fs::write(from.join("target/debug/x"), "build").map_err(|err| err.to_string())?;
+        fs::write(from.join("src/target/mod.rs"), "pub fn f() {}")
+            .map_err(|err| err.to_string())?;
+        fs::write(from.join("mutants.out/outcomes.json"), "{}").map_err(|err| err.to_string())?;
+        copy_tree(&from, &to, RUST.skip_dirs)?;
+        let kept = to.join("src/target/mod.rs").exists();
+        let root_target = to.join("target").exists();
+        let mutants_out = to.join("mutants.out").exists();
+        let _ = fs::remove_dir_all(&from);
+        let _ = fs::remove_dir_all(&to);
+        assert!(kept, "a nested src/target module must be copied");
+        assert!(!root_target, "root target/ must be skipped");
+        assert!(!mutants_out, "root mutants.out/ must be skipped");
+        Ok(())
+    }
+
     fn scratch_dir(tag: &str) -> Result<PathBuf, String> {
         let dir = std::env::temp_dir().join(format!("ripr-synthetic-{}-{tag}", std::process::id()));
         fs::create_dir_all(&dir).map_err(|err| err.to_string())?;
@@ -1405,6 +1454,7 @@ mod tests {
             language: "python",
             extensions: &["py"],
             skip_dirs: &[],
+            requires_recorded_diff: false,
         };
         assert!(scratch_ripr_toml(&python).contains("\"python\""));
         assert_eq!(
