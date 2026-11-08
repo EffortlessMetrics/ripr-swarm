@@ -20,7 +20,7 @@ use super::{
     PythonImport, PythonOracleShape, PythonOwner, PythonTest, expr_full_name,
     split_python_assignment,
 };
-use crate::domain::{OracleStrength, StaticLimitKind};
+use crate::domain::{OracleStrength, OwnerKind, StaticLimitKind};
 use rustpython_parser::ast::{self, Expr};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -392,18 +392,46 @@ pub(super) fn implicit_dunder_dispatch_limit(
     if !related_candidates.is_empty() {
         return None;
     }
-    let class = dunder_method_class(owner)?;
+    if let Some(class) = dunder_method_class(owner) {
+        return all_tests
+            .iter()
+            .any(|test| test_may_reach_owner_class(test, owner, class))
+            .then(|| PythonStaticLimit {
+                kind: StaticLimitKind::DynamicDispatch,
+                evidence: format!(
+                    "static_limit dynamic_dispatch: dunder method `{}` is invoked implicitly by Python syntax",
+                    owner.qualified_name
+                ),
+                missing: format!(
+                    "Static limit `dynamic_dispatch`: `{}` is a dunder method Python invokes through syntax on an instance of `{class}`; tests import `{class}`, its module or its package, or name `{class}`, but the preview adapter cannot bind the instance a test builds to the class, so it does not claim that no test reaches the owner.",
+                    owner.qualified_name
+                ),
+            });
+    }
+    // A helper only a dunder of its own class calls through `self.` /
+    // `cls.` (`Cache.getsizeof` via `__setitem__`, `LFUCache.__touch` via
+    // `__getitem__`) is reached by the same syntax (#13776).
+    let entry = owner.class_facts.dunder_entries.first()?;
+    if owner.class_path.is_empty()
+        || !matches!(
+            owner.owner_kind,
+            Some(OwnerKind::Method | OwnerKind::ClassMethod)
+        )
+    {
+        return None;
+    }
+    let class = owner.class_path.as_str();
     all_tests
         .iter()
         .any(|test| test_may_reach_owner_class(test, owner, class))
         .then(|| PythonStaticLimit {
             kind: StaticLimitKind::DynamicDispatch,
             evidence: format!(
-                "static_limit dynamic_dispatch: dunder method `{}` is invoked implicitly by Python syntax",
+                "static_limit dynamic_dispatch: `{}` is called through `self.` from dunder method `{entry}`, which Python invokes implicitly by syntax",
                 owner.qualified_name
             ),
             missing: format!(
-                "Static limit `dynamic_dispatch`: `{}` is a dunder method Python invokes through syntax on an instance of `{class}`; tests import `{class}`, its module or its package, or name `{class}`, but the preview adapter cannot bind the instance a test builds to the class, so it does not claim that no test reaches the owner.",
+                "Static limit `dynamic_dispatch`: `{}` is reached from dunder method `{entry}` of `{class}` through a same-class call path, and Python invokes that dunder through syntax on an instance of `{class}`; tests import `{class}`, its module or its package, or name `{class}`, but the preview adapter cannot bind the instance a test builds to the class, so it does not claim that no test reaches the owner.",
                 owner.qualified_name
             ),
         })
