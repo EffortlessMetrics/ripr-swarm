@@ -415,10 +415,16 @@ fn reaches_hidden_entry(
         }
         let target = normalize_relative(&directory.join(&normalized))
             .filter(|target| target.starts_with(package))?;
-        let names_hidden = normalized.split('/').any(|component| {
+        // A `..` after a hidden component (a symlink) is resolved by the OS
+        // through the link, not by the lexical fold above: refuse.
+        let mut names_hidden = false;
+        for component in normalized.split('/') {
+            if component == ".." && names_hidden {
+                return None;
+            }
             let component = component.strip_suffix(".rs").unwrap_or(component);
-            hidden.iter().any(|(_, name)| name == component)
-        });
+            names_hidden |= hidden.iter().any(|(_, name)| name == component);
+        }
         if !names_hidden {
             continue;
         }
@@ -464,10 +470,26 @@ fn hidden_leaf_is_inert(workspace_root: &Path, package: &Path, target: &Path) ->
     let Ok(Some(bytes)) = committed_source::read_source_bytes(workspace_root, target) else {
         return false;
     };
-    String::from_utf8(bytes)
-        .ok()
-        .and_then(|source| file_text(&source))
-        .is_some_and(|text| text.out_of_line_modules.is_empty() && text.path_literals.is_empty())
+    let Ok(source) = String::from_utf8(bytes) else {
+        return false;
+    };
+    !has_include_macro(&source)
+        && file_text(&source).is_some_and(|text| {
+            text.out_of_line_modules.is_empty() && text.path_literals.is_empty()
+        })
+}
+
+/// Whether the comment- and string-masked source invokes `include!`, whose
+/// target text could declare modules the leaf check never reads.
+fn has_include_macro(source: &str) -> bool {
+    let masked = mask_comments_and_strings(source);
+    let bytes = masked.as_bytes();
+    let ident = |byte: u8| byte.is_ascii_alphanumeric() || byte == b'_';
+    masked.match_indices("include").any(|(at, _)| {
+        (at == 0 || !ident(bytes[at - 1]))
+            && bytes.get(at + 7).is_none_or(|byte| !ident(*byte))
+            && masked[at + 7..].trim_start().starts_with('!')
+    })
 }
 
 /// Whether `directory/Cargo.toml` exists at the snapshot.
@@ -703,6 +725,26 @@ mod tests {
             "p/src/lib.rs",
             "#[path = \"inner/x.rs\"]\nmod x;\n"
         )?);
+        // `..` after a hidden component folds lexically but resolves through
+        // the link: refused even when captured.
+        let source = "#[path = \"alias/../app/x.rs\"]\nmod x;\n";
+        let text = record(source).ok_or("fixture text is accountable")?;
+        let captured = ["alias/../app/x.rs".to_string()];
+        assert_eq!(
+            reaches_hidden_entry(
+                Path::new("p"),
+                Path::new("p/src/lib.rs"),
+                &text,
+                Some(&captured),
+                &hidden,
+            ),
+            None
+        );
+        assert!(has_include_macro("include!(\"y.rs\");\n"));
+        assert!(has_include_macro("core::include ! (\"y.rs\");\n"));
+        assert!(!has_include_macro(
+            "let s = include_str!(\"y.txt\"); // include!(x)\n"
+        ));
         // A captured literal into a hidden directory resolves exactly and is
         // handed to the leaf check instead of refusing.
         let source = "#[path = \"../src/app/fixtures/x.rs\"]\nmod x;\n";

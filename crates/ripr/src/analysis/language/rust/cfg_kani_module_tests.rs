@@ -781,6 +781,12 @@ fn an_owner_in_a_discovery_skipped_directory_keeps_production_probes() -> Result
     )?;
     let owner = observe(&fixture, path, &helper_diff(path, "", 4))?;
     assert_production(&owner, "#[path] to an owning file in src/fixtures");
+    // A leaf that pulls in other text through `include!` is not inert: the
+    // included file can own the child.
+    fixture.write("src/fixtures/leaf.rs", "include!(\"y.rs\");\n")?;
+    fixture.write("src/fixtures/y.rs", "#[path = \"../proofs.rs\"]\nmod p;\n")?;
+    let included = observe(&fixture, path, &helper_diff(path, "", 4))?;
+    assert_production(&included, "#[path] to a leaf that include!s an owner");
     Ok(())
 }
 
