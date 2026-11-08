@@ -470,6 +470,14 @@ fn memoizing_decorator_refuses_a_map_that_may_not_be_the_global() {
         "Reflect.set(window, String.fromCharCode(77, 97, 112), FakeMap);\n",
         "self[`M${\"ap\"}`] = FakeMap;\n",
         "global[\"\\115ap\"] = FakeMap;\n",
+        "(() => 0).constructor(\"this.M\" + \"ap = FakeMap\")();\n",
+        "Object.setPrototypeOf(FakeMap, null);\n",
+        "const d = Object.getOwnPropertyDescriptors(Object.getPrototypeOf(() => 0));\n",
+        "const p = ({} as any).__proto__;\n",
+        "Reflect.ownKeys({});\n",
+        "window.name = \"\";\n",
+        "const c = String.fromCharCode(77);\n",
+        "const o = Object.prototype;\n",
     ] {
         assert_no_decorated_entry(&format!("{prefix}{base}"));
     }
@@ -501,4 +509,15 @@ fn memoizing_decorator_refuses_a_map_that_may_not_be_the_global() {
     return cache.get(n) as number;",
     );
     assert_no_decorated_entry(&aliased);
+    // A default parameter can close over the key and rebind it.
+    let defaulted = memo_source(MEMO_CACHE, MEMO_BODY).replace(
+        "function (this: unknown, n: number)",
+        "function (this: unknown, n: number, bump = () => { n = n + 1; })",
+    );
+    assert!(defaulted.contains("bump = "), "fixture must carry the default");
+    assert_no_decorated_entry(&defaulted);
+    // A script without `export` may run sloppy, where `this` is the global.
+    let script = memo_source(MEMO_CACHE, MEMO_BODY).replace("export ", "");
+    assert!(!script.contains("export"), "fixture must drop every export");
+    assert_no_decorated_entry(&script);
 }

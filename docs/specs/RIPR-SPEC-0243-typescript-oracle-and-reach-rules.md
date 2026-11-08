@@ -1386,15 +1386,20 @@ or `static_unknown`, never `exposed`):
    and the original call passes only `this` and plain identifiers, so it
    cannot rebind the key; the wrapper body is exactly the guard and the
    return, with no `else` and no other statement in the guard; the
-   `cache.set` statement sits on one line. `Map` must be the global
-   constructor, which is read statically as: the word `Map` appears nowhere
-   else in the file (no import, local class or binding, no `Map.prototype`
-   patch), and the file holds no backslash (no `\u`, `\x` or octal escape)
-   and none of the words `eval`, `Function`, `globalThis`, `window`,
-   `global`, `self`, `Reflect`, `fromCharCode`, `prototype` or `arguments`,
-   each of which can reach the global object, build a name the counts do
-   not see, or alias the key in sloppy mode. Patching the global `Map`
-   from another module is outside the static model. A `WeakMap`,
+   `cache.set` statement sits on one line, and no wrapper parameter has a
+   default value (a default closure could rebind the key while the original
+   runs). `Map` must be the global constructor. That is screened, not
+   proven: the file must be an ES module (it contains `export`, so it is
+   strict and no sloppy `this` reaches the global object), the word `Map`
+   appears nowhere else in it (no import, local class or binding), and it
+   holds no backslash (no `\u`, `\x` or octal escape) and none of the words
+   `eval`, `Function`, `constructor`, `globalThis`, `window`, `global`,
+   `self`, `Reflect`, `fromCharCode`, `prototype`, `__proto__`,
+   `getPrototypeOf`, `setPrototypeOf`, `getOwnPropertyDescriptor(s)` or
+   `arguments`. Deliberately obfuscated replacement of a built-in, in this
+   file or another module, is outside the static model, as it already is
+   for the pass-through rule's `original.call`; the screen refuses the
+   spellings that ordinary code would use. A `WeakMap`,
    a `let` cache, a prefilled or shared cache, a mismatched key, or a
    combined return (`cache.get(k) + 1`) keeps the old reading.
 3. The decorator is applied as a bare `@D` (or an import alias of it) on
@@ -1429,8 +1434,9 @@ or `static_unknown`, never `exposed`):
 
 Negatives pinned by tests: a memoizing wrapper outside condition 2a
 (prefilled, `let` or leaked cache, mismatched key, extra flow, a rebound or
-patched `Map`, an escape, dynamic evaluation, global-object access or
-`arguments` in the file, a split `set` line), a wrapper with a
+patched `Map`, an escape, dynamic evaluation, a constructor or prototype
+route, global-object access or `arguments` in the file, a non-module file, a
+defaulted wrapper parameter, a split `set` line), a wrapper with a
 conditional return, an `await`ing wrapper, a side-effect-only change
 (`calls.push(key)`), a factory decorator, a stacked decorator, and a
 `@D` that resolves to a different function than the owner.

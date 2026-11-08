@@ -366,9 +366,10 @@ fn pass_through_return(
 /// on one line.
 /// Words that refuse the memo credit anywhere in the file: each can reach the
 /// global `Map`, rebind the key, or build a name the counts cannot see.
-const MEMO_REFUSED_WORDS: [&str; 10] = [
+const MEMO_REFUSED_WORDS: [&str; 16] = [
     "eval",
     "Function",
+    "constructor",
     "globalThis",
     "window",
     "global",
@@ -376,6 +377,11 @@ const MEMO_REFUSED_WORDS: [&str; 10] = [
     "Reflect",
     "fromCharCode",
     "prototype",
+    "__proto__",
+    "getPrototypeOf",
+    "setPrototypeOf",
+    "getOwnPropertyDescriptor",
+    "getOwnPropertyDescriptors",
     "arguments",
 ];
 
@@ -440,7 +446,10 @@ fn memoized_flow(
     let is_parameter = wrapper.params.items.iter().any(
         |item| matches!(&item.pattern, BindingPattern::BindingIdentifier(id) if id.name == key),
     );
-    if !is_parameter || key == cache || key == original || cache == original {
+    // A default value can close over the key and rebind it while the
+    // original runs, so no wrapper parameter may carry one.
+    let has_default = wrapper.params.items.iter().any(|item| item.initializer.is_some());
+    if !is_parameter || has_default || key == cache || key == original || cache == original {
         return None;
     }
     // The flow is exactly one original call combined by `+`/`-`, and that
@@ -476,14 +485,20 @@ fn memoized_flow(
     if !declared || word_count(text, cache) != 4 {
         return None;
     }
-    // `Map` must be the global constructor: the name appears nowhere else in
+    // `Map` must be the global constructor. This is a best-effort screen of
+    // the file, not a proof: obfuscated replacement of a built-in is outside
+    // the static model, as for the pass-through rule's `original.call`. The
+    // name appears nowhere else in
     // the file (no import, local class or binding, no `Map.prototype` patch),
     // and the file holds nothing that could reach the global or spell a name
     // the counts do not see: no escape of any kind, no dynamic evaluation,
     // no global-object or `Reflect` access, no computed character codes, no
     // `.prototype` write, and no sloppy-mode `arguments` alias of the key.
+    // The file must be an ES module (strict, so no sloppy `this` reaches the
+    // global object).
     let file = source.text();
     if word_count(file, "Map") != 1
+        || word_count(file, "export") == 0
         || file.contains('\\')
         || MEMO_REFUSED_WORDS
             .iter()
