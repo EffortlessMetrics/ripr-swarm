@@ -35,6 +35,12 @@ pub enum OutputFormat {
     /// [`OutputFormat::Sarif`] exactly, including its
     /// `RIPR_SARIF_RESULTS_BYTES` bound and disclosed truncation (#13102).
     SarifCompact,
+    /// Plain-text gap list (#13626): one sorted
+    /// `path:line:col: <classification> <family>: <expression> -> <missing discriminator>`
+    /// line per candidate-actionable, unsuppressed, non-exposed finding;
+    /// nothing for exposed findings. A projection of the shared finding
+    /// owner in static vocabulary; it claims no runtime mutation outcome.
+    MissedTxt,
     /// Native `ripr` badge JSON (snake_case wire shape with full counts,
     /// reason counts, and policy). Consumed by tools and CI artifacts.
     BadgeJson,
@@ -175,6 +181,13 @@ const FORMAT_SPECS: &[OutputFormatSpec] = &[
     OutputFormatSpec {
         format: OutputFormat::Github,
         cli_names: &["github"],
+        is_full_repo_analysis: false,
+        is_seam_fact_cache_backed: false,
+        is_repo_seam_inventory: false,
+    },
+    OutputFormatSpec {
+        format: OutputFormat::MissedTxt,
+        cli_names: &["missed-txt"],
         is_full_repo_analysis: false,
         is_seam_fact_cache_backed: false,
         is_repo_seam_inventory: false,
@@ -416,6 +429,7 @@ impl OutputFormat {
             | Self::RepoSarif
             | Self::RepoSarifCompact
             | Self::AgentSeamPacketsJson
+            | Self::MissedTxt
             | Self::Agent => true,
             Self::Human
             | Self::HumanFull
@@ -492,6 +506,7 @@ mod tests {
             ("badge-json", true),
             ("repo-exposure-json", true),
             ("agent", true),
+            ("missed-txt", true),
             ("human", false),
             ("human-full", false),
             ("github", false),
@@ -504,6 +519,15 @@ mod tests {
                 "{name}"
             );
         }
+    }
+
+    #[test]
+    fn parses_missed_txt_as_a_single_name() {
+        assert_eq!(
+            OutputFormat::parse_cli_name("missed-txt"),
+            Some(OutputFormat::MissedTxt)
+        );
+        assert_eq!(OutputFormat::MissedTxt.primary_cli_name(), "missed-txt");
     }
 
     #[test]

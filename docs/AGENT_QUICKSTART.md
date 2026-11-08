@@ -19,6 +19,22 @@ ripr init --agents all       # all three
 Add `--dry-run` first to see exactly what would be written. Then commit the file
 so every session sees it.
 
+## Python and TypeScript repos
+
+`--agents` looks at the repo root for `Cargo.toml`, `pyproject.toml` / `setup.py`
+/ `pytest.ini`, and `package.json` / `tsconfig.json`. A Rust repo gets the Rust
+block below. A Python or TypeScript/JavaScript repo gets a variant with the
+test command (`pytest` or `unittest`, `jest` or `vitest`) and assertion advice
+that fit, and no promise of guided `ripr repair`, which covers Rust only; the
+route is `ripr check --format agent`, then a hand-written test. A repo with
+Rust plus another language keeps the Rust block and adds a short note. The
+Cursor rule's `globs` and description follow the detected languages. Detection
+looks at the root and its immediate children only. A detected language counts
+only when `[languages].enabled` in `ripr.toml` turns it on; otherwise the block
+says those files are not analyzed and points at `ripr doctor` instead of
+promising a loop. `--force` also refreshes the Cursor front matter, but only
+when it is exactly the one ripr wrote; your own front matter is kept.
+
 ## What `--agents` does to your files
 
 - It writes a short block (about 700 tokens) between `<!-- ripr:agents:begin ... -->`
@@ -56,14 +72,12 @@ Loop (max 3 rounds per gap):
 3. WRITE   One focused test next to the related test. Use assert_eq! on exact changed
            values: every changed field, branch and boundary (below, equal, above). Not
            `.is_some()`, `.is_empty()`, `<=`, or only whole-struct equality.
-4. VERIFY  `cargo test <your_test_name>` must pass. Then run `ripr check --quiet --format json-compact`
-           once on the same root, base and saved source (new files need `git add -N PATH`).
-           Check its exit status before reading the JSON; do not change inputs before DONE.
-5. DONE    Use that same report; require exit 0 and these fields:
-           `analysis_outcome.outcome.kind`: `complete_no_findings` or `complete_with_findings`;
-           `analysis_outcome.analysis_complete`: true; `summary.findings` = `summary.exposed`.
-           Missing required fields, `analysis_outcome.document_complete: false`, or
-           `unanalyzed_working_tree: true` mean STOP. Empty `.findings` alone is never enough.
+4. VERIFY  `cargo test <your_test_name>` must pass. Then run `ripr check --quiet --format agent`
+           once more on the same root, base and saved source (new files need `git add -N PATH`).
+           Check its exit status before reading it; do not change inputs before DONE.
+5. DONE    Use that same report; require exit 0 and its last line `verify=complete|...`.
+           `verify=refused`, a missing `verify=` line, or a cut-off report mean STOP.
+           `done=` or an empty gap list alone is never enough.
            If gaps remain, return to FIND; if inputs change, repeat VERIFY before DONE.
            Report tests and static result; this does not establish runtime bug detection.
 
@@ -110,10 +124,16 @@ Cursor and Claude Code share one entry shape:
 ```json
 {
   "mcpServers": {
-    "ripr": { "command": "ripr", "args": ["mcp", "--stdio"] }
+    "ripr": {
+      "command": "ripr",
+      "args": ["mcp", "--stdio"],
+      "env": { "RIPR_MCP_TOOLS_LIST": "slim" }
+    }
   }
 }
 ```
+
+The `env` line asks for the slim `tools/list` (about 29 KB smaller at every session start; results are unchanged). Delete it if your host validates results against `outputSchema`.
 
 `ripr init --mcp` and the Cursor file were exercised against the real
 `ripr` binary. The `claude`, `codex` and Cursor clients' own registration and
@@ -137,24 +157,33 @@ For one finding, pick by what the consumer is:
 ## When the agent should stop
 
 **Done** requires the focused test to pass and the successful post-edit
-`ripr check --quiet --format json-compact` for the same root, base and saved
-source used by the loop. Use that single report for both verification and the
-done decision; if inputs change, run the check again.
-Read the complete report, not just `.findings` or the human message
-`State: no gap selected for repair`:
+`ripr check --quiet --format agent` for the same root, base and saved source
+used by the loop. Use that single report for both verification and the done
+decision; if inputs change, run the check again. Read its last line, not just
+`done=`, an empty gap list or the human message `State: no gap selected for
+repair`. That `verify=` record is projected from the producer's outcome and
+full summary counts, never from the displayed subset:
 
-- `analysis_outcome.outcome.kind` must be `complete_no_findings` or
-  `complete_with_findings`, and `analysis_outcome.analysis_complete` must be true.
-  `no_scope`, `no_changed_lines` and `no_behavioral_candidates` can also have
-  `analysis_complete: true`; they describe an empty analysis scope and do not
-  establish completion of the requested behavior review.
-- The required numeric `summary.findings` and `summary.exposed` counts must
-  match. These full-analysis counts also prevent a rendered subset from hiding
-  a remaining gap or a policy-suppressed finding.
-- `analysis_outcome.document_complete: false` means the output was truncated;
-  `unanalyzed_working_tree: true` means saved changes were not analyzed. Either
-  blocks done. These two fields are optional when the condition is absent;
-  missing outcome or summary fields do not establish completion.
+- `verify=complete|outcome=O|findings=N|exposed=N` means the outcome is
+  `complete_no_findings` or `complete_with_findings`, the full
+  `findings` and `exposed` counts are equal, and no unanalyzed working tree,
+  untracked source in an enabled language excluded from the diff, partial or
+  no-scope condition applies. A new file stays untracked until
+  `git add -N <path>`, so stage new files before the post-edit check.
+  Gitignored source is named in the notes but does not refuse.
+- `verify=refused|...|reason=R,...` names every unmet condition
+  (`outcome_missing`, `no_behavior_in_scope`, `analysis_incomplete`,
+  `gaps_remain`, `unanalyzed_working_tree`, `untracked_source_excluded`,
+  `partial_scope`, `no_scope`).
+  `no_scope`, `no_changed_lines` and `no_behavioral_candidates` are complete
+  analyses of an empty scope; they do not establish completion of the
+  requested behavior review.
+- The record is the last line, after the bounded gap lines, so a truncated
+  report cannot leave a leading success marker. A missing `verify=` line means
+  STOP.
+
+The full JSON (`--format json`) remains an explicit drilldown, not ordinary
+model input. Test execution stays a separate proof (`cargo test`).
 
 **Stop and report** the actual state when the outcome is empty, partial,
 unsupported or failed, required evidence is missing, or output is truncated.

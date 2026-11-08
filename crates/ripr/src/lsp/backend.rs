@@ -14453,6 +14453,10 @@ struct DiskContentStatKey {
     len: u64,
     modified: Option<(u64, u32)>,
     ino: u64,
+    /// Device of the file. A path that moves onto another mount (for example
+    /// a local tree replaced by a network mount) gets a new key even when the
+    /// inode number and timestamps happen to match (#12170).
+    dev: u64,
     /// Inode change time. Unlike mtime, no writer can set or restore it
     /// (#12046): an in-place same-length rewrite that puts the old mtime back
     /// still moves ctime. `None` where std exposes no change time (Windows).
@@ -14460,15 +14464,15 @@ struct DiskContentStatKey {
 }
 
 fn disk_content_stat_key(meta: &fs::Metadata) -> DiskContentStatKey {
-    let ino = {
+    let (ino, dev) = {
         #[cfg(unix)]
         {
             use std::os::unix::fs::MetadataExt;
-            meta.ino()
+            (meta.ino(), meta.dev())
         }
         #[cfg(not(unix))]
         {
-            0
+            (0, 0)
         }
     };
     let modified = meta.modified().ok().map(|instant| {
@@ -14492,6 +14496,7 @@ fn disk_content_stat_key(meta: &fs::Metadata) -> DiskContentStatKey {
         len: meta.len(),
         modified,
         ino,
+        dev,
         changed,
     }
 }
@@ -14550,6 +14555,115 @@ fn disk_change_time_is_racy(_meta: &fs::Metadata) -> bool {
     false
 }
 
+/// Filesystem types whose timestamps come from a server clock that the local
+/// racy-window check cannot compare against (#12170). A file on one of these
+/// is never cached: a lagging server clock can stamp a just-written file as
+/// older than the window and a same-length rewrite in the same server tick
+/// would then match the cached key.
+const REMOTE_FILESYSTEM_TYPES: &[&str] = &[
+    "nfs",
+    "nfs3",
+    "nfs4",
+    "cifs",
+    "smb3",
+    "smbfs",
+    "9p",
+    "afs",
+    "ceph",
+    "glusterfs",
+    "lustre",
+    "ncpfs",
+    "davfs",
+    "fuse.sshfs",
+    "fuse.rclone",
+    "fuse.s3fs",
+    "fuse.gcsfuse",
+];
+
+/// Decodes the `\040`-style octal escapes `/proc/self/mountinfo` uses.
+fn unescape_mountinfo_field(field: &str) -> String {
+    let bytes = field.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        let octal = (bytes[index] == b'\\')
+            .then(|| bytes.get(index + 1..index + 4))
+            .flatten()
+            .and_then(|digits| std::str::from_utf8(digits).ok())
+            .and_then(|digits| u8::from_str_radix(digits, 8).ok());
+        match octal {
+            Some(byte) => {
+                out.push(byte);
+                index += 4;
+            }
+            None => {
+                out.push(bytes[index]);
+                index += 1;
+            }
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// The filesystem type of the longest mount point containing `path`, read from
+/// `mountinfo` text. `None` when no mount line matches.
+fn mountinfo_fstype_for(mountinfo: &str, path: &Path) -> Option<String> {
+    let mut best: Option<(usize, String)> = None;
+    for line in mountinfo.lines() {
+        let Some((before, after)) = line.split_once(" - ") else {
+            continue;
+        };
+        let (Some(raw_mount_point), Some(fstype)) = (
+            before.split_whitespace().nth(4),
+            after.split_whitespace().next(),
+        ) else {
+            continue;
+        };
+        let mount_point = unescape_mountinfo_field(raw_mount_point);
+        let mount_path = Path::new(&mount_point);
+        if path.starts_with(mount_path) {
+            let depth = mount_path.components().count();
+            if best
+                .as_ref()
+                .is_none_or(|(best_depth, _)| depth >= *best_depth)
+            {
+                best = Some((depth, fstype.to_string()));
+            }
+        }
+    }
+    best.map(|(_, fstype)| fstype)
+}
+
+fn fstype_is_remote(fstype: &str) -> bool {
+    // Any FUSE subtype other than the block-device `fuseblk` (ntfs-3g, exfat)
+    // may be network-backed (ftpfs, gvfsd-fuse, ...), so it is treated as
+    // remote: an unneeded reread is only a cost.
+    REMOTE_FILESYSTEM_TYPES.contains(&fstype)
+        || (fstype != "fuseblk" && (fstype == "fuse" || fstype.starts_with("fuse.")))
+}
+
+/// Whether the digest of `path` must not be cached because its timestamps may
+/// come from another machine's clock. Linux reads the mount table; a path or
+/// table that cannot be resolved is treated as remote (a reread is only a
+/// cost). Other platforms keep the local-clock racy window (documented limit).
+fn disk_path_may_be_remote(path: &Path) -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        let Ok(canonical) = fs::canonicalize(path) else {
+            return true;
+        };
+        let Ok(table) = fs::read_to_string("/proc/self/mountinfo") else {
+            return true;
+        };
+        mountinfo_fstype_for(&table, &canonical).is_none_or(|fstype| fstype_is_remote(&fstype))
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = path;
+        false
+    }
+}
+
 type DiskEqualityDigestCache = Mutex<BTreeMap<PathBuf, (DiskContentStatKey, Option<String>)>>;
 
 static DISK_EQUALITY_DIGEST_CACHE: LazyLock<DiskEqualityDigestCache> =
@@ -14573,6 +14687,15 @@ fn cached_disk_content_digest(
     stat_key: &DiskContentStatKey,
     bypass_cache: bool,
 ) -> Option<String> {
+    cached_disk_content_digest_with(path, stat_key, bypass_cache, disk_path_may_be_remote)
+}
+
+fn cached_disk_content_digest_with(
+    path: &Path,
+    stat_key: &DiskContentStatKey,
+    bypass_cache: bool,
+    is_remote: impl FnOnce(&Path) -> bool,
+) -> Option<String> {
     // A bypass lookup never consults the cache, so no earlier entry can answer it.
     if !bypass_cache
         && let Ok(cache) = DISK_EQUALITY_DIGEST_CACHE.lock()
@@ -14586,6 +14709,9 @@ fn cached_disk_content_digest(
     DISK_EQUALITY_READS.with(|reads| reads.set(reads.get() + 1));
 
     let digest = super::state::read_saved_bytes(path).map(|disk| content_digest(&disk));
+    // Checked on the miss path only, so a cache hit never reads the mount
+    // table; an entry can only exist for a path that was admitted as local.
+    let bypass_cache = bypass_cache || is_remote(path);
     if let Ok(mut cache) = DISK_EQUALITY_DIGEST_CACHE.lock() {
         if bypass_cache {
             // Drop any older entry too, so an uncacheable read never leaves a
@@ -14609,9 +14735,9 @@ fn cached_disk_content_digest(
 /// any later rewrite happens at or after `now`, so its floored timestamp
 /// differs from the cached one whenever the filesystem's timestamp granularity
 /// is no larger than the window (2 s FAT is covered). That relies on the
-/// filesystem stamping with a clock that agrees with the local clock; a
-/// network mount with a skewed clock can still reuse a digest across a
-/// same-key rewrite. A clock stepping backwards reads as racy, which is safe
+/// filesystem stamping with a clock that agrees with the local clock, so on
+/// Linux a file on a network mount (see [`REMOTE_FILESYSTEM_TYPES`]) is never
+/// cached (#12170); other Unix platforms keep that limit. A clock stepping backwards reads as racy, which is safe
 /// (#12115).
 fn disk_bytes_equal_text(path: &Path, text: &str) -> bool {
     let Ok(text_len) = u64::try_from(text.len()) else {
@@ -14637,8 +14763,8 @@ fn disk_bytes_equal_text(path: &Path, text: &str) -> bool {
 #[cfg(test)]
 mod disk_bytes_equal_text_tests {
     use super::{
-        DISK_EQUALITY_READS, cached_disk_content_digest, disk_bytes_equal_text,
-        disk_content_stat_key, reset_disk_equality_read_cache_for_tests,
+        DISK_EQUALITY_READS, cached_disk_content_digest, cached_disk_content_digest_with,
+        disk_bytes_equal_text, disk_content_stat_key, reset_disk_equality_read_cache_for_tests,
     };
 
     fn temp_disk_path(label: &str) -> std::path::PathBuf {
@@ -14669,6 +14795,70 @@ mod disk_bytes_equal_text_tests {
             .open(path)
             .and_then(|file| file.set_modified(when))
             .map_err(|err| format!("set mtime failed: {err}"))
+    }
+
+    #[test]
+    fn mountinfo_classifies_remote_mounts_by_longest_prefix() {
+        let table = "\
+24 1 8:1 / / rw - ext4 /dev/sda1 rw
+40 24 0:35 / /mnt/share rw - nfs4 srv:/x rw
+41 40 8:2 / /mnt/share/local\\040disk rw - ext4 /dev/sdb rw
+";
+        let fstype = |p: &str| super::mountinfo_fstype_for(table, std::path::Path::new(p));
+        assert_eq!(fstype("/work/u/a.rs").as_deref(), Some("ext4"));
+        assert_eq!(fstype("/mnt/share/a.rs").as_deref(), Some("nfs4"));
+        assert_eq!(
+            fstype("/mnt/share/local disk/a.rs").as_deref(),
+            Some("ext4")
+        );
+        assert!(super::fstype_is_remote("nfs4"));
+        assert!(super::fstype_is_remote("cifs"));
+        assert!(!super::fstype_is_remote("ext4"));
+        assert!(!super::fstype_is_remote("tmpfs"));
+        assert!(super::fstype_is_remote("fuse.ftpfs"));
+        assert!(super::fstype_is_remote("fuse.gvfsd-fuse"));
+        assert!(super::fstype_is_remote("fuse"));
+        assert!(!super::fstype_is_remote("fuseblk"));
+    }
+
+    #[test]
+    fn nfs_mount_table_marks_workspace_paths_remote() {
+        assert!(super::fstype_is_remote("nfs"));
+        let table = "1 0 0:1 / / rw - nfs srv:/ rw\n";
+        let fstype = super::mountinfo_fstype_for(table, std::path::Path::new("/w/f.rs"));
+        assert!(fstype.is_some_and(|t| super::fstype_is_remote(&t)));
+    }
+
+    #[test]
+    fn remote_path_digest_is_never_cached_but_local_is() -> Result<(), String> {
+        reset_disk_equality_read_cache_for_tests();
+        let path = temp_disk_path("remote-admission");
+        std::fs::write(&path, "abc").map_err(|err| format!("write failed: {err}"))?;
+        backdate(&path)?;
+        past_racy_window();
+        let meta = std::fs::metadata(&path).map_err(|err| format!("stat failed: {err}"))?;
+        let key = disk_content_stat_key(&meta);
+        let _ = cached_disk_content_digest_with(&path, &key, false, |_| true);
+        let _ = cached_disk_content_digest_with(&path, &key, false, |_| true);
+        let remote_reads = DISK_EQUALITY_READS.with(std::cell::Cell::get);
+        reset_disk_equality_read_cache_for_tests();
+        let _ = cached_disk_content_digest_with(&path, &key, false, |_| false);
+        let _ = cached_disk_content_digest_with(&path, &key, false, |_| false);
+        let local_reads = DISK_EQUALITY_READS.with(std::cell::Cell::get);
+        let _ = std::fs::remove_file(&path);
+        if remote_reads != 2 || local_reads != 1 {
+            return Err(format!(
+                "remote_reads={remote_reads} local_reads={local_reads}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn malformed_mountinfo_line_does_not_hide_later_mounts() {
+        let table = "garbage\n40 24 0:35 / /mnt/share rw - nfs4 srv:/x rw\n";
+        let fstype = super::mountinfo_fstype_for(table, std::path::Path::new("/mnt/share/a"));
+        assert_eq!(fstype.as_deref(), Some("nfs4"));
     }
 
     #[test]

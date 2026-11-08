@@ -45,7 +45,8 @@ They answer different questions and stack. Use ripr first, on the diff, to
 find where a focused test is missing. Use mutation testing to confirm at
 runtime. Use formal verification for properties you need proven.
 [`ripr calibrate cargo-mutants`](TARGETED_TEST_WORKFLOW.md) compares ripr's
-static findings with a cargo-mutants run you did.
+static findings with a cargo-mutants run you did. Switching from it:
+[Coming from cargo-mutants](FROM_CARGO_MUTANTS.md).
 
 ## What ripr does not claim
 
