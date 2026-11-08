@@ -11,3 +11,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — typescript_constructor_callback_no_path (2)
+
+Reason:
+RIPR-SPEC-0243: refresh new fixture after rebase on the renamed Evidence stage label (#13588)
+
+Command:
+`cargo xtask goldens bless typescript_constructor_callback_no_path --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
