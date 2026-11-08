@@ -2473,6 +2473,63 @@ fn pilot_offers_agent_repair_only_past_the_repair_packet_flip() -> Result<(), St
     Ok(())
 }
 
+/// #13624: a gap beside a skipped unreadable path may only be a test hidden
+/// there, so the same route-ready seam that is offered with no limitation is
+/// neither ranked nor offered a repair on any surface once a path was skipped.
+#[test]
+fn pilot_offers_no_gap_or_repair_while_an_unreadable_path_was_skipped() -> Result<(), String> {
+    let artifacts = pilot_artifacts();
+    let entries = [route_ready_entry(&["tests/pricing.rs"])];
+    let command = format!(
+        "ripr agent repair --root {} --seam-id {} --phase before",
+        crate::agent::loop_commands::shell_arg(&crate::agent::loop_commands::bound_root(".")),
+        entries[0].seam.id().as_str()
+    );
+    // Positive control: with no limitation the repair is offered.
+    let control: serde_json::Value = serde_json::from_str(&render_pilot_summary_json(
+        &entries,
+        pilot_context(&artifacts),
+    ))
+    .map_err(|e| e.to_string())?;
+    assert_eq!(
+        control["next"]["repair_command"].as_str(),
+        Some(command.as_str())
+    );
+
+    let limitations = [AnalysisLimitation::new(
+        AnalysisLimitationKind::LanguageScopeUnsupported,
+        AnalysisStage::LanguageAdapter,
+        AnalysisRecovery::new(
+            AnalysisRecoveryKind::Retry,
+            "Restore read access, then re-run.",
+        )?,
+    )
+    .with_path("tests/locked")?
+    .with_affected_items(1)?
+    .with_detail("unchanged Rust path could not be read")?];
+    let mut context = pilot_context(&artifacts);
+    context.inventory_evidence_limitations = &limitations;
+    let json = render_pilot_summary_json(&entries, context);
+    let summary: serde_json::Value = serde_json::from_str(&json).map_err(|e| e.to_string())?;
+    assert_eq!(
+        summary["top_actionable_seams"],
+        serde_json::json!([]),
+        "{json}"
+    );
+    assert!(summary["next"]["repair_command"].is_null(), "{json}");
+    assert!(summary["next"]["outcome_command"].is_null(), "{json}");
+    let terminal = render_pilot_terminal(&entries, context);
+    let md = render_pilot_summary_md(&entries, context);
+    for (name, text) in [("terminal", &terminal), ("markdown", &md), ("json", &json)] {
+        assert!(!text.contains(&command), "{name} offered a repair\n{text}");
+    }
+    assert!(terminal.contains("tests/locked"), "{terminal}");
+    assert!(terminal.contains("no gap is ranked"), "{terminal}");
+    assert!(!terminal.contains("some changed files"), "{terminal}");
+    assert!(md.contains("no gap is ranked"), "{md}");
+    Ok(())
+}
+
 /// #11292: `has_repair_route` mirrors the two conjuncts of
 /// `repair_start_command_for`; this keeps the two from drifting.
 #[test]

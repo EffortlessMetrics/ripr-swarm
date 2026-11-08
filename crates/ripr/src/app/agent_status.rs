@@ -1783,6 +1783,54 @@ struct PilotDeclinedOnly {
     evidence_failed: bool,
 }
 
+/// Paths a complete `ripr pilot` run skipped because they were unreadable
+/// (#13624), read from the summary's `inventory_evidence_limitations`. Pilot
+/// ranks and offers nothing then, so a rerun changes nothing until read
+/// access is restored. Not a failed evidence pass and not transient.
+fn pilot_unreadable_paths(root: &Path) -> Option<Vec<String>> {
+    let text = std::fs::read_to_string(root.join(PILOT_SUMMARY_ARTIFACT)).ok()?;
+    let summary = serde_json::from_str::<Value>(&text).ok()?;
+    let complete = summary.pointer("/status").and_then(Value::as_str) == Some("complete");
+    let no_seams = summary
+        .pointer("/top_actionable_seams")
+        .and_then(Value::as_array)
+        .is_some_and(Vec::is_empty);
+    let no_repair_start = summary
+        .pointer("/next/repair_command")
+        .is_some_and(Value::is_null);
+    if !(complete && no_seams && no_repair_start) {
+        return None;
+    }
+    let paths = summary
+        .pointer("/inventory_evidence_limitations")
+        .and_then(Value::as_array)?
+        .iter()
+        .filter(|entry| {
+            entry.pointer("/category").and_then(Value::as_str)
+                == Some(
+                    crate::analysis_outcome::AnalysisLimitationKind::LanguageScopeUnsupported
+                        .as_str(),
+                )
+        })
+        .filter_map(|entry| entry.pointer("/path").and_then(Value::as_str))
+        .map(|path| crate::terminal_text::terminal_safe(path.to_string()))
+        .collect::<Vec<_>>();
+    (!paths.is_empty()).then_some(paths)
+}
+
+fn pilot_unreadable_paths_message(paths: &[String]) -> String {
+    let listed = paths.iter().take(3).cloned().collect::<Vec<_>>().join(", ");
+    let more = paths.len().saturating_sub(3);
+    let more = if more > 0 {
+        format!(" and {more} more")
+    } else {
+        String::new()
+    };
+    format!(
+        "the last complete `ripr pilot` run ranked no gap because it could not read {listed}{more}: a gap may only be a test hidden in an unreadable path, so none is ranked or offered. This is an unreadable path, not a failed evidence pass: restore read access, then rerun `ripr pilot`. `target/ripr/pilot/pilot-summary.json` lists them under `inventory_evidence_limitations`"
+    )
+}
+
 fn pilot_declined_only(root: &Path) -> Option<PilotDeclinedOnly> {
     let text = std::fs::read_to_string(root.join(PILOT_SUMMARY_ARTIFACT)).ok()?;
     let summary = serde_json::from_str::<Value>(&text).ok()?;
@@ -2277,6 +2325,16 @@ fn legacy_next_command(
                     message: pilot_rust_excluded_message(&excluded),
                 });
             }
+            return None;
+        }
+        // #13624: pilot skipped an unreadable Rust path and ranked nothing,
+        // so a rerun changes nothing until read access is restored.
+        if let Some(paths) = pilot_unreadable_paths(root) {
+            warnings.push(AgentStatusWarning {
+                kind: "pilot_unreadable_rust_path_no_repair_target".to_string(),
+                artifact: PILOT_SUMMARY_ARTIFACT.to_string(),
+                message: pilot_unreadable_paths_message(&paths),
+            });
             return None;
         }
         // #5497: pilot withheld every seam as a static limitation, so a

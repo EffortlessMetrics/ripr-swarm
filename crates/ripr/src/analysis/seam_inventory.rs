@@ -15941,4 +15941,26 @@ mod first {{ pub struct Alpha; impl Alpha {{ pub fn new(x: i32) -> i32 {{ if x >
         let _ = std::fs::remove_dir_all(&root);
         Ok(())
     }
+
+    #[test]
+    fn unreadable_path_refusal_names_the_path_not_a_pass_wide_failure() -> Result<(), String> {
+        use crate::analysis_outcome::{
+            AnalysisLimitationKind, AnalysisRecovery, AnalysisRecoveryKind, AnalysisStage,
+        };
+        let limitation = AnalysisLimitation::new(
+            AnalysisLimitationKind::LanguageScopeUnsupported,
+            AnalysisStage::LanguageAdapter,
+            AnalysisRecovery::new(AnalysisRecoveryKind::Retry, "Restore read access.")?,
+        )
+        .with_path("src/locked")?;
+        let refusal = refuse_failed_evidence(&[limitation], "repo badge")
+            .err()
+            .ok_or("a limitation must refuse")?;
+        assert!(
+            refusal.contains("unreadable path `src/locked`"),
+            "{refusal}"
+        );
+        assert!(!refusal.contains("pass-wide"), "{refusal}");
+        Ok(())
+    }
 }

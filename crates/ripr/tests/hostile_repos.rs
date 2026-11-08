@@ -2437,17 +2437,20 @@ fn with_locked_rust_dir(
 #[test]
 fn repo_exposure_json_discloses_an_unreadable_unchanged_directory() -> Result<(), String> {
     with_locked_rust_dir("unread-repo-exposure", |root| {
-        let ran = ripr(
-            root,
-            &[
-                "check",
-                "--mode",
-                "instant",
-                "--format",
-                "repo-exposure-json",
-            ],
-            &[],
-        )?;
+        let args = [
+            "check",
+            "--mode",
+            "instant",
+            "--format",
+            "repo-exposure-json",
+        ];
+        // The second run is a warm cache hit and must still disclose the skip.
+        let first = ripr(root, &args, &[])?;
+        assert_sane(&first, "cold repo-exposure-json beside a locked directory")?;
+        if !first.stdout.contains("\"path\": \"src/locked\"") {
+            return Err(format!("cold run must name src/locked\n{}", first.stdout));
+        }
+        let ran = ripr(root, &args, &[])?;
         assert_sane(&ran, "repo-exposure-json beside a locked directory")?;
         let document: serde_json::Value = serde_json::from_str(&ran.stdout).map_err(|e| {
             format!(
@@ -2471,6 +2474,37 @@ fn repo_exposure_json_discloses_an_unreadable_unchanged_directory() -> Result<()
         // The readable seam is still analyzed rather than dropped with the run.
         if document["seams"].as_array().is_none_or(Vec::is_empty) {
             return Err(format!("readable seams were dropped\n{}", ran.stdout));
+        }
+        Ok(())
+    })
+}
+
+/// `--format repo-sarif` names the skipped path in the run properties and in
+/// the notification, and does not claim an opaque-stand-in failure (#13624).
+#[cfg(unix)]
+#[test]
+fn repo_sarif_discloses_an_unreadable_unchanged_directory() -> Result<(), String> {
+    with_locked_rust_dir("unread-repo-sarif", |root| {
+        let ran = ripr(
+            root,
+            &["check", "--mode", "instant", "--format", "repo-sarif"],
+            &[],
+        )?;
+        assert_sane(&ran, "repo-sarif beside a locked directory")?;
+        let sarif: serde_json::Value = serde_json::from_str(&ran.stdout)
+            .map_err(|e| format!("repo-sarif is not JSON: {e}\n{}", ran.stdout))?;
+        let limitation = &sarif["runs"][0]["properties"]["limitations"][0];
+        if limitation["category"] != "language_scope_unsupported"
+            || limitation["path"] != "src/locked"
+        {
+            return Err(format!("run limitation must name src/locked: {limitation}"));
+        }
+        let message =
+            sarif["runs"][0]["invocations"][0]["toolExecutionNotifications"][0]["message"]["text"]
+                .as_str()
+                .unwrap_or_default();
+        if !message.contains("src/locked") || message.contains("opaque stand-in") {
+            return Err(format!("notification must name the path: {message}"));
         }
         Ok(())
     })
@@ -2502,6 +2536,22 @@ fn pilot_discloses_an_unreadable_unchanged_directory_instead_of_aborting() -> Re
             if !summary.contains(needle) {
                 return Err(format!("pilot summary missing `{needle}`\n{summary}"));
             }
+        }
+        // A gap beside a skipped path may only be a test hidden there: the
+        // readable seam must not be ranked or offered a repair.
+        let parsed: serde_json::Value = serde_json::from_str(&summary)
+            .map_err(|e| format!("pilot summary is not JSON: {e}"))?;
+        if !parsed["next"]["repair_command"].is_null()
+            || parsed["top_actionable_seams"] != serde_json::json!([])
+            || ran.stdout.contains("agent repair")
+        {
+            return Err(format!(
+                "pilot offered a gap or repair beside a skipped path\n{}\n{summary}",
+                ran.stdout
+            ));
+        }
+        if !ran.stdout.contains("src/locked") {
+            return Err(format!("terminal must name src/locked\n{}", ran.stdout));
         }
         Ok(())
     })
