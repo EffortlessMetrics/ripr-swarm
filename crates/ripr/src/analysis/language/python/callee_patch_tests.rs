@@ -320,7 +320,17 @@ fn an_edit_that_reaches_the_patched_callee_transitively_keeps_the_limit() -> Res
 /// `mocked_module`.
 #[test]
 fn receiver_literal_and_target_shapes_keep_the_limit() -> Result<(), String> {
-    let bodies: [&str; 9] = [
+    let bodies: [&str; 15] = [
+        // A tainted receiver read through a property, with no call at all.
+        "    base = amount * 3\n    self.x = base\n    return self.rate\n",
+        // A tainted container subscript or iteration may run user code.
+        "    base = amount * 3\n    obj = base\n    return obj[0]\n",
+        "    base = amount * 3\n    obj = base\n    for item in obj:\n        pass\n    return 1\n",
+        "    base = amount * 3\n    obj = base\n    return 1 in obj\n",
+        // A semicolon hides the first assignment from the split.
+        "    base = amount * 3\n    key = base; n = 2\n    return rate_for(key)\n",
+        // Template strings evaluate their fields like f-strings.
+        "    base = amount * 3\n    key = t\"{base}-x\"\n    return rate_for(key)\n",
         // B1: tainted receiver, no tainted argument.
         "    base = amount * 3\n    self.x = base\n    return self.compute()\n",
         "    base = amount * 3\n    obj.scale = base\n    return obj.run()\n",

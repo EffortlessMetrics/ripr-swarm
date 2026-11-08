@@ -239,7 +239,8 @@ fn blank_literals(text: &str) -> Option<String> {
             .into_iter()
             .rev()
             .collect();
-        let formatted = prefix.len() <= 2 && prefix.to_ascii_lowercase().contains('f');
+        // `f"..."` and template `t"..."` strings both evaluate their fields.
+        let formatted = prefix.len() <= 2 && prefix.to_ascii_lowercase().contains(['f', 't']);
         let triple = chars.get(index + 1) == Some(&ch) && chars.get(index + 2) == Some(&ch);
         let width = if triple { 3 } else { 1 };
         out.push(ch);
@@ -503,6 +504,13 @@ fn edit_reaches_owner_calls(
         if text.starts_with("global ") || text.starts_with("nonlocal ") {
             return true;
         }
+        // `a = b; c = d` hides all but the last assignment from the split.
+        if text.contains(';') {
+            return true;
+        }
+        if tainted_receiver(text, &taint) {
+            return true;
+        }
         if is_function_header(text) {
             if tainted(text) {
                 return true;
@@ -530,6 +538,24 @@ fn edit_reaches_owner_calls(
         }
     }
     false
+}
+
+/// Whether a tainted name is used where Python may run its own code without a
+/// visible call: an attribute read or write (a property or setter), a
+/// subscript, or the right side of `in` (iteration or membership).
+fn tainted_receiver(text: &str, taint: &[&str]) -> bool {
+    let all = tokens(text);
+    all.iter().enumerate().any(|(position, (start, token))| {
+        if !taint.contains(token) {
+            return false;
+        }
+        let after = text[start + token.len()..].trim_start();
+        let follows_in = position
+            .checked_sub(1)
+            .and_then(|prev| all.get(prev))
+            .is_some_and(|(_, prev)| *prev == "in");
+        after.starts_with('.') || after.starts_with('[') || follows_in
+    })
 }
 
 /// Every call of `text` as `(callee, arguments)`: the callee is `Some(name)`
