@@ -104,6 +104,11 @@ Resolution law:
 - Recovery and status follow-up commands for an explicit store repeat `--store`
   / the portable locator. Status projections do not hardcode the default
   directory for an explicit-store attempt.
+- When a publisher finishes between the edit cage reading a file's link count
+  and listing its directory, the staging name is gone and the listing shows one
+  name for the inode. The cage re-stats the path and accepts it only if the
+  same device and inode now has exactly one link. A second link outside the
+  listed directory keeps the path refused (#12848).
 - An explicit store outside `target/ripr` is included in the edit cage's
   expected operational writes before baseline capture. Stores already under
   `target/ripr` stay covered by that subtree.
