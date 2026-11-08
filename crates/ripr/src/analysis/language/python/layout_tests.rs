@@ -110,9 +110,54 @@ fn a_sibling_project_package_attribute_call_credits_nothing() -> Result<(), Stri
             2,
         )?;
         let exposed = finding.class == ExposureClass::Exposed;
-        if !own && exposed {
-            return Err("a sibling project's `pkg.core` test credited project a".to_string());
+        if own != exposed {
+            return Err(format!(
+                "`pkg.core.limit` test in project {test_project} gave {:?}",
+                finding.class
+            ));
         }
+    }
+    Ok(())
+}
+
+#[test]
+fn a_project_name_without_a_rival_credits_only_tests_inside_the_project() -> Result<(), String> {
+    // No other `core` exists, yet a repo-root test importing `core` is not a
+    // test of `svc/a/core.py`: the project-relative name is scoped to `svc/a`.
+    let finding = analyze_one_line(
+        "layout-outside-root",
+        &[
+            ("svc/a/pyproject.toml", PROJECT),
+            ("svc/a/core.py", CORE_PY),
+            ("tests/test_core.py", STRONG_TEST),
+        ],
+        "svc/a/core.py",
+        2,
+    )?;
+    if finding.class == ExposureClass::Exposed {
+        return Err("a test outside `svc/a` credited its project-relative name".to_string());
+    }
+    Ok(())
+}
+
+#[test]
+fn a_rival_definition_module_equal_to_the_project_name_stays_withheld() -> Result<(), String> {
+    // The rival `x/src/core.py` is importable as `core`, the owner's
+    // project-relative name too; a test outside the owner's project importing
+    // `from core import limit` is the rival's.
+    let finding = analyze_one_line(
+        "layout-rival-exact",
+        &[
+            ("svc/b/pyproject.toml", PROJECT),
+            ("svc/b/core.py", CORE_PY),
+            ("x/src/core.py", CORE_PY),
+            ("x/tests/test_core.py", STRONG_TEST),
+        ],
+        "svc/b/core.py",
+        2,
+    )?;
+    if finding.class == ExposureClass::Exposed {
+        return Err("a rival `core` test credited `svc/b/core.py`".to_string());
     }
     Ok(())
 }
