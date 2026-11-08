@@ -48,36 +48,41 @@ jobs:
       - name: Mutate the pinned packages with Stryker
         shell: bash
         run: |
-          set -euo pipefail
+          set -uo pipefail
           corpus=benchmarks/mutation_spot_check/corpus-typescript.json
           stryker=$(jq -r .stryker.version "$corpus")
-          mkdir -p "$RUNNER_TEMP/corpus"
-          : > "$RUNNER_TEMP/xtask-args"
+          reports="$GITHUB_WORKSPACE/target/ripr/reports"
+          status="$reports/typescript-stryker-status.tsv"
+          mkdir -p "$RUNNER_TEMP/corpus" "$reports"
+          : > "$status"; : > "$RUNNER_TEMP/xtask-args"
           for name in $(jq -r '.packages[].name' "$corpus"); do
-            url=$(jq -r --arg n "$name" '.packages[]|select(.name==$n).url' "$corpus")
-            sha=$(jq -r --arg n "$name" '.packages[]|select(.name==$n).sha' "$corpus")
-            glob=$(jq -r --arg n "$name" '.packages[]|select(.name==$n).mutate' "$corpus")
-            [[ $sha =~ ^[0-9a-f]{40}$ ]] || { echo "bad sha for $name"; exit 1; }
+            pkg() { jq -r --arg n "$name" ".packages[]|select(.name==\$n).$1" "$corpus"; }
+            url=$(pkg url); sha=$(pkg sha); glob=$(pkg mutate)
             dir="$RUNNER_TEMP/corpus/$name"
-            mkdir "$dir" && cd "$dir"
-            git init -q && git remote add origin "$url"
-            git fetch -q --depth 1 origin "$sha" && git checkout -q FETCH_HEAD
-            [ "$(git rev-parse HEAD)" = "$sha" ] || { echo "pin mismatch for $name"; exit 1; }
-            npm install --ignore-scripts --no-audit --no-fund --no-package-lock
-            npm install --no-save --ignore-scripts --no-audit --no-fund --no-package-lock "@stryker-mutator/core@$stryker" "@stryker-mutator/vitest-runner@$stryker"
-            npx stryker run --testRunner vitest --plugins @stryker-mutator/vitest-runner --reporters json --mutate "$glob" --concurrency 2 || echo "stryker exited nonzero for $name"
-            [ -f reports/mutation/mutation.json ] && printf -- '--repo %s=%s --stryker-report %s=%s/reports/mutation/mutation.json ' "$name" "$dir" "$name" "$dir" >> "$RUNNER_TEMP/xtask-args"
+            rc=0
+            { [[ $sha =~ ^[0-9a-f]{40}$ ]] && mkdir "$dir" && cd "$dir" \
+              && git init -q && git remote add origin "$url" \
+              && git fetch -q --depth 1 origin "$sha" && git checkout -q FETCH_HEAD \
+              && [ "$(git rev-parse HEAD)" = "$sha" ] \
+              && npm install --ignore-scripts --no-audit --no-fund --no-package-lock \
+              && npm install --no-save --ignore-scripts --no-audit --no-fund --no-package-lock "@stryker-mutator/core@$stryker" "@stryker-mutator/vitest-runner@$stryker" \
+              && npx stryker run --testRunner vitest --plugins @stryker-mutator/vitest-runner --reporters json --mutate "$glob" --concurrency 2; } || rc=$?
             cd "$GITHUB_WORKSPACE"
+            printf '%s\t%s\n' "$name" "$rc" >> "$status"
+            if [ -f "$dir/reports/mutation/mutation.json" ]; then
+              printf -- '--repo %s=%s --stryker-report %s=%s/reports/mutation/mutation.json ' "$name" "$dir" "$name" "$dir" >> "$RUNNER_TEMP/xtask-args"
+            fi
           done
           [ -s "$RUNNER_TEMP/xtask-args" ] || { echo "no Stryker report was produced"; exit 1; }
 
       - name: Score ripr against the Stryker outcomes
-        # Advisory lane: a scoring failure must not hide the receipt upload.
+        # Advisory lane: a scoring failure must not hide the receipt upload;
+        # the final step turns a missing receipt into a red job.
         continue-on-error: true
         shell: bash
         run: cargo xtask mutation-spot-check $(cat "$RUNNER_TEMP/xtask-args")
 
-      - name: Upload the spot-check receipt
+      - name: Upload the spot-check receipt and per-package Stryker status
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -85,4 +90,15 @@ jobs:
           path: |
             target/ripr/reports/mutation-spot-check.json
             target/ripr/reports/mutation-spot-check.md
-          if-no-files-found: warn
+            target/ripr/reports/typescript-stryker-status.tsv
+          if-no-files-found: error
+
+      - name: Fail when the receipt is missing or a package failed
+        if: always()
+        shell: bash
+        run: |
+          status=target/ripr/reports/typescript-stryker-status.tsv
+          [ -s target/ripr/reports/mutation-spot-check.json ] || { echo "no mutation-spot-check receipt was written"; exit 1; }
+          [ -f "$status" ] || { echo "no per-package Stryker status was recorded"; exit 1; }
+          bad=$(awk -F'\t' '$2 != 0 {print $1 " (exit " $2 ")"}' "$status")
+          [ -z "$bad" ] || { echo "Stryker or setup failed for: $bad"; exit 1; }

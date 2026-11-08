@@ -125,6 +125,10 @@ const FLAGGED_OR_UNKNOWN_CLASSES: &[&str] = &[
 const RECALL_LANGUAGES: &[&str] = &["rust", "python", "typescript"];
 /// Language of every repo this harness scores: it drives cargo-mutants.
 const HARNESS_LANGUAGE: &str = "rust";
+/// Scored claim pairs (canonical_precise, strongly_gripped or ungripped, caught
+/// or missed) a synthetic-diff language needs before `recall_of_missed`
+/// reports it as established rather than `insufficient_sample`.
+const MIN_SCORED_FOR_ESTABLISHED: usize = 30;
 const REDERIVE_USAGE: &str =
     "usage: cargo xtask mutation-spot-check --rederive-summaries <mutation-spot-check.json>";
 const USAGE: &str = "usage: cargo xtask mutation-spot-check --repo <name>=<checkout> [--repo ...] [--mutants-out <name>=<mutants.out dir>] [--run-mutants] [--mutants-arg <name>=<arg>] [--jobs <n>] [--mutant-timeout-secs <n>] [--examples <n>] [--ripr <binary>]
@@ -1505,13 +1509,13 @@ fn replacement_criterion(
             "threshold": null,
             "observed": null,
             "status": "not_established",
-            "reason": "no real-mutant corpus has been run for Python or TypeScript; no figure is claimed",
+            "reason": "Python has no real-mutant corpus. TypeScript is measured only by the synthetic-diff verdict method (see synthetic_diff_verdict), which is not the span-join agreement this criterion is defined over; no figure is claimed here and the criterion fails closed",
             "scope": ["python", "typescript"],
         }),
     ];
     let verdict = replacement_verdict(&criteria);
     json!({
-        "claim_boundary": "Advisory. Answers whether ripr usably replaces cargo-mutants on the recorded evidence. Precision and flagged-or-unknown recall use the R2 bars of the release ladder in docs/METRICS.md; scored coverage and the time ratio are agent-chosen technical bars whose rationale is recorded per criterion in threshold_source. A replaces verdict requires every thresholded criterion met and none not_established. It is fail-closed by design: `replaces` is currently unreachable because the Python/TypeScript criterion is not_established until a real-mutant corpus exists. The time criterion is met on one crate, one diff and one run; it is not a distribution or a general speed claim. It is not suite adequacy and does not mean ripr runs or substitutes for mutation testing. Scope is Rust on the recorded crates and checkout revisions only.",
+        "claim_boundary": "Advisory. Answers whether ripr usably replaces cargo-mutants on the recorded evidence. Precision and flagged-or-unknown recall use the R2 bars of the release ladder in docs/METRICS.md; scored coverage and the time ratio are agent-chosen technical bars whose rationale is recorded per criterion in threshold_source. A replaces verdict requires every thresholded criterion met and none not_established. It is fail-closed by design: `replaces` is currently unreachable because the Python/TypeScript criterion stays not_established: Python has no real-mutant corpus and TypeScript is measured only by the separate synthetic-diff method. The time criterion is met on one crate, one diff and one run; it is not a distribution or a general speed claim. It is not suite adequacy and does not mean ripr runs or substitutes for mutation testing. Scope is Rust on the recorded crates and checkout revisions only.",
         "criteria": criteria,
         "verdict": verdict["verdict"],
         "not_met": verdict["not_met"],
@@ -1628,15 +1632,49 @@ fn recall_of_missed(outcomes: &Value, language_outcomes: &BTreeMap<String, Value
         .chain(language_outcomes.keys().map(String::as_str))
     {
         let entry = match language_outcomes.get(language) {
-            Some(table) => {
+            Some(table) if language == HARNESS_LANGUAGE => {
                 let mut counts = recall_counts(table);
                 counts.insert("status".into(), json!("established"));
-                if language != HARNESS_LANGUAGE {
+                Value::Object(counts)
+            }
+            Some(table) => {
+                // A synthetic-diff language is established only on a sample
+                // large enough for a share to mean something.
+                let scored = sum_outcomes(table, |disposition, class, outcome| {
+                    disposition == CANONICAL_PRECISE
+                        && matches!(class, "strongly_gripped" | "ungripped")
+                        && SCOREABLE_OUTCOMES.contains(&outcome)
+                });
+                let mut counts = if scored >= MIN_SCORED_FOR_ESTABLISHED {
+                    let mut counts = recall_counts(table);
+                    counts.insert("status".into(), json!("established"));
+                    counts
+                } else {
+                    let mut counts = serde_json::Map::new();
+                    counts.insert("status".into(), json!("insufficient_sample"));
                     counts.insert(
-                        "agreement_method".into(),
-                        json!(synthetic_diff::AGREEMENT_METHOD),
+                        "reason".into(),
+                        json!("too few scored synthetic-diff pairs for a recall figure; none is claimed"),
                     );
-                }
+                    counts.insert(
+                        "canonical_precise".into(),
+                        json!(sum_outcomes(table, |d, _, _| d == CANONICAL_PRECISE)),
+                    );
+                    counts.insert(
+                        "missed_total".into(),
+                        json!(sum_outcomes(table, |_, _, o| o == "missed")),
+                    );
+                    counts
+                };
+                counts.insert("scored_claim_mutants".into(), json!(scored));
+                counts.insert(
+                    "minimum_scored_claim_mutants".into(),
+                    json!(MIN_SCORED_FOR_ESTABLISHED),
+                );
+                counts.insert(
+                    "agreement_method".into(),
+                    json!(synthetic_diff::AGREEMENT_METHOD),
+                );
                 Value::Object(counts)
             }
             None => json!({
@@ -2450,13 +2488,19 @@ mod tests {
             out["recall_of_missed"]["by_language"]["rust"]["ungripped_missed"],
             2
         );
+        // A non-Rust language is exact in its split but needs the minimum
+        // scored sample before it is established.
         assert_eq!(
             out["recall_of_missed"]["by_language"]["python"]["status"],
-            "established"
+            "insufficient_sample"
         );
         assert_eq!(
-            out["recall_of_missed"]["by_language"]["python"]["flagged_or_unknown_missed"],
+            out["recall_of_missed"]["by_language"]["python"]["missed_total"],
             1
+        );
+        assert_eq!(
+            out["recall_of_missed"]["by_language"]["python"]["scored_claim_mutants"],
+            0
         );
         assert_eq!(
             out["recall_of_missed"]["by_language"]["typescript"]["status"],
@@ -3107,16 +3151,73 @@ mod tests {
         assert_eq!(entry["pairings"]["records_total"], 7);
         assert_eq!(entry["pairings"]["canonical_precise"], 5);
         let by_language = &report["recall_of_missed"]["by_language"];
-        assert_eq!(by_language["typescript"]["status"], "established");
+        // Four scored claim pairs is below the minimum sample.
+        assert_eq!(by_language["typescript"]["status"], "insufficient_sample");
         assert_eq!(
             by_language["typescript"]["agreement_method"],
             "synthetic_diff_verdict"
         );
+        assert_eq!(by_language["typescript"]["scored_claim_mutants"], 4);
+        assert_eq!(
+            by_language["typescript"]["minimum_scored_claim_mutants"],
+            30
+        );
+        assert_eq!(by_language["typescript"]["canonical_precise"], 5);
         assert_eq!(by_language["typescript"]["missed_total"], 4);
+        assert!(
+            by_language["typescript"]
+                .get("flagged_or_unknown_share_of_missed")
+                .is_none()
+        );
         assert_eq!(by_language["python"]["status"], "not_established");
         assert!(by_language["rust"].get("agreement_method").is_none());
         let markdown = spot_check_markdown(&report);
         assert!(markdown.contains("Synthetic-diff verdicts"));
+    }
+
+    fn typescript_recall(scored: usize) -> Value {
+        let mut records = Vec::new();
+        for _ in 0..scored {
+            records.push(synthetic_record(
+                CANONICAL_PRECISE,
+                "reachable_unrevealed",
+                "missed",
+            ));
+        }
+        // Unscored and excluded records never count toward the minimum.
+        records.push(synthetic_record(
+            CANONICAL_PRECISE,
+            "weakly_exposed",
+            "missed",
+        ));
+        records.push(synthetic_record(
+            "no_finding_on_mutated_lines",
+            "",
+            "missed",
+        ));
+        let mut ts = repo_run(records);
+        ts.language = "typescript".to_string();
+        ts.synthetic = Some(json!({"agreement_method": synthetic_diff::AGREEMENT_METHOD}));
+        let report = build_report(&[ts], 5, "ripr test");
+        report["recall_of_missed"]["by_language"]["typescript"].clone()
+    }
+
+    #[test]
+    fn typescript_recall_is_established_only_at_the_minimum_scored_sample() {
+        let below = typescript_recall(MIN_SCORED_FOR_ESTABLISHED - 1);
+        assert_eq!(below["status"], "insufficient_sample");
+        assert_eq!(
+            below["scored_claim_mutants"],
+            MIN_SCORED_FOR_ESTABLISHED - 1
+        );
+        assert_eq!(below["agreement_method"], "synthetic_diff_verdict");
+        assert!(below.get("ungripped_share_of_missed").is_none());
+        let at = typescript_recall(MIN_SCORED_FOR_ESTABLISHED);
+        assert_eq!(at["status"], "established");
+        assert_eq!(at["scored_claim_mutants"], MIN_SCORED_FOR_ESTABLISHED);
+        assert_eq!(at["agreement_method"], "synthetic_diff_verdict");
+        assert_eq!(at["missed_total"], MIN_SCORED_FOR_ESTABLISHED + 2);
+        assert!(at.get("ungripped_share_of_missed").is_some());
     }
 
     fn fixture(dir: &str, file: &str) -> Result<Value, String> {

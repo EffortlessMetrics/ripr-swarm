@@ -335,6 +335,56 @@ pub(crate) struct Scored {
     pub(crate) records: Vec<Record>,
     /// Files whose report source equals the checkout file.
     pub(crate) sources_matched: usize,
+    /// Mutants that passed every pre-check and could be run through ripr.
+    pub(crate) eligible: usize,
+    /// How many of those were run (an even-stride sample when over the cap).
+    pub(crate) selected: usize,
+}
+
+/// Why a check run produced no JSON.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum CheckError {
+    /// This one run failed (ripr exited nonzero, timed out, bad JSON); the
+    /// scratch tree is intact, so the mutant is excluded and scoring goes on.
+    Failed(String),
+    /// The scratch tree may be poisoned (a mutated file could not be written
+    /// or the original could not be restored): the whole repo run aborts.
+    Fatal(String),
+}
+
+/// Indices (0-based, ascending) of the `limit` eligible mutants to run out of
+/// `eligible`: every one when it fits, otherwise an even deterministic
+/// stride, so the sample spans every file instead of the first few.
+pub(crate) fn even_stride_sample(eligible: usize, limit: usize) -> BTreeSet<usize> {
+    if eligible <= limit {
+        return (0..eligible).collect();
+    }
+    (0..limit).map(|k| k * eligible / limit).collect()
+}
+
+/// Write `mutated` over `target`, run `check`, and put `original` back. A
+/// failure to write the mutation (it may be half written) or to restore the
+/// original is fatal; a failed check is not.
+pub(crate) fn mutate_check_restore(
+    target: &Path,
+    original: &str,
+    mutated: &str,
+    check: impl FnOnce() -> Result<Value, String>,
+) -> Result<Value, CheckError> {
+    if let Err(err) = fs::write(target, mutated) {
+        let restore = match fs::write(target, original) {
+            Ok(()) => "restored".to_string(),
+            Err(restore_err) => format!("restore also failed: {restore_err}"),
+        };
+        return Err(CheckError::Fatal(format!(
+            "write mutated {}: {err} ({restore})",
+            target.display()
+        )));
+    }
+    let checked = check();
+    fs::write(target, original)
+        .map_err(|err| CheckError::Fatal(format!("restore {}: {err}", target.display())))?;
+    checked.map_err(CheckError::Failed)
 }
 
 fn record(
@@ -388,35 +438,64 @@ fn has_extension(path: &str, extensions: &[&str]) -> bool {
 
 /// Give every mutant exactly one disposition. `read_checkout` returns the
 /// checkout's text for a report path; `run_check` runs ripr for one synthetic
-/// edit and returns its JSON report.
+/// edit and returns its JSON report. When more than `max_mutants` mutants are
+/// eligible, an even-stride sample of them is run and the rest are
+/// `over_mutant_cap`. A [`CheckError::Fatal`] aborts the whole run.
 pub(crate) fn score_mutants(
     profile: &LanguageProfile,
     sources: &[MutationSource],
     read_checkout: &dyn Fn(&str) -> Option<String>,
-    run_check: &mut dyn FnMut(&str, &SyntheticEdit) -> Result<Value, String>,
+    run_check: &mut dyn FnMut(&str, &SyntheticEdit) -> Result<Value, CheckError>,
     max_mutants: usize,
-) -> Scored {
-    let mut records = Vec::new();
+) -> Result<Scored, String> {
+    // Pass 1: the disposition every mutant gets before ripr runs.
     let mut sources_matched = 0;
-    let mut ran = 0usize;
+    let mut pre: Vec<Vec<Option<&'static str>>> = Vec::new();
     for source in sources {
         let file = source.path.as_str();
         let matches = read_checkout(file).is_some_and(|text| text == source.source);
         if matches {
             sources_matched += 1;
         }
-        for mutant in &source.mutants {
+        pre.push(
+            source
+                .mutants
+                .iter()
+                .map(|mutant| {
+                    if !has_extension(file, profile.extensions) {
+                        Some(NON_SOURCE_FILE)
+                    } else if !matches {
+                        Some(SOURCE_MISMATCH)
+                    } else if !SCOREABLE_OUTCOMES.contains(&mutant.outcome.as_str()) {
+                        Some(UNSCOREABLE_OUTCOME)
+                    } else {
+                        synthesize_edit(file, &source.source, mutant).err()
+                    }
+                })
+                .collect(),
+        );
+    }
+    let eligible = pre
+        .iter()
+        .flatten()
+        .filter(|reason| reason.is_none())
+        .count();
+    let chosen = even_stride_sample(eligible, max_mutants);
+    // Pass 2: run the chosen ones in report order.
+    let mut records = Vec::new();
+    let mut ordinal = 0usize;
+    for (source, reasons) in sources.iter().zip(&pre) {
+        let file = source.path.as_str();
+        for (mutant, reason) in source.mutants.iter().zip(reasons) {
             let excluded = |reason: &str| record(file, mutant, reason, None);
-            if !has_extension(file, profile.extensions) {
-                records.push(excluded(NON_SOURCE_FILE));
+            if let Some(reason) = reason {
+                records.push(excluded(reason));
                 continue;
             }
-            if !matches {
-                records.push(excluded(SOURCE_MISMATCH));
-                continue;
-            }
-            if !SCOREABLE_OUTCOMES.contains(&mutant.outcome.as_str()) {
-                records.push(excluded(UNSCOREABLE_OUTCOME));
+            let this = ordinal;
+            ordinal += 1;
+            if !chosen.contains(&this) {
+                records.push(excluded(OVER_CAP));
                 continue;
             }
             let edit = match synthesize_edit(file, &source.source, mutant) {
@@ -426,14 +505,15 @@ pub(crate) fn score_mutants(
                     continue;
                 }
             };
-            if ran >= max_mutants {
-                records.push(excluded(OVER_CAP));
-                continue;
-            }
-            ran += 1;
-            let Ok(check) = run_check(file, &edit) else {
-                records.push(excluded(CHECK_FAILED));
-                continue;
+            let check = match run_check(file, &edit) {
+                Ok(check) => check,
+                Err(CheckError::Failed(_)) => {
+                    records.push(excluded(CHECK_FAILED));
+                    continue;
+                }
+                Err(CheckError::Fatal(message)) => {
+                    return Err(format!("aborting `{file}` scoring: {message}"));
+                }
             };
             records.push(
                 match read_verdict(&check, file, edit.first_line, edit.last_line) {
@@ -455,10 +535,12 @@ pub(crate) fn score_mutants(
             );
         }
     }
-    Scored {
+    Ok(Scored {
         records,
         sources_matched,
-    }
+        eligible,
+        selected: chosen.len(),
+    })
 }
 
 /// Digest of the sorted mutant identities (file, range, mutator, replacement),
@@ -586,38 +668,37 @@ pub(crate) fn spot_check_synthetic_repo(repo: &SyntheticRepo<'_>) -> Result<Repo
         let relative = checkout_relative(path)?;
         fs::read_to_string(checkout.join(relative)).ok()
     };
-    let mut run_check = |file: &str, edit: &SyntheticEdit| -> Result<Value, String> {
-        let relative = checkout_relative(file).ok_or("report path leaves the checkout")?;
+    let mut run_check = |file: &str, edit: &SyntheticEdit| -> Result<Value, CheckError> {
+        let relative = checkout_relative(file)
+            .ok_or_else(|| CheckError::Failed("report path leaves the checkout".to_string()))?;
         let target = tree.join(relative);
-        let original =
-            fs::read_to_string(checkout.join(file)).map_err(|err| format!("read {file}: {err}"))?;
-        fs::write(&diff_path, &edit.diff).map_err(|err| format!("write synthetic diff: {err}"))?;
-        fs::write(&target, &edit.mutated).map_err(|err| format!("write {file}: {err}"))?;
-        let output = capture_output_with_timeout(
-            &path_arg(binary),
-            &[
-                "check".to_string(),
-                "--diff".to_string(),
-                path_arg(&diff_path),
-                "--root".to_string(),
-                path_arg(&tree),
-                "--format".to_string(),
-                "json".to_string(),
-                "--quiet".to_string(),
-            ],
-            &[],
-            CHECK_TIMEOUT,
-            "ripr check for synthetic mutant diff",
-        );
-        // Restore before judging the run, so a failed run cannot leave a
-        // mutated file behind for the next mutant.
-        let restored = fs::write(&target, original).map_err(|err| format!("restore {file}: {err}"));
-        let output = output?;
-        restored?;
-        if output.timed_out || !output.status.is_some_and(|status| status.success()) {
-            return Err(format!("ripr check failed: {}", output.stderr.trim()));
-        }
-        serde_json::from_str(&output.stdout).map_err(|err| format!("parse ripr check JSON: {err}"))
+        let original = fs::read_to_string(checkout.join(file))
+            .map_err(|err| CheckError::Failed(format!("read {file}: {err}")))?;
+        fs::write(&diff_path, &edit.diff)
+            .map_err(|err| CheckError::Fatal(format!("write synthetic diff: {err}")))?;
+        mutate_check_restore(&target, &original, &edit.mutated, || {
+            let output = capture_output_with_timeout(
+                &path_arg(binary),
+                &[
+                    "check".to_string(),
+                    "--diff".to_string(),
+                    path_arg(&diff_path),
+                    "--root".to_string(),
+                    path_arg(&tree),
+                    "--format".to_string(),
+                    "json".to_string(),
+                    "--quiet".to_string(),
+                ],
+                &[],
+                CHECK_TIMEOUT,
+                "ripr check for synthetic mutant diff",
+            )?;
+            if output.timed_out || !output.status.is_some_and(|status| status.success()) {
+                return Err(format!("ripr check failed: {}", output.stderr.trim()));
+            }
+            serde_json::from_str(&output.stdout)
+                .map_err(|err| format!("parse ripr check JSON: {err}"))
+        })
     };
     let scored = score_mutants(
         profile,
@@ -625,7 +706,8 @@ pub(crate) fn spot_check_synthetic_repo(repo: &SyntheticRepo<'_>) -> Result<Repo
         &read_checkout,
         &mut run_check,
         *max_mutants,
-    );
+    )
+    .map_err(|err| format!("`{name}`: {err}"))?;
     let mutants_total = scored.records.len();
     Ok(RepoRun {
         name: (*name).to_string(),
@@ -643,7 +725,13 @@ pub(crate) fn spot_check_synthetic_repo(repo: &SyntheticRepo<'_>) -> Result<Repo
         synthetic: Some(json!({
             "agreement_method": AGREEMENT_METHOD,
             "mutation_tool": tool,
-            "max_mutants": max_mutants,
+            "sampling": {
+                "method": "even_stride",
+                "max_mutants": max_mutants,
+                "eligible": scored.eligible,
+                "selected": scored.selected,
+                "note": "when eligible exceeds max_mutants, eligible mutants k*eligible/max_mutants for k in 0..max_mutants run, in sorted report order; the rest are over_mutant_cap",
+            },
             "files_checked_against_revision": scored.sources_matched,
             "scratch_ripr_toml": scratch_ripr_toml(profile),
             "verdict_grip_class_map": {
@@ -1014,10 +1102,10 @@ mod tests {
             _ => None,
         };
         let mut calls = 0;
-        let mut run = |file: &str, edit: &SyntheticEdit| -> Result<Value, String> {
+        let mut run = |file: &str, edit: &SyntheticEdit| -> Result<Value, CheckError> {
             calls += 1;
             if edit.diff.contains("+const y = 4;") {
-                return Err("boom".to_string());
+                return Err(CheckError::Failed("boom".to_string()));
             }
             if file == "src/other.ts" {
                 return Ok(check_json(
@@ -1042,11 +1130,13 @@ mod tests {
                 None,
             ))
         };
-        let scored = score_mutants(&TYPESCRIPT, &sources, &read, &mut run, 5);
+        let scored = score_mutants(&TYPESCRIPT, &sources, &read, &mut run, 5)?;
         let total: usize = sources.iter().map(|s| s.mutants.len()).sum();
         assert_eq!(scored.records.len(), total);
         assert_eq!(scored.sources_matched, 2);
-        // ids 1, 2, 5 (price) + 9, 10, 11 (other) reach ripr; 12 is over cap? runs: 1,2,5,9,10 = 5, so 11 is over cap.
+        // Eligible: ids 1, 2, 5, 9, 10, 11, 12 (7). An even stride of 5 runs
+        // ordinals 0, 1, 2, 4, 5: ids 1, 2, 5, 10, 11. Ids 9 and 12 are over the cap.
+        assert_eq!((scored.eligible, scored.selected), (7, 5));
         let by_id = |id: &str| {
             scored
                 .records
@@ -1063,9 +1153,9 @@ mod tests {
         assert_eq!(disposition("6")?, INVALID_LOCATION);
         assert_eq!(disposition("7")?, SOURCE_MISMATCH);
         assert_eq!(disposition("8")?, NON_SOURCE_FILE);
-        assert_eq!(disposition("9")?, CANONICAL_PRECISE);
+        assert_eq!(disposition("9")?, OVER_CAP);
         assert_eq!(disposition("10")?, CANONICAL_PRECISE);
-        assert_eq!(disposition("11")?, OVER_CAP);
+        assert_eq!(disposition("11")?, CHECK_FAILED);
         assert_eq!(disposition("12")?, OVER_CAP);
         assert_eq!(calls, 5);
 
@@ -1073,11 +1163,10 @@ mod tests {
             |id: &str| by_id(id).map(|record| agreement(claim_family(record), &record.outcome));
         assert_eq!(verdict("1")?, "agree");
         assert_eq!(verdict("2")?, "overclaim");
-        assert_eq!(verdict("9")?, "agree");
         assert_eq!(verdict("10")?, "false_gap");
         assert_eq!(by_id("1")?.verdict_token, "exposed");
-        assert_eq!(by_id("9")?.verdict_token, "reachable_unrevealed");
-        assert_eq!(by_id("9")?.join_method, AGREEMENT_METHOD);
+        assert_eq!(by_id("10")?.verdict_token, "reachable_unrevealed");
+        assert_eq!(by_id("10")?.join_method, AGREEMENT_METHOD);
         Ok(())
     }
 
@@ -1094,15 +1183,15 @@ mod tests {
         )];
         let read = |_: &str| Some(SOURCE.to_string());
         let mut n = 0;
-        let mut run = |_: &str, _: &SyntheticEdit| -> Result<Value, String> {
+        let mut run = |_: &str, _: &SyntheticEdit| -> Result<Value, CheckError> {
             n += 1;
             match n {
-                1 => Err("exit 2".to_string()),
+                1 => Err(CheckError::Failed("exit 2".to_string())),
                 2 => Ok(check_json(&[], true, Some("language_adapter_unavailable"))),
                 _ => Ok(check_json(&[], false, None)),
             }
         };
-        let scored = score_mutants(&TYPESCRIPT, &sources, &read, &mut run, 10);
+        let scored = score_mutants(&TYPESCRIPT, &sources, &read, &mut run, 10)?;
         let dispositions: Vec<&str> = scored
             .records
             .iter()
@@ -1117,6 +1206,132 @@ mod tests {
             ]
         );
         Ok(())
+    }
+
+    #[test]
+    fn even_stride_sample_spans_the_whole_list_deterministically() {
+        assert_eq!(even_stride_sample(3, 5), BTreeSet::from([0, 1, 2]));
+        assert_eq!(even_stride_sample(0, 5), BTreeSet::new());
+        assert_eq!(even_stride_sample(10, 5), BTreeSet::from([0, 2, 4, 6, 8]));
+        assert_eq!(even_stride_sample(7, 5), BTreeSet::from([0, 1, 2, 4, 5]));
+        let big = even_stride_sample(10_000, 1500);
+        assert_eq!(big.len(), 1500);
+        assert_eq!(big.first(), Some(&0));
+        // The last pick lies in the final stride, not the first 1500.
+        assert!(big.last().is_some_and(|last| *last > 9_000));
+        assert_eq!(big, even_stride_sample(10_000, 1500));
+    }
+
+    #[test]
+    fn capped_runs_sample_across_files_and_record_the_counts() -> Result<(), String> {
+        let make = |path: &str, base: u64| {
+            source(
+                path,
+                SOURCE,
+                (0..10)
+                    .map(|i| {
+                        mutant(
+                            &format!("{base}{i}"),
+                            (2, 6),
+                            (2, 15),
+                            &format!("qty > {i}"),
+                            "caught",
+                        )
+                    })
+                    .collect(),
+            )
+        };
+        let sources = vec![make("a.ts", 1), make("b.ts", 2)];
+        let read = |_: &str| Some(SOURCE.to_string());
+        let mut run = |_: &str, _: &SyntheticEdit| -> Result<Value, CheckError> {
+            Ok(check_json(&[("exposed", "a.ts", 2, "o")], true, None))
+        };
+        let scored = score_mutants(&TYPESCRIPT, &sources, &read, &mut run, 4)?;
+        assert_eq!((scored.eligible, scored.selected), (20, 4));
+        let ran_in = |file: &str| {
+            scored
+                .records
+                .iter()
+                .filter(|r| r.file == file && r.disposition != OVER_CAP)
+                .count()
+        };
+        // Both files are sampled, not just the first.
+        assert_eq!((ran_in("a.ts"), ran_in("b.ts")), (2, 2));
+        assert_eq!(scored.records.len(), 20);
+        Ok(())
+    }
+
+    fn scratch_dir(tag: &str) -> Result<PathBuf, String> {
+        let dir = std::env::temp_dir().join(format!("ripr-synthetic-{}-{tag}", std::process::id()));
+        fs::create_dir_all(&dir).map_err(|err| err.to_string())?;
+        Ok(dir)
+    }
+
+    #[test]
+    fn mutate_check_restore_restores_the_original_on_success_and_on_check_failure()
+    -> Result<(), String> {
+        let dir = scratch_dir("restore-ok")?;
+        let target = dir.join("a.ts");
+        fs::write(&target, "orig").map_err(|err| err.to_string())?;
+        let seen = mutate_check_restore(&target, "orig", "mutated", || {
+            Ok(json!({"saw": fs::read_to_string(&target).unwrap_or_default()}))
+        });
+        assert_eq!(seen, Ok(json!({"saw": "mutated"})));
+        assert_eq!(
+            fs::read_to_string(&target).map_err(|e| e.to_string())?,
+            "orig"
+        );
+        let failed = mutate_check_restore(&target, "orig", "mutated", || Err("exit 2".to_string()));
+        assert_eq!(failed, Err(CheckError::Failed("exit 2".to_string())));
+        assert_eq!(
+            fs::read_to_string(&target).map_err(|e| e.to_string())?,
+            "orig"
+        );
+        fs::remove_dir_all(&dir).map_err(|err| err.to_string())
+    }
+
+    #[test]
+    fn a_failed_mutation_write_or_restore_is_fatal() -> Result<(), String> {
+        let dir = scratch_dir("fatal")?;
+        // The parent directory does not exist, so the mutation cannot be written.
+        let missing = dir.join("no-such-dir").join("a.ts");
+        let write_failed = mutate_check_restore(&missing, "orig", "mutated", || Ok(json!({})));
+        assert!(matches!(write_failed, Err(CheckError::Fatal(_))));
+        // The check replaces the file with a directory, so the restore fails.
+        let target = dir.join("b.ts");
+        fs::write(&target, "orig").map_err(|err| err.to_string())?;
+        let restore_failed = mutate_check_restore(&target, "orig", "mutated", || {
+            fs::remove_file(&target).map_err(|err| err.to_string())?;
+            fs::create_dir(&target).map_err(|err| err.to_string())?;
+            Ok(json!({}))
+        });
+        assert!(matches!(restore_failed, Err(CheckError::Fatal(_))));
+        fs::remove_dir_all(&dir).map_err(|err| err.to_string())
+    }
+
+    #[test]
+    fn a_fatal_check_error_aborts_scoring_of_later_mutants() {
+        let sources = vec![source(
+            "a.ts",
+            SOURCE,
+            vec![
+                mutant("1", (2, 6), (2, 15), "qty > 10", "caught"),
+                mutant("2", (2, 6), (2, 15), "qty > 11", "caught"),
+            ],
+        )];
+        let read = |_: &str| Some(SOURCE.to_string());
+        let mut calls = 0;
+        let mut run = |_: &str, _: &SyntheticEdit| -> Result<Value, CheckError> {
+            calls += 1;
+            Err(CheckError::Fatal("restore failed".to_string()))
+        };
+        let result = score_mutants(&TYPESCRIPT, &sources, &read, &mut run, 10);
+        assert!(
+            result
+                .err()
+                .is_some_and(|err| err.contains("restore failed"))
+        );
+        assert_eq!(calls, 1);
     }
 
     #[test]

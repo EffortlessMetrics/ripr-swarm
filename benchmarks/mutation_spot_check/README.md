@@ -206,7 +206,9 @@ A pair is `canonical_precise` only when exactly one classification and owner
 lie on the mutated lines. Exclusions, so that `canonical_precise` plus them
 equals the mutant count: `non_target_language_file`, `source_mismatch`,
 `unscoreable_outcome`, `invalid_location`, `noop_mutant`, `over_mutant_cap`
-(`--stryker-max-mutants`, default 1500, taken in file and position order),
+(`--stryker-max-mutants`, default 1500; when more mutants are eligible, an even
+deterministic stride across the sorted report is run and the rest are
+excluded; the receipt's `sampling` records `eligible` and `selected`),
 `ripr_check_failed`, `analysis_incomplete`, `no_finding_on_mutated_lines`,
 `ambiguous_verdict`, and `language_adapter_unavailable` /
 `language_scope_unsupported` when ripr names that limitation for an empty
@@ -216,17 +218,23 @@ The receipt stays `ripr-mutation-spot-check-v2`; these repos add
 `language: "typescript"`, `agreement_method: "synthetic_diff_verdict"` and the
 mutation tool identity. Their numbers are reported under the top-level
 `synthetic_diff_verdict` row and in `recall_of_missed.by_language.typescript`
-(which becomes `established`, labelled with the same `agreement_method`), and
+(which becomes `established` only with at least 30 scored claim pairs, i.e.
+`canonical_precise` `strongly_gripped` or `ungripped` with a caught or missed
+outcome; below that it is `insufficient_sample` with the counts and no share;
+both carry the same `agreement_method`), and
 are excluded from the Rust `scored_families`, `seam_coverage`,
 `replacement_criterion` and pilot rows. The
 `python_typescript_real_mutant_agreement` criterion stays `not_established`
-(Python has no corpus). A mutated line is not a seam and the TypeScript
+(Python has no corpus; TypeScript is measured only by the synthetic-diff
+method, not the span-join agreement it is defined over). A mutated line is not a seam and the TypeScript
 analysis is a syntax-first preview, so the figures say how often a diff-time
 verdict agrees with a real mutant, not suite adequacy.
 
 `.github/workflows/mutation-spot-check-typescript.yml` runs it weekly on the
 pinned packages of `corpus-typescript.json` (Stryker 8.7.1 with the vitest
-runner). **That workflow and corpus have not run**: no package has been
+runner), uploads the receipt and a per-package Stryker exit-status file, and
+ends with a step that fails the job when the receipt is missing or a package
+failed. **That workflow and corpus have not run**: no package has been
 confirmed to install, pass its tests under Stryker or yield a report, and the
 Stryker version and its vitest runner were chosen without a registry check.
 The join code (`xtask/src/reports/mutation_spot_check/synthetic_diff.rs`) is
