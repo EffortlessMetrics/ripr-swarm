@@ -5635,7 +5635,7 @@ fn finalize_related_tests_with_direct_rows(
     (oracle_rows, matched_total, direct_rows)
 }
 
-const RELATED_TESTS_RENDER_CAP: usize = 8;
+pub(in crate::analysis) const RELATED_TESTS_RENDER_CAP: usize = 8;
 
 /// True for an extracted smoke row whose text is a bare `x.unwrap()` or
 /// `x.expect("..")` statement rather than an assertion macro. Such a row is

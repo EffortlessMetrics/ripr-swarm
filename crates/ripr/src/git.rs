@@ -820,9 +820,17 @@ fn collect_output_with_optional_deadline_and_limit(
     let stderr = stderr_result?;
 
     match wait? {
-        ChildWait::Exited(_) if stdout.exceeded || stderr.exceeded => {
+        ChildWait::Exited(_) if stdout.exceeded => Err(CoreError::message(format!(
+            "git_output_limit_exceeded: {describe} exceeded the {max_output_bytes}-byte per-stream capture limit"
+        ))),
+        ChildWait::Exited(status) if stderr.exceeded => {
+            // Bound the input before lossy decoding and terminal escaping:
+            // the stderr capture itself can be as large as the caller's limit.
+            let preview_bytes =
+                &stderr.bytes[..stderr.bytes.len().min(GIT_OUTPUT_DISPLAY_MAX_CHARS)];
+            let preview = bounded_git_output(preview_bytes, GIT_OUTPUT_DISPLAY_MAX_CHARS);
             Err(CoreError::message(format!(
-                "git_output_limit_exceeded: {describe} exceeded the {max_output_bytes}-byte per-stream capture limit"
+                "git_stderr_limit_exceeded: {describe} exceeded the {max_output_bytes}-byte stderr capture limit; status: {status}; stderr prefix: {preview}…"
             )))
         }
         ChildWait::Exited(status) => Ok(Output {

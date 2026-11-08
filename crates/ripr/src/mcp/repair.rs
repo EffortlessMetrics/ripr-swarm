@@ -954,7 +954,10 @@ impl WorkspaceSession {
                 "oracle": fix_site.oracle,
                 "oracle_kind": fix_site.oracle_kind,
                 "oracle_strength": fix_site.oracle_strength,
-                "established_by": if fix_site.oracle_strength != "strong" {
+                "new_test_kind": fix_site.new_test_kind,
+                "established_by": if fix_site.new_test_kind.is_some() {
+                    "the producer-owned new-test proposal the shared repair gate admitted as this seam's one repair target (the same target `ripr agent repair --phase before` confines the edit to); no existing test is extended, so `test_name`, `line` and `oracle` are empty"
+                } else if fix_site.oracle_strength != "strong" {
                     "the high-confidence directly-related producer test that reaches the changed behavior without pinning the named missing discriminator; extend this test, as `ripr repair` does, rather than adding a new one"
                 } else if fix_site.inline_test_module.is_some() {
                     "the strongest directly-related producer test grip (strong oracle, high-confidence direct relation), inside the seam's own governed inline test module that the shared repair gate admitted"
@@ -975,10 +978,7 @@ impl WorkspaceSession {
             },
             "command_routes": Value::Array(Vec::new()),
             "command_route_limitation": "concrete typed CommandSpec routes are published only by the durable CLI before phase (`ripr agent repair --phase before`); this session never executes commands and never reconstructs argv from display prose",
-            "limitations": [
-                "the seam-pipeline target-admission authority has not run in this session; the fix site is the strongest producer test grip, not an admitted seam target",
-                "the transaction is in-memory: restarting the server drops it; durable attempts survive under the CLI repair workflow and are readable here with ripr_get_repair_attempt",
-            ],
+            "limitations": prepare_limitations(&fix_site),
             "non_claims": NON_CLAIMS,
             "links": {
                 "gap": format!("ripr://gap/{}", item.canonical_id),
@@ -1199,6 +1199,20 @@ impl WorkspaceSession {
             RECOVERY_REPAIR_TOO_LARGE,
         )
     }
+}
+
+/// The packet's limitations. The target-admission caveat applies only to an
+/// existing-test fix site; a proposal fix site is the shared gate's own
+/// admitted target, whose file-exists, symlink and manifest preflight runs at
+/// the CLI start (`ripr agent repair --phase before`), not here.
+fn prepare_limitations(fix_site: &RepairFixSite) -> Vec<&'static str> {
+    let mut limitations = vec![if fix_site.new_test_kind.is_none() {
+        "the seam-pipeline target-admission authority has not run in this session; the fix site is the strongest producer test grip, not an admitted seam target"
+    } else {
+        "the fix site is the new-test proposal the shared repair gate admitted; the file-exists, symlink and owning-manifest preflight runs at the CLI start (`ripr agent repair --phase before`), not in this session"
+    }];
+    limitations.push("the transaction is in-memory: restarting the server drops it; durable attempts survive under the CLI repair workflow and are readable here with ripr_get_repair_attempt");
+    limitations
 }
 
 /// The module confinement of an inline-test fix site (#5516), or null for a
