@@ -5539,6 +5539,21 @@ fn inherent_receiver_call_resolves_with(
     let owner_local = index
         .zip(owner)
         .is_some_and(|(index, owner)| owner_impl_is_root_item_of(index, owner, &test.file));
+    // An explicit `use` that binds the receiver type's name to a type from a
+    // crate outside the workspace cannot be the owner's own type (#13525), yet
+    // the constructor below resolves by that name alone. Decline it. Imports
+    // rooted at `crate`/`self`/`super` or at a workspace member are unchanged,
+    // so a member-to-member same-named type is still a name-only match.
+    if let Some(index) = index
+        && !owner_local
+        && index
+            .call_identity_memos
+            .external_import(&test.file, impl_type, || {
+                file_imports_name_from_external_crate(index, &test.file, impl_type)
+            })
+    {
+        return false;
+    }
     let factory = |ty: &str, name: &str| {
         index.is_some_and(|index| {
             if ty.is_empty() {
@@ -6557,6 +6572,64 @@ fn owner_impl_is_root_item_of(index: &RustIndex, owner: &FunctionSummary, file: 
         .any(|&(start, end)| start <= owner.start_line && owner.start_line <= end)
 }
 
+/// Whether `file` has a non-glob `use` whose bound name (its alias, else its
+/// last segment) is `name` and whose path is rooted at a crate that is neither
+/// `crate`/`self`/`super`, a workspace member, nor a module or type declared in
+/// `file` itself.
+fn file_imports_name_from_external_crate(index: &RustIndex, file: &Path, name: &str) -> bool {
+    let Some(tree) = index.source_syntax.get(index, file).and_then(|s| s.tree()) else {
+        return false;
+    };
+    let members = index.workspace_member_crates();
+    // With no manifest in the index the workspace's own crate names are
+    // unknown, so no root can be called foreign.
+    if members.is_empty() {
+        return false;
+    }
+    // A root that names a module or type declared in this file (2018 uniform
+    // paths: `mod support; use support::Regex;`) is local, not a crate.
+    let local_items: std::collections::BTreeSet<String> = tree
+        .syntax()
+        .descendants()
+        .filter_map(|node| {
+            ast::Module::cast(node.clone())
+                .and_then(|item| item.name())
+                .or_else(|| ast::Adt::cast(node).and_then(|item| item.name()))
+        })
+        .map(|name| name.text().trim_start_matches("r#").to_string())
+        .collect();
+    tree.syntax()
+        .descendants()
+        .filter_map(ast::Use::cast)
+        .any(|item| {
+            let text = item.syntax().text().to_string();
+            super::reveal::flattened_use_paths(&text)
+                .iter()
+                .any(|import| {
+                    let last = import.path.rsplit("::").next().unwrap_or("");
+                    let bound = import
+                        .alias
+                        .as_deref()
+                        .unwrap_or(last)
+                        .trim_start_matches("r#");
+                    let root = import
+                        .path
+                        .trim_start_matches("::")
+                        .split("::")
+                        .next()
+                        .unwrap_or("")
+                        .trim_start_matches("r#");
+                    last != "*"
+                        && bound == name
+                        && !matches!(root, "crate" | "self" | "super" | "")
+                        && !local_items.contains(root)
+                        && !members
+                            .iter()
+                            .any(|member| member.replace('-', "_") == root)
+                })
+        })
+}
+
 /// Whether `file` has a `use` that names `ty` or a glob other than `self::*` /
 /// `super::*`, or a `type` alias called `ty`: any of which can make a bare
 /// `ty` mean a type declared elsewhere.
@@ -6847,6 +6920,38 @@ pub(in crate::analysis) fn inherent_owner_call_resolves_inside_unreadable_macro(
             .target_placement_unavailable(index)
         && relation(false) != RelationReason::DirectOwnerCall
         && relation(true) == RelationReason::DirectOwnerCall
+}
+
+/// Whether `owner`'s inherent call resolves in `caller` once `body` stands in
+/// for the test's body: the relation the direct-call path applies, over a body
+/// where a cross-file forwarding macro call (#12886) was replaced by the
+/// operands it evaluates. The index is untouched and nothing is credited; the
+/// answer only lets the caller name a limit. Binding, shadow and receiver rules
+/// are the ones the direct relation applies.
+pub(in crate::analysis) fn inherent_owner_call_resolves_in_forwarded_body(
+    caller: &TestSummary,
+    body: String,
+    owner: &FunctionSummary,
+    index: &RustIndex,
+) -> bool {
+    if !requires_inherent_receiver_identity(owner) {
+        return false;
+    }
+    let mut rewritten = caller.clone();
+    rewritten.body = crate::analysis::facts::SourceText::owned(body);
+    owner_call_relation_reason_gated(
+        &rewritten,
+        Some(owner),
+        &owner.name,
+        &[],
+        index
+            .files()
+            .get(&caller.file)
+            .map(|facts| facts.data().source.as_ref()),
+        index,
+        false,
+        false,
+    ) == RelationReason::DirectOwnerCall
 }
 
 /// Whether the last call of `method` in `prefix` (masked test source cut at

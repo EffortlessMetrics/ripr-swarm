@@ -182,6 +182,7 @@ pub(crate) fn decide_repair_start(
         transition_to: offered.map(|_| command_effect_label(CommandRole::RepairStart).to_string()),
         restart_route,
         check_case: None,
+        check_repair_route: None,
         doctor_recovery: None,
         pilot_delegation: None,
         alternatives: Vec::new(),
@@ -2385,6 +2386,18 @@ pub(crate) fn build_output_precondition_refusal(
     }
 }
 
+/// The plain cause of a build-output precondition failure, without any
+/// not-started claim. A caller that already wrote shared files words its own
+/// consequence around this instead of rewriting the refusal text (#13452).
+pub(crate) fn build_output_precondition_detail(
+    error: crate::edit_cage::BuildOutputPreconditionError,
+) -> String {
+    match error {
+        crate::edit_cage::BuildOutputPreconditionError::NotIgnored(detail)
+        | crate::edit_cage::BuildOutputPreconditionError::Inspection(detail) => detail,
+    }
+}
+
 /// The one shape every not-started repair refusal shares: the plain reason,
 /// then a single `next:` line naming the recovery.
 fn start_refusal_with_next(reason: &str, next: &str) -> String {
@@ -2979,7 +2992,13 @@ fn non_rust_language(file: &Path) -> Option<&'static str> {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct ChangedNonRust {
     pub(crate) language: &'static str,
+    /// Wire name of the language (`python`), for the `[languages]` line.
+    pub(crate) wire: &'static str,
     pub(crate) adds_code: bool,
+    /// Whether the effective `[languages].enabled` set analyzes this
+    /// language for the root. `false` means `ripr check` could not analyze
+    /// the change at all (#13571), so it names no gap for it.
+    pub(crate) enabled: bool,
 }
 
 /// Why repair could not narrow its spots to the change, when it could not
@@ -3079,17 +3098,34 @@ pub(crate) fn changed_non_rust_languages(root: &Path, base: Option<&str>) -> Vec
     let Some(files) = live_check_diff_files(root, base) else {
         return Vec::new();
     };
+    // An unreadable config keeps the earlier message: only a loaded
+    // `[languages]` set can say a language is switched off.
+    let enabled_languages = crate::config::load_for_root(root)
+        .ok()
+        .map(|config| config.languages.enabled);
     let mut found: Vec<ChangedNonRust> = Vec::new();
     for file in files {
-        let Some(language) = non_rust_language(&file.path) else {
+        let Some(id) = crate::analysis::route(&file.path) else {
             continue;
         };
+        if id == crate::domain::LanguageId::Rust {
+            continue;
+        }
+        let language = id.display_name();
+        let enabled = enabled_languages.as_ref().is_none_or(|set| {
+            set.contains(&id)
+                // The TypeScript adapter also analyzes JavaScript files.
+                || (id == crate::domain::LanguageId::JavaScript
+                    && set.contains(&crate::domain::LanguageId::TypeScript))
+        });
         let adds_code = !file.added_lines.is_empty();
         match found.iter_mut().find(|entry| entry.language == language) {
             Some(entry) => entry.adds_code |= adds_code,
             None => found.push(ChangedNonRust {
                 language,
+                wire: id.as_str(),
                 adds_code,
+                enabled,
             }),
         }
     }
@@ -3103,7 +3139,43 @@ pub(crate) fn changed_non_rust_languages(root: &Path, base: Option<&str>) -> Vec
 /// Names the gap-bound start for TypeScript and Python (#10373) and the
 /// manual route otherwise. A deletion-only change gets no `check` finding,
 /// so it is not promised one.
-pub(crate) fn non_rust_repair_guidance(root_display: &str, changed: &[ChangedNonRust]) -> String {
+pub(crate) fn non_rust_repair_guidance(
+    root: &Path,
+    root_display: &str,
+    changed: &[ChangedNonRust],
+) -> String {
+    let off: Vec<&ChangedNonRust> = changed.iter().filter(|entry| !entry.enabled).collect();
+    if !off.is_empty() {
+        // #13571: an adapter is switched off here (no project marker and no
+        // `ripr.toml`), so `ripr check` analyzes none of that change and a
+        // zero-gap result is not a clean one. Say that, with the fix, not the
+        // by-hand route that `check` cannot back. `root` is the real path:
+        // `root_display` is shell-quoted for the message only.
+        let mut names: Vec<&str> = Vec::new();
+        if crate::domain::rust_markers_at(root) {
+            names.push("rust");
+        }
+        for entry in &off {
+            // The TypeScript adapter also analyzes JavaScript files.
+            let wire = if entry.wire == "javascript" {
+                "typescript"
+            } else {
+                entry.wire
+            };
+            if !names.contains(&wire) {
+                names.push(wire);
+            }
+        }
+        let toml = crate::domain::format_languages_enabled_toml(&names);
+        let languages = off
+            .iter()
+            .map(|entry| entry.language)
+            .collect::<Vec<_>>()
+            .join(" and ");
+        return format!(
+            "the changed code under {root_display} is {languages}, and ripr did not analyze it: the adapter is not enabled here, so there is no gap to repair, and finding nothing is not a clean result. To analyze it, add this to ripr.toml and rerun `ripr check --root {root_display}`:\n\n[languages]\n{toml}"
+        );
+    }
     let languages = changed
         .iter()
         .map(|entry| entry.language)
@@ -5826,6 +5898,7 @@ pub(crate) mod tests {
             limitations: Vec::new(),
             non_claims: Vec::new(),
             after: None,
+            focused_receipt_evaluation: None,
             last_after_refusal: None,
             after_refusal_count: 0,
             after_refusal_history: Vec::new(),
