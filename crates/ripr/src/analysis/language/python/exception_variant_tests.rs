@@ -481,3 +481,55 @@ fn specific_exception_variant_requires_verified_module_import() -> Check {
     }
     Ok(())
 }
+
+const MSG_SOURCE: &str = r#"class EmptyError(Exception): pass
+class TooLongError(Exception): pass
+
+def parse(s):
+    if len(s) > 10:
+        raise TooLongError("too long")
+    return len(s)
+"#;
+const MSG_OLD: &str = "        raise EmptyError(\"too long\")";
+const MSG_NEW: &str = "        raise TooLongError(\"too long\")";
+
+fn classify_message(expected: &str) -> Result<Finding, String> {
+    let tests = format!(
+        "{IMPORTS}\ndef test_variant():\n    with pytest.raises({expected}, match=\"too long\"):\n        parse('abcdefghijklmnop')\n"
+    );
+    classify(MSG_SOURCE, &tests, MSG_OLD, MSG_NEW)
+}
+
+#[test]
+fn stale_exception_type_with_match_does_not_close_the_gap() -> Check {
+    // #13622: `match=` alone must not credit a class the raise no longer uses.
+    let stale = classify_message("EmptyError")?;
+    assert_eq!(stale.class, ExposureClass::WeaklyExposed, "{stale:?}");
+    assert!(
+        stale
+            .missing
+            .iter()
+            .any(|text| text.contains("old exception type `EmptyError`")
+                && text.contains("`TooLongError`")),
+        "the message must name the old and new type: {stale:?}"
+    );
+    // Negative control: the same test with the new type is not stale.
+    let current = classify_message("TooLongError")?;
+    assert!(
+        current
+            .missing
+            .iter()
+            .all(|text| !text.contains("old exception type")),
+        "{current:?}"
+    );
+    // Unrelated classes fail open to the existing rules.
+    let other = classify_message("Exception")?;
+    assert!(
+        other
+            .missing
+            .iter()
+            .all(|text| !text.contains("old exception type")),
+        "{other:?}"
+    );
+    Ok(())
+}

@@ -1003,6 +1003,16 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
                 &related_candidates,
                 &focus,
             )
+            // A raised-type replacement every strong error assertion still
+            // pins to the old type is stale, not credit (#13622).
+            .or_else(|| {
+                super::exception_variant::stale_exception_type_gap(
+                    line_text,
+                    old_line_text,
+                    &related_candidates,
+                    &focus,
+                )
+            })
         })
         .flatten();
     let mut message_pin_downgraded = false;
@@ -1287,8 +1297,8 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
             StageState::Yes,
             StageState::Weak,
             vec![format!(
-                "A strong Python oracle reaches `{}`, but {}. Add a `match=` pattern that the old message does not satisfy.",
-                owner.name, gap.reason,
+                "A strong Python oracle reaches `{}`, but {}. {}",
+                owner.name, gap.reason, gap.advice,
             )],
         )
     } else if strongest_strength >= OracleStrength::Strong.rank()

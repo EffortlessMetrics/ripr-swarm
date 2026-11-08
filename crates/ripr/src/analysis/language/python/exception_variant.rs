@@ -8,6 +8,8 @@
 //! Unknown bindings, class behavior, test activation or function flow grant
 //! no credit. The shared repair validator is unchanged.
 
+use super::assertion_selection::PythonAssertionFocus;
+use super::message_pin::{MessagePinGap, is_strong_error_variant};
 use super::module_constants::{
     ModuleBindingFacts, function_bound_names, mentions_identifier, visit_exprs_in_statements,
 };
@@ -229,6 +231,74 @@ fn credits<'a>(
         }
     }
     Some(credits)
+}
+
+/// A raised-type replacement (#13622) whose strong error-variant assertions
+/// all still expect the OLD class. Such an assertion fails (or passes only
+/// by subclassing) once the raise changed, so it must not close the gap, even
+/// when its `match=` pattern accepts the unchanged message. Any assertion that
+/// names another class fails open to the existing credit rules.
+pub(super) fn stale_exception_type_gap(
+    line_text: &str,
+    old_line_text: Option<&str>,
+    related_candidates: &[PythonRelatedCandidate<'_>],
+    focus: &PythonAssertionFocus,
+) -> Option<MessagePinGap> {
+    let (old_type, old_args) = raised_type(old_line_text?)?;
+    let (new_type, new_args) = raised_type(line_text)?;
+    if old_type == new_type || old_args != new_args {
+        return None;
+    }
+    let mut stale = Vec::new();
+    for assertion in related_candidates
+        .iter()
+        .filter(|candidate| candidate.relation.uses_oracle())
+        .flat_map(|candidate| &candidate.test.assertions)
+        .filter(|assertion| is_strong_error_variant(assertion) && focus.admits(assertion))
+    {
+        if expected_class(&assertion.text)? != old_type {
+            return None;
+        }
+        stale.push(format!("`{}`", assertion.text));
+    }
+    if stale.is_empty() {
+        return None;
+    }
+    stale.dedup();
+    Some(MessagePinGap {
+        discriminator: format!("raised type `{new_type}`"),
+        reason: format!(
+            "every strong related error assertion ({}) still expects the old exception type `{old_type}` while the changed raise now raises `{new_type}`, so it does not observe the new type",
+            stale.join(", ")
+        ),
+        advice: format!("Expect `{new_type}` in the `pytest.raises` assertion."),
+    })
+}
+
+/// The class name a `raises` / `assertRaises*` call expects as its first argument.
+fn expected_class(assertion_text: &str) -> Option<String> {
+    let Ok(Mod::Module(module)) =
+        parse_module_result(Path::new("<expected-class>"), assertion_text.trim())
+    else {
+        return None;
+    };
+    let [Stmt::Expr(statement)] = module.body.as_slice() else {
+        return None;
+    };
+    let Expr::Call(call) = statement.value.as_ref() else {
+        return None;
+    };
+    let callee = super::expr_full_name(&call.func)?;
+    if !matches!(
+        callee.rsplit('.').next()?,
+        "raises" | "assertRaises" | "assertRaisesRegex"
+    ) {
+        return None;
+    }
+    match call.args.first()? {
+        Expr::Name(name) => Some(name.id.to_string()),
+        _ => None,
+    }
 }
 
 /// Only the constructor's name changes; evaluating its arguments runs no code.
