@@ -1899,7 +1899,7 @@ fn dependency_edge_admits_owner_call(
             std::rc::Rc::new((stripped_body.clone(), imports))
         }
     };
-    let (stripped_file, file_level_imports) = (&file_text.0, &file_text.1);
+    let file_level_imports = file_text.1.as_str();
     // A `let` binding of the owner name cannot shadow `T::name(`, so the
     // type-path rule runs before the bare-call binding guard (#4558 review).
     if (workspace_complete || type_path_index_covers_competitors(context, &owner_manifest, owner))
@@ -1909,8 +1909,7 @@ fn dependency_edge_admits_owner_call(
             owner,
             test,
             &callable_dependency_names,
-            stripped_file,
-            file_level_imports,
+            &file_text,
             same_name.definitions,
         )
     {
@@ -1961,7 +1960,7 @@ fn dependency_edge_admits_owner_call(
             return true;
         }
         bare_call_captured
-            && imports_owner_from_dependency(&file_level_imports, dependency_name, owner_name)
+            && imports_owner_from_dependency(file_level_imports, dependency_name, owner_name)
     })
 }
 
@@ -2014,10 +2013,10 @@ fn type_path_call_admits_owner(
     owner: &FunctionSummary,
     test: &TestSummary,
     callable_dependency_names: &BTreeSet<String>,
-    stripped_file: &str,
-    file_level_imports: &str,
+    file_text: &(String, String),
     same_name_definitions: &[&FunctionSummary],
 ) -> bool {
+    let (stripped_file, file_level_imports) = (file_text.0.as_str(), file_text.1.as_str());
     let FunctionImplContext::Impl { self_type } = &owner.impl_context else {
         return false;
     };
