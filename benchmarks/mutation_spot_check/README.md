@@ -261,7 +261,7 @@ spans several lines, is not guessed at: its outcome token is
 `unlocatable_diff` or `unlocatable_multiline`, so it lands in
 `unscoreable_outcome` and stays countable in the receipt.
 
-Runtime side: a normal run whose tests detected the mutant is `caught` and a
+Runtime side: cosmic-ray reports a test timeout as a normal run with output `timeout`; that is `timeout`, never `caught`. A mutant that breaks import or collection also exits non-zero and reads as detected, so `caught` here is an upper bound on tests discriminating. A normal run whose tests detected the mutant is `caught` and a
 normal run whose tests did not is `missed`; incompetent (`unviable`), timeout,
 abnormal/exception (`runtime_error`), `no-test`, skipped and pending results
 are never scored. One run scores one synthetic language: `--stryker-report` and
