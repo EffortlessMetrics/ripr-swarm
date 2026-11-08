@@ -571,7 +571,63 @@ impl AnalysisOutcome {
         }
         Ok(format!("sha256:{hex}"))
     }
+
+    /// The not-all-clear sentence for an incomplete outcome (`partial_with_limitations`,
+    /// `unsupported_input`, `analysis_failed`), `None` for a complete or
+    /// empty-scope one (#13562). It reuses the plain labels and the producer-owned
+    /// recovery text that the human `check` limitation lines print, so an editor
+    /// marker cannot drift from `ripr check`. At most
+    /// [`MAX_INCOMPLETE_SENTENCE_LIMITATIONS`] scoping limitations are named; an
+    /// advisory disclosure (`eol_only_churn`, `verification_only_change`) does not
+    /// scope the analysis down and is not named.
+    pub(crate) fn incomplete_scope_sentence(&self) -> Option<String> {
+        if self.kind.is_complete() {
+            return None;
+        }
+        let scoping = self
+            .limitations
+            .iter()
+            .filter(|limitation| !limitation.kind.is_advisory_disclosure())
+            .collect::<Vec<_>>();
+        let mut sentence = format!(
+            "the analysis is incomplete ({}), so having no findings here does not mean the changed behavior is clean.",
+            self.kind.plain_label()
+        );
+        for limitation in scoping.iter().take(MAX_INCOMPLETE_SENTENCE_LIMITATIONS) {
+            sentence.push_str(&format!(
+                " Limitation: {} during {}",
+                limitation.kind.plain_label(),
+                limitation.producer_stage.plain_label()
+            ));
+            if let Some(path) = &limitation.path {
+                sentence.push_str(&format!("; file: {path}"));
+            }
+            if let Some(count) = limitation.affected_items {
+                sentence.push_str(&format!("; affected items: {count}"));
+            }
+            if let Some(detail) = &limitation.bounded_detail {
+                sentence.push_str(&format!("; {}", detail.trim_end_matches('.')));
+            }
+            sentence.push_str(&format!(
+                "; recovery: {} — {}.",
+                limitation.recovery.kind.plain_label(),
+                limitation.recovery.detail.trim_end_matches('.')
+            ));
+        }
+        let unnamed = scoping
+            .len()
+            .saturating_sub(MAX_INCOMPLETE_SENTENCE_LIMITATIONS);
+        if unnamed > 0 {
+            sentence.push_str(&format!(
+                " {unnamed} more limitation(s) are in the full analysis outcome."
+            ));
+        }
+        Some(sentence)
+    }
 }
+
+/// Bound on the limitations one editor marker names (#13562).
+pub(crate) const MAX_INCOMPLETE_SENTENCE_LIMITATIONS: usize = 3;
 
 pub(crate) fn normalize_portable_analysis_path(path: &str) -> Result<String, String> {
     // Paths are filesystem identities, not prose: trimming can name a different

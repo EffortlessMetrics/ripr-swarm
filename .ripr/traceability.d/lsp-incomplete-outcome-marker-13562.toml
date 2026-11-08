@@ -1,0 +1,7 @@
+[[extend]]
+id = "RIPR-SPEC-0127"
+tests = [
+  "crates/ripr/src/lsp/tests.rs::incomplete_outcome_with_no_rows_serves_a_passive_marker_and_nothing_else_does",
+  "crates/ripr/src/lsp/tests.rs::file_mode_only_change_serves_the_incomplete_marker_through_the_real_producer",
+]
+code = ["crates/ripr/src/analysis_outcome.rs", "crates/ripr/src/lsp/diagnostics.rs", "crates/ripr/src/lsp/backend.rs"]

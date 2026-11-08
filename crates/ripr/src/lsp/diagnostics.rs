@@ -849,7 +849,7 @@ pub(super) fn delivered_diagnostics_for_uri(
         diagnostics.push(delivery_omission_diagnostic(omission));
     }
     push_unlisted_language_not_analyzed(snapshot, uri, &mut diagnostics);
-    push_empty_scope_marker(snapshot, uri, &mut diagnostics);
+    push_scope_marker(snapshot, uri, &mut diagnostics);
     diagnostics
 }
 
@@ -864,39 +864,46 @@ pub(super) fn delivered_diagnostics_for_uri(
 /// any kind in the snapshot), so a snapshot with findings, gap rows or other
 /// markers never carries it, and it disappears with the next real snapshot.
 /// No finding identity, repair data or actionability; never a Warning.
-fn push_empty_scope_marker(
+fn push_scope_marker(
     snapshot: &AnalysisSnapshot,
     uri: &Uri,
     diagnostics: &mut Vec<Diagnostic>,
 ) {
     if diagnostics.is_empty()
-        && snapshot_serves_empty_scope_marker(snapshot)
+        && snapshot_serves_scope_marker(snapshot)
         && super::uri::file_uri_relative_to_root(&snapshot.root, uri).is_some()
     {
-        diagnostics.push(empty_scope_diagnostic(snapshot));
+        diagnostics.extend(scope_marker_payload(snapshot));
     }
 }
 
-/// True when the snapshot is an empty-scope outcome with no row of any kind,
-/// the one state in which its documents carry the empty-scope marker.
-pub(super) fn snapshot_serves_empty_scope_marker(snapshot: &AnalysisSnapshot) -> bool {
+/// True when the snapshot's outcome is an empty scope (#13441) or incomplete
+/// (#13562) and the snapshot holds no row of any kind, the one state in which
+/// its documents carry a scope marker. A complete outcome, a snapshot with a
+/// finding, gap row or stored marker (a language-not-analyzed or parse-failed
+/// file marker, a budget omission), and a snapshot with no typed outcome never
+/// carry one, so the two scope markers and the stored markers cannot stack.
+pub(super) fn snapshot_serves_scope_marker(snapshot: &AnalysisSnapshot) -> bool {
     snapshot.diagnostic_count() == 0
         && snapshot.findings.is_empty()
         && snapshot.gap_artifacts.is_empty()
         && snapshot
             .analysis_outcome
             .as_ref()
-            .is_some_and(|outcome| outcome.kind.is_empty_scope())
+            .is_some_and(|outcome| outcome.kind.is_empty_scope() || !outcome.kind.is_complete())
 }
 
-/// True for the served-not-stored empty-scope marker (#13441). It is never
+/// `data.kind` of the empty-scope marker (#13441).
+const EMPTY_SCOPE_MARKER_KIND: &str = "empty_scope";
+/// `data.kind` of the incomplete-analysis marker (#13562).
+const INCOMPLETE_ANALYSIS_MARKER_KIND: &str = "incomplete_analysis";
+
+/// True for a served-not-stored scope marker (#13441, #13562). It is never
 /// line-local evidence and never part of the committed baseline.
-pub(super) fn is_empty_scope_marker(diagnostic: &Diagnostic) -> bool {
-    diagnostic
-        .data
-        .as_ref()
-        .is_some_and(|data| data["kind"] == "empty_scope")
-        && diagnostic.code
+pub(super) fn is_scope_marker(diagnostic: &Diagnostic) -> bool {
+    diagnostic.data.as_ref().is_some_and(|data| {
+        data["kind"] == EMPTY_SCOPE_MARKER_KIND || data["kind"] == INCOMPLETE_ANALYSIS_MARKER_KIND
+    }) && diagnostic.code
             == Some(NumberOrString::String(
                 super::diagnostic_catalog::DIAGNOSTIC_LANGUAGE_NOT_ANALYZED_CODE.to_string(),
             ))
@@ -905,8 +912,52 @@ pub(super) fn is_empty_scope_marker(diagnostic: &Diagnostic) -> bool {
 /// The marker payload a snapshot would serve, or `None`. Comparing payloads
 /// (not just presence) lets a committed snapshot whose marker text changed
 /// (a different base or empty-scope cause) be re-served.
-pub(super) fn empty_scope_marker_payload(snapshot: &AnalysisSnapshot) -> Option<Diagnostic> {
-    snapshot_serves_empty_scope_marker(snapshot).then(|| empty_scope_diagnostic(snapshot))
+pub(super) fn scope_marker_payload(snapshot: &AnalysisSnapshot) -> Option<Diagnostic> {
+    if !snapshot_serves_scope_marker(snapshot) {
+        return None;
+    }
+    let outcome = snapshot.analysis_outcome.as_ref()?;
+    if outcome.kind.is_empty_scope() {
+        Some(empty_scope_diagnostic(snapshot))
+    } else {
+        incomplete_analysis_diagnostic(outcome)
+    }
+}
+
+/// The marker for an incomplete analysis outcome with no stored row (#13562).
+/// Shares the governed `ripr-diagnostic-language-not-analyzed` code (the
+/// analysis did not cover its scope, so an empty list is not a clean result)
+/// with `data.kind` `incomplete_analysis`. The wording is the typed outcome's
+/// own limitation text (`AnalysisOutcome::incomplete_scope_sentence`), the
+/// owner `ripr check` labels and recovery routes come from; this function only
+/// frames it. `None` for a complete outcome.
+fn incomplete_analysis_diagnostic(
+    outcome: &crate::analysis_outcome::AnalysisOutcome,
+) -> Option<Diagnostic> {
+    let sentence = outcome.incomplete_scope_sentence()?;
+    let limitations = outcome
+        .limitations
+        .iter()
+        .filter(|limitation| !limitation.kind.is_advisory_disclosure())
+        .map(|limitation| limitation.kind.as_str())
+        .collect::<Vec<_>>();
+    Some(Diagnostic {
+        range: Range::default(),
+        severity: Some(DiagnosticSeverity::INFORMATION),
+        code: Some(NumberOrString::String(
+            super::diagnostic_catalog::DIAGNOSTIC_LANGUAGE_NOT_ANALYZED_CODE.to_string(),
+        )),
+        source: Some("ripr".to_string()),
+        message: format!("ripr: {sentence} This is a static advisory, not runtime evidence."),
+        data: Some(serde_json::json!({
+            "delivery_eligible": true,
+            "kind": INCOMPLETE_ANALYSIS_MARKER_KIND,
+            "not_analyzed_reason": "analysis_incomplete",
+            "outcome_kind": outcome.kind.as_str(),
+            "limitations": limitations,
+        })),
+        ..Default::default()
+    })
 }
 
 /// The marker for an empty analysis scope. Shares the governed
@@ -931,7 +982,7 @@ pub(super) fn empty_scope_diagnostic(snapshot: &AnalysisSnapshot) -> Diagnostic 
         message: format!("ripr: {disclosure} This is a static advisory, not runtime evidence."),
         data: Some(serde_json::json!({
             "delivery_eligible": true,
-            "kind": "empty_scope",
+            "kind": EMPTY_SCOPE_MARKER_KIND,
             "not_analyzed_reason": "empty_scope",
             "recovery": super::backend::EMPTY_SCOPE_LSP_RETRY_ROUTE,
         })),
@@ -1228,8 +1279,8 @@ pub(super) fn workspace_diagnostic_result_id(snapshot: &AnalysisSnapshot) -> Str
     // #13441: the served empty-scope marker is not a stored document, so its
     // payload joins the workspace identity directly; otherwise a marker, a
     // changed marker and no marker could share one identity.
-    if let Some(marker) = empty_scope_marker_payload(snapshot) {
-        parts.push("empty-scope-marker".to_string());
+    if let Some(marker) = scope_marker_payload(snapshot) {
+        parts.push("scope-marker".to_string());
         parts.push(marker.message);
     }
     for uri in snapshot.diagnostics_by_uri.keys() {

@@ -33089,16 +33089,11 @@ fn clean_tree_serves_a_passive_empty_scope_marker_and_a_tree_with_rows_does_not(
     {
         return Err("the result id must differ between marker and rows payloads".to_string());
     }
-    // Negatives: only an empty-scope outcome serves the marker. A complete
-    // answer with no findings, a failed analysis and a missing outcome stay
-    // silent.
+    // Negatives: only an empty-scope outcome serves this marker (an incomplete
+    // outcome serves its own, #13562). A complete answer with no findings and
+    // a missing outcome stay silent.
     use crate::analysis_outcome::AnalysisOutcomeKind;
-    for kind in [
-        Some(AnalysisOutcomeKind::CompleteNoFindings),
-        Some(AnalysisOutcomeKind::AnalysisFailed),
-        Some(AnalysisOutcomeKind::PartialWithLimitations),
-        None,
-    ] {
+    for kind in [Some(AnalysisOutcomeKind::CompleteNoFindings), None] {
         let mut altered = clean.snapshot.clone();
         match (kind, altered.analysis_outcome.as_mut()) {
             (Some(kind), Some(outcome)) => outcome.kind = kind,
@@ -33184,6 +33179,328 @@ fn clean_tree_serves_a_passive_empty_scope_marker_and_a_tree_with_rows_does_not(
     .is_empty()
     {
         return Err("a document outside the root must not be marked".to_string());
+    }
+    Ok(())
+}
+
+fn scope_marker_kind_of(d: &Diagnostic) -> Option<String> {
+    let is_governed = d.code
+        == Some(NumberOrString::String(
+            super::diagnostic_catalog::DIAGNOSTIC_LANGUAGE_NOT_ANALYZED_CODE.to_string(),
+        ));
+    d.data
+        .as_ref()
+        .filter(|_| is_governed)
+        .and_then(|data| data["kind"].as_str())
+        .map(str::to_string)
+}
+
+fn incomplete_outcome_fixture(
+    kind: crate::analysis_outcome::AnalysisOutcomeKind,
+    limitations: Vec<crate::analysis_outcome::AnalysisLimitation>,
+) -> Result<crate::analysis_outcome::AnalysisOutcome, String> {
+    crate::analysis_outcome::AnalysisOutcome::new(
+        kind,
+        crate::analysis_outcome::AnalysisIdentity::default(),
+        crate::analysis_outcome::AnalysisOutcomeCounts::default(),
+        limitations,
+    )
+}
+
+fn incomplete_limitation_fixture(
+    kind: crate::analysis_outcome::AnalysisLimitationKind,
+    recovery: &str,
+) -> Result<crate::analysis_outcome::AnalysisLimitation, String> {
+    use crate::analysis_outcome::{
+        AnalysisLimitation, AnalysisRecovery, AnalysisRecoveryKind, AnalysisStage,
+    };
+    Ok(AnalysisLimitation::new(
+        kind,
+        AnalysisStage::AnalysisPipeline,
+        AnalysisRecovery::new(AnalysisRecoveryKind::IncreaseConfiguredLimit, recovery)?,
+    ))
+}
+
+/// #13562: an incomplete outcome with no stored row serves one passive
+/// Information marker per document, for each incomplete kind and limitation,
+/// worded by the typed outcome's own limitation text. Complete outcomes, rows,
+/// the empty-scope marker and stored path-bound markers are never double-marked.
+#[test]
+fn incomplete_outcome_with_no_rows_serves_a_passive_marker_and_nothing_else_does()
+-> Result<(), String> {
+    use crate::analysis_outcome::{AnalysisLimitationKind as L, AnalysisOutcomeKind as K};
+    let root = untested_rust_edit_fixture("incomplete-outcome-marker")?;
+    let analyze = || {
+        let config = LspAnalysisConfig {
+            base_ref: Some("HEAD".to_string()),
+            mode: Mode::Instant,
+            ..LspAnalysisConfig::default()
+        };
+        workspace_diagnostics_with_config(root.path(), &config, true)
+    };
+    let uri = file_uri_for_path(&root.path().join("src/lib.rs"))
+        .map_err(|err| format!("uri for lib.rs failed: {err}"))?;
+    let served = |snapshot: &AnalysisSnapshot| {
+        super::diagnostics::delivered_diagnostics_for_uri(
+            snapshot,
+            &uri,
+            &std::collections::BTreeMap::new(),
+        )
+    };
+    let edited = analyze()?;
+    run_lsp_scope_git(root.path(), &["checkout", "--", "src/lib.rs"])?;
+    let clean = analyze()?;
+    if clean.snapshot.diagnostic_count() != 0 || edited.snapshot.diagnostic_count() == 0 {
+        return Err("fixture needs one clean and one row-bearing snapshot".to_string());
+    }
+
+    let cases = [
+        (
+            K::PartialWithLimitations,
+            L::DiffScopeOversized,
+            "To widen the analyzed partition, raise RIPR_PARTIAL_DIFF_LINE_BUDGET to at least 79, then re-run.",
+        ),
+        (
+            K::UnsupportedInput,
+            L::MalformedDiff,
+            "Run the analysis on a diff that includes the source changes.",
+        ),
+        (
+            K::UnsupportedInput,
+            L::CombinedHunkUnsupported,
+            "Use a two-way diff against one base.",
+        ),
+        (
+            K::AnalysisFailed,
+            L::ProducerFailure,
+            "Inspect the failure and re-run.",
+        ),
+    ];
+    let mut messages = Vec::new();
+    let mut ids = Vec::new();
+    for (outcome_kind, limitation_kind, recovery) in cases {
+        let outcome = incomplete_outcome_fixture(
+            outcome_kind,
+            vec![incomplete_limitation_fixture(limitation_kind, recovery)?],
+        )?;
+        let mut snapshot = clean.snapshot.clone();
+        snapshot.analysis_outcome = Some(outcome.clone());
+        let items = served(&snapshot);
+        let [marker] = items.as_slice() else {
+            return Err(format!("{limitation_kind:?}: exactly one marker: {items:?}"));
+        };
+        let data = marker.data.as_ref().ok_or("marker carries typed data")?;
+        let sentence = outcome
+            .incomplete_scope_sentence()
+            .ok_or("incomplete outcome has a sentence")?;
+        if scope_marker_kind_of(marker).as_deref() != Some("incomplete_analysis")
+            || marker.severity != Some(DiagnosticSeverity::INFORMATION)
+            || marker.source.as_deref() != Some("ripr")
+            || marker.range != Range::default()
+            || !marker.message.contains(&sentence)
+            || !marker.message.contains(recovery.trim_end_matches('.'))
+            || !marker.message.contains(limitation_kind.plain_label())
+            || !marker.message.contains("does not mean")
+            || !marker.message.contains("not runtime evidence")
+            || data["outcome_kind"] != outcome_kind.as_str()
+            || data["limitations"] != serde_json::json!([limitation_kind.as_str()])
+            || data["not_analyzed_reason"] != "analysis_incomplete"
+        {
+            return Err(format!("{limitation_kind:?}: governed shape: {marker:?}"));
+        }
+        if ["finding_id", "repair", "witness", "preview_actionability", "recovery"]
+            .iter()
+            .any(|key| data.get(*key).is_some())
+        {
+            return Err(format!("marker must be passive typed data: {data:#}"));
+        }
+        let lowered = marker.message.to_lowercase();
+        // ripr-allow: static-language: negative guard lists the forbidden terms
+        for word in "passing covered safe proven adequate killed survived".split(' ') {
+            // ripr-allow: static-language: negative guard lists the forbidden terms
+            if lowered.contains(word) {
+                return Err(format!("marker wording must not contain {word:?}: {lowered}"));
+            }
+        }
+        if super::diagnostics::scope_marker_payload(&snapshot).as_ref() != Some(marker) {
+            return Err("lifecycle payload must equal the served marker".to_string());
+        }
+        ids.push(format!(
+            "{}|{}",
+            super::diagnostics::document_diagnostic_result_id(&snapshot, &uri),
+            super::diagnostics::workspace_diagnostic_result_id(&snapshot)
+        ));
+        messages.push(marker.message.clone());
+    }
+    let distinct = |values: &[String]| {
+        let mut sorted = values.to_vec();
+        sorted.sort();
+        sorted.dedup();
+        sorted.len() == values.len()
+    };
+    if !distinct(&messages) || !distinct(&ids) {
+        return Err("a changed marker payload must change text and both result ids".to_string());
+    }
+    let mut unchanged = clean.snapshot.clone();
+    unchanged.analysis_outcome = Some(incomplete_outcome_fixture(
+        K::PartialWithLimitations,
+        vec![incomplete_limitation_fixture(L::DiffScopeOversized, "r.")?],
+    )?);
+    let with_marker = super::diagnostics::document_diagnostic_result_id(&unchanged, &uri);
+    let clean_id = super::diagnostics::document_diagnostic_result_id(&clean.snapshot, &uri);
+    if with_marker == clean_id {
+        return Err("the marker must change the pull result id".to_string());
+    }
+
+    // More than three scoping limitations: bounded, the rest counted.
+    let many = incomplete_outcome_fixture(
+        K::PartialWithLimitations,
+        vec![
+            incomplete_limitation_fixture(L::DiffScopeOversized, "a.")?,
+            incomplete_limitation_fixture(L::ProducerTimeout, "b.")?,
+            incomplete_limitation_fixture(L::ProducerFailure, "c.")?,
+            incomplete_limitation_fixture(L::LanguageScopeUnsupported, "d.")?,
+        ],
+    )?;
+    let mut many_snapshot = clean.snapshot.clone();
+    many_snapshot.analysis_outcome = Some(many);
+    let items = served(&many_snapshot);
+    let [bounded] = items.as_slice() else {
+        return Err(format!("one bounded marker expected: {items:?}"));
+    };
+    if bounded.message.matches("Limitation:").count() != 3
+        || !bounded.message.contains("1 more limitation(s)")
+    {
+        return Err(format!("marker must name three and count the rest: {bounded:?}"));
+    }
+
+    // Discriminating negatives.
+    let mut complete = clean.snapshot.clone();
+    complete
+        .analysis_outcome
+        .as_mut()
+        .ok_or("clean snapshot carries an outcome")?
+        .kind = K::CompleteNoFindings;
+    if !served(&complete).is_empty() {
+        return Err("complete_no_findings must serve nothing".to_string());
+    }
+    let mut rows = edited.snapshot.clone();
+    rows.analysis_outcome = Some(incomplete_outcome_fixture(
+        K::PartialWithLimitations,
+        vec![incomplete_limitation_fixture(L::DiffScopeOversized, "r.")?],
+    )?);
+    if served(&rows)
+        .iter()
+        .any(|d| scope_marker_kind_of(d).is_some_and(|kind| kind == "incomplete_analysis"))
+        || super::diagnostics::scope_marker_payload(&rows).is_some()
+    {
+        return Err("a snapshot with rows must not carry the incomplete marker".to_string());
+    }
+    // The empty-scope outcome keeps its own marker, not the incomplete one.
+    let mut empty = clean.snapshot.clone();
+    empty
+        .analysis_outcome
+        .as_mut()
+        .ok_or("clean snapshot carries an outcome")?
+        .kind = K::NoScope;
+    let items = served(&empty);
+    let [only] = items.as_slice() else {
+        return Err(format!("one empty-scope marker expected: {items:?}"));
+    };
+    if scope_marker_kind_of(only).as_deref() != Some("empty_scope") {
+        return Err(format!("empty scope keeps its own marker: {only:?}"));
+    }
+    // A stored path-bound marker is not double-marked.
+    let mut stored = clean.snapshot.clone();
+    stored
+        .diagnostics_by_uri
+        .entry(uri.clone())
+        .or_default()
+        .push(super::diagnostics::file_parse_failed_diagnostic(
+            "src/lib.rs",
+            "producer_failure",
+            "fix the syntax error",
+        ));
+    stored.analysis_outcome = Some(incomplete_outcome_fixture(
+        K::PartialWithLimitations,
+        vec![incomplete_limitation_fixture(L::ProducerFailure, "r.")?],
+    )?);
+    if super::diagnostics::snapshot_serves_scope_marker(&stored)
+        || served(&stored)
+            .iter()
+            .any(|d| scope_marker_kind_of(d).is_some_and(|kind| kind == "incomplete_analysis"))
+    {
+        return Err("a stored marker must not be double-marked".to_string());
+    }
+    // A document outside the root gets nothing.
+    let outside = file_uri_for_path(Path::new("/elsewhere/other.rs"))
+        .map_err(|err| format!("uri failed: {err}"))?;
+    if !super::diagnostics::delivered_diagnostics_for_uri(
+        &many_snapshot,
+        &outside,
+        &std::collections::BTreeMap::new(),
+    )
+    .is_empty()
+    {
+        return Err("a document outside the root must not be marked".to_string());
+    }
+    Ok(())
+}
+
+/// #13562 through the real workspace entry point: a file-mode-only change is a
+/// well-formed diff with nothing ripr analyzes, so the run is `unsupported_input`
+/// with a `malformed_diff` limitation and no row. The real snapshot serves the
+/// incomplete marker, not the empty-scope one, and a real text edit serves none.
+#[cfg(unix)]
+#[test]
+fn file_mode_only_change_serves_the_incomplete_marker_through_the_real_producer()
+-> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt;
+    let root = untested_rust_edit_fixture("incomplete-mode-only")?;
+    run_lsp_scope_git(root.path(), &["checkout", "--", "src/lib.rs"])?;
+    let lib = root.path().join("src/lib.rs");
+    std::fs::set_permissions(&lib, std::fs::Permissions::from_mode(0o755))
+        .map_err(|err| format!("chmod failed: {err}"))?;
+    let config = LspAnalysisConfig {
+        base_ref: Some("HEAD".to_string()),
+        mode: Mode::Instant,
+        ..LspAnalysisConfig::default()
+    };
+    let result = workspace_diagnostics_with_config(root.path(), &config, true)?;
+    let outcome = result
+        .snapshot
+        .analysis_outcome
+        .as_ref()
+        .ok_or("real snapshot carries a typed outcome")?;
+    if outcome.kind != crate::analysis_outcome::AnalysisOutcomeKind::UnsupportedInput
+        || !result.batches.is_empty()
+    {
+        return Err(format!(
+            "mode-only change must be unsupported_input with no rows: {outcome:?}"
+        ));
+    }
+    let uri = file_uri_for_path(&lib).map_err(|err| format!("uri failed: {err}"))?;
+    let items = super::diagnostics::delivered_diagnostics_for_uri(
+        &result.snapshot,
+        &uri,
+        &std::collections::BTreeMap::new(),
+    );
+    let [marker] = items.as_slice() else {
+        return Err(format!("exactly one incomplete marker expected: {items:?}"));
+    };
+    if scope_marker_kind_of(marker).as_deref() != Some("incomplete_analysis")
+        || !marker.message.contains("binary or file-mode changes")
+    {
+        return Err(format!("marker must name the producer's text: {marker:?}"));
+    }
+    // A text edit on top produces real rows and no marker.
+    std::fs::write(&lib, "pub fn lonely(x: i32) -> i32 {\n    x * 3\n}\n")
+        .map_err(|err| format!("edit failed: {err}"))?;
+    let edited = workspace_diagnostics_with_config(root.path(), &config, true)?;
+    if edited.snapshot.diagnostic_count() == 0
+        || super::diagnostics::scope_marker_payload(&edited.snapshot).is_some()
+    {
+        return Err("a text edit must serve rows and no scope marker".to_string());
     }
     Ok(())
 }
