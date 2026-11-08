@@ -5640,24 +5640,20 @@ fn helper_borne_call_resolves(
     let (Some(call), None) = (borne.next(), borne.next()) else {
         return false;
     };
-    // The direct route resolves a constructor by the impl type's name alone,
-    // so a same-named type imported from elsewhere would be credited. The
-    // helper route also needs the test file's import to bind that name to the
-    // owner's own type (the #8999 method-entry authority).
-    let binds_owner_type = super::call_identity::inherent_entry_type_identity(index, owner)
-        .is_some_and(|identity| identity.binds_inherent_entry_type(test, index));
-    if !binds_owner_type {
+    // The test file's own functions, not the whole workspace's.
+    let Some(file) = index.files().get(&test.file) else {
         return false;
-    }
-    let mut holders = index.functions().iter().filter(|function| {
-        function.file == test.file && (function.start_line..=function.end_line).contains(&call.line)
-    });
+    };
+    let mut holders = file
+        .functions
+        .iter()
+        .filter(|function| (function.start_line..=function.end_line).contains(&call.line));
     let (Some(helper), None) = (holders.next(), holders.next()) else {
         return false;
     };
-    helper.item.container == FunctionContainer::Free
-        && helper.nested_fn_names.is_empty()
-        && function_calls_resolve(
+    if helper.item.container != FunctionContainer::Free
+        || !helper.nested_fn_names.is_empty()
+        || !function_calls_resolve(
             test,
             &helper.body,
             helper.start_line,
@@ -5666,6 +5662,16 @@ fn helper_borne_call_resolves(
             trust_unplaced_standard_root,
             resolves,
         )
+    {
+        return false;
+    }
+    // Last, because it is the costly check: the direct route resolves a
+    // constructor by the impl type's name alone, so a same-named type imported
+    // from elsewhere would be credited. The helper route also needs the test
+    // file's import to bind that name to the owner's own type (the #8999
+    // method-entry authority).
+    super::call_identity::inherent_entry_type_identity(index, owner)
+        .is_some_and(|identity| identity.binds_inherent_entry_type(test, index))
 }
 
 /// A helper-name graph supplies candidates, never executable function identity.
