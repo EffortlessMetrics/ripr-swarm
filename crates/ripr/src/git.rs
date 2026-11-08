@@ -345,7 +345,26 @@ fn git_command(root: &Path, args: &[&str]) -> Command {
         // #9375: match `hooksPath` and use `NUL` on native Windows git builds.
         .args(["-c", &format!("diff.orderFile={null_device}")])
         .args(args);
+    hide_console_window(&mut command);
     command
+}
+
+/// `CREATE_NO_WINDOW`: the child gets no console of its own.
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+/// #9375: ripr captures every internal git invocation's output through pipes,
+/// so git never needs a console. When ripr itself runs without one (the editor
+/// server, a GUI-launched agent), Windows would otherwise allocate a fresh
+/// console per git child and flash a window. No-op off Windows.
+fn hide_console_window(command: &mut Command) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+    #[cfg(not(windows))]
+    let _ = command;
 }
 
 /// The work-tree top level Git discovers from `dir` itself, canonicalized.
