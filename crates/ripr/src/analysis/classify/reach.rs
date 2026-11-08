@@ -1,6 +1,6 @@
 use super::super::facts::FunctionContainer;
 use super::super::rust_index::{FunctionSummary, RustIndex, TestSummary};
-use super::related_tests::is_established_free_function;
+use super::related_tests::{is_established_free_function, package_prefix};
 use crate::analysis::extract::mask_comments_and_strings;
 use crate::domain::{
     CALLEE_ONLY_REACH_PREFIX, Confidence, RelationReason, StageEvidence, StageState,
@@ -162,6 +162,101 @@ pub(in crate::analysis) fn owner_may_be_reached_unseen(
         || index.files().values().any(|file| {
             includes_external_docs_with(&file.source, file.data().macro_candidates.is_some())
         })
+}
+
+/// Attributes that never make a function callable without a source naming
+/// it. Any other attribute on the owner or its `impl` (`no_mangle`,
+/// `export_name`, `wasm_bindgen`, `ctor`, `proc_macro*`, `panic_handler`,
+/// registration macros, ...) may expose it to a caller ripr cannot see.
+const INERT_OWNER_ATTRS: &[&str] = &[
+    "inline",
+    "must_use",
+    "doc",
+    "allow",
+    "warn",
+    "deny",
+    "expect",
+    "deprecated",
+    "cold",
+    "track_caller",
+    "rustfmt",
+];
+
+/// RIPR-SPEC-0219: whether a ruled-out owner may be reported as
+/// `(unreferenced in workspace)`. Stricter than
+/// [`owner_may_be_reached_unseen`], and fail closed: the owner's file was
+/// parsed (not the lexical fallback, which records no attributes), it carries
+/// no attribute outside [`INERT_OWNER_ATTRS`], its signature declares no
+/// foreign ABI, and its name occurs as a whole word nowhere in the workspace
+/// outside its own definition, so a qualified call (`Self::pad(..)`) or any
+/// other spelling the naming scan does not model keeps the marker off.
+pub(in crate::analysis) fn owner_unreferenced_in_workspace(
+    owner: &FunctionSummary,
+    index: &RustIndex,
+) -> bool {
+    if owner.name.is_empty() || owner.name == "main" {
+        return false;
+    }
+    let inert = |attr: &String| {
+        if attr.trim_start().starts_with("//") {
+            return true;
+        }
+        let inner = attr
+            .trim()
+            .trim_start_matches("#!")
+            .trim_start_matches('#')
+            .trim_start_matches('[')
+            .trim_start();
+        let name: String = inner
+            .chars()
+            .take_while(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == ':')
+            .collect();
+        INERT_OWNER_ATTRS.contains(&name.as_str())
+    };
+    if !owner.attrs.iter().all(inert) || !owner.impl_attrs.iter().all(inert) {
+        return false;
+    }
+    let mut own_file_seen = false;
+    for file in index.files().values() {
+        let own_file = file.path == owner.file;
+        if own_file {
+            own_file_seen = true;
+            if file.used_lexical_fallback {
+                return false;
+            }
+        }
+        if !file.source.contains(owner.name.as_str()) {
+            continue;
+        }
+        let mut signature_open = true;
+        for (number, line) in file.source.lines().enumerate() {
+            let number = number + 1;
+            let inside_own = own_file && (owner.start_line..=owner.end_line).contains(&number);
+            if inside_own {
+                // A foreign ABI on the signature (`extern "C" fn`) is called
+                // from outside Rust.
+                if signature_open && line.contains("extern") {
+                    return false;
+                }
+                if line.contains('{') {
+                    signature_open = false;
+                }
+                continue;
+            }
+            if contains_word(line, &owner.name) {
+                return false;
+            }
+        }
+    }
+    own_file_seen
+}
+
+fn contains_word(line: &str, word: &str) -> bool {
+    let is_ident = |c: char| c.is_alphanumeric() || c == '_';
+    line.match_indices(word).any(|(at, _)| {
+        !line[..at].chars().next_back().is_some_and(is_ident)
+            && !line[at + word.len()..].chars().next().is_some_and(is_ident)
+    })
 }
 
 /// Whether the workspace names `owner` anywhere but inside its own body, given
@@ -624,6 +719,111 @@ fn imported_names(source: &str, keep_root: impl Fn(&str) -> bool) -> Vec<String>
     names
 }
 
+/// How many production caller hops [`owner_tested_through_production_caller`]
+/// walks up from the owner before giving up.
+const PRODUCTION_CALLER_HOPS: usize = 6;
+
+/// A caller name that more production functions define than this is not
+/// followed as a link. Three keeps a small overload family on one path
+/// (semver's `matches` on `VersionReq`, `Comparator` and the free helper all
+/// lead to `matches_impl`), while a common name such as `new`, `get` or `len`
+/// cannot stand in for a path. Measured on the five-crate cargo-mutants
+/// corpus (#12900): at 1 and 2 the rule removes 21 and 28 false gaps; at 3 it
+/// removes 61 and moves 8 boundary misses on `matches_*` helpers, which the
+/// tests do run, to `weakly_exposed`; above 3 it changes 6 more.
+const MAX_LINK_DEFINITIONS: usize = 3;
+
+/// Whether a chain of production callers (at most
+/// [`PRODUCTION_CALLER_HOPS`] hops) leads from `owner` to a function that a
+/// registered test calls by name, directly or through a test-side helper
+/// that a registered test calls.
+///
+/// This is a name-level lookalike of transitive reach: it never establishes
+/// reach and never credits an oracle. It only answers whether tests that
+/// merely sit near the owner are the whole story. When the owner sits behind
+/// a production caller that tests do call (a private helper behind a public
+/// entry), a missing assertion on the nearby tests is no evidence that the
+/// change goes unnoticed (#12900).
+///
+/// `CallFact::name` is the bare callee identifier, so a link is matched by
+/// name. A caller whose name more than [`MAX_LINK_DEFINITIONS`] production
+/// functions define (`new`, `get`, `len`) is not followed: a same-named call
+/// could be any of them, and following it would let a common name stand for a
+/// real path. A caller no test calls (an unexercised sibling) does not count
+/// either. A link must sit in the owner's own workspace package
+/// ([`package_prefix`]): a caller in a dependent package is the cross-package
+/// wrapper case, which keeps its own transitive-reach limit (#10127).
+pub(in crate::analysis) fn owner_tested_through_production_caller(
+    owner: &FunctionSummary,
+    index: &RustIndex,
+) -> bool {
+    use super::super::facts::FunctionSourceRole;
+    if owner.name.is_empty() {
+        return false;
+    }
+    let production = || {
+        index
+            .functions()
+            .iter()
+            .filter(|function| function.source_role == FunctionSourceRole::Production)
+    };
+    let mut definitions: HashMap<&str, usize> = HashMap::new();
+    for function in production() {
+        *definitions.entry(function.name.as_str()).or_default() += 1;
+    }
+    // A registered test calls `name`, or calls a test-side helper (one hop)
+    // that calls it. A helper no registered test calls is dead evidence and
+    // never counts.
+    let test_calls = |name: &str| {
+        index
+            .tests()
+            .iter()
+            .any(|test| test.calls.iter().any(|call| call.name == name))
+    };
+    let tested = |name: &str| {
+        test_calls(name)
+            || index.functions().iter().any(|function| {
+                function.source_role != FunctionSourceRole::Production
+                    && !function.name.is_empty()
+                    && function.calls.iter().any(|call| call.name == name)
+                    && test_calls(&function.name)
+            })
+    };
+    let owner_package = package_prefix(&owner.file);
+    let mut seen: BTreeSet<&str> = BTreeSet::from([owner.name.as_str()]);
+    let mut frontier: Vec<&str> = vec![owner.name.as_str()];
+    for _ in 0..PRODUCTION_CALLER_HOPS {
+        let mut next: Vec<&str> = Vec::new();
+        for function in production() {
+            let name = function.name.as_str();
+            if function.id == owner.id
+                || name.is_empty()
+                || seen.contains(name)
+                || package_prefix(&function.file) != owner_package
+                || definitions.get(name).copied().unwrap_or(0) > MAX_LINK_DEFINITIONS
+            {
+                continue;
+            }
+            if function
+                .calls
+                .iter()
+                .any(|call| frontier.contains(&call.name.as_str()))
+            {
+                seen.insert(name);
+                next.push(name);
+            }
+        }
+        if next.iter().any(|name| tested(name)) {
+            return true;
+        }
+        if next.is_empty() {
+            return false;
+        }
+        frontier = next;
+    }
+    false
+}
+
 /// Parser-backed owner ids carry their impl segment
 /// (`src/lib.rs::impl Display for Money::fmt`).
 pub(in crate::analysis) fn is_trait_impl_method(owner: &FunctionSummary) -> bool {
@@ -962,6 +1162,91 @@ mod tests {
     use crate::domain::SymbolId;
     use std::collections::BTreeMap;
     use std::path::PathBuf;
+
+    fn parsed_index(files: &[(&str, &str)]) -> Result<RustIndex, String> {
+        use crate::analysis::syntax::{RaRustSyntaxAdapter, RustSyntaxAdapter};
+        let mut index = RustIndex::default();
+        for (path, source) in files {
+            let facts = RaRustSyntaxAdapter.summarize_file(Path::new(path), source)?;
+            let functions = facts.functions.clone();
+            let tests = facts.tests.clone();
+            index.insert_file_only(PathBuf::from(path), facts);
+            index.extend_functions(functions);
+            index.extend_tests(tests);
+        }
+        Ok(index)
+    }
+
+    fn owner_named<'a>(index: &'a RustIndex, name: &str) -> Result<&'a FunctionSummary, String> {
+        index
+            .functions()
+            .iter()
+            .find(|function| function.name == name)
+            .ok_or_else(|| format!("owner {name} indexed"))
+    }
+
+    /// #12900: a private helper behind a public entry that a test calls is
+    /// tested through that caller chain, at any hop up to the bound.
+    #[test]
+    fn helper_behind_a_tested_public_entry_is_tested_through_a_caller() -> Result<(), String> {
+        let lib = "pub fn parse(s: &str) -> u32 { step(s) }\n\
+                   fn step(s: &str) -> u32 { digits(s) + 1 }\n\
+                   fn digits(s: &str) -> u32 { s.len() as u32 }\n";
+        let test = "#[test]\nfn parses() { assert!(parse(\"ab\") > 0); }\n";
+        let index = parsed_index(&[("src/lib.rs", lib), ("tests/parse.rs", test)])?;
+        for owner in ["step", "digits"] {
+            assert!(
+                owner_tested_through_production_caller(owner_named(&index, owner)?, &index),
+                "{owner} is reached through the tested entry `parse`"
+            );
+        }
+        Ok(())
+    }
+
+    /// The negative: a caller that no test calls (an unexercised sibling, the
+    /// `compile_time_marker_test_no_observation` shape) gives no such chain,
+    /// and neither does an owner with no production caller at all.
+    #[test]
+    fn unexercised_sibling_caller_or_no_caller_is_not_a_tested_chain() -> Result<(), String> {
+        let lib = "struct W(u32);\n\
+                   impl W {\n    fn peek(&self) -> u32 { self.get() }\n    fn get(&self) -> u32 { self.0 }\n}\n\
+                   pub fn lonely() -> u32 { 1 }\n";
+        let test = "#[test]\nfn unrelated() { assert_eq!(2, 2); }\n";
+        let index = parsed_index(&[("src/lib.rs", lib), ("tests/t.rs", test)])?;
+        for owner in ["get", "lonely"] {
+            assert!(
+                !owner_tested_through_production_caller(owner_named(&index, owner)?, &index),
+                "{owner} has no production caller that tests call"
+            );
+        }
+        Ok(())
+    }
+
+    /// A caller in a test-only module is a test-side lookalike, not a
+    /// production link, and a caller name that more than
+    /// `MAX_LINK_DEFINITIONS` production functions define is not followed: a
+    /// test calling `run` could mean any of them.
+    #[test]
+    fn test_module_caller_and_ambiguous_caller_name_are_not_links() -> Result<(), String> {
+        let lib = "fn helper() -> u32 { 1 }\n\
+                   pub mod a { pub fn run() -> u32 { super::helper() } }\n\
+                   pub mod b { pub fn run() -> u32 { 2 } }\n\
+                   pub mod c { pub fn run() -> u32 { 3 } }\n\
+                   pub mod d { pub fn run() -> u32 { 4 } }\n\
+                   fn lonely() -> u32 { 3 }\n\
+                   pub fn entry() -> u32 { orphan() }\n\
+                   fn orphan() -> u32 { 5 }\n\
+                   #[cfg(test)]\nmod tests {\n    fn wrap() -> u32 { super::lonely() }\n    fn unused() -> u32 { super::entry() }\n    #[test]\n    fn calls_wrap() { assert_eq!(wrap(), 3); }\n}\n";
+        let test = "#[test]\nfn runs() { assert!(ripr_fixture::a::run() > 0); }\n";
+        let index = parsed_index(&[("src/lib.rs", lib), ("tests/run.rs", test)])?;
+        for owner in ["helper", "lonely", "orphan"] {
+            assert!(
+                !owner_tested_through_production_caller(owner_named(&index, owner)?, &index),
+                "{owner} must not be tested through an ambiguous, test-side or dead-helper caller"
+            );
+        }
+        Ok(())
+    }
 
     #[test]
     fn given_no_related_tests_when_building_reach_evidence_then_stage_is_no() {
@@ -2294,6 +2579,79 @@ mod tests {
                 "{not_reaching:?} must not reach a module-level owner"
             );
         }
+    }
+
+    fn unreferenced_fixture(source: &str, owner: &FunctionSummary, lexical: bool) -> bool {
+        let index = RustIndex::from_owned(OwnedRustIndex {
+            files: BTreeMap::from([(
+                PathBuf::from("src/lib.rs"),
+                FileFacts {
+                    path: PathBuf::from("src/lib.rs"),
+                    source: source.into(),
+                    used_lexical_fallback: lexical,
+                    ..FileFacts::default()
+                },
+            )]),
+            functions: vec![owner.clone()],
+            ..Default::default()
+        });
+        owner_unreferenced_in_workspace(owner, &index)
+    }
+
+    #[test]
+    fn unreferenced_marker_admits_only_a_parsed_unnamed_plain_owner() {
+        let lone = "pub fn as_eb(x: u64) -> u64 {\n    x / 8\n}\n#[test]\nfn other() { assert_eq!(1, 1); }\n";
+        let owner = function("as_eb");
+        assert!(
+            unreferenced_fixture(lone, &owner, false),
+            "plain unnamed owner"
+        );
+        assert!(
+            !unreferenced_fixture(lone, &owner, true),
+            "lexical fallback has no attributes"
+        );
+
+        // A qualified call the naming scan may not count still names it.
+        let qualified = format!("{lone}fn caller() -> u64 {{ Self::as_eb(1) }}\n");
+        assert!(
+            !unreferenced_fixture(&qualified, &owner, false),
+            "Self::as_eb"
+        );
+
+        // Inert attributes and doc comments keep the marker.
+        let mut inline = owner.clone();
+        inline.attrs = vec!["#[inline(always)]".into(), "/// Returns exabytes.".into()].into();
+        assert!(unreferenced_fixture(lone, &inline, false), "inline + doc");
+
+        // Attributes that export the owner to an unseen caller drop it.
+        for attr in [
+            "#[no_mangle]",
+            "#[export_name = \"x\"]",
+            "#[wasm_bindgen]",
+            "#[ctor::ctor]",
+            "#[proc_macro]",
+        ] {
+            let mut exported = owner.clone();
+            exported.attrs = vec![attr.into()].into();
+            assert!(!unreferenced_fixture(lone, &exported, false), "{attr}");
+        }
+        let mut impl_exported = owner.clone();
+        impl_exported.impl_attrs = vec!["#[wasm_bindgen]".into()];
+        assert!(
+            !unreferenced_fixture(lone, &impl_exported, false),
+            "impl attr"
+        );
+
+        // A foreign ABI on the signature.
+        let ffi = "pub extern \"C\" fn as_eb(x: u64) -> u64 {\n    x / 8\n}\n";
+        assert!(!unreferenced_fixture(ffi, &owner, false), "extern C");
+
+        // `main` is run by the build, never named.
+        let main = "fn main() {\n    run();\n}\n";
+        assert!(
+            !unreferenced_fixture(main, &function("main"), false),
+            "main"
+        );
     }
 
     fn function(name: &str) -> FunctionSummary {
