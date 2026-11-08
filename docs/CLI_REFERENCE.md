@@ -95,6 +95,7 @@ reports no runtime outcomes; a real mutation runner confirms later.
 | [`ripr capabilities`](#capabilities) | Show per-language, framework and mode capability status. | public |
 | [`ripr check`](#check) | Analyze the current diff and name the top actionable gap. | public |
 | [`ripr start-here`](#first-pr) | Compatibility alias for first-pr; compose the same start-here bundle. | compatibility |
+| [`ripr completions`](#completions) | Print a tab-completion script for your shell. | public |
 | [`ripr config`](#config) | Show the configuration command surface. | public |
 | [`ripr config validate`](#config) | Validate ripr.toml without running analysis. | public |
 | [`ripr context`](#context) | Collect the tests and seams related to one finding. | public |
@@ -1770,6 +1771,35 @@ Examples:
   ripr check --diff d.patch --write-artifact target/ripr/last-check.json
 ```
 
+### completions
+
+`ripr help completions`
+
+```text
+Print a tab-completion script for your shell.
+
+Usage: ripr completions <bash|zsh|fish|powershell>
+
+Options:
+  --help  Show this help.
+
+The script completes ripr command names and the word after a command, such as
+`cache status`. It does not complete flags. It prints to stdout and changes
+nothing on your machine.
+
+Try it in the current shell:
+  bash        source <(ripr completions bash)
+  zsh         source <(ripr completions zsh)   (run `compinit` first)
+  fish        ripr completions fish | source
+  powershell  ripr completions powershell | Out-String | Invoke-Expression
+
+To keep it, add that line to your shell startup file (for example ~/.bashrc,
+~/.zshrc, ~/.config/fish/config.fish or your PowerShell profile).
+
+Examples:
+  ripr completions bash
+```
+
 ### config
 
 Shared help for `ripr config`, `ripr config validate`.
@@ -1868,13 +1898,22 @@ Examples:
 ```text
 Continue the current repair attempt through its after phase.
 
-Usage: ripr continue [--attempt ID] [--root PATH] [--quiet]
+Usage: ripr continue [--attempt ID] [--root PATH] [--json] [--quiet]
 
 Options:
   --attempt ID     Select one repair attempt by ID.
   --root PATH      Workspace root. Defaults to the current directory, then
                    walks up to the enclosing workspace or package, or the git
                    top level; `--root .` pins this directory.
+  --json           Print the after-phase JSON document, or the attempt's
+                   status JSON when it is already complete. A typed after-phase
+                   refusal or failure prints its JSON document on stdout
+                   (`repair_after_refusal`, `repair_after_failure`, or the
+                   verify document) beside the stderr prose and the same
+                   exit code. Selection refusals (no current attempt,
+                   several attempts, an ended attempt, a blocked baseline,
+                   an unanchored root) and operational errors before
+                   the verify step keep stdout empty.
   --quiet          Drop the after phase's progress narration and `wrote
                    <path>` lines from stderr. Refusal prose and the result
                    stay. `RIPR_QUIET` does the same.
@@ -4462,7 +4501,7 @@ Examples:
 ```text
 Start a repair attempt from a Rust gap, or select a gap to repair.
 
-Usage: ripr repair [<item>] [--root PATH] [--base REF] [--quiet]
+Usage: ripr repair [<item>] [--root PATH] [--base REF] [--json] [--quiet]
 
 Options:
   --root PATH      Workspace root. Defaults to the current directory, then
@@ -4472,6 +4511,11 @@ Options:
                    `ripr check --base`. Without it, repair infers the base
                    the way `ripr check` does. Only for a start ripr picks;
                    not allowed with an item.
+  --json           Print the repair packet JSON, including
+                   `repair_attempt.attempt_id`, instead of the summary and
+                   card. A repeated start prints the existing attempt's
+                   status JSON. Refusals keep stderr prose, empty stdout
+                   and their exit codes.
   --quiet          Drop the start's progress narration and `wrote <path>`
                    lines from stderr. Refusal prose, the attempt id and the
                    next command stay. `RIPR_QUIET` (any value except empty,
