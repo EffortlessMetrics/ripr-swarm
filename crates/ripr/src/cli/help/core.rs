@@ -737,6 +737,26 @@ not) is reported separately and never changes a cell. It does not say whether
 a language is enabled for a repository; use `ripr doctor` for that. It reads
 no repository, runs nothing and promotes no support tier.
 "#;
+pub(super) const COMPLETIONS_HELP: &str = r#"Print a tab-completion script for your shell.
+
+Usage: ripr completions <bash|zsh|fish|powershell>
+
+Options:
+  --help  Show this help.
+
+The script completes ripr command names and the word after a command, such as
+`cache status`. It does not complete flags. It prints to stdout and changes
+nothing on your machine.
+
+Try it in the current shell:
+  bash        source <(ripr completions bash)
+  zsh         source <(ripr completions zsh)   (run `compinit` first)
+  fish        ripr completions fish | source
+  powershell  ripr completions powershell | Out-String | Invoke-Expression
+
+To keep it, add that line to your shell startup file (for example ~/.bashrc,
+~/.zshrc, ~/.config/fish/config.fish or your PowerShell profile).
+"#;
 pub(super) const DOCTOR_HELP: &str = r#"Diagnose the local ripr setup (workspace, config, toolchains, paths).
 
 Usage: ripr doctor [--root PATH] [--json] [--timings] [--profile analysis|source-build]

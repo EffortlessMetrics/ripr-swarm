@@ -384,7 +384,15 @@ const MCP_CONFIG_FILE_NAME: &str = ".mcp.json";
 const MCP_SERVER_NAME: &str = "ripr";
 
 fn ripr_mcp_server_entry() -> serde_json::Value {
-    serde_json::json!({ "command": "ripr", "args": ["mcp", "--stdio"] })
+    // #13050: `tools/list` rides every session start and about two thirds of it
+    // is `outputSchema` documents a coding agent never reads, so the generated
+    // entry opts into the slim listing (docs/interop/mcp.md). Results still
+    // carry `structuredContent`; delete the `env` line to get the schemas back.
+    serde_json::json!({
+        "command": "ripr",
+        "args": ["mcp", "--stdio"],
+        "env": { "RIPR_MCP_TOOLS_LIST": "slim" }
+    })
 }
 
 /// Plan the `.mcp.json` write: create it, add the `ripr` server beside the
@@ -1500,7 +1508,8 @@ mod tests {
         serde_json::from_str(body).map_err(|err| format!("body is not JSON: {err}\n{body}"))
     }
 
-    const RIPR_ENTRY: &str = r#"{"command":"ripr","args":["mcp","--stdio"]}"#;
+    const RIPR_ENTRY: &str =
+        r#"{"command":"ripr","args":["mcp","--stdio"],"env":{"RIPR_MCP_TOOLS_LIST":"slim"}}"#;
 
     #[test]
     fn mcp_plan_creates_project_config_and_keeps_an_existing_ripr_toml() -> Result<(), String> {
