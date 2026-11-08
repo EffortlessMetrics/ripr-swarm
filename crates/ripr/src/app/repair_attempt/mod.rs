@@ -327,6 +327,13 @@ pub(crate) struct RepairAttemptAfter {
     pub(crate) focused_result: Option<PendingFocusedResult>,
     pub(crate) current: bool,
     pub(crate) verdict: EditCageVerdict,
+    /// Paths whose only change was a git-invisible line-ending flip on a path
+    /// Git normalizes (`core.autocrlf` or a `text` attribute), so the cage
+    /// did not count them as edits (#7377, #13833). Recorded beside the
+    /// verdict, not in it, so the receipt binding's verdict comparison is
+    /// unchanged. Absent when there were none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) line_ending_only_paths: Vec<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -3941,7 +3948,7 @@ pub(crate) fn finish_repair_attempt_with_workflow_backups_from(
     // swap inside the window is undetectable by commit comparison alone,
     // so the reflog fingerprint makes `current` robust to it (#5930).
     let before = crate::agent::artifact::current_git_head_identity(&root)?;
-    let (mut delta, _, captured_digest) =
+    let (mut delta, _, captured_digest, line_ending_only_paths) =
         crate::edit_cage::evaluate_repository_edit_cage_with_captured_digest(
             &baseline,
             movement,
@@ -4003,6 +4010,7 @@ pub(crate) fn finish_repair_attempt_with_workflow_backups_from(
         focused_result: pending_focused,
         current,
         verdict,
+        line_ending_only_paths,
     };
     manifest.after = Some(after.clone());
     // This after phase reached the durable finish, so an earlier refusal no
@@ -6250,6 +6258,7 @@ mod tests {
             packet_sha256:
                 "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
                     .to_string(),
+            line_ending_only_paths: Vec::new(),
             current: true,
             verdict: crate::edit_cage::EditCageVerdict {
                 status: crate::edit_cage::EditCageVerdictStatus::Compliant,
@@ -10589,6 +10598,7 @@ mod tests {
             receipt_projection_predecessor: None,
             focused_result: None,
             packet_sha256: String::new(),
+            line_ending_only_paths: Vec::new(),
             current,
             verdict: crate::edit_cage::EditCageVerdict {
                 status,
