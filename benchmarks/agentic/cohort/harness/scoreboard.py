@@ -31,7 +31,46 @@ def cfgname(row):
             "A2-packet-loop": "brief-mandatory"}.get(row["arm"], row["arm"])
 
 
-def load(paths):
+def validate_receipt(row, legacy_cohort, *, legacy_defaults=True):
+    """Normalize one receipt through the shared identity/usage consistency rules."""
+    if not isinstance(row, dict):
+        raise ValueError("receipt must be an object")
+    row = dict(row)
+    version = row.get("receipt_schema_version", 1)
+    if type(version) is not int or version not in (1, 2, 3):
+        raise ValueError("unsupported receipt_schema_version")
+    for key in ("task", "arm", "model"):
+        if not isinstance(row.get(key), str) or not row[key].strip():
+            raise ValueError(f"missing or invalid {key}")
+    if nonnegative(row.get("rep"), integer=True) is None:
+        raise ValueError("rep must be a nonnegative integer")
+    # Old successful receipts predate the configurable cap (40).
+    # An old exception receipt omitted the cap: keep it unknown.
+    if legacy_defaults:
+        row.setdefault("max_turns", None if row.get("error") else 40)
+    elif "max_turns" not in row:
+        raise ValueError("missing explicit max_turns")
+    cap = row["max_turns"]
+    if cap is not None and (nonnegative(cap, integer=True) is None or cap == 0):
+        raise ValueError("max_turns must be positive or null")
+    cohort = row.get("cohort_id", legacy_cohort)
+    if not isinstance(cohort, str) or not cohort.strip():
+        raise ValueError("cohort_id must be nonempty")
+    row["_cohort"] = cohort
+    if row.get("ripr_version") is not None and not isinstance(row["ripr_version"], str):
+        raise ValueError("ripr_version must be a string or null")
+    if "usage" in row and token_count(row) is not None and row.get("tokens") != token_count(row):
+        raise ValueError("tokens disagrees with terminal usage components")
+    for key in ("task_sha256", "protocol_sha256"):
+        value = row.get(key)
+        if value is not None and (not isinstance(value, str) or len(value) != 64
+                                   or any(c not in "0123456789abcdef" for c in value)):
+            raise ValueError(f"invalid {key}")
+    identity = (cohort, row["model"], cap, cfgname(row), row["task"], row["rep"])
+    return row, identity
+
+
+def load(paths, *, allow_empty=False, decoder=json.loads, legacy_defaults=True):
     rows, seen = [], set()
     for path in paths:
         data = Path(path).read_bytes()
@@ -40,44 +79,15 @@ def load(paths):
             if not line.strip():
                 continue
             try:
-                row = json.loads(line)
-                if not isinstance(row, dict):
-                    raise ValueError("receipt must be an object")
-                version = row.get("receipt_schema_version", 1)
-                if type(version) is not int or version not in (1, 2, 3):
-                    raise ValueError("unsupported receipt_schema_version")
-                for key in ("task", "arm", "model"):
-                    if not isinstance(row.get(key), str) or not row[key].strip():
-                        raise ValueError(f"missing or invalid {key}")
-                if nonnegative(row.get("rep"), integer=True) is None:
-                    raise ValueError("rep must be a nonnegative integer")
-                # Old successful receipts predate the configurable cap (40).
-                # An old exception receipt omitted the cap: keep it unknown.
-                row.setdefault("max_turns", None if row.get("error") else 40)
-                cap = row["max_turns"]
-                if cap is not None and (nonnegative(cap, integer=True) is None or cap == 0):
-                    raise ValueError("max_turns must be positive or null")
-                cohort = row.get("cohort_id", legacy_cohort)
-                if not isinstance(cohort, str) or not cohort.strip():
-                    raise ValueError("cohort_id must be nonempty")
-                row["_cohort"] = cohort
-                if row.get("ripr_version") is not None and not isinstance(row["ripr_version"], str):
-                    raise ValueError("ripr_version must be a string or null")
-                if "usage" in row and token_count(row) is not None and row.get("tokens") != token_count(row):
-                    raise ValueError("tokens disagrees with terminal usage components")
-                for key in ("task_sha256", "protocol_sha256"):
-                    value = row.get(key)
-                    if value is not None and (not isinstance(value, str) or len(value) != 64
-                                               or any(c not in "0123456789abcdef" for c in value)):
-                        raise ValueError(f"invalid {key}")
-                identity = (cohort, row["model"], cap, cfgname(row), row["task"], row["rep"])
+                row = decoder(line)
+                row, identity = validate_receipt(row, legacy_cohort, legacy_defaults=legacy_defaults)
                 if identity in seen:
                     raise ValueError(f"duplicate attempt {identity}; use distinct cohort IDs for new trials")
                 seen.add(identity)
                 rows.append(row)
             except (ValueError, TypeError) as error:
                 raise ValueError(f"{path}:{line_number}: {error}") from error
-    if not rows:
+    if not rows and not allow_empty:
         raise ValueError("no receipts; an empty experiment is not a result")
     return rows
 

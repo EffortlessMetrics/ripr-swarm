@@ -18,6 +18,23 @@ The report command reads supplied receipts and writes `report.json` and
 `report.md`. Missing measurements remain unknown. Historical reported quality
 is not silently promoted to verified runtime quality.
 
+For a new hill-climbing comparison, use the
+[frozen experiment contract](EXPERIMENT_CONTRACT.md). Freeze the complete
+task/model/arm/repetition population before collection, export its balanced
+schedule, then reconcile every receipt against that plan:
+
+```sh
+python3 benchmarks/agentic/cohort/harness/experiment.py freeze design.json plan.json
+python3 benchmarks/agentic/cohort/harness/experiment.py schedule plan.json
+python3 benchmarks/agentic/cohort/harness/experiment.py report plan.json planned-report receipts.jsonl
+```
+
+The planned report keeps missing trials, development/holdout partitions,
+predeclared strata, verified quality and complete cost separate. It supports
+both intervention arms and baseline/candidate RIPR builds. It does not launch
+a provider; the existing collector still owns execution. Complete observations
+are descriptive and do not automatically authorize promotion.
+
 The native test route requires Cargo and refuses skips, missing native controls
 or an empty test suite:
 
