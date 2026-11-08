@@ -448,7 +448,13 @@ fn memoized_flow(
     );
     // A default value can close over the key and rebind it while the
     // original runs, so no wrapper parameter may carry one.
-    let has_default = wrapper.params.items.iter().any(|item| item.initializer.is_some());
+    // Every parameter is a plain identifier and there is no rest parameter,
+    // so no nested default can hide one either.
+    let has_default = wrapper.params.rest.is_some()
+        || wrapper.params.items.iter().any(|item| {
+            item.initializer.is_some()
+                || !matches!(&item.pattern, BindingPattern::BindingIdentifier(_))
+        });
     if !is_parameter || has_default || key == cache || key == original || cache == original {
         return None;
     }
@@ -510,7 +516,12 @@ fn memoized_flow(
         source.line_for_offset(set_expression.span.start as usize),
         source.line_for_offset(set_expression.span.end as usize),
     );
-    (start == end).then_some((start, end))
+    // The set statement owns its line: an edit there that also rewrites the
+    // guard (`if (true) cache.set(..)`) or the return could change caching
+    // without changing any result.
+    let guard_line = source.line_for_offset(guard.span.start as usize);
+    let return_line = source.line_for_offset(ret.span.start as usize);
+    (start == end && guard_line < start && start < return_line).then_some((start, end))
 }
 
 /// `(object, first argument)` for `object.method(<identifier>, ...)` with

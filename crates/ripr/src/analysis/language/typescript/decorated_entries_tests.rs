@@ -369,14 +369,21 @@ fn memoizing_decorator_records_the_cache_set_lines() {
             return_end_line: 7,
         })
     );
-    // The braceless guard is the same idiom.
-    let braceless = "    if (!cache.has(n)) cache.set(n, original.call(this, n));
+    // A braceless guard with the set on its own line and a non-null return
+    // are the same idiom.
+    let braceless = "    if (!cache.has(n))
+      cache.set(n, original.call(this, n));
     return cache.get(n)!;";
     assert_eq!(
         decorator_entries(&memo_source(MEMO_CACHE, braceless)).len(),
         1,
         "a braceless guard and a non-null return are the same idiom"
     );
+    // A set sharing its line with the guard: an edit there can disable the
+    // memo (`if (true) cache.set(..)`) without changing any result.
+    let shared = "    if (!cache.has(n)) cache.set(n, original.call(this, n));
+    return cache.get(n)!;";
+    assert_no_decorated_entry(&memo_source(MEMO_CACHE, shared));
 }
 
 #[test]
@@ -449,6 +456,31 @@ fn memoizing_decorator_refuses_mismatched_keys_and_extra_flow() {
     ] {
         assert_no_decorated_entry(&memo_source(MEMO_CACHE, body));
     }
+    // `get` reads another identifier key than `set` wrote.
+    let other_key = memo_source(
+        MEMO_CACHE,
+        "    if (!cache.has(n)) {
+      cache.set(n, original.call(this, n));
+    }
+    return cache.get(m) as number;",
+    )
+    .replace("n: number)", "n: number, m: number)");
+    assert!(other_key.contains("m: number)"), "fixture must declare `m`");
+    assert_no_decorated_entry(&other_key);
+    // A destructured or rest parameter can hide a default that rebinds the
+    // key.
+    for parameters in [
+        "n: number, { bump = () => { n = 0; } }: { bump?: () => void }",
+        "n: number, ...[bump = () => { n = 0; }]: Array<() => void>",
+    ] {
+        let hidden =
+            memo_source(MEMO_CACHE, MEMO_BODY).replace("n: number)", &format!("{parameters})"));
+        assert!(
+            hidden.contains("bump = "),
+            "fixture must carry the hidden default"
+        );
+        assert_no_decorated_entry(&hidden);
+    }
 }
 
 #[test]
@@ -514,7 +546,10 @@ fn memoizing_decorator_refuses_a_map_that_may_not_be_the_global() {
         "function (this: unknown, n: number)",
         "function (this: unknown, n: number, bump = () => { n = n + 1; })",
     );
-    assert!(defaulted.contains("bump = "), "fixture must carry the default");
+    assert!(
+        defaulted.contains("bump = "),
+        "fixture must carry the default"
+    );
     assert_no_decorated_entry(&defaulted);
     // A script without `export` may run sloppy, where `this` is the global.
     let script = memo_source(MEMO_CACHE, MEMO_BODY).replace("export ", "");

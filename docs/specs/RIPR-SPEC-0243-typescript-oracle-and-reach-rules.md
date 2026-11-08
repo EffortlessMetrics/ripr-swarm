@@ -1386,8 +1386,11 @@ or `static_unknown`, never `exposed`):
    and the original call passes only `this` and plain identifiers, so it
    cannot rebind the key; the wrapper body is exactly the guard and the
    return, with no `else` and no other statement in the guard; the
-   `cache.set` statement sits on one line, and no wrapper parameter has a
-   default value (a default closure could rebind the key while the original
+   `cache.set` statement sits on one line of its own, after the `if` line
+   and before the `return` line (on a shared line, `if (true) cache.set(..)`
+   would disable the memo without changing any result); and every wrapper
+   parameter is a plain identifier with no default and there is no rest
+   parameter (a default closure could rebind the key while the original
    runs). `Map` must be the global constructor. That is screened, not
    proven: the file must be an ES module (it contains `export`, so it is
    strict and no sloppy `this` reaches the global object), the word `Map`
@@ -1436,7 +1439,8 @@ Negatives pinned by tests: a memoizing wrapper outside condition 2a
 (prefilled, `let` or leaked cache, mismatched key, extra flow, a rebound or
 patched `Map`, an escape, dynamic evaluation, a constructor or prototype
 route, global-object access or `arguments` in the file, a non-module file, a
-defaulted wrapper parameter, a split `set` line), a wrapper with a
+defaulted, destructured or rest wrapper parameter, a split `set` line, a
+`set` sharing the guard's line), a wrapper with a
 conditional return, an `await`ing wrapper, a side-effect-only change
 (`calls.push(key)`), a factory decorator, a stacked decorator, and a
 `@D` that resolves to a different function than the owner.
