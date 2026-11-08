@@ -32,6 +32,12 @@
 //!   wrapper's own parameters, so it cannot return a cached or stored
 //!   value in place of the original's result.
 //!
+//! One cached shape also qualifies (rule 21, condition 2a): the memo idiom
+//! `if (!cache.has(k)) { cache.set(k, <flow>); } return cache.get(k);` over a
+//! decorator-local `const cache = new Map()` named nowhere else. Its `get`
+//! can only return what `set` computed for that key, so the `cache.set` line
+//! is the observed line ([`memoized_flow`]).
+//!
 //! An application qualifies when it is the only decorator of a non-static,
 //! non-computed ordinary instance method written as a bare `@D` in a class
 //! of the same file that carries no class decorator. Anything else keeps the
@@ -298,6 +304,9 @@ fn pass_through_return(
         return None;
     }
     let wrapper_body = wrapper.body.as_ref()?;
+    if let Some(lines) = memoized_flow(decorator, wrapper, original, source) {
+        return Some(lines);
+    }
     let (last, rest) = wrapper_body.statements.split_last()?;
     if !rest
         .iter()
@@ -332,6 +341,175 @@ fn pass_through_return(
         source.line_for_offset(ret.span.start as usize),
         source.line_for_offset(ret.span.end as usize),
     ))
+}
+
+/// Lines of the `cache.set(key, <original flow>)` statement when the
+/// wrapper is the memoizing idiom (RIPR-SPEC-0243 rule 21, condition 2a):
+///
+/// ```ts
+/// const cache = new Map<number, number>();
+/// descriptor.value = function (this: unknown, n: number): number {
+///   if (!cache.has(n)) {
+///     cache.set(n, original.call(this, n));
+///   }
+///   return cache.get(n) as number;
+/// };
+/// ```
+///
+/// The cache only ever holds values the `set` argument computed for that key,
+/// so every call returns the set argument's value for its key: an edit to it
+/// reaches the decorated method's result. The cache must be a decorator-local
+/// `const` built by an argument-free `new Map()`, named nowhere else in the
+/// decorator, and the key one wrapper parameter used identically three times.
+fn memoized_flow(
+    decorator: &Function<'_>,
+    wrapper: &Function<'_>,
+    original: &str,
+    source: &SourceText<'_>,
+) -> Option<(usize, usize)> {
+    let body = decorator.body.as_ref()?;
+    let wrapper_body = wrapper.body.as_ref()?;
+    let [
+        Statement::IfStatement(guard),
+        Statement::ReturnStatement(ret),
+    ] = wrapper_body.statements.as_slice()
+    else {
+        return None;
+    };
+    if guard.alternate.is_some() {
+        return None;
+    }
+    // `!cache.has(key)`
+    let Expression::UnaryExpression(not) = &guard.test else {
+        return None;
+    };
+    if not.operator != oxc_ast::ast::UnaryOperator::LogicalNot {
+        return None;
+    }
+    let (cache, key) = map_call(&not.argument, "has", 1)?;
+    // `{ cache.set(key, <flow>); }` or the bare statement.
+    let set_statement = match &guard.consequent {
+        Statement::BlockStatement(block) => match block.body.as_slice() {
+            [statement] => statement,
+            _ => return None,
+        },
+        statement => statement,
+    };
+    let Statement::ExpressionStatement(set_expression) = set_statement else {
+        return None;
+    };
+    let Expression::CallExpression(set_call) = &set_expression.expression else {
+        return None;
+    };
+    let (set_cache, set_key) = map_call(&set_expression.expression, "set", 2)?;
+    let flow = set_call.arguments.get(1)?.as_expression()?;
+    // `return cache.get(key)`, optionally `as T` or `!`.
+    let mut returned = ret.argument.as_ref()?;
+    loop {
+        returned = match returned {
+            Expression::TSAsExpression(inner) => &inner.expression,
+            Expression::TSNonNullExpression(inner) => &inner.expression,
+            Expression::ParenthesizedExpression(inner) => &inner.expression,
+            _ => break,
+        };
+    }
+    let (get_cache, get_key) = map_call(returned, "get", 1)?;
+    if [set_cache, get_cache] != [cache, cache] || [set_key, get_key] != [key, key] {
+        return None;
+    }
+    // The key is a plain wrapper parameter, distinct from the cache and the
+    // captured original.
+    let is_parameter = wrapper.params.items.iter().any(
+        |item| matches!(&item.pattern, BindingPattern::BindingIdentifier(id) if id.name == key),
+    );
+    if !is_parameter || key == cache || key == original || cache == original {
+        return None;
+    }
+    // The flow is exactly one original call combined by `+`/`-`, and that
+    // call's arguments are `this` or plain identifiers, so evaluating it
+    // cannot rebind the key between `set` and `get`.
+    let operands: Vec<&str> = wrapper
+        .params
+        .items
+        .iter()
+        .filter_map(|item| match &item.pattern {
+            BindingPattern::BindingIdentifier(id) => Some(id.name.as_str()),
+            _ => None,
+        })
+        .collect();
+    if original_flow_count(flow, original, &operands) != Some(1) || !plain_call_arguments(flow) {
+        return None;
+    }
+    // `const cache = new Map()` (type arguments allowed, no constructor
+    // arguments) at the decorator's top level, and no other use of the name.
+    let declared = body.statements.iter().any(|statement| {
+        let Statement::VariableDeclaration(declaration) = statement else {
+            return false;
+        };
+        declaration.kind == oxc_ast::ast::VariableDeclarationKind::Const
+            && declaration.declarations.iter().any(|declarator| {
+                matches!(&declarator.id, BindingPattern::BindingIdentifier(id) if id.name == cache)
+                    && matches!(declarator.init.as_ref(), Some(Expression::NewExpression(new))
+                        if new.arguments.is_empty()
+                            && matches!(&new.callee, Expression::Identifier(callee) if callee.name == "Map"))
+            })
+    });
+    let text = &source[decorator.span.start as usize..decorator.span.end as usize];
+    if !declared || word_count(text, cache) != 4 || word_count(text, "Map") != 1 {
+        return None;
+    }
+    Some((
+        source.line_for_offset(set_expression.span.start as usize),
+        source.line_for_offset(set_expression.span.end as usize),
+    ))
+}
+
+/// `(object, first argument)` for `object.method(<identifier>, ...)` with
+/// exactly `arity` plain arguments, both names plain identifiers.
+fn map_call<'a>(
+    expression: &'a Expression<'_>,
+    method: &str,
+    arity: usize,
+) -> Option<(&'a str, &'a str)> {
+    let Expression::CallExpression(call) = expression else {
+        return None;
+    };
+    let Expression::StaticMemberExpression(callee) = &call.callee else {
+        return None;
+    };
+    let Expression::Identifier(object) = &callee.object else {
+        return None;
+    };
+    if call.optional || callee.optional || callee.property.name != method {
+        return None;
+    }
+    if call.arguments.len() != arity {
+        return None;
+    }
+    let Some(Expression::Identifier(key)) = call.arguments.first()?.as_expression() else {
+        return None;
+    };
+    Some((object.name.as_str(), key.name.as_str()))
+}
+
+/// Whether every original call in `flow` passes only `this` and plain
+/// identifiers (no assignment, spread or nested call in the arguments).
+fn plain_call_arguments(flow: &Expression<'_>) -> bool {
+    match flow {
+        Expression::ParenthesizedExpression(inner) => plain_call_arguments(&inner.expression),
+        Expression::TSAsExpression(inner) => plain_call_arguments(&inner.expression),
+        Expression::TSNonNullExpression(inner) => plain_call_arguments(&inner.expression),
+        Expression::BinaryExpression(binary) => {
+            plain_call_arguments(&binary.left) && plain_call_arguments(&binary.right)
+        }
+        Expression::CallExpression(call) => call.arguments.iter().all(|argument| {
+            matches!(
+                argument.as_expression(),
+                Some(Expression::ThisExpression(_) | Expression::Identifier(_))
+            )
+        }),
+        _ => true,
+    }
 }
 
 fn assigns_descriptor_value(assignment: &AssignmentExpression<'_>, descriptor: &str) -> bool {

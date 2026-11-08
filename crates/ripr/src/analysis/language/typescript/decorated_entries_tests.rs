@@ -327,3 +327,126 @@ fn only_a_plain_function_expression_wrapper_is_admitted() {
     ));
     assert_eq!(decorator_entries(AUDITED).len(), 1);
 }
+
+fn memo_source(declaration: &str, wrapper_body: &str) -> String {
+    format!(
+        r#"
+export function audited(_target: object, _key: string, descriptor: PropertyDescriptor): void {{
+  const original = descriptor.value as (n: number) => number;
+  {declaration}
+  descriptor.value = function (this: unknown, n: number): number {{
+{wrapper_body}
+  }};
+}}
+
+export class Calc {{
+  @audited
+  square(n: number): number {{
+    return n * n;
+  }}
+}}
+"#
+    )
+}
+
+const MEMO_CACHE: &str = "const cache = new Map<number, number>();";
+const MEMO_BODY: &str = "    if (!cache.has(n)) {
+      cache.set(n, original.call(this, n) + 1);
+    }
+    return cache.get(n) as number;";
+
+#[test]
+fn memoizing_decorator_records_the_cache_set_lines() {
+    let entries = decorator_entries(&memo_source(MEMO_CACHE, MEMO_BODY));
+    assert_eq!(entries.len(), 1, "expected one entry, got {entries:?}");
+    assert_eq!(entries[0].name, "square");
+    assert_eq!(
+        entries[0].decorated,
+        Some(TypeScriptDecoratedMethod {
+            class_name: "Calc".to_string(),
+            default_export: false,
+            return_start_line: 7,
+            return_end_line: 7,
+        })
+    );
+    // The braceless guard is the same idiom.
+    let braceless = "    if (!cache.has(n)) cache.set(n, original.call(this, n));
+    return cache.get(n)!;";
+    assert_eq!(
+        decorator_entries(&memo_source(MEMO_CACHE, braceless)).len(),
+        1,
+        "a braceless guard and a non-null return are the same idiom"
+    );
+}
+
+#[test]
+fn memoizing_decorator_refuses_a_cache_that_can_hold_other_values() {
+    // Prefilled, rebindable, or not a Map: `get` can return a value `set`
+    // never computed.
+    for declaration in [
+        "const cache = new Map<number, number>([[4, 99]]);",
+        "let cache = new Map<number, number>();",
+        "const cache = new WeakMap<object, number>();",
+        "const cache = makeCache();",
+        "",
+    ] {
+        assert_no_decorated_entry(&memo_source(declaration, MEMO_BODY));
+    }
+    // Any other use of the cache name can clear, prefill or leak it.
+    let leaked = memo_source(
+        "const cache = new Map<number, number>(); registry.push(cache);",
+        MEMO_BODY,
+    );
+    assert_no_decorated_entry(&leaked);
+}
+
+#[test]
+fn memoizing_decorator_refuses_mismatched_keys_and_extra_flow() {
+    for body in [
+        // `get` reads another key than `set` wrote.
+        "    if (!cache.has(n)) {
+      cache.set(n, original.call(this, n));
+    }
+    return cache.get(0) as number;",
+        "    if (!cache.has(n)) {
+      cache.set(n + 1, original.call(this, n));
+    }
+    return cache.get(n) as number;",
+        // An else branch, an extra statement, or a combined return.
+        "    if (!cache.has(n)) {
+      cache.set(n, original.call(this, n));
+    } else {
+      calls.push(n);
+    }
+    return cache.get(n) as number;",
+        "    if (!cache.has(n)) {
+      cache.set(n, original.call(this, n));
+      calls.push(n);
+    }
+    return cache.get(n) as number;",
+        "    if (!cache.has(n)) {
+      cache.set(n, original.call(this, n));
+    }
+    return (cache.get(n) as number) + 1;",
+        // A guard that is not `!cache.has(key)`.
+        "    if (cache.has(n)) {
+      cache.set(n, original.call(this, n));
+    }
+    return cache.get(n) as number;",
+        // The stored value is not the original's result, or rebinds the key.
+        "    if (!cache.has(n)) {
+      cache.set(n, 99);
+    }
+    return cache.get(n) as number;",
+        "    if (!cache.has(n)) {
+      cache.set(n, original.call(this, (n = 5)));
+    }
+    return cache.get(n) as number;",
+        "    if (!cache.has(n)) {
+      cache.set(n, original.call(this, n) || 0);
+    }
+    return cache.get(n) as number;",
+    ] {
+        assert_no_decorated_entry(&memo_source(MEMO_CACHE, body));
+    }
+}

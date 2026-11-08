@@ -1371,6 +1371,23 @@ or `static_unknown`, never `exposed`):
    returns a cached or stored value (`return cache.get(n)`), a sequence
    (`return (original.apply(this, args) + 1, 99)`), an array, a logical or
    conditional expression, or a second call keeps the old reading.
+2a. **Memoizing wrapper (amended 2026-11-08, #13657).** The one cached
+   shape admitted is the memo idiom whose cache can only ever hold what its
+   `set` computed:
+   `if (!cache.has(k)) { cache.set(k, <flow>); } return cache.get(k);`
+   (braces optional; `as T` and `!` on the return allowed). Every call then
+   returns `<flow>` evaluated for its key, so an edit to the `cache.set`
+   line reaches the decorated method's result, and that line, not the
+   `return`, is the observed line. Conditions: `cache` is a decorator-level
+   `const` initialized by an argument-free `new Map()` (type arguments
+   allowed) and named nowhere else in the decorator (no prefill, `clear`,
+   `delete`, export or escape); the key `k` is one plain wrapper parameter,
+   spelled identically in `has`, `set` and `get`; `<flow>` meets condition 2
+   and the original call passes only `this` and plain identifiers, so it
+   cannot rebind the key; the wrapper body is exactly the guard and the
+   return, with no `else` and no other statement in the guard. A `WeakMap`,
+   a `let` cache, a prefilled or shared cache, a mismatched key, or a
+   combined return (`cache.get(k) + 1`) keeps the old reading.
 3. The decorator is applied as a bare `@D` (or an import alias of it) on
    an ordinary instance method that is the only decorator on that method,
    in a class whose methods the owner relation can name, including
@@ -1401,8 +1418,8 @@ or `static_unknown`, never `exposed`):
 5. Tests of every decorated method count; a decorated method nobody tests
    is not a path.
 
-Negatives pinned by tests: a memoizing wrapper that returns
-`cache.get(n)` (`deco-decorator-wrapper-value`), a wrapper with a
+Negatives pinned by tests: a memoizing wrapper outside condition 2a
+(prefilled, `let` or leaked cache, mismatched key, extra flow), a wrapper with a
 conditional return, an `await`ing wrapper, a side-effect-only change
 (`calls.push(key)`), a factory decorator, a stacked decorator, and a
 `@D` that resolves to a different function than the owner.
