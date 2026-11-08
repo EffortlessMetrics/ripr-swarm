@@ -25,6 +25,8 @@ def step(name, number, **kw):
 class API:
     def __init__(self):
         self.current = dict(id=10, run_attempt=1, head_sha=HEAD, event='pull_request')
+        self.pr = dict(number=42, state='open', head={'sha': HEAD})
+        self.pr_reads = 0
         self.runs = [dict(total_count=1, workflow_runs=[dict(id=10, run_attempt=1, head_sha=HEAD, event='pull_request', display_title=f'Merge-ready request {HEAD}', created_at='2026-11-08T00:00:00Z')])]
         self.job = dict(id=30, run_id=10, run_attempt=1, head_sha=HEAD,
                         name='Ripr Rust Small on GitHub Hosted / Rust gates', status='completed', conclusion='success',
@@ -42,6 +44,9 @@ class API:
         return copy.deepcopy(self.runs)
     def get(self, path):
         if path == 'actions/runs/10': return copy.deepcopy(self.current)
+        if path == 'pulls/42':
+            self.pr_reads += 1
+            return copy.deepcopy(self.pr)
         if path == 'actions/jobs/30': return copy.deepcopy(self.job)
         if path == 'actions/runs/10/attempts/1': return copy.deepcopy(self.detail)
         if path == f'contents/.github/workflows/routed-rust.yml?ref={GENERATION}': return {'sha': self.caller}
@@ -52,7 +57,48 @@ class API:
 
 class ReaderTests(unittest.TestCase):
     def test_matching_subject(self):
-        self.assertEqual(m.read(API(), **PARAMS)['parents'], [BASE, HEAD])
+        api = API()
+        self.assertEqual(m.read(api, **PARAMS)['parents'], [BASE, HEAD])
+        self.assertEqual(api.pr_reads, 2)
+
+    def test_rejects_moved_head_before_and_during_inspection(self):
+        api = API()
+        api.pr['head']['sha'] = '9' * 40
+        with self.assertRaisesRegex(m.Refusal, 'current PR head'):
+            m.read(api, **PARAMS)
+
+        class MovesDuringRead(API):
+            def get(self, path):
+                if path == 'pulls/42' and self.pr_reads == 1:
+                    self.pr['head']['sha'] = '9' * 40
+                return super().get(path)
+        api = MovesDuringRead()
+        with self.assertRaisesRegex(m.Refusal, 'current PR head'):
+            m.read(api, **PARAMS)
+        self.assertEqual(api.pr_reads, 2)
+
+    def test_queue_observation_is_explicitly_unavailable(self):
+        api = API()
+        api.current['event'] = 'merge_group'
+        with self.assertRaisesRegex(m.Refusal, 'merge_group.*unavailable'):
+            m.read(api, **PARAMS)
+
+    def test_rejects_newer_request_arriving_during_inspection(self):
+        class SupersededDuringRead(API):
+            def __init__(self):
+                super().__init__()
+                self.page_reads = 0
+            def pages(self, path):
+                self.page_reads += 1
+                if self.page_reads == 2:
+                    later = dict(self.runs[0]['workflow_runs'][0], id=11, created_at='2026-11-08T01:00:00Z')
+                    self.runs[0]['workflow_runs'].append(later)
+                    self.runs[0]['total_count'] = 2
+                return super().pages(path)
+        api = SupersededDuringRead()
+        with self.assertRaisesRegex(m.Refusal, 'stale'):
+            m.read(api, **PARAMS)
+        self.assertEqual(api.page_reads, 2)
 
     def test_matching_shard_subject(self):
         api = API()
@@ -94,7 +140,11 @@ class ReaderTests(unittest.TestCase):
         def wrong_leaf(a): a.leaf = '9' * 40
         def wrong_origin(a): a.job['steps'][5]['name'] = a.job['steps'][5]['name'].replace('attempt=1', 'attempt=2')
         def wrong_ref(a): a.detail['referenced_workflows'][0]['ref'] = 'refs/pull/43/merge'
-        for mutation in (missing, failed, failed_checkout, wrong_order, duplicate, stale_attempt, later_attempt, newer_request, incomplete_inventory, wrong_run, wrong_job, job_failure, forged_head, unsupported_parents, forged_tree, wrong_commit, wrong_workflow, wrong_repository, missing_ref, duplicate_ref, conflicting_ref, wrong_caller, wrong_leaf, wrong_origin, wrong_ref):
+        def wrong_pr(a): a.pr['number'] = 43
+        def closed_pr(a): a.pr['state'] = 'closed'
+        def missing_head(a): a.pr['head'] = None
+        def unavailable_pr(a): a.pr = None
+        for mutation in (missing, failed, failed_checkout, wrong_order, duplicate, stale_attempt, later_attempt, newer_request, incomplete_inventory, wrong_run, wrong_job, job_failure, forged_head, unsupported_parents, forged_tree, wrong_commit, wrong_workflow, wrong_repository, missing_ref, duplicate_ref, conflicting_ref, wrong_caller, wrong_leaf, wrong_origin, wrong_ref, wrong_pr, closed_pr, missing_head, unavailable_pr):
             with self.subTest(mutation=mutation.__name__):
                 api = API(); mutation(api)
                 with self.assertRaises(m.Refusal): m.read(api, **PARAMS)

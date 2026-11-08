@@ -68,13 +68,25 @@ def latest_request(api, head, run_id, attempt):
         raise Refusal('requested workflow run or attempt is stale')
 
 
+def require_current_head(api, pr, head):
+    live = api.get(f'pulls/{pr}')
+    if (not isinstance(live, dict) or type(live.get('number')) is not int or live['number'] != pr or
+        live.get('state') != 'open' or not isinstance(live.get('head'), dict) or live['head'].get('sha') != head):
+        raise Refusal('current PR head is missing, closed or differs from the reviewed head')
+
+
 def read(api, *, pr, run_id, attempt, job_id, head, base, tree, caller_blob, leaf_blob):
     if any(not SHA.fullmatch(x or '') for x in (head, base, tree, caller_blob, leaf_blob)):
         raise Refusal('expected subject or independently reviewed workflow blob is invalid')
-    latest_request(api, head, run_id, attempt)
     current = api.get(f'actions/runs/{run_id}')
-    if not isinstance(current, dict) or current.get('id') != run_id or current.get('run_attempt') != attempt or current.get('head_sha') != head or current.get('event') != 'pull_request':
+    if not isinstance(current, dict) or current.get('id') != run_id or current.get('run_attempt') != attempt:
         raise Refusal('requested attempt is stale or does not match the current run')
+    if current.get('event') == 'merge_group':
+        raise Refusal('merge_group checkout verification unavailable: authenticated queue subject binding is not established')
+    if current.get('head_sha') != head or current.get('event') != 'pull_request':
+        raise Refusal('requested attempt is stale or does not match the current run')
+    require_current_head(api, pr, head)
+    latest_request(api, head, run_id, attempt)
     job = api.get(f'actions/jobs/{job_id}')
     if not isinstance(job, dict) or job.get('id') != job_id or job.get('run_id') != run_id or job.get('run_attempt') != attempt or job.get('head_sha') != head:
         raise Refusal('job does not match requested run, attempt and head')
@@ -131,6 +143,8 @@ def read(api, *, pr, run_id, attempt, job_id, head, base, tree, caller_blob, lea
     obj = api.get(f'git/commits/{commit}')
     if not isinstance(obj, dict) or obj.get('sha') != commit or not isinstance(obj.get('tree'), dict) or obj['tree'].get('sha') != tree or not isinstance(obj.get('parents'), list) or [p.get('sha') if isinstance(p, dict) else None for p in obj['parents']] != parent_list:
         raise Refusal('GitHub commit object disagrees with the checkout observation')
+    latest_request(api, head, run_id, attempt)
+    require_current_head(api, pr, head)
     return {'repository': REPO, 'workflow': '.github/workflows/routed-rust.yml', 'workflow_sha': workflow_sha, 'run': run_id, 'attempt': attempt, 'job': job_id, 'job_name': job['name'], 'commit': commit, 'tree': tree, 'parents': parent_list}
 
 
