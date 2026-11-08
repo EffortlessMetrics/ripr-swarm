@@ -104,6 +104,7 @@ map is:
 | --- | --- | --- |
 | `ripr check --format json` | `schema_version` | `0.2` |
 | `ripr check --format json-compact` | `schema_version` | `0.2` (the `json` document minified; parsed values identical, #13103) |
+| `ripr check --format missed-txt` | none (plain text) | one `path:line:col: <classification> <probe family>: <expression> -> <missing discriminator>` line per gap; see "missed-txt" below (#13626) |
 | `ripr check --format json-terse` | `schema_version` | `0.2` (the `json` findings with repeated evidence prose coded against an `evidence_legend`; see "json-terse" below) |
 | `ripr context --json` (`context_packet`; versions via top-level `version` key) | `version` | `1.1` |
 | `ripr check --format json` refusal envelope, `analysis_timeout` with input context (RIPR-SPEC-0241 amendment #10796) | `schema_version` | `0.3` |
@@ -202,6 +203,63 @@ explicitly; deleting the pin does not. A schema with no pin (the Shields badge
 schema) cannot take a breaking edit at all. With no merge base the gate prints
 `schema compatibility not established`; it passes locally but fails when `CI`
 is set, so a shallow CI checkout cannot silently skip the comparison.
+
+### `missed-txt`: sorted gap lines
+
+`ripr check --format missed-txt` (#13626) prints plain text, one line per
+actionable static gap, for readers that consume a `cargo mutants`-style
+`missed.txt` list:
+
+```text
+path:line:col: <classification> <probe family>: <expression> -> <missing discriminator>
+```
+
+Example:
+
+```text
+src/pricing.rs:30:1: reachable_unrevealed return_value: Ok(total) -> total == 0
+src/pricing.rs:42:5: weakly_exposed predicate: amount >= threshold -> strong oracle
+```
+
+- Selection mirrors `--format github` and adds no classifier: a finding is
+  listed when it is candidate-actionable (`Finding::is_candidate_actionable`),
+  is not suppressed by an explicit `--suppression-policy`, is not severity
+  `off` for its file in `ripr.toml`, and its class is not `exposed`. Exposed
+  findings print nothing.
+- `<classification>` is the check document's `class` token verbatim
+  (`weakly_exposed`, `reachable_unrevealed`, `no_static_path`,
+  `infection_unknown`, `propagation_unknown`, `static_unknown`);
+  `<probe family>` is the probe's `family` token. These are static
+  exposure verdicts, not runtime mutation outcomes: the format claims no runtime outcome
+  was run or observed.
+- `<missing discriminator>` is the first producer-owned missing discriminator
+  value, else the first `missing` entry, else `-`. An empty expression also
+  prints `-`.
+- Ordering is by path, numeric line, numeric column, classification, probe
+  family, expression, then discriminator, so it is independent of finding
+  order. Whitespace inside fields collapses to single spaces and control and
+  bidi characters are escaped, so each record is exactly one line.
+- A line starting with `# ` is a comment, never a gap. Paths and expressions
+  are only whitespace-collapsed and control-escaped, not otherwise sanitized,
+  so a reader must treat a line beginning with `# ` as a comment rather than
+  assume a field cannot produce one. Leading `# ripr: ...` comments disclose
+  every state `--format github` treats as not clean, through the same shared
+  helpers: an incomplete analysis outcome (`# ripr: analysis outcome <kind>;
+  listed gaps cover only the analyzed scope, and the absence of lines is not a
+  clean result`, followed by `. Limitation: <kind>: <recovery>` for each
+  limitation, also when gaps are listed), advisory limitations on a complete
+  outcome, uncommitted, untracked or gitignored working-tree sources, no
+  analysis scope, and preview-language files not analyzed. When findings are
+  left out because `--suppression-policy` suppressed them or they are not
+  current obligations of this change (base-side or unresolved evidence), one
+  `# ripr: <n> finding(s) not listed: ...` comment counts them. Zero bytes is
+  printed only when the run is fully analyzed with none of those states, omits
+  no finding, and has no listed gap. A refused run prints one
+  `# ripr run refused: run_status=...; repair_route=...; ...` line and keeps
+  its non-zero exit.
+- `--suppression-policy` is accepted, like `github`. The format is
+  machine-readable: stdout stays byte-clean and piped progress is off by
+  default.
 
 ### `json-terse`: semantically compacted check JSON
 
@@ -3519,7 +3577,7 @@ Example:
 ```
 
 Scope: the flag applies to the findings-based check formats (`human`,
-`human-full`, `json`, `github`). Human output lists suppressed findings as compact
+`human-full`, `json`, `github`, `missed-txt`). Human output lists suppressed findings as compact
 one-liners instead of detailed blocks; GitHub-format output skips
 annotations for suppressed findings and, when the policy hides every finding,
 emits a denominator `::notice` rather than an empty stream. SARIF keeps its existing

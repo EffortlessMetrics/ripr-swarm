@@ -242,7 +242,10 @@ pub(crate) fn render_with_config(output: &CheckOutput, config: &RiprConfig) -> S
     // preview-language files detected but not analyzed) downgrade the
     // empty-stream notice to warnings naming the unanalyzed surface and
     // the remedy route. These lead the stream like the other disclosures.
-    let state_warnings = unanalyzed_state_warnings(output);
+    let state_warnings: Vec<String> = unanalyzed_state_notes(output)
+        .iter()
+        .map(UnanalyzedStateNote::warning_annotation)
+        .collect();
     if let Some(outcome) = incomplete {
         *per_level.entry("warning").or_default() += 1;
         out.push_str(&incomplete_outcome_warning(
@@ -306,6 +309,16 @@ pub(crate) fn render_refusal(notice: &crate::core_error::RefusalNotice) -> Strin
 fn complete_outcome_limitation_notice(
     outcome: &crate::analysis_outcome::AnalysisOutcome,
 ) -> String {
+    format!(
+        "::notice title=ripr analysis limitations::{}\n",
+        escape_data(&complete_outcome_limitation_message(outcome))
+    )
+}
+
+/// Raw limitation disclosure for a complete outcome, shared with `missed-txt`.
+pub(crate) fn complete_outcome_limitation_message(
+    outcome: &crate::analysis_outcome::AnalysisOutcome,
+) -> String {
     let mut message = format!(
         "Analysis outcome: {} (analysis complete; advisory limitation(s) follow).",
         outcome.kind.as_str()
@@ -317,10 +330,7 @@ fn complete_outcome_limitation_notice(
             limitation.recovery.detail
         ));
     }
-    format!(
-        "::notice title=ripr analysis limitations::{}\n",
-        escape_data(&message)
-    )
+    message
 }
 
 /// An incomplete analysis must not read as a clean one in a PR check: the
@@ -339,17 +349,27 @@ fn incomplete_outcome_warning(
         "Analysis outcome: {} (analysis incomplete). {scope}",
         outcome.kind.as_str()
     );
+    message.push_str(&incomplete_outcome_limitations(outcome));
+    format!(
+        "::warning title=ripr analysis incomplete::{}\n",
+        escape_data(&message)
+    )
+}
+
+/// Each limitation of an incomplete outcome with its recovery, as
+/// ` Limitation: <kind>: <detail>` segments. Shared with `missed-txt`.
+pub(crate) fn incomplete_outcome_limitations(
+    outcome: &crate::analysis_outcome::AnalysisOutcome,
+) -> String {
+    let mut text = String::new();
     for limitation in &outcome.limitations {
-        message.push_str(&format!(
+        text.push_str(&format!(
             " Limitation: {}: {}",
             limitation.kind.as_str(),
             limitation.recovery.detail
         ));
     }
-    format!(
-        "::warning title=ripr analysis incomplete::{}\n",
-        escape_data(&message)
-    )
+    text
 }
 
 /// The preview suffix must track the shared validator's own verdict, as the
@@ -365,12 +385,30 @@ fn advisory_packet_suffix(repair_packet_ready: bool) -> &'static str {
     }
 }
 
+/// One unanalyzed-state disclosure: the GitHub annotation title suffix and
+/// the raw (unescaped) message. Shared by the `github` and `missed-txt`
+/// renderers so the set of not-clean states has a single owner.
+pub(crate) struct UnanalyzedStateNote {
+    pub(crate) title: &'static str,
+    pub(crate) message: String,
+}
+
+impl UnanalyzedStateNote {
+    fn warning_annotation(&self) -> String {
+        format!(
+            "::warning title=ripr {}::{}\n",
+            self.title,
+            escape_data(&self.message)
+        )
+    }
+}
+
 /// Run states the human and JSON surfaces disclose as NOT clean, so an
 /// empty GitHub stream must not read as all-clear either (#5011). Each
 /// warning names the unanalyzed surface and the remedy route, mirroring
 /// the human notes; the preview-advisory arm reuses the JSON surface's
 /// shared `why` strings so the machine surfaces cannot drift.
-fn unanalyzed_state_warnings(output: &CheckOutput) -> Vec<String> {
+pub(crate) fn unanalyzed_state_notes(output: &CheckOutput) -> Vec<UnanalyzedStateNote> {
     let mut warnings = Vec::new();
     if output.unanalyzed_working_tree {
         // #5258: mirrors the human note's wording decision — untracked
@@ -419,10 +457,10 @@ fn unanalyzed_state_warnings(output: &CheckOutput) -> Vec<String> {
         // so it is workflow-command-escaped like the no-scope warning below —
         // a path containing a newline or `%` sequence must not start another
         // workflow command.
-        warnings.push(format!(
-            "::warning title=ripr unanalyzed working tree::{}\n",
-            escape_data(&message)
-        ));
+        warnings.push(UnanalyzedStateNote {
+            title: "unanalyzed working tree",
+            message,
+        });
     }
     // RIPR-SPEC-0116: a working-tree read names the untracked routed files
     // its diff does not contain; `--worktree` is already in effect, so the
@@ -434,10 +472,10 @@ fn unanalyzed_state_warnings(output: &CheckOutput) -> Vec<String> {
             str::to_string,
         )
     {
-        warnings.push(format!(
-            "::warning title=ripr untracked files not analyzed::{}\n",
-            escape_data(&message)
-        ));
+        warnings.push(UnanalyzedStateNote {
+            title: "untracked files not analyzed",
+            message,
+        });
     }
     // #7467: a run that excluded gitignored routed files names them, on a
     // working-tree read and on a committed-history read alike — neither diff
@@ -456,10 +494,10 @@ fn unanalyzed_state_warnings(output: &CheckOutput) -> Vec<String> {
             )
         };
         if let Some(message) = message {
-            warnings.push(format!(
-                "::warning title=ripr gitignored files not analyzed::{}\n",
-                escape_data(&message)
-            ));
+            warnings.push(UnanalyzedStateNote {
+                title: "gitignored files not analyzed",
+                message,
+            });
         }
     }
     if output.no_scope_provided {
@@ -480,10 +518,10 @@ fn unanalyzed_state_warnings(output: &CheckOutput) -> Vec<String> {
                 crate::domain::WHOLE_REPO_PILOT_COMMAND,
             )
         };
-        warnings.push(format!(
-            "::warning title=ripr no analysis scope::{}\n",
-            escape_data(&message)
-        ));
+        warnings.push(UnanalyzedStateNote {
+            title: "no analysis scope",
+            message,
+        });
     }
     for advisory in &output.preview_language_advisories {
         if advisory.analyzed(&output.language_runs) {
@@ -500,10 +538,10 @@ fn unanalyzed_state_warnings(output: &CheckOutput) -> Vec<String> {
             "{} {} {} in scope: {}",
             advisory.file_count, file_language, file_label, why
         );
-        warnings.push(format!(
-            "::warning title=ripr preview advisory::{}\n",
-            escape_data(&message)
-        ));
+        warnings.push(UnanalyzedStateNote {
+            title: "preview advisory",
+            message,
+        });
     }
     warnings
 }
