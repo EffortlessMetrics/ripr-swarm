@@ -5526,7 +5526,15 @@ mod tests {
     fn staged_publication_pair_outside_the_attempt_store_stays_unsafe() -> Result<(), String> {
         let fixture = git_fixture("staged-pair-outside-store")?;
         commit_target_ignore(&fixture)?;
-        for dir_relative in ["src", "target/ripr/artifacts", "target/ripr/workflow"] {
+        // The sibling spellings share the store's name as a prefix without the
+        // trailing separator (#13553): they are not the store.
+        for dir_relative in [
+            "src",
+            "target/ripr/artifacts",
+            "target/ripr/workflow",
+            "target/ripr/repair-attempts-old",
+            "target/ripr/repair-attempts-old/attempt-1/artifacts",
+        ] {
             let dir = fixture.root.join(dir_relative);
             fs::create_dir_all(&dir).map_err(|err| format!("create {dir_relative}: {err}"))?;
             let destination = dir.join("lib.rs");

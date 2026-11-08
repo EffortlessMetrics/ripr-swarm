@@ -120,10 +120,11 @@ map is:
 | `ripr agent brief` | `schema_version` | `0.1` |
 | `ripr agent receipt` | `schema_version` | `0.5` |
 | `ripr agent verify` | `schema_version` | `0.3` |
-| `ripr agent repair --phase before --json` success stdout | `schema_version` | `0.5` |
-| `ripr agent repair --phase after --json` success stdout | `schema_version` | `0.1` |
-| `ripr agent repair --phase after --json` refusal stdout (`repair_after_refusal`) | `schema_version` | `0.2` |
-| `ripr agent repair --phase after --json` failure stdout (`repair_after_failure`; #6033) | `schema_version` | `0.4` |
+| `ripr agent repair --phase before --json` and `ripr repair --json` (#11584) start stdout | `schema_version` | `0.5` |
+| `ripr agent repair --phase after --json` and `ripr continue --json` (#11584) success stdout | `schema_version` | `0.1` |
+| `ripr agent repair --phase after --json` and `ripr continue --json` refusal stdout (`repair_after_refusal`) | `schema_version` | `0.2` |
+| `ripr agent repair --phase after --json` and `ripr continue --json` failure stdout (`repair_after_failure`; #6033) | `schema_version` | `0.4` |
+| `ripr repair --json` repeated start and `ripr continue --json` already-complete stdout (`agent_attempt_status`; #11584) | `schema_version` | `0.1` |
 | `ripr agent status` | `schema_version` | `0.1` |
 | `ripr agent status --attempt <id>` (`agent_attempt_status`; RIPR-SPEC-0217, #4798) | `schema_version` | `0.1` |
 | `ripr agent review-summary` | `schema_version` | `0.1` |
@@ -181,6 +182,26 @@ records that distinction.
 
 Bump rules below apply per contract: a breaking change to one family bumps
 that family's version only.
+
+Breaking-change gate (#1720): `cargo xtask check-verification-contracts` also
+compares every published schema with its copy at the merge base with
+`origin/main` and fails when the edit narrows what existing consumers accept
+without changing `properties.schema_version.const`. Treated as breaking: a
+removed or renamed schema file; a removed property, enum value or `$defs`
+entry; a newly required field; a narrowed `type`; a tightened bound, a new or
+changed `pattern`, or `uniqueItems`; closing or constraining
+`additionalProperties`, or adding a constrained property to an object that
+accepted extra properties; a changed `const`; fewer `anyOf`/`oneOf`
+alternatives (compared by position, so reordering counts), an added `oneOf`
+alternative (it may overlap an existing one), or more `allOf` conjuncts; and any other keyword whose non-annotation content changed.
+Widening edits pass, as does a new property on an object with
+`additionalProperties: false`, `const` widening to an `enum` that contains it,
+a dropped `pattern`, and annotation-only edits (`description`, `title`,
+`examples`, ...) at any depth. Changing the version pin accepts a breaking edit
+explicitly; deleting the pin does not. A schema with no pin (the Shields badge
+schema) cannot take a breaking edit at all. With no merge base the gate prints
+`schema compatibility not established`; it passes locally but fails when `CI`
+is set, so a shallow CI checkout cannot silently skip the comparison.
 
 ### `json-terse`: semantically compacted check JSON
 
@@ -1005,6 +1026,14 @@ next=COMMAND
 - `limits=` counts the non-exposed findings that are not test-side gaps
   (`no_static_path`, `infection_unknown`, `propagation_unknown`,
   `static_unknown`, preview-only), so a short gap list never hides them.
+- `repairable=1` is added to the header (#13599) when the selected preview
+  finding (Python, TypeScript or JavaScript) has a gap that `ripr agent repair`
+  can start. It is not a counted gap, so `gaps=` stays 0, but the terminal is
+  then `open=` (never `stop=`) and `next=` is that `ripr agent repair --gap-id
+  ... --base ...` command, the same start the human `Next` block and JSON
+  `finding_routes[].repair.command` print. When uncommitted production edits
+  block the start, `open=` says to commit first and `next=` is absent. Without
+  a start, `stop=` says there is no guided repair route for this finding.
 - `next=` is the scope-bound `ripr explain` command for the top gap (it embeds
   `--root` and the diff or base selectors, because a finding id does not
   resolve outside its run). It is absent when no gap is listed unless the
@@ -1288,7 +1317,11 @@ identity even when `--root` was typed with native backslashes (#7730). An
 inspectable finding stays `inspect_details`; a guidance string is never
 upgraded into `run_command` without a producer-owned `CommandSpec`. JSON
 findings-array budgeting preserves this primary object and its
-`stop.detail_route` even when later findings are omitted. Classification
+`stop.detail_route` even when later findings are omitted. A
+`check_triage` stop for a preview finding whose gap `ripr agent repair` can
+start carries an additive `stop.repair_route` (#13599): the same command as
+`finding_routes[].repair.command`. The class stays `unsupported_or_limited`
+because naming the route does not run it; the field is omitted otherwise. Classification
 fixture goldens strip the member so analyzer contracts stay finding-shaped.
 
 For a candidate-tree subject (`--candidate-tree`), `explain` cannot replay the tree,
@@ -3361,6 +3394,13 @@ field closes, but plain `git add -N` refuses ignored paths, so the notes
 name the force intent-to-add repair (`git add -f -N <path>`). The exclusion
 itself is unchanged: `target/` and other ignored paths stay excluded, only
 disclosed.
+
+Gitignored dependency and build-output trees are not listed (#13597): a path
+with a `node_modules`, `.venv`, `venv`, `site-packages`, `bower_components` or
+`vendor` component, or whose first component is `dist` or `build`, is omitted
+from this array and from the human and GitHub notes. The list is therefore
+not a complete inventory of ignored routed files; those trees are still
+excluded from analysis.
 
 Example:
 
@@ -9550,6 +9590,17 @@ Field contract:
   exist before the phase ran, so `ripr agent status` does not present them
   as current loop artifacts beside the terminal attempt; artifacts an
   earlier phase or attempt wrote stay untouched.
+
+- Task-first `ripr continue --json` (#11584) runs this same after phase and
+  prints the same documents with the same exit codes: the
+  `repair_after_result` envelope on success, the `repair_after_refusal` or
+  `repair_after_failure` document, or the bare verify `0.3` document on the
+  paths above. When the selected attempt is already complete, it prints the
+  attempt's `agent_attempt_status` document (what `ripr status --attempt
+  <id> --json` prints) with exit `0`. Selection refusals (no current attempt,
+  several attempts, an attempt that ended unsuccessfully, a blocked baseline,
+  an unanchored root) and operational errors before the verify step keep
+  stdout empty under `--json`.
 
 ## Agent Verify Execute
 
@@ -17284,14 +17335,22 @@ Field contract:
   `analysis_outcome_status` and `analysis_outcome` envelope so packet
   consumers cannot mistake seam-budget completion for diff-analysis
   completeness. `0.5` adds the optional envelope-level `repair_attempt`
-  continuation block (#4329), present only in the `ripr agent repair
-  --phase before` success stdout; every other projection (`ripr agent
+  continuation block (#4329), present only in the start stdout of `ripr
+  agent repair --phase before --json` and `ripr repair --json` (#11584);
+  every other projection (`ripr agent
   packet`, `agent-seam-packets-json`, gap-ledger packets) keeps the `0.4`
   shape and only the version string moves.
   Reason and confidence vocabularies are documented in the
   `repo-exposure.json` field contract above.
 - `repair_attempt` — optional envelope-level continuation block, present
-  only in the `ripr agent repair --phase before --json` success stdout.
+  only in the start stdout of `ripr agent repair --phase before --json` and
+  of the task-first `ripr repair --json` (#11584), which prints this same
+  packet document alone, without the human summary or handoff card. A
+  repeated `ripr repair --json` that resumes an attempt already awaiting the
+  focused test edit at the same HEAD starts nothing and prints that
+  attempt's `agent_attempt_status` document (what `ripr status --attempt
+  <id> --json` prints) instead, so it carries no `repair_attempt` block.
+  `ripr repair --json` refusals keep exit `3`, stderr prose and empty stdout.
   It names the durable transaction the packet was prepared
   for so a driver that captures only stdout can complete the before →
   edit → after loop without reading stderr narration:
@@ -19900,7 +19959,7 @@ top-level `source_subject`:
 
 - `digest_algorithm`: always `"sha256"`.
 - `corpus` (additive, full Rust inventory only): the analysis-owned
-  `{ "scope": "rust_workspace", "cache_schema_version": "1.172",
+  `{ "scope": "rust_workspace", "cache_schema_version": "1.176",
   "files_content_hash": "<16 lowercase hex digits>" }` from the actual
   classified inventory cache key, including both production and test Rust
   files after the existing generated-file exclusions. Repo-exposure producers
@@ -20685,7 +20744,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.172",
+      "schema_version": "1.176",
       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567+languages:rust=1,typescript=1,python=1,perl=0",
       "workspace_root_hash": "…",
       "files_content_hash": "…",

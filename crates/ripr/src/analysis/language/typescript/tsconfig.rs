@@ -3,15 +3,17 @@
 //! This module is FAIL-CLOSED with a bounded `extends` chain:
 //!
 //! - Only `compilerOptions.baseUrl` and `compilerOptions.paths` are read.
-//! - Discovery reads ONLY `<workspace-root>/tsconfig.json` and
-//!   `<workspace-root>/jsconfig.json`; package-level tsconfigs are out of
-//!   scope, and the load-gap advice says so instead of implying the project
-//!   lacks config (#8715). The root map is additionally WITHHELD for an
-//!   importer whose nearest `tsconfig.json`/`jsconfig.json` (bounded upward
-//!   walk) declares its own `compilerOptions.paths` and is not the root
-//!   config: applying the root map there could credit the wrong owner
-//!   (#12754 slice). Root fallback is unchanged when no nearer config
-//!   declares `paths`.
+//! - The ROOT map reads only `<workspace-root>/tsconfig.json` and
+//!   `<workspace-root>/jsconfig.json`. An importer whose nearest
+//!   `tsconfig.json`/`jsconfig.json` (bounded upward walk) is not the root
+//!   config and owns `compilerOptions.paths` (declares them, inherits them
+//!   through a same-directory `extends` chain, or cannot be read/parsed)
+//!   resolves through THAT config's own map ([`TsAliasMap::nested_for`],
+//!   `baseUrl` anchored at the config's directory), never the root map
+//!   (#12754). It fails closed (unresolved) when that config has no
+//!   `baseUrl` (#12760), uses an unsupported `extends`/`references` form,
+//!   or when `tsconfig.json` and `jsconfig.json` in one directory both own
+//!   paths. Root fallback is unchanged when no nearer config owns `paths`.
 //! - `extends` chains are followed up to 8 hops when every target is a
 //!   relative path inside the directory of the extending config
 //!   (#11204); `references`, package-name `extends`, cross-directory
@@ -100,6 +102,18 @@ pub(crate) struct TsAliasMap {
     /// package table, so recomputing it for each of the workspace's files
     /// made a run quadratic in the file count. Every mutator resets it.
     digest: std::sync::OnceLock<(u64, u64)>,
+    /// Workspace-relative directory (`/`-separated) of the config this map was
+    /// compiled from; empty for the workspace-root config. `baseUrl` anchors
+    /// here, not at `root` (#12754).
+    config_dir: String,
+    /// For a per-package map, the digest of the root map it was derived from:
+    /// it stands in for the (shared, large) package table in [`Self::cache_digest`]
+    /// so many package maps do not each render that table.
+    parent_digest: Option<(u64, u64)>,
+    /// Content fingerprint of every nested `paths`-declaring config in the
+    /// workspace, so a per-package config edit invalidates cached facts that a
+    /// root-only digest could not see (#12754).
+    nested_configs: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -211,8 +225,8 @@ impl TsAliasMapLoadGap {
     pub(crate) fn parts(&self) -> (String, String) {
         match self {
             Self::ConfigMissing => (
-                "no tsconfig.json or jsconfig.json exists at the workspace root; discovery reads only those two workspace-root configs, so package-level tsconfigs cannot anchor aliases".to_string(),
-                "add a tsconfig.json (or jsconfig.json) with compilerOptions.baseUrl and compilerOptions.paths at the workspace root for credit; package-level tsconfigs are out of scope"
+                "no tsconfig.json or jsconfig.json exists at the workspace root, and the importing file's nearest package config does not supply a usable `paths` map; the root map reads only those two workspace-root configs".to_string(),
+                "add compilerOptions.baseUrl and compilerOptions.paths to the importing package's tsconfig.json (or jsconfig.json), or to the workspace root, for credit; a package config is followed only with a `baseUrl` and a same-directory `extends` chain"
                     .to_string(),
             ),
             Self::ConfigUnparseable { config, detail } => (
@@ -276,6 +290,8 @@ impl TsAliasMap {
         self.base_url.hash(&mut first);
         self.base_url_absolute.hash(&mut first);
         self.tsconfig_loaded.hash(&mut first);
+        self.config_dir.hash(&mut first);
+        self.nested_configs.hash(&mut first);
         let mut literals: Vec<(&String, &Option<String>)> = self.literal_entries.iter().collect();
         literals.sort();
         for (key, value) in literals {
@@ -285,8 +301,15 @@ impl TsAliasMap {
         for glob in &self.glob_entries {
             format!("{glob:?}").hash(&mut first);
         }
-        format!("{:?}", self.packages).hash(&mut first);
-        format!("{:?}", self.packages).hash(&mut second);
+        if let Some(parent) = self.parent_digest {
+            parent.hash(&mut first);
+            parent.hash(&mut second);
+        } else {
+            format!("{:?}", self.packages).hash(&mut first);
+            format!("{:?}", self.packages).hash(&mut second);
+        }
+        self.config_dir.hash(&mut second);
+        self.nested_configs.hash(&mut second);
         for glob in &self.glob_entries {
             format!("{glob:?}").hash(&mut second);
         }
@@ -327,6 +350,41 @@ impl TsAliasMap {
         self
     }
 
+    /// Records the fingerprint of the workspace's nested `paths`-declaring
+    /// configs ([`nested_configs_fingerprint`]) in the cache digest.
+    pub(crate) fn with_nested_configs(mut self, fingerprint: u64) -> Self {
+        self.nested_configs = fingerprint;
+        self.digest = std::sync::OnceLock::new();
+        self
+    }
+
+    /// Compile the alias map for the importer-owning config in `config_dir`
+    /// (an absolute directory under `root`), per tsc's rule that each
+    /// compilation unit owns its effective `compilerOptions` (#12754).
+    ///
+    /// `Err(())` fails closed — the caller leaves the specifier unresolved —
+    /// when the directory does not hold exactly one `paths`-declaring
+    /// conventional config (both `tsconfig.json` and `jsconfig.json` declaring
+    /// is an unmodeled selection), or the config is unreadable, unparseable,
+    /// uses an unsupported `extends`/`references` form, lacks `baseUrl`
+    /// (`paths` without `baseUrl` is owned by #12760), or has an unsafe
+    /// `baseUrl`. Workspace package names remain shared with the root map.
+    pub(crate) fn nested_for(&self, config_dir: &Path) -> Result<Self, ()> {
+        let declaring: Vec<PathBuf> = ["tsconfig.json", "jsconfig.json"]
+            .iter()
+            .map(|name| config_dir.join(name))
+            .filter(|path| path.is_file() && config_file_owns_paths(path))
+            .collect();
+        let [config_path] = declaring.as_slice() else {
+            return Err(());
+        };
+        let text = read_config_capped(config_path).map_err(|_read_err| ())?;
+        let mut map = parse_alias_map(&self.root, config_path, &text).map_err(|_blocker| ())?;
+        map.packages = self.packages.clone();
+        map.parent_digest = Some(self.cache_digest());
+        Ok(map)
+    }
+
     /// The workspace package directory a bare specifier names, when no
     /// `paths` key owns it (#4769): an unresolved import of it is a package
     /// manifest question, not a tsconfig one.
@@ -335,6 +393,11 @@ impl TsAliasMap {
             return None;
         }
         self.packages.package_dir_for(specifier)
+    }
+
+    /// The workspace root this map resolves within.
+    pub(crate) fn root(&self) -> &Path {
+        &self.root
     }
 
     /// `true` when the map's `paths` entries came from a loaded config.
@@ -469,7 +532,10 @@ impl TsAliasMap {
         if !is_safe_relative(Path::new(&self.base_url)) {
             return None;
         }
-        let base_dir = self.root.join(self.base_url.trim_matches('/'));
+        let base_dir = self
+            .root
+            .join(&self.config_dir)
+            .join(self.base_url.trim_matches('/'));
         let extensions = [".ts", ".tsx", ".js", ".jsx", ".mts", ".cts", ".mjs", ".cjs"];
         let mut found: Vec<PathBuf> = Vec::new();
         for ext in &extensions {
@@ -477,7 +543,13 @@ impl TsAliasMap {
             if candidate.is_file() {
                 // Normalize to forward-slash workspace-relative path.
                 if let Ok(rel) = candidate.strip_prefix(&self.root) {
-                    found.push(rel.to_path_buf());
+                    // A `.` baseUrl under a package dir leaves `./` inside the
+                    // relative path; drop it so the module spelling is canonical.
+                    found.push(
+                        rel.components()
+                            .filter(|part| !matches!(part, std::path::Component::CurDir))
+                            .collect::<PathBuf>(),
+                    );
                 }
             }
         }
@@ -735,7 +807,25 @@ fn parse_alias_map(
         tsconfig_loaded: true,
         packages: Default::default(),
         digest: Default::default(),
+        config_dir: config_dir_relative(root, config_path),
+        parent_digest: None,
+        nested_configs: 0,
     })
+}
+
+/// Workspace-relative, `/`-separated directory of `config_path`; empty for a
+/// config directly in `root` (or outside it, which callers never load).
+fn config_dir_relative(root: &Path, config_path: &Path) -> String {
+    config_path
+        .parent()
+        .and_then(|dir| dir.strip_prefix(root).ok())
+        .map(|rel| {
+            rel.components()
+                .map(|part| part.as_os_str().to_string_lossy().into_owned())
+                .collect::<Vec<_>>()
+                .join("/")
+        })
+        .unwrap_or_default()
 }
 
 // ── Build-output (outDir) mapping (#4551) ─────────────────────────────────────
@@ -971,32 +1061,127 @@ fn is_safe_relative(p: &Path) -> bool {
         .all(|c| matches!(c, Component::Normal(_) | Component::CurDir))
 }
 
-/// `true` when the config file at `path` declares its own
-/// `compilerOptions.paths` (presence of the key counts, even `{}` or without
-/// `baseUrl`: per TS 4.1+ paths-without-`baseUrl` resolve relative to the
-/// declaring config — #12760 — so no `baseUrl` requirement here).
-///
-/// Declaration probe for the wrong-owner safeguard (#12754 slice): the walk in
-/// `related_tests` withholds the workspace-root map for importers whose
-/// nearest declaring config is not the root one. Unreadable, unparseable, or
-/// non-object configs return `false` — this probe reports only an observed
-/// `paths` declaration; every other fail-closed shape stays owned by its own
-/// lane. `extends` is deliberately not followed and `references` not
-/// consulted: full per-config resolution remains out of scope.
-pub(crate) fn config_file_declares_paths(path: &Path) -> bool {
-    let Ok(text) = super::bounded_read::read_config_capped(path) else {
-        return false;
+/// Content fingerprint of every non-root `tsconfig.json`/`jsconfig.json` that
+/// declares `compilerOptions.paths`, probed in the directories that hold or
+/// contain `files` (workspace-relative source paths). `None` when there is
+/// none. Bounded by the directory count; each config is read through the
+/// capped reader.
+pub(crate) fn nested_configs_fingerprint(root: &Path, files: &[PathBuf]) -> Option<u64> {
+    use std::hash::{Hash, Hasher};
+    let mut dirs: std::collections::BTreeSet<PathBuf> = std::collections::BTreeSet::new();
+    for file in files {
+        let mut dir = file.parent();
+        while let Some(current) = dir {
+            if current.as_os_str().is_empty() || !dirs.insert(current.to_path_buf()) {
+                break;
+            }
+            dir = current.parent();
+        }
+    }
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    let mut found = false;
+    for dir in dirs {
+        for name in ["tsconfig.json", "jsconfig.json"] {
+            let path = root.join(&dir).join(name);
+            if !path.is_file() || !config_file_owns_paths(&path) {
+                continue;
+            }
+            found = true;
+            dir.hash(&mut hasher);
+            name.hash(&mut hasher);
+            let Ok(text) = read_config_capped(&path) else {
+                // Unreadable configs fail closed in the resolver; they must
+                // still move the digest away from "no config".
+                "unreadable".hash(&mut hasher);
+                continue;
+            };
+            text.hash(&mut hasher);
+            // Hash the merged chain too: an edit to a same-directory
+            // `extends` base changes resolution without touching `text`.
+            match merge_compiler_options(&path, &text, &mut Vec::new(), 0) {
+                Ok(merged) => {
+                    merged.base_url.hash(&mut hasher);
+                    let mut paths: Vec<_> = merged.paths.unwrap_or_default().into_iter().collect();
+                    paths.sort();
+                    paths.hash(&mut hasher);
+                }
+                Err(_blocker) => "unmodeled".hash(&mut hasher),
+            }
+        }
+    }
+    found.then(|| hasher.finish())
+}
+
+/// Whether the paths-owning config(s) in `config_dir` may claim `specifier`
+/// through their own `compilerOptions.paths` keys (#12754). Fail-closed: an
+/// unreadable or unparseable config, a non-object `paths`, or `paths`
+/// inherited only through `extends` counts as claiming, since its effective
+/// keys are not observable here. `"paths": null` declares no keys.
+pub(crate) fn package_config_claims(config_dir: &Path, specifier: &str) -> bool {
+    for name in ["tsconfig.json", "jsconfig.json"] {
+        let path = config_dir.join(name);
+        if !path.is_file() || !config_file_owns_paths(&path) {
+            continue;
+        }
+        let Some(value) = read_config_capped(&path)
+            .ok()
+            .and_then(|text| strip_jsonc(&text).ok())
+            .and_then(|normalized| serde_json::from_str::<serde_json::Value>(&normalized).ok())
+        else {
+            return true;
+        };
+        match value
+            .get("compilerOptions")
+            .and_then(|options| options.get("paths"))
+        {
+            Some(serde_json::Value::Object(keys)) => {
+                let claims = keys.keys().any(|key| match key.matches('*').count() {
+                    0 => key == specifier,
+                    1 => key.split_once('*').is_some_and(|(prefix, suffix)| {
+                        match_glob(specifier, prefix, suffix).is_some()
+                    }),
+                    _ => false,
+                });
+                if claims {
+                    return true;
+                }
+            }
+            Some(serde_json::Value::Null) => {}
+            _ => return true,
+        }
+    }
+    false
+}
+
+/// `true` when the config at `path` determines its importers' `paths`, so the
+/// root map must not stand in for them: it declares `compilerOptions.paths`,
+/// inherits them through a same-directory `extends` chain
+/// ([`merge_compiler_options`]), or cannot be read or parsed (an unobservable
+/// config is not evidence that the root map applies; the importer stays
+/// unresolved instead). An `extends`-only config that parses but whose chain
+/// declares no followable `paths` (cross-directory, package-name, cycle) does
+/// NOT claim ownership, so today's root fallback is kept for it (#12754).
+pub(crate) fn config_file_owns_paths(path: &Path) -> bool {
+    let Ok(text) = read_config_capped(path) else {
+        return true;
     };
-    let Ok(normalized) = strip_jsonc(&text) else {
-        return false;
+    let Ok(raw) = parse_raw_tsconfig(&text) else {
+        return true;
     };
-    let Ok(value) = serde_json::from_str::<serde_json::Value>(&normalized) else {
-        return false;
-    };
-    value
-        .get("compilerOptions")
-        .and_then(|options| options.get("paths"))
-        .is_some()
+    // Presence of the key counts, even `"paths": null` or `{}`: such a config
+    // still owns its importers, so the root map must not stand in for it.
+    let declares = strip_jsonc(&text)
+        .ok()
+        .and_then(|normalized| serde_json::from_str::<serde_json::Value>(&normalized).ok())
+        .is_some_and(|value| {
+            value
+                .get("compilerOptions")
+                .is_some_and(|options| options.get("paths").is_some())
+        });
+    declares
+        || (raw.extends.is_some()
+            && merge_compiler_options(path, &text, &mut Vec::new(), 0)
+                .is_ok_and(|merged| merged.paths.is_some()))
 }
 
 /// Strip the file extension from a path string, preserving the rest.
@@ -1100,6 +1285,36 @@ mod tests {
     // ── load_alias_map ────────────────────────────────────────────────────
 
     #[test]
+    fn nested_fingerprint_follows_extends_base_and_unreadable_configs() -> Result<(), String> {
+        let root = temp_dir("nested-fingerprint");
+        let files = vec![PathBuf::from("packages/a/src/x.ts")];
+        assert_eq!(nested_configs_fingerprint(&root, &files), None);
+        write(
+            &root,
+            "packages/a/tsconfig.json",
+            r#"{"extends":"./tsconfig.base.json"}"#,
+        );
+        write(
+            &root,
+            "packages/a/tsconfig.base.json",
+            r#"{"compilerOptions":{"baseUrl":".","paths":{"@/*":["src/*"]}}}"#,
+        );
+        let first = nested_configs_fingerprint(&root, &files).ok_or("base paths own")?;
+        write(
+            &root,
+            "packages/a/tsconfig.base.json",
+            r#"{"compilerOptions":{"baseUrl":".","paths":{"@/*":["lib/*"]}}}"#,
+        );
+        let second = nested_configs_fingerprint(&root, &files).ok_or("base paths own")?;
+        assert_ne!(
+            first, second,
+            "an extends-base edit must move the fingerprint"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
     fn returns_none_when_no_config_file_present() {
         let root = temp_dir("no-config");
         assert!(load_alias_map(&root).is_none());
@@ -1107,16 +1322,16 @@ mod tests {
 
     #[test]
     fn config_missing_advice_discloses_discovery_scope() {
-        // #8715: a monorepo with only package-level tsconfigs hits
-        // ConfigMissing; the advice must state that discovery reads only the
-        // workspace-root configs instead of implying the project lacks config.
+        // #8715/#12754: a monorepo with only package-level tsconfigs that
+        // cannot be used hits ConfigMissing; the advice must name the root
+        // discovery scope and point at the importing package's config.
         let (why, recovery) = TsAliasMapLoadGap::ConfigMissing.parts();
         assert!(
             why.contains("only those two workspace-root configs"),
             "why must name the discovery scope: {why}"
         );
         assert!(
-            recovery.contains("package-level tsconfigs are out of scope"),
+            recovery.contains("importing package's tsconfig.json"),
             "recovery must name the scope boundary: {recovery}"
         );
         let (why, recovery) = TsAliasMapLoadGap::ExtendsUnsupported {
