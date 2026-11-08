@@ -1,0 +1,60 @@
+name: Select owned Rust compatibility toolchain
+description: Select repository Rust without changing the runner primary; isolate missing components in this job.
+inputs:
+  require-llvm:
+    description: Require executable llvm-cov and llvm-profdata from this toolchain.
+    required: false
+    default: 'false'
+runs:
+  using: composite
+  steps:
+    - name: Select and verify owned Rust
+      shell: bash
+      env:
+        REQUIRE_LLVM: ${{ inputs.require-llvm }}
+      run: |
+        set -euo pipefail
+        [[ "$RUNNER_ENVIRONMENT" == self-hosted && "$RUNNER_OS" == Linux && "$RUNNER_ARCH" == X64 ]]
+        [[ "$CARGO_HOME" == /cache/cargo && "$SCCACHE_DIR" == /cache/sccache && "$RUSTC_WRAPPER" == sccache && "$CARGO_INCREMENTAL" == 0 ]]
+        [[ "$CARGO_BUILD_JOBS" == 8 && "$NEXTEST_TEST_THREADS" == 8 && "$RUST_TEST_THREADS" == 8 ]]
+        [[ "$REQUIRE_LLVM" == true || "$REQUIRE_LLVM" == false ]]
+        for path in "$GITHUB_WORKSPACE" "$RUNNER_TEMP"; do
+          [[ "$path" == /* && "$path" != *$'\n'* && "$path" != *$'\r'* && -d "$path" && -w "$path" && ! -L "$path" && "$(realpath "$path")" == "$path" ]]
+        done
+        export RUSTUP_TOOLCHAIN=1.95.0 RUSTUP_AUTO_INSTALL=0
+        ready() {
+          local observed library tool
+          observed=$(rustc --version) || return 1
+          [[ "$observed" == 'rustc 1.95.0 '* ]] || return 1
+          observed=$(cargo --version) || return 1
+          [[ "$observed" == 'cargo 1.95.0 '* ]] || return 1
+          rustfmt --version >/dev/null && cargo clippy --version >/dev/null || return 1
+          if [[ "$REQUIRE_LLVM" == true ]]; then
+            library=$(rustc --print target-libdir) || return 1
+            for tool in llvm-cov llvm-profdata; do
+              [[ -x "$library/../bin/$tool" ]] && "$library/../bin/$tool" --version >/dev/null || return 1
+            done
+          fi
+        }
+        if ! ready; then
+          # Only this bounded job directory is written. Never install into the image Rust home.
+          export RUSTUP_HOME
+          RUSTUP_HOME=$(mktemp -d "$RUNNER_TEMP/ripr-rustup.XXXXXX")
+          components=rustfmt,clippy
+          [[ "$REQUIRE_LLVM" != true ]] || components+=,llvm-tools-preview
+          rustup toolchain install 1.95.0 --profile minimal --no-self-update --component "$components"
+          ready || { echo 'Repository toolchain/components could not be established' >&2; exit 1; }
+          printf 'RUSTUP_HOME=%s\n' "$RUSTUP_HOME" >> "$GITHUB_ENV"
+        fi
+        for path in "$GITHUB_WORKSPACE/target" "$GITHUB_WORKSPACE/target/tmp"; do
+          [[ ! -L "$path" ]] && { [[ ! -e "$path" ]] || [[ -d "$path" ]]; }
+          mkdir -p "$path"
+        done
+        {
+          echo 'RUSTUP_TOOLCHAIN=1.95.0'
+          echo 'RUSTUP_AUTO_INSTALL=0'
+          echo "CARGO_TARGET_DIR=$GITHUB_WORKSPACE/target"
+          echo "TMPDIR=$GITHUB_WORKSPACE/target/tmp"
+          echo "TMP=$GITHUB_WORKSPACE/target/tmp"
+          echo "TEMP=$GITHUB_WORKSPACE/target/tmp"
+        } >> "$GITHUB_ENV"
