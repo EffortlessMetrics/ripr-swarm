@@ -3788,7 +3788,7 @@ To add an exception for this directory, call:\n\n\tgit config --global --add saf
         assert_eq!(at_root, WorkTreeRootProbe::Root);
         assert_eq!(inside, WorkTreeRootProbe::InsideWorkTree);
         assert!(
-            absent.is_err(),
+            matches!(absent, Err(ref message) if !message.is_empty()),
             "absent directory must not verify: {absent:?}"
         );
         Ok(())
