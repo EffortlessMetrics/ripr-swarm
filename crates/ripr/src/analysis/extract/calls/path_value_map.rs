@@ -2,12 +2,13 @@
 
 use super::MAX_CALL_FACTS_PER_LINE;
 use crate::analysis::facts::CallFact;
+use crate::analysis::syntax::source_binds_value_name;
 
 /// Scan `masked` for bounded `literal.iter().map(path).collect::<Vec..>()` chains
 /// and append synthetic owner call facts (`path(first_literal)`) for reach only.
 pub(super) fn add_path_value_map_calls(
     masked: &str,
-    _body: &str,
+    body: &str,
     start_line: usize,
     calls: &mut Vec<CallFact>,
 ) {
@@ -26,7 +27,15 @@ pub(super) fn add_path_value_map_calls(
             .filter(|call| call.line == line)
             .map(|call| call.name.clone())
             .collect();
-        for (target, call) in synthetic_calls_in_line(masked_line) {
+        for (target, call, bare) in synthetic_calls_in_line(masked_line) {
+            // A bare mapped name the test body binds itself (`let inc = |x| x;`)
+            // is that local value, not the owner; a call fact for it would raise
+            // reach on a function the test never runs (#12844). A path such as
+            // `module::inc` names no local binding, so it keeps its fact. A body
+            // that does not parse may bind anything, so it also withholds.
+            if bare && source_binds_value_name(body, &target) {
+                continue;
+            }
             if line_names.len() >= MAX_CALL_FACTS_PER_LINE {
                 break;
             }
@@ -48,8 +57,11 @@ pub(super) fn add_path_value_map_calls(
     }
 }
 
-/// `(owner leaf name, representative call text)` for each bounded chain on the line.
-pub(in crate::analysis::extract) fn synthetic_calls_in_line(line: &str) -> Vec<(String, String)> {
+/// `(owner leaf name, representative call text, written as a bare name)` for
+/// each bounded chain on the line.
+pub(in crate::analysis::extract) fn synthetic_calls_in_line(
+    line: &str,
+) -> Vec<(String, String, bool)> {
     let mut out = Vec::new();
     let needle = ".map(";
     let mut search = 0;
@@ -72,7 +84,8 @@ pub(in crate::analysis::extract) fn synthetic_calls_in_line(line: &str) -> Vec<(
             .next()
             .filter(|name| !name.is_empty())
             .unwrap_or(chain.owner_path.as_str());
-        out.push((leaf.to_string(), format!("{}({input})", leaf)));
+        let bare = !chain.owner_path.contains("::");
+        out.push((leaf.to_string(), format!("{}({input})", leaf), bare));
     }
     out
 }
@@ -276,7 +289,30 @@ mod tests {
     fn parses_map_collect_chain() {
         let line = "assert_eq!(vec![1, 2].into_iter().map(inc).collect::<Vec<_>>(), vec![2, 3]);";
         let calls = synthetic_calls_in_line(line);
-        assert_eq!(calls, vec![("inc".to_string(), "inc(1)".to_string())]);
+        assert_eq!(calls, vec![("inc".to_string(), "inc(1)".to_string(), true)]);
+    }
+
+    fn reach_names(body: &str) -> Vec<String> {
+        let mut calls = Vec::new();
+        add_path_value_map_calls(body, body, 1, &mut calls);
+        calls.into_iter().map(|call| call.name).collect()
+    }
+
+    #[test]
+    fn a_bare_name_the_body_binds_locally_adds_no_owner_call() {
+        let chain = "assert_eq!(vec![1, 2].into_iter().map(inc).collect::<Vec<_>>(), vec![1, 2]);";
+        let unbound = format!("fn t() {{\n    {chain}\n}}\n");
+        assert_eq!(reach_names(&unbound), vec!["inc".to_string()]);
+        let closure = format!("fn t() {{\n    let inc = |x| x;\n    {chain}\n}}\n");
+        assert!(reach_names(&closure).is_empty());
+        let nested = format!("fn t() {{\n    fn inc(x: i32) -> i32 {{ x }}\n    {chain}\n}}\n");
+        assert!(reach_names(&nested).is_empty());
+    }
+
+    #[test]
+    fn a_path_owner_keeps_its_call_when_a_same_leaf_local_exists() {
+        let body = "fn t() {\n    let inc = |x| x;\n    assert_eq!(vec![1, 2].into_iter().map(m::inc).collect::<Vec<_>>(), vec![2, 3]);\n}\n";
+        assert_eq!(reach_names(body), vec!["inc".to_string()]);
     }
 
     #[test]
