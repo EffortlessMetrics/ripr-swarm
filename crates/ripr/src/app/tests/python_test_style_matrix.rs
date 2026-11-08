@@ -216,29 +216,16 @@ const WEAK_ONLY: &[WeakOnly] = &[
         edit: CALC_EDIT,
         test: "from hypothesis import given, strategies as st\n\nfrom src.calc import discount\n\n\n@given(st.integers(min_value=100, max_value=1000))\ndef test_discount(total):\n    assert discount(total) < total\n",
     },
-    WeakOnly {
-        name: "hypothesis property pinning the formula",
-        sources: &[("src/calc.py", CALC)],
-        edit: CALC_EDIT,
-        test: "from hypothesis import given, strategies as st\n\nfrom src.calc import discount\n\n\n@given(st.integers(min_value=100, max_value=1000))\ndef test_discount(total):\n    assert discount(total) == total - 10\n",
-    },
 ];
 
 #[test]
-fn every_python_test_style_keeps_weak_tests_out_of_exposed() -> Result<(), String> {
+fn python_test_styles_without_strong_credit_keep_weak_tests_out_of_exposed() -> Result<(), String> {
+    // The supported styles' weak rows are held to `weakly_exposed` below.
     let mut failures = Vec::new();
-    let weak_rows = STYLES
-        .iter()
-        .map(|style| (style.name, style.sources, style.edit, style.weak))
-        .chain(
-            WEAK_ONLY
-                .iter()
-                .map(|row| (row.name, row.sources, row.edit, row.test)),
-        );
-    for (name, sources, edit, test) in weak_rows {
-        let finding = check_style(name, sources, edit, test)?;
+    for row in WEAK_ONLY {
+        let finding = check_style(row.name, row.sources, row.edit, row.test)?;
         if finding.class == ExposureClass::Exposed {
-            failures.push(format!("{name}: weak test read exposed"));
+            failures.push(format!("{}: weak test read exposed", row.name));
         }
     }
     assert!(failures.is_empty(), "{failures:#?}");
@@ -295,8 +282,24 @@ fn a_doctest_no_runner_collects_is_not_credited() -> Result<(), String> {
         CALC_EDIT,
         "",
     )?;
-    assert_ne!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    assert_eq!(finding.class, ExposureClass::NoStaticPath, "{finding:?}");
     assert!(finding.related_tests.is_empty(), "{finding:?}");
+    Ok(())
+}
+
+#[test]
+fn a_hypothesis_property_is_a_static_limit_not_a_verdict() -> Result<(), String> {
+    // This property pins the formula, so it does notice the edit. Generated
+    // inputs are outside what ripr reads statically (property-based limit);
+    // the honest reading is an abstention, and it must never be a gap. If
+    // ripr learns to credit it, move this row into `STYLES`.
+    let finding = check_style(
+        "hypothesis property pinning the formula",
+        &[("src/calc.py", CALC)],
+        CALC_EDIT,
+        "from hypothesis import given, strategies as st\n\nfrom src.calc import discount\n\n\n@given(st.integers(min_value=100, max_value=1000))\ndef test_discount(total):\n    assert discount(total) == total - 10\n",
+    )?;
+    assert_eq!(finding.class, ExposureClass::StaticUnknown, "{finding:?}");
     Ok(())
 }
 
