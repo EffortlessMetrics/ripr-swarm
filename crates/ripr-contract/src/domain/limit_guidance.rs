@@ -17,7 +17,7 @@ impl StaticLimitKind {
     /// Every kind, so tests can walk the vocabulary. The ordinal test keeps
     /// this list in step with the enum.
     #[cfg(test)]
-    pub const ALL: [StaticLimitKind; 34] = [
+    pub const ALL: [StaticLimitKind; 35] = [
         StaticLimitKind::DynamicDispatch,
         StaticLimitKind::Metaprogramming,
         StaticLimitKind::MissingImportGraph,
