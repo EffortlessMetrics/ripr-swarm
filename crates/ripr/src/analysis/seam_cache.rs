@@ -714,6 +714,10 @@ pub(crate) struct CachedSeamLimitInfo {
 /// `1.171`: a workspace assertion macro defined in another file that forwards
 /// its operands to a std assertion names the macro-wrapped limit instead of an
 /// unnamed gap, with nothing credited (#12886).
+/// `1.172`: reserved for #12669 (in flight).
+/// `1.173`: `#[async_std::test]` bodies admit owner-return pins read through one
+/// `.await` on an async owner (#5040). Old entries would keep those assertions
+/// refused as async tests.
 /// `1.174`: repo-seam reach stages carry producer-owned `unresolved_reach_limit`
 /// through classified-seam cache round trips (#5492).
 pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.174";
@@ -929,6 +933,8 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.174";
 /// `0.171`: same plain `assert_eq!` literal withhold as full `1.169` (#13005).
 /// `0.172`: same positive Err-enclosing rule as full `1.170` (#12474).
 /// `0.173`: same cross-file wrapper limit as full `1.171` (#12886).
+/// `0.174`: reserved for #12669 (in flight).
+/// `0.175`: same `#[async_std::test]` admission as full `1.173` (#5040).
 /// `0.176`: same producer-owned reach `unresolved_reach_limit` as full `1.174` (#5492).
 const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.176";
 
@@ -1145,6 +1151,8 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.176";
 /// `0.171`: same plain `assert_eq!` literal withhold as full `1.169` (#13005).
 /// `0.172`: same positive Err-enclosing rule as full `1.170` (#12474).
 /// `0.173`: same cross-file wrapper limit as full `1.171` (#12886).
+/// `0.174`: reserved for #12669 (in flight).
+/// `0.175`: same `#[async_std::test]` admission as full `1.173` (#5040).
 /// `0.176`: same producer-owned reach `unresolved_reach_limit` as full `1.174` (#5492).
 pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.176";
 
@@ -2863,7 +2871,7 @@ impl RepoSeamFactCache {
             };
             let envelope = match codec::decode_shard(&bytes) {
                 Ok(envelope) => envelope,
-                Err(reason) => return CacheLoad::CorruptIgnored { reason },
+                Err(reason) => return corrupt_entry(&shard_path, reason),
             };
             if !envelope.matches_key(key) {
                 return CacheLoad::CorruptIgnored {
@@ -3727,7 +3735,10 @@ struct CacheEnvelope {
     workspace_manifests_hash: String,
     lockfile_hash: String,
     toolchain_hash: String,
-    #[serde(with = "related_test_table")]
+    #[serde(
+        serialize_with = "related_test_table::serialize",
+        deserialize_with = "related_test_table::deserialize_classified"
+    )]
     classified_seams: Vec<ClassifiedSeam>,
     /// `None` means this is a complete run (all seams were analyzed).
     /// `Some(...)` means the run was capped; the renderer uses this to
@@ -4069,7 +4080,10 @@ struct ShardedCacheEnvelope {
     toolchain_hash: String,
     shard_index: usize,
     shard_count: usize,
-    #[serde(with = "related_test_table")]
+    #[serde(
+        serialize_with = "related_test_table::serialize",
+        deserialize_with = "related_test_table::deserialize_classified"
+    )]
     classified_seams: Vec<ClassifiedSeam>,
 }
 
@@ -5290,7 +5304,9 @@ mod tests {
         // 1.167 -> 1.168: typed missing-discriminator shape (#12414).
         // 1.169 -> 1.170: positive Err-enclosing allowlist (#12474).
         // 1.170 -> 1.171: cross-file forwarding wrapper names the limit (#12886).
-        // 1.171 -> 1.174: producer-owned reach limit survives cache round trip (#5492).
+        // 1.171 -> 1.172: reserved for #12669 (in flight).
+        // 1.172 -> 1.173: `#[async_std::test]` owner-return pins (#5040).
+        // 1.173 -> 1.174: producer-owned reach limit survives cache round trip (#5492).
         assert_eq!(CACHE_SCHEMA_VERSION, "1.174");
         // 1.168 -> 1.169: plain `assert_eq!` literal withhold in the audit (#13005).
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
@@ -5444,7 +5460,9 @@ mod tests {
         // 0.169 -> 0.170: same typed missing-discriminator shape as full 1.168 (#12414).
         // 0.171 -> 0.172: same positive Err-enclosing rule as full 1.170 (#12474).
         // 0.172 -> 0.173: same cross-file wrapper limit as full 1.171 (#12886).
-        // 0.173 -> 0.176: same producer-owned reach limit as full 1.174 (#5492).
+        // 0.173 -> 0.174: reserved for #12669 (in flight).
+        // 0.174 -> 0.175: same async_std test admission as full 1.173 (#5040).
+        // 0.175 -> 0.176: same producer-owned reach limit as full 1.174 (#5492).
         assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.176");
         assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.176");
         // 0.170 -> 0.171: same plain `assert_eq!` literal withhold as full 1.169 (#13005).
@@ -5770,8 +5788,11 @@ mod tests {
         // Explicit synthesized e290-shaped predecessor, not an execution of
         // an old parser. The separate retained CLI receipt owns that capture.
         let mut favorable = current.clone();
-        let restore_old_text = |calls: &mut Vec<crate::analysis::facts::CallFact>| {
+        let restore_old_text = |calls: &mut crate::analysis::facts::SharedFactSlice<
+            crate::analysis::facts::CallFact,
+        >| {
             for call in calls
+                .make_mut()
                 .iter_mut()
                 .filter(|call| call.name == "discounted_total" && call.line == old_offset + 1)
             {
@@ -6441,6 +6462,120 @@ mod tests {
             assert!(Arc::ptr_eq(&tests(0)[0], &tests(2)[0]), "{label}: a");
             assert!(Arc::ptr_eq(&tests(0)[1], &tests(1)[0]), "{label}: b");
         }
+        Ok(())
+    }
+
+    #[test]
+    fn classified_reference_budget_rejects_single_and_late_shard_without_a_prefix()
+    -> Result<(), String> {
+        use super::related_test_table::tests::{related, seam};
+        use crate::domain::RelationReason;
+
+        let test = related("budget", RelationReason::SameModule);
+        let seams = vec![
+            seam(1, vec![test.clone(), test.clone()]),
+            seam(2, vec![test]),
+        ];
+        for compact in [false, true] {
+            for sharded in [false, true] {
+                let scratch = integrity_scratch("reference-budget")?;
+                let cache = RepoSeamFactCache::at_dir(scratch.0.clone());
+                let mut key = empty_state().cache_key();
+                if compact {
+                    key.schema_version = COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION.to_owned();
+                }
+                cache.store_classified_seams_with_limit(
+                    &key,
+                    &seams,
+                    None,
+                    if sharded { 1 } else { 10 },
+                )?;
+                let load = || {
+                    related_test_table::with_test_classified_reference_limit(3, || {
+                        cache.load_classified_seams_with_fallback(&key)
+                    })
+                };
+                assert!(matches!(load(), CacheLoad::Hit((ref loaded, _, _)) if loaded.len() == 2));
+                related_test_table::take_test_reference_clones();
+                let path = if sharded {
+                    let manifest = codec::decode_sharded_manifest(
+                        &std::fs::read(cache.sharded_manifest_path(&key))
+                            .map_err(|err| err.to_string())?,
+                    )?;
+                    assert_eq!(manifest.shards.len(), 2);
+                    cache.sharded_entry_dir(&key).join(&manifest.shards[1].file)
+                } else {
+                    cache.entry_path(&key)
+                };
+                let mut body: serde_json::Value =
+                    serde_json::from_slice(&std::fs::read(&path).map_err(|err| err.to_string())?)
+                        .map_err(|err| err.to_string())?;
+                let seam_index = if sharded { 0 } else { 1 };
+                body["classified_seams"]["seams"][seam_index]["evidence"]["related_tests"] =
+                    if sharded {
+                        serde_json::json!([0, 0, 0, 0])
+                    } else {
+                        serde_json::json!([0, 0])
+                    };
+                std::fs::write(
+                    &path,
+                    serde_json::to_vec(&body).map_err(|err| err.to_string())?,
+                )
+                .map_err(|err| err.to_string())?;
+                match load() {
+                    CacheLoad::CorruptIgnored { reason } => {
+                        assert!(reason.contains("related-test reference limit"), "{reason}");
+                        assert!(reason.contains(&path.display().to_string()), "{reason}");
+                    }
+                    other => {
+                        return Err(format!("over-limit generation must be rejected: {other:?}"));
+                    }
+                }
+                assert_eq!(
+                    related_test_table::take_test_reference_clones(),
+                    if sharded { 2 } else { 0 },
+                    "only the earlier valid shard may expand references"
+                );
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn classified_reference_budget_refuses_default_scale_amplification() -> Result<(), String> {
+        use super::related_test_table::tests::{related, seam};
+        use crate::domain::RelationReason;
+
+        let scratch = integrity_scratch("reference-budget-scale")?;
+        let cache = RepoSeamFactCache::at_dir(scratch.0.clone());
+        let key = empty_state().cache_key();
+        let seams = [seam(1, vec![related("scale", RelationReason::SameModule)])];
+        cache.store_classified_seams_with_limit(&key, &seams, None, 10)?;
+        let path = cache.entry_path(&key);
+        let mut body: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).map_err(|err| err.to_string())?)
+                .map_err(|err| err.to_string())?;
+        let slot_bytes = std::mem::size_of::<Arc<RelatedTestGrip>>();
+        let limit = CLASSIFIED_SEAM_CACHE_ENCODED_SHARD_CEILING_BYTES / slot_bytes.max(8);
+        body["classified_seams"]["seams"][0]["evidence"]["related_tests"] =
+            serde_json::Value::Array(vec![serde_json::json!(0); limit + 1]);
+        let encoded = serde_json::to_vec(&body).map_err(|err| err.to_string())?;
+        assert!(encoded.len() < CLASSIFIED_SEAM_CACHE_ENCODED_SHARD_CEILING_BYTES);
+        related_test_table::take_test_reference_clones();
+        let result = related_test_table::with_test_classified_reference_limit(limit, || {
+            codec::decode(&encoded)
+        });
+        assert!(
+            matches!(result, Err(ref reason) if reason.contains("related-test reference limit"))
+        );
+        assert_eq!(related_test_table::take_test_reference_clones(), 0);
+        println!(
+            "reference-budget: encoded={} references={} limit={} requested-slot-bytes={}",
+            encoded.len(),
+            limit + 1,
+            limit,
+            (limit + 1) * slot_bytes
+        );
         Ok(())
     }
 

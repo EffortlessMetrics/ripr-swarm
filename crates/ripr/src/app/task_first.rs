@@ -182,6 +182,7 @@ pub(crate) fn decide_repair_start(
         transition_to: offered.map(|_| command_effect_label(CommandRole::RepairStart).to_string()),
         restart_route,
         check_case: None,
+        check_repair_route: None,
         doctor_recovery: None,
         pilot_delegation: None,
         alternatives: Vec::new(),

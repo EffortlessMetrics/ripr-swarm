@@ -32,6 +32,26 @@ use std::sync::Arc;
 #[cfg(test)]
 thread_local! {
     static ROW_KEY_SERIALIZATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static TEST_CLASSIFIED_REFERENCE_LIMIT: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
+    static TEST_REFERENCE_CLONES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(super) fn with_test_classified_reference_limit<T>(limit: usize, f: impl FnOnce() -> T) -> T {
+    struct Reset(Option<usize>);
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            TEST_CLASSIFIED_REFERENCE_LIMIT.with(|current| current.set(self.0));
+        }
+    }
+    let previous = TEST_CLASSIFIED_REFERENCE_LIMIT.with(|current| current.replace(Some(limit)));
+    let _reset = Reset(previous);
+    f()
+}
+
+#[cfg(test)]
+pub(super) fn take_test_reference_clones() -> usize {
+    TEST_REFERENCE_CLONES.with(std::cell::Cell::take)
 }
 
 #[derive(Serialize)]
@@ -440,10 +460,51 @@ fn pretty_item_bytes<T: Serialize>(value: &T) -> Result<usize, String> {
 pub(super) fn deserialize<'de, D: Deserializer<'de>>(
     deserializer: D,
 ) -> Result<Vec<ClassifiedSeam>, D::Error> {
+    expand_table(TableOwned::deserialize(deserializer)?)
+}
+
+/// Bound reconstructed Arc slots for each classified entry or shard. The
+/// encoded file is read under a byte ceiling; its index vectors are decoded
+/// before this check and are outside the Arc-slot bound.
+pub(super) fn deserialize_classified<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Vec<ClassifiedSeam>, D::Error> {
+    let table = TableOwned::deserialize(deserializer)?;
+    let limit = classified_reference_limit();
+    let mut total = 0usize;
+    for seam in &table.seams {
+        total = total
+            .checked_add(seam.evidence.related_tests.len())
+            .filter(|&count| count <= limit)
+            .ok_or_else(|| {
+                D::Error::custom(format!("related-test reference limit exceeded ({limit})"))
+            })?;
+    }
+    expand_table(table)
+}
+
+fn classified_reference_limit_for_ceiling(byte_ceiling: usize) -> usize {
+    // At least eight encoded bytes are used per index by the pretty-printed
+    // classified-cache writer. This also bounds requested Arc slot bytes by
+    // the configured encoded ceiling on platforms with wider pointers.
+    byte_ceiling / std::mem::size_of::<Arc<RelatedTestGrip>>().max(8)
+}
+
+fn classified_reference_limit() -> usize {
+    #[cfg(test)]
+    if let Some(limit) = TEST_CLASSIFIED_REFERENCE_LIMIT.with(std::cell::Cell::get) {
+        return limit;
+    }
+    let ceiling = super::classified_seam_cache_encoded_shard_ceiling_bytes()
+        .unwrap_or(super::CLASSIFIED_SEAM_CACHE_ENCODED_SHARD_CEILING_BYTES);
+    classified_reference_limit_for_ceiling(ceiling)
+}
+
+fn expand_table<E: serde::de::Error>(table: TableOwned) -> Result<Vec<ClassifiedSeam>, E> {
     let TableOwned {
         related_tests: table,
         seams,
-    } = TableOwned::deserialize(deserializer)?;
+    } = table;
     let mut classified = Vec::with_capacity(seams.len());
     for SeamOwned {
         seam,
@@ -471,11 +532,13 @@ pub(super) fn deserialize<'de, D: Deserializer<'de>>(
                 .ok()
                 .and_then(|index| table.get(index))
                 .ok_or_else(|| {
-                    D::Error::custom(format!(
+                    E::custom(format!(
                         "related test index {index} outside a table of {}",
                         table.len()
                     ))
                 })?;
+            #[cfg(test)]
+            TEST_REFERENCE_CLONES.with(|count| count.set(count.get().saturating_add(1)));
             related_tests.push(Arc::clone(test));
         }
         classified.push(ClassifiedSeam {
@@ -612,6 +675,37 @@ pub(super) mod tests {
         assert!(Arc::ptr_eq(&tests(0)[0], &tests(3)[0]));
         assert!(Arc::ptr_eq(&tests(0)[1], &tests(1)[0]));
         assert!(!Arc::ptr_eq(&tests(0)[0], &tests(1)[2]));
+        Ok(())
+    }
+
+    #[test]
+    fn classified_reference_budget_tracks_byte_ceiling_and_pretty_writer() -> Result<(), String> {
+        let ceiling = super::super::CLASSIFIED_SEAM_CACHE_ENCODED_SHARD_CEILING_BYTES;
+        let slot_bytes = std::mem::size_of::<Arc<RelatedTestGrip>>();
+        let limit = classified_reference_limit_for_ceiling(ceiling);
+        assert_eq!(limit, ceiling / slot_bytes.max(8));
+        assert!(limit.saturating_mul(slot_bytes) <= ceiling);
+        assert_eq!(classified_reference_limit_for_ceiling(0), 0);
+        let configured =
+            super::super::classified_seam_cache_encoded_shard_ceiling_bytes().unwrap_or(ceiling);
+        assert_eq!(
+            classified_reference_limit(),
+            classified_reference_limit_for_ceiling(configured)
+        );
+
+        let row = Arc::new(related("budget", RelationReason::SameModule));
+        for count in [1, 2, 10, 1_024] {
+            let mut classified = seam(1, Vec::new());
+            classified.evidence.related_tests = vec![Arc::clone(&row); count];
+            let encoded = serde_json::to_vec_pretty(&Body {
+                seams: vec![classified],
+            })
+            .map_err(|err| err.to_string())?;
+            assert!(
+                classified_reference_limit_for_ceiling(encoded.len()) >= count,
+                "the pretty writer's {count} references must fit the derived limit"
+            );
+        }
         Ok(())
     }
 
