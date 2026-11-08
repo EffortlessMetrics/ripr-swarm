@@ -98,7 +98,7 @@ reports no runtime outcomes; a real mutation runner confirms later.
 | [`ripr completions`](#completions) | Print a tab-completion script for your shell. | public |
 | [`ripr config`](#config) | Show the configuration command surface. | public |
 | [`ripr config validate`](#config) | Validate ripr.toml without running analysis. | public |
-| [`ripr context`](#context) | Print one finding's changed code and related tests for an agent or script. | public |
+| [`ripr context`](#context) | Print one finding's probe and related tests for an agent or script. | public |
 | [`ripr continue`](#continue) | After the test edit, check whether it closed the gap. | public |
 | [`ripr coverage-grip`](#coverage-grip) | Show the coverage-grip surface. | public |
 | [`ripr coverage-grip frontier`](#coverage-grip) | Project the coverage-grip frontier from ledger, delta, and zero-status artifacts. | public |
@@ -1522,6 +1522,8 @@ Options:
                            same findings with repeated evidence prose coded
                            against a document-head legend -> json-terse;
                            compact report for a coding agent -> agent;
+                           one sorted path:line:col gap line per actionable
+                           finding, nothing for exposed -> missed-txt;
                            file annotations in Actions logs -> github; code
                            scanning upload -> sarif (bounded minified:
                            sarif-compact); README badge ->
@@ -1532,7 +1534,7 @@ Options:
                              Analysis (diff-scoped):
                                human, human-full, json, json-compact,
                                json-terse, github,
-                               sarif, sarif-compact, agent,
+                               sarif, sarif-compact, agent, missed-txt,
                                check-findings-json (identified snapshot
                                for `agent verify`)
                              Badge (diff-scoped, for PR/CI status):
@@ -1546,6 +1548,12 @@ Options:
                                repo-badge-plus-json, repo-badge-plus-shields
                              Agent (machine-readable repair evidence):
                                agent-seam-packets-json
+                           missed-txt prints `path:line:col: <classification>
+                           <probe family>: <expression> -> <missing
+                           discriminator>` for each candidate-actionable,
+                           unsuppressed, non-exposed finding, sorted; exposed
+                           findings print nothing. Static classification only;
+                           no runtime mutation outcome is claimed.
                            json-compact is the same check document as json,
                            with only insignificant whitespace removed and one
                            final newline. Evidence, source identity, actions,
@@ -1576,7 +1584,7 @@ Options:
                            Apply a suppressions TOML (same schema as
                            .ripr/suppressions.toml) to the findings-based
                            formats (human, human-full, json, json-compact,
-                           github). exposure_gap
+                           github, missed-txt). exposure_gap
                            entries select findings by finding_id or by a
                            path glob (with optional static_class narrowing).
                            Suppressed findings stay visible in JSON with
@@ -1655,7 +1663,8 @@ Progress:
   run can be told from a hang. Non-TTY / CI output is newline-delimited
   with no control sequences. A TTY may reuse one line and stays silent
   for sub-threshold flashes. Machine formats (json, json-compact, sarif,
-  github) keep stdout byte-clean. With json, json-compact, sarif, badge-*
+  github, missed-txt) keep stdout byte-clean. With json, json-compact, sarif,
+  missed-txt, badge-*
   or agent selected and stderr not a terminal, the stream is off by default;
   `RIPR_PROGRESS=1` restores it. A terminal and the human formats keep it. Unknown totals
   never become a percentage or ETA. Progress does not mean analysis is faster
@@ -1826,34 +1835,26 @@ Examples:
 `ripr help context`
 
 ```text
-Print one finding's changed code and related tests for an agent or script.
+Print the per-change context packet for one finding or location.
 
-Use this when an agent or tool needs the facts behind one `ripr check`
-finding: the changed expression ripr examined, the tests that appear to
-reach it, the values they check, and any assertion that seems to be missing.
-Output is always JSON; `--json` is accepted and changes nothing. To read the
-same finding as prose, run `ripr explain` with the same selector.
+The packet is always JSON, for an agent or tool to consume; `--json` is
+accepted and changes nothing. To read the same finding as prose, run
+`ripr explain` with the same selector.
 
 Usage: ripr context [--root PATH] [--base REV] [--worktree|--committed|--diff PATH] [--from PATH] [--path GLOB] [--exclude GLOB] [--mode MODE] [--no-unchanged-tests] [--perl-facts PATH] [--suppression-policy PATH] --at <finding-id|file:line> [--max-related-tests N] [--json] [--quiet]
 
 Options:
-  --at <finding-id|file:line>
-               Required. The finding to describe: an id from
-               `ripr check --json`, or a changed `file:line`.
-  --finding ID
-               Same as --at.
-  --max-related-tests N
-               List at most N related tests. Defaults to
-               `reports.max_related_tests` in ripr.toml, otherwise 5.
   --root PATH  Workspace root. Defaults to the current directory, then
                walks up to the enclosing workspace or package, or the git
                top level; `--root .` pins this directory. A member-relative
                `file:line` selector binds to the directory you ran from like
                `ripr explain`; --diff and --from paths are read as typed from
                the current directory.
-  --base REV   Compare against this revision, as in `ripr check --base`.
-               Not combinable with --diff unless --from is also given.
-  --diff PATH  Read a diff file instead of running git diff (`-` = stdin).
+  --finding ID
+               Select the finding by id or `file:line`, like `--at`.
+  --quiet      Suppress analysis progress and heartbeats on stderr, like
+               `ripr check --quiet`. Does not change stdout, exit codes, or
+               error reporting.
   --committed  Analyze committed history only (base...HEAD), even when the
                working tree is dirty. Not combinable with --worktree, --diff
                or --from. Without a supplied scope, dirty repositories use
@@ -1871,8 +1872,8 @@ Options:
                analysis (same identity check as explain --from).
                Stdin (--diff -) cannot verify a recorded diff identity;
                create and reuse the artifact with a named --diff PATH.
-               --max-related-tests still applies, including beyond the
-               check --json render cap.
+               --max-related-tests is a render-time knob honored fresh,
+               including beyond the check --json render cap.
   --mode MODE  How much of the workspace is indexed: instant (changed
                files only, cheapest), draft (packages the diff touches; the
                default), fast (same as draft for now), deep and ready (whole
@@ -1886,17 +1887,6 @@ Options:
                Use this Perl facts file for replay.
   --suppression-policy PATH
                Apply the explicit suppression policy for replay.
-  --json       Accepted; output is always JSON.
-  --quiet      Suppress analysis progress and heartbeats on stderr, like
-               `ripr check --quiet`. Does not change stdout, exit codes, or
-               error reporting.
-
-Exit status:
-  0  the JSON packet was printed
-  2  usage error (no selector, conflicting flags), a selector that matches
-     no finding or several, or a failed analysis. Once the arguments are
-     accepted, a failure also prints a JSON refusal document on stdout;
-     usage errors and selector misses keep stdout empty.
 
 Filesystem effects:
   Fresh analysis may create or refresh disposable cache files under
@@ -1915,61 +1905,48 @@ Examples:
 `ripr help continue`
 
 ```text
-After the test edit, check whether it closed the gap.
-
-Run this after `ripr repair` has named a gap (changed behavior no current test
-appears to check) and you have edited the focused test it pointed at. ripr
-re-reads your tests, compares the evidence with what it recorded when the
-repair started, and writes a receipt: a JSON record of the before and after
-result. ripr does not run your tests and never edits your source or test files.
+Continue the current repair attempt through its after phase.
 
 Usage: ripr continue [--attempt ID] [--root PATH] [--json] [--quiet]
 
 Options:
-  --attempt ID     Continue this repair attempt. Without it, continue runs
-                   only when exactly one current attempt exists under the
-                   root; with several it lists them with a retry command
-                   and picks none.
+  --attempt ID     Select one repair attempt by ID.
   --root PATH      Workspace root. Defaults to the current directory, then
                    walks up to the enclosing workspace or package, or the git
                    top level; `--root .` pins this directory.
-  --json           Print the result as JSON, or the attempt's status JSON
-                   when it is already complete. A refusal or failure inside
-                   the check also prints its JSON document on stdout
+  --json           Print the after-phase JSON document, or the attempt's
+                   status JSON when it is already complete. A typed after-phase
+                   refusal or failure prints its JSON document on stdout
                    (`repair_after_refusal`, `repair_after_failure`, or the
-                   verify document) beside the stderr prose. Refusals that
-                   stop before the check (no current attempt, several
-                   attempts, an ended attempt, a blocked baseline, an
-                   unanchored root) and operational errors before the
-                   verify step keep stdout empty.
-  --quiet          Drop progress lines and `wrote <path>` lines from stderr.
-                   Refusals and the result stay. `RIPR_QUIET` does the same.
+                   verify document) beside the stderr prose and the same
+                   exit code. Selection refusals (no current attempt,
+                   several attempts, an ended attempt, a blocked baseline,
+                   an unanchored root) and operational errors before
+                   the verify step keep stdout empty. An unknown flag or
+                   stray argument prints the `cli_refusal` JSON document
+                   on stdout beside its exit 2 stderr prose.
+  --quiet          Drop the after phase's progress narration and `wrote
+                   <path>` lines from stderr. Refusal prose and the result
+                   stay. `RIPR_QUIET` does the same.
 
-What it checks, in order:
-  1. Nothing moved underneath: HEAD and the analysis inputs still match the
-     start of the attempt.
-  2. Only the test file (or inline test module) the repair allowed changed.
-  3. Whether the static evidence now shows a test that would notice the
-     changed behavior being wrong. The receipt records the answer.
-A moved HEAD, changed analysis input, or refused verification stops with a
-named refusal and the command to restart or recover.
+Without an ID, continue runs only when exactly one current attempt is
+eligible under the selected root. Several current attempts print a bounded
+selection list with a retry command instead of selecting one implicitly;
+no current attempt reports that honestly. An explicitly selected attempt
+whose status confirms a compliant receipt reports its already-complete
+status instead of running again; one that ended without a receipt (stale,
+failed, or incomparable), and one whose finished state no compliant
+receipt confirms (unissued, unavailable, or compatibility-only), reports
+its state and refuses with exit 3 instead of claiming completion.
 
-An attempt that is already confirmed complete prints its status and exits 0
-without running again. One that ended without a receipt (stale, failed, or
-incomparable), or finished without a receipt that confirms it (unissued,
-unavailable, or compatibility-only), prints its state and exits 3; no
-completion is claimed.
+Continue runs the accepted after path: currentness admission, the edit
+cage, verification composition, and the receipt. A stale head, drifted
+analysis input, or refused verification ends in the canonical typed
+refusal with its restart or recovery route.
 
-Exit status:
-  0  the check ran and wrote its result, or the attempt was already complete
-  2  usage or operational error, or the edit check rejected the attempt:
-     files outside the allowed test changed, HEAD moved, or the files could
-     not be compared (that attempt is over; start again with `ripr repair`)
-  3  a named refusal, such as no edit yet (make it and rerun); for a coded
-     refusal, stderr ends with `ripr: refusal code=<code> disposition=<disposition>`
-
-The advanced spelling `ripr agent repair --attempt ID --phase after` runs the
-same step.
+This is the ordinary route through the repair transaction. The advanced
+spelling `ripr agent repair --attempt ID --phase after` runs the same
+after phase with explicit phase vocabulary.
 
 Examples:
   ripr continue [--attempt ID] --root .
@@ -2428,14 +2405,9 @@ Examples:
 Shared help for `ripr first-pr`, `ripr start-here`.
 
 ```text
-Summarize what to fix in one PR from existing ripr reports.
-
-Answers "what should I do first on this PR?" first-pr reads reports that
-earlier ripr commands wrote (check output, the gap list, review comments,
-receipts) and writes one start-here page (the start-here packet:
-start-here.md and start-here.json), naming a single next step. A gap is
-changed behavior that no current test appears to check. By default first-pr runs no analysis: for a missing report
-it prints the command that creates it. Pass --run-chain to run those commands.
+Create the start-here packet for one PR from existing RIPR artifacts.
+By default first-pr runs no analysis: it prints the next command for a missing
+artifact. Pass --run-chain to have it run the missing-artifact chain itself.
 
 Usage: ripr first-pr|start-here [--root <path>] [--base <rev>] [--head <rev>] [--check-output <path>] [--gap-ledger <path>] [--first-action <path>] [--review-comments <path>] [--agent-packet <path>] [--gate-decision <path>] [--receipts-dir <path>] [--out-dir <path>] [--check] [--run-chain]
 
@@ -2445,44 +2417,42 @@ Options:
                              `ripr check`: origin/HEAD, then origin/main,
                              origin/master, main, and master.
   --head <rev>               PR head revision. Defaults to HEAD.
-  --check-output <path>      Existing `ripr check --json` output to build the gap list from.
+  --check-output <path>      Existing `ripr check --json` output to derive the gap ledger from.
                              Without --run-chain, first-pr never runs analysis itself.
-  --gap-ledger <path>        Gap list (gap-decision ledger) JSON. Defaults to target/ripr/reports/gap-decision-ledger.json.
+  --gap-ledger <path>        Gap-decision ledger JSON. Defaults to target/ripr/reports/gap-decision-ledger.json.
   --first-action <path>      First-useful-action JSON. Defaults to target/ripr/reports/first-useful-action.json.
   --review-comments <path>   Review-comments JSON. Defaults to target/ripr/review/comments.json.
-  --agent-packet <path>      Agent handoff JSON. Defaults to target/ripr/workflow/agent-packet.json.
+  --agent-packet <path>      Agent packet JSON. Defaults to target/ripr/workflow/agent-packet.json.
   --gate-decision <path>     Gate-decision JSON. Defaults to target/ripr/reports/gate-decision.json.
-  --receipts-dir <path>      Directory of repair receipts (before/after records). Defaults to target/ripr/receipts.
+  --receipts-dir <path>      Receipt directory. Defaults to target/ripr/receipts.
   --out-dir <path>           Output directory. Defaults to target/ripr/reports.
-  --check                    Verify the existing start-here page is up to date; write nothing.
-  --run-chain                Run the commands for missing reports first, each only when its
-                             report is missing and each exactly the command first-pr prints,
-                             with the resolved --base and --head: the repo-exposure report (a
-                             `ripr check` run on a Python or TypeScript root without a Cargo
-                             manifest), the gap list, then the review cards. This runs analysis
-                             (cost scales with the repository), writes the missing reports (by
-                             default under target/ripr/) and uses no network. The first failing
-                             step stops with exit 2 and no start-here page is written from
-                             partial reports. Cannot be combined with --check or --check-output.
+  --check                    Verify the existing start-here packet is up to date.
+  --run-chain                Opt in to running the missing-artifact chain first: the repo-exposure
+                             report (a `ripr check` run on a Python or TypeScript root without a
+                             Cargo manifest), the gap ledger, then the review cards, each only when missing
+                             and each exactly the command first-pr prints, with the resolved
+                             --base and --head. This runs analysis (cost scales with the repository),
+                             writes the missing artifacts (by default under target/ripr/) and
+                             uses no network. The first failing step stops the chain with exit 2 and
+                             no start-here packet is written from partial artifacts. Cannot be
+                             combined with --check or --check-output.
 
 Exit status:
-  0  the start-here page was written, or --check found a current, unblocked page
-  2  usage error, unresolvable input, or --check found a missing, stale or malformed page,
-     or a current page that records a blocked state (wrong root, missing or malformed reports)
-  Write mode exits 0 after composing a page, including a recovery page; read its
+  0  the start-here packet was written, or --check found a current, unblocked packet
+  2  usage error, unresolvable input, or --check found a missing, stale or malformed packet,
+     or a current packet that records a blocked state (wrong root, missing or malformed artifacts)
+  Write mode exits 0 after composing a packet, including a recovery packet; read its
   State line (or the JSON `selected.output_state`), or run --check, to gate on
-  the page state.
+  the packet state.
 
 Start-here language:
   - start here: open target/ripr/reports/start-here.md first when it exists
-  - safe next action: fix one named gap, regenerate a missing report, or stop because nothing needs doing
-  - missing artifact / stale evidence / wrong root / malformed artifact: a report is absent, out of date,
-    from another directory or unreadable; first-pr stops before suggesting any fix
-  - no actionable gap: nothing to fix was found; advisory, not a promise that the tests catch every bug
-  - preview-limited evidence: from a syntax-only preview analysis; advisory, with its limits stated before any fix
+  - safe next action: repair one named gap, regenerate missing evidence, or stop on no-action
+  - missing artifact / stale evidence / wrong root / malformed artifact: fail closed before repair work
+  - no actionable gap: advisory no-action, not runtime adequacy or mutation proof
+  - preview-limited evidence: syntax-first and advisory, with static limits before repair language
   - receipt lifecycle: receipt_missing, receipt_found, receipt_stale, receipt_gap_mismatch, receipt_movement_improved, receipt_movement_unchanged, receipt_not_applicable
-  - verify command / receipt command / receipt path: the commands that recheck a fix and record its
-    before/after result, and where that record is written
+  - verify command / receipt command / receipt path: static movement proof rail
 
 Examples:
   ripr first-pr --root . --base BASE --head HEAD
@@ -4556,7 +4526,9 @@ Options:
                    `repair_attempt.attempt_id`, instead of the summary and
                    card. A repeated start prints the existing attempt's
                    status JSON. Refusals keep stderr prose, empty stdout
-                   and their exit codes.
+                   and their exit codes. An unknown flag prints the
+                   `cli_refusal` JSON document on stdout beside its exit 2
+                   stderr prose.
   --quiet          Drop the start's progress narration and `wrote <path>`
                    lines from stderr. Refusal prose, the attempt id and the
                    next command stay. `RIPR_QUIET` (any value except empty,
@@ -5837,7 +5809,7 @@ Examples:
 `ripr help status`
 
 ```text
-Show where the current repair stands and what to run next.
+Report the current repair state and the one next action.
 
 Usage: ripr status [--attempt ID] [--root PATH] [--json] [--quiet]
 
