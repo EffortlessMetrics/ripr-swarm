@@ -1138,15 +1138,39 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
             )],
         )
     } else if !has_oracle_eligible_relation {
+        // Every related test provably never runs (an unconditional skip, an
+        // empty parametrize table, `__test__ = False`, a later binding): the
+        // repair is an active test, not a stronger assertion in a dead one.
+        let never_run: Vec<(&str, &str)> = related_candidates
+            .iter()
+            .map_while(|candidate| {
+                super::test_activation::never_runs(candidate.test)
+                    .map(|control| (candidate.test.name.as_str(), control))
+            })
+            .collect();
+        let missing = match never_run.as_slice() {
+            [(test, control), rest @ ..] if rest.len() + 1 == related_candidates.len() => {
+                format!(
+                    "Related test `{test}`{} never runs (`{control}`), so no test can notice this change to `{}`; remove the control or add an active pytest or unittest test with an exact-value assertion.",
+                    if rest.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" and {} other related test(s)", rest.len())
+                    },
+                    owner.name
+                )
+            }
+            _ => format!(
+                "Only heuristic Python test links were found for `{}`; verify the suggested test location or add a direct pytest or unittest call with an exact-value assertion.",
+                owner.name
+            ),
+        };
         (
             ExposureClass::WeaklyExposed,
             StageState::Weak,
             StageState::Weak,
             StageState::Weak,
-            vec![format!(
-                "Only heuristic Python test links were found for `{}`; verify the suggested test location or add a direct pytest or unittest call with an exact-value assertion.",
-                owner.name
-            )],
+            vec![missing],
         )
     } else if let Some(credit) = log_evidence
         .as_ref()
@@ -1876,6 +1900,12 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
             evidence.push(format!(
                 "related_test_uncertain: {} ({})",
                 candidate.relation.as_str(),
+                test.name
+            ));
+        }
+        if let Some(control) = super::test_activation::never_runs(test) {
+            evidence.push(format!(
+                "related_test_never_runs: `{control}` ({})",
                 test.name
             ));
         }

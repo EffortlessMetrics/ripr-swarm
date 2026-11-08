@@ -1744,8 +1744,9 @@ impl<'a> LocalTestClasses<'a> {
                         super::test_activation::DeclarationSite::Class,
                     )
                 }))
-                .chain(class_switched_off(&scope, name).then(|| {
+                .chain(class_switched_off(&scope, name).and_then(|switch| {
                     super::test_activation::test_switch_control(
+                        switch,
                         super::test_activation::DeclarationSite::Class,
                     )
                 }))
@@ -1925,13 +1926,17 @@ impl<'a> ScopeClasses<'a> {
     }
 }
 
-/// Whether `__test__ = False` (or an unevaluable binding) reaches `name`:
-/// pytest reads the attribute through the class hierarchy, so the first class
-/// along the MRO that binds it decides, and an intermediate literal `True`
-/// re-enables collection for its subclasses. When the MRO is unavailable or an
-/// external base precedes any binding, any ancestor that is not provably
-/// `True` counts (fail-closed).
-fn class_switched_off<'a>(scope: &ScopeClasses<'a>, name: &'a str) -> bool {
+/// The `__test__` binding that decides whether pytest collects `name`, when
+/// it may not: pytest reads the attribute through the class hierarchy, so the
+/// first class along the MRO that binds it decides, and an intermediate
+/// literal `True` re-enables collection for its subclasses. When the MRO is
+/// unavailable or an external base precedes any binding, any ancestor that is
+/// not provably `True` counts, as an unresolved binding (fail-closed): only a
+/// fully local MRO whose deciding binding is a literal `False` is `Off`.
+fn class_switched_off<'a>(
+    scope: &ScopeClasses<'a>,
+    name: &'a str,
+) -> Option<super::test_activation::TestSwitch> {
     use super::test_activation::{TestSwitch, test_switch};
     let switch_of = |key: &str| {
         scope
@@ -1945,8 +1950,8 @@ fn class_switched_off<'a>(scope: &ScopeClasses<'a>, name: &'a str) -> bool {
                 break;
             };
             match switch_of(key) {
-                Some(TestSwitch::Enabled) => return false,
-                Some(TestSwitch::Disabled) => return true,
+                Some(TestSwitch::Enabled) => return None,
+                Some(switch @ (TestSwitch::Off | TestSwitch::Disabled)) => return Some(switch),
                 _ => {}
             }
         }
@@ -1957,8 +1962,11 @@ fn class_switched_off<'a>(scope: &ScopeClasses<'a>, name: &'a str) -> bool {
         .filter_map(|ancestor| switch_of(ancestor))
         .collect();
     match switches.first() {
-        Some(TestSwitch::Enabled) => false,
-        _ => switches.contains(&TestSwitch::Disabled),
+        Some(TestSwitch::Enabled) => None,
+        _ => switches
+            .iter()
+            .any(|switch| matches!(switch, TestSwitch::Off | TestSwitch::Disabled))
+            .then_some(TestSwitch::Disabled),
     }
 }
 

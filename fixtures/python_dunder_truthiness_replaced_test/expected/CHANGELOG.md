@@ -105,3 +105,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — python_dunder_truthiness_replaced_test (9)
+
+Reason:
+RIPR-SPEC-0238: a Python test that provably never runs is no evidence, so the finding is a gap, not an unestablished-activation abstention
+
+Command:
+`cargo xtask goldens bless python_dunder_truthiness_replaced_test --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

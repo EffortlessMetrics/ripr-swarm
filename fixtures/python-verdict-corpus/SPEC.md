@@ -124,7 +124,10 @@ this repository's license, one per test library or library feature:
 - `authored-py-pytest-unrunnable`: RIPR-SPEC-0238 rules 23 and 24. Assertions
   under a literal-false `if`/`while` or swallowed by an `AssertionError`
   handler cannot notice an edit, and tests the collector skips never run, so
-  those are gaps (the skipped forms abstain with `static_unknown`). The live
+  those are gaps (the conditional, `xfail` and missing-`importorskip` forms
+  abstain with `static_unknown`; an unconditional skip, a module skip or
+  `pytestmark` skip, an empty table and a replaced definition provably never
+  run and read as gaps). The live
   `else` arm, an `else` or `finally` block beside a swallowing `try`, a handler
   that calls `pytest.fail`, `xfail(False, reason=...)` and
   `unittest.skipUnless(True, ...)` keep the test active and are credited.
@@ -138,11 +141,12 @@ this repository's license, one per test library or library feature:
   Python 3.13.18 and pytest 9.2.0.
 - `authored-py-pytest-uncollected` and `authored-py-pytest-uncollected-config`:
   RIPR-SPEC-0238 rule 24's collection exclusions (#11527). A test pytest never
-  collects cannot notice an edit, so it is a gap that abstains with
-  `static_unknown`: a class with `__test__ = False`, one that inherits it, a
-  module with `__test__ = False`, a file named by a conftest `collect_ignore`,
-  a file name that `python_files` leaves out, and a directory that `addopts`
-  `--ignore` skips. `__test__ = True` and a file that matches `python_files`
+  collects cannot notice an edit, so it is a gap. A class with
+  `__test__ = False`, one that inherits it from a local base and a module with
+  `__test__ = False` provably never run and read as gaps; a file named by a
+  conftest `collect_ignore`, a file name that `python_files` leaves out, and a
+  directory that `addopts` `--ignore` skips abstain with `static_unknown`,
+  because a command line naming the file can bypass project collection rules. `__test__ = True` and a file that matches `python_files`
   stay collected and are credited. The first subject keeps a benign
   `testpaths = ["tests"]` in `pyproject.toml`, which must not move a verdict.
 - `authored-py-pytest-bands`: RIPR-SPEC-0238 rule 21's `approx` band

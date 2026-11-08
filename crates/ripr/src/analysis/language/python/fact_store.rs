@@ -57,7 +57,10 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 /// `19`: entries are framed as a digest header over the stored body bytes
 /// and verified over those bytes on read; `18` entries embed the digest in
 /// the body and need a re-serialization to verify, so they are not read.
-pub(crate) const PYTHON_FILE_FACT_SCHEMA_VERSION: &str = "19";
+/// `20`: a class or module `__test__` binding records whether it is the
+/// literal `False` (a test that never runs) or an unresolved binding; `19`
+/// entries name both the same way.
+pub(crate) const PYTHON_FILE_FACT_SCHEMA_VERSION: &str = "20";
 
 /// Approximate per-run ceiling on newly persisted fact bytes. The parse
 /// already happened by store time, so exhausting the budget only skips the

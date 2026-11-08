@@ -3,7 +3,7 @@ mode: fast
 root: fixtures/python_dunder_truthiness_replaced_test/input
 config: <cwd>/fixtures/python_dunder_truthiness_replaced_test/input/ripr.toml
 
-Summary: 1 changed behavior checked: 0 appear noticed by tests, 0 partly noticed, 0 reached but not noticed, 0 no test path, 1 unclear. 1 found, 0 suppressed by your settings
+Summary: 1 changed behavior checked: 0 appear noticed by tests, 1 partly noticed, 0 reached but not noticed, 0 no test path. 1 found, 0 suppressed by your settings
 
 Changed file(s) by language: python = 1
 
@@ -12,20 +12,20 @@ Analysis outcome: findings below (analysis complete)
 
 Start here:
   State: preview language, advisory only
-  Safe next action: static limitation `decorator_indirection` keeps this Python preview finding from a repair card, so `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; check by hand whether a test observes this change, then rerun `ripr check`
+  Safe next action: this Python preview finding has no repair card (static evidence names no concrete missing check), so `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; add or strengthen a test by hand, then rerun `ripr check`
   File: src/shapes/money.py:6
   Language: python
   Language status: preview
-  Static exposure: unknown (severity: note, confidence 0.20)
-  Why capped: preview adapter: infection/propagation not modeled (Python); syntax-first, no type or import resolution; whether a test checks this behavior is not established. Preview score, not on the same scale as Rust confidence.
-  Why unknown: the analysis could not determine a static exposure state
+  Static exposure: weak (severity: warning, confidence 0.40)
+  Why capped: preview adapter: infection/propagation not modeled (Python); syntax-first, no type or import resolution; no related test reaches the changed owner. Preview score, not on the same scale as Rust confidence.
+  Why weak: a related test reaches this change but does not observe the exact changed value
+  Gap ID (for scripts): gap:python:src/shapes/money.py:Money.__bool__:predicate_boundary:predicate:self.cents>0
   Changed behavior: return self.cents > 0
-  Analyzer limit: Static limit `decorator_indirection`: related test `test_truthiness` uses `later
-    binding of the test name`; static evidence does not establish that its body runs and an
-    assertion failure fails verification. Add an independent active test or inspect the activation
-    condition
+  Missing check: Related test `test_truthiness` never runs (`later binding of the test name`), so no
+    test can notice this change to `__bool__`; remove the control or add an active pytest or
+    unittest test with an exact-value assertion
   Related test: tests/test_money.py:4 test_truthiness
-  Evidence: reach weak · infection unknown · propagation unknown · observation weak · assertion unknown
+  Evidence: reach weak · infection yes · propagation weak · observation weak · assertion weak
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;
       assertion = a test assertion tells intended from wrong behavior
@@ -37,24 +37,18 @@ Start here:
       found = listed for review; suppressed by your settings = hidden by your suppression policy;
       base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
     - reach weak: 1 heuristic Python test link(s) found for owner `__bool__`; relation is uncertain
-    - infection unknown: Static limit `decorator_indirection` prevents a safe Python infection claim
-    - 4 more detail line(s) in --format human-full
+    - infection yes: Changed Python expression can alter preview-classified predicate behavior: `return self.cents > 0`
+    - 5 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
   (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/python_dunder_truthiness_replaced_test/input --diff <cwd>/fixtures/python_dunder_truthiness_replaced_test/diff.patch --mode fast probe:src_shapes_money.py:python_preview:aacb327b
   ripr context --root <cwd>/fixtures/python_dunder_truthiness_replaced_test/input --diff <cwd>/fixtures/python_dunder_truthiness_replaced_test/diff.patch --mode fast --at probe:src_shapes_money.py:python_preview:aacb327b
-  no repair start offered: this finding has no gap ID, so there is no gap to start a repair from; follow the Next step above
+  no repair start offered: the spot list behind `ripr repair` and `ripr agent repair --phase before` covers Rust files only, so this Python finding in `src/shapes/money.py` has no spot to start a repair from; this is a terminal state of the delegated loop, not a stale id. The gap, test node and verify command that `ripr check` prints are the manual route: add the missing check to that test by hand and run the printed verify command
 
 More:
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
 
-
-Note: ripr could not classify any of the 1 changed expression(s) in this diff well enough to
-  establish a static test path. Scope analyzed: 1 changed expression(s) and 1 statically linked
-  related test(s). This is not a coverage assessment. A test may already exercise these changes
-  through macros, helper-call chains, or integration tests that ripr's static model does not yet
-  trace; if none does, add co-located tests that observe the changed behavior.
 
 Note: 1 Python file analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.

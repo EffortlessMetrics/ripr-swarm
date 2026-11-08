@@ -1,0 +1,2 @@
+<!-- section: Changed -->
+- Python: a test that provably never runs (an unconditional `@pytest.mark.skip` or `@unittest.skip`, a module `pytestmark` skip or `pytest.skip(..., allow_module_level=True)`, an empty parametrize table, a parametrize mark pytest refuses, a replaced definition, or `__test__ = False`) is now reported as a gap that names the dead test, instead of an "activation unestablished" abstention. Conditional skips, `xfail`, `importorskip` and project collection rules still abstain (#13723).
