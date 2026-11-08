@@ -35,10 +35,16 @@ use crate::normalize_path;
 const ROOTS: [&str; 2] = ["crates", "xtask"];
 const SKIP_DIRS: [&str; 4] = ["target", "fixtures", "testdata", "test_data"];
 const REPORT_PATH: &str = "target/ripr/reports/fv-scoreboard.md";
-const SUITES: [&str; 3] = [
-    "crates/ripr/tests/stage_metamorphic.rs",
-    "xtask/src/output_properties.rs",
-    "crates/ripr/src/analysis/diff/differential_tests.rs",
+/// (path, pending note). A pending suite is expected to be absent until the
+/// named change lands; every other suite must exist (see the suites test).
+const SUITES: [(&str, Option<&str>); 4] = [
+    ("crates/ripr/tests/stage_metamorphic.rs", None),
+    ("xtask/src/output_properties.rs", None),
+    ("crates/ripr/src/analysis/diff/parse.rs", None),
+    (
+        "crates/ripr/src/analysis/diff/differential_tests.rs",
+        Some("pending #13129"),
+    ),
 ];
 
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -237,9 +243,13 @@ fn measure_kani(root: &Path) -> Result<KaniCounts, String> {
     let mut files = Vec::new();
     for sub in ROOTS {
         let dir = root.join(sub);
-        if dir.is_dir() {
-            rust_files(&dir, &mut files)?;
+        if !dir.is_dir() {
+            return Err(format!(
+                "scan root {} is missing; refusing to report zero Kani counts as measured",
+                dir.display()
+            ));
         }
+        rust_files(&dir, &mut files)?;
     }
     files.sort();
     let mut total = KaniCounts::default();
@@ -285,15 +295,20 @@ fn render(root: &Path) -> Result<String, String> {
     md.push_str(
         "\n## Property suites\n\n| Suite | Present | `proptest!` blocks | Status |\n|---|---|---|---|\n",
     );
-    for suite in SUITES {
+    for (suite, pending) in SUITES {
         match fs::read_to_string(root.join(suite)) {
             Ok(source) => {
                 let blocks = mask_non_code(&source).matches("proptest!").count();
                 md.push_str(&format!(
-                    "| `{suite}` | yes | {blocks} | measured (by reading) |\n"
+                    "| `{suite}` | present | {blocks} | measured (by reading) |\n"
                 ));
             }
-            Err(_) => md.push_str(&format!("| `{suite}` | no | 0 | not_measured |\n")),
+            Err(_) => {
+                let note = pending.map_or(String::new(), |p| format!(" ({p})"));
+                md.push_str(&format!(
+                    "| `{suite}`{note} | file absent | n/a | not_measured |\n"
+                ));
+            }
         }
     }
     md.push_str("\n## Fuzz lane\n\n| Metric | Value | Status |\n|---|---|---|\n");
@@ -308,15 +323,23 @@ fn render(root: &Path) -> Result<String, String> {
 }
 
 pub(crate) fn fv_scoreboard() -> Result<(), String> {
-    let md = render(Path::new("."))?;
+    let root = crate::repo_root()?;
+    let md = render(&root)?;
     print!("{md}");
-    let path = Path::new(REPORT_PATH);
+    let path = write_report(&root, &md)?;
+    println!("wrote {}", normalize_path(&path));
+    Ok(())
+}
+
+fn write_report(root: &Path, md: &str) -> Result<PathBuf, String> {
+    let path = root.join(REPORT_PATH);
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)
             .map_err(|err| format!("failed to create {}: {err}", normalize_path(parent)))?;
     }
-    fs::write(path, &md).map_err(|err| format!("failed to write {REPORT_PATH}: {err}"))?;
-    Ok(())
+    fs::write(&path, md)
+        .map_err(|err| format!("failed to write {}: {err}", normalize_path(&path)))?;
+    Ok(path)
 }
 
 #[cfg(test)]
@@ -378,6 +401,70 @@ mod tests {
         let lane = crate::kani_lane::discover_harnesses(&[("f.rs".to_string(), text.to_string())]);
         assert_eq!(lane.len(), 2);
         assert_eq!(count_file(text).harnesses, lane.len());
+    }
+
+    fn temp_tree(name: &str) -> Result<PathBuf, String> {
+        let root =
+            std::env::temp_dir().join(format!("fv-scoreboard-{name}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).map_err(|err| err.to_string())?;
+        Ok(root)
+    }
+
+    #[test]
+    fn missing_scan_root_is_an_error_not_zero_measured() -> Result<(), String> {
+        let root = temp_tree("missing")?;
+        fs::create_dir_all(root.join("crates")).map_err(|err| err.to_string())?;
+        let result = render(&root);
+        let _ = fs::remove_dir_all(&root);
+        match result {
+            Err(err) => {
+                assert!(err.contains("missing"), "{err}");
+                Ok(())
+            }
+            Ok(md) => Err(format!("expected an error, rendered: {md}")),
+        }
+    }
+
+    #[test]
+    fn render_and_report_path_are_relative_to_the_given_root_not_cwd() -> Result<(), String> {
+        let root = temp_tree("rooted")?;
+        fs::create_dir_all(root.join("crates/c")).map_err(|err| err.to_string())?;
+        fs::create_dir_all(root.join("xtask")).map_err(|err| err.to_string())?;
+        fs::write(
+            root.join("crates/c/h.rs"),
+            "#[kani::proof]\nfn a() {}\n#[kani::proof]\nfn b() {}\n",
+        )
+        .map_err(|err| err.to_string())?;
+        let md = render(&root)?;
+        assert!(
+            md.contains("| Real `#[kani::proof]` harnesses | 2 |"),
+            "{md}"
+        );
+        assert!(
+            md.contains("| Modules (files) containing harnesses | 1 |"),
+            "{md}"
+        );
+        let path = write_report(&root, &md)?;
+        assert_eq!(path, root.join(REPORT_PATH));
+        assert!(path.is_file());
+        let _ = fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn every_configured_suite_exists_or_is_marked_pending() -> Result<(), String> {
+        let root = crate::repo_root()?;
+        for (suite, pending) in SUITES {
+            assert!(
+                root.join(suite).is_file() || pending.is_some(),
+                "suite {suite} is absent and not marked pending"
+            );
+        }
+        let md = render(&root)?;
+        let any_absent = SUITES.iter().any(|(s, _)| !root.join(s).is_file());
+        assert_eq!(md.contains("file absent"), any_absent);
+        Ok(())
     }
 
     #[test]
