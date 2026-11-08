@@ -3,7 +3,7 @@ mode: fast
 root: fixtures/typescript_adversarial_render_unobserved_sink/input
 config: <cwd>/fixtures/typescript_adversarial_render_unobserved_sink/input/ripr.toml
 
-Summary: 1 changed behavior checked: 0 appear noticed by tests, 0 partly noticed, 0 reached but not noticed, 1 no test path. 1 found, 0 suppressed by your settings
+Summary: 1 changed behavior checked: 0 appear noticed by tests, 0 partly noticed, 0 reached but not noticed, 0 no test path, 1 unclear. 1 found, 0 suppressed by your settings
 
 Changed file(s) by language: typescript = 1
 
@@ -12,20 +12,21 @@ Analysis outcome: findings below (analysis complete)
 
 Start here:
   State: preview language, advisory only
-  Safe next action: this TypeScript preview finding's repair packet is not ready (no trusted related Jest/Vitest test or observer is available for a bounded TypeScript repair route); `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; check by hand whether a test observes this change, then rerun `ripr check`
+  Safe next action: this TypeScript preview finding's repair packet is not ready (TypeScript preview found related test evidence but cannot name a safe target check or observer shape); `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; check by hand whether a test observes this change, then rerun `ripr check`
   File: src/badge.tsx:2
   Language: typescript
   Language status: preview
-  Static exposure: no path (severity: warning, confidence 0.40)
-  Why capped: preview adapter: infection/propagation not modeled (TypeScript); syntax-first, no type or import resolution; no related test reaches the changed owner. Preview score, not on the same scale as Rust confidence.
-  Why no path: no related test was found that reaches this change
+  Static exposure: unknown (severity: note, confidence 0.40)
+  Why capped: preview adapter: infection/propagation not modeled (TypeScript); syntax-first, no type or import resolution; whether a test checks this behavior is not established. Preview score, not on the same scale as Rust confidence.
+  Why unknown: the analysis could not determine a static exposure state
   Changed behavior: return count > 99 ? "99+" : String(count);
-  Missing check: No statically linked test call to `formatBadge(` was established; inspect existing test calls and their import/export paths
-  Next step — TypeScript preview advisory: no statically linked test calls `formatBadge(`; inspect
-    existing test calls and their import/export paths; if no suitable test exists, add a test that
-    calls the changed owner and asserts the changed behavior with `toBe` / `toEqual`. Then run the
-    project's native test command and rerun `ripr check` to refresh the finding
-  Evidence: reach no · infection unknown · propagation unknown · observation no · assertion no
+  Analyzer limit: Related tests reach `formatBadge` only through same-module callers (`Badge`);
+    static evidence cannot confirm whether the changed behavior reaches their assertions, so whether
+    a test checks the changed behavior is not established either way
+  Related test: tests/badge.test.tsx:3 renders the cart label
+  Next step — TypeScript preview advisory: the related test reaches the changed owner only through a
+    same-module caller, so no new assertion is needed on that evidence; no repair packet is emitted
+  Evidence: reach yes · infection unknown · propagation unknown · observation unknown · assertion unknown
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;
       assertion = a test assertion tells intended from wrong behavior
@@ -36,9 +37,9 @@ Start here:
       no test path = no test path found; unclear = analysis limited, not a verdict;
       found = listed for review; suppressed by your settings = hidden by your suppression policy;
       base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
-    - reach no: 0 related test(s) found for owner `formatBadge`
+    - reach yes: 1 related test(s) found for owner `formatBadge`
     - infection unknown: TypeScript preview adapter does not yet model infection
-    - 7 more detail line(s) in --format human-full
+    - 4 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
   (finding id, for explain/context)
@@ -50,11 +51,5 @@ More:
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
 
-
-Note: ripr found no static test path for any of the 1 changed expression(s) in this diff. Scope
-  analyzed: 1 changed expression(s) and 0 statically linked related test(s). This is not a coverage
-  assessment. A test may already exercise these changes through macros, helper-call chains, or
-  integration tests that ripr's static model does not yet trace; if none does, add co-located tests
-  that observe the changed behavior.
 
 Note: 1 TypeScript file analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.
