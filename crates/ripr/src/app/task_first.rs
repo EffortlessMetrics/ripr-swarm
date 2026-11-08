@@ -182,6 +182,7 @@ pub(crate) fn decide_repair_start(
         transition_to: offered.map(|_| command_effect_label(CommandRole::RepairStart).to_string()),
         restart_route,
         check_case: None,
+        check_repair_route: None,
         doctor_recovery: None,
         pilot_delegation: None,
         alternatives: Vec::new(),
@@ -2382,6 +2383,18 @@ pub(crate) fn build_output_precondition_refusal(
         crate::edit_cage::BuildOutputPreconditionError::Inspection(detail) => {
             (None, format!("{detail} Nothing was started."))
         }
+    }
+}
+
+/// The plain cause of a build-output precondition failure, without any
+/// not-started claim. A caller that already wrote shared files words its own
+/// consequence around this instead of rewriting the refusal text (#13452).
+pub(crate) fn build_output_precondition_detail(
+    error: crate::edit_cage::BuildOutputPreconditionError,
+) -> String {
+    match error {
+        crate::edit_cage::BuildOutputPreconditionError::NotIgnored(detail)
+        | crate::edit_cage::BuildOutputPreconditionError::Inspection(detail) => detail,
     }
 }
 
@@ -5885,6 +5898,7 @@ pub(crate) mod tests {
             limitations: Vec::new(),
             non_claims: Vec::new(),
             after: None,
+            focused_receipt_evaluation: None,
             last_after_refusal: None,
             after_refusal_count: 0,
             after_refusal_history: Vec::new(),

@@ -151,6 +151,7 @@ mod assertion_form_tests;
 mod asymmetric_matcher_tests;
 #[cfg(test)]
 mod conditional_assertion_tests;
+mod loop_count_credit;
 mod loop_count_guard;
 mod loop_rows;
 mod parse;
@@ -204,6 +205,9 @@ mod suite_factory;
 mod tests_extract;
 #[cfg(test)]
 mod tests_extract_tests;
+mod throw_boundary_guard;
+#[cfg(test)]
+mod throw_boundary_tests;
 pub(crate) mod tsconfig;
 mod typed_loose_equality_guard;
 mod types;
@@ -290,6 +294,7 @@ pub(crate) use table_loop_rows::*;
 pub(crate) use table_rows::*;
 pub(crate) use ternary_arm_guard::*;
 pub(crate) use tests_extract::*;
+pub(crate) use throw_boundary_guard::*;
 #[cfg(test)]
 pub(crate) use tsconfig::load_alias_map;
 pub(crate) use tsconfig::{
@@ -700,6 +705,27 @@ impl TypeScriptAdapter {
                 None => TsAliasMap::workspace_packages_only(&options.root, workspace_packages),
             })
         };
+        // Per-package `paths` configs (#12754): a nested `paths`-declaring
+        // config is resolved for its own importers, so its content joins the
+        // cache digest, and a map must exist even with no root config.
+        let nested_configs = if options.resolve_tsconfig_paths {
+            tsconfig::nested_configs_fingerprint(&options.root, &workspace_files)
+        } else {
+            None
+        };
+        let alias_map = match nested_configs {
+            Some(fingerprint) => Some(
+                alias_map
+                    .unwrap_or_else(|| {
+                        TsAliasMap::workspace_packages_only(
+                            &options.root,
+                            workspace_packages::WorkspacePackages::default(),
+                        )
+                    })
+                    .with_nested_configs(fingerprint),
+            ),
+            None => alias_map,
+        };
         let alias_map_ref: Option<&TsAliasMap> = alias_map.as_ref();
 
         // #10725: persistent per-file fact store. One content-keyed lookup
@@ -1008,6 +1034,15 @@ impl TypeScriptAdapter {
         // it binds (RIPR-SPEC-0095).
         reexport_index.rewrite_namespace_reexport_imports(
             &mut all_tests,
+            alias_map_ref,
+            Some(&options.root),
+        );
+
+        // A named import of a class through a re-export barrel reads as the
+        // direct import of the declaring module (#13592 B3).
+        reexport_index.rewrite_class_barrel_imports(
+            &mut all_tests,
+            &related_tests::ExportedClasses::from_owners(&all_owners),
             alias_map_ref,
             Some(&options.root),
         );
