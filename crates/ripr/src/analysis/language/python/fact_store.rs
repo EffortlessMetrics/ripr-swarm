@@ -60,7 +60,11 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 /// `20`: a class or module `__test__` binding records whether it is the
 /// literal `False` (a test that never runs) or an unresolved binding; `19`
 /// entries name both the same way.
-pub(crate) const PYTHON_FILE_FACT_SCHEMA_VERSION: &str = "20";
+/// `21`: a literal-`False` switch re-enabled elsewhere is unresolved, a loop
+/// or aliased rebinding of a test name and a test class with a base outside
+/// the file are recorded under their own control names; `20` entries lack
+/// them.
+pub(crate) const PYTHON_FILE_FACT_SCHEMA_VERSION: &str = "21";
 
 /// Approximate per-run ceiling on newly persisted fact bytes. The parse
 /// already happened by store time, so exhausting the budget only skips the

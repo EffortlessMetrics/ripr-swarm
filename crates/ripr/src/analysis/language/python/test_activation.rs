@@ -65,16 +65,79 @@ fn effective_controls(test: &PythonTest) -> impl Iterator<Item = &PythonActivati
 /// command ripr prints for it), which ignores pytest marks, parametrize and
 /// `__test__`, so only the runner-neutral controls count for it: `unittest.skip`,
 /// a module-level `pytest.skip` (the import itself fails) and a later binding.
+///
+/// A module-site skip or switch (`pytestmark`, module `__test__ = False`)
+/// applies only to the defining module's collection: a test another module
+/// imports (including one with no tests of its own) is collected there
+/// without it, so module-site controls never count. A module-level
+/// `pytest.skip` does, because importing the module raises.
 pub(super) fn never_runs(test: &PythonTest) -> Option<&str> {
+    if test
+        .activation_controls
+        .iter()
+        .any(|control| control.name == UNRESOLVED_CLASS_BASE)
+    {
+        return None;
+    }
     effective_controls(test)
-        .find(|control| match control.name.as_str() {
-            "unittest.skip" | "pytest.skip" | LATER_BINDING => true,
-            "pytest.mark.skip" | EMPTY_TABLE | COLLECTION_ERROR | TEST_SWITCH_OFF => {
+        .find(|control| match (control.name.as_str(), control.site) {
+            ("pytest.skip", _) => true,
+            (_, DeclarationSite::Module) => false,
+            ("unittest.skip" | LATER_BINDING, _) => true,
+            ("pytest.mark.skip" | EMPTY_TABLE | COLLECTION_ERROR | TEST_SWITCH_OFF, _) => {
                 test.framework != PythonFramework::Unittest
             }
             _ => false,
         })
         .map(|control| control.name.as_str())
+}
+
+/// A test class with a base this file does not define (other than
+/// `object`) may be a unittest `TestCase` subclass the adapter cannot see
+/// (`IsolatedAsyncioTestCase`, a Django or project base): `python -m
+/// unittest` and pytest's unittest plugin then ignore pytest marks,
+/// parametrize and `__test__`. The marker keeps such a test's pytest-only
+/// controls unestablished; it is added only beside an existing control, so it
+/// never makes an uncontrolled test controlled.
+pub(super) fn mark_unresolved_class_base(test: &mut PythonTest) {
+    if never_runs(test).is_some()
+        && !matches!(
+            never_runs(test),
+            Some("unittest.skip" | "pytest.skip" | LATER_BINDING)
+        )
+    {
+        test.activation_controls.push(PythonActivationControl {
+            name: UNRESOLVED_CLASS_BASE.to_string(),
+            site: DeclarationSite::Class,
+        });
+    }
+}
+
+/// Whether `name` is mentioned in `source` only by the statements of
+/// `statements` that bind it: any other mention (an alias such as
+/// `kept = test_x`, a decorator or call reading it, a string) may keep the
+/// earlier definition alive under another collected name, so a later
+/// rebinding does not prove it never runs.
+pub(super) fn only_bindings_mention(source: &str, statements: &[Stmt], name: &str) -> bool {
+    let is_ident = |c: char| c == '_' || c.is_alphanumeric();
+    let mentions = source
+        .match_indices(name)
+        .filter(|(start, _)| {
+            let before = source[..*start].chars().next_back();
+            let after = source[start + name.len()..].chars().next();
+            !before.is_some_and(is_ident) && !after.is_some_and(is_ident)
+        })
+        .count();
+    let mut names = Vec::new();
+    let bindings = statements
+        .iter()
+        .filter(|stmt| {
+            names.clear();
+            names_rebound_by(stmt, &mut names);
+            names.contains(&name)
+        })
+        .count();
+    mentions == bindings
 }
 
 const EMPTY_TABLE: &str = "pytest.mark.parametrize(empty table)";
@@ -85,79 +148,9 @@ const LATER_BINDING: &str = "later binding of the test name";
 const LATER_LOOP_BINDING: &str = "later loop binding of the test name";
 const TEST_SWITCH_OFF: &str = "pytest.collection(__test__ = False)";
 const TEST_SWITCH_UNRESOLVED: &str = "pytest.collection(__test__ unresolved)";
-/// A module-site skip or `__test__` switch on a test another test module
-/// imports: pytest also collects the imported name there, without the
-/// defining module's `pytestmark` or switch.
-const IMPORTED_ELSEWHERE: &str = "module control on a test another test module imports";
-
-/// Module-site controls apply to the defining module's collection only. A test
-/// function or class another test module imports (by name, by `*`, or through
-/// the module object) is collected there too without them, so they no longer
-/// prove the test never runs; they stay an unestablished control. The match is
-/// by module stem and is deliberately broad (fail-closed).
-pub(super) fn withhold_imported_module_controls(tests: &mut [PythonTest]) {
-    let mut imports_by_file: std::collections::BTreeMap<&std::path::Path, Vec<&PythonImport>> =
-        std::collections::BTreeMap::new();
-    for test in tests.iter() {
-        let entry = imports_by_file.entry(test.file.as_path()).or_default();
-        for import in &test.imports {
-            if !entry.contains(&import) {
-                entry.push(import);
-            }
-        }
-    }
-    let imported_elsewhere = |test: &PythonTest| -> bool {
-        let Some(stem) = test.file.file_stem().and_then(|stem| stem.to_str()) else {
-            return true;
-        };
-        let top = test
-            .qualified_name
-            .split('.')
-            .next()
-            .unwrap_or(test.qualified_name.as_str());
-        let last = |dotted: &str| dotted.rsplit('.').next().unwrap_or(dotted).to_string();
-        imports_by_file
-            .iter()
-            .filter(|(file, _)| **file != test.file.as_path())
-            .flat_map(|(_, imports)| imports.iter())
-            .any(|import| {
-                if import.source_module.is_empty() {
-                    last(&import.imported) == stem
-                } else {
-                    import.imported == stem
-                        || (last(&import.source_module) == stem
-                            && (import.imported == top || import.imported == "*"))
-                }
-            })
-    };
-    let flagged: Vec<bool> = tests
-        .iter()
-        .map(|test| {
-            test.activation_controls.iter().any(|control| {
-                control.site == DeclarationSite::Module
-                    && matches!(
-                        control.name.as_str(),
-                        "pytest.mark.skip" | "unittest.skip" | TEST_SWITCH_OFF
-                    )
-            }) && imported_elsewhere(test)
-        })
-        .collect();
-    for (test, flagged) in tests.iter_mut().zip(flagged) {
-        if !flagged {
-            continue;
-        }
-        for control in &mut test.activation_controls {
-            if control.site == DeclarationSite::Module
-                && matches!(
-                    control.name.as_str(),
-                    "pytest.mark.skip" | "unittest.skip" | TEST_SWITCH_OFF
-                )
-            {
-                control.name = IMPORTED_ELSEWHERE.to_string();
-            }
-        }
-    }
-}
+/// Marks a test whose class may be a hidden unittest `TestCase`; see
+/// [`mark_unresolved_class_base`].
+const UNRESOLVED_CLASS_BASE: &str = "test class with a base outside this file";
 
 pub(super) fn activation_controls(
     decorators: &[Expr],

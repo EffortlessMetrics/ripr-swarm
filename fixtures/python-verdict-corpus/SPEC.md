@@ -125,9 +125,10 @@ this repository's license, one per test library or library feature:
   under a literal-false `if`/`while` or swallowed by an `AssertionError`
   handler cannot notice an edit, and tests the collector skips never run, so
   those are gaps (the conditional, `xfail` and missing-`importorskip` forms
-  abstain with `static_unknown`; an unconditional skip, a module skip or
-  `pytestmark` skip, an empty table and a replaced definition provably never
-  run and read as gaps). The live
+  abstain with `static_unknown`, and so do a module `pytestmark` skip, which
+  does not travel with a test another module imports; an unconditional skip,
+  a module-level `pytest.skip`, an empty table and a replaced definition
+  provably never run and read as gaps). The live
   `else` arm, an `else` or `finally` block beside a swallowing `try`, a handler
   that calls `pytest.fail`, `xfail(False, reason=...)` and
   `unittest.skipUnless(True, ...)` keep the test active and are credited.
@@ -142,8 +143,9 @@ this repository's license, one per test library or library feature:
 - `authored-py-pytest-uncollected` and `authored-py-pytest-uncollected-config`:
   RIPR-SPEC-0238 rule 24's collection exclusions (#11527). A test pytest never
   collects cannot notice an edit, so it is a gap. A class with
-  `__test__ = False`, one that inherits it from a local base and a module with
-  `__test__ = False` provably never run and read as gaps; a file named by a
+  `__test__ = False` and one that inherits it from a local base provably never
+  run and read as gaps; a module with `__test__ = False` (which does not travel
+  with a test another module imports), a file named by a
   conftest `collect_ignore`, a file name that `python_files` leaves out, and a
   directory that `addopts` `--ignore` skips abstain with `static_unknown`,
   because a command line naming the file can bypass project collection rules. `__test__ = True` and a file that matches `python_files`

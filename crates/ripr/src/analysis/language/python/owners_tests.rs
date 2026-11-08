@@ -1259,6 +1259,8 @@ pub(super) fn collect_tests_from_statements(
                                     == qualified_test_name(Some(&nested_class_context), &test.name)
                         }));
                     }
+                    let unresolved_base =
+                        !class_is_unittest && has_unresolved_base(statements, class);
                     for test in &mut out[first_class_test..] {
                         test.activation_controls.extend(
                             local_classes
@@ -1268,6 +1270,9 @@ pub(super) fn collect_tests_from_statements(
                                 .flatten()
                                 .cloned(),
                         );
+                        if unresolved_base {
+                            super::test_activation::mark_unresolved_class_base(test);
+                        }
                         test.direct_parametrized.extend(
                             local_classes
                                 .class_direct_parametrized
@@ -1342,8 +1347,13 @@ pub(super) fn collect_tests_from_statements(
         if let Some(defined) = defined
             && later_bindings.rebound_later(statements, index, defined, source)
         {
-            let in_loop_only =
-                !later_bindings.rebound_later_outside_loops(statements, index, defined, source);
+            // A loop may bind nothing, and any other mention of the name (an
+            // alias taken before the rebinding) may keep the definition
+            // collected under another name: both leave the control
+            // unestablished.
+            let in_loop_only = !later_bindings
+                .rebound_later_outside_loops(statements, index, defined, source)
+                || !super::test_activation::only_bindings_mention(source, statements, defined);
             for test in &mut out[first_pushed..] {
                 test.activation_controls.push(
                     super::test_activation::shadowed_by_later_binding_control(
@@ -1565,6 +1575,35 @@ fn is_parametrized(decorators: &[Expr]) -> bool {
             || decorator.ends_with(".parametrize")
             || decorator.ends_with("mark.parametrize")
     })
+}
+
+/// Whether `class` reaches a base that is neither `object` nor a class
+/// defined earlier in `statements` (followed through those definitions).
+fn has_unresolved_base(statements: &[Stmt], class: &ast::StmtClassDef) -> bool {
+    fn walk(statements: &[Stmt], class: &ast::StmtClassDef, depth: usize) -> bool {
+        if depth > 32 {
+            return true;
+        }
+        class.bases.iter().any(|base| {
+            let Expr::Name(name) = base else {
+                return true;
+            };
+            if name.id.as_str() == "object" {
+                return false;
+            }
+            let local = statements.iter().rev().find_map(|stmt| match stmt {
+                Stmt::ClassDef(def)
+                    if def.name.as_str() == name.id.as_str()
+                        && def.range.start() < class.range.start() =>
+                {
+                    Some(def)
+                }
+                _ => None,
+            });
+            local.is_none_or(|def| walk(statements, def, depth + 1))
+        })
+    }
+    walk(statements, class, 0)
 }
 
 fn is_unittest_class(class: &ast::StmtClassDef) -> bool {
