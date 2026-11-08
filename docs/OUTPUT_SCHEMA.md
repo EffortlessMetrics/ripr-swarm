@@ -1471,8 +1471,11 @@ static-limited finding gets none). A blocked start names `uncommitted_file` or
 `uncommitted_files` and carries no `command`: a seam route names
 `uncommitted_file` for a held inline test target and `uncommitted_files` for the
 uncommitted production files `ripr repair` refuses to start over (#13636), and a
-gap route names `uncommitted_files`. Both routes list every dirty file the start
-refuses, spelled relative to the analyzed root (files outside it as `../...`).
+gap route names `uncommitted_files`. Both routes spell the files relative to the
+analyzed root (files outside it as `../...`). The seam route lists the dirty files
+the start's early preflight refuses; a `ready` seam route can still be refused by
+the start's full check (for example a dirty production file carrying an inline
+test module), which names the files itself.
 When the check did not analyze those files (a committed-only run, or source or
 test changes it left unanalyzed), neither route prints a commit step and the
 route is refused instead. An absent key means no route was offered, not
