@@ -1137,6 +1137,13 @@ verify=complete|outcome=O|findings=N|exposed=N
   line shape (with `missing=-`), the weak test in its `tK` row, `limits=` still
   counts it, and `next=` is the `ripr explain` drill-in. A limit with no such
   row, or any other limit kind, keeps `stop=`.
+- When `stop=` ends a run with no test-side gap, records are printed only for
+  limited findings that carry a concrete next step (a producer-established
+  discriminator on preview-limited evidence that is not also static-limited),
+  capped at five with the rest counted. A static-limited finding would print
+  `missing=-`, which names nothing to fix, so it gets no record and stays
+  counted in `limits=`. `next=` drills into the first printed record, or the
+  first limited finding when none is printed (#13594).
 - Terminal states are one explicit line: `done=` (no weak or unobserved gap is
   left to fix from the test side, or no changed behavior was found in scope),
   `stop=` (every finding is base-side or unresolved, all are suppressed by
