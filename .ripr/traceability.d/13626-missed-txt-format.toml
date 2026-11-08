@@ -1,9 +1,10 @@
-# MissedTxt is a plain-text projection of the same candidate-actionable
+# missed-txt is a plain-text projection of the same candidate-actionable
 # finding selection the github annotations use, not another classifier or
-# schema owner (#13626). Registration records intended coverage; execution
-# evidence belongs to the PR.
-[[extend]]
-id = "RIPR-SPEC-0012"
+# schema owner (#13626).
+[[behavior]]
+id = "RIPR-SPEC-0428"
+name = "Check missed-txt one-line gap list"
+spec = "docs/specs/RIPR-SPEC-0428-check-missed-txt-gap-lines.md"
 tests = [
   "crates/ripr/src/output/missed_txt.rs::tests::lists_sorted_gap_lines_and_omits_exposed",
   "crates/ripr/src/output/missed_txt.rs::tests::ordering_is_independent_of_finding_order",
@@ -23,4 +24,16 @@ tests = [
   "crates/ripr/src/output/missed_txt.rs::tests::severity_off_findings_are_not_listed",
   "crates/ripr/src/output/missed_txt.rs::tests::comment_like_expression_stays_on_a_gap_line",
   "crates/ripr/src/cli/commands/check_argv_refusal_tests.rs::suppression_policy_is_not_refused_on_missed_txt",
+]
+code = [
+  "crates/ripr/src/output/missed_txt.rs",
+  "crates/ripr/src/output/github.rs",
+  "crates/ripr/src/output/format.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0428-check-missed-txt-gap-lines.md",
+  "docs/OUTPUT_SCHEMA.md",
+]
+metrics = [
+  "unit_test_pass_rate",
 ]
