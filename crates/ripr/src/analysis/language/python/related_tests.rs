@@ -728,16 +728,20 @@ fn bare_name_bound_to_other_module(test: &PythonTest, owner: &PythonOwner) -> bo
     {
         return false;
     }
-    let owner_paths = owner_import_modules(owner);
+    let owner_paths = owner_module_paths(&owner.file);
     let may_be_owners_module = |module: &str| {
         owner_paths.iter().any(|path| {
             path == module
                 || path.ends_with(&format!(".{module}"))
                 || module.ends_with(&format!(".{path}"))
-        }) || owner
-            .ambiguous_src_modules
-            .iter()
-            .any(|ambiguous| ambiguous.module == module)
+        }) || owner.ambiguous_src_modules.iter().any(|ambiguous| {
+            // A src-layout short name is also an owner path; a project-relative
+            // name (#13675) is the owner's only for a test under its project.
+            ambiguous.module == module
+                && (owner_paths.contains(&ambiguous.module)
+                    || owner.reexport_modules.contains(&ambiguous.module)
+                    || module_name_identifies_owner_for(owner, module, &test.file))
+        })
     };
     let imports_name_from_rival = test.imports.iter().any(|import| {
         import.imported == owner.name
@@ -1542,7 +1546,7 @@ fn imports_owner_module(import: &PythonImport, owner: &PythonOwner) -> bool {
 fn module_contains_owner(module: &str, owner: &PythonOwner) -> bool {
     !module.is_empty()
         && module != "src"
-        && owner_import_modules(owner).iter().any(|path| {
+        && owner_module_paths(&owner.file).iter().any(|path| {
             path == module
                 || path
                     .strip_prefix(module)
@@ -2149,7 +2153,7 @@ fn submodule_receivers_scan(
         format!("{}.{}", import.source_module, import.imported)
     };
     let prefix = format!("{bound}.");
-    owner_import_modules(owner)
+    owner_import_modules_for(owner, test_file)
         .iter()
         .filter_map(|path| {
             if *path == bound {
@@ -2461,13 +2465,19 @@ pub(super) fn apply_project_module_names<'a>(
     }
 }
 
-/// Every dotted module path under which the owner can be imported: its
+/// Every dotted module path under which `test_file` may import the owner: its
 /// repository-relative paths plus the project-relative names recorded by
-/// [`apply_project_module_names`].
-pub(super) fn owner_import_modules(owner: &PythonOwner) -> Vec<String> {
+/// [`apply_project_module_names`] whose project root holds `test_file`.
+/// Project-relative names are short (`core`, `pkg.main`), so they are only
+/// ever offered with that root check and are never used for suffix or package
+/// prefix matching elsewhere.
+pub(super) fn owner_import_modules_for(owner: &PythonOwner, test_file: &Path) -> Vec<String> {
     let mut paths = owner_module_paths(&owner.file);
     for ambiguous in &owner.ambiguous_src_modules {
-        if !paths.contains(&ambiguous.module) {
+        if !paths.contains(&ambiguous.module)
+            && !owner.reexport_modules.contains(&ambiguous.module)
+            && module_name_identifies_owner_for(owner, &ambiguous.module, test_file)
+        {
             paths.push(ambiguous.module.clone());
         }
     }
@@ -2532,7 +2542,7 @@ pub(super) fn import_source_module_matches_owner(
     if import.source_module.is_empty() {
         return false;
     }
-    let names_owner_module = owner_import_modules(owner).contains(&import.source_module)
+    let names_owner_module = owner_import_modules_for(owner, test_file).contains(&import.source_module)
         // `from humanize import naturaldelta`: the package re-exports the
         // owner under its own name, so the package path identifies it too.
         || (import.imported == owner.name && owner.reexport_modules.contains(&import.source_module));
@@ -2767,7 +2777,7 @@ fn client_app_identity(
                     // package above it may define another `app`.
                     if import_source_module_matches_owner(import, owner, &test.file) {
                         ClientApp::Own
-                    } else if owner_import_modules(owner)
+                    } else if owner_module_paths(&owner.file)
                         .iter()
                         .any(|path| path.starts_with(&format!("{}.", import.source_module)))
                     {
@@ -2785,7 +2795,7 @@ fn client_app_identity(
             None => {
                 let names_owner_module =
                     import_source_module_matches_owner(import, owner, &test.file)
-                        || owner_import_modules(owner)
+                        || owner_module_paths(&owner.file)
                             .iter()
                             .any(|path| path.starts_with(&format!("{}.", import.source_module)));
                 if import.imported == owner_receiver {
