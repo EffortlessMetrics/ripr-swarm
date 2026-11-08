@@ -502,14 +502,43 @@ fn terse_multibyte_legend_round_trips_and_validates_check_schema() -> Result<(),
             .get("suggested_next_action")
             .is_none()
     );
-    // #13673: a dropped activation alias keeps its exact value in activation.
-    for alias in aliases.iter().skip(1).filter_map(Value::as_str) {
-        assert!(terse_value["findings"][0].get(alias).is_none(), "{alias}");
+    // #13673: per finding, terse drops an activation alias exactly when the
+    // full copy is non-empty and equal to activation's; otherwise it is kept
+    // verbatim. Full JSON always carries both arrays (the schema lists them
+    // as optional for terse, so this test holds the full-json guarantee).
+    let full_findings = full["findings"].as_array().ok_or("full findings")?;
+    let terse_findings = terse_value["findings"].as_array().ok_or("terse findings")?;
+    assert_eq!(full_findings.len(), terse_findings.len());
+    for alias in ["observed_values", "missing_discriminators"] {
+        let mut any_dropped = false;
+        for (full_finding, terse_finding) in full_findings.iter().zip(terse_findings) {
+            let value = full_finding
+                .get(alias)
+                .ok_or(format!("full json lacks {alias}"))?;
+            let droppable = value.as_array().is_some_and(|items| !items.is_empty())
+                && full_finding["activation"].get(alias) == Some(value);
+            if droppable {
+                any_dropped = true;
+                assert!(terse_finding.get(alias).is_none(), "{alias} kept");
+                assert_eq!(terse_finding["activation"][alias], *value, "{alias}");
+            } else {
+                assert_eq!(terse_finding.get(alias), Some(value), "{alias} dropped");
+            }
+        }
         assert_eq!(
-            terse_value["findings"][0]["activation"][alias], full["findings"][0][alias],
-            "{alias}"
+            aliases.contains(&Value::from(alias)),
+            any_dropped,
+            "dropped_aliases lists {alias} exactly when a finding dropped it"
         );
     }
+    assert!(
+        full_findings
+            .iter()
+            .any(|finding| finding["observed_values"]
+                .as_array()
+                .is_some_and(|items| !items.is_empty())),
+        "fixture must exercise a non-empty activation alias"
+    );
     assert_eq!(
         terse_value["findings"][0]["recommended_next_step"],
         full["findings"][0]["suggested_next_action"]

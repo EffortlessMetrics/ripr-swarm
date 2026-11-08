@@ -290,12 +290,15 @@ Guarantees and limits, stated precisely:
   the terse document alone. Restore an omitted `suggested_next_action` from
   that finding's `recommended_next_step`, and an omitted `observed_values` or
   `missing_discriminators` from that finding's `activation`. All other fields remain verbatim
-  even when their strings coincide. The schema permits the omission only
-  when both `rendering: "terse"` and the known alias declaration are present;
-  full JSON continues to require both action fields. Full `json` and
-  `json-compact` always emit the finding-level activation arrays; the schema
-  lists them as optional (an additive widening, no version bump) so a terse
-  document that omits them still validates.
+  even when their strings coincide. The schema permits omitting
+  `suggested_next_action` only when both `rendering: "terse"` and the known
+  alias declaration are present; full JSON continues to require it. The
+  finding-level `observed_values` and `missing_discriminators` are listed as
+  optional for every document (an additive widening, so no version bump):
+  full `json` and `json-compact` still always emit both, and the output
+  property tests, not the schema, hold that guarantee. Tying their omission
+  to the alias declaration in the schema needs a narrowing change and a
+  schema version bump, which is deferred.
 - What terse does *not* code: `ripr` stage summaries, related-test oracle
   lines, flow-sink text and repair cards stay inline. Those are the
   remaining cross-finding duplication; coding them is follow-up work if
