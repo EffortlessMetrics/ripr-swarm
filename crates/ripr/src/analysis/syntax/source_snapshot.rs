@@ -164,6 +164,11 @@ impl SourceSnapshot {
         self.parse.as_ref().map(Parse::tree)
     }
 
+    /// The 1-based line of `offset` in this snapshot's source.
+    pub(crate) fn line(&self, offset: ra_ap_syntax::TextSize) -> usize {
+        self.lines.line(offset)
+    }
+
     pub(crate) fn new(source: &str) -> Self {
         Self {
             parse: parse_clean_source_file(source),
