@@ -95,12 +95,12 @@ pub(crate) fn render_terse(rendered: &str) -> Result<String, String> {
         }
         root.insert(LEGEND_KEY.to_string(), Value::Object(legend));
     }
-    let dropped: Vec<Value> = KNOWN_ALIASES
-        .iter()
-        .zip(coder.dropped_aliases)
-        .filter(|(_, dropped)| *dropped)
-        .map(|(alias, _)| Value::String((*alias).to_string()))
-        .collect();
+    let mut dropped = Vec::new();
+    for (alias, was_dropped) in KNOWN_ALIASES.iter().zip(coder.dropped_aliases) {
+        if was_dropped {
+            dropped.push(Value::String((*alias).to_string()));
+        }
+    }
     if !dropped.is_empty() {
         root.insert(DROPPED_ALIASES_KEY.to_string(), Value::Array(dropped));
     }
