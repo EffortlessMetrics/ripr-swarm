@@ -2105,6 +2105,9 @@ pub(crate) fn doctor_tool_check_isolated(tool: &str) -> (DoctorStatus, String) {
 /// cwd nor a script directory reaches `sys.path`; user-site installs
 /// (`pip install --user`) stay visible, as they are for the verify command
 /// (#13617). `-P` is not used because it is rejected before Python 3.11.
+/// `PYTHONPATH` is removed so a checkout listed there cannot supply a
+/// `pytest.py` that doctor would execute; a pytest reachable only through
+/// `PYTHONPATH` is then reported as missing (advisory, exit code unchanged).
 ///
 /// The probe only imports pytest; it never starts pytest itself. Running
 /// `python -m pytest --version` would let pytest search the ancestors of the
@@ -2118,12 +2121,14 @@ const DOCTOR_PYTEST_PROBE_ARGS: [&str; 2] = [
     "import sys, pytest; sys.stdout.write('pytest ' + pytest.__version__)",
 ];
 
-/// The probe command: `python -m pytest` in `dir` with safe-path env.
+/// The probe command: PATH `python` importing pytest in `dir` with safe-path
+/// env and no `PYTHONPATH`.
 fn doctor_pytest_probe_command(dir: &Path) -> std::process::Command {
     let mut command = doctor_tool_command("python");
     command
         .args(DOCTOR_PYTEST_PROBE_ARGS)
         .env("PYTHONSAFEPATH", "1")
+        .env_remove("PYTHONPATH")
         .current_dir(dir);
     command
 }
@@ -2739,6 +2744,12 @@ mod tests {
             command
                 .get_envs()
                 .any(|(k, v)| k == "PYTHONSAFEPATH" && v == Some(OsStr::new("1")))
+        );
+        assert!(
+            command
+                .get_envs()
+                .any(|(k, v)| k == "PYTHONPATH" && v.is_none()),
+            "PYTHONPATH is removed so a checkout on it cannot supply pytest.py"
         );
         assert_eq!(command.get_current_dir(), Some(dir.as_path()));
         assert!(

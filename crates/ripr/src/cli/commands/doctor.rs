@@ -1370,10 +1370,17 @@ where
     }
     let venv = project_venv_python(root).unwrap_or(".venv/bin/python");
     // `venv/bin/python` -> `venv/bin/activate`: name the detected directory.
-    let activate = venv.strip_suffix("python").map_or_else(
+    let activate_rel = venv.strip_suffix("python").map_or_else(
         || ".venv/bin/activate".to_string(),
         |bin| format!("{bin}activate"),
     );
+    // With `--root` elsewhere the hint must still paste from the caller's
+    // directory, so join the root and quote it for the host shell.
+    let activate = if root.as_os_str().is_empty() || root == Path::new(".") {
+        activate_rel
+    } else {
+        crate::agent::loop_commands::shell_arg(&root.join(&activate_rel).to_string_lossy())
+    };
     let note = match project_venv_pytest(root) {
         VenvPytest::Present(_) => format!(
             "pytest is installed in the project virtualenv ({venv}) but `python` on PATH lacks it; activate the venv (source {activate}) before running the printed verify command"
@@ -3852,7 +3859,13 @@ mod tests {
         let (status, evidence) = python_pytest_runtime_probe(&with, &mut path_fail);
         assert_eq!(status, output::doctor::DoctorStatus::Fail);
         assert!(evidence.contains("No module named pytest"), "{evidence}");
-        assert!(evidence.contains("source .venv/bin/activate"), "{evidence}");
+        let expected = crate::agent::loop_commands::shell_arg(
+            &with.join(".venv/bin/activate").to_string_lossy(),
+        );
+        assert!(
+            evidence.contains(&format!("source {expected}")),
+            "root-joined activate path: {evidence}"
+        );
         assert_eq!(*calls.borrow(), ["python -m pytest"]);
         // Negative control: venv without pytest gives no activation advice.
         let without = make("without", &["pip"])?;
@@ -3869,8 +3882,17 @@ mod tests {
             plain.join("venv/lib/python3.13/site-packages/pytest-9.2.0.dist-info"),
         )?;
         let (_, evidence) = python_pytest_runtime_probe(&plain, &mut path_fail);
-        assert!(evidence.contains("source venv/bin/activate"), "{evidence}");
+        let expected = crate::agent::loop_commands::shell_arg(
+            &plain.join("venv/bin/activate").to_string_lossy(),
+        );
+        assert!(
+            evidence.contains(&format!("source {expected}")),
+            "{evidence}"
+        );
         assert!(!evidence.contains(".venv/bin/activate"), "{evidence}");
+        // A `.` root keeps the bare relative hint.
+        let (_, evidence) = python_pytest_runtime_probe(Path::new("."), &mut path_fail);
+        assert!(!evidence.contains("source /"), "{evidence}");
         let _ = std::fs::remove_dir_all(&plain);
         // PATH python with pytest passes and says which command was probed,
         // regardless of the venv.

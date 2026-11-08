@@ -532,9 +532,12 @@ ripr doctor [--root PATH] [--json] [--timings] [--profile analysis|source-build]
 ```
 
 Reports local tooling and workspace shape. Takes no analysis-shaping flags.
-For Python roots, doctor probes `python -m pytest --version` on the PATH
-`python` (the command the printed verify route runs, not a standalone `pytest`
-binary) from a private empty directory with `PYTHONSAFEPATH=1`. A missing
+For Python roots, doctor checks that the PATH `python` (the interpreter the
+printed `python -m pytest` verify route runs, not a standalone `pytest` binary)
+can import pytest. It runs `python -c 'import pytest'` from a private empty
+directory with `PYTHONSAFEPATH=1` and `PYTHONPATH` unset, so no checkout or temp
+directory code runs. It does not start pytest, so a broken pytest entry point
+that still imports is not detected. A missing
 pytest is an advisory warning and never changes the exit code. When a project
 `.venv` or `venv` has pytest installed but PATH `python` does not, the warning
 suggests activating the venv before running the printed verify command; the
