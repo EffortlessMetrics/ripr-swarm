@@ -7852,6 +7852,129 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
         Ok(())
     }
 
+    /// #13754 common case: a core with no include limitation at all, extras
+    /// that include each other, and an extra that mentions `include!` only
+    /// in a comment and a string. The mention adds no limitation, so the
+    /// core is extended in place (one parse phase) and equals a fresh build.
+    #[test]
+    fn reuse_extends_clean_core_when_added_includes_stay_among_extras() -> Result<(), String> {
+        let core_src = [
+            ("src/lib.rs", "pub fn top() -> i32 { 1 }\n"),
+            (
+                "tests/common/shared.rs",
+                "pub fn unrelated() -> i32 { 3 }\n",
+            ),
+        ];
+        let extra_src = [
+            (
+                "tests/helper.rs",
+                "include!(\"support/fixture.rs\");\n#[test]\nfn helper_runs() { assert_eq!(fixture(), 2); }\n",
+            ),
+            (
+                "tests/mentions.rs",
+                "// an unresolved `include!(\"gone.rs\")` is disclosed\nconst TEXT: &str = \"include!(\\\"nope.rs\\\");\";\n#[test]\nfn mentions_run() { assert!(!TEXT.is_empty()); }\n",
+            ),
+            (
+                "tests/support/fixture.rs",
+                "pub fn fixture() -> i32 { 2 }\n",
+            ),
+        ];
+        let (builds, reused) =
+            include_reuse_builds("reuse-include-clean-core", &core_src, &extra_src)?;
+        if !reused.include_limitations.is_empty() {
+            return Err(format!(
+                "a comment or string mention of `include!` must add no limitation, got {:?}",
+                reused.include_limitations
+            ));
+        }
+        if builds != 1 {
+            return Err(format!(
+                "added includes among extras over a clean core must extend the core, got {builds} parse phases"
+            ));
+        }
+        let fixture = reused
+            .include_parents
+            .get(Path::new("tests/support/fixture.rs"))
+            .ok_or("the added fragment must resolve to its added parent")?;
+        if fixture.parent != Path::new("tests/helper.rs") {
+            return Err(format!("unexpected include parent {:?}", fixture.parent));
+        }
+        let rebased = reused.functions().iter().any(|function| {
+            function.name == "fixture" && function.id.0.starts_with("tests/helper.rs::")
+        });
+        if !rebased {
+            return Err("the added fragment's function must be rebased onto its parent".into());
+        }
+        Ok(())
+    }
+
+    /// #13754 fail-closed, target guard alone: a retained file with an
+    /// unresolved `include!("e.rs")` (so the core already carries a
+    /// limitation) and an added `e.rs` that includes it back form a cycle.
+    /// Cycle members lose their parents, so the retained file's parent is
+    /// unchanged (none), but it becomes an include target; only
+    /// `retained_include_target_changed` can refuse the extension.
+    #[test]
+    fn reuse_falls_back_when_added_include_cycle_targets_a_retained_file() -> Result<(), String> {
+        let core_src = [
+            ("src/b.rs", "pub fn other() -> i32 { 3 }\n"),
+            (
+                "src/c.rs",
+                "include!(\"e.rs\");\npub fn core() -> i32 { 1 }\n",
+            ),
+        ];
+        let extra_src = [(
+            "src/e.rs",
+            "include!(\"c.rs\");\npub fn extra() -> i32 { 2 }\n",
+        )];
+        // Pin the fixture's premise on the core alone: a limitation already
+        // present (first-limitation guard inert), and `src/c.rs` neither a
+        // target nor a child.
+        {
+            let mut all: Vec<(&str, &str)> = core_src.iter().chain(&extra_src).copied().collect();
+            all.sort_unstable();
+            let root = reuse_fixture_root("reuse-include-cycle-premise", &all)?;
+            let core = rust_index::build_analysis_index_from_loaded_files(
+                &root,
+                &bytes_of(&core_src),
+                &[],
+            );
+            let _ = std::fs::remove_dir_all(&root);
+            let core = core?.index;
+            if core.include_limitations.is_empty()
+                || !core.include_targets.is_empty()
+                || !core.include_parents.is_empty()
+            {
+                return Err(format!(
+                    "fixture core must have a limitation and no include edges: limitations={:?} targets={:?} parents={:?}",
+                    core.include_limitations, core.include_targets, core.include_parents
+                ));
+            }
+        }
+        let (builds, reused) = include_reuse_builds("reuse-include-cycle", &core_src, &extra_src)?;
+        if builds != 2 {
+            return Err(format!(
+                "an include cycle that makes a retained file a target must fall back, got {builds} parse phases"
+            ));
+        }
+        // Only the target guard applies: no edge limit, the retained file
+        // keeps no parent, and it is now a target.
+        if reused
+            .include_limitations
+            .iter()
+            .any(|limitation| limitation.reason_code == "rust_include_edge_limit_exceeded")
+        {
+            return Err("fixture must stay under the include edge limit".into());
+        }
+        if reused.include_parents.contains_key(Path::new("src/c.rs")) {
+            return Err("fixture must leave the retained cycle member without a parent".into());
+        }
+        if !reused.include_targets.contains(Path::new("src/c.rs")) {
+            return Err("fixture must make the retained file an include target".into());
+        }
+        Ok(())
+    }
+
     /// #13754 fail-closed: an added `include!` that gives a retained file an
     /// include parent changes that file's compilation unit and composed
     /// context, so the reuse falls back to a fresh build.

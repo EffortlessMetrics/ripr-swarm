@@ -442,8 +442,12 @@ fn reuse_fallback(
 ///
 /// Include resolution is recomputed over the whole index on every extension,
 /// so the extended `include_parents`, `include_targets` and
-/// `include_limitations` always equal a fresh build's. What is not recomputed
-/// is state derived from them earlier: the function identities already
+/// `include_limitations` equal a fresh build's, except on the edge-limit
+/// path: there resolution clears `include_parents` but leaves
+/// `include_targets` as the extension merged it, which can differ from a
+/// fresh build's, so `check_preserved` refuses any index that exceeded the
+/// edge limit before comparing the view. What is not recomputed is state
+/// derived from them earlier: the function identities already
 /// rebased onto a compilation unit (a rebase only rewrites an identity that
 /// still carries its own file's prefix), and the composed roles, provenance
 /// and grants of retained files. Post-processing re-derives the latter from
