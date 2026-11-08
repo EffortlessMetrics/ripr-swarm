@@ -2479,7 +2479,7 @@ pub(super) fn apply_project_module_names<'a>(
             // Another file of the same project yields the same name
             // (`pkg.py` beside `pkg/__init__.py`): the name alone does not say
             // which one an import loads, so it identifies neither (#13698).
-            if rival_roots.iter().any(|rival| *rival == owner_root) {
+            if rival_roots.contains(&owner_root) {
                 continue;
             }
             owner.ambiguous_src_modules.push(AmbiguousSrcModule {
