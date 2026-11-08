@@ -2005,6 +2005,22 @@ and the test is `tests/test_subject.py`, which imports each owner from
     `py-coarse-sign`, `py-coarse-residue`, `py-coarse-text-length`), and
     `assert f(3) == 6` stays `exposed` (`py-coarse-exact-control`).
 
+- example `package-init-ancestor`: `shapes/rates/table.py` changes
+  `RATE_TABLE = {"gold": 10, "silver": 5}` to gold 11. The ancestor
+  `shapes/__init__.py` loads the real table, then rebinds `rates` to an
+  alternate package whose `table.lookup` returns 10 independently. A test
+  imports `shapes.rates.table as t` and asserts `t.lookup("gold") == 10`:
+  no credit for the real table; the runtime mutant passes.
+- example `package-init-reexport`: The same table edit with
+  `shapes/rates/__init__.py` containing `from . import table` and an empty
+  ancestor initializer: the same exact assertion credits the real table;
+  the runtime mutant fails that assertion.
+- example `package-init-shadow`: The same table edit with the immediate
+  package initializer loading `table`, then binding `from . import alternate
+  as table`, where `alternate.lookup` returns 10 independently: the same
+  exact assertion gives no credit for the real table; the runtime mutant
+  passes. Import and test execution succeed in both negative cases.
+
 ## Test Mapping
 
 - Existing: `crates/ripr/src/analysis/language/python/doctest_gate_tests.rs`

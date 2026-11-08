@@ -262,3 +262,6 @@ fn build_service(
     )
     .finish()
 }
+
+#[cfg(test)]
+mod surface_conformance_tests;

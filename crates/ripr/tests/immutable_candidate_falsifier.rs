@@ -101,6 +101,17 @@ fn run_check_in_temp_dir(
     args: &[&str],
     temp_dir: Option<&Path>,
 ) -> Result<Value, String> {
+    let text = run_check_stdout(root, args, temp_dir)?;
+    let start = text.find('{').ok_or("no JSON in output")?;
+    serde_json::from_str(&text[start..]).map_err(|e| format!("parse check JSON: {e}"))
+}
+
+/// Raw stdout of a successful `ripr check` run, for the non-JSON formats.
+fn run_check_text(root: &Path, args: &[&str]) -> Result<String, String> {
+    run_check_stdout(root, args, None)
+}
+
+fn run_check_stdout(root: &Path, args: &[&str], temp_dir: Option<&Path>) -> Result<String, String> {
     let mut command = Command::new(env!("CARGO_BIN_EXE_ripr"));
     command
         .current_dir(root)
@@ -126,9 +137,7 @@ fn run_check_in_temp_dir(
             String::from_utf8_lossy(&output.stderr).trim()
         ));
     }
-    let text = String::from_utf8_lossy(&output.stdout);
-    let start = text.find('{').ok_or("no JSON in output")?;
-    serde_json::from_str(&text[start..]).map_err(|e| format!("parse check JSON: {e}"))
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
 fn subject_args(base: Option<&str>, candidate: &str) -> Vec<String> {
@@ -287,6 +296,9 @@ fn same_tree_immutable_and_committed_analysis_agree() -> Result<(), String> {
         copy["base"] = Value::Null;
         if let Some(object) = copy.as_object_mut() {
             object.remove("canonical_next_action");
+            // `finding_routes` (#11976) embeds the same provenance-bound
+            // explain route per finding, so it differs by run kind too.
+            object.remove("finding_routes");
             // RIPR-SPEC-0255: `config_path` names the caller's loaded
             // worktree file, like `root`; a tree subject's governing file
             // is not in the worktree, so the member is absent there by
@@ -303,6 +315,110 @@ fn same_tree_immutable_and_committed_analysis_agree() -> Result<(), String> {
         serde_json::to_string(&semantic(&committed)).unwrap_or_default(),
         "same-tree immutable and committed runs must agree semantically"
     );
+    Ok(())
+}
+
+/// #11976: `explain` cannot replay a candidate tree, so a tree subject must
+/// not present follow-up commands that would analyze the live checkout. The
+/// committed run of the same tree is the control: it does carry the routes.
+#[test]
+#[serial]
+fn candidate_tree_subject_withholds_live_checkout_finding_routes() -> Result<(), String> {
+    let (guard, base, candidate) = fixture_repo("routes-withheld")?;
+    let root = &guard.0;
+    let subject = run_subject(root, &base, &candidate)?;
+    assert!(
+        subject["findings"]
+            .as_array()
+            .is_some_and(|findings| !findings.is_empty()),
+        "premise: the subject run carries findings"
+    );
+    assert!(
+        subject.get("finding_routes").is_none(),
+        "a candidate-tree subject must not name routes against the live checkout: {}",
+        subject["finding_routes"]
+    );
+    git(root, &["checkout", "-q", &candidate])?;
+    let committed = run_check(root, &["--base", &base, "--format", "json"])?;
+    let routes = committed["finding_routes"]
+        .as_array()
+        .ok_or("control: the committed run carries finding_routes")?;
+    assert!(
+        routes
+            .iter()
+            .all(|route| route["explain_command"].is_string()),
+        "control: committed routes carry explain commands"
+    );
+    Ok(())
+}
+
+/// #13464: the top-level `canonical_next_action` must not route a candidate
+/// tree subject to the live checkout either. The committed run of the same
+/// tree is the control: its stop does carry an `explain` detail route.
+#[test]
+#[serial]
+fn candidate_tree_subject_withholds_live_checkout_detail_route() -> Result<(), String> {
+    let (guard, base, candidate) = fixture_repo("detail-route-withheld")?;
+    let root = &guard.0;
+    let subject = run_subject(root, &base, &candidate)?;
+    assert!(
+        subject["findings"]
+            .as_array()
+            .is_some_and(|findings| !findings.is_empty()),
+        "premise: the subject run carries findings"
+    );
+    let action = subject
+        .get("canonical_next_action")
+        .ok_or("premise: the subject run carries a canonical_next_action")?;
+    let rendered = serde_json::to_string(action).map_err(|error| error.to_string())?;
+    assert_eq!(
+        action["stop"]["detail_route"].as_str(),
+        Some(""),
+        "the subject stop carries an empty detail_route, not an absent or live one: {rendered}"
+    );
+    assert!(
+        !rendered.contains("ripr explain"),
+        "a candidate-tree subject must not route to the live checkout: {rendered}"
+    );
+    git(root, &["checkout", "-q", &candidate])?;
+    let committed = run_check(root, &["--base", &base, "--format", "json"])?;
+    let control = committed["canonical_next_action"]["stop"]["detail_route"]
+        .as_str()
+        .ok_or("control: the committed run names a detail_route")?;
+    assert!(
+        control.contains("ripr explain"),
+        "control: the committed detail route is an explain command: {control}"
+    );
+    Ok(())
+}
+
+/// #13502: the human renderer must not name a follow-up command
+/// that analyzes the live checkout for a candidate-tree subject. The
+/// committed run of the same tree is the control for each format.
+#[test]
+#[serial]
+fn candidate_tree_subject_withholds_live_checkout_text_routes() -> Result<(), String> {
+    let (guard, base, candidate) = fixture_repo("text-routes-withheld")?;
+    let root = &guard.0;
+    // The fixture's finding is exposed, so the agent format prints no `next=`
+    // line here; that renderer is pinned by a unit test in `triage.rs`.
+    let mut args = subject_args(Some(&base), &candidate);
+    let last = args.len() - 1;
+    args[last] = "human".to_string();
+    let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+    let subject = run_check_text(root, &refs)?;
+    git(root, &["checkout", "-q", &candidate])?;
+    let committed = run_check_text(root, &["--base", &base, "--format", "human"])?;
+    assert!(
+        committed.contains("ripr explain"),
+        "control: the committed run names an explain route: {committed}"
+    );
+    for needle in ["ripr explain", "ripr context", "Drill in"] {
+        assert!(
+            !subject.contains(needle),
+            "a candidate-tree subject must not print `{needle}`: {subject}"
+        );
+    }
     Ok(())
 }
 

@@ -24,6 +24,7 @@ mod lsp_performance;
 mod merge_queue;
 mod metrics;
 mod module_health;
+mod muse_plugin_setup;
 mod mutation;
 mod mutation_spot_check;
 mod operator;
@@ -46,7 +47,7 @@ mod recommendation;
 pub(crate) mod release;
 mod release_control;
 mod release_denominator;
-mod release_ledger;
+pub(crate) mod release_ledger;
 mod release_negative;
 #[cfg(all(test, unix))]
 pub(crate) use release_negative::capture_with_owned_root_for_test;
@@ -149,6 +150,7 @@ pub(crate) use lsp_performance::lsp_performance_report;
 pub(crate) use merge_queue::merge_queue;
 pub(crate) use metrics::metrics_report;
 pub(crate) use module_health::module_health;
+pub(crate) use muse_plugin_setup::muse_plugin_setup;
 pub(crate) use mutation::mutation_calibration;
 #[cfg(test)]
 pub(crate) use mutation::{

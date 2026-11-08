@@ -281,7 +281,7 @@ runs no tests or verification and grants no execution or edit authority.
 | --- | --- |
 | Tool (no arguments) | `ripr_workspace_status` |
 | Tool (`base?`, `source?`) | `ripr_refresh` |
-| Tool (`snapshot_id?`, `offset?`, `omitted_offset?`, `limit?`, `file?`, `class?`, `language?`, `repair_ready?`) | `ripr_list_gaps` |
+| Tool (`snapshot_id?`, `offset?`, `omitted_offset?`, `independent_pages?`, `limit?`, `file?`, `class?`, `language?`, `repair_ready?`) | `ripr_list_gaps` |
 | Tool (`canonical_id`, `snapshot_id?`) | `ripr_get_gap` |
 | Tool (`canonical_id`, `snapshot_id?`) | `ripr_get_top_limitation` |
 | Tool (`canonical_id`, `snapshot_id?`) | `ripr_prepare_repair` |
@@ -486,7 +486,21 @@ the next window. Each continuation route replays the whole request, advancing
 only its own axis: `next_omitted_page` keeps the snapshot pin, filters, item
 `offset` and `limit`; `next_page` keeps the requested `omitted_offset`.
 Walking `omitted_page.next_offset` covers every omitted identity exactly
-once; a past-end `omitted_offset` is an empty disclosed window. Only a listing whose remaining non-pageable disclosure
+once; a past-end `omitted_offset` is an empty disclosed window.
+
+For a lower-replay walk, set `independent_pages: true` on the first call and
+save both `continuation.next_page` and `continuation.next_omitted_page` before
+following either. The first response still carries both starting windows. The
+item continuation puts `omitted_offset` at the total omitted count, so later
+item pages have an empty, closed omission window. The omission continuation puts
+`offset` at the filtered item count, so later omission pages have an empty,
+closed item window. Follow each saved route to its end; discarding either route
+can lose identities. Both routes retain the snapshot pin, filters, limit and
+opt-in; a refresh that replaces the snapshot refuses the old pin. The omission
+inventory remains the selection-wide disclosure, as in the default mode. The
+input option changes generated continuation arguments, not the v5 response
+schema or default behavior. In every text-content mode, use each route's complete
+`arguments` from `structuredContent`. Only a listing whose remaining non-pageable disclosure
 (for example an oversized filter echo) cannot fit even one page fails closed
 with `result_too_large` naming `ripr://snapshot/{snapshot_id}` as the
 identity route. Other tool responses carry the document once at full fidelity:
@@ -586,7 +600,8 @@ ignored; any other value keeps the default) omits every `outputSchema` and
 changes nothing else: results still carry `structuredContent` with a
 `schema_version`, and the document shapes are the ones this page and
 `docs/OUTPUT_SCHEMA.md` describe. Measured over stdio (whole `tools/list`
-response line): 45,526 bytes with schemas, 16,710 with `slim`. Set it in the
+response line, before adding the independent-pages input): 45,526 bytes with
+schemas, 16,710 with `slim`. Set it in the
 host's server `env` beside
 `RIPR_MCP_TEXT_CONTENT` — for example
 `"env": {"RIPR_MCP_TOOLS_LIST": "slim"}`. Independent of the mode, the
@@ -619,7 +634,8 @@ producer's retained-row cap, and typed limitation states for anything the
 producer did not establish. The readiness block reports the committed
 producer repair-readiness facts (candidate actionability, an established
 discriminator, and a strong directly-related test fix site on a test
-surface) with the typed first-failing-gate reason when not ready — this
+surface; for a weakly exposed item that names its missing discriminator, the
+weak directly-related test the repair extends) with the typed first-failing-gate reason when not ready — this
 evidence never authorizes an edit by itself — and the repair boundary is
 `none_declared` until `ripr_prepare_repair` binds a session transaction;
 then the repair-attempt link names that transaction instead of staying an
@@ -667,7 +683,14 @@ exception is a saved-worktree snapshot, #7357, whose withheld verdict is a
 snapshot-level fact, so a finding-level gate stays first there), so
 `ripr_prepare_repair` and `ripr repair` name the same cause for the same item
 (#10718). The producer-side reasons remain for items the gate admits or when
-no seam evaluation ran.
+no seam evaluation ran. A producer-side refusal is derived from the committed
+source and tests, so its `recovery` and `next` (`await_producer_fact`, route
+`ripr_get_gap`) say that `ripr_refresh` on an unchanged tree returns the same
+refusal; refresh only after the committed code or tests change. A gate-admitted
+weakly exposed item that names its missing discriminator is ready on every
+route, and `ripr_list_gaps`, `ripr_prepare_repair`, `ripr_get_repair_card` and
+`ripr repair` name the same single test file (the packet's `fix_site` carries
+`oracle_strength`). When several related tests qualify, the fix site is the existing test the shared repair gate recommends (`ripr repair`'s "test to extend"); a recommendation outside the item's own high-confidence related tests refuses as `fix_site_not_established` naming that file, and with no recommendation the strongest candidate leads. When the shared gate's only target is a producer-owned new-test proposal (`SeamVerdict::AdmittedProposed`, the target `ripr agent repair --phase before` starts from), the item is ready with that proposal as its fix site: `fix_site.file` and `allowed_edit_surface` name the proposal file the CLI edit cage allows (`selected_target.path`), `fix_site.new_test_kind` is `integration` or `inline_unit`, and `test_name`, `line` and `oracle` are empty (an inline proposal also carries `inline_test_module`). A seam the producer admits no proposal for stays not ready. Prepare packets carry `fix_site.new_test_kind: null` for an existing-test fix site. The proposal path must pass the filesystem-free part of the CLI preflight (plain relative path, `<dir>/tests/<name>.rs` for integration); the file-exists, symlink and owning-manifest checks stay at the CLI start preflight, not at MCP prepare.
 
 The truncation refusal covers repair readiness (`ripr_list_gaps`,
 `ripr_get_gap`, `ripr_prepare_repair`). `ripr_get_repair_card` reads the same

@@ -1627,6 +1627,10 @@ pub(crate) struct TargetedTestBriefOutline {
     pub(crate) suggested_reason: String,
     pub(crate) candidate_value: Option<String>,
     pub(crate) assertion_shape: String,
+    /// The shape is a drafted concrete assertion: its expected value comes
+    /// from the static fold, so human surfaces keep the drafted note
+    /// instead of reading it as a verified assertion.
+    pub(crate) assertion_drafted: bool,
 }
 
 impl TargetedTestBriefOutline {
@@ -1651,6 +1655,7 @@ pub(crate) fn targeted_test_brief_outline_for_classified_seam(
             suggested_reason: recommended.reason,
             candidate_value: None,
             assertion_shape: "not_applicable".to_string(),
+            assertion_drafted: false,
         };
     }
     let missing = missing_discriminator_records_for(entry);
@@ -1673,6 +1678,7 @@ pub(crate) fn targeted_test_brief_outline_for_classified_seam(
         suggested_reason: recommended.reason,
         candidate_value,
         assertion_shape,
+        assertion_drafted: drafted_boundary_from_evidence(&entry.evidence).is_some(),
     }
 }
 
@@ -2425,6 +2431,20 @@ fn push_packet_json(
         "\"file\": \"{}\", ",
         json_escape(recommended.file.as_str())
     ));
+    // #13203: a producer-owned new-test proposal names its kind so the
+    // repair attempt can bind the proposal it follows. Absent for an
+    // existing test, which keeps every other packet's bytes unchanged.
+    let proposal_kind = match recommended.target_kind {
+        RecommendedTestTargetKind::NewInlineTestModule => Some(NewTestKind::InlineUnit),
+        RecommendedTestTargetKind::NewIntegrationTest => Some(NewTestKind::Integration),
+        RecommendedTestTargetKind::ExistingTest | RecommendedTestTargetKind::Unresolved => None,
+    };
+    if let Some(kind) = proposal_kind {
+        out.push_str(&format!(
+            "\"target_kind\": \"{}\", ",
+            kind.packet_target_kind()
+        ));
+    }
     out.push_str(&format!(
         "\"reason\": \"{}\"",
         json_escape(recommended.reason.as_str())
@@ -2572,8 +2592,26 @@ fn push_packet_json(
     if !missing.is_empty() {
         out.push('\n');
         for (idx, record) in missing.iter().enumerate() {
+            let drafted = record
+                .drafted_boundary
+                .as_ref()
+                .map(|drafted| {
+                    let arguments = drafted
+                        .arguments
+                        .iter()
+                        .map(|argument| format!("\"{}\"", json_escape(argument)))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    let expected = drafted
+                        .expected
+                        .as_ref()
+                        .map(|value| format!(", \"expected\": \"{}\"", json_escape(value)))
+                        .unwrap_or_default();
+                    format!(", \"drafted_boundary\": {{\"arguments\": [{arguments}]{expected}}}")
+                })
+                .unwrap_or_default();
             out.push_str(&format!(
-                "        {{\"value\": \"{}\", \"reason\": \"{}\"}}",
+                "        {{\"value\": \"{}\", \"reason\": \"{}\"{drafted}}}",
                 json_escape(record.value.as_str()),
                 json_escape(record.reason.as_str())
             ));
@@ -2791,6 +2829,10 @@ fn push_packet_json(
 pub(crate) struct MissingRecord {
     pub(crate) value: String,
     pub(crate) reason: String,
+    /// The concrete drafted boundary call behind this fact, when the
+    /// static model pinned the equality-boundary input (`assertion_shape`
+    /// carries the rendered draft; this carries the typed parts).
+    pub(crate) drafted_boundary: Option<crate::domain::DraftedBoundaryAssertion>,
 }
 
 pub(crate) struct CandidateValue {
@@ -2951,16 +2993,18 @@ pub(crate) fn recommended_test_for(entry: &ClassifiedSeam) -> RecommendedTest {
     let selected_target = match &readiness.target_selection {
         RepairTargetSelection::Existing(selected_target) => selected_target,
         RepairTargetSelection::Proposed(proposal) => {
-            let file = display_path(&proposal.file);
+            let selected =
+                crate::analysis::new_test_target::SelectedProposal::from_proposal(proposal);
+            let file = selected.file;
             return RecommendedTest {
                 name: uniquify_recommended_test_name(&name, entry, &file),
                 file,
-                target_kind: match proposal.kind {
+                target_kind: match selected.kind {
                     NewTestKind::InlineUnit => RecommendedTestTargetKind::NewInlineTestModule,
                     NewTestKind::Integration => RecommendedTestTargetKind::NewIntegrationTest,
                 },
                 symbol_id: None,
-                source: match proposal.kind {
+                source: match selected.kind {
                     NewTestKind::InlineUnit => RecommendedTestSource::InferredSourceModuleTests,
                     NewTestKind::Integration => RecommendedTestSource::InferredIntegrationTests,
                 },
@@ -3384,6 +3428,17 @@ fn assertion_shape_from_guidance(guidance: AssertionGuidance) -> AssertionShape 
     AssertionShape::from_guidance(guidance)
 }
 
+/// The drafted boundary call the seam evidence carries, when its static
+/// model pinned the equality-boundary input.
+fn drafted_boundary_from_evidence(
+    evidence: &TestGripEvidence,
+) -> Option<&crate::domain::DraftedBoundaryAssertion> {
+    evidence
+        .missing_discriminators
+        .iter()
+        .find_map(|fact| fact.drafted_boundary.as_ref())
+}
+
 fn assertion_guidance_for(
     kind: SeamKind,
     owner: &str,
@@ -3405,13 +3460,16 @@ fn assertion_guidance_for(
                 let trimmed = suggestion.trim_start();
                 !trimmed.starts_with("//") && trimmed.contains("assert")
             });
-    let basis = if assertion_template_uses_required_discriminator(kind, required)
+    let basis = if drafted_boundary_from_evidence(evidence).is_some() {
+        Some(AssertionBasis::DraftedStaticFold)
+    } else if assertion_template_uses_required_discriminator(kind, required)
         || (matches!(kind, SeamKind::FieldConstruction)
             && field_write.is_some()
             && matches!(
                 required,
                 Some(RequiredDiscriminator::FieldValue { field }) if !field.trim().is_empty()
-            )) {
+            ))
+    {
         Some(AssertionBasis::SeamRequiredDiscriminator)
     } else if required.is_none() && !evidence.observed_values.is_empty() {
         Some(AssertionBasis::ObservedValueFact)
@@ -3601,6 +3659,7 @@ pub(crate) fn missing_discriminator_records_for(entry: &ClassifiedSeam) -> Vec<M
         .map(|m| MissingRecord {
             value: m.value.clone(),
             reason: m.reason.clone(),
+            drafted_boundary: m.drafted_boundary.clone(),
         })
         .collect()
 }
@@ -3743,6 +3802,22 @@ fn suggested_assertions_for(
     let call = |arguments: &str| owner_call.call(owner_short, arguments);
     match kind {
         SeamKind::PredicateBoundary => {
+            // The concrete drafted boundary call: paste-ready arguments the
+            // related tests' own rows pin, plus the folded expected value
+            // when the static model is strong (a non-foldable branch keeps
+            // the `/* expected */` placeholder). Static draft only; ripr
+            // has not run or verified anything.
+            if let Some(drafted) = drafted_boundary_from_evidence(evidence) {
+                let expected = drafted
+                    .expected
+                    .clone()
+                    .unwrap_or_else(|| "/* expected */".to_string());
+                return vec![format!(
+                    "assert_eq!({}, {})",
+                    call(&drafted.arguments.join(", ")),
+                    expected
+                )];
+            }
             let hint = predicate_boundary_assertion_hint(required, evidence);
             vec![format!(
                 "assert_eq!({}, /* expected */)",
@@ -4036,8 +4111,8 @@ mod tests {
         AnalysisRecovery, AnalysisRecoveryKind, AnalysisStage,
     };
     use crate::domain::{
-        Confidence, MissingDiscriminatorFact, OracleKind, OracleStrength, StageEvidence,
-        StageState, ValueContext, ValueFact,
+        Confidence, DiscriminatorShape, MissingDiscriminatorFact, OracleKind, OracleStrength,
+        StageEvidence, StageState, ValueContext, ValueFact,
     };
     use crate::repair_guidance::{GuidanceReason, GuidanceRecovery};
     use std::path::PathBuf;
@@ -4295,6 +4370,7 @@ mod tests {
             suggested_reason: "route limited".to_string(),
             candidate_value: None,
             assertion_shape: "not_applicable".to_string(),
+            assertion_drafted: false,
         };
         let actionable = TargetedTestBriefOutline {
             suggested_file: "tests/pricing.rs".to_string(),
@@ -4302,6 +4378,7 @@ mod tests {
             suggested_reason: "ready".to_string(),
             candidate_value: None,
             assertion_shape: "assert_eq!".to_string(),
+            assertion_drafted: false,
         };
 
         assert!(limited.is_not_applicable());
@@ -4426,6 +4503,29 @@ mod tests {
         classified_with(seam, SeamGripClass::Ungripped, vec![test])
     }
 
+    /// #13203: a proposal is followed only when the packet's recommended test
+    /// is exactly the proposal's file; any other file, even a test surface,
+    /// does not match.
+    #[test]
+    fn recommended_test_matches_only_the_exact_proposed_file() {
+        let entry = weakly_gripped_classified();
+        assert!(recommended_test_is_the_proposed_file(
+            &entry,
+            Path::new("tests/pricing.rs")
+        ));
+        for other in [
+            "tests/discounted_total.rs",
+            "tests/pricing_boundary.rs",
+            "src/pricing.rs",
+            "",
+        ] {
+            assert!(
+                !recommended_test_is_the_proposed_file(&entry, Path::new(other)),
+                "{other:?} must not match the recommended tests/pricing.rs"
+            );
+        }
+    }
+
     fn weakly_gripped_classified() -> ClassifiedSeam {
         let seam = boundary_seam();
         let evidence = TestGripEvidence {
@@ -4466,6 +4566,8 @@ mod tests {
                 value: "discount_threshold (equality boundary)".to_string(),
                 reason: "observed values do not include the equality-boundary case".to_string(),
                 flow_sink: None,
+                shape: DiscriminatorShape::Other,
+                drafted_boundary: None,
             }],
             new_test_target: None,
             statically_contradicted_related_tests: 0,
@@ -6804,6 +6906,8 @@ mod tests {
             value: "amount >= discount_threshold".to_string(),
             reason: "no observed activation values for boundary predicate".to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Other,
+            drafted_boundary: None,
         }];
         entry.evidence.new_test_target = Some(NewTestTargetAdmission {
             proposal: Some(NewTestTargetProposal {
@@ -7098,6 +7202,8 @@ mod tests {
             value: "AuthError::RevokedToken".to_string(),
             reason: "producer identified the exact error variant as missing".to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Other,
+            drafted_boundary: None,
         }];
         let json = render_agent_seam_packets_json(&[entry], None);
         for needle in [
@@ -7425,6 +7531,8 @@ mod tests {
             value: "quote.total".to_string(),
             reason: "producer identified the output field value as missing".to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Other,
+            drafted_boundary: None,
         }];
         let opaque_field = classified_with(
             seam_with(
@@ -7499,6 +7607,8 @@ mod tests {
             value: "free_shipping_threshold (equality boundary)".to_string(),
             reason: "observed values do not include the equality-boundary case".to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Other,
+            drafted_boundary: None,
         }];
         entry
     }
@@ -7647,6 +7757,8 @@ mod tests {
             value: "bulk_threshold (equality boundary)".to_string(),
             reason: "observed values do not include the equality-boundary case".to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Other,
+            drafted_boundary: None,
         }];
         three.push(third);
         let (_, many) = render_pilot_packets(&three, pilot_bound(1))?;
@@ -7840,6 +7952,147 @@ mod tests {
         Ok(())
     }
 
+    /// #13204: the card, the packet and MCP read the selected proposal
+    /// through one projection, so they agree on kind and file; a seam with no
+    /// proposal projects none in any of them and MCP keeps its plain verdict.
+    #[test]
+    fn selected_proposal_reads_the_same_in_card_packet_and_mcp() -> Result<(), String> {
+        use crate::analysis::new_test_target::SelectedProposal;
+        use crate::analysis::repair_route::{
+            NewTestKind, NewTestProposalProvenance, NewTestTargetAdmission, NewTestTargetProposal,
+            repair_packet_eligibility,
+        };
+        use crate::app::repair_card::project_target;
+        use crate::mcp::repair_admission::{SeamVerdict, inline_verdict};
+        let missing = vec![MissingDiscriminatorFact {
+            value: "amount >= discount_threshold".to_string(),
+            reason: "no observed activation values for boundary predicate".to_string(),
+            flow_sink: None,
+            shape: crate::domain::DiscriminatorShape::Boundary,
+            drafted_boundary: None,
+        }];
+        let mut entry = classified_with(boundary_seam(), SeamGripClass::WeaklyGripped, Vec::new());
+        entry.evidence.missing_discriminators = missing.clone();
+        let proposal = NewTestTargetProposal {
+            kind: NewTestKind::Integration,
+            file: PathBuf::from("tests/discounted_total.rs"),
+            owner: "pricing::discounted_total".to_string(),
+            provenance: NewTestProposalProvenance::ProducerOwned,
+            workspace_identity: String::new(),
+        };
+        entry.evidence.new_test_target = Some(NewTestTargetAdmission {
+            proposal: Some(proposal.clone()),
+            region: None,
+            blocker: None,
+            owner_inline_region: None,
+        });
+        assert!(
+            is_safe_for_repair_packet(&entry),
+            "the fixture must be route-ready"
+        );
+        let selected = SelectedProposal::from_proposal(&proposal);
+
+        let packet = recommended_test_for(&entry);
+        assert_eq!(packet.file, selected.file);
+        assert_eq!(
+            packet.target_kind,
+            RecommendedTestTargetKind::NewIntegrationTest
+        );
+
+        let readiness = repair_packet_eligibility(&entry).readiness;
+        match project_target(&readiness.target_selection) {
+            Some(crate::domain::RepairCardTarget::Proposed {
+                file,
+                proposal_kind,
+                ..
+            }) => {
+                assert_eq!(file, selected.file);
+                assert_eq!(
+                    proposal_kind,
+                    crate::domain::RepairCardProposedTestKind::Integration
+                );
+            }
+            other => return Err(format!("the card must project the proposal: {other:?}")),
+        }
+
+        let seam_id = entry.seam.id().as_str().to_string();
+        assert_eq!(
+            inline_verdict(&seam_id, std::slice::from_ref(&entry)),
+            SeamVerdict::AdmittedProposed(selected.clone())
+        );
+
+        // An InlineUnit proposal reads the same kind and file in the card and
+        // packet, and MCP also carries the governed module its admission
+        // captured.
+        let mut inline = classified_with(boundary_seam(), SeamGripClass::WeaklyGripped, Vec::new());
+        inline.evidence.missing_discriminators = entry.evidence.missing_discriminators.clone();
+        let inline_proposal = NewTestTargetProposal {
+            kind: NewTestKind::InlineUnit,
+            file: PathBuf::from("src/pricing.rs"),
+            owner: "pricing::discounted_total".to_string(),
+            provenance: NewTestProposalProvenance::ProducerOwned,
+            workspace_identity: String::new(),
+        };
+        inline.evidence.new_test_target = Some(NewTestTargetAdmission {
+            proposal: Some(inline_proposal.clone()),
+            region: Some(
+                crate::analysis::new_test_target::InlineTestRegionAuthority {
+                    file: PathBuf::from("src/pricing.rs"),
+                    module_name: "tests".to_string(),
+                    parent_modules: Vec::new(),
+                    body_start: 0,
+                    close_brace_start: 0,
+                    source_digest: String::new(),
+                },
+            ),
+            blocker: None,
+            owner_inline_region: None,
+        });
+        let inline_selected = SelectedProposal::from_proposal(&inline_proposal);
+        assert_eq!(recommended_test_for(&inline).file, inline_selected.file);
+        match project_target(
+            &repair_packet_eligibility(&inline)
+                .readiness
+                .target_selection,
+        ) {
+            Some(crate::domain::RepairCardTarget::Proposed {
+                file,
+                proposal_kind,
+                ..
+            }) => {
+                assert_eq!(file, inline_selected.file);
+                assert_eq!(
+                    proposal_kind,
+                    crate::domain::RepairCardProposedTestKind::InlineUnit
+                );
+            }
+            other => {
+                return Err(format!(
+                    "the card must project the inline proposal: {other:?}"
+                ));
+            }
+        }
+        assert_eq!(
+            inline_verdict(inline.seam.id().as_str(), std::slice::from_ref(&inline)),
+            SeamVerdict::AdmittedProposed(inline_selected.with_module(Some("tests")))
+        );
+
+        // Negative: with no proposal nothing projects, and MCP keeps `Admitted`.
+        let mut bare = classified_with(boundary_seam(), SeamGripClass::WeaklyGripped, Vec::new());
+        bare.evidence.missing_discriminators = missing;
+        assert_eq!(
+            recommended_test_for(&bare).target_kind,
+            RecommendedTestTargetKind::Unresolved
+        );
+        let bare_readiness = repair_packet_eligibility(&bare).readiness;
+        assert_eq!(project_target(&bare_readiness.target_selection), None);
+        assert_eq!(
+            inline_verdict(&seam_id, std::slice::from_ref(&bare)),
+            SeamVerdict::Admitted
+        );
+        Ok(())
+    }
+
     /// A producer-owned inline-module proposal names a production file. It
     /// must never ride an actionable packet: advertising it as
     /// `allowed_edit_surface` alongside the must-not-change production
@@ -7856,6 +8109,8 @@ mod tests {
             value: "amount >= discount_threshold".to_string(),
             reason: "no observed activation values for boundary predicate".to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Other,
+            drafted_boundary: None,
         }];
         entry.evidence.new_test_target = Some(NewTestTargetAdmission {
             proposal: Some(NewTestTargetProposal {
@@ -7912,6 +8167,8 @@ mod tests {
             value: "amount >= discount_threshold".to_string(),
             reason: "no observed activation values for boundary predicate".to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Other,
+            drafted_boundary: None,
         }];
         let region = InlineTestRegionAuthority {
             file: PathBuf::from("src/pricing.rs"),
