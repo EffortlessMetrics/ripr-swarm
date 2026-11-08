@@ -1701,17 +1701,23 @@ const CARGO_INPUT_IDENTITY_UNAVAILABLE: &str = "cargo_configuration_identity_una
 /// no leading `./`, no verbatim prefix, and case folding only where the
 /// filesystem is case-insensitive.
 fn normalize_file_fact_path(path: &Path) -> String {
+    // Only Windows treats `\` as a separator (and folds case); on Unix a
+    // backslash is an ordinary filename character, so rewriting it would
+    // merge distinct files into one identity.
+    #[cfg(windows)]
     let mut normalized = path.to_string_lossy().replace('\\', "/");
+    #[cfg(not(windows))]
+    let mut normalized = path.to_string_lossy().into_owned();
     while let Some(stripped) = normalized.strip_prefix("./") {
-        normalized = stripped.to_string();
-    }
-    if let Some(stripped) = normalized.strip_prefix("//?/UNC/") {
-        normalized = format!("//{stripped}");
-    } else if let Some(stripped) = normalized.strip_prefix("//?/") {
         normalized = stripped.to_string();
     }
     #[cfg(windows)]
     {
+        if let Some(stripped) = normalized.strip_prefix("//?/UNC/") {
+            normalized = format!("//{stripped}");
+        } else if let Some(stripped) = normalized.strip_prefix("//?/") {
+            normalized = stripped.to_string();
+        }
         normalized = normalized.to_lowercase();
     }
     normalized
@@ -3509,7 +3515,13 @@ impl RepoFileFactCache {
                     if let Err(reason) = envelope.validate_integrity() {
                         return corrupt_entry(&path, reason);
                     }
-                    CacheLoad::Hit(envelope.file_facts)
+                    // Facts summarized under another spelling of this file
+                    // carry that spelling in `path`; serve them under the
+                    // key's canonical identity so index identity comparisons
+                    // see one path per file (#13887).
+                    let mut facts = envelope.file_facts;
+                    facts.path = key.file_path.clone();
+                    CacheLoad::Hit(facts)
                 } else {
                     CacheLoad::Miss
                 }
@@ -5189,17 +5201,55 @@ mod tests {
         let cache = RepoFileFactCache::at_dir(scratch.0.clone());
         let source = "pub fn f(x: u32) -> u32 { x + 1 }\n";
         let facts = RaRustSyntaxAdapter.summarize_file(Path::new("src/lib.rs"), source)?;
-        let stored = RepoFileFactCacheKey::new(Path::new(r"src\lib.rs"), source.as_bytes());
+        let stored = RepoFileFactCacheKey::new(Path::new("src/lib.rs"), source.as_bytes());
         cache.store_file_facts(&stored, &facts)?;
-        for spelling in ["src/lib.rs", "./src/lib.rs", r"src\lib.rs"] {
+        for spelling in ["src/lib.rs", "./src/lib.rs"] {
             let key = RepoFileFactCacheKey::new(Path::new(spelling), source.as_bytes());
-            assert!(
-                matches!(cache.load_file_facts(&key), CacheLoad::Hit(_)),
-                "spelling {spelling} must hit the stored entry"
-            );
+            match cache.load_file_facts(&key) {
+                // A hit serves the facts under the canonical identity, not
+                // the spelling they were summarized under.
+                CacheLoad::Hit(loaded) => {
+                    assert_eq!(loaded.path, Path::new("src/lib.rs"));
+                }
+                other => {
+                    return Err(format!("spelling {spelling} must hit: {other:?}"));
+                }
+            }
             assert!(
                 cache.known_file_paths().contains(Path::new(spelling)),
                 "known paths must recognize spelling {spelling}"
+            );
+        }
+        // On Windows the native separator spelling is the same file; on Unix
+        // a backslash is an ordinary filename character and stays distinct.
+        #[cfg(windows)]
+        {
+            let key = RepoFileFactCacheKey::new(Path::new(r"src\lib.rs"), source.as_bytes());
+            assert!(
+                matches!(cache.load_file_facts(&key), CacheLoad::Hit(_)),
+                "windows separator spelling must hit the stored entry"
+            );
+            // Facts summarized under the backslash spelling are served under
+            // the canonical identity path.
+            let backslash_facts =
+                RaRustSyntaxAdapter.summarize_file(Path::new(r"src\other.rs"), source)?;
+            let backslash_key =
+                RepoFileFactCacheKey::new(Path::new(r"src\other.rs"), source.as_bytes());
+            cache.store_file_facts(&backslash_key, &backslash_facts)?;
+            let canonical = RepoFileFactCacheKey::new(Path::new("src/other.rs"), source.as_bytes());
+            match cache.load_file_facts(&canonical) {
+                CacheLoad::Hit(loaded) => {
+                    assert_eq!(loaded.path, Path::new("src/other.rs"));
+                }
+                other => return Err(format!("canonical spelling must hit: {other:?}")),
+            }
+        }
+        #[cfg(not(windows))]
+        {
+            let key = RepoFileFactCacheKey::new(Path::new(r"src\lib.rs"), source.as_bytes());
+            assert!(
+                matches!(cache.load_file_facts(&key), CacheLoad::Miss),
+                "unix backslash spelling is a distinct file and must miss"
             );
         }
         // Windows filesystems are case-insensitive and canonicalized forms
@@ -5234,7 +5284,7 @@ mod tests {
                 "case-sensitive filesystems keep case-distinct files apart"
             );
         }
-        let other_path = RepoFileFactCacheKey::new(Path::new("src/other.rs"), source.as_bytes());
+        let other_path = RepoFileFactCacheKey::new(Path::new("src/another.rs"), source.as_bytes());
         assert!(matches!(
             cache.load_file_facts(&other_path),
             CacheLoad::Miss

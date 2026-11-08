@@ -1,0 +1,57 @@
+schema_version = "2.0"
+id = "ripr.slice.file-fact-key-path-identity.v1"
+generation = 1
+
+source_issue = "issue:13887"
+design_reference = "issue:13887#acceptance"
+change_class = "behavior_change"
+
+claim_boundary = """
+The Rust file-fact cache (`RepoFileFactCacheKey`) identifies an entry by a
+normalized path spelling: forward slashes and no leading `./` on every
+platform, plus Windows-only verbatim-prefix stripping and case folding,
+applied identically at key construction, the entry filename, envelope
+admission, and the known-paths inventory. One file reached through different
+caller spellings reuses one entry instead of reparsing under each spelling,
+and a hit serves `FileFacts` under the key's canonical identity path.
+Admission stays fail-closed on schema, analyzer, path identity, and content
+hash, so no stale or wrong-file facts are served. `1.58` entries orphan under
+the `1.59` schema bump. On Unix a backslash remains an ordinary filename
+character and case-distinct files keep distinct identities. Claims no change
+to semantic analysis output, the seam-level aggregate hash, or the
+TypeScript/Python fact stores.
+"""
+
+non_goals = [
+  "unifying absolute and relative spellings of one file (the key carries no workspace root)",
+  "changing workspace discovery or the seam aggregate content hash",
+  "normalizing the TypeScript or Python fact stores (already normalized)",
+  "a measured end-to-end latency claim (only removed reparse is claimed)",
+]
+
+return_conditions = [
+  "Return to root if two spellings of one file mint separate entries again.",
+  "Return to root if a hit serves facts under a non-canonical `FileFacts.path`.",
+  "Return to root if distinct Unix files (backslash or case variants) share an entry.",
+]
+
+owned_seams = [
+  "seam:ripr:analysis:file-facts-cache",
+]
+
+shared_seams = []
+
+forbidden_seams = []
+
+[[requirement_delta]]
+requirement_id = "issue:13887#acceptance"
+requirement_generation = 1
+
+[implementation_claim]
+status = "implemented"
+
+[evidence]
+state = "outstanding"
+
+[support_claim]
+state = "unchanged"
