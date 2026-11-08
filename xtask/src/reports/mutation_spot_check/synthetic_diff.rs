@@ -277,7 +277,13 @@ pub(crate) fn read_verdict(check: &Value, file: &str, first_line: u64, last_line
         .into_iter()
         .flatten()
         .filter(|finding| {
-            finding.pointer("/probe/file").and_then(Value::as_str) == Some(file)
+            // The Rust adapter reports `./src/lib.rs`; the other adapters
+            // report the bare relative path.
+            finding
+                .pointer("/probe/file")
+                .and_then(Value::as_str)
+                .map(|probe_file| probe_file.strip_prefix("./").unwrap_or(probe_file))
+                == Some(file)
                 && finding
                     .pointer("/probe/line")
                     .and_then(Value::as_u64)
@@ -1010,6 +1016,21 @@ mod tests {
             }
         );
         assert_eq!(read_verdict(&check, "a.ts", 5, 6), Verdict::NoFinding);
+    }
+
+    #[test]
+    fn verdict_matches_a_dot_slash_probe_path() {
+        // `ripr check` on Rust reports `./src/lib.rs`, not `src/lib.rs`.
+        let check = check_json(
+            &[("weakly_exposed", "./src/lib.rs", 2, "rust:src/lib.rs::f")],
+            true,
+            None,
+        );
+        assert!(matches!(
+            read_verdict(&check, "src/lib.rs", 2, 2),
+            Verdict::Class { ref token, .. } if token == "weakly_exposed"
+        ));
+        assert_eq!(read_verdict(&check, "lib.rs", 2, 2), Verdict::NoFinding);
     }
 
     #[test]
