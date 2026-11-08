@@ -49,7 +49,7 @@ const TS_OLD: &str = "export function price(amount: number, years: number): numb
 #[cfg(feature = "lang-typescript")]
 const TS_NEW: &str = "export function price(amount: number, years: number): number {\n  if (years >= 4 && amount >= 100) {\n    return amount - amount * 0.06;\n  }\n  return amount;\n}\n\ntest(\"discounts\", () => {\n  expect(price(200, 5)).toBe(190);\n});\n";
 
-const CONFIG_SEED: &str = "[languages]\nenabled = [\"rust\", \"python\", \"typescript\"]\n\n[analysis]\ninclude_unchanged_tests = true\n\n[suppressions]\npaths = [\"target/**\", \"**/generated/**\"]\n\n[output]\nformat = \"human\"\n";
+const CONFIG_SEED_TAIL: &str = "\n[analysis]\ninclude_unchanged_tests = true\n\n[suppressions]\npaths = [\"target/**\", \"**/generated/**\"]\n\n[output]\nformat = \"human\"\n";
 
 /// Tokens that most often split a parser's idea of "inside a string".
 const TOKENS: &[&[u8]] = &[
@@ -348,7 +348,8 @@ proptest! {
 
     #[test]
     fn hostile_config_never_panics_or_hangs(edits in edits()) {
-        let config_bytes = apply(CONFIG_SEED.as_bytes(), &edits);
+        let config_seed = format!("{}{CONFIG_SEED_TAIL}", languages_toml());
+        let config_bytes = apply(config_seed.as_bytes(), &edits);
         let diff = replace_diff("src/lib.rs", RUST_OLD, RUST_NEW.as_bytes());
         let workspace = Workspace::create(&[
             ("Cargo.toml", CARGO_TOML.as_bytes()),
@@ -415,9 +416,17 @@ fn unmutated_seeds_reach_analysis_and_config_is_consumed() -> Result<(), String>
             .map_err(|error| format!("{path}: read check artifact failed: {error}"))?;
         let report: serde_json::Value = serde_json::from_str(&text)
             .map_err(|error| format!("{path}: check artifact is not JSON: {error}"))?;
-        let findings = report["findings"].as_array().cloned().unwrap_or_default();
+        let findings = report["findings"].as_array().ok_or_else(|| {
+            format!(
+                "{path}: check artifact has no findings array (schema_version {})",
+                report["schema_version"]
+            )
+        })?;
         let reached = findings.iter().any(|finding| {
-            finding["language"].as_str() == Some(language) && finding.to_string().contains(path)
+            finding["language"].as_str() == Some(language)
+                && finding["probe"]["location"]["file"]
+                    .as_str()
+                    .is_some_and(|file| file.replace('\\', "/").ends_with(path))
         });
         if !reached {
             return Err(format!(
