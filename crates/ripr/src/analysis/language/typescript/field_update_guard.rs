@@ -570,6 +570,7 @@ mod tests {
             method_kind: TypeScriptMethodKind::Ordinary,
             class_default_export: false,
             default_object_member: false,
+            default_object_unsafe_siblings: Vec::new(),
             module_entries: Vec::new(),
             params: Vec::new(),
             arity: Some(0),

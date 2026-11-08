@@ -59,6 +59,12 @@ pub(crate) struct TypeScriptOwner {
     /// method, getter or duplicate), which keeps the member from being
     /// replaced inside the object. RIPR-SPEC-0243 rule 5.
     pub(crate) default_object_member: bool,
+    /// Other members of the same default object whose declaration could
+    /// replace this owner before the test calls it (uses `this`, `require`,
+    /// `exports`, a relative import, ...). A test that calls any of them as
+    /// `local.sibling(...)` gets no rule-5 credit for this owner.
+    #[serde(default)]
+    pub(crate) default_object_unsafe_siblings: Vec<String>,
     /// `true` when the owner is the whole value of a CommonJS
     /// `module.exports = <function>` assignment (an anonymous or named
     /// function expression, an arrow, or a plain reference to a top-level

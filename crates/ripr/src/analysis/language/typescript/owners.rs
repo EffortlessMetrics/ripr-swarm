@@ -894,95 +894,174 @@ fn mark_default_object_members(body: &[Statement<'_>], owners: &mut [TypeScriptO
         .flat_map(|declarator| declarator.id.get_binding_identifiers())
         .map(|identifier| identifier.name.as_str())
         .collect();
-    // A member called as `local.sibling()` runs with `this` bound to the
-    // default object and could replace another member (`this.merge = stub`)
-    // before the test calls it, which no test-file fact can see. So an owner
-    // stays unmarked when any *other* member's declaration mentions `this`.
-    let this_members = members_whose_declaration_uses_this(body, &members);
+    // A member called as `local.sibling()` can replace another member before
+    // the test calls it (`this.merge = stub`, or through `require`, `exports`
+    // or a self-import), which no test-file fact can see. Each marked owner
+    // carries the siblings that might do so; a test that calls any of them
+    // gets no rule-5 credit for the owner (#13694 review).
+    let Some(unsafe_names) = unsafe_top_level_names(body) else {
+        return;
+    };
     for owner in owners.iter_mut() {
         let callable = match owner.owner_kind {
             OwnerKind::Function => true,
             OwnerKind::ArrowFunction => const_names.contains(owner.name.as_str()),
             _ => false,
         };
-        let sibling_uses_this = this_members.iter().any(|name| *name != owner.name.as_str());
-        if owner.class_name.is_none()
-            && callable
-            && members.contains(owner.name.as_str())
-            && !sibling_uses_this
-        {
+        if owner.class_name.is_none() && callable && members.contains(owner.name.as_str()) {
             owner.default_object_member = true;
+            let mut siblings: Vec<String> = members
+                .iter()
+                .filter(|name| **name != owner.name.as_str() && unsafe_names.contains(**name))
+                .map(|name| (*name).to_string())
+                .collect();
+            siblings.sort();
+            owner.default_object_unsafe_siblings = siblings;
         }
     }
 }
 
-/// Names in `members` whose top-level function or variable declaration
-/// contains a `this` expression anywhere (nested functions included, which
-/// over-approximates and only withholds credit).
-fn members_whose_declaration_uses_this<'n>(
-    body: &[Statement<'_>],
-    members: &std::collections::HashSet<&'n str>,
-) -> std::collections::HashSet<&'n str> {
-    use oxc_ast::ast::{Declaration, ThisExpression};
-    use oxc_ast_visit::Visit;
-    struct ThisFinder {
-        found: bool,
-    }
-    impl<'a> Visit<'a> for ThisFinder {
-        fn visit_this_expression(&mut self, _expression: &ThisExpression) {
-            self.found = true;
-        }
-    }
-    let mut out = std::collections::HashSet::new();
-    let mut note = |name: &str, found: bool| {
-        if found && let Some(member) = members.get(name) {
-            out.insert(*member);
-        }
+/// Top-level names (functions, classes, variables) whose declaration could
+/// reach and replace a member of the module's anonymous default object.
+/// A declaration is unsafe when it contains `this`, `import(...)`,
+/// `import.meta`, a reference to `require`, `module`, `exports`,
+/// `globalThis`, `global`, `window`, `self`, `eval`, `Function`,
+/// `arguments` or `define`, a reference to a binding imported from a
+/// relative source (possibly the module itself), or a reference to another
+/// unsafe top-level name (fixpoint). References are matched by name, so a
+/// shadowing local only over-approximates. `None` when a top-level name is
+/// declared more than once, since the object could then hold either.
+fn unsafe_top_level_names(body: &[Statement<'_>]) -> Option<std::collections::HashSet<String>> {
+    use oxc_ast::ast::{
+        Declaration, IdentifierReference, ImportDeclarationSpecifier, ImportExpression,
+        MetaProperty, ThisExpression,
     };
+    use oxc_ast_visit::Visit;
+    use std::collections::{HashMap, HashSet};
+    const ESCAPES: &[&str] = &[
+        "require",
+        "module",
+        "exports",
+        "globalThis",
+        "global",
+        "window",
+        "self",
+        "eval",
+        "Function",
+        "arguments",
+        "define",
+    ];
+    #[derive(Default)]
+    struct Scan {
+        escapes: bool,
+        references: HashSet<String>,
+    }
+    impl<'a> Visit<'a> for Scan {
+        fn visit_this_expression(&mut self, _expression: &ThisExpression) {
+            self.escapes = true;
+        }
+        fn visit_import_expression(&mut self, _expression: &ImportExpression<'a>) {
+            self.escapes = true;
+        }
+        fn visit_meta_property(&mut self, _property: &MetaProperty<'a>) {
+            self.escapes = true;
+        }
+        fn visit_identifier_reference(&mut self, identifier: &IdentifierReference<'a>) {
+            if ESCAPES.contains(&identifier.name.as_str()) {
+                self.escapes = true;
+            }
+            self.references.insert(identifier.name.as_str().to_string());
+        }
+    }
+    let mut relative_imports: HashSet<String> = HashSet::new();
+    let mut declared: HashMap<String, Scan> = HashMap::new();
+    let mut seen: HashSet<String> = HashSet::new();
     for stmt in body {
         let declaration = match stmt {
-            Statement::FunctionDeclaration(func) => {
-                if let Some(id) = &func.id {
-                    let mut finder = ThisFinder { found: false };
-                    finder.visit_formal_parameters(&func.params);
-                    if let Some(body) = &func.body {
-                        finder.visit_function_body(body);
+            Statement::ImportDeclaration(import) => {
+                if import.source.value.starts_with('.') {
+                    for specifier in import.specifiers.iter().flatten() {
+                        let local = match specifier {
+                            ImportDeclarationSpecifier::ImportSpecifier(s) => &s.local,
+                            ImportDeclarationSpecifier::ImportDefaultSpecifier(s) => &s.local,
+                            ImportDeclarationSpecifier::ImportNamespaceSpecifier(s) => &s.local,
+                        };
+                        relative_imports.insert(local.name.as_str().to_string());
                     }
-                    note(id.name.as_str(), finder.found);
                 }
                 continue;
             }
-            Statement::VariableDeclaration(decl) => Some(&**decl),
-            Statement::ExportNamedDeclaration(export) => match &export.declaration {
-                Some(Declaration::FunctionDeclaration(func)) => {
-                    if let Some(id) = &func.id {
-                        let mut finder = ThisFinder { found: false };
-                        finder.visit_formal_parameters(&func.params);
-                        if let Some(body) = &func.body {
-                            finder.visit_function_body(body);
-                        }
-                        note(id.name.as_str(), finder.found);
-                    }
-                    continue;
-                }
-                Some(Declaration::VariableDeclaration(decl)) => Some(&**decl),
-                _ => None,
-            },
+            Statement::FunctionDeclaration(_)
+            | Statement::ClassDeclaration(_)
+            | Statement::VariableDeclaration(_) => stmt.as_declaration(),
+            Statement::ExportNamedDeclaration(export) => export.declaration.as_ref(),
             _ => None,
         };
-        let Some(decl) = declaration else { continue };
-        for declarator in &decl.declarations {
-            let Some(init) = &declarator.init else {
-                continue;
-            };
-            let mut finder = ThisFinder { found: false };
-            finder.visit_expression(init);
-            for identifier in declarator.id.get_binding_identifiers() {
-                note(identifier.name.as_str(), finder.found);
+        let Some(declaration) = declaration else {
+            continue;
+        };
+        let names: Vec<String> = match declaration {
+            Declaration::FunctionDeclaration(func) => func
+                .id
+                .iter()
+                .map(|id| id.name.as_str().to_string())
+                .collect(),
+            Declaration::ClassDeclaration(class) => class
+                .id
+                .iter()
+                .map(|id| id.name.as_str().to_string())
+                .collect(),
+            Declaration::VariableDeclaration(decl) => decl
+                .declarations
+                .iter()
+                .flat_map(|declarator| declarator.id.get_binding_identifiers())
+                .map(|id| id.name.as_str().to_string())
+                .collect(),
+            _ => Vec::new(),
+        };
+        let mut scan = Scan::default();
+        scan.visit_declaration(declaration);
+        for name in names {
+            if !seen.insert(name.clone()) {
+                return None;
             }
+            declared.insert(
+                name,
+                Scan {
+                    escapes: scan.escapes,
+                    references: scan.references.clone(),
+                },
+            );
         }
     }
-    out
+    let mut unsafe_names: HashSet<String> = declared
+        .iter()
+        .filter(|(_, scan)| {
+            scan.escapes
+                || scan
+                    .references
+                    .iter()
+                    .any(|reference| relative_imports.contains(reference))
+        })
+        .map(|(name, _)| name.clone())
+        .collect();
+    loop {
+        let before = unsafe_names.len();
+        for (name, scan) in &declared {
+            if !unsafe_names.contains(name)
+                && scan
+                    .references
+                    .iter()
+                    .any(|reference| reference != name && unsafe_names.contains(reference))
+            {
+                unsafe_names.insert(name.clone());
+            }
+        }
+        if unsafe_names.len() == before {
+            break;
+        }
+    }
+    Some(unsafe_names)
 }
 
 /// `module.exports` as a static member expression on the bare `module`
@@ -1189,6 +1268,7 @@ pub(crate) fn owner_from_variable_declarator(
             method_kind: TypeScriptMethodKind::Ordinary,
             class_default_export: false,
             default_object_member: false,
+            default_object_unsafe_siblings: Vec::new(),
             commonjs_default_export: false,
             commonjs_whole_function: false,
             module_entries: Vec::new(),
@@ -1245,6 +1325,7 @@ pub(crate) fn owner_from_function(
         method_kind: TypeScriptMethodKind::Ordinary,
         class_default_export: false,
         default_object_member: false,
+        default_object_unsafe_siblings: Vec::new(),
         commonjs_default_export: false,
         commonjs_whole_function: false,
         module_entries: Vec::new(),
@@ -1277,6 +1358,7 @@ pub(crate) fn owner_from_arrow(
         method_kind: TypeScriptMethodKind::Ordinary,
         class_default_export: false,
         default_object_member: false,
+        default_object_unsafe_siblings: Vec::new(),
         commonjs_default_export: false,
         commonjs_whole_function: false,
         module_entries: Vec::new(),
@@ -1347,6 +1429,7 @@ pub(crate) fn owner_from_method(
         },
         class_default_export: false,
         default_object_member: false,
+        default_object_unsafe_siblings: Vec::new(),
         commonjs_default_export: false,
         commonjs_whole_function: false,
         module_entries: Vec::new(),

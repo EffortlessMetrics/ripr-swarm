@@ -345,3 +345,80 @@ fn a_sibling_that_can_replace_the_member_through_this_credits_nothing() -> Resul
     );
     Ok(())
 }
+
+#[test]
+fn a_sibling_that_can_reach_the_object_without_this_credits_nothing() -> Result<(), String> {
+    // Routes to the anonymous default object that need no `this` (#13694
+    // review): CommonJS globals, a self-import, a dynamic import, or a
+    // helper that does one of those.
+    let test = test_with(&format!("  utils.extend();\n{CALL}"));
+    let stub = "() => ({ a: 1, b: 5, c: 4 })";
+    for (label, prelude, extend) in [
+        (
+            "require-self",
+            "",
+            format!("function extend(): void {{\n  require('./utils').default.merge = {stub};\n}}"),
+        ),
+        (
+            "exports-default",
+            "",
+            format!("function extend(): void {{\n  exports.default.merge = {stub};\n}}"),
+        ),
+        (
+            "self-import",
+            "import self from './utils';\n",
+            format!("function extend(): void {{\n  self.merge = {stub};\n}}"),
+        ),
+        (
+            "dynamic-import",
+            "",
+            format!(
+                "async function extend(): Promise<void> {{\n  (await import('./utils')).default.merge = {stub};\n}}"
+            ),
+        ),
+        (
+            "transitive-helper",
+            "",
+            format!(
+                "function patch(): void {{\n  module.exports.default.merge = {stub};\n}}\n\nfunction extend(): void {{\n  patch();\n}}"
+            ),
+        ),
+    ] {
+        let owner = format!(
+            "{prelude}{}",
+            OWNER.replace(
+                "export default { merge };",
+                &format!("{extend}\n\nexport default {{ merge, extend }};"),
+            )
+        );
+        assert_ne!(
+            class_of(label, &owner, &test)?,
+            ExposureClass::Exposed,
+            "{label}"
+        );
+    }
+    // The unsafe sibling withholds only when the test calls it: a test that
+    // calls `merge` alone keeps the single-member credit.
+    let owner = OWNER.replace(
+        "export default { merge };",
+        &format!("function extend(): void {{\n  exports.default.merge = {stub};\n}}\n\nexport default {{ merge, extend }};"),
+    );
+    assert_eq!(
+        class_of("unsafe-sibling-not-called", &owner, &test_with(CALL))?,
+        ExposureClass::Exposed
+    );
+    Ok(())
+}
+
+#[test]
+fn a_member_name_declared_twice_credits_nothing() -> Result<(), String> {
+    let owner = OWNER.replace(
+        "export default { merge };",
+        "var merge = (base: any, extra: any): any => ({ ...base, ...extra });\n\nexport default { merge };",
+    );
+    assert_ne!(
+        class_of("duplicate-name", &owner, &test_with(CALL))?,
+        ExposureClass::Exposed
+    );
+    Ok(())
+}

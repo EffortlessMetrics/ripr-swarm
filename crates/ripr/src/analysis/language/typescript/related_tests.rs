@@ -1840,6 +1840,7 @@ pub(crate) fn module_entry_owner(
             class_default_export: decorated.default_export,
             exported_as_default: false,
             default_object_member: false,
+            default_object_unsafe_siblings: Vec::new(),
             method_kind: TypeScriptMethodKind::Ordinary,
             module_entries: Vec::new(),
             params: Vec::new(),
@@ -1856,6 +1857,7 @@ pub(crate) fn module_entry_owner(
             owner_kind: OwnerKind::Method,
             exported_as_default: false,
             default_object_member: false,
+            default_object_unsafe_siblings: Vec::new(),
             method_kind,
             module_entries: Vec::new(),
             params: Vec::new(),
@@ -1871,6 +1873,7 @@ pub(crate) fn module_entry_owner(
         exported_as_default: entry.exported_as_default,
         class_default_export: false,
         default_object_member: false,
+        default_object_unsafe_siblings: Vec::new(),
         commonjs_default_export: false,
         commonjs_whole_function: false,
         method_kind: TypeScriptMethodKind::Ordinary,
@@ -3988,6 +3991,12 @@ fn import_references_owner_call(
             .default_member_only_locals_in_file
             .iter()
             .any(|(local, member)| *local == import.local && *member == owner.name)
+            && !test
+                .default_member_only_locals_in_file
+                .iter()
+                .any(|(local, member)| {
+                    *local == import.local && owner.default_object_unsafe_siblings.contains(member)
+                })
             && contains_member_call_name(body_text, &import.local, &owner.name);
     }
     // A default import (`import local from './owner'`) binds the owner
