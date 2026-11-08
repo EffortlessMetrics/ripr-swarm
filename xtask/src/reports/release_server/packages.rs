@@ -34,8 +34,8 @@ fn find_unique(root: &Path, name: &str) -> Result<PathBuf, String> {
             let path = entry
                 .map_err(|e| format!("read entry under {}: {e}", dir.display()))?
                 .path();
-            let metadata = fs::symlink_metadata(&path)
-                .map_err(|e| format!("stat {}: {e}", path.display()))?;
+            let metadata =
+                fs::symlink_metadata(&path).map_err(|e| format!("stat {}: {e}", path.display()))?;
             if metadata.is_dir() {
                 pending.push(path);
             } else if metadata.is_file() && path.file_name().and_then(|n| n.to_str()) == Some(name)
@@ -80,7 +80,9 @@ fn flat_member(name: &str) -> Result<&str, String> {
         || name.contains(['/', '\\', ':'])
         || name.starts_with('.')
     {
-        return Err(format!("archive member `{name}` is not a flat payload file"));
+        return Err(format!(
+            "archive member `{name}` is not a flat payload file"
+        ));
     }
     Ok(name)
 }
@@ -94,7 +96,9 @@ fn write_member(
 ) -> Result<PathBuf, String> {
     let name = flat_member(name.strip_prefix("./").unwrap_or(name))?;
     if size > MAX_PAYLOAD_FILE_BYTES {
-        return Err(format!("archive member `{name}` is {size} bytes, over the limit"));
+        return Err(format!(
+            "archive member `{name}` is {size} bytes, over the limit"
+        ));
     }
     if !seen.insert(name.to_string()) {
         return Err(format!("archive member `{name}` appears twice"));
@@ -108,7 +112,9 @@ fn write_member(
     let copied = std::io::copy(&mut reader.take(MAX_PAYLOAD_FILE_BYTES + 1), &mut out)
         .map_err(|e| format!("extract {name}: {e}"))?;
     if copied != size {
-        return Err(format!("archive member `{name}` declared {size} bytes, read {copied}"));
+        return Err(format!(
+            "archive member `{name}` declared {size} bytes, read {copied}"
+        ));
     }
     Ok(path)
 }
@@ -133,7 +139,10 @@ pub(super) fn extract_flat_archive(archive: &Path, kind: &str, dir: &Path) -> Re
     match kind {
         "tar.gz" => {
             let mut tar = tar::Archive::new(GzDecoder::new(file));
-            for entry in tar.entries().map_err(|e| format!("read tar entries: {e}"))? {
+            for entry in tar
+                .entries()
+                .map_err(|e| format!("read tar entries: {e}"))?
+            {
                 let mut entry = entry.map_err(|e| format!("read tar entry: {e}"))?;
                 let name = entry
                     .path()
@@ -146,8 +155,14 @@ pub(super) fn extract_flat_archive(archive: &Path, kind: &str, dir: &Path) -> Re
                 if !entry.header().entry_type().is_file() {
                     return Err(format!("archive member `{name}` is not a regular file"));
                 }
-                let size = entry.header().size().map_err(|e| format!("size {name}: {e}"))?;
-                let mode = entry.header().mode().map_err(|e| format!("mode {name}: {e}"))?;
+                let size = entry
+                    .header()
+                    .size()
+                    .map_err(|e| format!("size {name}: {e}"))?;
+                let mode = entry
+                    .header()
+                    .mode()
+                    .map_err(|e| format!("mode {name}: {e}"))?;
                 let path = write_member(dir, &mut seen, &name, size, &mut entry)?;
                 set_mode(&path, mode)?;
             }
@@ -158,7 +173,10 @@ pub(super) fn extract_flat_archive(archive: &Path, kind: &str, dir: &Path) -> Re
                 let mut entry = zip
                     .by_index(index)
                     .map_err(|e| format!("read zip entry {index}: {e}"))?;
-                let name = entry.name().to_string();
+                let name = entry
+                    .name()
+                    .map_err(|e| format!("read zip entry {index} name: {e}"))?
+                    .to_string();
                 if !entry.is_file() {
                     return Err(format!("archive member `{name}` is not a regular file"));
                 }
@@ -218,8 +236,8 @@ pub(super) fn produce_family(artifacts: &Path, out_dir: &Path) -> Result<(), Str
             Err(error) => failures.push(format!("{}: {error}", target.rust_target)),
         }
     }
-    let cleanup = fs::remove_dir_all(&staging)
-        .map_err(|e| format!("remove {}: {e}", staging.display()));
+    let cleanup =
+        fs::remove_dir_all(&staging).map_err(|e| format!("remove {}: {e}", staging.display()));
     if !failures.is_empty() {
         return Err(format!(
             "{} of {} targets failed to package:\n- {}",
@@ -300,7 +318,10 @@ mod tests {
         let out = root.join("tar");
         fs::create_dir(&out).map_err(|e| e.to_string())?;
         extract_flat_archive(&tarball, "tar.gz", &out)?;
-        assert_eq!(fs::read(out.join("ripr")).map_err(|e| e.to_string())?, b"native");
+        assert_eq!(
+            fs::read(out.join("ripr")).map_err(|e| e.to_string())?,
+            b"native"
+        );
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -328,7 +349,7 @@ mod tests {
         let root = temp("reject")?;
         let cases: [(&str, Vec<(&str, &[u8], u32)>); 3] = [
             ("nested", vec![("bin/ripr", b"x", 0o755)]),
-            ("dotdot", vec![("..", b"x", 0o644)]),
+            ("drive", vec![("c:ripr", b"x", 0o644)]),
             ("hidden", vec![(".ripr", b"x", 0o644)]),
         ];
         for (label, members) in cases {
@@ -394,8 +415,11 @@ mod tests {
             .map_err(|e| e.to_string())?;
         let found = target_inputs(&root, "0.11.0", &target)?;
         assert_eq!(found.archive, archive_dir.join(archive_name));
-        fs::write(payload_dir.join("v0.11.0").join("payload-identity.json"), b"{}")
-            .map_err(|e| e.to_string())?;
+        fs::write(
+            payload_dir.join("v0.11.0").join("payload-identity.json"),
+            b"{}",
+        )
+        .map_err(|e| e.to_string())?;
         let Err(_) = target_inputs(&root, "0.11.0", &target) else {
             return Err("ambiguous payload identity accepted".to_string());
         };
