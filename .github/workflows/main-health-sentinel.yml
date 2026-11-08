@@ -97,9 +97,12 @@ jobs:
       # the latest completed, non-cancelled main-push run of each gate instead
       # of building anything again: zero extra runner time. An unreadable or
       # absent gate run is shown as `unknown` and claims neither red nor green;
-      # the probe above stays the fail-closed half of the verdict.
+      # the probe above stays the fail-closed half of the verdict. Each call
+      # is bounded and the step never blocks the judge: a hung or failed read
+      # leaves `unknown` rows (or none) and the probe evidence is still judged.
       - name: Read the latest completed main push gates
         timeout-minutes: 5
+        continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}
@@ -109,7 +112,7 @@ jobs:
           mkdir -p "$d"
           : > "$d/gates.tsv"
           for wf in routed-rust.yml ci.yml; do
-            run="$(gh api -X GET "repos/$REPOSITORY/actions/workflows/$wf/runs" -f branch=main -f event=push -f status=completed -f per_page=100 --jq '[.workflow_runs[] | select(.conclusion != "cancelled" and .conclusion != "skipped")][0] // empty | [.id, .conclusion, .head_sha, .html_url] | @tsv' 2>/dev/null)"
+            run="$(timeout 60 gh api -X GET "repos/$REPOSITORY/actions/workflows/$wf/runs" -f branch=main -f event=push -f status=completed -f per_page=100 --jq '[.workflow_runs[] | select(.conclusion != "cancelled" and .conclusion != "skipped")][0] // empty | [.id, .conclusion, .head_sha, .html_url] | @tsv' 2>/dev/null)"
             if [ -z "$run" ]; then
               printf '%s\tunknown\t-\t-\t-\t-\n' "$wf" >> "$d/gates.tsv"
               continue
@@ -117,7 +120,7 @@ jobs:
             IFS=$'\t' read -r id conclusion sha url <<<"$run"
             failed="-"
             if [ "$conclusion" != success ]; then
-              failed="$(gh api "repos/$REPOSITORY/actions/runs/$id/jobs?per_page=100" --jq '[.jobs[] | select(.conclusion == "failure" or .conclusion == "timed_out") | .name] | join(", ")' 2>/dev/null)"
+              failed="$(timeout 60 gh api "repos/$REPOSITORY/actions/runs/$id/jobs?per_page=100" --jq '[.jobs[] | select(.conclusion == "failure" or .conclusion == "timed_out") | .name] | join(", ")' 2>/dev/null)"
             fi
             printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$wf" "$conclusion" "${sha::7}" "$id" "$url" "${failed:-unreadable}" >> "$d/gates.tsv"
           done
@@ -132,6 +135,9 @@ jobs:
           d="$RUNNER_TEMP/main-health-sentinel"
           [ -f "$d/gates.tsv" ] || : > "$d/gates.tsv"
           echo 0 > "$d/gates.red"
+          echo 0 > "$d/gates.unknown"
+          # Fewer than two rows means a read hung or failed mid-way.
+          [ "$(grep -c . "$d/gates.tsv" || true)" -ge 2 ] || echo 1 > "$d/gates.unknown"
           : > "$d/gates.md"
           : > "$d/gates.fp"
           { echo "### Latest completed main push gates"; echo; echo "| Gate | Conclusion | Run and failed jobs |"; echo "| --- | --- | --- |"; } >> "$GITHUB_STEP_SUMMARY"
@@ -139,7 +145,8 @@ jobs:
             [ -n "$wf" ] || continue
             echo "| $wf | $conclusion | $sha $url failed jobs: $failed |" >> "$GITHUB_STEP_SUMMARY"
             case "$conclusion" in
-              success|unknown) ;;
+              success) ;;
+              unknown) echo 1 > "$d/gates.unknown" ;;
               *)
                 echo 1 > "$d/gates.red"
                 printf -- '- latest completed main push `%s`: %s at `%s` (%s); failed jobs: %s\n' "$wf" "$conclusion" "$sha" "$url" "$failed" >> "$d/gates.md"
@@ -194,7 +201,8 @@ jobs:
 
       # The durable record. Red: open the tracker once, then append one
       # comment per confirming probe. Green: comment the recovering run and
-      # close. Status files are read with the same 124 fallback as the judge,
+      # close, but only when both gate reads succeeded: an unknown gate is not
+      # recovery, so it keeps an open tracker open. Status files are read with the same 124 fallback as the judge,
       # so a timed-out probe still lands its tracker record. Skipped only
       # when the judge never ran (checkout, toolchain, cache): that failure
       # is visible as a red run and claims no main verdict.
@@ -238,7 +246,7 @@ jobs:
                 gh api "repos/$REPOSITORY/issues/$number/comments" -f body="$body" > /dev/null
               fi
             fi
-          elif [ -n "$number" ]; then
+          elif [ -n "$number" ] && [ "$(cat "$RUNNER_TEMP/main-health-sentinel/gates.unknown" 2>/dev/null || echo 1)" = 0 ]; then
             gh api "repos/$REPOSITORY/issues/$number/comments" -f body="Recovered: the probe and the latest completed main push gates passed on main at \`${GITHUB_SHA::7}\` ($run_url). Closing the tracker." > /dev/null
             gh api -X PATCH "repos/$REPOSITORY/issues/$number" -f state=closed > /dev/null
           fi

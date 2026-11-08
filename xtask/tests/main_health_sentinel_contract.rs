@@ -284,5 +284,20 @@ fn sentinel_judges_the_latest_completed_main_push_gates() -> Result<(), String> 
         &lines,
         "grep -qxF \"$fingerprint\"",
         "a red tracker gets one comment per new piece of evidence, not one per fire",
+    )?;
+    require(
+        &lines,
+        "continue-on-error: true",
+        "a hung or failed gate read must not skip the probe judge and tracker",
+    )?;
+    require(
+        &lines,
+        "run=\"$(timeout 60 gh api -X GET",
+        "each gate read is bounded so a hung API call becomes an unknown row",
+    )?;
+    require(
+        &lines,
+        "elif [ -n \"$number\" ] && [ \"$(cat \"$RUNNER_TEMP/main-health-sentinel/gates.unknown\" 2>/dev/null || echo 1)\" = 0 ]; then",
+        "an unknown gate is not recovery and must not close an open tracker",
     )
 }

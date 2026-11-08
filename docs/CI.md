@@ -1467,7 +1467,8 @@ with `actions: read`. It lists their failed jobs in the summary and the tracker
 and turns the verdict red when either failed. It rebuilds, re-runs and
 dispatches nothing, so it adds no runner time beyond a few API reads. An
 unreadable or absent gate run shows as `unknown` and claims neither red nor
-green. The probe stays the fail-closed half. A red tracker gets one comment
+green, so it never closes an open tracker. Each read is bounded and the read
+step cannot block the judge. The probe stays the fail-closed half. A red tracker gets one comment
 per new piece of evidence (a fingerprint of the probe result and the failing
 gate run ids), not one per fire. Gate-level detection latency is the gate
 cadence plus up to thirty minutes. The
