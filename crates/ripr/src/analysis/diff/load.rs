@@ -193,7 +193,7 @@ pub(crate) fn load_diff_with_effective_base_core(
     // the caller toward --base.
     if !root.is_dir() {
         return Err(format!(
-            "repository root {} does not exist or is not a directory",
+            "repository root {} does not exist or is not a directory; pass `--root <dir>` naming an existing repository",
             root.display()
         )
         .into());
