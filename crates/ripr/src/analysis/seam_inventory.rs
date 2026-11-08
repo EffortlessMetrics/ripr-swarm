@@ -2167,6 +2167,36 @@ pub(crate) fn inventory_diff_scoped_classified_seams_at_with_config(
     )
 }
 
+/// The diff-scoped inventory for a lookup that reads one seam by id (#13884):
+/// the same scope and seam walk as
+/// [`inventory_diff_scoped_classified_seams_at_with_config`] with no owner
+/// names, but only the seam whose id is `seam_id` receives evidence and
+/// classification. Evidence is per seam, so that seam's class and evidence
+/// equal its entry in the whole-file result, and an id the file does not
+/// hold yields no entry in either. Without this, a `--at` disclosure lookup
+/// in a large file paid for classifying every other seam in that file.
+pub(crate) fn inventory_diff_scoped_seam_at_with_config(
+    root: &Path,
+    config: &RiprConfig,
+    changed_files: &[PathBuf],
+    seam_id: &str,
+) -> Result<ScopedClassifiedSeamInventory, String> {
+    let first = |seam: &RepoSeam| seam.id().as_str() == seam_id;
+    let stages = DiffScopeEvidenceStages {
+        first: &first,
+        sufficient: &|_| true,
+        reuse: None,
+    };
+    inventory_diff_scoped_classified_seams_inner(
+        root,
+        config,
+        DiffScopeInputs::canonical(changed_files, &[]),
+        !no_impact_fast_path_disabled(),
+        Some(&stages),
+        None,
+    )
+}
+
 /// Whether a seam can be named by a changed finding's gap: it sits in a
 /// changed file, or its owner is exactly a changed gap owner. Every
 /// seam-to-finding join the card binding and the shared repair validator run
@@ -10348,6 +10378,103 @@ marker = "libtest_mimic::Trial"
         let bound_all = render(bound.classified.iter().collect())?;
         assert_eq!(bound_all, full_changed);
         Ok(())
+    }
+
+    /// A file holding `functions` predicate seams, every one called by a test
+    /// with a different oracle, so the seams do not all share one class.
+    fn many_seams_layout(root: &Path, functions: usize) -> Result<(), String> {
+        write_file(
+            &root.join("Cargo.toml"),
+            "[package]\nname = 'one_seam_fixture'\nversion = '0.1.0'\n\n[workspace]\n",
+        )?;
+        write_file(&root.join("src/lib.rs"), "pub mod limits;\n")?;
+        let mut source = String::new();
+        let mut tests = String::new();
+        for n in 0..functions {
+            source.push_str(&format!(
+                "pub fn over_{n}(value: i32) -> bool {{\n    value > {n}\n}}\n"
+            ));
+            let oracle = if n % 2 == 0 {
+                format!("assert!(one_seam_fixture::limits::over_{n}({}));", n + 1)
+            } else {
+                format!("let _ = one_seam_fixture::limits::over_{n}({n});")
+            };
+            tests.push_str(&format!(
+                "#[test]\nfn over_{n}_checks() {{\n    {oracle}\n}}\n"
+            ));
+        }
+        write_file(&root.join("src/limits.rs"), &source)?;
+        write_file(&root.join("tests/limits.rs"), &tests)?;
+        Ok(())
+    }
+
+    /// #13884: a by-id lookup evaluates exactly the selected seam however
+    /// many seams the file holds, and that seam's classified entry is
+    /// byte-identical to its entry in the whole-file inventory.
+    #[test]
+    fn one_seam_inventory_evaluates_only_the_selected_seam() -> Result<(), String> {
+        for functions in [3usize, 9] {
+            let root = make_tempdir(&format!("one-seam-{functions}"))?;
+            many_seams_layout(&root, functions)?;
+            let config = RiprConfig::default();
+            let changed = [PathBuf::from("src/limits.rs")];
+
+            evaluation_probe::reset();
+            let full = inventory_diff_scoped_classified_seams_at_with_config(
+                &root,
+                &config,
+                &changed,
+                &[],
+            )?;
+            let full_evaluated = evaluation_probe::evaluated();
+            // Fixture premises: at least one seam per function, all evaluated by
+            // the whole-file path, and more than one class among them.
+            let seams = full.classified.len();
+            assert!(seams >= functions, "{:?}", class_names(&full));
+            assert_eq!(full_evaluated, seams);
+            let classes = full
+                .classified
+                .iter()
+                .map(|entry| entry.class.as_str())
+                .collect::<BTreeSet<_>>();
+            assert!(classes.len() > 1, "fixture classes: {classes:?}");
+
+            for entry in &full.classified {
+                let id = entry.seam.id().as_str();
+                evaluation_probe::reset();
+                let one = inventory_diff_scoped_seam_at_with_config(&root, &config, &changed, id)?;
+                assert_eq!(evaluation_probe::evaluated(), 1, "{functions} seams, {id}");
+                assert_eq!(one.unevaluated_seams, seams - 1);
+                assert!(!one.evidence_incomplete());
+                let one_json = serde_json::to_value(&one.classified)
+                    .map_err(|error| format!("serialize: {error}"))?;
+                let full_json =
+                    serde_json::to_value([entry]).map_err(|error| format!("serialize: {error}"))?;
+                assert_eq!(one_json, full_json, "{functions} seams, {id}");
+            }
+
+            // Negative control: an id the file does not hold evaluates nothing
+            // and yields no entry, as the whole-file lookup would.
+            evaluation_probe::reset();
+            let missing = inventory_diff_scoped_seam_at_with_config(
+                &root,
+                &config,
+                &changed,
+                "seam-id-not-in-file",
+            )?;
+            assert_eq!(evaluation_probe::evaluated(), 0);
+            assert!(missing.classified.is_empty());
+            let _ = std::fs::remove_dir_all(&root);
+        }
+        Ok(())
+    }
+
+    fn class_names(inventory: &ScopedClassifiedSeamInventory) -> Vec<(String, &'static str)> {
+        inventory
+            .classified
+            .iter()
+            .map(|entry| (entry.seam.id().as_str().to_string(), entry.class.as_str()))
+            .collect()
     }
 
     /// #9210: an unchanged refresh reuses the classified result; any change
