@@ -9094,9 +9094,16 @@ mod tests {
             })
         };
         let packages = ["services/a", "services/b"];
-        let cwd = std::env::current_dir().unwrap_or_default();
+        use crate::agent::loop_commands::{bound_root_path, root_path_display, shell_arg};
         let picked = render_with(".", &packages, "services/b/src/calc.py");
-        let expected = format!("ripr check --root {}/services/b`", cwd.display());
+        // Spelled through the same helpers so the expectation holds for any
+        // cwd and host separator.
+        let expected = format!(
+            "ripr check --root {}`",
+            shell_arg(&root_path_display(&bound_root_path(Path::new(
+                "services/b"
+            ))))
+        );
         assert!(
             picked.contains(&expected),
             "must pick the changed package under the bound cwd; got:\n{picked}"
@@ -9105,17 +9112,20 @@ mod tests {
             !picked.contains("services/a`.") && !picked.contains("--root services/"),
             "got:\n{picked}"
         );
-        let absolute = render_with("/work/mono", &packages, "services/a/x.py");
-        assert!(
-            absolute.contains("ripr check --root /work/mono/services/a`"),
-            "got:\n{absolute}"
-        );
-        // A hostile directory name must arrive shell-quoted (security).
-        let hostile = render_with("/work/mono", &["$(touch pwned)"], "$(touch pwned)/x.py");
-        assert!(
-            hostile.contains("--root '/work/mono/$(touch pwned)'`"),
-            "got:\n{hostile}"
-        );
+        // `/work/mono` is only absolute off Windows (no drive prefix).
+        if !cfg!(windows) {
+            let absolute = render_with("/work/mono", &packages, "services/a/x.py");
+            assert!(
+                absolute.contains("ripr check --root /work/mono/services/a`"),
+                "got:\n{absolute}"
+            );
+            // A hostile directory name must arrive shell-quoted (security).
+            let hostile = render_with("/work/mono", &["$(touch pwned)"], "$(touch pwned)/x.py");
+            assert!(
+                hostile.contains("--root '/work/mono/$(touch pwned)'`"),
+                "got:\n{hostile}"
+            );
+        }
         let unmatched = render_with(".", &packages, "tools/x.py");
         assert!(
             unmatched.contains("`services/a`, `services/b`")
