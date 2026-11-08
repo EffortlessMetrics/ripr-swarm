@@ -31,7 +31,7 @@ pub(crate) const OUTCOME_SCHEMA_VERSION: &str = "0.1";
 pub(crate) const PRODUCER_TOOL: &str = "ripr";
 /// Copied from the producer claim-boundary constant so a random object
 /// with the right keys is not admitted. Keep in lockstep with
-/// `crates/ripr/src/analysis_outcome.rs`.
+/// `crates/ripr-contract/src/analysis_outcome.rs`.
 pub(crate) const OUTCOME_CLAIM_BOUNDARY: &str = "Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim.";
 /// `run_limitations[].run_status` when the findings array is a prefix.
 pub(crate) const FINDINGS_BOUND_STATUS: &str = "limited_findings_bound";
@@ -49,7 +49,7 @@ const INCOMPLETE_KINDS: [&str; 3] = [
     "analysis_failed",
 ];
 /// The only typed outcome limitations a complete kind may carry
-/// (`validate_outcome` in `crates/ripr/src/analysis_outcome.rs`).
+/// (`validate_outcome` in `crates/ripr-contract/src/analysis_outcome.rs`).
 const COMPLETE_KIND_ALLOWED_LIMITATIONS: [&str; 2] = ["eol_only_churn", "verification_only_change"];
 
 /// Identity the measured child was asked to analyze.

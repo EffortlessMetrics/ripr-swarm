@@ -333,7 +333,7 @@ surface carry the same envelope without changing the legacy gap-ledger route.
 ## Implementation Mapping
 
 The producer contract is implemented in
-`crates/ripr/src/analysis_outcome.rs`; parser-to-pipeline projection is in
+`crates/ripr-contract/src/analysis_outcome.rs`; parser-to-pipeline projection is in
 `crates/ripr/src/analysis/` and `crates/ripr/src/analysis/pipeline.rs`.
 Human rendering is in `crates/ripr/src/output/human.rs`, while JSON/status
 projection is in `crates/ripr/src/output/json/` and the related output

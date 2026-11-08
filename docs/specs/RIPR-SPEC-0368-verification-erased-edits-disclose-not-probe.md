@@ -169,7 +169,7 @@ See `.ripr/traceability.d/verification-erased-edits-0368.toml`.
 - `crates/ripr/src/analysis/probes/verification_erased.rs`: recognition.
 - `crates/ripr/src/analysis/probes/diff.rs`: probe suppression.
 - `crates/ripr/src/analysis/language/rust/mod.rs`: the aggregate limitation.
-- `crates/ripr/src/analysis_outcome.rs`: `VerificationOnlyChange` and the
+- `crates/ripr-contract/src/analysis_outcome.rs`: `VerificationOnlyChange` and the
   advisory-disclosure rule shared with `EolOnlyChurn`.
 
 ## Metrics
