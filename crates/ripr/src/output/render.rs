@@ -229,6 +229,7 @@ pub(crate) fn render_check_with_config_and_progress(
                     ts_guidance.as_ref(),
                     python_guidance.as_ref(),
                     generated_skip.as_ref(),
+                    &report.evidence_limitations,
                     &artifact_context,
                 )
             },
@@ -263,17 +264,19 @@ pub(crate) fn render_check_with_config_and_progress(
                     ts_guidance.as_ref(),
                     python_guidance.as_ref(),
                     generated_skip.as_ref(),
+                    &report.evidence_limitations,
                 ))
             },
         ),
         OutputFormat::RepoSarif => repo_inventory_with_progress(
             progress,
-            || analysis::inventory_classified_seams_at_with_config(&output.root, config),
-            |(classified, limit_info)| {
+            || analysis::inventory_classified_seams_report_at_with_config(&output.root, config),
+            |report| {
                 let results_budget = sarif::sarif_results_byte_budget()?;
                 Ok(sarif::render_repo_seams_sarif_with_budget(
-                    &classified,
-                    limit_info.as_ref(),
+                    &report.classified,
+                    report.limit_info.as_ref(),
+                    &report.evidence_limitations,
                     config,
                     results_budget,
                 ))
@@ -281,9 +284,14 @@ pub(crate) fn render_check_with_config_and_progress(
         ),
         OutputFormat::RepoSarifCompact => repo_inventory_with_progress(
             progress,
-            || analysis::inventory_classified_seams_at_with_config(&output.root, config),
-            |(classified, limit_info)| {
-                sarif::render_repo_seams_sarif_compact(&classified, limit_info.as_ref(), config)
+            || analysis::inventory_classified_seams_report_at_with_config(&output.root, config),
+            |report| {
+                sarif::render_repo_seams_sarif_compact(
+                    &report.classified,
+                    report.limit_info.as_ref(),
+                    &report.evidence_limitations,
+                    config,
+                )
             },
         ),
         OutputFormat::AgentSeamPacketsJson => repo_inventory_with_progress(
@@ -2405,6 +2413,176 @@ fn happy_path_passes() {
         let mut output = check_output_with(findings);
         output.root = root;
         Ok(output)
+    }
+
+    /// #13340: a repo-exposure render whose seam-evidence warm failed reports
+    /// `limited_seam_evidence` with one pass-wide `producer_failure`
+    /// limitation instead of a complete inventory of opaque stand-ins; a
+    /// healthy render stays `complete` with no limitation.
+    #[test]
+    fn repo_exposure_json_discloses_a_failed_evidence_warm() -> Result<(), String> {
+        use crate::analysis::test_grip_evidence::WarmPanicGuard;
+        let render = |output: &CheckOutput| -> Result<serde_json::Value, String> {
+            let rendered = render_check_with_config(
+                output,
+                &OutputFormat::RepoExposureJson,
+                &RiprConfig::default(),
+            )?;
+            serde_json::from_str(&rendered).map_err(|err| format!("parse repo exposure: {err}"))
+        };
+
+        // Unarmed control on its own root: its cached healthy walk cannot
+        // answer the armed runs.
+        let control_output = check_output_with_temp_seam_workspace(Vec::new())?;
+        let control = render(&control_output)?;
+        assert_eq!(control["run_status"], "complete");
+        assert!(control.get("limitations").is_none(), "{control}");
+        let control_seams = control["seams"].as_array().map_or(0, Vec::len);
+        assert!(control_seams > 0, "fixture must classify seams: {control}");
+        remove_temp_root(&control_output.root)?;
+
+        for point in [1u8, 2u8] {
+            let output = check_output_with_temp_seam_workspace(Vec::new())?;
+            let document = {
+                let _armed = WarmPanicGuard::arm(point);
+                render(&output)?
+            };
+            assert_eq!(
+                document["run_status"], "limited_seam_evidence",
+                "point {point}: {document}"
+            );
+            let limitations = document["limitations"]
+                .as_array()
+                .ok_or_else(|| format!("point {point}: limitations missing: {document}"))?;
+            assert_eq!(limitations.len(), 1, "point {point}: {document}");
+            assert_eq!(limitations[0]["category"], "producer_failure");
+            assert_eq!(limitations[0]["scope"], "pass_wide");
+            assert!(limitations[0].get("path").is_none(), "{document}");
+            assert!(
+                limitations[0]["repair_route"]
+                    .as_str()
+                    .is_some_and(|route| !route.is_empty()),
+                "point {point}: {document}"
+            );
+            remove_temp_root(&output.root)?;
+        }
+        Ok(())
+    }
+
+    /// #13340: a repo-sarif render whose seam-evidence warm failed reports
+    /// `limited_seam_evidence`, one pass-wide `producer_failure` limitation
+    /// and a warning invocation notification; the healthy control stays
+    /// `complete` with no invocations.
+    #[test]
+    fn repo_sarif_discloses_a_failed_evidence_warm() -> Result<(), String> {
+        use crate::analysis::test_grip_evidence::WarmPanicGuard;
+        let render =
+            |output: &CheckOutput, format: &OutputFormat| -> Result<serde_json::Value, String> {
+                let rendered = render_check_with_config(output, format, &RiprConfig::default())?;
+                serde_json::from_str(&rendered).map_err(|err| format!("parse repo sarif: {err}"))
+            };
+
+        let control_output = check_output_with_temp_seam_workspace(Vec::new())?;
+        let control = render(&control_output, &OutputFormat::RepoSarif)?;
+        let run = &control["runs"][0];
+        assert_eq!(run["properties"]["run_status"], "complete", "{control}");
+        assert!(run["properties"].get("limitations").is_none(), "{control}");
+        assert!(run.get("invocations").is_none(), "{control}");
+        assert!(
+            run["results"].as_array().is_some_and(|r| !r.is_empty()),
+            "fixture must classify seams: {control}"
+        );
+        remove_temp_root(&control_output.root)?;
+
+        for (point, format) in [
+            (1u8, OutputFormat::RepoSarif),
+            (2u8, OutputFormat::RepoSarifCompact),
+        ] {
+            let output = check_output_with_temp_seam_workspace(Vec::new())?;
+            let document = {
+                let _armed = WarmPanicGuard::arm(point);
+                render(&output, &format)?
+            };
+            let run = &document["runs"][0];
+            assert_eq!(
+                run["properties"]["run_status"], "limited_seam_evidence",
+                "point {point}: {document}"
+            );
+            let limitations = run["properties"]["limitations"]
+                .as_array()
+                .ok_or_else(|| format!("point {point}: limitations missing: {document}"))?;
+            assert_eq!(limitations.len(), 1, "point {point}: {document}");
+            assert_eq!(limitations[0]["category"], "producer_failure");
+            assert_eq!(limitations[0]["scope"], "pass_wide");
+            assert!(limitations[0].get("path").is_none(), "{document}");
+            assert!(
+                limitations[0]["repair_route"]
+                    .as_str()
+                    .is_some_and(|route| !route.is_empty()),
+                "point {point}: {document}"
+            );
+            let invocation = &run["invocations"][0];
+            assert_eq!(invocation["executionSuccessful"], true, "{document}");
+            let notifications = invocation["toolExecutionNotifications"]
+                .as_array()
+                .ok_or_else(|| format!("point {point}: notifications missing: {document}"))?;
+            assert_eq!(notifications.len(), 1, "{document}");
+            assert_eq!(notifications[0]["level"], "warning");
+            assert_eq!(
+                notifications[0]["descriptor"]["id"],
+                run["tool"]["driver"]["notifications"][0]["id"],
+                "{document}"
+            );
+            assert_eq!(
+                notifications[0]["properties"]["category"],
+                "producer_failure"
+            );
+            remove_temp_root(&output.root)?;
+        }
+        Ok(())
+    }
+
+    /// #13340: the repo-exposure Markdown discloses a failed seam-evidence
+    /// warm in its Limitations section; the healthy control has no note.
+    #[test]
+    fn repo_exposure_md_discloses_a_failed_evidence_warm() -> Result<(), String> {
+        use crate::analysis::test_grip_evidence::WarmPanicGuard;
+        let render = |output: &CheckOutput| -> Result<String, String> {
+            render_check_with_config(
+                output,
+                &OutputFormat::RepoExposureMd,
+                &RiprConfig::default(),
+            )
+        };
+
+        // Unarmed control on its own root: its cached healthy walk cannot
+        // answer the armed runs.
+        let control_output = check_output_with_temp_seam_workspace(Vec::new())?;
+        let control = render(&control_output)?;
+        assert!(control.contains("| seams_total |"), "{control}");
+        assert!(!control.contains("Seam evidence unavailable"), "{control}");
+        assert!(!control.contains("producer_failure"), "{control}");
+        remove_temp_root(&control_output.root)?;
+
+        for point in [1u8, 2u8] {
+            let output = check_output_with_temp_seam_workspace(Vec::new())?;
+            let md = {
+                let _armed = WarmPanicGuard::arm(point);
+                render(&output)?
+            };
+            assert!(md.contains("## Limitations"), "point {point}: {md}");
+            assert!(
+                md.contains("> Seam evidence unavailable (producer_failure;"),
+                "point {point}: {md}"
+            );
+            assert!(md.contains("scope: pass_wide"), "point {point}: {md}");
+            assert!(
+                md.contains("not a complete inventory result"),
+                "point {point}: {md}"
+            );
+            remove_temp_root(&output.root)?;
+        }
+        Ok(())
     }
 
     fn check_output_with_temp_seam_workspace(

@@ -409,6 +409,20 @@ fn render_agent_start_json(written: &AgentStartWritten) -> Result<String, String
     output::json::render_pretty_with_newline(&value, "agent start")
 }
 
+/// The one agent-side inventory load (#13340). A walk whose evidence warm
+/// failed carries opaque stand-ins for every seam, so no agent packet, start,
+/// before phase or snapshot may be built from it: the shared
+/// `require_complete_evidence` owner refuses with the `producer_failure` error.
+fn complete_agent_seam_inventory(
+    root: &Path,
+    config: &RiprConfig,
+    consumer: &str,
+) -> Result<analysis::ClassifiedSeamsReport, String> {
+    let report = analysis::inventory_classified_seams_report_at_with_config(root, config)?;
+    report.require_complete_evidence(consumer)?;
+    Ok(report)
+}
+
 /// Files written by `agent start` and the first missing-input command.
 struct AgentStartWritten {
     paths: Vec<PathBuf>,
@@ -418,7 +432,7 @@ struct AgentStartWritten {
 fn write_agent_start(options: AgentStartOptions) -> Result<AgentStartWritten, CoreError> {
     ensure_command_root(&options.root, "agent start")?;
     let (input, config) = load_root_input_and_config(&options.root)?;
-    let report = analysis::inventory_classified_seams_report_at_with_config(&input.root, &config)?;
+    let report = complete_agent_seam_inventory(&input.root, &config, "agent start")?;
     write_agent_start_with_report(&options, &input, &config, &report)
 }
 
@@ -944,7 +958,7 @@ fn render_agent_packet_with_context(
     let seam_id = seam_id.as_str();
     let config =
         load_for_root(&options.root).map_err(|err| config_load_refusal(&options.root, err))?;
-    let report = analysis::inventory_classified_seams_report_at_with_config(&options.root, &config)
+    let report = complete_agent_seam_inventory(&options.root, &config, "agent packet")
         .map_err(CoreError::from)?;
     render_agent_packet_for_seam_with_report(&options.root, seam_id, &config, &report, context)
 }
@@ -2351,6 +2365,7 @@ fn run_agent_repair_phase(
         edit_authorization,
         verify_authorization,
         verify_rollback,
+        test_result,
         store,
         json,
         quiet,
@@ -2435,9 +2450,10 @@ fn run_agent_repair_phase(
             // workflow artifact, so F15-12 still holds.
             let packet_root = crate::agent::loop_commands::bound_root(&root.to_string_lossy());
             let (before_input, before_config) = load_root_input_and_config(&root)?;
-            let before_report = analysis::inventory_classified_seams_report_at_with_config(
+            let before_report = complete_agent_seam_inventory(
                 &before_input.root,
                 &before_config,
+                "agent before phase",
             )?;
             let packet = render_agent_packet_for_seam_with_report(
                 &root,
@@ -2850,6 +2866,35 @@ fn run_agent_repair_phase(
                     }
                 };
 
+            // #13203 slice B: a caller-supplied focused test result is
+            // validated against this attempt before anything is finished, so
+            // a refused result leaves the attempt awaiting its edit. ripr
+            // does not run the tests; it checks the claim's shape, its binding
+            // to this attempt and the HEAD this phase evaluates, and that a
+            // test ran in the selected file or inline module.
+            let focused_run = match test_result.as_deref() {
+                None => None,
+                Some(path) => {
+                    match validate_focused_run_input(
+                        &root,
+                        store_ref,
+                        &attempt.attempt_id,
+                        &cage_policy,
+                        path,
+                    ) {
+                        Ok(record) => Some(record),
+                        Err(error) => {
+                            refusal.narrate(format!("focused test result refused: {error}"));
+                            refusal.typed = true;
+                            return Err(format!(
+                                "repair attempt `{}` refused the focused test result: {error}; the attempt is unchanged, so fix the result and rerun `ripr agent repair --phase after --attempt <id> --test-result FILE`",
+                                attempt.attempt_id.as_str()
+                            ));
+                        }
+                    }
+                }
+            };
+
             // Review summaries consume the canonical diff-scoped producer
             // outcome. Generate it from the same current root before issuing
             // the receipt so the built-in repair route cannot report a clean
@@ -3027,6 +3072,11 @@ fn run_agent_repair_phase(
                 // the typed failure envelope and withdraw this phase's
                 // shared artifacts instead of the success-shaped document.
                 if cage_after.verdict.status != crate::edit_cage::EditCageVerdictStatus::Compliant {
+                    if focused_run.is_some() && !quiet {
+                        eprintln!(
+                            "ripr: focused test result not recorded: the edit cage did not finish compliant"
+                        );
+                    }
                     let finished_state =
                         crate::app::repair_attempt::repair_attempt_state_for_finish(&cage_after);
                     refusal.code = Some(
@@ -3104,6 +3154,9 @@ fn run_agent_repair_phase(
                     let gap_after_path = root
                         .join("target/ripr/workflow")
                         .join(crate::app::gap_bound_repair::GAP_BOUND_AFTER_SNAPSHOT_FILE);
+                    let focused_path = root
+                        .join("target/ripr/reports")
+                        .join(crate::app::focused_run::FOCUSED_RUN_ARTIFACT_FILE);
                     let mut sources = vec![
                         crate::app::repair_attempt::BeforeArtifactSource {
                             role: crate::app::repair_attempt::TERMINAL_RECEIPT_ROLE,
@@ -3120,12 +3173,45 @@ fn run_agent_repair_phase(
                             path: &gap_after_path,
                         });
                     }
-                    crate::app::repair_attempt::retain_terminal_evidence_from(
+                    // A compliant finish stages the normalized caller-reported
+                    // focused-run record beside the receipt and verify
+                    // results; retention below is what commits it.
+                    if let Some(record) = &focused_run
+                        && cage_after.verdict.status
+                            == crate::edit_cage::EditCageVerdictStatus::Compliant
+                    {
+                        output::file_write::write(&focused_path, &record.render()?).map_err(
+                            |error| {
+                                format!(
+                                    "publish {} failed: {error}; check you can write to that path, then rerun",
+                                    focused_path.display()
+                                )
+                            },
+                        )?;
+                        sources.push(crate::app::repair_attempt::BeforeArtifactSource {
+                            role: crate::app::repair_attempt::TERMINAL_FOCUSED_RUN_ROLE,
+                            path: &focused_path,
+                        });
+                    }
+                    let retained = crate::app::repair_attempt::retain_terminal_evidence_from(
                         &root,
                         store_ref,
                         &attempt.attempt_id,
                         &sources,
-                    )?;
+                    );
+                    if retained.is_err() && focused_run.is_some() {
+                        // The one-slot staging file is not evidence until
+                        // retention commits it; do not leave it behind.
+                        let _ = std::fs::remove_file(&focused_path);
+                    }
+                    retained?;
+                    if let Some(record) = &focused_run
+                        && cage_after.verdict.status
+                            == crate::edit_cage::EditCageVerdictStatus::Compliant
+                        && !quiet
+                    {
+                        eprintln!("ripr: focused test result recorded: {}", record.summary());
+                    }
                 }
 
                 // The status report the finished after phase embeds in its
@@ -3375,7 +3461,7 @@ fn render_agent_analysis_outcome(root: &Path) -> Result<Vec<u8>, String> {
 
 fn write_agent_repo_exposure_snapshot(root: &Path, path: &Path) -> Result<Vec<u8>, String> {
     let config = load_for_root(root)?;
-    let report = analysis::inventory_classified_seams_report_at_with_config(root, &config)?;
+    let report = complete_agent_seam_inventory(root, &config, "agent repo-exposure snapshot")?;
     write_agent_repo_exposure_snapshot_with_report(
         root,
         &config,
@@ -3437,6 +3523,7 @@ fn write_agent_repo_exposure_snapshot_with_report(
             ts_guidance.as_ref(),
             python_guidance.as_ref(),
             generated_skip.as_ref(),
+            &report.evidence_limitations,
             &context,
             writer,
         )
@@ -4529,6 +4616,82 @@ mod tests {
         unique_repo_relative_test_dir,
     };
     use super::*;
+
+    /// #13340: a failed evidence warm leaves every seam an opaque stand-in, so
+    /// the agent start, packet, before-phase and snapshot loads refuse with the
+    /// shared `producer_failure` error and write nothing; the unarmed control
+    /// (separate root, so a cached healthy walk cannot answer) loads a complete
+    /// inventory and still starts.
+    #[test]
+    fn failed_evidence_warm_refuses_agent_seam_inventory() -> Result<(), String> {
+        use crate::analysis::test_grip_evidence::WarmPanicGuard;
+        let source =
+            "pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }\n";
+        let make_root = |name: &str| -> Result<PathBuf, String> {
+            let root = unique_command_test_dir(name);
+            std::fs::create_dir_all(root.join("src")).map_err(|err| format!("mkdir: {err}"))?;
+            std::fs::write(root.join("src/foo.rs"), source)
+                .map_err(|err| format!("write: {err}"))?;
+            Ok(root)
+        };
+        let config = RiprConfig::default();
+
+        let control = make_root("agent-failed-warm-control")?;
+        let healthy = complete_agent_seam_inventory(&control, &config, "agent packet")?;
+        assert!(
+            !healthy.classified.is_empty(),
+            "fixture must classify seams"
+        );
+        assert!(healthy.evidence_limitations.is_empty());
+        let _ = std::fs::remove_dir_all(&control);
+
+        for point in [1u8, 2u8] {
+            let root = make_root(&format!("agent-failed-warm-{point}"))?;
+            let refused = {
+                let _armed = WarmPanicGuard::arm(point);
+                complete_agent_seam_inventory(&root, &config, "agent packet")
+            };
+            let Err(message) = refused else {
+                return Err(format!("point {point}: a failed walk must refuse"));
+            };
+            assert!(message.starts_with("agent packet refused"), "{message}");
+            assert!(message.contains("producer_failure"), "{message}");
+            assert!(message.contains("pass-wide"), "{message}");
+
+            let out_dir = root.join("out");
+            let started = {
+                let _armed = WarmPanicGuard::arm(point);
+                write_agent_start(AgentStartOptions {
+                    root: root.clone(),
+                    root_explicit: true,
+                    seam_id: "any".to_string(),
+                    out_dir: out_dir.clone(),
+                    json: false,
+                })
+            };
+            let Err(error) = started else {
+                return Err(format!("point {point}: agent start must refuse"));
+            };
+            assert!(error.to_string().contains("producer_failure"), "{error}");
+            assert!(!out_dir.exists(), "a refused start must write nothing");
+
+            let snapshot_path = root.join("snapshot.json");
+            let snapshot = {
+                let _armed = WarmPanicGuard::arm(point);
+                write_agent_repo_exposure_snapshot(&root, &snapshot_path)
+            };
+            let Err(snapshot_error) = snapshot else {
+                return Err(format!("point {point}: the snapshot must refuse"));
+            };
+            assert!(
+                snapshot_error.contains("producer_failure"),
+                "{snapshot_error}"
+            );
+            assert!(!snapshot_path.exists());
+            let _ = std::fs::remove_dir_all(&root);
+        }
+        Ok(())
+    }
 
     /// #10712 review: a static-limitation seam that policy permits is not a
     /// policy omission, so `agent start` must not send the caller to policy
@@ -6633,4 +6796,57 @@ mod no_movement_code_tests {
         assert_eq!(last.as_str(), "retry_budget_exhausted");
         assert_eq!(last.disposition(), RepairRefusalDisposition::Terminal);
     }
+}
+
+/// Reads and validates a caller-supplied focused test result against the
+/// attempt: its id, the HEAD this phase evaluates, the selected test file and
+/// (for an inline proposal) the governed module, and the file's current text.
+fn validate_focused_run_input(
+    root: &std::path::Path,
+    store: Option<&std::path::Path>,
+    attempt_id: &crate::app::repair_attempt::RepairAttemptId,
+    policy: &crate::edit_cage::EditCagePolicy,
+    result_path: &std::path::Path,
+) -> Result<crate::app::focused_run::FocusedRunRecord, String> {
+    // A result saved inside the checkout is an untracked edit the cage would
+    // judge, so refuse it up front rather than violate the attempt.
+    if let (Ok(result), Ok(checkout)) = (result_path.canonicalize(), root.canonicalize())
+        && result.starts_with(&checkout)
+    {
+        return Err(format!(
+            "the focused test result {} is inside the checkout, where the edit cage would count it as an untracked file; save it outside the checkout (for example under the system temp directory) and pass that path",
+            crate::output::path::human_path(result_path)
+        ));
+    }
+    let raw = crate::bounded_input::read(result_path).map_err(|error| {
+        format!(
+            "read the focused test result {} failed: {error}",
+            crate::output::path::human_path(result_path)
+        )
+    })?;
+    let head = crate::agent::artifact::current_git_head(root)?;
+    let file = policy.selected_target.path();
+    let source = crate::bounded_input::read_to_string(root.join(file))
+        .map_err(|error| format!("read the selected test file `{file}` failed: {error}"))?;
+    let baseline =
+        crate::app::repair_attempt::load_edit_cage_baseline_from(root, store, attempt_id)?;
+    let inline_module = if policy.inline_test_module_target {
+        Some(
+            baseline
+                .inline_test_module_name()
+                .ok_or("the attempt retains no inline test module for its selected target")?,
+        )
+    } else {
+        None
+    };
+    crate::app::focused_run::validate_focused_run(
+        &raw,
+        &crate::app::focused_run::FocusedRunScope {
+            attempt_id: attempt_id.as_str(),
+            head: &head,
+            file,
+            file_source: &source,
+            inline_module,
+        },
+    )
 }
