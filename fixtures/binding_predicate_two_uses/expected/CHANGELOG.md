@@ -463,3 +463,15 @@ Source-only edit; native `cargo xtask goldens bless` could not run because the l
 
 Updated:
 - `expected/check.json`
+
+## Pending — binding_predicate_two_uses (33)
+
+Reason:
+union-head re-bless after main merge: additive evidence_stages rows (RIPR-SPEC-0429)
+
+Command:
+`cargo xtask goldens bless binding_predicate_two_uses --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

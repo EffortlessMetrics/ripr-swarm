@@ -56,11 +56,12 @@ mod tests {
     };
     use crate::app::{CheckOutput, Mode};
     use crate::domain::{
-        ActivationEvidence, Confidence, ConfidenceCap, DeltaKind, DiscriminatorShape, ExposureClass,
-        Finding, FindingCanonicalGap, FlowSinkFact, FlowSinkKind, LanguageId, LanguageStatus,
-        MissingDiscriminatorFact, OracleKind, OracleStrength, OwnerKind, Probe, ProbeFamily,
-        ProbeId, RelatedTest, RelatedTestMiss, RevealEvidence, RiprEvidence, SourceLocation,
-        StageEvidence, StageState, StaticLimitKind, Summary, SymbolId, ValueContext, ValueFact,
+        ActivationEvidence, Confidence, ConfidenceCap, DeltaKind, DiscriminatorShape,
+        ExposureClass, Finding, FindingCanonicalGap, FlowSinkFact, FlowSinkKind, LanguageId,
+        LanguageStatus, MissingDiscriminatorFact, OracleKind, OracleStrength, OwnerKind, Probe,
+        ProbeFamily, ProbeId, RelatedTest, RelatedTestMiss, RevealEvidence, RiprEvidence,
+        SourceLocation, StageEvidence, StageState, StaticLimitKind, Summary, SymbolId,
+        ValueContext, ValueFact,
     };
     use proptest::prelude::*;
     use std::path::{Path, PathBuf};
