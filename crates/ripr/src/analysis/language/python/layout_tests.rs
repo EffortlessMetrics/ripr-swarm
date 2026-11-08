@@ -161,3 +161,49 @@ fn a_rival_definition_module_equal_to_the_project_name_stays_withheld() -> Resul
     }
     Ok(())
 }
+
+#[test]
+fn a_nested_project_lib_module_is_not_its_bare_name() -> Result<(), String> {
+    // Inside a project, `lib/core.py` is `lib.core`; `from core import` loads
+    // the project's own `core.py`, so it is no evidence for `lib/core.py`.
+    let finding = analyze_one_line(
+        "layout-nested-lib",
+        &[
+            ("svc/a/pyproject.toml", PROJECT),
+            ("svc/a/core.py", CORE_PY),
+            ("svc/a/lib/core.py", CORE_PY),
+            ("svc/a/tests/test_core.py", STRONG_TEST),
+        ],
+        "svc/a/lib/core.py",
+        2,
+    )?;
+    if finding.class == ExposureClass::Exposed {
+        return Err("`from core import` credited `svc/a/lib/core.py`".to_string());
+    }
+    Ok(())
+}
+
+#[test]
+fn a_module_beside_a_same_named_package_takes_no_credit_from_the_name() -> Result<(), String> {
+    // `pkg.py` and `pkg/__init__.py` in one project both spell `pkg`; Python
+    // loads the package, so a `from pkg import` test is not evidence for
+    // `pkg.py`.
+    let finding = analyze_one_line(
+        "layout-module-vs-package",
+        &[
+            ("svc/a/pyproject.toml", PROJECT),
+            ("svc/a/pkg.py", CORE_PY),
+            ("svc/a/pkg/__init__.py", CORE_PY),
+            (
+                "svc/a/tests/test_pkg.py",
+                "from pkg import limit\n\n\ndef test_limit():\n    assert limit(10) == False\n    assert limit(11) == True\n",
+            ),
+        ],
+        "svc/a/pkg.py",
+        2,
+    )?;
+    if finding.class == ExposureClass::Exposed {
+        return Err("a `pkg` package test credited the shadowed `pkg.py`".to_string());
+    }
+    Ok(())
+}

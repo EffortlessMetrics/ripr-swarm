@@ -2400,10 +2400,23 @@ fn nearest_project_root(
 }
 
 /// The dotted names `file` has relative to its project `root`.
+///
+/// The repository-root `lib/` import root of [`owner_module_paths`] is not
+/// applied: a project's `lib/core.py` is `lib.core`, never `core` (#13698).
+/// The `src/` layout root applies at any depth, as it does there.
 fn project_relative_module_names(file: &Path, root: &Path) -> Vec<String> {
-    file.strip_prefix(root)
-        .map(owner_module_paths)
-        .unwrap_or_default()
+    let Ok(relative) = file.strip_prefix(root) else {
+        return Vec::new();
+    };
+    let lib_root_form = relative
+        .strip_prefix("lib")
+        .ok()
+        .filter(|rest| rest.components().count() > 1)
+        .map(|rest| owner_module_paths(rest).into_iter().next());
+    owner_module_paths(relative)
+        .into_iter()
+        .filter(|module| lib_root_form.as_ref().and_then(Option::as_ref) != Some(module))
+        .collect()
 }
 
 /// Records each owner's project-relative module names (`svc/b/core.py` in the
@@ -2456,6 +2469,12 @@ pub(super) fn apply_project_module_names<'a>(
             let rival_roots = rival_roots_for(&files_by_module, &module, |file, _| {
                 normalized_path(file) == owner_file
             });
+            // Another file of the same project yields the same name
+            // (`pkg.py` beside `pkg/__init__.py`): the name alone does not say
+            // which one an import loads, so it identifies neither (#13698).
+            if rival_roots.iter().any(|rival| *rival == owner_root) {
+                continue;
+            }
             owner.ambiguous_src_modules.push(AmbiguousSrcModule {
                 module,
                 owner_root: owner_root.clone(),
