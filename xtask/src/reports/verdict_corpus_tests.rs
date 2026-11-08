@@ -2850,14 +2850,24 @@ fn abstention_by_cause_counts_only_abstained_rows_by_missed_side_and_class()
         abstention_row("credited", "limited", &["static_unknown"], "abstained")?,
         abstention_row("credited", "limited", &[], "abstained")?,
         abstention_row("gap", "gap", &["weakly_exposed"], "ideal")?,
+        abstention_row(
+            "limited",
+            "silent",
+            &["infection_unknown", "static_unknown"],
+            "abstained",
+        )?,
     ];
     let causes = abstention_by_cause(&rows);
     assert_eq!(causes.get("gap_missed:no_static_path"), Some(&2));
     assert_eq!(causes.get("credit_missed:static_unknown"), Some(&1));
     assert_eq!(causes.get("credit_missed:none"), Some(&1));
     assert_eq!(
+        causes.get("no_claim_expected:infection_unknown+static_unknown"),
+        Some(&1)
+    );
+    assert_eq!(
         causes.values().sum::<usize>(),
-        4,
+        5,
         "the ideal row is not counted"
     );
     Ok(())

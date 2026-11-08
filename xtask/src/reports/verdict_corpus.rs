@@ -771,7 +771,8 @@ pub(crate) struct Report {
     pub(crate) contradiction_rate: Ratio,
     pub(crate) contradictions_by_code: BTreeMap<String, usize>,
     /// Abstained rows again, by what the abstention missed (`gap_missed` or
-    /// `credit_missed`, from the row's ideal verdict) and the observed
+    /// `credit_missed`, or `no_claim_expected` when the ideal verdict is
+    /// itself `limited`/`silent`) and the observed
     /// classification. Every abstained row is acceptable by its case's own
     /// labels; this split shows where a promotion could pay off and which
     /// ones (`gap_missed:no_static_path`) would raise false gaps on real code.
