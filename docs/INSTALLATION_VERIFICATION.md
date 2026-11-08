@@ -310,7 +310,7 @@ available. The extension resolves the server in this order:
 ripr.server.path
 bundled server binary, if present
 downloaded cached server binary
-ripr on PATH, when ripr.server.version is empty
+ripr on PATH, when ripr.server.version is empty and not older than the expected version
 verified first-run download from GitHub Releases
 ripr on PATH, as the fallback when the download fails or a version is pinned
 actionable error

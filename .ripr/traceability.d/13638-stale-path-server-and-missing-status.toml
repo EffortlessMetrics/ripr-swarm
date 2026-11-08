@@ -2,6 +2,11 @@
 [[extend]]
 id = "RIPR-SPEC-0049"
 tests = [
+  "editors/vscode/test/suite/server_resolver_compatibility.test.ts::version comparison reuses the setup-diagnosis parse and only flags strictly older",
+  "editors/vscode/test/suite/server_resolver_compatibility.test.ts::an older PATH ripr does not skip the managed download, and stays the warned fallback",
+  "editors/vscode/test/suite/server_resolver_compatibility.test.ts::a current PATH ripr still wins before the download with no warning",
+  "editors/vscode/test/suite/server_resolver_compatibility.test.ts::a disabled download uses an older PATH ripr with a warning",
+  "editors/vscode/test/suite/server_resolver_compatibility.test.ts::an explicit ripr.server.path is honored as-is even when older, and only warns",
   "editors/vscode/test/suite/status_render.test.ts::a missing server keeps a persistent status item after the toast is gone (#13638)",
   "editors/vscode/test/suite/extension.test.ts::a stale unmanaged server warns once per session and still starts (#13638)",
 ]
