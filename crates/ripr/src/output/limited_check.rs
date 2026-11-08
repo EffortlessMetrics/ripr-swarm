@@ -1,6 +1,7 @@
 use crate::app::{CHECK_OUTPUT_SCHEMA_VERSION, CHECK_REFUSAL_SCHEMA_VERSION, CheckInput};
 use crate::core_error::CoreError;
 use crate::output::json::render_pretty_with_newline;
+use crate::output::refusal::RefusalBlock;
 use serde_json::{Value, json};
 
 const DIFF_SCOPE_OVERSIZED_PREFIX: &str = "diff_scope_oversized:";
@@ -93,6 +94,9 @@ pub(crate) fn render_diff_scope_limited_check_json(
     if let Some(base) = &input.base {
         value["base"] = json!(base);
     }
+    // The shared refusal block (#11584) rides beside the frozen scope-guard
+    // keys; `message` stays the guard's own diagnostic verbatim.
+    RefusalBlock::from_prose(run_status, error).insert_into(&mut value);
 
     render_pretty_with_newline(&value, "limited check").map(Some)
 }
@@ -246,6 +250,11 @@ pub(crate) fn render_check_failure_json(
     if let Some(projection) = timeout_context {
         value["input_context"] = projection.input_context_value();
     }
+    // The shared refusal block (#11584): the typed identity and message the
+    // envelope already carries, plus the one stated next step (or null).
+    let notice = error.refusal_notice(&crate::config::config_error_summary);
+    RefusalBlock::from_remedy(notice.identity, &notice.message, &notice.remedy)
+        .insert_into(&mut value);
     render_pretty_with_newline(&value, "limited check")
 }
 
