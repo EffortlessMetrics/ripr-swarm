@@ -21332,6 +21332,9 @@ fn execute_command_workspace_status_is_not_current_during_pending_save() -> Resu
         assert_eq!(during["run_status"], "stale", "{during}");
         assert_eq!(during["analysis_status"]["state"], "queued", "{during}");
         assert!(during["top_actionable_packet"].is_null(), "{during}");
+        let limitation = top_limitation_for(backend).await?;
+        assert_eq!(limitation["run_status"], "stale", "{limitation}");
+        assert_eq!(limitation, during["top_limitation"]);
         backend.set_interactive_debounce_open_for_test(false);
         let after = workspace_status_for(backend).await?;
         assert_eq!(after["run_status"], before["run_status"]);
@@ -21340,8 +21343,22 @@ fn execute_command_workspace_status_is_not_current_during_pending_save() -> Resu
         let moved = workspace_status_for(backend).await?;
         assert_eq!(moved["run_status"], "stale", "{moved}");
         assert_eq!(moved["analysis_status"]["state"], "queued", "{moved}");
+        assert!(moved["top_actionable_packet"].is_null(), "{moved}");
+        assert_eq!(top_limitation_for(backend).await?, moved["top_limitation"]);
         Ok(())
     })
+}
+
+async fn top_limitation_for(backend: &Backend) -> Result<serde_json::Value, String> {
+    backend
+        .execute_command(ExecuteCommandParams {
+            command: COLLECT_TOP_LIMITATION_COMMAND.to_string(),
+            arguments: vec![],
+            work_done_progress_params: Default::default(),
+        })
+        .await
+        .map_err(|err| format!("execute_command failed: {err}"))?
+        .ok_or_else(|| "expected top limitation".to_string())
 }
 
 async fn workspace_status_for(backend: &Backend) -> Result<serde_json::Value, String> {

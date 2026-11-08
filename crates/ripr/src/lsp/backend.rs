@@ -10526,7 +10526,8 @@ impl Backend {
     }
 
     fn collect_top_limitation(&self) -> Option<LSPAny> {
-        let health = self.analysis_health_snapshot();
+        // Same save-currentness projection as workspace status (#13783).
+        let health = self.analysis_health_for_currentness();
         let snapshot = self.latest_analysis.lock().ok()?.clone();
         let health = snapshot
             .as_ref()
