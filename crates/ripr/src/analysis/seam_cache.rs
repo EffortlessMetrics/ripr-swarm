@@ -3108,6 +3108,27 @@ impl FileFactCacheStats {
 /// CLI build to alternate on one cache without evicting each other.
 const FILE_FACT_RETAINED_OTHER_BUILDS: usize = 2;
 
+/// An other build used (hit or written) within this window is never pruned,
+/// whatever its rank: a frequently rebuilt local CLI must not evict an editor
+/// server that is still in use.
+const FILE_FACT_RECENT_BUILD_GRACE: std::time::Duration =
+    std::time::Duration::from_secs(7 * 24 * 60 * 60);
+
+/// Directory, beside the schema directories, holding one "last used" marker
+/// per build. Its name never parses as a schema version, so the
+/// schema-sibling prune keeps it.
+const FILE_FACT_BUILD_USE_DIR: &str = ".build-use";
+
+/// A long-running process (the editor server) refreshes its marker this often.
+const FILE_FACT_BUILD_USE_REFRESH: std::time::Duration = std::time::Duration::from_secs(60 * 60);
+
+static FILE_FACT_BUILD_USE_NOTED: Mutex<BTreeMap<PathBuf, std::time::Instant>> =
+    Mutex::new(BTreeMap::new());
+
+fn build_use_marker_name(identity: &str) -> String {
+    format!("{:016x}", fnv1a_64(identity.as_bytes()))
+}
+
 static FILE_FACT_STALE_SCHEMA_PRUNED: Mutex<BTreeSet<PathBuf>> = Mutex::new(BTreeSet::new());
 
 pub(crate) struct RepoFileFactCache {
@@ -3379,6 +3400,14 @@ impl RepoFileFactCache {
     }
 
     pub(crate) fn load_file_facts(&self, key: &RepoFileFactCacheKey) -> CacheLoad<FileFacts> {
+        let load = self.load_file_facts_entry(key);
+        if matches!(load, CacheLoad::Hit(_)) {
+            self.note_build_use();
+        }
+        load
+    }
+
+    fn load_file_facts_entry(&self, key: &RepoFileFactCacheKey) -> CacheLoad<FileFacts> {
         // An unusable base fails every lookup the same way, but on Windows
         // that failure is indistinguishable from `NotFound` (#4918). The
         // positive base probe classifies the whole layer as corrupt-ignored
@@ -3577,12 +3606,94 @@ impl RepoFileFactCache {
     /// (#7047). A key embeds the analyzer identity, so such an entry is never
     /// served again, yet every ripr upgrade used to leave a full generation
     /// behind. The current build and the [`FILE_FACT_RETAINED_OTHER_BUILDS`]
-    /// most recently written other builds are kept, so two builds that
-    /// alternate on one cache (an editor-managed server and a local CLI) do
-    /// not evict each other. Entries whose header cannot be read, temp files
+    /// most recently used other builds are kept, and so is any build used
+    /// within [`FILE_FACT_RECENT_BUILD_GRACE`]. "Used" is the later of its
+    /// newest entry and its use marker (see `note_build_use`), so an editor
+    /// server that only hits is not evicted by a run of local rebuilds. Entries whose header cannot be read, temp files
     /// and non-JSON files are left alone.
+    /// Records that this build served a hit, at most once per
+    /// [`FILE_FACT_BUILD_USE_REFRESH`] per process. A warm run never writes an
+    /// entry, so entry mtimes alone would make an editor server that only
+    /// hits look abandoned to the prune; this marker is its "last used" time.
+    /// Production layout and a usable base only; failures are ignored.
+    fn note_build_use(&self) {
+        let Some(layer_dir) = self.file_fact_schema_layer_dir() else {
+            return;
+        };
+        if self.unusable_base_reason().is_some() {
+            return;
+        }
+        let due = {
+            let mut noted = match FILE_FACT_BUILD_USE_NOTED.lock() {
+                Ok(guard) => guard,
+                Err(poisoned) => poisoned.into_inner(),
+            };
+            let now = std::time::Instant::now();
+            let due = noted
+                .get(&layer_dir)
+                .is_none_or(|last| now.duration_since(*last) >= FILE_FACT_BUILD_USE_REFRESH);
+            if due {
+                noted.insert(layer_dir.clone(), now);
+            }
+            due
+        };
+        if !due {
+            return;
+        }
+        let marker_dir = layer_dir.join(FILE_FACT_BUILD_USE_DIR);
+        if !cache_path_contained_in_base(&self.base, &marker_dir) {
+            return;
+        }
+        let identity = crate::build_identity::cache_identity();
+        let marker = marker_dir.join(build_use_marker_name(identity));
+        let _ = std::fs::create_dir_all(&marker_dir)
+            .and_then(|()| std::fs::write(&marker, identity.as_bytes()));
+    }
+
+    /// Last-used time per other build, from the use markers.
+    fn other_build_use_markers(
+        &self,
+        identity: &str,
+    ) -> HashMap<String, (std::time::SystemTime, PathBuf)> {
+        let mut markers = HashMap::new();
+        let Some(layer_dir) = self.file_fact_schema_layer_dir() else {
+            return markers;
+        };
+        let Ok(entries) = std::fs::read_dir(layer_dir.join(FILE_FACT_BUILD_USE_DIR)) else {
+            return markers;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let Ok(metadata) = std::fs::symlink_metadata(&path) else {
+                continue;
+            };
+            if !metadata.is_file() || metadata.len() > 4096 {
+                continue;
+            }
+            let Ok(build) = std::fs::read_to_string(&path) else {
+                continue;
+            };
+            if build == identity
+                || entry.file_name().to_str() != Some(build_use_marker_name(&build).as_str())
+            {
+                continue;
+            }
+            let modified = metadata.modified().unwrap_or(std::time::UNIX_EPOCH);
+            markers.insert(build, (modified, path));
+        }
+        markers
+    }
+
     fn prune_stale_build_entries(&self) {
         let identity = crate::build_identity::cache_identity();
+        // Like the schema-sibling prune, never act through a symlinked entry
+        // directory: containment below is lexical.
+        let Ok(dir_meta) = std::fs::symlink_metadata(&self.dir) else {
+            return;
+        };
+        if dir_meta.file_type().is_symlink() || !dir_meta.is_dir() {
+            return;
+        }
         let Ok(entries) = std::fs::read_dir(&self.dir) else {
             return;
         };
@@ -3613,17 +3724,34 @@ impl RepoFileFactCache {
             slot.0 = slot.0.max(modified);
             slot.1.push(path);
         }
+        let mut markers = self.other_build_use_markers(identity);
+        for (build, (used, _)) in &markers {
+            if let Some(slot) = by_build.get_mut(build) {
+                slot.0 = slot.0.max(*used);
+            }
+        }
         let mut builds: Vec<(String, (std::time::SystemTime, Vec<PathBuf>))> =
             by_build.into_iter().collect();
         // Newest first; the identity breaks ties so the choice is deterministic.
         builds.sort_by(|(left_id, (left, _)), (right_id, (right, _))| {
             right.cmp(left).then_with(|| left_id.cmp(right_id))
         });
-        for (_, (_, paths)) in builds.into_iter().skip(FILE_FACT_RETAINED_OTHER_BUILDS) {
+        let now = std::time::SystemTime::now();
+        for (build, (last_used, paths)) in builds.into_iter().skip(FILE_FACT_RETAINED_OTHER_BUILDS)
+        {
+            let recently_used = now
+                .duration_since(last_used)
+                .map_or(true, |age| age < FILE_FACT_RECENT_BUILD_GRACE);
+            if recently_used {
+                continue;
+            }
             for path in paths {
                 if cache_path_contained_in_base(&self.base, &path) {
                     let _ = std::fs::remove_file(&path);
                 }
+            }
+            if let Some((_, marker)) = markers.remove(&build) {
+                let _ = std::fs::remove_file(marker);
             }
         }
     }
@@ -10279,13 +10407,13 @@ mod file_fact_stale_build_prune_tests {
     }
 
     /// Plants an entry whose header names `analyzer` and whose mtime is
-    /// `age_mins` minutes in the past.
+    /// `age_days` days in the past.
     fn plant_build_entry(
         dir: &Path,
         template: &[u8],
         name: &str,
         analyzer: &str,
-        age_mins: u64,
+        age_days: u64,
     ) -> Result<PathBuf, String> {
         let text = String::from_utf8(template.to_vec()).map_err(|error| error.to_string())?;
         let identity = crate::build_identity::cache_identity();
@@ -10305,7 +10433,8 @@ mod file_fact_stale_build_prune_tests {
         std::fs::create_dir_all(dir).map_err(|error| error.to_string())?;
         let path = dir.join(name);
         std::fs::write(&path, replaced).map_err(|error| format!("plant {name}: {error}"))?;
-        let when = std::time::SystemTime::now() - std::time::Duration::from_secs(age_mins * 60);
+        let when =
+            std::time::SystemTime::now() - std::time::Duration::from_secs(age_days * 24 * 60 * 60);
         std::fs::OpenOptions::new()
             .write(true)
             .open(&path)
@@ -10334,10 +10463,10 @@ mod file_fact_stale_build_prune_tests {
         let dir = base
             .join(CacheLayer::FileFacts.name())
             .join(FILE_FACT_CACHE_SCHEMA_VERSION);
-        let oldest_a = plant_build_entry(&dir, &template, "a1.json", "0.9.0+old", 300)?;
-        let oldest_b = plant_build_entry(&dir, &template, "a2.json", "0.9.0+old", 290)?;
-        let middle = plant_build_entry(&dir, &template, "b.json", "0.10.0+mid", 120)?;
-        let newest = plant_build_entry(&dir, &template, "c.json", "0.10.1+new", 5)?;
+        let oldest_a = plant_build_entry(&dir, &template, "a1.json", "0.9.0+old", 40)?;
+        let oldest_b = plant_build_entry(&dir, &template, "a2.json", "0.9.0+old", 39)?;
+        let middle = plant_build_entry(&dir, &template, "b.json", "0.10.0+mid", 20)?;
+        let newest = plant_build_entry(&dir, &template, "c.json", "0.10.1+new", 10)?;
         let current = store_one(&cache)?;
 
         let state = |path: &Path| path.exists();
@@ -10365,7 +10494,7 @@ mod file_fact_stale_build_prune_tests {
         let dir = base
             .join(CacheLayer::FileFacts.name())
             .join(FILE_FACT_CACHE_SCHEMA_VERSION);
-        for (index, age) in [400_u64, 300, 200].iter().enumerate() {
+        for (index, age) in [40_u64, 30, 20].iter().enumerate() {
             plant_build_entry(
                 &dir,
                 &template,
@@ -10403,7 +10532,7 @@ mod file_fact_stale_build_prune_tests {
         let dir = scratch("build-prune-at-dir")?;
         let cache = RepoFileFactCache::at_dir(dir.clone());
         let mut planted = Vec::new();
-        for (index, age) in [400_u64, 300, 200].iter().enumerate() {
+        for (index, age) in [40_u64, 30, 20].iter().enumerate() {
             planted.push(plant_build_entry(
                 &dir,
                 &template,
@@ -10417,6 +10546,102 @@ mod file_fact_stale_build_prune_tests {
         super::ignore_remove_dir_all(&dir);
         if !all_kept {
             return Err("a non-production cache root must not prune".to_string());
+        }
+        Ok(())
+    }
+
+    fn plant_use_marker(layer: &Path, build: &str, age_days: u64) -> Result<(), String> {
+        let dir = layer.join(FILE_FACT_BUILD_USE_DIR);
+        std::fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
+        let path = dir.join(build_use_marker_name(build));
+        std::fs::write(&path, build).map_err(|error| error.to_string())?;
+        let when =
+            std::time::SystemTime::now() - std::time::Duration::from_secs(age_days * 24 * 60 * 60);
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(&path)
+            .and_then(|file| file.set_modified(when))
+            .map_err(|error| format!("set marker mtime: {error}"))
+    }
+
+    #[test]
+    fn hit_only_build_with_a_fresh_use_marker_is_kept_over_newer_writers() -> Result<(), String> {
+        let template = current_entry_bytes("build-prune-template-4")?;
+        let base = scratch("build-prune-use-marker")?;
+        let cache = RepoFileFactCache::at_base(&base);
+        let layer = base.join(CacheLayer::FileFacts.name());
+        let dir = layer.join(FILE_FACT_CACHE_SCHEMA_VERSION);
+        // The editor build wrote its entries long ago but still serves hits.
+        let editor = plant_build_entry(&dir, &template, "editor.json", "0.11.0+editor", 60)?;
+        plant_use_marker(&layer, "0.11.0+editor", 0)?;
+        let dev_old = plant_build_entry(&dir, &template, "dev1.json", "0.11.0+dev1", 30)?;
+        let dev_mid = plant_build_entry(&dir, &template, "dev2.json", "0.11.0+dev2", 20)?;
+        let dev_new = plant_build_entry(&dir, &template, "dev3.json", "0.11.0+dev3", 10)?;
+        store_one(&cache)?;
+        let observed = (
+            editor.exists(),
+            dev_old.exists(),
+            dev_mid.exists(),
+            dev_new.exists(),
+        );
+        super::ignore_remove_dir_all(&base);
+        if observed != (true, false, false, true) {
+            return Err(format!(
+                "expected (editor kept, dev1 gone, dev2 gone, dev3 kept), got {observed:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn builds_used_within_the_grace_window_are_never_pruned() -> Result<(), String> {
+        let template = current_entry_bytes("build-prune-template-5")?;
+        let base = scratch("build-prune-grace")?;
+        let cache = RepoFileFactCache::at_base(&base);
+        let dir = base
+            .join(CacheLayer::FileFacts.name())
+            .join(FILE_FACT_CACHE_SCHEMA_VERSION);
+        let mut planted = Vec::new();
+        for (index, age) in [3_u64, 2, 1].iter().enumerate() {
+            planted.push(plant_build_entry(
+                &dir,
+                &template,
+                &format!("recent{index}.json"),
+                &format!("0.6.{index}+x"),
+                *age,
+            )?);
+        }
+        store_one(&cache)?;
+        let all_kept = planted.iter().all(|path| path.exists());
+        super::ignore_remove_dir_all(&base);
+        if !all_kept {
+            return Err("builds used within the grace window must be kept".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_cache_hit_records_this_builds_use_marker() -> Result<(), String> {
+        let base = scratch("build-prune-hit-marker")?;
+        let cache = RepoFileFactCache::at_base(&base);
+        let key = RepoFileFactCacheKey::new(Path::new("src/hit.rs"), b"pub fn hit() {}\n");
+        cache
+            .store_file_facts(&key, &FileFacts::default())
+            .map_err(|error| error.message)?;
+        let identity = crate::build_identity::cache_identity();
+        let marker = base
+            .join(CacheLayer::FileFacts.name())
+            .join(FILE_FACT_BUILD_USE_DIR)
+            .join(build_use_marker_name(identity));
+        let before_hit = marker.exists();
+        let hit = matches!(cache.load_file_facts(&key), CacheLoad::Hit(_));
+        let content = std::fs::read_to_string(&marker).unwrap_or_default();
+        super::ignore_remove_dir_all(&base);
+        if before_hit || !hit || content != identity {
+            return Err(format!(
+                "before_hit={before_hit} hit={hit} marker_content_matches={}",
+                content == identity
+            ));
         }
         Ok(())
     }
