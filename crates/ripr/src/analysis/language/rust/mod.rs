@@ -1295,7 +1295,7 @@ fn select_partial_diff_partition(
         budgets,
         enabled_languages,
     ) {
-        PartialSelection::Partition(scope) => Some(scope),
+        PartialSelection::Partition(scope) => Some(*scope),
         PartialSelection::Fits | PartialSelection::NothingFits(_) => None,
     }
 }
@@ -1309,7 +1309,7 @@ enum PartialSelection {
     /// a full-scope run.
     Fits,
     /// A bounded partition: a `limited_partial_scope` run.
-    Partition(PartialDiffScope),
+    Partition(Box<PartialDiffScope>),
     /// Every enabled changed-line file alone exceeds its language limit, so
     /// no file can be analyzed.
     NothingFits(Vec<OverLimitFile>),
@@ -1321,7 +1321,7 @@ impl PartialSelection {
     fn into_scope(self) -> Result<Option<PartialDiffScope>, String> {
         match self {
             Self::Fits => Ok(None),
-            Self::Partition(scope) => Ok(Some(scope)),
+            Self::Partition(scope) => Ok(Some(*scope)),
             Self::NothingFits(files) => Err(nothing_fits_error(&files)),
         }
     }
@@ -1533,7 +1533,7 @@ fn select_partial_diff_partition_with_identity(
         budgets.line_budget,
         &selected_sorted,
     );
-    PartialSelection::Partition(PartialDiffScope {
+    PartialSelection::Partition(Box::new(PartialDiffScope {
         run_status: PartialDiffScope::RUN_STATUS.to_string(),
         diff_identity,
         file_budget: budgets.file_budget,
@@ -1551,7 +1551,7 @@ fn select_partial_diff_partition_with_identity(
             .then_some((enabled_files, enabled_lines)),
         over_limit_files,
         partition_identity: sha256_hex(canonical.as_bytes()),
-    })
+    }))
 }
 
 /// The bounded partition for a run whose enabled-language set leaves the
@@ -7440,9 +7440,9 @@ fn absent_delimiter_boundary_returns_head() {
             "{}",
             scope.widen_instruction()
         );
-        // The same file is within the default Rust limit, so judging it by
-        // the Rust limit (the pre-review behavior) would have selected it.
-        assert!(800 < DIFF_CHANGED_RUST_LINE_LIMIT);
+        // The same 800-line file is within the default 2,000-line Rust
+        // limit, so judging it by the Rust limit (the pre-review behavior)
+        // would have selected it.
 
         // A raised TypeScript limit admits a file over the Rust limit: it is
         // judged by its own limit and analyzed alone, never full scope.
@@ -7500,13 +7500,14 @@ fn absent_delimiter_boundary_returns_head() {
             || partial_diff_budgets(&[LanguageId::Rust]),
         )?;
         assert_eq!(rust_only.line_limit, DIFF_CHANGED_RUST_LINE_LIMIT);
-        assert!(
-            with_forced_diff_limit_env(
-                &[(DIFF_CHANGED_RUST_LINE_LIMIT_ENV, "not-a-number")],
-                || partial_diff_budgets(&[LanguageId::Rust]),
-            )
-            .is_err()
-        );
+        if let Ok(budgets) = with_forced_diff_limit_env(
+            &[(DIFF_CHANGED_RUST_LINE_LIMIT_ENV, "not-a-number")],
+            || partial_diff_budgets(&[LanguageId::Rust]),
+        ) {
+            return Err(format!(
+                "an invalid enabled-language limit must fail closed, got {budgets:?}"
+            ));
+        }
         Ok(())
     }
 
