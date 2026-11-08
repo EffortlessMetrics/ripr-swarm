@@ -34,10 +34,10 @@ Each script completes two positions only:
 2. The word after a command, for commands that have one (for example the
    `status`, `export` and `clear` words after `cache`).
 
-The names come from the governed command catalog: only ordinary public
-canonical rows. Compatibility aliases, advanced rows and hidden rows are never
-completed. The second word is offered only while no second word is typed yet;
-after `ripr cache status ` the sub-words are not offered again.
+The names are the commands that `ripr help` lists. Old alternate spellings,
+advanced commands and hidden commands are never completed. The word after a
+command is offered only in the second position, in every shell: after
+`ripr cache status ` or `ripr help cache ` the `cache` words are not offered.
 
 ### Errors and exit codes
 

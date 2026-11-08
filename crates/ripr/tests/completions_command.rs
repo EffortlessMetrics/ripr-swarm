@@ -175,7 +175,7 @@ fn fish_offers_the_second_word_only_in_second_position() {
     let file = script_file("fish");
     let path = file.to_string_lossy().into_owned();
     let offer = |line: &str| {
-        let script = format!("source {path}; complete -C '{line}'");
+        let script = format!("source '{path}'; complete -C '{line}'");
         shell_stdout("fish", &["-c", &script])
     };
     if let Some(second) = offer("ripr cache ") {
@@ -185,6 +185,11 @@ fn fish_offers_the_second_word_only_in_second_position() {
     if let Some(third) = offer("ripr cache status ") {
         assert!(!third.contains("export"), "{third}");
         assert!(!third.contains("clear"), "{third}");
+    }
+    // A command name in a later position must not trigger its own words.
+    if let Some(later) = offer("ripr help cache ") {
+        assert!(!later.contains("export"), "{later}");
+        assert!(!later.contains("clear"), "{later}");
     }
     let _ = std::fs::remove_file(&file);
 }

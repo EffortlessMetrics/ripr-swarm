@@ -144,8 +144,7 @@ fn render_fish(tree: &CommandTree) -> String {
     ));
     for (top, subs) in with_subs(tree) {
         out.push_str(&format!(
-            "complete -c ripr -f -n '__fish_seen_subcommand_from {top}; and not __fish_seen_subcommand_from {}' -a '{}'\n",
-            spaced(subs),
+            "complete -c ripr -f -n 'test (count (commandline -opc)) -eq 2; and contains -- {top} (commandline -opc)[2]' -a '{}'\n",
             spaced(subs)
         ));
     }
@@ -305,7 +304,7 @@ fi
         let expected = "\
 # fish completion for ripr. Load it with: ripr completions fish | source
 complete -c ripr -f -n '__fish_use_subcommand' -a 'alpha zeta'
-complete -c ripr -f -n '__fish_seen_subcommand_from alpha; and not __fish_seen_subcommand_from one two' -a 'one two'
+complete -c ripr -f -n 'test (count (commandline -opc)) -eq 2; and contains -- alpha (commandline -opc)[2]' -a 'one two'
 ";
         assert_eq!(render("fish", &synthetic()), expected);
     }
