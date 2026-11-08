@@ -9,9 +9,9 @@ code comments.
 The release archive is `ripr-server-v{version}-x86_64-pc-windows-msvc.zip`. The
 PowerShell snippet in the [quickstart](QUICKSTART.md) downloads it, checks the
 SHA-256 and puts `ripr.exe` on `PATH` for the current session. To keep it,
-add the extracted directory under Settings → Environment Variables. See
+add the extracted directory to your user `Path` (search the Start menu for "Edit environment variables for your account"). See
 [install channels](INSTALL_CHANNELS.md) for which channels exist today; the
-registry packages are Linux-only until more platforms publish.
+npm and PyPI packages are Linux-only until more platforms publish.
 
 ## Which shell
 
@@ -53,9 +53,9 @@ repository somewhere shallower, for example `C:\src\repo`.
 
 ## Editor
 
-The VS Code extension downloads and manages its own server. Windows packaged
-editor runs are qualified by the
-[Windows packaged qualification](WINDOWS_PACKAGED_QUALIFICATION.md) lane.
+The VS Code extension downloads and manages its own server. The
+[Windows packaged qualification](WINDOWS_PACKAGED_QUALIFICATION.md) lane is a
+release rehearsal for a named candidate; it is not a per-install check.
 
 ## Reporting a problem
 
