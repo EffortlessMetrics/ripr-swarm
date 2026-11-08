@@ -664,6 +664,15 @@ fn a_test_that_can_still_run_is_never_reported_as_never_running() -> Result<(), 
         format!(
             "{header}from helpers import wrap\n@wrap\n@pytest.mark.parametrize('x', [])\ndef test_score(x):\n    assert score(0) == 8\n"
         ),
+        // A wrapper that drops the method's mark leaves only the class
+        // parametrize, so the duplicate never reaches collection.
+        format!(
+            "{header}from helpers import wrap\n@pytest.mark.parametrize('x', [1])\nclass TestScore:\n    @wrap\n    @pytest.mark.parametrize('x', [2])\n    def test_score(self, x):\n        assert score(0) == 8\n"
+        ),
+        // A module skip patched through an attribute is not the runner's.
+        format!(
+            "{header}pytest.skip = lambda *a, **kw: None\npytest.skip('off', allow_module_level=True)\ndef test_score():\n    assert score(0) == 8\n"
+        ),
         // A module-level skip through a rebound `pytest` lets the import finish.
         format!(
             "{header}from types import SimpleNamespace\npytest = SimpleNamespace(skip=lambda *a, **kw: None)\npytest.skip('off', allow_module_level=True)\ndef test_score():\n    assert score(0) == 8\n"

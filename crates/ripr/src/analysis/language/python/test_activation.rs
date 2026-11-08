@@ -30,11 +30,17 @@ pub(super) fn activation_control(test: &PythonTest) -> Option<&str> {
         .map(|control| control.name.as_str())
 }
 
+/// Whether the test carries any control its runner honours.
+pub(super) fn has_activation_control(test: &PythonTest) -> bool {
+    activation_control(test).is_some()
+}
+
 /// The controls the test's runner honours: a unittest-only control on a
 /// pytest-style test is not one.
 fn effective_controls(test: &PythonTest) -> impl Iterator<Item = &PythonActivationControl> {
     test.activation_controls
         .iter()
+        .filter(|control| control.name != WRAPPING_DECORATOR)
         .filter(|control| match (control.name.as_str(), control.site) {
             ("unittest.expectedFailure", _)
             | (
@@ -87,10 +93,14 @@ pub(super) fn never_runs(test: &PythonTest) -> Option<&str> {
             // A class `__test__ = False` is not counted: the abstract-suite
             // idiom re-enables it in a subclass (`__test__ = True`), in this
             // file or another, which collects the inherited tests.
-            ("pytest.mark.skip" | EMPTY_TABLE | COLLECTION_ERROR, site) => {
+            // A wrapper may drop the method's own marks, so a skip or empty
+            // table on the function and any collection error (which may come
+            // from a class/method duplicate) no longer count under one.
+            ("pytest.mark.skip" | EMPTY_TABLE, site) => {
                 test.framework != PythonFramework::Unittest
                     && !(wrapped && site == DeclarationSite::Function)
             }
+            (COLLECTION_ERROR, _) => test.framework != PythonFramework::Unittest && !wrapped,
             _ => false,
         })
         .map(|control| control.name.as_str())
@@ -131,6 +141,21 @@ pub(super) fn withhold_shadowed_skips(statements: &[Stmt], tests: &mut [PythonTe
     ) {
         let mut names = Vec::new();
         for stmt in body {
+            // `pytest.skip = ...` patches the runner's name through an
+            // attribute; its root is not the runner's either.
+            let attribute_targets: Vec<&Expr> = match stmt {
+                Stmt::Assign(assign) => assign.targets.iter().collect(),
+                Stmt::AugAssign(assign) => vec![assign.target.as_ref()],
+                Stmt::AnnAssign(assign) => vec![assign.target.as_ref()],
+                _ => Vec::new(),
+            };
+            for target in attribute_targets {
+                if matches!(target, Expr::Attribute(_) | Expr::Subscript(_))
+                    && let Some(root) = target_root(target)
+                {
+                    out.insert(root);
+                }
+            }
             if let Stmt::Expr(expr) = stmt
                 && let Expr::Call(call) = expr.value.as_ref()
                 && call.keywords.iter().any(|keyword| {
@@ -187,6 +212,14 @@ pub(super) fn withhold_shadowed_skips(statements: &[Stmt], tests: &mut [PythonTe
                     .for_each(|case| collect(&case.body, out, skip_roots)),
                 _ => {}
             }
+        }
+    }
+    fn target_root(target: &Expr) -> Option<&str> {
+        match target {
+            Expr::Name(name) => Some(name.id.as_str()),
+            Expr::Attribute(attribute) => target_root(attribute.value.as_ref()),
+            Expr::Subscript(subscript) => target_root(subscript.value.as_ref()),
+            _ => None,
         }
     }
     fn call_root(func: &Expr) -> Option<&str> {
@@ -280,8 +313,11 @@ const WRAPPING_DECORATOR: &str = "test decorator that may replace the marked fun
 /// Pytest keeps a mark on the decorated function object, so such a decorator
 /// may return a fresh callable without the mark that pytest collects and runs
 /// (`@wrap` over `@pytest.mark.skip`). `unittest.skip` replaces the body
-/// itself, so it still never runs. The marker is only added beside an
-/// existing control, so it never makes an uncontrolled test controlled.
+/// itself, so it still never runs. The marker is not itself a control: it
+/// is left out of [`effective_controls`], so it never makes an uncontrolled
+/// test controlled. It is added even without a function-site control because
+/// a class/method parametrize duplicate may later add a collection error
+/// from the method's own (possibly discarded) mark.
 pub(super) fn with_wrapping_decorator_marker(
     decorators: &[Expr],
     imports: &[PythonImport],
@@ -303,7 +339,7 @@ pub(super) fn with_wrapping_decorator_marker(
             resolved.starts_with("pytest.mark.") || resolved.starts_with("unittest.")
         })
     });
-    if custom && !controls.is_empty() {
+    if custom {
         controls.push(PythonActivationControl {
             name: WRAPPING_DECORATOR.to_string(),
             site: DeclarationSite::Function,
