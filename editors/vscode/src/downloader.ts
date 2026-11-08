@@ -578,7 +578,7 @@ export function assertSafeTarListing(nameLines: readonly string[], verboseLines:
   }
   for (const name of names) {
     const segments = name.split(/[\\/]/);
-    if (name.startsWith('/') || /^[A-Za-z]:/.test(name) || name.includes('\0') || segments.includes('..')) {
+    if (/^[\\/]/.test(name) || /^[A-Za-z]:/.test(name) || name.includes('\0') || segments.includes('..')) {
       throw new Error(`Refusing server archive member with unsafe path ${JSON.stringify(name)}.`);
     }
   }
