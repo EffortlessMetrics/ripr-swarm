@@ -595,3 +595,35 @@ fn runs_are_ordered_numerically_so_the_latest_run_names_the_version() -> Result<
     assert_eq!(receipt["cells"][0]["samples"][0]["run_id"], "9");
     Ok(())
 }
+
+#[test]
+fn samples_of_an_older_release_do_not_carry_the_newest_release_median() -> Result<(), String> {
+    let mut cells = matrix(100.0, &["101", "102", "103"]);
+    for cell in cells.iter_mut().filter(|cell| cell.run_id == "103") {
+        cell.version = Some("ripr 0.11.0".to_string());
+        if cell.channel == "cargo" && cell.platform == "ubuntu-latest" {
+            cell.install_seconds = Some(1200.0);
+        }
+    }
+    let receipt = build_receipt(&cells, &shipped())?;
+    assert_eq!(verdict(&receipt), "not_met", "{}", reasons(&receipt));
+    let text = reasons(&receipt);
+    assert!(
+        text.contains("cargo on ubuntu-latest: median 1200 s over 1 sample(s)"),
+        "{text}"
+    );
+
+    // Without the slow sample, the single 0.11.0 sample is too few for a source build.
+    let mut cells = matrix(100.0, &["101", "102", "103"]);
+    for cell in cells.iter_mut().filter(|cell| cell.run_id == "103") {
+        cell.version = Some("ripr 0.11.0".to_string());
+    }
+    let receipt = build_receipt(&cells, &shipped())?;
+    assert_eq!(verdict(&receipt), "not_established");
+    assert!(
+        reasons(&receipt).contains("has 1 of the 3 samples of its newest version"),
+        "{}",
+        reasons(&receipt)
+    );
+    Ok(())
+}

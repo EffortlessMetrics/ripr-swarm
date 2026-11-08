@@ -97,12 +97,15 @@ jobs:
           OS_LABEL: ${{ matrix.os }}
           OUTCOME: ${{ runner.os == 'Windows' && steps.install_windows.outcome || steps.install_unix.outcome }}
           SECONDS_TO_INSTALL: ${{ runner.os == 'Windows' && steps.install_windows.outputs.install_seconds || steps.install_unix.outputs.install_seconds }}
+          VERSION: ${{ steps.resolve.outputs.version }}
         run: |
           # One `install-cell-archive-<os>` file for `cargo xtask install-receipt`, in the
           # same shape as published-install-matrix.yml's cells.
           version=$(head -n1 "$RUNNER_TEMP/archive-version.txt" 2>/dev/null | tr -d '\r\357\273\277' | tr -cd '0-9A-Za-z.+ ()-' || true)
           mkdir -p "$RUNNER_TEMP/cell"
-          if [ "$OUTCOME" = success ] && [ -n "$version" ] && [[ ${SECONDS_TO_INSTALL:-} =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+          # The binary must report the resolved release; only the build-commit suffix is allowed.
+          reported=$(printf '%s' "$version" | sed -E 's/ \([0-9a-f]{40}(-dirty)?\)$//')
+          if [ "$OUTCOME" = success ] && [ "$reported" = "ripr $VERSION" ] && [[ ${SECONDS_TO_INSTALL:-} =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
             printf '{"channel":"archive","os":"%s","status":"works","version":"%s","install_seconds":%s}\n' \
               "$OS_LABEL" "$version" "$SECONDS_TO_INSTALL" > "$RUNNER_TEMP/cell/cell.json"
           else

@@ -2949,10 +2949,14 @@ unknown cell.
 
 Each cell is judged on all its samples. A failed or broken sample fails it; a
 cell that is a documented gap in every run is `not_established`. A working cell
-is timed by the median of its working samples: prebuilt channels (archive,
+is timed by the median of its working samples of the newest version it reports
+(older-release samples stay listed but are not judged): prebuilt channels (archive,
 binstall, PyPI, npm) against the 300 s first-value bar, and `cargo install`,
 which compiles from source on a runner whose speed varies run to run, against
-900 s on the median of at least three samples. `--write` writes
+900 s on the median of at least three samples. The 900 s source-build bar was
+requested by the release ladder owner, who reconciles the R0 row in
+`docs/METRICS.md`. The archive cell records `failed` when the binary does not
+report the resolved release. `--write` writes
 `metrics/install/receipt.json` and `receipt.md`; `--check` is the default and
 re-derives the whole checked-in receipt from its own samples offline. It is not
 part of `precommit`. The binstall cells stay `known_gap` until a release carries

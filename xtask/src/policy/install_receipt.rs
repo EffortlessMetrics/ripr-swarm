@@ -382,8 +382,12 @@ pub(super) fn build_receipt(cells: &[Cell], dispositions: &[Disposition]) -> Res
             .iter()
             .filter(|cell| cell.status == "works")
             .collect();
+        // Only samples of the newest working version judge the row; samples of
+        // an older release stay listed as history but cannot carry its median.
+        let version = working.last().and_then(|cell| cell.version.clone());
         let seconds: Vec<f64> = working
             .iter()
+            .filter(|cell| cell.version == version)
             .filter_map(|cell| cell.install_seconds)
             .collect();
         let median_seconds = median(&seconds);
@@ -413,13 +417,12 @@ pub(super) fn build_receipt(cells: &[Cell], dispositions: &[Disposition]) -> Res
             } else if seconds.len() < min_samples {
                 not_established = true;
                 reasons.push(format!(
-                    "{channel} on {platform} has {} of the {min_samples} samples a source build is judged on",
+                    "{channel} on {platform} has {} of the {min_samples} samples of its newest version a source build is judged on",
                     seconds.len()
                 ));
             }
             "works".to_string()
         };
-        let version = working.last().and_then(|cell| cell.version.clone());
         rows.push(json!({
             "channel": channel,
             "platform": platform,
