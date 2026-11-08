@@ -78,6 +78,18 @@ The default contract is:
 - A missing `ripr.toml` and a freshly generated `ripr.toml` should produce
   equivalent default policy behavior, except for filesystem artifacts
   intentionally created by `init` or other commands.
+- `ripr init --agents` writes language-appropriate agent instructions. The
+  Rust block stays byte-identical to `docs/AGENT_QUICKSTART.md`; a preview
+  language (Python, TypeScript/JavaScript) gets its own test runner and
+  assertion advice, an advisory label, and the same fail-closed DONE/STOP
+  rules, including STOP on `unanalyzed_working_tree: true`. A language counts
+  only when it is both detected and enabled in the effective
+  `[languages].enabled` (the config this run writes, else the one it keeps,
+  with an unreadable config enabling none); a detected language that is not
+  enabled is named as not analyzed instead of promised. The Cursor rule's
+  front-matter globs follow the same languages, and `--force` refreshes that
+  front matter only when it exactly matches a shape ripr generated;
+  user-authored front matter and content outside the markers stay untouched.
 - Explicit CLI flags and LSP initialization options override repo config.
 - Repo config overrides built-in defaults.
 - Config discovery stops at a `.git` directory entry, including a dangling or
@@ -589,6 +601,20 @@ when a user runs ripr init without --force,
 then ripr exits with an actionable message and leaves the file unchanged.
 ```
 
+### Init agent instructions follow the analyzed languages
+
+```text
+Given a Python repository whose ripr.toml enables Python,
+when a user runs ripr init --agents all,
+then CLAUDE.md, AGENTS.md and the Cursor rule carry the Python preview loop
+(pytest advice, `**/*.py` globs) without cargo or Rust-only repair commands.
+If ripr.toml enables only rust, the Python loop is not written and the block
+says Python files are not analyzed.
+After Python is added to a Rust repository, ripr init --agents cursor --force
+rewrites ripr's own Cursor front matter to the new globs and keeps the user's
+notes outside the markers and any user-authored front matter unchanged.
+```
+
 ### Init provider recovery does not initialize a rejected value
 
 ```text
@@ -867,6 +893,10 @@ Current tests and reports that support the contract:
 - `crates/ripr/src/cli/mod.rs::tests::run_dispatches_check_parse_errors`
 - `crates/ripr/src/cli/mod.rs::tests::run_treats_a_repeated_global_verbose_as_one_enable`
 - `crates/ripr/src/cli/execute.rs::tests::execute_dispatches_subcommand_args_without_reparsing_argv`
+- `crates/ripr/src/cli/commands/init_agents.rs::tests::detected_but_not_enabled_languages_are_not_promised`
+- `crates/ripr/src/cli/commands/init_agents.rs::tests::force_refreshes_generated_cursor_frontmatter_but_not_user_frontmatter`
+- `crates/ripr/src/cli/commands/init_agents.rs::tests::python_block_names_pytest_and_does_not_promise_guided_repair`
+- `crates/ripr/tests/cli_smoke.rs::init_agents_writes_language_appropriate_instructions`
 
 - `crates/ripr/tests/pilot_missing_changed_files.rs::pilot_discloses_sparse_missing_changed_file_and_recovers_same_head`
 - `crates/ripr/tests/pilot_missing_changed_files.rs::pilot_discloses_mixed_missing_changed_file_even_with_changed_recommendation`
@@ -1007,6 +1037,9 @@ Current implementation pieces:
 - `crates/ripr/src/cli/commands.rs` exposes `init`, `pilot`, `outcome`, `check`,
   `explain`, `context`, `doctor`, and `lsp`; `init --ci github` writes the
   advisory GitHub Actions report workflow with optional SARIF rendering/upload.
+- `crates/ripr/src/cli/commands/init_agents.rs` owns the language-sensitive
+  `ripr init --agents` block and Cursor front matter; `crates/ripr/src/cli/commands/init.rs`
+  passes it the effective enabled languages.
 - `crates/ripr/src/app.rs` orchestrates config-aware analysis entry points.
 - `crates/ripr/src/output/agent_seam_packets.rs` renders targeted-test work
   orders.
