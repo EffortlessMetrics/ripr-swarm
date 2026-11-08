@@ -154,6 +154,8 @@ jobs:
       # Scores only crates whose mutants.out remained; the checkout is needed
       # because the harness verifies each mutant diff against the pinned source.
       - name: Score the surviving crates together
+        # Advisory lane: a scoring failure must not hide the receipt upload.
+        continue-on-error: true
         run: |
           set -euo pipefail
           corpus="$RUNNER_TEMP/spot-check-corpus"
