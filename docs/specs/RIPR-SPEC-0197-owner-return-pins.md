@@ -2398,12 +2398,15 @@ Forwarding grammar (`forwarded_callback_params`, fail-closed):
   statement the helper reaches unconditionally and in order (`g(.., fun);`,
   tail `g(fun)`, `let PAT = g(fun);`), or the receiver of a method chain on
   such a call (`catch_unwind(fun).unwrap()`);
-- exactly one parameter is forwarded; the test reaches the helper call
-  eagerly with a call-making closure literal at that position (the
-  invocation rule's test side), and every argument of every call to the
-  helper in the test that holds a call-making closure, or a name bound to
-  one (the #9997 reading), sits at that same position, so a second closure
-  the helper never runs cannot carry the owner call.
+- every argument of every call to the helper in the test that holds a
+  call-making closure, or a name bound to one (the #9997 reading), sits at
+  one position, so a second closure the helper never runs cannot carry the
+  owner call; the forwarded parameter at that position is the closure's, and
+  the test reaches the helper call eagerly with a call-making closure literal
+  there (the invocation rule's test side). Other parameters the helper
+  forwards bare (tracing's `new_span(span)`, `let s = make(want);`) receive
+  no call-making closure, so they are ordinary values and neither block nor
+  join the rule.
 
 Same-file forward (credited): the receiving call is a single-segment free
 function defined once in the file, an evidence-helper role item of the
@@ -2417,14 +2420,19 @@ copied to the test with their own lines, filtered by each function's role
 (`assert_eq!` only for a `Production` integration-target item). The
 receiving function's calls, except the callback parameter's own call, are
 added with the helper's. A receiving function that forwards again, invokes
-the parameter only conditionally, or never invokes it is not followed
-(one hop).
+the parameter only conditionally, or otherwise does not eagerly invoke it is
+not followed (one hop). A receiving function that passes every resolution
+check above but never names the parameter at the forwarded position (a `_`
+pattern, or a plain name with no identifier token of it in its body) never
+runs the closure: it is read like the never-invoked control (#9997), so it
+lends nothing and records no limit.
 
 Unresolved forward (named limit, never credit): when the grammar holds but
 the receiving call is not such a same-file function (an external
 `with_default`, a qualified path, a method call, or a same-file function
-outside the rule) and the helper still has a role-admitted assertion after
-the forwarding statement, the helper-credit pass records a transient
+outside the rule) and the helper still has a recognized, role-admitted
+parser-backed assertion after the forwarding statement, the helper-credit
+pass records a transient
 per-test limit naming the helper and the callee as written, and lends
 nothing. The classifier reads it only for a row it would otherwise mark
 `no_assertion` with no oracle: that row's miss becomes the analyzer-limit
@@ -2452,6 +2460,14 @@ the "No detected assertion observes ..." missing line. The analyzer-limit gap
 marker is not set (no refusal exists), so the class is not rewritten to
 `static_unknown`. A finding whose related tests include any other
 no-assertion row, such as the never-invoked control, keeps the old wording.
+
+Remaining residual: the literal tracing helper of #9981 asserts only through
+`handle.assert_finished()`, a method call that is not a parser-backed
+assertion (no method-name oracle is added for it). It therefore has no
+recognized assertion after the forward, records no limit, and its tests still
+read `no_assertion` until that expectation-handle oracle is recognized by the
+oracle producers themselves. Only helpers with a recognized assertion
+(`assert_eq!` and the other parser-backed macros) after the forward are named.
 
 ### Selected tier literals through a returned binding (#13037)
 
@@ -3109,6 +3125,7 @@ assertions. This repair shares the existing callback without that larger migrati
 - Forwarded closure callbacks (#9981 forwarding residual):
   `plain_helper_forwarding_a_closure_to_a_same_file_invoker_lends_its_later_assertion`
   (the former #9997 pinned negative, now an intended positive),
+  `forwarded_closure_is_credited_beside_a_non_closure_parameter_forwarded_bare`,
   `forwarded_closure_credits_the_same_file_invokers_own_observing_assertion`,
   `forwarded_closure_to_an_unresolved_callee_is_a_named_limit_not_credit` and
   `forwarded_closure_shapes_outside_the_grammar_grant_nothing_and_name_nothing`
@@ -3117,7 +3134,9 @@ assertions. This repair shares the existing callback without that larger migrati
   same-file forward reads exactly like the direct-invocation reference, and an
   unresolved forward keeps the never-invoked control's class and strength
   while its row reads `assertion_admission_unproven` with the named evidence
-  line (the never-invoked control stays `no_assertion`).
+  line (the never-invoked control stays `no_assertion`); two mixed findings
+  pin that a genuine `no_assertion` test keeps the finding wording and an
+  oracle-bearing test leaves class, oracle and stages unchanged.
 
 - Cloned unused callbacks (#13219):
   `closure_callbacks::tests::cloned_callback_names_keep_the_plain_helper_withhold`

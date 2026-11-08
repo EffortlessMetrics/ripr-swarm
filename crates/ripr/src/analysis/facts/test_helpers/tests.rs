@@ -1425,6 +1425,24 @@ fn plain_helper_forwarding_a_closure_to_a_same_file_invoker_lends_its_later_asse
 }
 
 #[test]
+fn forwarded_closure_is_credited_beside_a_non_closure_parameter_forwarded_bare()
+-> Result<(), Box<dyn Error>> {
+    // The helper also hands `want` bare to another call; only the parameter at
+    // the test's call-making closure position is the forwarded closure.
+    let index = index_for(&callback_source(
+        "    fn make(want: bool) -> bool {\n        want\n    }\n    fn with_default(s: bool, f: impl FnOnce() -> bool) -> bool {\n        let got = f();\n        got == s\n    }\n    fn run_test(want: bool, f: impl FnOnce() -> bool) {\n        let s = make(want);\n        let _ = with_default(s, f);\n        assert_eq!(s, true);\n    }\n",
+        "        run_test(true, || gate(11));\n",
+    ))?;
+
+    let test = test_named(&index, "boundary")?;
+
+    assert_eq!(assertion_texts(test), vec!["assert_eq!(s, true);"]);
+    assert!(calls(test).contains(&"with_default"), "{:?}", calls(test));
+    assert_eq!(forwarded_limit(&index, "boundary")?, None);
+    Ok(())
+}
+
+#[test]
 fn forwarded_closure_credits_the_same_file_invokers_own_observing_assertion()
 -> Result<(), Box<dyn Error>> {
     // One hop: the receiving function invokes the closure and asserts on its
@@ -1469,9 +1487,19 @@ fn forwarded_closure_to_an_unresolved_callee_is_a_named_limit_not_credit()
             "    fn run_test(want: bool, fun: impl FnOnce() -> bool) {\n        let pool = Pool::new();\n        pool.run(fun);\n        assert_eq!(want, true);\n    }\n",
         ),
         (
-            "same-file callee that never invokes it",
+            "same-file callee that mentions its parameter but never invokes it",
             "with_default",
-            "    fn with_default(_f: impl FnOnce() -> bool) -> bool {\n        true\n    }\n    fn run_test(want: bool, f: impl FnOnce() -> bool) {\n        let _ = with_default(f);\n        assert_eq!(want, true);\n    }\n",
+            "    fn with_default(f: impl FnOnce() -> bool) -> bool {\n        drop(f);\n        true\n    }\n    fn run_test(want: bool, f: impl FnOnce() -> bool) {\n        let _ = with_default(f);\n        assert_eq!(want, true);\n    }\n",
+        ),
+        (
+            "tracing shape: a non-closure parameter is also forwarded bare",
+            "with_default",
+            "    fn run_test(span: u32, fun: impl FnOnce() -> bool) {\n        let (subscriber, handle) = mock().new_span(span).run_with_handle();\n        with_default(subscriber, fun);\n        assert_eq!(handle, 1);\n    }\n",
+        ),
+        (
+            "non-closure parameter forwarded bare to a builder first",
+            "with_default",
+            "    fn run_test(want: bool, fun: impl FnOnce() -> bool) {\n        let s = make(want);\n        with_default(s, fun);\n        assert_eq!(s, true);\n    }\n",
         ),
         (
             "same-file callee that forwards again (one hop only)",
@@ -1549,6 +1577,16 @@ fn forwarded_closure_shapes_outside_the_grammar_grant_nothing_and_name_nothing()
                 "{SAME_FILE_INVOKER}    fn run_test(want: bool, f: impl FnOnce() -> bool) {{\n        let _ = with_default(f);\n        assert_eq!(want, true);\n    }}\n"
             ),
             "        if gate(0) == false {\n            run_test(true, || gate(11));\n        }\n",
+        ),
+        (
+            "same-file receiver whose parameter is named but never mentioned",
+            "    fn with_default(_f: impl FnOnce() -> bool) -> bool {\n        true\n    }\n    fn run_test(want: bool, f: impl FnOnce() -> bool) {\n        let _ = with_default(f);\n        assert_eq!(want, true);\n    }\n".to_string(),
+            "        run_test(true, || gate(11));\n",
+        ),
+        (
+            "same-file receiver with a wildcard parameter",
+            "    fn with_default(_: impl FnOnce() -> bool) -> bool {\n        true\n    }\n    fn run_test(want: bool, f: impl FnOnce() -> bool) {\n        let _ = with_default(f);\n        assert_eq!(want, true);\n    }\n".to_string(),
+            "        run_test(true, || gate(11));\n",
         ),
         (
             "async forwarding helper",

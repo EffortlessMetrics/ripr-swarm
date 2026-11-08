@@ -135,6 +135,43 @@ pub(crate) fn forwarded_callback_params(helper_text: &str) -> Option<Vec<Forward
     Some(forwarded)
 }
 
+/// Whether the free function in `function_text` never names its parameter at
+/// `position`: a `_` pattern, or a plain identifier (no `@` subpattern) with
+/// no identifier token of that name in the body, so the argument passed there
+/// is never used and a closure passed there never runs (#9981). `Some(false)`
+/// for any other pattern or a mentioned name; `None` for a method (`self`),
+/// a missing parameter or an unparsable text.
+pub(crate) fn param_never_mentioned(function_text: &str, position: usize) -> Option<bool> {
+    let parse = parse_clean_source_file(function_text)?;
+    let function = parse
+        .tree()
+        .syntax()
+        .descendants()
+        .find_map(ast::Fn::cast)?;
+    let parameters = function.param_list()?;
+    if parameters.self_param().is_some() {
+        return None;
+    }
+    let parameter = parameters.params().nth(position)?;
+    let name = match parameter.pat()? {
+        ast::Pat::WildcardPat(_) => return Some(true),
+        ast::Pat::IdentPat(pattern) if pattern.pat().is_none() => {
+            pattern.name()?.text().to_string()
+        }
+        _ => return Some(false),
+    };
+    let body = function.body()?;
+    Some(
+        !body
+            .syntax()
+            .descendants_with_tokens()
+            .filter_map(|element| element.into_token())
+            .any(|token| {
+                token.kind() == ra_ap_syntax::SyntaxKind::IDENT && token.text() == name.as_str()
+            }),
+    )
+}
+
 /// The call in a statement expression that receives `name` as a bare
 /// argument: the expression itself, or the receiver of a method chain on it
 /// (`with_default(f).unwrap()`), which is evaluated first and in full. Yields
