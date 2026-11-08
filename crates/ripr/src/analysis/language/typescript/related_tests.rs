@@ -464,6 +464,13 @@ impl ReExportIndex {
                     let mut via = frame.via.clone();
                     via.extend(visited.iter().cloned());
                     let mut names = frame.names.clone();
+                    // The export name the importer binds (`decodeText` for
+                    // `export { decodeThing as decodeText }`, or `default`) is
+                    // the name a test spies on; a fabricated spy on it must
+                    // void the chain just as one on the declaration does.
+                    if let Some(imported) = &call.import.imported {
+                        names.insert(imported.clone());
+                    }
                     names.insert(exported.name.clone());
                     let entry = TypeScriptModuleEntry {
                         name: exported.name.clone(),

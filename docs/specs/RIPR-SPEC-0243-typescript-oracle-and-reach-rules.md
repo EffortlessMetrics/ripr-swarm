@@ -957,7 +957,7 @@ Candidates come from the first non-empty tier:
    cross-module callers"); the class follows the same-module rule because not
    every test's reach is cross-module. Each related test records the entries
    it reaches once, so per-line classification does not rescan them. The importer's calls ride in the per-file export facts
-   (file-fact schema 7), so resolution never re-parses an importer, and run
+   (file-fact schema 8), so resolution never re-parses an importer, and run
    only for owners of changed files.
 3. **Heuristic relations** when tiers 1 and 2 are empty, package-filtered,
    for function, arrow and component owners, when the test body

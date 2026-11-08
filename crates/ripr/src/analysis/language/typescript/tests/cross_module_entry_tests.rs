@@ -508,6 +508,28 @@ fn a_fabricating_spy_on_the_chain_is_refused() -> Result<(), String> {
 }
 
 #[test]
+fn a_fabricating_spy_on_a_renamed_export_is_refused() -> Result<(), String> {
+    // `b.ts` binds the owner through its renamed export `decodeText`; a test
+    // that fabricates `decodeText` never runs `decodeThing`.
+    let renamed = with(
+        with(
+            base(),
+            "src/a.ts",
+            format!("{A}export {{ decodeThing as decodeText }};\n"),
+        ),
+        "src/b.ts",
+        "import { decodeText } from \"./a\";\nexport function normalize(p: string): string {\n  return \"/\" + decodeText(p);\n}\n"
+            .to_string(),
+    );
+    assert_related("renamed-twin", &renamed)?;
+    let spied = "import { describe, expect, test, vi } from \"vitest\";\nimport * as a from \"../src/a\";\nimport { normalize } from \"../src/b\";\ndescribe(\"normalize\", () => {\n  test(\"decodes\", () => {\n    vi.spyOn(a, \"decodeText\").mockReturnValue(\"a/b\");\n    expect(normalize(\"a%252Fb\")).toBe(\"/a/b\");\n  });\n});\n";
+    assert_refused(
+        "renamed-spy",
+        &with(renamed, "tests/b.test.ts", spied.to_string()),
+    )
+}
+
+#[test]
 fn a_dynamic_or_computed_call_is_refused() -> Result<(), String> {
     for (label, body) in [
         (
