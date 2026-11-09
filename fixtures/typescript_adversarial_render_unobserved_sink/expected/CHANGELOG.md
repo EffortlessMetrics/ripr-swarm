@@ -612,7 +612,7 @@ Updated:
 ## Pending — typescript_adversarial_render_unobserved_sink (37)
 
 Reason:
-#13592 follow-up (RIPR-SPEC-0108): Badge calls formatBadge inside a template substitution, which the call lexer now reads as code, so the render test reaches formatBadge through its same-module caller; no_static_path becomes static_unknown with observation unknown. Still never exposed, no repair packet.
+RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; human rendering unchanged
 
 Command:
 `cargo xtask goldens bless typescript_adversarial_render_unobserved_sink --reason "..."`
