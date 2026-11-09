@@ -189,4 +189,111 @@ mod tests {
         assert_eq!(escape_property("src/dé.rs"), "src/dé.rs");
         assert_eq!(escape_property_pre_encoded("src/dé.rs"), "src/dé.rs");
     }
+
+    /// GitHub's documented decode: one left-to-right pass, so `%250A` yields
+    /// the literal text `%0A`, never a newline. `property` also decodes
+    /// `%3A` and `%2C`.
+    fn github_decode(text: &str, property: bool) -> String {
+        let mut decoded = String::with_capacity(text.len());
+        let mut rest = text;
+        while let Some(at) = rest.find('%') {
+            decoded.push_str(&rest[..at]);
+            let tail = &rest[at..];
+            let replacement = match tail.get(..3) {
+                Some("%25") => Some('%'),
+                Some("%0D") => Some('\r'),
+                Some("%0A") => Some('\n'),
+                Some("%3A") if property => Some(':'),
+                Some("%2C") if property => Some(','),
+                _ => None,
+            };
+            match replacement {
+                Some(c) => {
+                    decoded.push(c);
+                    rest = &tail[3..];
+                }
+                None => {
+                    decoded.push('%');
+                    rest = &tail[1..];
+                }
+            }
+        }
+        decoded.push_str(rest);
+        decoded
+    }
+
+    /// Characters the encoders deliberately print as `\u{XX}` text instead of
+    /// round-tripping (they cannot be carried faithfully), plus CR and LF,
+    /// which encode as `%0D` and `%0A`.
+    fn carried_faithfully(c: char) -> bool {
+        c == '\r' || c == '\n' || !crate::agent::loop_commands::needs_terminal_escape(c)
+    }
+
+    fn workflow_text() -> impl proptest::strategy::Strategy<Value = String> {
+        use proptest::prelude::*;
+        // Weighted toward the characters the escapes act on, mixed with
+        // arbitrary text, control characters and bidi overrides.
+        proptest::collection::vec(
+            prop_oneof![
+                4 => proptest::sample::select(vec![
+                    '%', ',', ':', '\r', '\n', '\t', '2', '5', '0', 'A', 'D', 'C', '3',
+                    '\u{1b}', '\u{7}', '\u{202e}', '\u{0}', 'é',
+                ]),
+                3 => any::<char>(),
+            ],
+            0..40,
+        )
+        .prop_map(|chars| chars.into_iter().collect())
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn data_and_property_round_trip_through_the_github_decode(text in workflow_text()) {
+            // Characters the encoders print as `\\u{XX}` do not round-trip by design.
+            let text: String = text
+                .chars()
+                .map(|c| if carried_faithfully(c) { c } else { 'x' })
+                .collect();
+            proptest::prop_assert_eq!(github_decode(&escape_data(&text), false), text.clone());
+            proptest::prop_assert_eq!(github_decode(&escape_property(&text), true), text.clone());
+            proptest::prop_assert_eq!(
+                github_decode(&escape_property_pre_encoded(&text.replace('%', "%25")), true),
+                text
+            );
+        }
+
+        #[test]
+        fn output_never_carries_raw_line_breaks_or_controls(text in workflow_text()) {
+            for escaped in [
+                escape_data(&text),
+                escape_property(&text),
+                escape_property_pre_encoded(&text),
+            ] {
+                // Tab is the one control character the terminal-safe pass
+                // keeps; it cannot end or split a workflow command.
+                proptest::prop_assert!(
+                    !escaped.chars().any(|c| c.is_control() && c != '\t'),
+                    "raw control character in {:?}", escaped
+                );
+            }
+            for escaped in [escape_property(&text), escape_property_pre_encoded(&text)] {
+                proptest::prop_assert!(
+                    !escaped.contains([',', ':']),
+                    "raw comma or colon in property {:?}", escaped
+                );
+            }
+        }
+
+        #[test]
+        fn pre_encoded_property_never_double_encodes(text in workflow_text()) {
+            // Stable path text already holds %25 for every literal percent;
+            // the pre-encoded form must leave those percents alone.
+            let stable = text.replace('%', "%25");
+            proptest::prop_assert_eq!(
+                escape_property_pre_encoded(&stable),
+                escape_property(&text)
+            );
+            proptest::prop_assert!(!escape_property_pre_encoded("%25").contains("%2525"));
+        }
+    }
 }
