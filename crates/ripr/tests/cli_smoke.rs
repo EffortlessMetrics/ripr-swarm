@@ -17,6 +17,9 @@ mod agent_output_budget;
 #[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/agent_policy_guidance.rs"]
 mod agent_policy_guidance;
+#[cfg(any(feature = "lang-typescript", feature = "lang-python"))]
+#[path = "cli_smoke/agent_seam_preview_route.rs"]
+mod agent_seam_preview_route;
 #[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/artifact_mode_precedence.rs"]
 mod artifact_mode_precedence;
@@ -45,6 +48,8 @@ mod common;
 #[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/diff_absolute_root.rs"]
 mod diff_absolute_root;
+#[path = "cli_smoke/diff_nothing_analyzed.rs"]
+mod diff_nothing_analyzed;
 #[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/diff_pairing.rs"]
 mod diff_pairing;
@@ -170,6 +175,9 @@ mod source_unicode;
 #[cfg(any(feature = "lang-rust", feature = "lang-typescript"))]
 #[path = "cli_smoke/structural_workspace_markers.rs"]
 mod structural_workspace_markers;
+#[cfg(feature = "lang-rust")]
+#[path = "cli_smoke/stub_closes_own_gap.rs"]
+mod stub_closes_own_gap;
 #[path = "cli_smoke/suppression_notice.rs"]
 mod suppression_notice;
 #[path = "cli_smoke/ts_limitations_boundaries.rs"]
@@ -27183,12 +27191,12 @@ fn check_explicit_base_deletion_only_range_does_not_claim_no_behavior_changed() 
 /// #13238: `check --format agent` on a diff whose findings are all
 /// `no_static_path` must not collapse to a bare `stop=` line. The agent
 /// surface owes the same bounded route the human surface names for the same
-/// run: one record per counted finding (file:line, id) plus the
-/// `ripr explain` drill-in, and the terminal must not claim nothing more is
+/// run: `limits=` plus the `ripr explain` drill-in (#13594 dropped the
+/// `missing=-` per-finding records, which named nothing to fix), and the terminal must not claim nothing more is
 /// fixable while the human Start-here block recommends adding a co-located
 /// test.
 #[test]
-fn check_format_agent_all_static_limited_emits_records_and_a_route() -> Result<(), String> {
+fn check_format_agent_all_static_limited_emits_a_route_without_records() -> Result<(), String> {
     let root = unique_temp_workspace("agent-format-all-limited");
     std::fs::create_dir_all(root.join("src")).map_err(|e| format!("mkdir: {e}"))?;
     run_git(&root, &["init", "-b", "main"])?;
@@ -27224,14 +27232,11 @@ fn check_format_agent_all_static_limited_emits_records_and_a_route() -> Result<(
             "expected both new functions counted as no_static_path (predicate + return_value probes):\n{stdout}"
         ));
     }
-    if !stdout.contains("no_static_path|src/lib.rs:") || !stdout.contains("|id=") {
+    // #13594: static-limited findings carry no concrete next step, so no
+    // `missing=-` record is printed; `limits=` and the drill-in carry the route.
+    if stdout.contains("no_static_path|src/lib.rs:") || stdout.contains("missing=-") {
         return Err(format!(
-            "the all-limited run must emit bounded records (file:line + id):\n{stdout}"
-        ));
-    }
-    if !stdout.contains("src/lib.rs:4|") || !stdout.contains("src/lib.rs:8|") {
-        return Err(format!(
-            "the records must name both changed functions (levy at line 4, fee at line 8):\n{stdout}"
+            "the all-limited run must not emit missing=- records:\n{stdout}"
         ));
     }
     if !stdout.contains("next=ripr explain ") {
@@ -28283,6 +28288,117 @@ fn check_default_base_with_clean_worktree_keeps_no_scope_note_only() -> Result<(
             "no-origin JSON must bind guidance to its resolved local base: {value}"
         ));
     }
+
+    ignore_remove_dir_all(&root);
+    Ok(())
+}
+
+/// #13644: a bare human `ripr check` on a clean base branch whose HEAD has a
+/// parent analyzes the last commit and says so, so a caller does not spend a
+/// call on `nothing in scope`. JSON keeps the empty-range contract, and a
+/// dirty tree or an explicit `--base` keeps its own scope.
+#[test]
+fn check_clean_base_branch_with_parent_analyzes_last_commit_in_human_only() -> Result<(), String> {
+    let root = unique_temp_workspace("last-commit-fallback");
+    std::fs::create_dir_all(root.join("src")).map_err(|err| format!("create src: {err}"))?;
+    run_git(&root, &["init", "-b", "main"])?;
+    run_git(&root, &["config", "user.email", "test@test.com"])?;
+    run_git(&root, &["config", "user.name", "Test"])?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"last-commit-fallback\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|err| format!("write Cargo.toml: {err}"))?;
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "pub fn can_vote(age: u32) -> bool { age > 18 }\n",
+    )
+    .map_err(|err| format!("write lib.rs: {err}"))?;
+    run_git(&root, &["add", "."])?;
+    run_git(&root, &["commit", "-m", "initial"])?;
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "pub fn can_vote(age: u32) -> bool { age >= 18 }\n",
+    )
+    .map_err(|err| format!("rewrite lib.rs: {err}"))?;
+    run_git(&root, &["commit", "-am", "boundary"])?;
+    let root_str = root.to_string_lossy().into_owned();
+
+    let human = run_ripr(&["check", "--root", &root_str]);
+    assert_success(&human);
+    let stdout = String::from_utf8_lossy(&human.stdout);
+    let stderr = String::from_utf8_lossy(&human.stderr);
+    if !stdout.contains("base: HEAD~1") || stdout.contains("0 changed behaviors checked") {
+        return Err(format!(
+            "bare check on a clean base branch must analyze the last commit; got:\n{stdout}"
+        ));
+    }
+    if stdout.contains("ripr explain") && !stdout.contains("--base 'HEAD~1'") {
+        return Err(format!(
+            "drill-in commands must stay on the analyzed last-commit range; got:\n{stdout}"
+        ));
+    }
+    if !stderr.contains("analyzed the last commit (--base HEAD~1)") {
+        return Err(format!(
+            "the auto-scope must be labeled on stderr; got:\n{stderr}"
+        ));
+    }
+
+    let json = run_ripr(&["check", "--root", &root_str, "--json"]);
+    assert_success(&json);
+    let value: serde_json::Value =
+        serde_json::from_slice(&json.stdout).map_err(|err| format!("parse check JSON: {err}"))?;
+    if value["base"] != "main" || value["findings"].as_array().is_none_or(|f| !f.is_empty()) {
+        return Err(format!(
+            "JSON must keep the resolved base unchanged: {value}"
+        ));
+    }
+
+    let explicit = run_ripr(&["check", "--root", &root_str, "--base", "main"]);
+    assert_success(&explicit);
+    if String::from_utf8_lossy(&explicit.stderr).contains("analyzed the last commit") {
+        return Err("an explicit --base must not be rescoped".to_string());
+    }
+
+    // An ignored routed source file is not a clean checkout: keep the empty
+    // result and its disclosure.
+    std::fs::write(root.join(".git/info/exclude"), "src/generated.rs\n")
+        .map_err(|err| format!("write exclude: {err}"))?;
+    std::fs::write(root.join("src/generated.rs"), "pub fn g() -> u8 { 1 }\n")
+        .map_err(|err| format!("write ignored source: {err}"))?;
+    let ignored = run_ripr(&["check", "--root", &root_str]);
+    assert_success(&ignored);
+    if !String::from_utf8_lossy(&ignored.stdout).contains("base: main") {
+        return Err(format!(
+            "an ignored source file must keep the original range; got:\n{}",
+            String::from_utf8_lossy(&ignored.stdout)
+        ));
+    }
+    if String::from_utf8_lossy(&ignored.stderr).contains("analyzed the last commit") {
+        return Err(format!(
+            "an ignored source file must keep the empty-range result; got:\n{}",
+            String::from_utf8_lossy(&ignored.stdout)
+        ));
+    }
+    std::fs::remove_file(root.join("src/generated.rs"))
+        .map_err(|err| format!("remove ignored source: {err}"))?;
+
+    // A clone resolves the default base to `origin/main` while HEAD is `main`;
+    // an older remote branch in that clone must not disable the fallback.
+    run_git(&root, &["branch", "older", "HEAD~1"])?;
+    let clone = unique_temp_workspace("last-commit-fallback-clone");
+    let clone_str = clone.to_string_lossy().into_owned();
+    run_git(&root, &["clone", "--quiet", &root_str, &clone_str])?;
+    let cloned = run_ripr(&["check", "--root", &clone_str]);
+    assert_success(&cloned);
+    if !String::from_utf8_lossy(&cloned.stderr).contains("analyzed the last commit") {
+        return Err(format!(
+            "a clean clone on its default branch must analyze the last commit; got:\n{}\n{}",
+            String::from_utf8_lossy(&cloned.stdout),
+            String::from_utf8_lossy(&cloned.stderr)
+        ));
+    }
+    ignore_remove_dir_all(&clone);
 
     ignore_remove_dir_all(&root);
     Ok(())
@@ -32104,11 +32220,12 @@ fn agent_status_does_not_fall_back_to_another_attempt_when_local_receipt_is_unus
         "before",
     ]);
     assert_success(&second_before);
+    // #13803: a human start prints its one next command on stdout.
     let second = repair_route_attempt_id(
-        String::from_utf8_lossy(&second_before.stderr)
+        String::from_utf8_lossy(&second_before.stdout)
             .lines()
-            .find_map(|line| line.strip_prefix("ripr: attempt next command: "))
-            .ok_or("second before phase printed no attempt command")?,
+            .find_map(|line| line.strip_prefix("Next, after the test edit: "))
+            .ok_or("second before phase printed no next command")?,
     )?;
     let mut shipping = std::fs::read_to_string(root.join("tests/shipping.rs"))?;
     shipping.push_str(
