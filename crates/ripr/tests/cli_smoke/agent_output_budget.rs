@@ -5,7 +5,7 @@
 //! any of these outputs fails here instead of silently taxing every agent turn.
 //! A deliberate cut lowers the ceiling in the same change; a deliberate
 //! addition must justify raising it.
-use super::{run_command, unique_external_workspace};
+use super::{printed_path, run_command, unique_external_workspace};
 use std::fs;
 use std::path::Path;
 
@@ -60,13 +60,10 @@ fn run(project: &Path, args: &[&str]) -> TestResult<String> {
     );
     // Measure with the absolute root replaced by a fixed token, so the
     // budget does not depend on how long the checkout path is.
-    // The brief renders the root with `/` separators on every host, so
-    // normalize both spellings or Windows measures the temp-path length.
-    let root = project.to_string_lossy().into_owned();
-    let slashed = root.replace('\\', "/");
-    Ok(String::from_utf8(output.stdout)?
-        .replace(&root, "<root>")
-        .replace(&slashed, "<root>"))
+    // `printed_path` is the spelling the binary prints (verbatim prefix folded,
+    // `/` separators on Windows), so the measurement is host-path independent.
+    let root = printed_path(project);
+    Ok(String::from_utf8(output.stdout)?.replace(&root, "<root>"))
 }
 
 fn within(label: &str, text: &str, ceiling: usize) {
