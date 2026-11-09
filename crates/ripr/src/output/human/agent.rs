@@ -137,7 +137,16 @@ fn render_report(
     let startable = repair_start
         .as_ref()
         .is_some_and(|start| start.command.is_some());
-    let mut out = header_line(output, &considered, gaps.len(), startable);
+    let unconfirmed = unconfirmed_gap_count(&triage, &gaps, incomplete);
+    let mut out = header_line(
+        output,
+        &considered,
+        HeaderCounts {
+            gaps: gaps.len(),
+            unconfirmed,
+            repairable: startable,
+        },
+    );
     out.push_str(&incomplete_lines);
     let next = next_line(&triage, output, &gaps, drill_in, provenance);
     if output.findings.is_empty() && !output.no_scope_provided {
@@ -204,6 +213,7 @@ fn render_report(
             strongest_test(finding).map(|test| intern_test(&mut tests, &output.root, test));
         out.push_str(&gap_line(&output.root, finding, test_ref, true));
         out.push('\n');
+        push_stage_rows(&mut out, finding);
     }
     for (index, test) in tests.iter().enumerate() {
         out.push_str(&format!("t{}={}\n", index + 1, test.line));
@@ -368,6 +378,7 @@ pub(super) fn render_finding(
         terminal.starts_with("open=a test-side") || terminal.starts_with("open=preview-language");
     out.push_str(&gap_line(root, finding, test_ref, with_missing));
     out.push('\n');
+    push_stage_rows(&mut out, finding);
     for (index, test) in tests.iter().enumerate() {
         out.push_str(&format!("t{}={}\n", index + 1, test.line));
     }
@@ -394,6 +405,7 @@ fn finish_stop(
 ) -> String {
     out.push_str(&gap_line(root, finding, None, false));
     out.push('\n');
+    push_stage_rows(&mut out, finding);
     out.push_str(terminal);
     out.push('\n');
     out.push_str(&format!("next={context_command}\n"));
@@ -445,6 +457,7 @@ fn render_open_limited(
             .map(|test| intern_test(&mut tests, &output.root, test));
         out.push_str(&gap_line(&output.root, finding, test_ref, false));
         out.push('\n');
+        push_stage_rows(&mut out, finding);
     }
     for (index, test) in tests.iter().enumerate() {
         out.push_str(&format!("t{}={}\n", index + 1, test.line));
@@ -533,6 +546,7 @@ fn render_limited_records(
             strongest_test(finding).map(|test| intern_test(&mut tests, &output.root, test));
         out.push_str(&gap_line(&output.root, finding, test_ref, true));
         out.push('\n');
+        push_stage_rows(&mut out, finding);
     }
     for (index, test) in tests.iter().enumerate() {
         out.push_str(&format!("t{}={}\n", index + 1, test.line));
@@ -568,6 +582,17 @@ fn is_test_side_gap(finding: &Finding) -> bool {
         && !triage::is_preview_limited(finding)
 }
 
+/// RIPR-SPEC-0429: the compact staged-evidence row, printed directly after a
+/// finding record so the record always carries its stage states (`stages=…`)
+/// without a consumer parsing the JSON document. Pure projection of the same
+/// `evidence_stage_rows` the check JSON emits.
+fn push_stage_rows(out: &mut String, finding: &Finding) {
+    out.push_str(&crate::output::stage_rows::stage_rows_agent_line(
+        &crate::output::stage_rows::evidence_stage_rows(finding),
+    ));
+    out.push('\n');
+}
+
 /// `stop=` is the terminal "ripr cannot offer a test-side fix" flag. It is
 /// true only when no test-side gap remains; a selected static-limited finding
 /// is not enough to set it. The line itself must not claim nothing more is
@@ -576,22 +601,73 @@ fn should_emit_stop(gaps: &[&Finding]) -> bool {
     gaps.is_empty()
 }
 
-fn header_line(
-    output: &CheckOutput,
-    considered: &[&Finding],
+/// A preview-only finding that would otherwise be a test-side gap: candidate
+/// current, `weakly_exposed` or `reachable_unrevealed`, not static-limited.
+/// Preview evidence is advisory, so it is never a counted `gaps=` entry. Like
+/// `gaps=`, membership is by class; explain's `open=` drill-in additionally
+/// needs a missing discriminator and a weak related test, so a preview
+/// finding without those counts here while explain ends in `stop=`.
+fn is_unconfirmed_preview_gap(finding: &Finding) -> bool {
+    finding.is_candidate_actionable()
+        && matches!(
+            finding.class,
+            ExposureClass::WeaklyExposed | ExposureClass::ReachableUnrevealed
+        )
+        && triage::is_preview_limited(finding)
+        && !triage::is_static_limited(finding)
+}
+
+/// How many listed records are gaps the static evidence cannot confirm
+/// (#13803): the open weak-assertion rows behind a reach-only limit, or the
+/// preview-only gap records of a limited-records report. It follows the body
+/// path exactly, so the header never counts a record the body does not list
+/// and never reads `gaps=0` alone beside a listed gap. Zero whenever a
+/// confirmed gap is listed, because those paths print no limited records.
+fn unconfirmed_gap_count(triage: &HumanTriage<'_>, gaps: &[&Finding], incomplete: bool) -> usize {
+    if !should_emit_stop(gaps) {
+        return 0;
+    }
+    let open = open_limited_findings(triage);
+    if !open.is_empty() {
+        return open.len();
+    }
+    if incomplete {
+        return 0;
+    }
+    limited_record_findings(triage)
+        .into_iter()
+        .filter(|finding| is_unconfirmed_preview_gap(finding))
+        .count()
+}
+
+/// The header's gap facts, each owned by the body path that prints it.
+struct HeaderCounts {
+    /// Confirmed test-side gaps (`gaps=`).
     gaps: usize,
+    /// Listed gaps the static evidence cannot confirm (`unconfirmed_gaps=`).
+    unconfirmed: usize,
+    /// A guided repair start the agent can run now (`repairable=1`).
     repairable: bool,
-) -> String {
+}
+
+fn header_line(output: &CheckOutput, considered: &[&Finding], counts: HeaderCounts) -> String {
     let mut by_class: BTreeMap<&'static str, usize> = BTreeMap::new();
     for finding in considered {
         *by_class.entry(finding.class.as_str()).or_default() += 1;
     }
     let mut line = format!(
-        "#ripr agent static-advisory base={} findings={} gaps={gaps}",
+        "#ripr agent static-advisory base={} findings={} gaps={}",
         output.base.as_deref().unwrap_or("-"),
         considered.len(),
+        counts.gaps,
     );
-    if repairable {
+    if counts.unconfirmed > 0 {
+        // #13803: `gaps=` counts confirmed gaps only; a listed preview-only
+        // or reach-limited gap is counted here so the header agrees with
+        // the records and the `open=` line below it.
+        line.push_str(&format!(" unconfirmed_gaps={}", counts.unconfirmed));
+    }
+    if counts.repairable {
         // A preview finding is never a counted gap, but `ripr agent repair`
         // can start its gap; say so beside `gaps=` instead of leaving `gaps=0`
         // to read as "nothing to repair" (#13599).

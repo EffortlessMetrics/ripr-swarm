@@ -297,6 +297,7 @@ mod tests {
     use super::*;
     use crate::analysis::language::python::classify::classify_change;
     use crate::analysis::language::python::owners_tests::{extract_owners, extract_tests};
+    use crate::analysis::language::python::related_tests::apply_class_facts;
     use crate::domain::StopReason;
     use std::path::Path;
 
@@ -330,7 +331,9 @@ class Table:
             .position(|line| line == line_text)
             .ok_or_else(|| format!("fixture source must contain the changed line: {line_text}"))?
             + 1;
-        let owners = extract_owners(file, source);
+        let mut owners = extract_owners(file, source);
+        // The production path fills class facts before classification.
+        apply_class_facts(&mut owners);
         let tests = extract_tests(Path::new(test_file), tests);
         classify_change(file, line, line_text, &owners, &tests)
             .ok_or_else(|| "behavioral fixture must produce a finding".to_string())
