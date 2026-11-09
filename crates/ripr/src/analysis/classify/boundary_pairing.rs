@@ -824,6 +824,22 @@ fn assertion_observes_boundary_owner_call(
     } else {
         owner_call_sites(&subject, owner)
     };
+    // #13037: a comparison guarded by `&& flag` pairs only with a call that
+    // sits on the boundary and holds every guard; an unread guarded shape
+    // keeps the readings below.
+    if let Some(reached) = super::activation::guarded_comparison(probe, owner).and_then(|guarded| {
+        lists.iter().try_fold(false, |any, arguments| {
+            let values: Vec<Vec<String>> = arguments
+                .iter()
+                .map(|argument| pairing_argument_values(test, argument, scope))
+                .collect();
+            guarded
+                .call_reaches_boundary(probe, owner, index, &values)
+                .map(|reached| any || reached)
+        })
+    }) {
+        return reached;
+    }
     if lists
         .iter()
         .any(|arguments| argument_list_activates_boundary(probe, owner, test, arguments, scope))
