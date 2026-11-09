@@ -1673,6 +1673,13 @@ pub(super) enum DocumentStalenessReason {
     /// longer authoritative for line identity, so diagnostics stay
     /// quarantined until a later full replacement/open re-establishes it.
     InvalidIncrementalChange,
+    /// A `didOpen` (or first full replacement) was refused because the
+    /// store-wide open-document or retained-text limit was reached, so ripr
+    /// never tracked this editor buffer. The URI is held as an
+    /// unknown-authority placeholder; closing other documents and reopening
+    /// this one re-establishes tracking. Not an incremental-change failure
+    /// (#11666).
+    DocumentStoreLimitReached,
     /// No analyzed baseline records this document's saved content, so there
     /// is nothing to serve against. The cause (no attempt, in progress,
     /// failed, or not recorded by a committed snapshot) is not part of the
@@ -1687,6 +1694,7 @@ impl DocumentStalenessReason {
                 "buffer_diverges_from_analyzed_saved_content"
             }
             Self::InvalidIncrementalChange => "invalid_incremental_change",
+            Self::DocumentStoreLimitReached => "document_store_limit_reached",
             Self::NoAnalyzedSavedContent => "no_analyzed_saved_content",
         }
     }
@@ -1699,8 +1707,22 @@ impl DocumentStalenessReason {
             Self::InvalidIncrementalChange => {
                 "an incremental document change could not be applied under the negotiated position encoding"
             }
+            Self::DocumentStoreLimitReached => {
+                "this editor buffer was not tracked because the open-document limit was reached"
+            }
             Self::NoAnalyzedSavedContent => "the document's saved content has no analyzed baseline",
         }
+    }
+
+    /// Whether the retained buffer is not a synchronization authority, so
+    /// only a range-less full replacement (or client save text) may end the
+    /// quarantine. Both variants are pinned fail-closed by
+    /// [`DocumentState::refresh_quarantine`].
+    pub(super) fn is_buffer_authority_loss(self) -> bool {
+        matches!(
+            self,
+            Self::InvalidIncrementalChange | Self::DocumentStoreLimitReached
+        )
     }
 }
 
@@ -1848,6 +1870,12 @@ pub(super) struct DocumentState {
     /// buffer never supplies a save identity; only a range-less full
     /// replacement or client-provided save text re-establishes authority.
     pub(super) buffer_authority_unknown: bool,
+    /// True when `buffer_authority_unknown` is because the store-wide
+    /// document or retained-text limit refused this buffer, not because an
+    /// incremental change failed (#11666). Only meaningful while
+    /// `buffer_authority_unknown` is set; it selects the disclosed reason and
+    /// never relaxes the fail-closed quarantine.
+    pub(super) store_limit_refused: bool,
     pub(super) quarantine: Option<DocumentQuarantine>,
 }
 
@@ -1868,7 +1896,18 @@ impl DocumentState {
             analyzed_saved_digest: None,
             analyzed_input_identity: None,
             buffer_authority_unknown: false,
+            store_limit_refused: false,
             quarantine: None,
+        }
+    }
+
+    /// The reason disclosed while the buffer is not a synchronization
+    /// authority.
+    fn authority_loss_reason(&self) -> DocumentStalenessReason {
+        if self.store_limit_refused {
+            DocumentStalenessReason::DocumentStoreLimitReached
+        } else {
+            DocumentStalenessReason::InvalidIncrementalChange
         }
     }
 
@@ -1913,7 +1952,7 @@ impl DocumentState {
                 .as_ref()
                 .is_some_and(|quarantine| quarantine.withdrawal_disclosed);
             self.quarantine = Some(DocumentQuarantine {
-                reason: DocumentStalenessReason::InvalidIncrementalChange,
+                reason: self.authority_loss_reason(),
                 withdrawal_disclosed: was_disclosed,
             });
             return if was_quarantined {
@@ -2181,7 +2220,7 @@ fn invalidate_incremental_document_state(state: &mut DocumentState) -> Quarantin
     // through the ordinary staleness recomputation.
     state.buffer_authority_unknown = true;
     state.quarantine = Some(DocumentQuarantine {
-        reason: DocumentStalenessReason::InvalidIncrementalChange,
+        reason: state.authority_loss_reason(),
         withdrawal_disclosed: was_disclosed,
     });
     if was_quarantined {
@@ -2317,7 +2356,8 @@ impl Drop for BudgetedDocumentMut<'_> {
 /// exceed either bound is still recorded so later `didChange`/`didClose`
 /// find it, but with empty retained text and `buffer_authority_unknown`
 /// so [`DocumentState::refresh_quarantine`] pins the existing
-/// invalid-incremental-change fail-closed path (no diagnostics). Reopening
+/// fail-closed path (no diagnostics), disclosed as
+/// [`DocumentStalenessReason::DocumentStoreLimitReached`]. Reopening
 /// an existing URI replaces its bytes (the delta is counted, not doubled).
 /// Closing a document frees its share of both budgets.
 pub(super) struct DocumentStore {
@@ -2397,6 +2437,7 @@ impl DocumentStore {
     ) -> QuarantineTransition {
         let mut state = DocumentState::new(uri.clone(), version, String::new());
         state.buffer_authority_unknown = true;
+        state.store_limit_refused = true;
         let transition = state.refresh_quarantine();
         self.rust_index_keys.remove(&uri);
         self.documents.insert(uri, state);
@@ -2579,9 +2620,11 @@ impl DocumentStore {
             // quarantined until a range-less replacement re-establishes the
             // complete current buffer, then apply only changes after that
             // replacement.
-            if state.quarantine.as_ref().is_some_and(|quarantine| {
-                quarantine.reason == DocumentStalenessReason::InvalidIncrementalChange
-            }) {
+            if state
+                .quarantine
+                .as_ref()
+                .is_some_and(|quarantine| quarantine.reason.is_buffer_authority_loss())
+            {
                 let Some(last_full_replacement) =
                     changes.iter().rposition(|change| change.range.is_none())
                 else {
@@ -2614,6 +2657,7 @@ impl DocumentStore {
                 // authority again and the ordinary staleness recomputation
                 // applies (#1746).
                 state.buffer_authority_unknown = false;
+                state.store_limit_refused = false;
                 return state.refresh_quarantine();
             }
 
@@ -2712,6 +2756,7 @@ impl DocumentStore {
                 return state.refresh_quarantine();
             }
             state.buffer_authority_unknown = false;
+            state.store_limit_refused = false;
         }
         if let Some(digest) = saved_digest {
             state.saved_digest = Some(digest);
@@ -2905,6 +2950,7 @@ mod tests {
             analyzed_saved_digest: Some(digest_of(saved_text)),
             analyzed_input_identity: Some("input:test".to_string()),
             buffer_authority_unknown: false,
+            store_limit_refused: false,
             quarantine: None,
         }
     }
@@ -3827,11 +3873,9 @@ mod tests {
             .quarantine
             .as_ref()
             .map(|quarantine| quarantine.reason)
-            != Some(DocumentStalenessReason::InvalidIncrementalChange)
+            != Some(DocumentStalenessReason::DocumentStoreLimitReached)
         {
-            return Err(
-                "overflow document must reuse invalid-incremental-change quarantine".into(),
-            );
+            return Err("overflow document must use the document-store-limit quarantine".into());
         }
         Ok(())
     }
@@ -3849,12 +3893,32 @@ mod tests {
         if state.buffer_authority_unknown {
             return Err("accepted document must not pin buffer_authority_unknown".to_string());
         }
-        if state.quarantine.as_ref().is_some_and(|quarantine| {
-            quarantine.reason == DocumentStalenessReason::InvalidIncrementalChange
-        }) {
-            return Err(
-                "accepted document must not use invalid-incremental-change quarantine".into(),
-            );
+        if state.store_limit_refused
+            || state
+                .quarantine
+                .as_ref()
+                .is_some_and(|quarantine| quarantine.reason.is_buffer_authority_loss())
+        {
+            return Err("accepted document must not use an authority-loss quarantine".into());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn invalidating_an_overflow_placeholder_keeps_the_store_limit_reason() -> Result<(), String> {
+        let first = test_uri("file:///workspace/src/a.rs")?;
+        let second = test_uri("file:///workspace/src/b.rs")?;
+        let overflow = test_uri("file:///workspace/src/c.rs")?;
+        let mut store = DocumentStore::with_limits(tiny_count_limits());
+        store.open(open_params(first, "fn a() {}"));
+        store.open(open_params(second, "fn b() {}"));
+        store.open(open_params(overflow.clone(), "fn overflow() {}"));
+        store.invalidate_change(&overflow, 2);
+        assert_overflow_quarantined(&store, &overflow)?;
+        if DocumentStalenessReason::DocumentStoreLimitReached.as_str()
+            != "document_store_limit_reached"
+        {
+            return Err("store-limit reason id must stay stable".to_string());
         }
         Ok(())
     }

@@ -1072,6 +1072,10 @@ pub(super) fn quarantine_withdrawal_diagnostic(reason: DocumentStalenessReason) 
             "undo_or_revert",
             "Undo the edit or revert the file so ripr receives the full document again.",
         ),
+        DocumentStalenessReason::DocumentStoreLimitReached => (
+            "close_other_documents_then_reopen",
+            "Close other open files, then reopen this file so ripr can track it.",
+        ),
         DocumentStalenessReason::NoAnalyzedSavedContent => (
             "save_then_refresh",
             "Save the file if it is new, then refresh (`ripr.refresh`) so ripr can restore them.",
