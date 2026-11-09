@@ -123,8 +123,11 @@ pub(super) fn owner_prelude(
             }
             ["const", named, ty, "=", literal] => {
                 let name = named.strip_suffix(':')?;
+                // A parameter of the same name would win in the row inputs,
+                // although Rust reads the block's item, so it declines.
                 if !super::activation::is_constant_like(name)
                     || matches!(name, "true" | "false")
+                    || parameters.iter().any(|parameter| parameter == name)
                     || !INTEGER_TYPES.contains(ty)
                     || !is_decimal_literal(literal)
                     || found.binds(name)
@@ -191,12 +194,18 @@ fn token_count(text: &str, name: &str) -> usize {
         .count()
 }
 
-/// Whether `text` holds a macro call: an identifier followed by `!` and an
-/// opening delimiter.
+/// Whether `text` holds a macro call: an identifier, optionally followed by
+/// whitespace (`rebind !()` is legal), then `!` and an opening delimiter.
+/// A keyword before a negated group (`return !(x)`) also matches, which only
+/// declines.
 fn has_macro_call(text: &str) -> bool {
     let is_word = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
     text.match_indices('!').any(|(at, _)| {
-        text[..at].chars().next_back().is_some_and(is_word)
+        text[..at]
+            .trim_end()
+            .chars()
+            .next_back()
+            .is_some_and(is_word)
             && text[at + 1..].trim_start().starts_with(['(', '[', '{'])
     })
 }

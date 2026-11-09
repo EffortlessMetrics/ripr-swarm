@@ -157,4 +157,38 @@ fn a_rebound_name_mentioned_outside_the_prelude_and_the_initializer_declines() {
         owner_prelude(&owner(redeclared), "unit", "KB", &params(&["bytes"])),
         None
     );
+    // A shadow through a pattern after the local adds a mention, which only
+    // the token count catches.
+    for shadow in [
+        "    if let Some(si) = Some(true) { let _ = si; }\n",
+        "    match bytes { si => { let _ = si; } }\n",
+        "    for si in [true] { let _ = si; }\n",
+    ] {
+        let body = format!(
+            "fn f(bytes: u64, si: bool) -> u8 {{\n    let si = !si;\n    let unit = if si {{ KIB }} else {{ KB }};\n{shadow}    if bytes >= unit {{ 1 }} else {{ 0 }}\n}}\n"
+        );
+        assert_eq!(
+            owner_prelude(&owner(&body), "unit", FLAGGED, &parameters),
+            None,
+            "{shadow}"
+        );
+    }
+    // A macro call spelled with whitespace before `!`.
+    let spaced_macro = "fn f(bytes: u64) -> u8 {\n    const KB: u64 = 2_000;\n    let unit = KB;\n    rebind !();\n    if bytes >= unit { 1 } else { 0 }\n}\n";
+    assert_eq!(
+        owner_prelude(&owner(spaced_macro), "unit", "KB", &params(&["bytes"])),
+        None
+    );
+}
+
+#[test]
+fn a_local_constant_named_like_a_parameter_declines() {
+    // Rust reads the block's `const KB`, but the row's `KB` would win in the
+    // evaluator's inputs, so the prelude must not resolve it (#12771 review).
+    let body = "pub fn tier(bytes: u64, KB: u64) -> bool {\n    const KB: u64 = 2_000;\n    let unit = KB;\n    bytes >= unit\n}\n";
+    assert_eq!(
+        owner_prelude(&owner(body), "unit", "KB", &params(&["bytes", "KB"])),
+        None
+    );
+    assert!(owner_prelude(&owner(body), "unit", "KB", &params(&["bytes"])).is_some());
 }
