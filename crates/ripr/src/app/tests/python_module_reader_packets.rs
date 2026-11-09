@@ -158,16 +158,35 @@ fn assert_import_refusal(root: &Path) -> Result<(), String> {
     assert_eq!(finding.ripr.reach.state, StageState::Unknown);
     assert!(finding.flow_sinks.is_empty(), "{finding:?}");
     assert!(python_repair_card(finding).is_none());
-    let gap = &finding
-        .canonical_gap
-        .as_ref()
-        .ok_or("the refused import must retain its gap")?
-        .id;
+    // The refusal is a `missing_import_graph` static limit, and a static limit
+    // never mints a canonical gap (fail closed). With no gap identity there is
+    // no id a gap-start request could select, so the finding cannot open a
+    // repair attempt at all; assert that, not a retained gap.
+    assert!(
+        finding.canonical_gap.is_none(),
+        "the refused import must not mint a startable gap: {finding:?}"
+    );
+    assert!(
+        finding
+            .stop_reasons
+            .iter()
+            .any(|reason| format!("{reason:?}").contains("StaticProbeUnknown")),
+        "{:?}",
+        finding.stop_reasons
+    );
     let json = crate::render_check(&output, &crate::OutputFormat::Json)?;
-    assert!(matches!(
-        lookup_python_gap_start(&output.findings, &json, &root.to_string_lossy(), gap),
-        GapStartLookup::NotReady { .. }
-    ));
+    assert!(
+        !matches!(
+            lookup_python_gap_start(
+                &output.findings,
+                &json,
+                &root.to_string_lossy(),
+                "gap:python:src_fx_core.py:greet",
+            ),
+            GapStartLookup::Ready(_)
+        ),
+        "{json}"
+    );
     Ok(())
 }
 
