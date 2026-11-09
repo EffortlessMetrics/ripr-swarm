@@ -40,7 +40,7 @@ pub(super) fn build_plan(target_directory: &Path, max_size_bytes: u64) -> Result
         })?;
         let name = entry.file_name();
         let path = entry.path();
-        if name == OsStr::new(PRESERVED_ENTRY) {
+        if is_preserved_entry(&name) {
             retained_measurement = measure_path(&path)?;
             continue;
         }
@@ -70,6 +70,11 @@ pub(super) fn build_plan(target_directory: &Path, max_size_bytes: u64) -> Result
         max_size_bytes,
         over_budget_bytes,
     })
+}
+
+pub(super) fn is_preserved_entry(name: &OsStr) -> bool {
+    name.to_str()
+        .is_some_and(|value| value.eq_ignore_ascii_case(PRESERVED_ENTRY))
 }
 
 pub(super) fn measure_path(path: &Path) -> Result<Measurement> {
@@ -145,7 +150,7 @@ pub(super) fn is_reparse_point(_metadata: &fs::Metadata) -> bool {
 pub(super) fn require_direct_child(target_directory: &Path, path: &Path) -> Result<()> {
     if path.parent() != Some(target_directory)
         || path.file_name().is_none()
-        || path.file_name() == Some(OsStr::new(PRESERVED_ENTRY))
+        || path.file_name().is_some_and(is_preserved_entry)
     {
         return Err(ArtifactError::new(format!(
             "refusing deletion outside direct non-ripr target ownership: {}",

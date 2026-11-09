@@ -56,18 +56,79 @@ pub(super) fn parse_cargo_paths(json: &str) -> Result<CargoPaths> {
 }
 
 pub(super) fn json_string_field(json: &str, key: &str) -> Result<String> {
-    let needle = format!("\"{key}\"");
-    let start = json
-        .find(&needle)
-        .ok_or_else(|| ArtifactError::new(format!("cargo metadata lacks `{key}`")))?;
-    let after_key = &json[start + needle.len()..];
-    let colon = after_key
-        .find(':')
-        .ok_or_else(|| ArtifactError::new(format!("cargo metadata field `{key}` lacks a colon")))?;
-    let value = after_key[colon + 1..].trim_start();
-    parse_json_string(value).map_err(|error| {
-        ArtifactError::new(format!("invalid cargo metadata field `{key}`: {error}"))
-    })
+    let bytes = json.as_bytes();
+    let first = bytes
+        .iter()
+        .position(|byte| !byte.is_ascii_whitespace())
+        .ok_or_else(|| ArtifactError::new("cargo metadata JSON is empty"))?;
+    if bytes[first] != b'{' {
+        return Err(ArtifactError::new("cargo metadata root is not a JSON object"));
+    }
+
+    let mut depth = 0usize;
+    let mut index = first;
+    while index < bytes.len() {
+        match bytes[index] {
+            b'"' => {
+                let end = json_string_end(json, index)?;
+                if depth == 1 {
+                    let candidate = parse_json_string(&json[index..end])?;
+                    let mut after = end;
+                    while after < bytes.len() && bytes[after].is_ascii_whitespace() {
+                        after += 1;
+                    }
+                    if after < bytes.len() && bytes[after] == b':' && candidate == key {
+                        after += 1;
+                        while after < bytes.len() && bytes[after].is_ascii_whitespace() {
+                            after += 1;
+                        }
+                        return parse_json_string(&json[after..]).map_err(|error| {
+                            ArtifactError::new(format!(
+                                "invalid top-level cargo metadata field `{key}`: {error}"
+                            ))
+                        });
+                    }
+                }
+                index = end;
+            }
+            b'{' | b'[' => {
+                depth = depth.saturating_add(1);
+                index += 1;
+            }
+            b'}' | b']' => {
+                if depth == 0 {
+                    return Err(ArtifactError::new("unbalanced cargo metadata JSON"));
+                }
+                depth -= 1;
+                index += 1;
+            }
+            _ => index += 1,
+        }
+    }
+    Err(ArtifactError::new(format!(
+        "cargo metadata lacks top-level `{key}`"
+    )))
+}
+
+pub(super) fn json_string_end(json: &str, start: usize) -> Result<usize> {
+    let bytes = json.as_bytes();
+    if bytes.get(start) != Some(&b'"') {
+        return Err(ArtifactError::new("expected a JSON string"));
+    }
+    let mut index = start + 1;
+    while index < bytes.len() {
+        match bytes[index] {
+            b'"' => return Ok(index + 1),
+            b'\\' => {
+                index += 2;
+                if index > bytes.len() {
+                    return Err(ArtifactError::new("unterminated JSON escape"));
+                }
+            }
+            _ => index += 1,
+        }
+    }
+    Err(ArtifactError::new("unterminated JSON string"))
 }
 
 pub(super) fn parse_json_string(value: &str) -> Result<String> {
@@ -190,9 +251,21 @@ pub(super) fn normalize_absolute(path: &Path) -> Result<PathBuf> {
 
 #[cfg(windows)]
 pub(super) fn same_path(left: &Path, right: &Path) -> bool {
-    left.to_string_lossy()
-        .replace('/', "\\")
-        .eq_ignore_ascii_case(&right.to_string_lossy().replace('/', "\\"))
+    windows_path_key(left) == windows_path_key(right)
+}
+
+#[cfg(windows)]
+fn windows_path_key(path: &Path) -> String {
+    let mut value = path.to_string_lossy().replace('/', "\\");
+    if let Some(rest) = value.strip_prefix("\\\\?\\UNC\\") {
+        value = format!("\\\\{rest}");
+    } else if let Some(rest) = value.strip_prefix("\\\\?\\") {
+        value = rest.to_string();
+    }
+    while value.len() > 3 && value.ends_with('\\') {
+        value.pop();
+    }
+    value.to_ascii_lowercase()
 }
 
 #[cfg(not(windows))]
