@@ -228,6 +228,15 @@ pub(super) fn resolve_repository_local_includes(root: &Path, index: &mut RustInd
     rebase_function_identities(index);
 }
 
+/// Whether the index already carries include state from an earlier
+/// resolution pass: resolved parents (whose function identities are rebased)
+/// or physical include targets. The overflow path of the resolution pass
+/// returns before replacing the targets, so a stale set would survive an
+/// in-place extension that a fresh build never had.
+pub(super) fn index_holds_include_state(index: &RustIndex) -> bool {
+    !index.include_parents.is_empty() || !index.include_targets.is_empty()
+}
+
 /// Whether adding a file with this decoded `source` to an already-indexed
 /// workspace can re-parent function identities through an `include!`
 /// directive. Only an invocation that can become an edge counts: a
@@ -241,23 +250,14 @@ pub(super) fn resolve_repository_local_includes(root: &Path, index: &mut RustInd
 /// directive budget, reports `true`: its directives are unknown, so the
 /// caller fails closed to a fresh build. The edge budget is shared by the
 /// whole index and is spent on inert directives too, so once the cached
-/// index already holds rebased include edges (`core_has_include_edges`) any
+/// index already holds include state (`core_has_include_state`) any
 /// directive in an added file could push the merged total over the budget,
 /// which clears the edges without undoing the rebased identities: it counts.
-/// Whether the index already carries include state from an earlier
-/// resolution pass: resolved parents (whose function identities are rebased)
-/// or physical include targets. The overflow path of the resolution pass
-/// returns before replacing the targets, so a stale set would survive an
-/// in-place extension that a fresh build never had.
-pub(super) fn index_holds_include_state(index: &RustIndex) -> bool {
-    !index.include_parents.is_empty() || !index.include_targets.is_empty()
-}
-
 pub(super) fn added_file_may_rebase_includes(
     path: &Path,
     source: &str,
     kept: &BTreeSet<&Path>,
-    core_has_include_edges: bool,
+    core_has_include_state: bool,
 ) -> bool {
     if !might_contain_include_macro(source) {
         return false;
@@ -266,7 +266,7 @@ pub(super) fn added_file_may_rebase_includes(
         return true;
     };
     directives.len() > MAX_INCLUDE_EDGES
-        || (core_has_include_edges && !directives.is_empty())
+        || (core_has_include_state && !directives.is_empty())
         || directives.iter().any(|directive| {
             directive.is_file_level
                 && directive
