@@ -1680,6 +1680,8 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
                     reading.old, reading.new, reading.assertion.text
                 ),
                 flow_sink: Some(reading.sink.clone()),
+                shape: DiscriminatorShape::Other,
+                drafted_boundary: None,
             }]
         } else if boundary_downgraded {
             // The boundary downgrade names the equality that would activate the
