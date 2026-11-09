@@ -2219,6 +2219,9 @@ pub(crate) fn owner_call_relation(
         {
             return false;
         }
+        if default_object_second_binding(import, test, owner, alias_map, workspace_root) {
+            return false;
+        }
         import_references_owner_call(import, test, owner)
     }) {
         // A namespace import synthesized from `export * as ns from` reached
@@ -2519,6 +2522,7 @@ pub(crate) fn module_entry_owner(
             class_default_export: decorated.default_export,
             exported_as_default: false,
             default_object_member: false,
+            default_object_unsafe_siblings: Vec::new(),
             method_kind: TypeScriptMethodKind::Ordinary,
             module_entries: Vec::new(),
             params: Vec::new(),
@@ -2535,6 +2539,7 @@ pub(crate) fn module_entry_owner(
             owner_kind: OwnerKind::Method,
             exported_as_default: false,
             default_object_member: false,
+            default_object_unsafe_siblings: Vec::new(),
             method_kind,
             module_entries: Vec::new(),
             params: Vec::new(),
@@ -2555,6 +2560,7 @@ pub(crate) fn module_entry_owner(
         exported_as_default: entry.exported_as_default,
         class_default_export: false,
         default_object_member: false,
+        default_object_unsafe_siblings: Vec::new(),
         commonjs_default_export: false,
         commonjs_whole_function: false,
         constructor_callback: false,
@@ -4648,6 +4654,28 @@ fn owner_export_imported_from_unrelated_source(
     })
 }
 
+/// RIPR-SPEC-0243 rule 5 (#13694 review, #13750): when the owner's default
+/// object has a sibling that could replace it, any second binding of the
+/// owner's module in the test file (another import local, a named or
+/// namespace import, a `require()`) could reach that sibling outside the
+/// `local.member(` calls rule 5 checks, so the rule-5 relation is withheld.
+pub(crate) fn default_object_second_binding(
+    import: &TypeScriptImport,
+    test: &TypeScriptTest,
+    owner: &TypeScriptOwner,
+    alias_map: Option<&TsAliasMap>,
+    workspace_root: Option<&Path>,
+) -> bool {
+    owner.default_object_member
+        && !owner.default_object_unsafe_siblings.is_empty()
+        && import.imported.as_deref() == Some("default")
+        && !import.namespace
+        && test.imports_in_file.iter().any(|other| {
+            !std::ptr::eq(other, import)
+                && import_source_matches_owner(other, &test.file, owner, alias_map, workspace_root)
+        })
+}
+
 /// A literal `require()` binding (recorded as a default-named namespace
 /// binding) of a module whose whole export is the owner function
 /// (`module.exports = <function>`, RIPR-SPEC-0243 rule 19).
@@ -4686,6 +4714,12 @@ fn import_references_owner_call(
             .default_member_only_locals_in_file
             .iter()
             .any(|(local, member)| *local == import.local && *member == owner.name)
+            && !test
+                .default_member_only_locals_in_file
+                .iter()
+                .any(|(local, member)| {
+                    *local == import.local && owner.default_object_unsafe_siblings.contains(member)
+                })
             && contains_member_call_name(body_text, &import.local, &owner.name);
     }
     // A default import (`import local from './owner'`) binds the owner

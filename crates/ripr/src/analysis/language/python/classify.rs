@@ -901,7 +901,10 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
     // equality side. Unreadable guards, unbound operands, and rows without
     // literal inputs fail open and keep the existing oracle verdict.
     let guarded_arm_gap = (static_limit.is_none()
-        && matches!(family, ProbeFamily::ReturnValue | ProbeFamily::Predicate)
+        && matches!(
+            family,
+            ProbeFamily::ReturnValue | ProbeFamily::FieldConstruction | ProbeFamily::Predicate
+        )
         && boundary_gap.is_none()
         && inactive_term.is_none()
         && !no_behavior.multi_line_def_header_line)
@@ -1666,7 +1669,14 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
                 drafted_boundary: None,
             }]
         } else {
-            python_missing_discriminators(&family, line, line_text, owner, flow_sink.as_ref())
+            python_missing_discriminators(
+                &family,
+                line,
+                line_text,
+                old_line_text,
+                owner,
+                flow_sink.as_ref(),
+            )
         }
     } else {
         Vec::new()

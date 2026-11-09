@@ -112,6 +112,7 @@ reports no runtime outcomes; a real mutation runner confirms later.
 | [`ripr first-action`](#first-action) | Project the first useful action from review and evidence artifacts. | public |
 | [`ripr first-pr`](#first-pr) | Summarize what to fix in one PR from existing ripr reports. | public |
 | [`ripr gate`](#gate) | Show the gate command surface. | public |
+| [`ripr gate check`](#gate) | Fail CI on new gaps in this diff with one command. | public |
 | [`ripr gate evaluate`](#gate) | Evaluate advisory gate modes over PR guidance. | public |
 | [`ripr help`](#help) | Route to per-command options, the exhaustive reference, and the versioned machine catalog. | public |
 | [`ripr impacted-evidence`](#impacted-evidence) | Route later mutation work from PR evidence and labels. | public |
@@ -2503,14 +2504,38 @@ Examples:
 
 ### gate
 
-Shared help for `ripr gate`, `ripr gate evaluate`.
+Shared help for `ripr gate`, `ripr gate check`, `ripr gate evaluate`.
 
 ```text
 Evaluate the optional pass/fail gate against existing PR guidance (advisory unless explicitly enabled).
 
 Usage: ripr gate evaluate [--pr-guidance PATH | --gap-ledger PATH] [--mode MODE] [--out PATH] [--out-md PATH] [further inputs: see Options below]
+       ripr gate check --base REV [--head REV] [--mode MODE] [--label LABEL]... [--labels-json PATH] [check options: see below]
 
-Options:
+`gate check` is the one-command CI gate: it runs `ripr review-comments` for
+--base..--head, then `gate evaluate` over the guidance it wrote, and exits like
+`gate evaluate`: 0 pass/advisory/acknowledged, 3 blocked, 2 config_error. It
+defaults to --mode acknowledgeable, so an eligible new gap blocks unless the PR
+carries the waiver label. If review-comments cannot complete, the previous
+guidance document is not reused: the decision is config_error (exit 2).
+
+Check options:
+  --base REV                          Required. Base revision of the change, for example origin/main.
+  --head REV                          Head revision. Defaults to HEAD.
+  --timeout-ms N                      Passed to review-comments.
+  --guidance-out PATH                 Guidance JSON path. Defaults to target/ripr/review/comments.json.
+                                      Any existing file there (and its .md) is removed before the
+                                      run, and again if review-comments fails.
+  --mode                              Same modes as gate evaluate, but defaults to acknowledgeable.
+  --root, --label, --labels-json, --acknowledgement-label, --exception-policy,
+  --acknowledgements, --baseline, --out, --out-md
+                                      As for gate evaluate.
+  gate check produces its own guidance, so it does not accept --pr-guidance,
+  --gap-ledger or the other evaluate-only inputs (--repo-exposure, --sarif-policy,
+  --agent-verify, --agent-receipt, --recommendation-calibration, --mutation-calibration);
+  run review-comments and gate evaluate yourself to supply them.
+
+Evaluate options:
   --root PATH                         Workspace root. Must be an existing directory. Defaults to current directory.
   --repo-exposure PATH                Optional repo-exposure JSON input.
   --pr-guidance PATH                  Optional PR guidance JSON from `ripr review-comments`.
@@ -2559,6 +2584,7 @@ An explicit `--mode visible-only` is quiet; blocking modes remain opt-in.
 Examples:
   ripr gate
   ripr gate evaluate --pr-guidance PATH
+  ripr gate check --base origin/main
 ```
 
 ### help

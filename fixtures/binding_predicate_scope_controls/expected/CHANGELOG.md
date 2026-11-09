@@ -498,3 +498,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — binding_predicate_scope_controls (36)
+
+Reason:
+Reach summary of a workspace-unreferenced owner now ends '(unreferenced in workspace)' (RIPR-SPEC-0219, #12766); class unchanged
+
+Command:
+`cargo xtask goldens bless binding_predicate_scope_controls --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

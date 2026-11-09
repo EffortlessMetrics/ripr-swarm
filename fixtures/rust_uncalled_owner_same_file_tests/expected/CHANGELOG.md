@@ -462,3 +462,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — rust_uncalled_owner_same_file_tests (39)
+
+Reason:
+Reach summary of a workspace-unreferenced owner now ends '(unreferenced in workspace)' (RIPR-SPEC-0219, #12766); class unchanged
+
+Command:
+`cargo xtask goldens bless rust_uncalled_owner_same_file_tests --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
