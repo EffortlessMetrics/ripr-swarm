@@ -1134,8 +1134,8 @@ fn parse_review_comments_options(args: &[String]) -> Result<ReviewCommentsOption
 
     Ok(ReviewCommentsOptions {
         root,
-        base: base.ok_or_else(|| "review-comments requires --base <sha>".to_string())?,
-        head: head.ok_or_else(|| "review-comments requires --head <sha>".to_string())?,
+        base: base.ok_or_else(|| "review-comments requires --base <sha>; pass the pull request's base commit, for example `--base origin/main --head HEAD`".to_string())?,
+        head: head.ok_or_else(|| "review-comments requires --head <sha>; pass the pull request's head commit, for example `--base origin/main --head HEAD`".to_string())?,
         gap_ledger,
         check_output,
         out,
@@ -1199,7 +1199,7 @@ fn map_review_comments_git_diff_ingress_error(
     error
 }
 
-fn review_comments_markdown_path(json_path: &Path) -> PathBuf {
+pub(super) fn review_comments_markdown_path(json_path: &Path) -> PathBuf {
     let mut path = json_path.to_path_buf();
     path.set_extension("md");
     path
@@ -1452,11 +1452,11 @@ mod tests {
     fn review_comments_requires_base_and_head() {
         assert_eq!(
             parse_review_comments_options(&args(&["--head", "HEAD"])),
-            Err("review-comments requires --base <sha>".to_string())
+            Err("review-comments requires --base <sha>; pass the pull request's base commit, for example `--base origin/main --head HEAD`".to_string())
         );
         assert_eq!(
             parse_review_comments_options(&args(&["--base", "main"])),
-            Err("review-comments requires --head <sha>".to_string())
+            Err("review-comments requires --head <sha>; pass the pull request's head commit, for example `--base origin/main --head HEAD`".to_string())
         );
         assert_eq!(
             parse_review_comments_options(&args(&["--base"])),
@@ -2225,6 +2225,7 @@ mod tests {
             base: Some("HEAD~1".to_string()),
             diff: None,
             seam_id: None,
+            changed_paths: None,
         };
 
         let python_only = RiprConfig {

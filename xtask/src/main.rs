@@ -42,6 +42,7 @@ mod evidence_promotion;
 mod evidence_quality;
 mod first_run;
 mod fixture_contracts;
+mod fixture_expected_classes;
 mod generation_pins;
 mod kani_lane;
 mod public_proof;
@@ -71,6 +72,7 @@ mod packaged_repair_receipt;
 mod policy;
 #[cfg(test)]
 mod portable_consumer;
+mod precommit_formatting;
 mod product_gate_plan;
 mod product_route_parity;
 mod provider_review_observations;
@@ -83,6 +85,7 @@ mod readiness_snapshot;
 mod repo_readiness;
 mod repository_orientation;
 mod ripr_agent_disposition;
+mod schema_compat;
 mod schema_pattern;
 mod size_scaling;
 mod termination_qualification;
@@ -319,7 +322,8 @@ use policy::{
     check_executable_files, check_file_policy, check_local_context, check_network_policy,
     check_no_panic_family, check_packaged_readme, check_positioning_language, check_process_policy,
     check_product_copy, check_proof_packs, check_release_targets, check_static_language,
-    check_text_encoding, check_user_text, check_workflows, qualify_python_wheelhouse,
+    check_text_encoding, check_user_text, check_workflows, parse_workspace_lints_section,
+    qualify_python_wheelhouse,
 };
 use public_api_surface::public_api_surface;
 #[cfg(test)]
@@ -670,7 +674,9 @@ fn precommit_policy(collect_all: bool) -> Result<(), String> {
     if collect_all && let Some(path) = &preflight_receipt {
         repo_policy::verify_preflight(Path::new(path))?;
     }
-    run("cargo", &["fmt", "--check"])?;
+    precommit_formatting::run(collect_all, || {
+        run("cargo", &["fmt", "--check"]).map(|_| ())
+    })?;
     if collect_all {
         policy::check_policy_all()?;
     } else {
@@ -18114,53 +18120,6 @@ fn is_deletion_only(change: &ChangedPath) -> bool {
             .all(|status| status.chars().all(|character| character == 'D'))
 }
 
-/// Parse a `[workspace.lints.<section>]` block from `Cargo.toml`-shaped TOML.
-///
-/// Returns a map of bare lint name (e.g. `unwrap_used`, `unsafe_code`) to its
-/// level string (e.g. `deny`, `forbid`, `warn`, `allow`). Only direct
-/// `name = "level"` lines are recognized; this matches how the workspace
-/// declares lints today and keeps the parser dependency-free.
-fn parse_workspace_lints_section(text: &str, section: &str) -> BTreeMap<String, String> {
-    let mut out = BTreeMap::new();
-    let header = format!("[workspace.lints.{section}]");
-    let mut in_section = false;
-    for raw in text.lines() {
-        let line = raw.trim();
-        if line.starts_with('#') {
-            continue;
-        }
-        if line == header {
-            in_section = true;
-            continue;
-        }
-        if line.starts_with('[') && line.ends_with(']') {
-            in_section = false;
-            continue;
-        }
-        if !in_section {
-            continue;
-        }
-        let Some((key, raw_value)) = line.split_once('=') else {
-            continue;
-        };
-        let key = key.trim();
-        if key.is_empty() {
-            continue;
-        }
-        let value = raw_value.trim().trim_end_matches('#').trim();
-        // Take the first quoted token as the level. Anything more elaborate
-        // (table-form lint configuration) is intentionally not supported here
-        // — workspace lints today are flat `name = "level"` lines.
-        let level = value
-            .strip_prefix('"')
-            .and_then(|rest| rest.split_once('"').map(|(level, _)| level.to_string()));
-        if let Some(level) = level {
-            out.insert(key.to_string(), level);
-        }
-    }
-    out
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct LedgerLintEntry {
     name: String,
@@ -18446,7 +18405,13 @@ fn collect_clippy_debt_violations(
     today: &str,
 ) -> Vec<String> {
     let (entries, mut violations) = parse_clippy_debt_ledger(debt_text);
-    let cargo_clippy = parse_workspace_lints_section(cargo_text, "clippy");
+    let cargo_clippy = match parse_workspace_lints_section(cargo_text, "clippy") {
+        Ok(lints) => lints,
+        Err(err) => {
+            violations.push(err);
+            return violations;
+        }
+    };
     let (lints, _) = parse_clippy_lints_ledger(lints_text);
 
     let mut seen_ids = BTreeSet::new();
@@ -18687,8 +18652,14 @@ fn planned_blocker_text_is_msrv_only(text: &str) -> bool {
 }
 
 fn collect_lint_policy_violations(cargo_text: &str, ledger_text: &str) -> Vec<String> {
-    let cargo_clippy = parse_workspace_lints_section(cargo_text, "clippy");
-    let cargo_rust = parse_workspace_lints_section(cargo_text, "rust");
+    let cargo_clippy = match parse_workspace_lints_section(cargo_text, "clippy") {
+        Ok(lints) => lints,
+        Err(err) => return vec![err],
+    };
+    let cargo_rust = match parse_workspace_lints_section(cargo_text, "rust") {
+        Ok(lints) => lints,
+        Err(err) => return vec![err],
+    };
     let (entries, mut violations) = parse_clippy_lints_ledger(ledger_text);
     let workspace_msrv = parse_workspace_package_rust_version(cargo_text);
     let workspace_triple = workspace_msrv.as_deref().and_then(parse_msrv_triple);
@@ -19617,6 +19588,7 @@ const PROOF_PACK_RELEASE_REQUIRED_PATHS: &[&str] = &[
     "editors/vscode/package-lock.json",
     ".github/workflows/publish-extension.yml",
     ".github/workflows/release-server-binaries.yml",
+    ".github/workflows/package-family-qualification.yml",
 ];
 
 /// The full release proof the `release-package` pack MUST require: workspace

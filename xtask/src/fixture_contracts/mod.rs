@@ -172,6 +172,9 @@ pub(crate) fn check_fixture_contracts() -> Result<(), String> {
                 violations.push(format!("{} is missing `{heading}`", normalize_path(&spec)));
             }
         }
+        violations.extend(crate::fixture_expected_classes::fixture_dir_violations(
+            &path,
+        ));
     }
 
     finish_policy_report_with_disclosures(

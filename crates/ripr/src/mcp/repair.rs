@@ -399,6 +399,11 @@ fn durable_attempt_document(
         limitations.insert(0, limitation);
     }
     limitations.extend(route_limitations);
+    if let Some(limitation) =
+        crate::app::agent_status::focused_receipt_recovery_limitation(manifest)
+    {
+        limitations.push(limitation.to_string());
+    }
     // Ordinary next-action displays bind the portable root, like the repair
     // card: presentation only, never execution authority (ADR 0022).
     // Trust-bound or store-qualified continuations keep the persisted
@@ -581,10 +586,16 @@ pub(super) fn durable_receipt_document(
         }
         RepairAttemptState::ReadyToFinish => match load_attempt_terminal_receipt(root, manifest) {
             AttemptTerminalReceipt::NotRetained => {
-                let receipt = json!({
-                    "status": "not_retained",
-                    "note": "the after phase finished but no digest-bound terminal receipt is retained; issue it with `ripr agent receipt --attempt <id>` in the repository",
-                });
+                let note = if manifest
+                    .after
+                    .as_ref()
+                    .is_some_and(|after| after.focused_result.is_some())
+                {
+                    "no focused terminal receipt is retained; inspect `ripr agent status --attempt <id>` and the original after-phase outcome before retrying or starting a new attempt"
+                } else {
+                    "the after phase finished but no digest-bound terminal receipt is retained; issue it with `ripr agent receipt --attempt <id>` in the repository"
+                };
+                let receipt = json!({ "status": "not_retained", "note": note });
                 ("verification_pending", receipt)
             }
             AttemptTerminalReceipt::Unavailable { path, reason } => {
@@ -1347,6 +1358,7 @@ pub(super) mod tests {
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
+            owner_opt_outs: Vec::new(),
             suppression: None,
             partial_scope: None,
             analyzed_revisions: None,

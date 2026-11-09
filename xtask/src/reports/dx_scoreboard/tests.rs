@@ -6014,6 +6014,43 @@ fn every_corpus_entry_names_a_size_tier_and_gets_its_memory_bar() -> Result<(), 
 }
 
 #[test]
+fn large_real_repo_rows_are_heavy_large_tier_with_pinned_shas() -> Result<(), String> {
+    let config = parse_config(include_str!(
+        "../../../../benchmarks/dx_scoreboard/scoreboards.toml"
+    ))?;
+    validate_corpus(&config.corpus)?;
+    for id in ["bevy", "deno", "polars"] {
+        let entry = config
+            .corpus
+            .iter()
+            .find(|entry| entry.id == id)
+            .ok_or_else(|| format!("{id} missing from scoreboards.toml"))?;
+        assert!(entry.heavy, "{id} must be heavy");
+        assert_eq!(entry.size_tier.as_deref(), Some("large"), "{id}");
+        assert_eq!(entry.sha.len(), 40, "{id} pins a full commit sha");
+        assert!(entry.base_sha.is_none(), "{id} diffs against HEAD~1");
+        assert!(entry.memory_ratchet.is_none(), "{id} meets its tier bar");
+        let rss = entry.ceilings.get(TIER_RSS_METRIC).copied();
+        assert!(
+            rss.is_some_and(|mb| mb > 525.0 && mb <= 1024.0),
+            "{id}: {rss:?}"
+        );
+        assert!(entry.ceilings.contains_key("speed.cold_pilot_ms"), "{id}");
+    }
+    Ok(())
+}
+
+#[test]
+fn pilot_reason_suffix_names_a_partial_summary_reason() {
+    assert_eq!(
+        super::measure::pilot_reason_suffix(Some("timeout")),
+        " (reason `timeout`)"
+    );
+    assert_eq!(super::measure::pilot_reason_suffix(Some("")), "");
+    assert_eq!(super::measure::pilot_reason_suffix(None), "");
+}
+
+#[test]
 fn a_memory_ceiling_looser_than_the_tier_bar_needs_a_dated_ratchet_note() -> Result<(), String> {
     let base = format!(
         "{}\n[[size_tier]]\nid = \"small\"\ndescription = \"d\"\npeak_rss_mb = 150\nbar_source = \"ladder\"\n",

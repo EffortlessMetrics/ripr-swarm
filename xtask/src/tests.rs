@@ -8168,6 +8168,95 @@ fn swarm_server_binary_rehearsal_cannot_publish() -> Result<(), String> {
     Ok(())
 }
 
+/// The package family the rehearsal builds (#5378) stays read-only: it is only
+/// reachable from the rehearsal, holds no write or OIDC permission, reads no
+/// secret, and has no registry upload, release or publish step.
+#[test]
+fn swarm_package_family_rehearsal_cannot_publish() -> Result<(), String> {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .ok_or_else(|| "xtask manifest should have a repository parent".to_string())?;
+    let path = root.join(".github/workflows/package-family-qualification.yml");
+    let workflow = fs::read_to_string(&path)
+        .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
+    let caller_path = root.join(".github/workflows/release-server-binaries.yml");
+    let caller = fs::read_to_string(&caller_path)
+        .map_err(|error| format!("failed to read {}: {error}", caller_path.display()))?;
+    // Only the `packages` job body (lines indented deeper than job keys).
+    let calls_after_archives = |candidate: &str| {
+        let job: String = candidate
+            .split("\n  packages:\n")
+            .nth(1)
+            .unwrap_or_default()
+            .lines()
+            .take_while(|line| line.is_empty() || line.starts_with("    "))
+            .map(|line| format!("{line}\n"))
+            .collect();
+        job.contains("uses: ./.github/workflows/package-family-qualification.yml")
+            && job.contains("needs: rehearse")
+    };
+    if !calls_after_archives(&caller) {
+        return Err("the rehearsal must call the package family after the archives".to_string());
+    }
+    if calls_after_archives(&caller.replace("    needs: rehearse\n", "")) {
+        return Err("package-family caller negative control was accepted".to_string());
+    }
+    let validate = |candidate: &str| -> Result<(), String> {
+        let on_block = candidate
+            .split("\non:\n")
+            .nth(1)
+            .and_then(|rest| rest.split("\npermissions:").next())
+            .unwrap_or_default();
+        if !candidate.contains("permissions:\n  contents: read")
+            || on_block
+                .lines()
+                .filter(|line| line.starts_with("  ") && !line.starts_with("   "))
+                .ne(["  workflow_call:"])
+            || candidate.contains(": write")
+            || candidate.contains("id-token")
+            || candidate.contains("secrets.")
+            || candidate.contains("GH_TOKEN")
+            || candidate.contains("NODE_AUTH_TOKEN")
+            || candidate.contains("github.token")
+            || candidate.contains("registry-url")
+            || candidate.contains("npm publish")
+            || candidate.contains("twine")
+            || candidate.contains("gh-action-pypi-publish")
+            || candidate.contains("gh release")
+            || candidate.contains("release-upload-assets")
+            || !candidate.contains("persist-credentials: false")
+        {
+            return Err(
+                "package-family qualification must stay a read-only, called-only build and install proof"
+                    .to_string(),
+            );
+        }
+        Ok(())
+    };
+    validate(&workflow)?;
+    for broken in [
+        workflow.replace("contents: read", "contents: write"),
+        workflow.replace("contents: read", "contents: read\n  id-token: write"),
+        workflow.replace(
+            "on:\n  workflow_call:",
+            "on:\n  workflow_dispatch:\n  workflow_call:",
+        ),
+        workflow.replace(
+            "on:\n  workflow_call:",
+            "on:\n  workflow_call:\n  schedule:\n    - cron: '0 0 * * *'",
+        ),
+        format!("{workflow}\n      - run: npm publish --tag next ./pkg.tgz\n"),
+        format!("{workflow}\n      - run: python -m twine upload wheels/*\n"),
+        format!("{workflow}\n        env:\n          TOKEN: ${{{{ secrets.NPM_TOKEN }}}}\n"),
+        workflow.replace("persist-credentials: false", "persist-credentials: true"),
+    ] {
+        if validate(&broken).is_ok() {
+            return Err("package-family publication negative control was accepted".to_string());
+        }
+    }
+    Ok(())
+}
+
 #[test]
 fn server_archive_qualification_workflow_is_sha_bound_and_credential_free() -> Result<(), String> {
     const QUALIFICATION_COMMIT_TYPE_COMMAND: &str = r#"git -C "${GITHUB_WORKSPACE}" cat-file -t"#;
@@ -49915,21 +50004,21 @@ fn lsp_cockpit_report_reads_boundary_gap_fixture_expectations() -> Result<(), St
             .action_titles
             .contains(&"Write targeted test: open best related test".to_string())
     );
-    assert!(
-        !boundary_gap
-            .action_titles
-            .contains(&"Write targeted test: copy brief".to_string()),
-        "repair-packet brief is gated on fix_site_ready (#1663)"
-    );
+    // #13716: the boundary seam passes the repair-packet flip, so the real
+    // seam diagnostic offers the brief and the repair start.
+    for title in [
+        "Write targeted test: copy brief",
+        "Start repair: copy repair command",
+    ] {
+        assert!(
+            boundary_gap.action_titles.contains(&title.to_string()),
+            "boundary_gap must offer {title}: {:?}",
+            boundary_gap.action_titles
+        );
+    }
     assert!(boundary_gap.context.seam_packet_available);
-    assert!(
-        !boundary_gap.context.targeted_test_brief_available,
-        "pinned fixtures omit copyTargetedTestBrief until fix_site_ready"
-    );
-    assert!(
-        !boundary_gap.context.agent_repair_command_available,
-        "pinned fixtures omit copyAgentRepairCommand until fix_site_ready"
-    );
+    assert!(boundary_gap.context.targeted_test_brief_available);
+    assert!(boundary_gap.context.agent_repair_command_available);
     assert!(boundary_gap.context.agent_packet_command_available);
     assert!(boundary_gap.context.agent_brief_command_available);
     assert!(boundary_gap.context.after_snapshot_command_available);
@@ -49960,14 +50049,10 @@ fn editor_lsp_workflow_fixture_pins_saved_workspace_loop() -> Result<(), String>
     assert_eq!(editor_fixture.diagnostic_count, 1);
     assert_eq!(editor_fixture.seam_diagnostic_count, 1);
     assert!(editor_fixture.context.seam_packet_available);
-    assert!(
-        !editor_fixture.context.targeted_test_brief_available,
-        "editor_lsp_workflow pins repair-packet suppression without fix_site_ready"
-    );
-    assert!(
-        !editor_fixture.context.agent_repair_command_available,
-        "editor_lsp_workflow pins repair start suppression without fix_site_ready"
-    );
+    // #13716: the seam passes the repair-packet flip, so the brief and the
+    // repair start are offered on the real seam diagnostic.
+    assert!(editor_fixture.context.targeted_test_brief_available);
+    assert!(editor_fixture.context.agent_repair_command_available);
     assert!(editor_fixture.context.agent_packet_command_available);
     assert!(editor_fixture.context.agent_brief_command_available);
     assert!(editor_fixture.context.after_snapshot_command_available);
@@ -52610,7 +52695,7 @@ fn mutation_calibration_reports_are_advisory_and_structured() -> Result<(), Stri
 }
 
 #[test]
-fn parse_workspace_lints_section_extracts_clippy_levels() {
+fn parse_workspace_lints_section_extracts_clippy_levels() -> Result<(), String> {
     let cargo = r#"
 [workspace]
 members = ["crates/ripr"]
@@ -52627,7 +52712,7 @@ allow_attributes_without_reason = "deny" # trailing comment
 [profile.release]
 lto = true
 "#;
-    let clippy = super::parse_workspace_lints_section(cargo, "clippy");
+    let clippy = super::parse_workspace_lints_section(cargo, "clippy")?;
     assert_eq!(clippy.get("panic").map(String::as_str), Some("deny"));
     assert_eq!(clippy.get("todo").map(String::as_str), Some("deny"));
     assert_eq!(
@@ -52638,9 +52723,10 @@ lto = true
     );
     assert!(!clippy.contains_key("unsafe_code"));
 
-    let rust = super::parse_workspace_lints_section(cargo, "rust");
+    let rust = super::parse_workspace_lints_section(cargo, "rust")?;
     assert_eq!(rust.get("unsafe_code").map(String::as_str), Some("forbid"));
     assert!(!rust.contains_key("panic"));
+    Ok(())
 }
 
 #[test]
@@ -52954,7 +53040,7 @@ does_not_prove = "It does not demonstrate compiled analyzer behavior."
 
 [[pack]]
 id = "release-package"
-paths = ["Cargo.toml", "Cargo.lock", "crates/ripr/Cargo.toml", "CHANGELOG.md", "editors/vscode/package.json", "editors/vscode/package-lock.json", ".github/workflows/publish-extension.yml", ".github/workflows/release-server-binaries.yml"]
+paths = ["Cargo.toml", "Cargo.lock", "crates/ripr/Cargo.toml", "CHANGELOG.md", "editors/vscode/package.json", "editors/vscode/package-lock.json", ".github/workflows/publish-extension.yml", ".github/workflows/release-server-binaries.yml", ".github/workflows/package-family-qualification.yml"]
 required_commands = ["cargo test --workspace", "cargo clippy --workspace --all-targets -- -D warnings", "cargo xtask check-pr", "cargo package -p ripr --list", "cargo xtask publish-dry-run", "cargo xtask release-readiness"]
 advisory_commands = []
 ci_lane = "release-readiness-proof"
@@ -53172,7 +53258,7 @@ fn proof_pack_command_known_set_accepts_xtask_roots_and_repo_commands() {
 }
 
 #[test]
-fn check_lint_policy_detects_active_entry_missing_in_cargo_toml() {
+fn check_lint_policy_detects_active_entry_missing_in_cargo_toml() -> Result<(), String> {
     let cargo = r#"
 [workspace.lints.clippy]
 panic = "deny"
@@ -53186,7 +53272,7 @@ level = "deny"
 name = "clippy::map_err_ignore"
 level = "deny"
 "#;
-    let cargo_clippy = super::parse_workspace_lints_section(cargo, "clippy");
+    let cargo_clippy = super::parse_workspace_lints_section(cargo, "clippy")?;
     let (entries, parse_violations) = super::parse_clippy_lints_ledger(ledger);
     assert!(parse_violations.is_empty());
     let mut violations = Vec::new();
@@ -53197,10 +53283,11 @@ level = "deny"
         }
     }
     assert_eq!(violations, vec!["clippy::map_err_ignore".to_string()]);
+    Ok(())
 }
 
 #[test]
-fn check_lint_policy_detects_planned_entry_already_active_in_cargo_toml() {
+fn check_lint_policy_detects_planned_entry_already_active_in_cargo_toml() -> Result<(), String> {
     let cargo = r#"
 [workspace.lints.clippy]
 indexing_slicing = "deny"
@@ -53211,7 +53298,7 @@ name = "clippy::indexing_slicing"
 level = "deny"
 activate_when_msrv = "1.93"
 "#;
-    let cargo_clippy = super::parse_workspace_lints_section(cargo, "clippy");
+    let cargo_clippy = super::parse_workspace_lints_section(cargo, "clippy")?;
     let (entries, _violations) = super::parse_clippy_lints_ledger(ledger);
     let mut leaks = Vec::new();
     for entry in entries.iter().filter(|entry| entry.is_planned) {
@@ -53221,6 +53308,7 @@ activate_when_msrv = "1.93"
         }
     }
     assert_eq!(leaks, vec!["clippy::indexing_slicing".to_string()]);
+    Ok(())
 }
 
 #[test]
@@ -53436,7 +53524,7 @@ rust-version = '1.95'
 }
 
 #[test]
-fn check_lint_policy_detects_level_drift() {
+fn check_lint_policy_detects_level_drift() -> Result<(), String> {
     let cargo = r#"
 [workspace.lints.clippy]
 panic = "warn"
@@ -53446,7 +53534,7 @@ panic = "warn"
 name = "clippy::panic"
 level = "deny"
 "#;
-    let cargo_clippy = super::parse_workspace_lints_section(cargo, "clippy");
+    let cargo_clippy = super::parse_workspace_lints_section(cargo, "clippy")?;
     let (entries, _violations) = super::parse_clippy_lints_ledger(ledger);
     let mut drift = Vec::new();
     for entry in entries.iter().filter(|entry| !entry.is_planned) {
@@ -53464,6 +53552,7 @@ level = "deny"
             "warn".to_string()
         )]
     );
+    Ok(())
 }
 
 #[test]

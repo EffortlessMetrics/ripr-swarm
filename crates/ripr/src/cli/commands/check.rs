@@ -698,6 +698,9 @@ pub(super) fn machine_refusal_document(
         // GitHub: one workflow-command error annotation, escaped like every
         // other line of the format.
         OutputFormat::Github => Some(Ok(output::github::render_refusal(&notice))),
+        // missed-txt: one `# ` comment line, never zero bytes (an empty
+        // gap list would read as clean) and never a parseable gap line.
+        OutputFormat::MissedTxt => Some(Ok(output::missed_txt::render_refusal(&notice))),
         // Badge JSON: the degraded-state convention (warn + lightgrey,
         // zeroed counts, named message) applied to a refused run.
         OutputFormat::BadgeJson => Some(Ok(output::badge::render_native_json(
@@ -1194,13 +1197,14 @@ fn check_inner(
                 | OutputFormat::Json
                 | OutputFormat::JsonCompact
                 | OutputFormat::Github
+                | OutputFormat::MissedTxt
         )
     {
         return Err(super::check_fanout::refuse(
             super::check_fanout::refusal_destination(fanout_custody.as_ref(), output_dir.as_deref()),
             &envelope_input,
             effective_format,
-            "--suppression-policy applies to the findings-based check formats (human, human-full, json, json-compact, github); \
+            "--suppression-policy applies to the findings-based check formats (human, human-full, json, json-compact, github, missed-txt); \
              it is not yet supported for SARIF, badge, or repo formats"
                 .to_string(),
         ));
@@ -1780,7 +1784,7 @@ fn check_inner(
     // RIPR-SPEC-0112 disclosure gate after the analysis needs it.
     let input_diff_file_is_some = input.diff_file.is_some();
     let diff_from_stdin = input.diff_file.as_deref() == Some(Path::new("-"));
-    let limited_check_input = input.clone();
+    let mut limited_check_input = input.clone();
     // Analysis-phase snapshot: identical to the scope-guard input, so guard
     // envelopes and refusal envelopes echo the same invocation context.
     envelope_input = limited_check_input.clone();
@@ -1830,6 +1834,9 @@ fn check_inner(
     // leaves the slot empty — the early-timeout case.
     let input_facts_slot: crate::analysis::InputFactsSlot =
         std::sync::Arc::new(std::sync::Mutex::new(None));
+    // #13644: the last-commit fallback below spends only what remains of
+    // this budget.
+    let analysis_started = std::time::Instant::now();
     let output_result = if format.is_repo_seam_inventory() {
         // Repo seam-driven formats do not consume legacy repo `Findings`,
         // so skip `run_repo_analysis` and let `render_check` drive the
@@ -1904,6 +1911,65 @@ fn check_inner(
             ));
         }
     };
+    // #13644: a bare human `ripr check` on a clean checkout of the comparison
+    // base has an empty range by construction; the usual intent is the commit
+    // just made. Analyze it instead of costing a caller a dead-end call, and
+    // say so. Human format only: gate, JSON, SARIF and GitHub formats keep
+    // their empty-range contract.
+    if matches!(format, OutputFormat::Human)
+        && !scope_explicitly_provided
+        && !base_explicitly_provided
+        && !input_diff_file_is_some
+        && !worktree_run
+        && candidate_tree.is_none()
+        && output_dir.is_none()
+        && write_artifact.is_none()
+        && last_commit_fallback_applies(
+            &output,
+            &limited_check_input.root,
+            limited_check_input.git_timeout,
+        )
+    {
+        let mut retry = limited_check_input.clone();
+        retry.base = Some("HEAD~1".to_string());
+        let retry_config = config.clone();
+        // Below this, a retry worker would only time out after its cancel
+        // grace; keep the original empty result instead.
+        const MIN_RETRY_BUDGET: std::time::Duration = std::time::Duration::from_secs(1);
+        let remaining =
+            check_timeout.map(|budget| budget.saturating_sub(analysis_started.elapsed()));
+        // The first run already held its success terminal on the shared
+        // progress sink; a second producer there could project `failed` or
+        // `cancelled` over a successful check. Run it without a sink and
+        // disclose it on stderr only once its result replaces the output, so
+        // a retry that fails or finds nothing leaves no claim of a rescope.
+        let retried = remaining
+            .is_none_or(|left| left >= MIN_RETRY_BUDGET)
+            .then(|| {
+                super::check_budget::run_with_budget(
+                    remaining,
+                    None,
+                    || {},
+                    move || {
+                        app::check_with_progress_core(retry, &retry_config, progress_scope, None)
+                    },
+                )
+            });
+        if let Some(Ok(retried)) = retried
+            && retried
+                .analysis_outcome
+                .as_ref()
+                .is_some_and(|outcome| outcome.counts.changed_file_count > 0)
+        {
+            eprintln!(
+                "ripr: analyzed the last commit (--base HEAD~1). Pass --base to choose another range."
+            );
+            output = retried;
+            // Drill-in, stub and repair routes rebuild their commands from
+            // this input; keep them on the range that was actually shown.
+            limited_check_input.base = Some("HEAD~1".to_string());
+        }
+    }
     // The findings formats apply suppression only through the explicit flag.
     // Disclose a detected default without parsing it or changing stdout/exit
     // semantics. Implicit policy consumers retain their existing authority.
@@ -1915,6 +1981,7 @@ fn check_inner(
                 | OutputFormat::Json
                 | OutputFormat::JsonCompact
                 | OutputFormat::Github
+                | OutputFormat::MissedTxt
         )
         && output
             .root
@@ -2079,13 +2146,15 @@ fn check_inner(
     let machine_drill_in = output_dir
         .as_ref()
         .map(|_| app::FindingDrillIn::Commands(navigation.clone()));
+    // #13599: the compact agent format names the repair start from the same
+    // decision, so it computes the route too.
     // #11976: the JSON `finding_routes` projection reads the same decisions as
     // the human screen, so the default JSON formats compute them under the
     // same live-files gate. The output-directory members (`human.txt` and
     // `detail.json`) share this one navigation, keeping fanout parity.
     let routed_format = matches!(
         format,
-        OutputFormat::Human | OutputFormat::Json | OutputFormat::JsonCompact
+        OutputFormat::Human | OutputFormat::Agent | OutputFormat::Json | OutputFormat::JsonCompact
     );
     let navigation = if routed_format && analyzed_live_files {
         // #8547: both routes read seams of the selected finding's file
@@ -2272,6 +2341,73 @@ fn record_human_legend_seen(root: &Path, marker: &Path) {
         return;
     }
     let _ = crate::atomic_file::write(marker, b"1\n", "legend marker");
+}
+
+/// #13644: true when an unscoped check produced an empty range because HEAD
+/// is the checked-out comparison-base branch itself, the tree is clean and
+/// HEAD has a parent, so `--base HEAD~1` names the last commit.
+fn last_commit_fallback_applies(
+    output: &crate::CheckOutput,
+    root: &Path,
+    git_timeout: Option<std::time::Duration>,
+) -> bool {
+    if !output.findings.is_empty()
+        || output.unanalyzed_working_tree
+        || !output.untracked_working_tree_source_paths.is_empty()
+        || !output.ignored_working_tree_source_paths.is_empty()
+        || output
+            .analysis_outcome
+            .as_ref()
+            .is_none_or(|outcome| outcome.counts.changed_file_count != 0)
+    {
+        return false;
+    }
+    let Some(base) = output.base.as_deref() else {
+        return false;
+    };
+    let git = |args: &[&str]| {
+        crate::git::run_git_output_with_deadline(
+            root,
+            args,
+            // `--git-timeout` bounds these probes like any other git call.
+            Some(git_timeout.unwrap_or(std::time::Duration::from_secs(5))),
+        )
+        .ok()
+        .filter(|out| out.status.success())
+    };
+    // Both spellings below require the base to name HEAD's own commit: an
+    // empty range by construction, not a branch that is merely behind.
+    let Some(branch) = git(&["symbolic-ref", "--quiet", "--short", "HEAD"])
+        .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_string())
+    else {
+        return false;
+    };
+    let commit = |rev: &str| {
+        git(&[
+            "rev-parse",
+            "--verify",
+            "--quiet",
+            &format!("{rev}^{{commit}}"),
+        ])
+        .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_string())
+    };
+    let same_commit = commit(base).is_some_and(|base_commit| commit("HEAD") == Some(base_commit));
+    if !same_commit || commit("HEAD~1").is_none() {
+        return false;
+    }
+    if base == branch {
+        return true;
+    }
+    // A clone resolves the default base to `origin/<branch>` while HEAD is
+    // `<branch>`. That is also the shape of a feature-branch clone whose
+    // `origin/HEAD` tracks the feature branch, where the real base is
+    // elsewhere and the existing hedge names it (#7644); only narrow to the
+    // last commit when the branch is a conventional default or no other base
+    // candidate exists (a full clone of `main` usually carries other remote
+    // branches, which must not disable the fallback).
+    base.strip_prefix("origin/") == Some(branch.as_str())
+        && (matches!(branch.as_str(), "main" | "master")
+            || crate::analysis::another_base_candidate(root, git_timeout).is_none())
 }
 
 /// The stderr warning for an empty default-base result when the default base

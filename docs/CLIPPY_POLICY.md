@@ -51,6 +51,31 @@ A panic-family call site is acceptable only if it satisfies **both rails**.
 - `unsafe_code = "forbid"` workspace-wide. Adding an unsafe island requires
   a separate, dedicated PR and review.
 
+## Required feature coverage
+
+The required Rust lane keeps two strict Clippy invocations:
+
+```bash
+cargo clippy -p ripr --all-targets --all-features -- -D warnings
+cargo clippy --workspace --all-targets -- -D warnings
+```
+
+The first lints optional RIPR code, including `lang-perl`, and replaces the
+previous all-features `cargo check` step. Its retained `all_features_check`
+step ID preserves the existing receipt identity; the command now applies
+Clippy diagnostics as well as type checking.
+
+The second retains default-feature workspace coverage. Both are necessary:
+an all-features build omits `#[cfg(not(feature = "lang-perl"))]` branches
+that still need linting in the default build. Warning denial applies to both
+commands, and both include test and example targets.
+
+This does not execute optional-feature tests, lint every possible feature
+combination, or establish native-platform coverage beyond the runner used.
+Local impact-selected `precommit`, `check-fast`, and `check-pr` still run
+default-feature Clippy; run the first command above when changing optional
+RIPR code. Advisory future-lint scans retain their separate policy.
+
 ## Active lints
 
 The authoritative source is `[workspace.lints.*]` in Cargo.toml. A reviewable
@@ -179,7 +204,8 @@ verifies that:
   configured in `[workspace.lints.*]` in `Cargo.toml` at the same level;
 - every `[[planned]]` entry is **not** yet configured in `Cargo.toml`
   (they're future flips, not active);
-- every `[workspace.lints.*]` line has a matching ledger entry;
+- every Rust or Clippy lint in `[workspace.lints.rust]` or
+  `[workspace.lints.clippy]` has a matching ledger entry;
 - every `[[planned]]` `activate_when_msrv` that is already met by
   `[workspace.package] rust-version` has a remaining non-MSRV `blocked_by`
   (empty or MSRV-only `blocked_by` text fails; `reason` does not satisfy
@@ -188,6 +214,14 @@ verifies that:
   unique `id` / `lint`, required nonblank fields, a `target` that is not
   in the past, and a lint that is not already `[[active]]`, `[[planned]]`,
   or present in `Cargo.toml`.
+
+The workspace lint levels are read from parsed TOML. String settings such as
+`panic = "deny"` and table settings such as
+`unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)'] }` participate
+in the same ledger and debt comparisons. Invalid TOML, non-table lint sections,
+missing or non-string table levels, and unsupported levels fail the gate.
+The accepted levels are `allow`, `warn`, `deny`, and `forbid`; Cargo retains
+responsibility for other configuration fields such as `priority` and `check-cfg`.
 
 `activate_when_msrv` on `[[planned]]` entries is compared to
 `[workspace.package] rust-version`. When the recorded MSRV is already
