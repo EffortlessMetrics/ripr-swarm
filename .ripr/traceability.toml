@@ -9767,6 +9767,8 @@ spec = "docs/specs/RIPR-SPEC-0112-disclose-unanalyzed-working-tree.md"
 tests = [
   "crates/ripr/tests/cli_smoke.rs::check_base_head_with_uncommitted_edit_shows_unanalyzed_working_tree_disclosure",
   "crates/ripr/tests/cli_smoke.rs::check_base_head_with_clean_worktree_does_not_show_unanalyzed_working_tree_disclosure",
+  "crates/ripr/src/output/human/agent_tests.rs::empty_report_over_unanalyzed_files_stops_instead_of_done",
+  "crates/ripr/src/output/human/agent_tests.rs::exposed_only_run_with_unanalyzed_files_stops_instead_of_done",
 ]
 fixtures = []
 code = [
@@ -9774,6 +9776,7 @@ code = [
   "crates/ripr/src/analysis/diff/load.rs",
   "crates/ripr/src/cli/commands.rs",
   "crates/ripr/src/output/human.rs",
+  "crates/ripr/src/output/human/agent.rs",
   "crates/ripr/src/output/json/report.rs",
 ]
 outputs = [
@@ -11746,6 +11749,7 @@ tests = [
   "crates/ripr/src/lsp/tests.rs::framed_retained_code_actions_survive_changed_config_failure",
   "crates/ripr/src/lsp/tests.rs::gap_code_actions_disable_verify_route_when_verification_commands_missing",
   "crates/ripr/src/lsp/tests.rs::gap_code_actions_disable_receipt_route_when_receipt_command_missing",
+  "crates/ripr/src/lsp/tests.rs::gap_code_actions_same_language_static_limit_does_not_claim_a_language_boundary",
   "crates/ripr/src/lsp/tests.rs::gap_code_actions_cross_language_unresolved_yields_disabled_preview_limitation",
   "crates/ripr/src/lsp/tests.rs::seam_code_actions_cross_language_unresolved_yields_disabled_preview_limitation",
   "crates/ripr/src/lsp/tests.rs::execute_command_rejects_unsupported_commands_with_stable_invalid_params",
