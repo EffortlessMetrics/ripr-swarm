@@ -782,3 +782,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — typescript_tsx_preview (37)
+
+Reason:
+union-head re-bless after main merge: additive evidence_stages rows (RIPR-SPEC-0429)
+
+Command:
+`cargo xtask goldens bless typescript_tsx_preview --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

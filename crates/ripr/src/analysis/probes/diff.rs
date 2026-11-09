@@ -49,6 +49,12 @@ pub(crate) fn probes_for_file_with_relations(
     index: &RustIndex,
     registrations: &[crate::config::TestHarnessRegistration],
 ) -> Vec<SeededProbe> {
+    // #13736: a file only an out-of-line `#[cfg(kani)] mod` compiles is
+    // verification source; its changed lines are disclosed through
+    // `changed_verification_only_lines`, never probed as production.
+    if super::verification_erased::in_cfg_kani_module(index, &changed.path) {
+        return Vec::new();
+    }
     let mut probes = Vec::<SeededProbe>::new();
     // Use `new_side_line` for all lines: for added lines this equals `line`; for
     // removed lines `new_side_line` is the new-file coordinate, which is what
