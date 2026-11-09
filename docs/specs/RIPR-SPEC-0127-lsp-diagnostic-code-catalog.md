@@ -81,7 +81,17 @@ constructor that is the single source of truth for that family:
   the marker state changes (re-served to other open documents, cleared from
   quarantined open documents when it is withdrawn), once when a document is
   opened after the snapshot committed, and retracts it when a document is
-  closed or the workspace root changes or the session shuts down;
+  closed or the workspace root changes or the session shuts down; the same
+  code and the same serve-time lifecycle also mark (#13562) every in-root
+  document of a snapshot whose outcome is incomplete (`partial_with_limitations`,
+  `unsupported_input`, `analysis_failed`) and which holds no finding, gap row
+  or stored diagnostic (`data.kind` `incomplete_analysis`), so an incomplete
+  run with no row, such as a `diff_scope_oversized`, `malformed_diff` or
+  `combined_hunk_unsupported` limitation, does not read as an all-clear. Its
+  text is the typed outcome's own limitation wording (plain labels and
+  producer-owned recovery text, at most three limitations named and the rest
+  counted), a static advisory and not runtime evidence; it never stacks on
+  the empty-scope marker or on a stored per-file marker;
   `ripr-diagnostic-preview-withheld` (#11296) is the Hint on a file whose
   preview-language findings the actionable profile withheld, or (#11798) any
   other gap-class finding it withheld, outside the

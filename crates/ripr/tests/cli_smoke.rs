@@ -17395,6 +17395,21 @@ fn init_dry_run_prints_config_without_writing() -> Result<(), String> {
     ignore_remove_dir_all(&workspace);
     Ok(())
 }
+/// Plain `ripr init --mcp` does not plan `.cursor/mcp.json`, so the Cursor
+/// follow-up is still offered, and it names `--mcp` because that route needs it.
+#[test]
+fn init_mcp_without_cursor_still_offers_the_cursor_route() -> Result<(), String> {
+    let workspace = make_temp_workspace(None)?;
+    let root = workspace.display().to_string();
+    let out = run_ripr(&["init", "--root", &root, "--mcp"]);
+    assert_success(&out);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("For Cursor add `--agents cursor --mcp`"),
+        "{stdout}"
+    );
+    Ok(())
+}
 
 /// `ripr init --agents` end to end: dry run writes nothing, the real run
 /// appends a marked section to the user's file and creates the others, a rerun
@@ -17438,6 +17453,14 @@ fn init_agents_appends_marked_section_idempotently_and_never_clobbers() -> Resul
 
     let first = run_ripr(&["init", "--root", &root, "--agents", "all", "--mcp"]);
     assert_success(&first);
+    // `--agents all` already writes `.cursor/mcp.json`, so the hint to add
+    // `--agents cursor` is not offered.
+    let first_stdout = String::from_utf8_lossy(&first.stdout);
+    assert!(
+        first_stdout.contains("For Codex run `codex mcp add"),
+        "{first_stdout}"
+    );
+    assert!(!first_stdout.contains("For Cursor add"), "{first_stdout}");
     let after_claude = std::fs::read_to_string(&claude).map_err(|e| e.to_string())?;
     assert!(
         after_claude.starts_with(mine),
@@ -27378,6 +27401,50 @@ fn check_diff_file_with_base_does_not_report_a_git_range_note() -> Result<(), St
                 "{format}: a supplied diff file must not be reported as a Git range:\n{stdout}"
             ));
         }
+    }
+    ignore_remove_dir_all(&root);
+    Ok(())
+}
+
+/// #13659: a tracked source file replaced by a symlink is a type change ripr
+/// does not analyze; stderr must say so. Control: an ordinary edit has no
+/// symlink disclosure.
+#[cfg(unix)]
+#[test]
+fn check_file_replaced_by_symlink_discloses_the_type_change() -> Result<(), String> {
+    let root = unique_temp_workspace("symlink-type-change");
+    std::fs::create_dir_all(root.join("src")).map_err(|e| format!("mkdir: {e}"))?;
+    run_git(&root, &["init"])?;
+    run_git(&root, &["config", "user.email", "test@test.com"])?;
+    run_git(&root, &["config", "user.name", "Test"])?;
+    std::fs::write(root.join("src/lib.rs"), "pub fn one() -> i32 { 1 }\n")
+        .map_err(|e| format!("write lib: {e}"))?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"symlink-change\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|e| format!("write Cargo.toml: {e}"))?;
+    run_git(&root, &["add", "."])?;
+    run_git(&root, &["commit", "-m", "initial"])?;
+    let root_str = root.to_string_lossy().into_owned();
+    let stderr_of = |root_str: &str| {
+        String::from_utf8_lossy(&run_ripr(&["check", "--root", root_str, "--worktree"]).stderr)
+            .into_owned()
+    };
+    std::fs::write(root.join("src/lib.rs"), "pub fn one() -> i32 { 2 }\n")
+        .map_err(|e| format!("edit lib: {e}"))?;
+    let control = stderr_of(&root_str);
+    if control.contains("symlink change") {
+        return Err(format!(
+            "an ordinary edit is not a symlink change:\n{control}"
+        ));
+    }
+    std::fs::remove_file(root.join("src/lib.rs")).map_err(|e| format!("rm lib: {e}"))?;
+    std::os::unix::fs::symlink("/etc/hostname", root.join("src/lib.rs"))
+        .map_err(|e| format!("symlink: {e}"))?;
+    let stderr = stderr_of(&root_str);
+    if !stderr.contains("skipped 1 symlink change(s)") {
+        return Err(format!("the type change must be disclosed:\n{stderr}"));
     }
     ignore_remove_dir_all(&root);
     Ok(())
