@@ -231,25 +231,31 @@ mod tests {
 
     fn workflow_text() -> impl proptest::strategy::Strategy<Value = String> {
         use proptest::prelude::*;
-        // Weighted toward the characters the escapes act on, mixed with
-        // arbitrary text, control characters and bidi overrides.
+        // Weighted toward the characters and whole escape tokens the encoders
+        // act on (so `%25`/`%0A` style text is common), mixed with arbitrary
+        // text, control characters and bidi overrides.
         proptest::collection::vec(
             prop_oneof![
                 4 => proptest::sample::select(vec![
-                    '%', ',', ':', '\r', '\n', '\t', '2', '5', '0', 'A', 'D', 'C', '3',
-                    '\u{1b}', '\u{7}', '\u{202e}', '\u{0}', 'é',
-                ]),
-                3 => any::<char>(),
+                    "%", ",", ":", "\r", "\n", "\t", "2", "5", "0", "A", "D", "C", "3",
+                    "\u{1b}", "\u{7}", "\u{202e}", "\u{0}", "é",
+                ])
+                .prop_map(str::to_string),
+                3 => proptest::sample::select(vec![
+                    "%25", "%0A", "%0D", "%3A", "%2C", "%250A", "%%", "%2",
+                ])
+                .prop_map(str::to_string),
+                3 => any::<char>().prop_map(String::from),
             ],
-            0..40,
+            0..30,
         )
-        .prop_map(|chars| chars.into_iter().collect())
+        .prop_map(|pieces| pieces.concat())
     }
 
     proptest::proptest! {
         #[test]
         fn data_and_property_round_trip_through_the_github_decode(text in workflow_text()) {
-            // Characters the encoders print as `\\u{XX}` do not round-trip by design.
+            // Characters the encoders print as `\u{XX}` do not round-trip by design.
             let text: String = text
                 .chars()
                 .map(|c| if carried_faithfully(c) { c } else { 'x' })
@@ -293,7 +299,6 @@ mod tests {
                 escape_property_pre_encoded(&stable),
                 escape_property(&text)
             );
-            proptest::prop_assert!(!escape_property_pre_encoded("%25").contains("%2525"));
         }
     }
 }
