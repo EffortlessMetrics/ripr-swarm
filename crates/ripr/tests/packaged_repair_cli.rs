@@ -29,12 +29,13 @@ fn seam_id(seam: &Value) -> Result<&str, String> {
         .ok_or_else(|| "boundary seam is missing seam_id".to_string())
 }
 
-fn printed_continue_command(stderr: &str) -> Result<String, String> {
-    stderr
+/// A human before phase prints its one next command on stdout (#13803).
+fn printed_continue_command(stdout: &str) -> Result<String, String> {
+    stdout
         .lines()
-        .find_map(|line| line.strip_prefix("ripr: attempt next command: "))
+        .find_map(|line| line.strip_prefix("Next, after the test edit: "))
         .map(str::to_string)
-        .ok_or_else(|| format!("before phase printed no attempt command:\n{stderr}"))
+        .ok_or_else(|| format!("before phase printed no next command:\n{stdout}"))
 }
 
 fn attempt_id_from_continue(command: &str) -> Result<String, String> {
@@ -253,7 +254,7 @@ fn canonical_positive_journey_completes_before_edit_after_with_closed_movement()
     )?;
     require_success("agent repair --phase before", &repair_before)?;
     let continue_command =
-        printed_continue_command(&String::from_utf8_lossy(&repair_before.stderr))?;
+        printed_continue_command(&String::from_utf8_lossy(&repair_before.stdout))?;
     let attempt_id = attempt_id_from_continue(&continue_command)?;
 
     std::fs::write(roots.fixture.join("tests/pricing.rs"), AFTER_TESTS)
@@ -344,7 +345,7 @@ fn attempt_and_terminal_receipt_survive_fresh_installed_processes() -> Result<()
     )?;
     require_success("process A repair before", &repair_before)?;
     let continue_command =
-        printed_continue_command(&String::from_utf8_lossy(&repair_before.stderr))?;
+        printed_continue_command(&String::from_utf8_lossy(&repair_before.stdout))?;
     let attempt_id = attempt_id_from_continue(&continue_command)?;
 
     let resumed = agent_status(&candidate, &roots, &attempt_id)?;
@@ -405,7 +406,7 @@ fn noop_edit_reports_unchanged_not_improved() -> Result<(), String> {
     )?;
     require_success("noop repair before", &repair_before)?;
     let continue_command =
-        printed_continue_command(&String::from_utf8_lossy(&repair_before.stderr))?;
+        printed_continue_command(&String::from_utf8_lossy(&repair_before.stdout))?;
     // Deliberately skip the equality edit; running an unrelated passing test must
     // not let the after phase claim movement.
     run_focused_cargo_test(

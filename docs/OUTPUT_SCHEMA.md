@@ -1072,7 +1072,7 @@ diff-scoped, refuses `--suppression-policy` like SARIF and the badge formats,
 and has no legend or repeated disclaimers.
 
 ```text
-#ripr agent static-advisory base=BASE findings=N gaps=G CLASS=COUNT ...
+#ripr agent static-advisory base=BASE findings=N gaps=G [unconfirmed_gaps=U] [repairable=1] CLASS=COUNT ...
 CLASS|FILE:LINE|CHANGED EXPRESSION|missing=VALUE|test=tK|id=FINDING_ID
 tK=FILE:LINE TEST_NAME ORACLE_KIND `ORACLE TEXT` miss=MISS
 +M more gaps not shown; `--format json` lists all
@@ -1111,6 +1111,19 @@ verify=complete|outcome=O|findings=N|exposed=N
   every test-side gap (candidate-current, `weakly_exposed` or
   `reachable_unrevealed`, not static-limited, not preview-only), and the class
   counts cover every non-suppressed finding in the run.
+- `unconfirmed_gaps=U` follows `gaps=` (#13803) when the report lists gap
+  records the static evidence cannot confirm, so the header never reads
+  `gaps=0` alone beside a listed gap. It counts every finding on the path
+  that lists them: the `open=` weak-assertion rows behind a reach-only limit
+  (below), or, in a limited-records report, the preview-only (Python,
+  TypeScript, JavaScript) candidate-current `weakly_exposed` or
+  `reachable_unrevealed` findings that are not static-limited, whatever the
+  repair route state. It is absent when a confirmed gap is listed (those
+  findings then appear only in `limits=`), for preview records when the
+  analysis is incomplete (no limited records are listed then; reach-limited
+  `open=` rows still print and still count), and for exposed or
+  static-limited preview findings. It never adds to
+  `gaps=`: preview and reach-limited evidence stays advisory.
 - 5 gap lines are printed, plus one more per 8 gaps, up to 10 (#13081): top
   triage gap first, then the remaining gaps in finding order; `+M more gaps not
   shown` states the exact remainder. The `open=` form (unconfirmed findings)
@@ -1127,12 +1140,15 @@ verify=complete|outcome=O|findings=N|exposed=N
   `static_unknown`, preview-only), so a short gap list never hides them.
 - `repairable=1` is added to the header (#13599) when the selected preview
   finding (Python, TypeScript or JavaScript) has a gap that `ripr agent repair`
-  can start. It is not a counted gap, so `gaps=` stays 0, but the terminal is
+  can start. It is not a counted gap, so `gaps=` stays 0 and
+  `unconfirmed_gaps=` counts it, but the terminal is
   then `open=` (never `stop=`) and `next=` is that `ripr agent repair --gap-id
   ... --base ...` command, the same start the human `Next` block and JSON
   `finding_routes[].repair.command` print. When uncommitted production edits
   block the start, `open=` says to commit first and `next=` is absent. Without
-  a start, `stop=` says there is no guided repair route for this finding.
+  a start, a selected preview finding that already reads `exposed` (and is not
+  static-limited) ends with `done=` carrying the preview advisory qualifier;
+  otherwise `stop=` says there is no guided repair route for this finding.
 - `next=` is the scope-bound `ripr explain` command for the top gap (it embeds
   `--root` and the diff or base selectors, because a finding id does not
   resolve outside its run). It is absent when no gap is listed unless the
@@ -1142,9 +1158,9 @@ verify=complete|outcome=O|findings=N|exposed=N
   reach-only `rust_transitive_reach_unresolved` limitation and still carries a
   contributing related test with a `weak` or `smoke` oracle (#11825) that is not
   related by file or module proximity alone (#12058). It is not a
-  confirmed gap, so `gaps=` does not count it; the finding is listed in the gap
-  line shape (with `missing=-`), the weak test in its `tK` row, `limits=` still
-  counts it, and `next=` is the `ripr explain` drill-in. A limit with no such
+  confirmed gap, so `gaps=` does not count it (`unconfirmed_gaps=` does); the
+  finding is listed in the gap line shape (with `missing=-`), the weak test in
+  its `tK` row, `limits=` still counts it, and `next=` is the `ripr explain` drill-in. A limit with no such
   row, or any other limit kind, keeps `stop=`.
 - When `stop=` ends a run with no test-side gap, records are printed only for
   limited findings that carry a concrete next step (a producer-established
@@ -1154,11 +1170,12 @@ verify=complete|outcome=O|findings=N|exposed=N
   counted in `limits=`. `next=` drills into the first printed record, or the
   first limited finding when none is printed (#13594).
 - Terminal states are one explicit line: `done=` (no weak or unobserved gap is
-  left to fix from the test side, or no changed behavior was found in scope),
+  left to fix from the test side, no changed behavior was found in scope, or
+  the selected preview finding already reads `exposed`),
   `stop=` (every finding is base-side or unresolved, all are suppressed by
-  policy, ripr cannot tell from reading the code, preview-only evidence, or
-  nothing was analyzed because no scope was given or the diff held no
-  analyzable source, #13658), or `open=` (no gap is
+  policy, ripr cannot tell from reading the code, non-exposed preview-only
+  evidence, or nothing was analyzed because no scope was given or the diff
+  held no analyzable source, #13658), or `open=` (no gap is
   listed, but a reach-only limitation still carries a weak or smoke related
   test; it replaces `stop=` as described above). `done=` is static advisory
   evidence, not runtime mutation outcome or test adequacy.
@@ -1196,8 +1213,10 @@ next=ripr context ... --at SELECTOR
 - Exactly one terminal line: `open=` for a candidate-current test-side gap
   (`weakly_exposed` or `reachable_unrevealed`, not limited) or for a
   reach-only limit that still carries a weak related test (the `check` `open=`
-  rule); `done=` for a candidate-current, unsuppressed exposed finding;
-  `stop=` otherwise (limited, preview-only, `no_static_path`, unknown classes).
+  rule); `done=` for a candidate-current, unsuppressed exposed finding that is
+  not static-limited (a preview finding's `done=` keeps the advisory
+  qualifier); `stop=` otherwise (limited, non-exposed preview-only,
+  `no_static_path`, unknown classes).
   A finding that is not a current edit target (`base_deleted`, `moved_or_renamed`,
   `unresolved_subject`) never prints `open=` or `done=`: its `stop=` names the
   currentness. A policy-suppressed finding prints a suppression `stop=`; a
