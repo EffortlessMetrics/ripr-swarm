@@ -1,0 +1,15 @@
+# Registers the #13636 commit-first repair start under RIPR-SPEC-0011: when the
+# production change is uncommitted, `ripr check` names the commit step (human)
+# or reports `blocked_uncommitted` (JSON) instead of a seam start the start's
+# dirty-premise preflight would refuse, and refuses the route when the run did
+# not analyze the dirty files.
+[[extend]]
+id = "RIPR-SPEC-0011"
+tests = [
+  "crates/ripr/tests/check_repair_agree.rs::uncommitted_change_check_names_the_commit_step_before_the_repair_start",
+  "crates/ripr/tests/check_repair_agree.rs::commit_step_names_dirty_files_outside_the_analyzed_root",
+  "crates/ripr/tests/check_repair_agree.rs::committed_only_check_refuses_the_seam_route_over_dirty_files",
+  "crates/ripr/src/app/navigation.rs::tests::seam_route_commit_prerequisite_covers_premise_and_held_target",
+  "crates/ripr/src/app/task_first.rs::tests::seam_commit_step_refuses_when_the_run_did_not_analyze_the_dirt",
+  "crates/ripr/src/output/render.rs::tests::finding_routes_name_the_blocker_instead_of_a_runnable_command",
+]

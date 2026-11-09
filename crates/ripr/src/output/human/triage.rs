@@ -586,7 +586,20 @@ pub(crate) fn render_human_triage(
                 Some(PrintedRepairRoute::Seam(route)) => {
                     repair_printed = true;
                     let command = navigation.repair_command(&route.seam_id);
-                    if let Some(file) = route.uncommitted_target.as_deref() {
+                    if let Some(commit) = navigation.repair_prerequisite(route) {
+                        // #13636: `ripr repair` refuses while tracked
+                        // production files differ from HEAD; name the
+                        // commit first, in the gap-bound route's words.
+                        out.push_str(&format!(
+                            "  Commit your production change first (the repair start refuses to begin while it is uncommitted):\n  {commit}\n  Then start the repair:\n"
+                        ));
+                        super::push_labeled_commands(
+                            out,
+                            "  ",
+                            super::SPOT_ID_COMMAND_LABEL,
+                            std::slice::from_ref(&command),
+                        );
+                    } else if let Some(file) = route.uncommitted_target.as_deref() {
                         // `ripr repair` would refuse this start: its
                         // inline test module target begins from the
                         // committed file. State the requirement instead
@@ -942,7 +955,7 @@ fn repair_already_noticed(navigation: &crate::app::FindingNavigation) -> bool {
 /// True when the repair advisory on screen (if any) says there is no repair
 /// start for this finding. Refusals that name a route or a recovery
 /// (`SeveralBindingSeams`, `Ineligible`, `SeamLimit`, `ClassificationFailed`,
-/// `GapRouteUnavailable`, `ConfigUnreadable`, and `NoBindingSeam` with seams
+/// `GapRouteUnavailable`, `SeamRouteUnavailable`, `ConfigUnreadable`, and `NoBindingSeam` with seams
 /// in the file, which points at `ripr pilot`) must not sit beside "ripr has no
 /// repair route".
 fn names_no_route(navigation: &crate::app::FindingNavigation) -> bool {
@@ -954,6 +967,7 @@ fn names_no_route(navigation: &crate::app::FindingNavigation) -> bool {
                 | RepairRouteRefusal::SeamLimit
                 | RepairRouteRefusal::ClassificationFailed
                 | RepairRouteRefusal::GapRouteUnavailable { .. }
+                | RepairRouteRefusal::SeamRouteUnavailable { .. }
                 | RepairRouteRefusal::ConfigUnreadable
         )
     ) && !matches!(
@@ -2017,17 +2031,23 @@ pub(crate) fn finding_routes_json(
         }
         Some(PrintedRepairRoute::Seam(route)) => {
             repair.insert("seam_id".to_string(), route.seam_id.clone().into());
-            match &route.uncommitted_target {
-                None => {
-                    repair.insert("status".to_string(), "ready".into());
-                    repair.insert(
-                        "command".to_string(),
-                        navigation.repair_command(&route.seam_id).into(),
-                    );
-                }
-                Some(file) => {
-                    repair.insert("status".to_string(), "blocked_uncommitted".into());
+            if route.uncommitted_target.is_none() && route.uncommitted_files.is_empty() {
+                repair.insert("status".to_string(), "ready".into());
+                repair.insert(
+                    "command".to_string(),
+                    navigation.repair_command(&route.seam_id).into(),
+                );
+            } else {
+                repair.insert("status".to_string(), "blocked_uncommitted".into());
+                if let Some(file) = &route.uncommitted_target {
                     repair.insert("uncommitted_file".to_string(), file.clone().into());
+                }
+                // #13636: the dirty production premise the start refuses.
+                if !route.uncommitted_files.is_empty() {
+                    repair.insert(
+                        "uncommitted_files".to_string(),
+                        route.uncommitted_files.clone().into(),
+                    );
                 }
             }
         }

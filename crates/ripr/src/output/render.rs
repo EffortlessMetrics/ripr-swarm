@@ -1166,6 +1166,7 @@ mod tests {
             finding_id: finding.id.clone(),
             seam_id: "seam-abc".to_string(),
             uncommitted_target: uncommitted.map(str::to_string),
+            uncommitted_files: Vec::new(),
         })
     }
 
@@ -1285,6 +1286,26 @@ mod tests {
         {
             return Err(format!(
                 "blocked seam repair must carry no command: {repair}"
+            ));
+        }
+        // #13636: a held inline target and a dirty production premise
+        // together name both blockers and still carry no command.
+        let both = crate::app::CheckRepairRoute::Route(crate::app::RepairRoute {
+            finding_id: finding.id.clone(),
+            seam_id: "seam-abc".to_string(),
+            uncommitted_target: Some("src/lib.rs".to_string()),
+            uncommitted_files: vec!["src/other.rs".to_string(), "../shared.rs".to_string()],
+        });
+        let seam = FindingNavigation::legacy().with_repair_route_outcome(both);
+        let (routes, _) = routes_for(vec![finding.clone()], seam)?;
+        let repair = &routes[0]["repair"];
+        if repair["status"] != "blocked_uncommitted"
+            || repair["uncommitted_file"] != "src/lib.rs"
+            || repair["uncommitted_files"] != serde_json::json!(["src/other.rs", "../shared.rs"])
+            || repair.get("command").is_some()
+        {
+            return Err(format!(
+                "a seam repair blocked twice must name both blockers: {repair}"
             ));
         }
         let gap = FindingNavigation::legacy()
