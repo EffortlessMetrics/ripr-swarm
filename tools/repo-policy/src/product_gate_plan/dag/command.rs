@@ -393,6 +393,57 @@ mod tests {
         Ok(())
     }
     #[test]
+    fn canonical_base_step_ids_conserve_native_outcomes() -> Result<(), String> {
+        let plan = super::super::tests::plan();
+        let steps = serde_json::json!({
+            "user_text_base": {"outcome":"success"},
+            "user_text_recovery": {"outcome":"success"},
+            "base_format_recovery": {"outcome":"success"},
+            "user_text_matcher": {"outcome":"success"}
+        });
+        let result = record(plan.clone(), Branch::BaseMatcher, &steps, 1)?;
+        reconcile_branch(&plan, &result)?;
+        for id in [
+            "user_text_base",
+            "user_text_recovery",
+            "base_format_recovery",
+            "user_text_matcher",
+        ] {
+            let mut failed = steps.clone();
+            failed[id]["outcome"] = "failure".into();
+            assert!(
+                reconcile_branch(
+                    &plan,
+                    &record(plan.clone(), Branch::BaseMatcher, &failed, 1)?
+                )
+                .is_err(),
+                "{id}"
+            );
+            failed
+                .as_object_mut()
+                .ok_or("steps must be an object")?
+                .remove(id);
+            assert!(
+                reconcile_branch(
+                    &plan,
+                    &record(plan.clone(), Branch::BaseMatcher, &failed, 1)?
+                )
+                .is_err(),
+                "missing {id}"
+            );
+        }
+        let stale = serde_json::json!({"base_preparation":{"outcome":"success"},"base_compiler_recovery":{"outcome":"success"},"base_format_recovery":{"outcome":"success"},"base_user_text":{"outcome":"success"}});
+        assert!(
+            reconcile_branch(
+                &plan,
+                &record(plan.clone(), Branch::BaseMatcher, &stale, 1)?
+            )
+            .is_err()
+        );
+        Ok(())
+    }
+
+    #[test]
     fn record_uses_native_outcome_not_successful_continue_on_error_conclusion() -> Result<(), String>
     {
         let plan = super::super::tests::plan();

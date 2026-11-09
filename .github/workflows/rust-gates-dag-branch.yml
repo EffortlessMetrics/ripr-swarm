@@ -218,7 +218,7 @@ jobs:
 
       - name: Prepare independent user-text base
         if: ${{ inputs.branch == 'base_matcher' && (github.event_name == 'pull_request' || github.event_name == 'merge_group') }}
-        id: base_preparation
+        id: user_text_base
         # Prepares the exact first-parent base before running its policy matcher.
         # These two short steps preserve the check-workflows per-block line bound.
         run: |
@@ -229,7 +229,7 @@ jobs:
 
       - name: Recover pinned base compiler arity if needed
         if: ${{ inputs.branch == 'base_matcher' && (github.event_name == 'pull_request' || github.event_name == 'merge_group') }}
-        id: base_compiler_recovery
+        id: user_text_recovery
         run: |
           set -euo pipefail
           base_tree="$RUNNER_TEMP/user-text-base"
@@ -294,7 +294,7 @@ jobs:
 
       - name: User-text goldens judged by the merge-base matcher
         if: ${{ inputs.branch == 'base_matcher' && (github.event_name == 'pull_request' || github.event_name == 'merge_group') }}
-        id: base_user_text
+        id: user_text_matcher
         # The PR's goldens are judged by the original matcher at the merge base,
         # so the PR cannot qualify a weakened version of its own gate (#11385).
         run: |

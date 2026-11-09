@@ -147,6 +147,13 @@ pub(super) fn render(source: &str) -> Result<String, String> {
                 return Err(format!("duplicate producer step {label}"));
             }
             verify_commands(gate, &block)?;
+            if let Some(actual) = block
+                .lines()
+                .find_map(|line| line.strip_prefix("        id: "))
+                && actual != gate.id.step_id()
+            {
+                return Err(format!("producer step id mismatch for {label}: {actual}"));
+            }
             if gate.id.branch() != Branch::Preflight {
                 result.push_str(&conditional(
                     &block,
@@ -562,6 +569,11 @@ mod tests {
     }
     #[test]
     fn omitted_or_duplicated_required_producer_is_not_projectable() {
+        let renamed_base_id = SOURCE_BYTES.replace("id: user_text_base", "id: unexpected_base");
+        assert!(
+            render(&renamed_base_id).is_err(),
+            "changed producer id must refuse"
+        );
         let missing = SOURCE_BYTES.replace(
             "name: Required Rust doctests",
             "name: accidentally omitted doctests",
