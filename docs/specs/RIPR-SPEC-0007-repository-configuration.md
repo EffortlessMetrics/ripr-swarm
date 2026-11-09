@@ -119,6 +119,20 @@ and fix or remove the file first when it is not a JSON object or `mcpServers`
 is not an object, which init refuses. A `.mcp.json` that is a symlink is not
 verified; one over 1 MiB is reported as unreadable.
 
+### Generated MCP registration (#13050)
+
+The `ripr` server entry that `ripr init --mcp` writes to `.mcp.json`, and
+`ripr init --agents cursor --mcp` to `.cursor/mcp.json`, is one shared value:
+command `ripr`, args `mcp`, `--stdio`, and
+`"env": {"RIPR_MCP_TOOLS_LIST": "slim"}`. The slim listing omits only each tool's
+`outputSchema` (docs/interop/mcp.md), cutting the `tools/list` every agent
+session pays at start; results still carry `structuredContent`. An existing
+`ripr` entry is left alone without `--force`, and doctor ignores `env`. Slim is
+the server default since #13803; the explicit value keeps older ripr builds
+slim, and a host that validates results against `outputSchema` sets it to
+`full`. Acceptance: the init unit tests compare the written entry with
+this value for both files.
+
 ### Suppression manifest declarations
 
 The configured suppression file and explicit `--suppression-policy` input share
@@ -300,6 +314,21 @@ and rerun with a new candidate-tree identity; editing only the worktree file
 cannot repair that immutable subject. A config-free candidate uses the built-in
 defaults, not a parent or worktree config. The JSON refusal retains its redacted
 first-line message, config_invalid identity and analysis/config-load route.
+```
+
+### Unknown keys name the nearest valid key (#13682)
+
+```text
+Given ripr.toml contains a key that is one small edit (including one adjacent
+swap) from a valid key in the same table, such as `[analysis] modee` or `mdoe`,
+when ripr loads the config,
+then the load fails and the error adds `did you mean `mode`?`, built only from
+the parser's fixed key names; an unrelated key gets no suggestion. The
+source-free summary keeps the hint only when it names a known key.
+
+Given schemas/config/ripr-toml.schema.json and the docs/CONFIGURATION.md
+reference table,
+then their keys, types, enums and integer floors equal what the parser accepts.
 ```
 
 ### Per-crate overrides (#2671)
@@ -570,6 +599,9 @@ not the symlink spelling.
 ```
 
 ## Test Mapping
+
+- `crates/ripr/src/config/schema_parity_tests.rs` (#13682) pins nearest-key
+  suggestions, the source-free summary allowlist, and schema/parser/docs parity.
 
 - `hostile_repos::doctor_distinguishes_healthy_and_unborn_heads`
 - `hostile_repos::corrupt_packed_refs_without_base_is_not_reported_as_unborn`

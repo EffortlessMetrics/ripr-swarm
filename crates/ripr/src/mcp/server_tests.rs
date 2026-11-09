@@ -322,6 +322,7 @@ async fn oversized_gap_item_leaves_mcp_through_the_real_routes() -> Result<(), S
         untracked_working_tree_source_paths: Vec::new(),
         ignored_working_tree_source_paths: Vec::new(),
         unlinked_python_tests: None,
+        owner_opt_outs: Vec::new(),
         suppression: None,
         partial_scope: None,
         analyzed_revisions: None,
@@ -437,6 +438,7 @@ async fn window_sized_gap_item_refuses_typed_instead_of_dropping_structured_cont
         untracked_working_tree_source_paths: Vec::new(),
         ignored_working_tree_source_paths: Vec::new(),
         unlinked_python_tests: None,
+        owner_opt_outs: Vec::new(),
         suppression: None,
         partial_scope: None,
         analyzed_revisions: None,
@@ -684,6 +686,8 @@ async fn list_gaps_accepts_offset_and_limit_at_the_dispatch_edge() -> Result<(),
         serde_json::json!({}),
         serde_json::json!({"offset": 0}),
         serde_json::json!({"offset": 3, "limit": 10}),
+        serde_json::json!({"independent_pages": true}),
+        serde_json::json!({"independent_pages": false}),
         serde_json::json!({"snapshot_id": "snapshot:sha256:x", "offset": 0, "limit": 1}),
     ] {
         let arguments = serde_json::from_value(arguments).map_err(|error| error.to_string())?;
@@ -714,6 +718,8 @@ async fn list_gaps_accepts_offset_and_limit_at_the_dispatch_edge() -> Result<(),
         serde_json::json!({"offset": "3"}),
         serde_json::json!({"limit": 0}),
         serde_json::json!({"limit": true}),
+        serde_json::json!({"independent_pages": "true"}),
+        serde_json::json!({"independent_pages": null}),
         serde_json::json!({"verbose": true}),
     ] {
         let arguments = serde_json::from_value(arguments).map_err(|error| error.to_string())?;

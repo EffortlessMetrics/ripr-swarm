@@ -166,6 +166,9 @@ pub(in crate::analysis) struct OwnerReturnPin {
     /// arithmetic subset, when both are and it is called by its bare name. It
     /// lets a pinned literal that neither version returns withhold the credit.
     closed_owner: Option<super::owner_value::ClosedChange>,
+    /// #13005: set only while [`Self::literal_check_withholds`] asks whether
+    /// the current-owner literal check is the one gate refusing an assertion.
+    skip_current_literal_check: Cell<bool>,
 }
 
 /// A file's `std`/`core`-rooted `assert_eq!` paths and, for each of the four
@@ -779,7 +782,7 @@ impl OwnerPinSyntax {
     }
 
     /// Whether a macro in the workspace may declare a type named `name`.
-    fn macro_may_declare(&self, name: &str, index: &RustIndex) -> bool {
+    pub(super) fn macro_may_declare(&self, name: &str, index: &RustIndex) -> bool {
         self.macro_type_names
             .get_or_init(|| macro_type_names(index))
             .as_ref()
@@ -954,6 +957,18 @@ impl OwnerPinSyntax {
             && self
                 .matches_expected_panic_refusal(probe, test, assertion, index)
                 .is_none()
+    }
+
+    /// The execution and macro-binding admission for a plain returned-value
+    /// equality. A caller must separately establish the value-flow relation.
+    pub(super) fn admits_tier_return_assertion(
+        &self,
+        test: &TestSummary,
+        assertion: &OracleFact,
+        index: &RustIndex,
+    ) -> bool {
+        !test.attrs.iter().any(|attr| attr.contains("should_panic"))
+            && self.admits_assertion_family(ProbeFamily::ReturnValue, test, assertion, index)
     }
 
     fn matches_expected_panic_refusal(
@@ -1662,7 +1677,17 @@ impl OwnerPinSyntax {
         let module_resolved = |file: &Path, line: usize, declaration: &str| {
             resolved_modules.contains(&(file.to_path_buf(), line, declaration.to_string()))
         };
-        let sites = scan_macro_sites(&files, index, self.target_roots(index), &module_resolved);
+        // Limit naming only (#12886): with placement unavailable, a drop-in
+        // assertion import the test file's own manifest verifies is a
+        // binding to a macro that evaluates its operands. This scan feeds
+        // only the unplaced limit pass; the credit path never reads it.
+        let sites = scan_macro_sites(
+            &files,
+            index,
+            self.target_roots(index),
+            &module_resolved,
+            true,
+        );
         let names: BTreeSet<String> = sites
             .ambiguities
             .into_iter()
@@ -3935,6 +3960,18 @@ fn macro_root_verified_in_contexts(
         })
 }
 
+/// Whether the file's own physical manifest resolves `krate` to the drop-in
+/// package, with no placement. Names a limit only; it never certifies a
+/// binding for credit (#12886). `std` and `core` roots keep their existing
+/// unplaced handling; only a drop-in crate name widens here.
+fn own_manifest_verifies_root(path: &Path, krate: &str, index: &RustIndex) -> bool {
+    if krate == "serde_json" {
+        index.drop_in_manifests.verified_literal_json(path)
+    } else {
+        index.drop_in_manifests.verified_root(path, krate)
+    }
+}
+
 /// Trusted macro names some workspace file may rebind for every test, and
 /// the scoped sites (an inline module or block) kept per file.
 ///
@@ -4029,6 +4066,7 @@ fn scan_macro_sites(
     index: &RustIndex,
     roots: &TargetRoots,
     module_resolved: &(dyn Fn(&Path, usize, &str) -> bool + Sync),
+    own_manifest_when_unplaced: bool,
 ) -> ScannedMacroSites {
     #[cfg(test)]
     {
@@ -4061,7 +4099,13 @@ fn scan_macro_sites(
                 &names,
                 &singleton_names,
                 &|line, declaration| module_resolved(path, line, declaration),
-                &|krate| macro_root_verified_in_contexts(path, krate, index, roots),
+                &|krate| {
+                    macro_root_verified_in_contexts(path, krate, index, roots)
+                        || (own_manifest_when_unplaced
+                            && roots.disabled
+                            && !matches!(krate, "std" | "core")
+                            && own_manifest_verifies_root(path, krate, index))
+                },
             );
             ((*path).clone(), union, singleton)
         })
@@ -4502,6 +4546,10 @@ struct WholeValueField {
     /// non-std `use` of it), so an expected `String::from(..)` is not the
     /// standard conversion and gives no credit (#7066 review).
     string_from_may_be_rebound: bool,
+    /// #12394 item 5: the changed field's initializer before and after the
+    /// diff, when both read as the closed integer subset. A pinned field value
+    /// that neither computes for the call fails on both versions.
+    closed: Option<Box<super::owner_value::ClosedChange>>,
 }
 
 /// #8480: records constructed in exit positions of `body`: the block
@@ -4953,6 +5001,7 @@ impl OwnerReturnPin {
             trait_scope_by_file: SyncMemo::default(),
             identity,
             closed_owner,
+            skip_current_literal_check: Cell::new(false),
         })
     }
 
@@ -5077,6 +5126,7 @@ impl OwnerReturnPin {
             pointer_return_change: None,
             tuple_projection: None,
             closed_owner: None,
+            skip_current_literal_check: Cell::new(false),
             awaited: declares_async(owner, index),
             poll_helpers: if declares_async(owner, index) {
                 super::poll_helper::verified_helpers(index)
@@ -5160,6 +5210,29 @@ impl OwnerReturnPin {
                 candidate.name.as_deref() == Some(field) && candidate.ty == "String"
             })
         });
+        let field_ty = derived_equality(&type_name, index).and_then(|(facts, _)| {
+            facts
+                .fields
+                .iter()
+                .find(|candidate| candidate.name.as_deref() == Some(field))
+                .map(|candidate| candidate.ty.clone())
+        });
+        let closed =
+            probe
+                .before
+                .as_deref()
+                .zip(field_ty.as_deref())
+                .and_then(|(before, field_ty)| {
+                    super::owner_value::ClosedChange::read_field(
+                        &owner.body,
+                        &owner.name,
+                        changed_line,
+                        before,
+                        field,
+                        field_ty,
+                    )
+                    .map(Box::new)
+                });
         let call = pin_call(owner, index)?;
         // #6617 keeps the associated-function pin to a return value: a
         // `T::new()` whole-value field pin is a separate claim.
@@ -5179,6 +5252,7 @@ impl OwnerReturnPin {
                 computed_names: camel_case_value_items(index),
                 constructor_names: declared_constructor_names(index),
                 string_from_may_be_rebound: wrapper_may_be_rebound("String", index),
+                closed,
             }),
             walked_positions: Vec::new(),
             returns_bool: false,
@@ -5188,6 +5262,7 @@ impl OwnerReturnPin {
             pointer_return_change: None,
             tuple_projection: None,
             closed_owner: None,
+            skip_current_literal_check: Cell::new(false),
             awaited: declares_async(owner, index),
             poll_helpers: if declares_async(owner, index) {
                 super::poll_helper::verified_helpers(index)
@@ -5291,6 +5366,7 @@ impl OwnerReturnPin {
             pointer_return_change: None,
             tuple_projection: None,
             closed_owner: None,
+            skip_current_literal_check: Cell::new(false),
             awaited: declares_async(owner, index),
             poll_helpers: if declares_async(owner, index) {
                 super::poll_helper::verified_helpers(index)
@@ -5467,6 +5543,40 @@ impl OwnerReturnPin {
             self.closed_owner = super::owner_value::ClosedChange::current(&owner.body, &self.name);
         }
         self
+    }
+
+    /// #13005: whether the closed subset can read `owner` as it stands. A cheap
+    /// pre-check on the owner's text alone, so the audit builds a pin for a
+    /// plain `assert_eq!` only where the literal check could ever withhold.
+    pub(in crate::analysis) fn owner_literal_readable(owner: &FunctionSummary) -> bool {
+        super::owner_value::ClosedChange::current(&owner.body, &owner.name).is_some()
+    }
+
+    /// #13005: whether the current-owner literal check (see
+    /// [`Self::with_current_owner_literal_check`]) is the one gate that
+    /// refuses `assertion`: [`Self::admits`] refuses it, and would admit it
+    /// without that check. The repo-wide audit credits a plain `assert_eq!`
+    /// from its extracted oracle, so it asks this to withhold a literal the
+    /// current owner provably does not return, the audit twin of the diff
+    /// path's neither-version check (#12716). Every other refusal reading is
+    /// left to the audit's existing credit.
+    pub(in crate::analysis) fn literal_check_withholds(
+        &self,
+        test: &TestSummary,
+        assertion: &OracleFact,
+        index: &RustIndex,
+        imports_foreign: ForeignImport<'_>,
+        syntax: &OwnerPinSyntax,
+    ) -> bool {
+        if self.closed_owner.is_none()
+            || self.admits(test, assertion, index, imports_foreign, syntax)
+        {
+            return false;
+        }
+        self.skip_current_literal_check.set(true);
+        let admitted_without = self.admits(test, assertion, index, imports_foreign, syntax);
+        self.skip_current_literal_check.set(false);
+        admitted_without
     }
 
     /// RIPR-SPEC-0197 claims payload equality: whether `assert_ok_eq!(call,
@@ -5697,10 +5807,15 @@ impl OwnerReturnPin {
             // only a pin on the macro's own variant reads.
             let direction = claims_payload_variant(spelling)
                 .is_some_and(|variant| unwrap_wrapper == Some(variant));
-            // Only a literal expected operand is a discriminator. The cheap
+            // Only a literal expected operand is a discriminator. A whole-value
+            // field gate reads the struct literal itself (`Config { .. }`
+            // beside an `Ok(..)` tail), so it judges that operand below;
+            // every other gate needs a scalar literal here. The cheap
             // refusals come first: the import check parses the whole file.
+            let literal_expected = matches!(self.path, ReturnPathGate::WholeValueField(_))
+                || helper_arguments::expected_literal(second, index).is_some();
             if !direction
-                || helper_arguments::expected_literal(second, index).is_none()
+                || !literal_expected
                 || doctest.is_some()
                 || !index.files().get(&test.file).is_some_and(|facts| {
                     source_imported_claims_macros(&facts.source, (test.start_line, test.end_line))
@@ -6188,11 +6303,28 @@ impl OwnerReturnPin {
         // above.
         if helper.is_none()
             && substituted.is_none()
+            && !self.skip_current_literal_check.get()
             && let Some(closed) = &self.closed_owner
             && let Some(call) = call_text
                 .map(str::to_string)
                 .or_else(|| owner_call_in(&assertion.text, &self.name, unwrapped))
             && closed.provably_unpinned(&self.name, call.trim_end_matches(".unwrap()"), expected)
+        {
+            return false;
+        }
+        // #12394 item 5: the same for a whole-value field pin. The field's
+        // pinned value is read against both versions of the changed field's
+        // initializer; a value neither computes for the call's literal
+        // arguments fails the test on both versions.
+        if helper.is_none()
+            && substituted.is_none()
+            && let ReturnPathGate::WholeValueField(gate) = &self.path
+            && let Some(closed) = &gate.closed
+            && let Some(call) = call_text
+                .map(str::to_string)
+                .or_else(|| owner_call_in(&assertion.text, &self.name, unwrapped))
+            && let Some(pinned) = gate.pinned_field_text(expected)
+            && closed.provably_unpinned(&self.name, call.trim_end_matches(".unwrap()"), &pinned)
         {
             return false;
         }
@@ -9493,6 +9625,37 @@ fn returns_other_variant(exit: &ast::ReturnExpr, wrapper: &str) -> bool {
 }
 
 impl WholeValueField {
+    /// The source text a literal `expected` gives the field (`3` for
+    /// `Ok(Config { retries: 3 })`), when [`Self::admits`] reads it.
+    fn pinned_field_text(&self, expected: &str) -> Option<String> {
+        let parse = parse_clean_source_file(&format!("fn ripr_expected() {{ ({expected}); }}"))?;
+        let mut value = parse
+            .tree()
+            .syntax()
+            .descendants()
+            .find_map(ast::ParenExpr::cast)?
+            .expr()?;
+        if self.wrapper.is_some() {
+            let ast::Expr::CallExpr(call) = value else {
+                return None;
+            };
+            value = call.arg_list()?.args().next()?;
+        }
+        let ast::Expr::RecordExpr(literal) = value else {
+            return None;
+        };
+        literal
+            .record_expr_field_list()?
+            .fields()
+            .find(|candidate| {
+                candidate
+                    .field_name()
+                    .is_some_and(|name| name.text().trim_start_matches("r#") == self.field)
+            })?
+            .expr()
+            .map(|pinned| pinned.syntax().text().to_string())
+    }
+
     /// RIPR-SPEC-0225 rule 2: `expected` is a literal of the owner's type,
     /// in the owner's wrapper, that names the field once, explicitly, with an
     /// independent value ([`independent_value`]), and no functional-update
@@ -13104,7 +13267,35 @@ fn parameter_annotation(test: &TestSummary, receiver: &str) -> Option<String> {
 /// test body (the optional annotation and the initializer), or `None` when
 /// the name may be bound some other way ripr does not read.
 fn receiver_let_bindings<'a>(test: &'a TestSummary, receiver: &str) -> Option<Vec<&'a str>> {
-    let masked = mask_comments_and_strings(&test.body);
+    use crate::analysis::syntax::run_memo::{Product, memoize_with};
+    // A pure function of the body text and the receiver name, asked again for
+    // every seam and every expected operand of a naming test, so the run scope
+    // reads each pair once and the per-call work is a digest lookup (#13577).
+    let ranges = memoize_with(
+        Product::ReceiverLetBindings,
+        0,
+        receiver,
+        &test.body,
+        || receiver_let_binding_ranges(&test.body, receiver),
+    )?;
+    ranges
+        .into_iter()
+        .map(|(start, end)| test.body.get(start..end))
+        .collect()
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Times [`receiver_let_binding_ranges`] actually scanned on this thread.
+    static RECEIVER_LET_SCANS: Cell<usize> = const { Cell::new(0) };
+}
+
+/// [`receiver_let_bindings`] as byte ranges of `body`, so the answer can be
+/// stored for the run without borrowing the test.
+fn receiver_let_binding_ranges(body: &str, receiver: &str) -> Option<Vec<(usize, usize)>> {
+    #[cfg(test)]
+    RECEIVER_LET_SCANS.with(|n| n.set(n.get() + 1));
+    let masked = mask_comments_and_strings(body);
     if binds_outside_let(&masked, receiver) {
         return None;
     }
@@ -13150,8 +13341,7 @@ fn receiver_let_bindings<'a>(test: &'a TestSummary, receiver: &str) -> Option<Ve
         let name_at = whole_word_offsets(&statement[..pattern_end], receiver)
             .first()
             .copied()?;
-        let binding = &test.body[pattern_start..statement_end];
-        bindings.push(&binding[name_at + receiver.len()..]);
+        bindings.push((pattern_start + name_at + receiver.len(), statement_end));
     }
     Some(bindings)
 }
@@ -16093,15 +16283,15 @@ pub(super) fn imported_enum_variant_value(
     if name.is_empty() || enum_name.is_empty() || PRELUDE_VALUES.contains(&name) {
         return false;
     }
-    let declaring: Vec<_> = index
-        .files()
-        .values()
-        .filter(|facts| {
+    let declaring_path = index.call_identity_memos.sole_type_declarer(enum_name, || {
+        let mut matching = index.files().iter().filter(|(_, facts)| {
             facts.source.contains(enum_name)
                 && declares_type(&mask_comments_and_strings(&facts.source), enum_name)
-        })
-        .collect();
-    let [declaring] = declaring.as_slice() else {
+        });
+        let first = matching.next()?;
+        matching.next().is_none().then(|| first.0.clone())
+    });
+    let Some(declaring) = declaring_path.and_then(|path| index.files().get(&path)) else {
         return false;
     };
     // Equality facts are not needed (and can be unavailable for an enum with

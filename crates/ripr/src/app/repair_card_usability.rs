@@ -30,12 +30,13 @@ use crate::analysis::seams::{
     ExpectedSink, OwnerCallShape, RepoSeam, RequiredDiscriminator, SeamGripClass, SeamKind,
 };
 use crate::analysis::test_grip_evidence::TestGripEvidence;
-use crate::cli::commands::agent_card::agent_card_plain_lines;
 use crate::domain::{
     Confidence, DEFAULT_REPAIR_CARD_MAX_DETAIL_ITEMS, DEFAULT_REPAIR_CARD_MAX_SERIALIZED_BYTES,
     DiagnosticConfidence, DiagnosticFixSite, DiagnosticWitness, DiagnosticWitnessLimitation,
-    MissingDiscriminatorFact, RepairCardSnapshotCurrentness, StageEvidence, StageState,
+    DiscriminatorShape, MissingDiscriminatorFact, RepairCardSnapshotCurrentness, StageEvidence,
+    StageState,
 };
+use crate::output::agent_card::agent_card_plain_lines;
 use crate::output::json::render_pretty_with_newline;
 
 use super::repair_attempt::{RepairAttemptId, RepairAttemptManifest, RepairAttemptState};
@@ -116,6 +117,8 @@ pub(crate) fn measurement_witness() -> DiagnosticWitness {
                      boundary itself is not pinned"
                 .to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Other,
+            drafted_boundary: None,
         }],
         fix_site: Some(DiagnosticFixSite {
             file: "tests/pricing.rs".to_string(),
@@ -165,6 +168,7 @@ fn measurement_attempt(
         limitations: Vec::new(),
         non_claims: Vec::new(),
         after: None,
+        focused_receipt_evaluation: None,
         last_after_refusal: None,
         after_refusal_count: 0,
         after_refusal_history: Vec::new(),

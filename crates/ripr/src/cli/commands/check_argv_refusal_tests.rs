@@ -238,13 +238,35 @@ fn suppression_policy_is_refused_on_formats_that_cannot_apply_it() -> Result<(),
             &["--suppression-policy", "policy.toml", "--format", format],
         )?;
         if !(error.starts_with(
-            "--suppression-policy applies to the findings-based check formats (human, human-full, json, github)",
+            "--suppression-policy applies to the findings-based check formats (human, human-full, json, json-compact, github, missed-txt)",
         ) && error.ends_with("it is not yet supported for SARIF, badge, or repo formats"))
         {
             return Err(format!(
                 "{format}: refusal must name the limitation, got {error}"
             ));
         }
+    }
+    Ok(())
+}
+
+#[test]
+fn suppression_policy_is_not_refused_on_missed_txt() -> Result<(), String> {
+    let root = TempRoot::new("suppression-missed-txt")?;
+    let mut argv = vec!["--root".to_string(), root.arg()];
+    argv.extend(
+        [
+            "--suppression-policy",
+            "policy.toml",
+            "--format",
+            "missed-txt",
+        ]
+        .iter()
+        .map(|value| value.to_string()),
+    );
+    if let Err(error) = check(&argv)
+        && error.contains("applies to the findings-based check formats")
+    {
+        return Err(format!("missed-txt must accept the flag, got {error}"));
     }
     Ok(())
 }
@@ -551,6 +573,7 @@ fn machine_formats_pin_refusal_identity_and_human_formats_stay_prose() -> Result
         OutputFormat::Json,
         OutputFormat::Sarif,
         OutputFormat::Github,
+        OutputFormat::MissedTxt,
         OutputFormat::BadgeJson,
         OutputFormat::RepoExposureJson,
         OutputFormat::AgentSeamPacketsJson,
@@ -559,6 +582,13 @@ fn machine_formats_pin_refusal_identity_and_human_formats_stay_prose() -> Result
             return Err(format!("{format:?} must carry a refusal document"));
         };
         let document = document?;
+        if matches!(format, OutputFormat::MissedTxt) {
+            assert_eq!(
+                document,
+                "# ripr run refused: run_status=repository_root_unusable; repair_route=analysis/repository-root; synthetic refusal\n"
+            );
+            continue;
+        }
         if matches!(format, OutputFormat::Github) {
             assert_eq!(
                 document,

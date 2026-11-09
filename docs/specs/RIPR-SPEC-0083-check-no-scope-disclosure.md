@@ -95,6 +95,19 @@ the canonical whole-repository route `ripr pilot --root .` (owned by
 `domain::next_action`): pilot writes the same repo-exposure artifacts, adds
 seam ranking and a supported repair route, and runs without Git or a base.
 
+Producer-declared `NoScope` is a different case from provided-scope
+analyzed-empty (#13658). When `--diff` named a file that yielded zero changed
+files (empty or unparseable unified diff), the producer reports an
+`AnalysisOutcomeKind::NoScope` outcome: nothing was parsed or analyzed at all,
+so a clean-looking empty result would mislead. The agent format must not claim
+`done` for that outcome — it ends with
+`stop=nothing was in scope; zero findings is not a clean result` — and the
+GitHub format emits
+`::warning title=ripr nothing analyzed::Nothing was in scope, so zero findings is not a clean result. ...`
+instead of the `::notice title=ripr::No static exposure findings found`
+all-clear. The provided-scope 0-probe bullets above keep the honest
+"No diff-derived..." message and are unaffected by this warning.
+
 ### Scope detection
 
 The CLI `check()` handler tracks a `scope_explicitly_provided` boolean,
@@ -223,10 +236,25 @@ names the comparison (#9922). Explicit `--base` and `--worktree` provide scope
 and keep the full note for those qualifying empty ranges. GitHub and JSON
 retain their existing `no_scope_provided`-gated disclosures; explicit-base
 empty ranges do not add the GitHub no-scope annotation or JSON
-`scope_disclosures` (#9033, #9222). `no_scope` with zero changed files also
+`scope_disclosures` (#9033, #9222). The #13658
+`::warning title=ripr nothing analyzed::` warning is a different signal: it is
+gated on the producer-declared `NoScope` outcome (an empty or unparseable
+`--diff` from which nothing was parsed), NOT on `no_scope_provided`, and it
+does not add the GitHub no-scope annotation, JSON `scope_disclosures` or the
+`missing_scope` triage state; explicit-base empty-range behavior (#9033, #9222)
+is unchanged. `no_scope` with zero changed files also
 covers ranges that only delete files, change submodule pointers or touch ripr
 artifacts, so deletion-only, submodule and excluded-artifact ranges still carry
 no assurance that no behavior changed.
+
+### Symlink type changes (#13659)
+
+A tracked file that becomes, or stops being, a symlink (git mode `120000`) is
+not source and is never analyzed. The diff parser counts each symlink file
+section once, and `check` prints on stderr
+`ripr: skipped N symlink change(s); ...` stating that the empty result does not
+mean the behavior is covered. The stdout surfaces keep their existing
+empty-scope wording; the stderr line is the type-change disclosure.
 
 A submodule with uncommitted changes counts as a submodule pointer change too.
 Git renders it as an adjacent `-Subproject commit <sha>` and
@@ -318,6 +346,11 @@ a gitlink (#10648).
 - `crates/ripr/tests/cli_smoke.rs::check_default_base_deletion_only_range_does_not_claim_no_behavior_changed_in_any_renderer` (#9222: a default-base deletion-only range never gets a "no behavior changed" assurance in human, GitHub or JSON output, and still says nothing was analyzed)
 - `crates/ripr/src/output/human.rs::tests::explicit_base_with_an_empty_range_explains_the_empty_result` (#9033: range and working-tree wording, bounded and full forms)
 - `crates/ripr/src/output/human.rs::tests::empty_range_note_is_suppressed_when_it_would_be_untrue_or_redundant` (#9033: off for other outcome kinds, changed file count alone, no base, unanalyzed working tree, preview advisories and language runs)
+- `crates/ripr/src/output/github.rs::tests::render_no_scope_outcome_is_a_warning_not_a_clean_notice` (#13658: a producer-declared `NoScope` outcome emits the `ripr nothing analyzed` warning, never the all-clear notice)
+- `crates/ripr/src/output/human/agent_tests.rs::agent_no_scope_outcome_is_not_done_but_complete_no_findings_is` (#13658: agent format refuses `done` on a `NoScope` outcome; a complete no-findings run still says `done`)
+- `crates/ripr/tests/cli_smoke.rs::check_empty_diff_file_is_not_a_clean_result_in_agent_and_github` (#13658: end-to-end — an empty `--diff` file in agent and GitHub formats carries the stop/warning, never the clean-result claim)
+
+- `crates/ripr/tests/cli_smoke.rs::check_clean_base_branch_with_parent_analyzes_last_commit_in_human_only` (#13644: human-only last-commit fallback, stderr label, drill-ins on `HEAD~1`, JSON unchanged, explicit `--base` not rescoped, clone with `origin/main`, ignored source keeps the empty result)
 
 ## Implementation Mapping
 
@@ -325,7 +358,8 @@ a gitlink (#10648).
 - `crates/ripr/src/app/check/output_builder.rs` — sets `no_scope_provided: false` (library API always has scope).
 - `crates/ripr/src/cli/commands.rs` — `scope_explicitly_provided` tracking in `check()`; sets `output.no_scope_provided = true` when no scope + empty.
 - `crates/ripr/src/output/human.rs` — emits `Note:` guidance in the empty-findings branch when `no_scope_provided`.
-- `crates/ripr/src/output/github.rs` — emits the `ripr no analysis scope` annotation with the same range wording.
+- `crates/ripr/src/output/github.rs` — emits the `ripr no analysis scope` annotation with the same range wording; also emits the `ripr nothing analyzed` warning for a producer-declared `NoScope` outcome (#13658).
+- `crates/ripr/src/output/human/agent.rs` — refuses `done` and prints the `stop=nothing was in scope` line for a producer-declared `NoScope` outcome (#13658).
 - `crates/ripr/src/output/json/report.rs` — emits additive `scope_disclosures[]` when `no_scope_provided`.
 
 ## CI Proof
@@ -352,6 +386,23 @@ a gitlink (#10648).
   --root . --format repo-exposure-md` does a real repo scan (Scope: repo) and
   shows NO guidance; (e) bare `ripr check` that analyzed changed files with 0
   probes shows NO guidance in any form (#4012).
+
+- (f) bare `ripr check --format human` (the default; `human-full` excluded)
+  on a clean checkout of the resolved base branch analyzes the last commit
+  (`--base HEAD~1`) and labels that on stderr (#13644). It applies only when
+  HEAD is that branch at the same commit (or `origin/<branch>` is the base and
+  `<branch>` is `main`/`master` or no other base candidate exists, so a
+  feature-branch clone keeps the #7644 base hedge),
+  `HEAD~1` exists, no tracked source edit or untracked source file is
+  pending (tracked, untracked or ignored), and no scope, output directory or artifact was requested. Drill-in
+  commands then name `--base 'HEAD~1'`. Rationale (#13644): agents otherwise
+  spend a dead-end call on "nothing in scope" before `--base HEAD~1`. Machine
+  formats (JSON, SARIF, GitHub) keep the empty-range contract so CI runs on
+  `main` are unchanged. When the retry fails or finds no changed file, the
+  original empty result and its `--base HEAD~1` next action are kept. The
+  retry spends only the remaining `--timeout` (skipped below one second) and
+  is labeled on stderr only after its result replaces the output, never
+  through the progress stream; its git probes honor `--git-timeout`.
 
 ## Metrics
 

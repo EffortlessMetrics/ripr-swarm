@@ -163,7 +163,13 @@ impl SharedMacroScans {
                 self.runs.fetch_add(1, Relaxed);
                 self.scanned_files.fetch_add(files.len(), Relaxed);
             }
-            Arc::new(scan_macro_sites(&files, index, roots, module_resolved))
+            Arc::new(scan_macro_sites(
+                &files,
+                index,
+                roots,
+                module_resolved,
+                false,
+            ))
         }))
     }
 

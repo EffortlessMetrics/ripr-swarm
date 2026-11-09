@@ -1,0 +1,20 @@
+{
+  "id": "rust_same_line_call_inputs_masked",
+  "language": "rust",
+  "tier": "pure",
+  "source_fixture": "fixtures/same_line_call_inputs_masked",
+  "vector": "input_is_not_its_observed_return",
+  "probe_family": "predicate",
+  "assertions": [
+    {
+      "type": "must_not_report_clean"
+    },
+    {
+      "type": "expected_finding_count",
+      "count": 1
+    },
+    {
+      "type": "must_not_promote"
+    }
+  ]
+}

@@ -784,6 +784,49 @@ fn imported_enum_variant_value_admits_only_the_single_unambiguous_import() {
     ));
 }
 
+/// The sole declaring file of the enum is decided once per index: repeated
+/// admissions on one index keep answering from the memo (including the
+/// ambiguous and absent answers) instead of masking every file that mentions
+/// the enum name again. Pilot on bevy re-masked those files per seam and test
+/// and timed out at 275 s.
+#[test]
+fn imported_enum_variant_value_reuses_the_declarer_decision_per_index() {
+    const ENUM: &str = "pub enum Rule {\n    Upper,\n}\n";
+    let glob = "use crate::Rule::*;\n#[test]\nfn t() { assert_eq!(Upper.apply(1), 1); }\n";
+    let one = index(&[(HELPERS, ENUM), (LIB, glob)]);
+    for _ in 0..3 {
+        assert!(imported_enum_variant_value(
+            "Upper",
+            "Rule",
+            Path::new(LIB),
+            &one
+        ));
+    }
+    let two = index(&[(HELPERS, ENUM), (LIB, glob), ("src/other.rs", ENUM)]);
+    for _ in 0..3 {
+        assert!(!imported_enum_variant_value(
+            "Upper",
+            "Rule",
+            Path::new(LIB),
+            &two
+        ));
+        assert!(!imported_enum_variant_value(
+            "Upper",
+            "Missing",
+            Path::new(LIB),
+            &two
+        ));
+    }
+    let stored = two
+        .call_identity_memos
+        .sole_type_declarer("Rule", || Some(PathBuf::from("recomputed")));
+    assert_eq!(stored, None, "the ambiguous answer must come from the memo");
+    let stored = one
+        .call_identity_memos
+        .sole_type_declarer("Rule", || Some(PathBuf::from("recomputed")));
+    assert_eq!(stored.as_deref(), Some(Path::new(HELPERS)));
+}
+
 /// #7172: per-assertion unit-struct pin admission must not rescan the
 /// workspace. `ASSERTIONS` admissions over one `FILLER_FILES`-file index
 /// share one run-scoped [`OwnerPinSyntax`], exactly as production shares
@@ -3022,6 +3065,42 @@ fn a_constant_counts_only_from_a_package_the_test_belongs_to_tests_or_names() {
 }
 
 #[test]
+fn receiver_let_bindings_scan_each_body_and_receiver_once_per_run() {
+    let tests = "use demo::weight;\n#[test]\nfn weighs() {\nlet e = weight(2);\nlet f = e;\nassert_eq!(weight(2), f);\n}\n";
+    let index = index(&[(LIB, WEIGHT_LIB), (TESTS, tests)]);
+    assert_eq!(index.tests().len(), 1, "fixture must hold exactly one test");
+    let test = index.tests().at(0);
+    let answer = |receiver: &str| receiver_let_bindings(test, receiver);
+    let unscoped: Vec<_> = ["e", "f", "weight"].into_iter().map(answer).collect();
+    assert_eq!(
+        unscoped[0].as_deref(),
+        Some(&[" = weight(2)"][..]),
+        "one readable binding of `e`"
+    );
+    assert_eq!(unscoped[1].as_deref(), Some(&[" = e"][..]));
+    assert_eq!(
+        unscoped[2].as_deref(),
+        Some(&[][..]),
+        "no binding of the owner"
+    );
+    let before = RECEIVER_LET_SCANS.with(Cell::get);
+    let scoped: Vec<Vec<_>> = {
+        let _scope = crate::analysis::syntax::run_memo::enter();
+        (0..4)
+            .map(|_| ["e", "f", "weight"].into_iter().map(answer).collect())
+            .collect()
+    };
+    for round in &scoped {
+        assert_eq!(round, &unscoped, "the memo never changes an answer");
+    }
+    assert_eq!(
+        RECEIVER_LET_SCANS.with(Cell::get) - before,
+        3,
+        "one scan per distinct (body, receiver), not one per ask"
+    );
+}
+
+#[test]
 fn the_reveal_side_reads_an_expected_name_only_through_one_readable_let_or_constant() {
     let value = |items: &str, body: &str, operand: &str| -> Option<String> {
         let tests = format!("use demo::weight;\n{items}\n#[test]\nfn weighs() {{\n{body}\n}}\n");
@@ -3494,6 +3573,45 @@ fn a_rebound_test_attribute_refuses_the_pin_and_the_builtin_keeps_it() {
 }
 
 #[test]
+fn an_async_std_test_runtime_runs_an_async_test_body_and_other_async_tests_refuse() {
+    for attributes in [
+        "#[async_std::test]",
+        "#[::async_std::test]",
+        "#[async_std::test()]",
+    ] {
+        let tests = format!(
+            "use demo::weight;\n{attributes}\nasync fn weighs() {{\n    assert_eq!(weight(4), 12);\n}}\n"
+        );
+        assert_eq!(weight_admitted(&tests).len(), 1, "{tests}");
+    }
+    for attributes in [
+        "#[async_std::test(flavor = \"multi_thread\")]",
+        "mod async_std { pub use other::test; }\n#[async_std::test]",
+        "use other as async_std;\n#[async_std::test]",
+    ] {
+        let tests = format!(
+            "use demo::weight;\n{attributes}\nasync fn weighs() {{\n    assert_eq!(weight(4), 12);\n}}\n"
+        );
+        assert!(weight_admitted(&tests).is_empty(), "{tests}");
+    }
+    let lib = "pub async fn weight(x: u32) -> u32 {\n    x * 3\n}\n";
+    let tests = "use demo::weight;\n#[async_std::test]\nasync fn weighs() {\n    assert_eq!(weight(4).await, 12);\n}\n";
+    let index = index(&[(LIB, lib), (TESTS, tests)]);
+    let pin = establish(&index, "weight", "x * 3");
+    assert!(
+        pin.is_some(),
+        "async_std must run the async body for an async owner"
+    );
+    let Some(pin) = pin else {
+        return;
+    };
+    assert_eq!(
+        admitted_texts(&index, &pin),
+        vec!["assert_eq!(weight(4).await, 12);".to_string()]
+    );
+}
+
+#[test]
 fn a_tokio_test_runtime_runs_an_async_test_body_and_other_async_tests_refuse() {
     for attributes in [
         "#[tokio::test]",
@@ -3510,7 +3628,6 @@ fn a_tokio_test_runtime_runs_an_async_test_body_and_other_async_tests_refuse() {
     for attributes in [
         // Another crate's runtime path, and arguments that change what runs.
         "#[test]",
-        "#[async_std::test]",
         "#[tokio::test(crate = \"other\")]",
         "#[tokio::test(flavor = \"current_thread\", unhandled_panic = \"shutdown_runtime\")]",
         "#[tokio::test(flavor = some_flavor())]",
@@ -13868,7 +13985,7 @@ fn the_workspace_macro_scan_runs_in_line_on_a_pool_worker_and_fans_out_elsewhere
     let roots = TargetRoots::new(&index);
     let decision_of_scan = || {
         LAST_SCAN_FAN_OUT.with(|last| last.set(None));
-        scan_macro_sites(&files, &index, &roots, &resolved);
+        scan_macro_sites(&files, &index, &roots, &resolved, false);
         LAST_SCAN_FAN_OUT.with(std::cell::Cell::get)
     };
 
