@@ -14,6 +14,9 @@ use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
 
+pub(crate) mod admission;
+pub mod dag;
+
 /// The selected #3825 runner contract. Nextest owns compiled lib, bin,
 /// integration, and example test binaries; Cargo and rustdoc own doctests,
 /// which nextest cannot execute. Both rows are required, both run with default
@@ -23,7 +26,7 @@ use serde::{Deserialize, Serialize};
 pub(crate) const TEST_RUNNER_CONTRACT: &str = "canonical_nextest_plus_cargo_doc";
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub(crate) enum ProductGateId {
+pub enum ProductGateId {
     Formatting,
     AllFeaturesCheck,
     Clippy,
@@ -37,10 +40,21 @@ pub(crate) enum ProductGateId {
     NetworkPolicy,
     Goldens,
     Fixtures,
+    BasePreparation,
+    BaseCompilerRecovery,
+    BaseFormatRecovery,
+    BaseUserText,
+    CapabilityProducers,
+    CapabilityDocs,
+    VerdictCorpora,
+    PrEvidence,
+    SchemaSweep,
+    WildcardRetention,
+    WorkspacePreparation,
 }
 
 impl ProductGateId {
-    pub(crate) const fn as_str(self) -> &'static str {
+    pub const fn as_str(self) -> &'static str {
         match self {
             Self::Formatting => "product.rust.formatting",
             Self::AllFeaturesCheck => "product.rust.all_features_check",
@@ -55,26 +69,37 @@ impl ProductGateId {
             Self::NetworkPolicy => "product.repository.network_policy",
             Self::Goldens => "product.evidence.goldens",
             Self::Fixtures => "product.evidence.fixtures",
+            Self::BasePreparation => "product.policy.base_preparation",
+            Self::BaseCompilerRecovery => "product.policy.base_compiler_recovery",
+            Self::BaseFormatRecovery => "product.policy.base_format_recovery",
+            Self::BaseUserText => "product.policy.base_user_text",
+            Self::CapabilityProducers => "product.contract.capability_producers",
+            Self::CapabilityDocs => "product.contract.capability_docs",
+            Self::VerdictCorpora => "product.evidence.verdict_corpora",
+            Self::PrEvidence => "product.evidence.pr",
+            Self::SchemaSweep => "product.contract.schema_sweep",
+            Self::WildcardRetention => "product.evidence.wildcard_retention",
+            Self::WorkspacePreparation => "product.rust.workspace_preparation",
         }
     }
 }
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub(crate) enum ProductSurface {
+pub enum ProductSurface {
     Rust,
     RepositoryPolicy,
     Evidence,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub(crate) enum ProductGateRole {
+pub enum ProductGateRole {
     Required,
     Advisory,
     Scheduled,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub(crate) enum ProductGateSelection {
+pub enum ProductGateSelection {
     Selected,
     NoOp,
     Quarantined,
@@ -82,52 +107,52 @@ pub(crate) enum ProductGateSelection {
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub(crate) enum ProductGateTrustClass {
+pub enum ProductGateTrustClass {
     Repository,
     ExternalTree,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct ProductGateDefinition {
-    pub(crate) id: ProductGateId,
-    pub(crate) role: ProductGateRole,
-    pub(crate) surfaces: BTreeSet<ProductSurface>,
-    pub(crate) command: &'static str,
-    pub(crate) claim: &'static str,
-    pub(crate) non_claim: &'static str,
+pub struct ProductGateDefinition {
+    pub id: ProductGateId,
+    pub role: ProductGateRole,
+    pub surfaces: BTreeSet<ProductSurface>,
+    pub command: &'static str,
+    pub claim: &'static str,
+    pub non_claim: &'static str,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct ProductGateRow {
-    pub(crate) definition: ProductGateDefinition,
-    pub(crate) selection: ProductGateSelection,
-    pub(crate) reason: &'static str,
+pub struct ProductGateRow {
+    pub definition: ProductGateDefinition,
+    pub selection: ProductGateSelection,
+    pub reason: &'static str,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct ProductGateSubject {
-    pub(crate) changed_surfaces: BTreeSet<ProductSurface>,
-    pub(crate) selectors_authoritative: bool,
-    pub(crate) trust_class: ProductGateTrustClass,
+pub struct ProductGateSubject {
+    pub changed_surfaces: BTreeSet<ProductSurface>,
+    pub selectors_authoritative: bool,
+    pub trust_class: ProductGateTrustClass,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct ProductGatePlan {
-    pub(crate) rows: Vec<ProductGateRow>,
-    pub(crate) full_route_reason: Option<&'static str>,
+pub struct ProductGatePlan {
+    pub rows: Vec<ProductGateRow>,
+    pub full_route_reason: Option<&'static str>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct ProductGateParity {
-    pub(crate) aligned: bool,
-    pub(crate) plan_gate_ids: BTreeSet<&'static str>,
-    pub(crate) producer_gate_ids: BTreeSet<&'static str>,
-    pub(crate) missing_from_producer: BTreeSet<&'static str>,
-    pub(crate) unrepresented_producer_gates: BTreeSet<&'static str>,
+pub struct ProductGateParity {
+    pub aligned: bool,
+    pub plan_gate_ids: BTreeSet<&'static str>,
+    pub producer_gate_ids: BTreeSet<&'static str>,
+    pub missing_from_producer: BTreeSet<&'static str>,
+    pub unrepresented_producer_gates: BTreeSet<&'static str>,
 }
 
 impl ProductGateParity {
-    pub(crate) fn compare(producer_gate_ids: BTreeSet<ProductGateId>) -> Self {
+    pub fn compare(producer_gate_ids: BTreeSet<ProductGateId>) -> Self {
         let plan_gate_ids: BTreeSet<_> = product_gate_definitions()
             .into_iter()
             .map(|gate| gate.id.as_str())
@@ -156,7 +181,7 @@ impl ProductGateParity {
 }
 
 impl ProductGatePlan {
-    pub(crate) fn for_subject(subject: &ProductGateSubject) -> Self {
+    pub fn for_subject(subject: &ProductGateSubject) -> Self {
         let definitions = product_gate_definitions();
         let full_route_reason = if !subject.selectors_authoritative {
             Some("selector authority is missing; the complete product route is required")
@@ -200,7 +225,9 @@ impl ProductGatePlan {
     }
 }
 
-pub(crate) fn product_gate_definitions() -> Vec<ProductGateDefinition> {
+/// Canonical ordinary-route portfolio shared with xtask route parity.
+/// This is not the staged DAG's expanded allocation denominator.
+pub fn product_gate_definitions() -> Vec<ProductGateDefinition> {
     let mut rust = BTreeSet::new();
     rust.insert(ProductSurface::Rust);
     let mut policy = BTreeSet::new();
@@ -460,9 +487,9 @@ mod tests {
     // workflow, nextest-config, or documentation edit cannot silently drop,
     // filter, or restate a required test proposition. The parity test above
     // compares the plan with itself; these read the real files.
-    const REQUIRED_WORKFLOW: &str = include_str!("../../.github/workflows/rust-gates.yml");
-    const NEXTEST_CONFIG: &str = include_str!("../../.config/nextest.toml");
-    const GATE_PLAN_DOC: &str = include_str!("../../docs/ci/PRODUCT_GATE_PLAN.md");
+    const REQUIRED_WORKFLOW: &str = include_str!("../../../.github/workflows/rust-gates.yml");
+    const NEXTEST_CONFIG: &str = include_str!("../../../.config/nextest.toml");
+    const GATE_PLAN_DOC: &str = include_str!("../../../docs/ci/PRODUCT_GATE_PLAN.md");
 
     /// Shell command lines in a workflow, with a single-line `run:` unwrapped.
     fn workflow_command_lines(workflow: &str) -> Vec<&str> {
@@ -1206,7 +1233,7 @@ rustc() { echo "rustc stub"; }
         ) -> Result<(Option<i32>, String), String> {
             let body = step_body();
             assert!(!body.is_empty(), "Required Rust tests step not found");
-            let dir = crate::tests::temp_dir(&format!("required-test-step-{label}"));
+            let dir = crate::test_support::scratch(&format!("required-test-step-{label}"))?;
             let ci = dir.join("target/nextest/ci");
             std::fs::create_dir_all(&ci).map_err(|err| err.to_string())?;
             if stale {

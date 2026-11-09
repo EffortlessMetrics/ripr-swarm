@@ -871,7 +871,7 @@ owner = "analysis"
 surface = "rust"
 classification = "config"
 reason = "Pinned upstream SCIP proto revision for optional read-only index admission (#8115)."
-covered_by = ["cargo test -p ripr --lib analysis::scip::admission::tests", "cargo xtask check-file-policy"]
+covered_by = ["cargo test -p ripr --lib --features ripr-contract/default analysis::scip::admission::tests", "cargo xtask check-file-policy"]
 
 [[allow]]
 glob = "benchmarks/pilot_ranking/manifest.json"
@@ -1259,3 +1259,23 @@ surface = "repo"
 classification = "metadata"
 reason = "Pinned Python package list (full SHAs, cosmic-ray version, module paths, test commands) read by .github/workflows/mutation-spot-check-python.yml for the cosmic-ray real-mutant spot check (#12901); declarative data, no logic. The workflow has not run."
 covered_by = ["cargo xtask check-workflows", "cargo xtask check-file-policy"]
+
+[[allow]]
+glob = ".github/scripts/check-base-recovery-state.py"
+kind = "base_recovery_git_state"
+owner = "repo-policy"
+surface = "ci"
+classification = "tooling"
+reason = "Native Git-state validation must run before pinned base Rust recovery can compile; exercised by the actual Linux recovery shell control (#8197)."
+covered_by = ["cargo xtask check-file-policy"]
+covered_by_unix = ["cargo test -p repo-policy --test frontdoor base_recovery_rejects_unrelated_git_state"]
+
+[[allow]]
+glob = "tools/repo-policy/tests/base_recovery.py"
+kind = "base_recovery_git_state"
+owner = "repo-policy"
+surface = "ci"
+classification = "tooling"
+reason = "Native Git-state validation must run before pinned base Rust recovery can compile; exercised by the actual Linux recovery shell control (#8197)."
+covered_by = ["cargo xtask check-file-policy"]
+covered_by_unix = ["cargo test -p repo-policy --test frontdoor base_recovery_rejects_unrelated_git_state"]

@@ -16,6 +16,9 @@ sha2 = "0.10"
 # Match the existing workspace variant; retain PID custody until group cleanup.
 rustix = { version = "1.1.5", features = ["process", "event", "fs"] }
 
+[dev-dependencies]
+toml = "1"
+
 [build-dependencies]
 sha2 = "0.10"
 

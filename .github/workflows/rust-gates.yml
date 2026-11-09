@@ -329,6 +329,7 @@ jobs:
           set -euo pipefail
           base_tree="$RUNNER_TEMP/user-text-base"
           base_sha="$(git -C "$base_tree" rev-parse HEAD)"
+          python3 "$GITHUB_WORKSPACE/.github/scripts/check-base-recovery-state.py" "$base_tree"
           old_stub_blob="$(git -C "$base_tree" rev-parse "HEAD:crates/ripr/src/app/test_stub.rs")"
           if test "$old_stub_blob" = "41ce81981802365b31e5182b7a7a51540ff8d7be"; then
             python3 - "$base_tree/crates/ripr/src/app/test_stub.rs" <<'PY'
@@ -364,6 +365,7 @@ jobs:
           set -euo pipefail
           base_tree="$RUNNER_TEMP/user-text-base"
           base_sha="$(git -C "$base_tree" rev-parse HEAD)"
+          python3 "$GITHUB_WORKSPACE/.github/scripts/check-base-recovery-state.py" "$base_tree" --allow-compiler-repair
           old_format_blob="$(git -C "$base_tree" rev-parse "HEAD:crates/ripr/src/output/format.rs")"
           if test "$old_format_blob" = "5c223a5e714540e314600f24f6f07373d136c475"; then
             python3 - "$base_tree/crates/ripr/src/output/format.rs" <<'PY'

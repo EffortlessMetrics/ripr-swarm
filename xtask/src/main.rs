@@ -73,7 +73,7 @@ mod policy;
 #[cfg(test)]
 mod portable_consumer;
 mod precommit_formatting;
-mod product_gate_plan;
+use repo_policy::product_gate_plan;
 mod product_route_parity;
 mod provider_review_observations;
 mod public_api_surface;
@@ -23851,6 +23851,14 @@ pub(crate) fn is_non_rust_programming_candidate(path: &str) -> bool {
 }
 
 pub(crate) fn non_rust_programming_retention_reason(path: &str) -> Option<&'static str> {
+    if matches!(
+        path,
+        ".github/scripts/check-base-recovery-state.py" | "tools/repo-policy/tests/base_recovery.py"
+    ) {
+        return Some(
+            "Pinned base recovery must validate native Git state before the base Rust compiler can run; the Unix repo-policy frontdoor control executes the exact Bash/Python production steps without product compilation (#8197).",
+        );
+    }
     if matches!(
         path,
         "tools/provision-dev.cjs" | "tools/provision-dev.test.cjs"

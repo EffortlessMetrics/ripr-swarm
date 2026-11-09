@@ -895,3 +895,239 @@ fn workflow_input_reuse_propagates_discovery_and_action_read_errors() -> Result<
     );
     Ok(())
 }
+
+#[test]
+fn native_preflight_receipt_crosses_independent_directories_without_reexecution()
+-> Result<(), String> {
+    let producer = Fixture::new()?;
+    let consumer = Fixture::new()?;
+    let artifact = Fixture(test_support::scratch("policy-receipt-artifact")?);
+    assert_ne!(producer.0, consumer.0);
+    let relative = "target/ripr/reports/policy-preflight.json";
+    let destination = consumer.0.join(relative);
+    // A clean consumer cannot inherit producer-local reports.
+    assert!(!destination.exists());
+    assert!(!consumer.run("verify-preflight")?.status.success());
+    let output = producer.run("preflight")?;
+    assert!(
+        output.status.success(),
+        "native producer: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let produced = std::fs::read(producer.0.join(relative)).map_err(|e| e.to_string())?;
+    let retained = artifact.0.join("policy-preflight.json");
+    copy(&producer.0.join(relative), &retained)?;
+    copy(&retained, &destination)?;
+    assert_eq!(
+        std::fs::read(&destination).map_err(|e| e.to_string())?,
+        produced
+    );
+    let output = consumer.run("verify-preflight")?;
+    assert!(
+        output.status.success(),
+        "independent consumer: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(String::from_utf8_lossy(&output.stdout).contains("no duplicate execution"));
+    assert!(
+        !consumer.0.join("target/ripr/reports/workflows.md").exists(),
+        "verification must not run the producer checks"
+    );
+    for field in ["source", "compiler", "inputs", "checks"] {
+        let mut substituted: serde_json::Value =
+            serde_json::from_slice(&produced).map_err(|e| e.to_string())?;
+        substituted[field] = serde_json::json!("substituted");
+        std::fs::write(&destination, substituted.to_string()).map_err(|e| e.to_string())?;
+        assert!(
+            !consumer.run("verify-preflight")?.status.success(),
+            "substituted {field}"
+        );
+    }
+    copy(&retained, &destination)?;
+    // Different consumer inputs invalidate genuine, unchanged producer bytes.
+    let input = consumer.0.join("AGENTS.md");
+    let original = std::fs::read(&input).map_err(|e| e.to_string())?;
+    let mut changed = original.clone();
+    changed.extend_from_slice(b"\nChanged after native preflight.\n");
+    std::fs::write(&input, changed).map_err(|e| e.to_string())?;
+    assert!(!consumer.run("verify-preflight")?.status.success());
+    std::fs::write(&input, original).map_err(|e| e.to_string())?;
+    assert!(consumer.run("verify-preflight")?.status.success());
+    std::fs::remove_file(&destination).map_err(|e| e.to_string())?;
+    assert!(!consumer.run("verify-preflight")?.status.success());
+    Ok(())
+}
+
+#[test]
+fn lightweight_product_route_parity_preserves_cli_and_provenance() -> Result<(), String> {
+    let source = test_support::workspace_root()?;
+    let fixture = Fixture::from_paths(
+        &source,
+        test_support::scratch("product-route-parity-frontdoor")?,
+        &["fixtures/product-route-parity"],
+    )?;
+    std::fs::create_dir(fixture.0.join(".git")).map_err(|e| e.to_string())?;
+    let run = |cwd: &Path, args: &[&str]| -> Result<Output, String> {
+        Command::new(env!("CARGO_BIN_EXE_repo-policy"))
+            .current_dir(cwd)
+            .arg("check-product-route-parity")
+            .args(args)
+            .output()
+            .map_err(|e| e.to_string())
+    };
+    let decode = |out: Output| -> Result<serde_json::Value, String> {
+        if !out.status.success() {
+            return Err(String::from_utf8_lossy(&out.stderr).into_owned());
+        }
+        serde_json::from_slice(&out.stdout).map_err(|e| e.to_string())
+    };
+    let root_report = decode(run(&fixture.0, &["--json"])?)?;
+    let read_report = |cwd: &Path| -> Result<serde_json::Value, String> {
+        serde_json::from_slice(
+            &std::fs::read(cwd.join("target/ripr/reports/product-route-parity.json"))
+                .map_err(|e| e.to_string())?,
+        )
+        .map_err(|e| e.to_string())
+    };
+    assert_eq!(root_report, read_report(&fixture.0)?);
+    let subdir = fixture.0.join("nested");
+    std::fs::create_dir(&subdir).map_err(|e| e.to_string())?;
+    assert_eq!(decode(run(&subdir, &["--json"])?)?, root_report);
+    assert_eq!(read_report(&subdir)?, root_report);
+    assert_eq!(
+        decode(run(
+            &subdir,
+            &[
+                "--corpus",
+                "../fixtures/product-route-parity/corpus.json",
+                "--json"
+            ]
+        )?)?,
+        root_report
+    );
+    let human = run(&fixture.0, &[])?;
+    assert!(human.status.success());
+    assert!(String::from_utf8_lossy(&human.stdout).contains("product route parity:"));
+    for args in [
+        vec!["--corpus"],
+        vec!["--unknown"],
+        vec!["--corpus", "missing.json"],
+    ] {
+        assert!(!run(&fixture.0, &args)?.status.success());
+    }
+    let corpus_path = fixture.0.join("fixtures/product-route-parity/corpus.json");
+    let original = std::fs::read(&corpus_path).map_err(|e| e.to_string())?;
+    let original_json: serde_json::Value =
+        serde_json::from_slice(&original).map_err(|e| e.to_string())?;
+    let selected = [
+        "--corpus",
+        "fixtures/product-route-parity/corpus.json",
+        "--json",
+    ];
+    let mut distinct = original_json.clone();
+    distinct["subjects"][0]["title"] = "independent checkout input".into();
+    std::fs::write(&corpus_path, distinct.to_string()).map_err(|e| e.to_string())?;
+    let local = decode(run(&fixture.0, &["--json"])?)?;
+    assert_eq!(local["subjects"][0]["title"], "independent checkout input");
+    assert_eq!(local, read_report(&fixture.0)?);
+    assert_eq!(decode(run(&subdir, &["--json"])?)?, local);
+    std::fs::write(&corpus_path, b"{").map_err(|e| e.to_string())?;
+    assert!(!run(&fixture.0, &selected)?.status.success());
+    assert!(
+        !run(&fixture.0, &["--json"])?.status.success(),
+        "default must read this checkout corpus, not build checkout"
+    );
+    assert!(
+        !run(&subdir, &["--json"])?.status.success(),
+        "subdirectory must read nearest checkout corpus"
+    );
+    for mutation in 0..3 {
+        let mut changed = original_json.clone();
+        if mutation == 0 {
+            changed["subjects"][0]["subject"]["changed_surfaces"] = serde_json::json!(["unknown"]);
+        } else if mutation == 1 {
+            let expected = changed["subjects"][0]["expect_semantic_parity"]
+                .as_bool()
+                .ok_or("missing expectation")?;
+            changed["subjects"][0]["expect_semantic_parity"] = (!expected).into();
+            changed["subjects"][0]["expect_mismatch_owner"] = "not_proven".into();
+        } else {
+            let subjects = changed["subjects"]
+                .as_array_mut()
+                .ok_or("missing subjects")?;
+            let fork = subjects
+                .iter_mut()
+                .find(|s| s["public_fork"] == true)
+                .ok_or("missing fork")?;
+            fork["reusable_runner"] = "contabo-self-hosted".into();
+            fork["expect_public_fork_trust"] = false.into();
+        }
+        std::fs::write(&corpus_path, changed.to_string()).map_err(|e| e.to_string())?;
+        assert!(
+            !run(&fixture.0, &selected)?.status.success(),
+            "mutation {mutation}"
+        );
+    }
+    std::fs::write(&corpus_path, &original).map_err(|e| e.to_string())?;
+    let validate = || {
+        let mut violations = Vec::new();
+        repo_policy::product_route_parity::validate_product_route_parity_fixture_corpus(
+            &fixture.0,
+            &mut violations,
+        );
+        violations
+    };
+    assert!(validate().is_empty());
+    let mut drift = original.clone();
+    drift.push(b' ');
+    std::fs::write(&corpus_path, drift).map_err(|e| e.to_string())?;
+    assert!(validate().iter().any(|v| v.contains("digest drifted")));
+    std::fs::write(&corpus_path, original).map_err(|e| e.to_string())?;
+    let provenance = fixture
+        .0
+        .join("fixtures/product-route-parity/provenance.json");
+    let mut manifest: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&provenance).map_err(|e| e.to_string())?)
+            .map_err(|e| e.to_string())?;
+    manifest["files"] = serde_json::json!([]);
+    std::fs::write(&provenance, manifest.to_string()).map_err(|e| e.to_string())?;
+    assert!(validate().iter().any(|v| v.contains("must bind")));
+    // A nearer checkout with no corpus must not borrow the parent's corpus.
+    std::fs::create_dir(subdir.join(".git")).map_err(|e| e.to_string())?;
+    assert!(!run(&subdir, &["--json"])?.status.success());
+    assert!(
+        run(
+            &subdir,
+            &[
+                "--corpus",
+                "../fixtures/product-route-parity/corpus.json",
+                "--json"
+            ]
+        )?
+        .status
+        .success()
+    );
+
+    Ok(())
+}
+
+// These are the Bash/Python commands of the Linux workflow, not a portable Rust substitute.
+#[cfg(unix)]
+#[test]
+fn base_recovery_rejects_unrelated_git_state() -> Result<(), String> {
+    let root = test_support::workspace_root()?;
+    let scratch = test_support::scratch("base-recovery-native")?.join("controls");
+    let output = Command::new("python3")
+        .arg(root.join("tools/repo-policy/tests/base_recovery.py"))
+        .arg(scratch)
+        .output()
+        .map_err(|e| e.to_string())?;
+    if !output.status.success() {
+        return Err(format!(
+            "native recovery controls failed: {} {}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    Ok(())
+}
