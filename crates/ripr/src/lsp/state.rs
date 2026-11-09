@@ -1795,16 +1795,7 @@ impl QuarantineLedger {
         uri: &Uri,
     ) -> Option<(PathBuf, DocumentStalenessReason)> {
         let documents = self.documents.lock().ok()?;
-        let Some(state) = documents.state_for_uri(uri) else {
-            // An untracked overflow buffer has no stored state to withdraw
-            // against; the store-wide latch withdraws it (#11666).
-            return documents.has_untracked_overflow().then(|| {
-                (
-                    document_path(uri),
-                    DocumentStalenessReason::DocumentStoreLimitReached,
-                )
-            });
-        };
+        let state = documents.state_or_untracked(uri)?;
         let quarantine = state.quarantine.as_ref()?;
         Some((state.path.clone(), quarantine.reason))
     }
@@ -1813,7 +1804,7 @@ impl QuarantineLedger {
         self.documents
             .lock()
             .ok()?
-            .state_for_uri(uri)
+            .state_or_untracked(uri)
             .map(|state| state.path.clone())
     }
 
@@ -2464,7 +2455,10 @@ impl DocumentStore {
             .documents
             .get(&uri)
             .is_some_and(Self::is_store_overflow_placeholder);
-        let placeholders = self.documents.len() - self.documents.usage.accepted_documents;
+        let placeholders = self
+            .documents
+            .len()
+            .saturating_sub(self.documents.usage.accepted_documents);
         if !existing_placeholder && placeholders >= self.limits.max_overflow_placeholders {
             // Metadata-only growth is bounded too: do not track this URI.
             // Fail closed through the store-wide latch instead of serving
@@ -2919,15 +2913,35 @@ impl DocumentStore {
     pub(super) fn close(&mut self, params: DidCloseTextDocumentParams) {
         self.rust_index_keys.remove(&params.text_document.uri);
         self.documents.remove(&params.text_document.uri);
-        if self.documents.is_empty() {
-            self.untracked_overflow = false;
-        }
     }
 
-    /// Whether a URI without a stored state must read as withdrawn because an
-    /// earlier refused URI could not be tracked (#11666).
-    pub(super) fn has_untracked_overflow(&self) -> bool {
-        self.untracked_overflow
+    /// The single accessor for a document's state: the stored state, or, when
+    /// an earlier refused URI could not be tracked, a synthetic unknown-
+    /// authority state under `DocumentStoreLimitReached` for any URI without
+    /// one. Every reader that treats absence as "not quarantined" must go
+    /// through this (#11666).
+    pub(super) fn state_or_untracked(
+        &self,
+        uri: &Uri,
+    ) -> Option<std::borrow::Cow<'_, DocumentState>> {
+        if let Some(state) = self.state_for_uri(uri) {
+            return Some(std::borrow::Cow::Borrowed(state));
+        }
+        if !self.untracked_overflow {
+            return None;
+        }
+        let mut state = DocumentState::new(uri.clone(), None, String::new());
+        state.buffer_authority_unknown = true;
+        state.store_limit_refused = true;
+        state.refresh_quarantine();
+        Some(std::borrow::Cow::Owned(state))
+    }
+
+    /// Workspace-level reset (root transition or shutdown): the only point
+    /// that ends untracked-overflow saturation. Closing documents does not,
+    /// because the untracked buffers may still be open in the client.
+    pub(super) fn clear_untracked_overflow(&mut self) {
+        self.untracked_overflow = false;
     }
 
     /// Look up a document by exact URI, tolerating spelling differences the

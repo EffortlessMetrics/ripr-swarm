@@ -125,8 +125,13 @@ loses buffer authority under the same `document_store_limit_reached` reason,
 as an over-limit full-replacement `didChange` does. Placeholders are bounded as
 well (4,096). A refused URI beyond that bound is not stored at all; instead the
 store withdraws every URI that has no stored state under
-`document_store_limit_reached` until all documents are closed, so an untracked
-buffer is never served line-local diagnostics. This is a static delivery
+`document_store_limit_reached` (push publication, document and workspace pull,
+hover, lens and actions all read the same accessor), so an untracked buffer is
+never served line-local diagnostics. This is deliberately over-broad: a
+never-opened URI reads as withdrawn too while the latch is set. Closing
+documents, even all of them, does not clear it, because untracked buffers may
+still be open in the client; only a workspace-level reset (root transition or
+shutdown) clears it. This is a static delivery
 limitation, not a finding, repair, or runtime outcome.
 
 Each catalog entry carries the code identity used today: the stable `code` and

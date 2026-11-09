@@ -1467,8 +1467,8 @@ impl Backend {
             .keys()
             .filter(|uri| {
                 documents
-                    .state_for_uri(uri)
-                    .is_some_and(DocumentState::is_quarantined)
+                    .state_or_untracked(uri)
+                    .is_some_and(|state| state.is_quarantined())
             })
             .cloned()
             .collect::<Vec<_>>();
@@ -1565,8 +1565,12 @@ impl Backend {
             *diagnostic_result_ids = None;
         }
         let mut uris = take_all_uris(&mut last_diagnostic_uris);
-        if marker_served && let Ok(documents) = self.quarantine.documents.lock() {
-            uris.extend(documents.documents.keys().cloned());
+        if let Ok(mut documents) = self.quarantine.documents.lock() {
+            if marker_served {
+                uris.extend(documents.documents.keys().cloned());
+            }
+            // Workspace-level reset: the only point that ends saturation.
+            documents.clear_untracked_overflow();
         }
         // #8732: a root transition or shutdown must also retract any
         // analysis-pending marker published to a push client while no
@@ -1906,8 +1910,8 @@ impl Backend {
             .documents
             .lock()
             .ok()?
-            .state_for_uri(uri)
-            .map(project)
+            .state_or_untracked(uri)
+            .map(|state| project(&state))
     }
 
     /// Clears intentionally bind no version (#1747): a clear must apply
@@ -3838,7 +3842,7 @@ impl Backend {
             .ok()
             .and_then(|documents| {
                 documents
-                    .state_for_uri(uri)
+                    .state_or_untracked(uri)
                     .map(|state| state.buffer_authority_unknown)
             })
             .unwrap_or(false)
@@ -4257,6 +4261,42 @@ impl Backend {
         }
     }
 
+    /// The per-batch publication decision for one URI: pending quarantine,
+    /// bound version and current quarantine, from one state projection. A
+    /// URI with no stored state reads through the latch-aware accessor, so an
+    /// untracked overflow buffer is withdrawn rather than published
+    /// (#11666).
+    fn transaction_publication_projection(
+        &self,
+        uri: &Uri,
+        pending_analyzed: &BTreeMap<Uri, Option<String>>,
+    ) -> (
+        Option<(PathBuf, DocumentStalenessReason)>,
+        Option<i32>,
+        bool,
+    ) {
+        self.with_document_state(uri, |state| {
+            let pending = quarantine_for_pending_from_state(state, pending_analyzed);
+            let version = if state.buffer_authority_unknown {
+                None
+            } else {
+                state.version
+            };
+            (pending, version, quarantine_from_state(state).is_some())
+        })
+        .unwrap_or((None, None, false))
+    }
+
+    #[cfg(test)]
+    pub(super) fn transaction_publication_projection_for_test(
+        &self,
+        uri: &Uri,
+    ) -> (bool, Option<i32>, bool) {
+        let (pending, version, quarantined) =
+            self.transaction_publication_projection(uri, &BTreeMap::new());
+        (pending.is_some(), version, quarantined)
+    }
+
     /// Publish one document's selection-filtered diagnostics during a
     /// refresh transaction, honoring the dirty-buffer quarantine against the
     /// transaction's pending analyzed identity (#1970/#7771): a document
@@ -4276,17 +4316,8 @@ impl Backend {
         // edit cannot make analyzed diagnostics look current. Unknown
         // buffer authority binds no version (see the pending-entered
         // pass).
-        let (pending_quarantine, raw_version, is_quarantined) = self
-            .with_document_state(uri, |state| {
-                let pending = quarantine_for_pending_from_state(state, pending_analyzed);
-                let version = if state.buffer_authority_unknown {
-                    None
-                } else {
-                    state.version
-                };
-                (pending, version, quarantine_from_state(state).is_some())
-            })
-            .unwrap_or((None, None, false));
+        let (pending_quarantine, raw_version, is_quarantined) =
+            self.transaction_publication_projection(uri, pending_analyzed);
         let version = self.negotiated_version(raw_version);
         if pending_quarantine.is_some() {
             if !diagnostics.is_empty() {

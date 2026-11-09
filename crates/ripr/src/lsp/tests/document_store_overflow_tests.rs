@@ -430,33 +430,69 @@ async fn overflow_placeholders_are_capped_and_untracked_uris_stay_withdrawn() ->
     // The tracked placeholder and accepted document are undisturbed.
     require_overflow_placeholder(backend, &fixture.uri_a, "after the capped refusal")?;
 
-    // Closing the placeholder alone keeps the latch: the untracked URI is not
-    // remembered, so it stays withdrawn while any document remains.
-    backend.did_close(close_params(&fixture.uri_a)).await;
-    let still = pull_document_json(backend, &fixture.uri_b, None).await?;
-    if !report_is_quarantine_withdrawal(&still) {
-        return Err("the untracked URI must stay withdrawn while the store is non-empty".into());
+    // Every reader agrees, not just the document pull: the per-batch push
+    // publication projection and the workspace pull withdraw the URI too.
+    let (pending_withdrawn, bound_version, quarantined) =
+        backend.transaction_publication_projection_for_test(&fixture.uri_b);
+    if !pending_withdrawn || !quarantined || bound_version.is_some() {
+        return Err("push publication must withdraw an untracked URI unversioned".into());
     }
-
-    // Closing every document ends the saturation; the URI is then tracked.
-    backend.did_close(close_params(&filler)).await;
-    backend
-        .did_open(quarantine_open_params(&fixture.uri_b, QUARANTINE_TEXT_B))
-        .await;
-    let reopened = backend
-        .document_state_for_test(&fixture.uri_b)
-        .ok_or_else(|| "reopened URI missing".to_string())?;
-    if reopened.text != QUARANTINE_TEXT_B || reopened.buffer_authority_unknown {
-        return Err("an emptied store must track the reopened document".into());
-    }
-    let after = pull_document_json(backend, &fixture.uri_b, None).await?;
-    if report_is_quarantine_withdrawal(&after)
-        && after
+    let workspace = backend
+        .workspace_diagnostic(WorkspaceDiagnosticParams {
+            identifier: None,
+            previous_result_ids: Vec::new(),
+            work_done_progress_params: Default::default(),
+            partial_result_params: PartialResultParams::default(),
+        })
+        .await
+        .map_err(|err| format!("workspace pull failed: {err}"))?;
+    let workspace = serde_json::to_value(workspace)
+        .map_err(|err| format!("serialize workspace report failed: {err}"))?;
+    let entry = workspace
+        .get("items")
+        .and_then(serde_json::Value::as_array)
+        .and_then(|items| {
+            items
+                .iter()
+                .find(|item| item["uri"].as_str() == Some(fixture.uri_b.as_str()))
+        })
+        .ok_or_else(|| format!("workspace report must carry the untracked URI: {workspace}"))?;
+    if !report_is_quarantine_withdrawal(entry)
+        || entry
             .pointer("/items/0/data/reason")
             .and_then(serde_json::Value::as_str)
-            == Some("document_store_limit_reached")
+            != Some("document_store_limit_reached")
     {
-        return Err("saturation must clear once the store is empty".into());
+        return Err(format!(
+            "workspace pull must withdraw the untracked URI: {entry}"
+        ));
+    }
+
+    // Closing the placeholder, then every document, does not end saturation:
+    // the untracked buffer may still be open in the client.
+    backend.did_close(close_params(&fixture.uri_a)).await;
+    backend.did_close(close_params(&filler)).await;
+    let emptied = backend
+        .with_documents_for_test(|store| store.documents.is_empty())
+        .ok_or_else(|| "document store lock failed".to_string())?;
+    if !emptied {
+        return Err("SETUP: the store must be empty".into());
+    }
+    let still = pull_document_json(backend, &fixture.uri_b, None).await?;
+    if !report_is_quarantine_withdrawal(&still) {
+        return Err("an untracked URI must stay withdrawn after the store empties".into());
+    }
+    let never_opened = filler_uri(7)?;
+    let never = pull_document_json(backend, &never_opened, None).await?;
+    if !report_is_quarantine_withdrawal(&never) {
+        return Err("a never-opened URI reads withdrawn while saturated".into());
+    }
+
+    // Only a workspace-level reset ends it.
+    backend.clear_all_diagnostic_uris();
+    let after = pull_document_json(backend, &fixture.uri_b, None).await?;
+    if report_is_quarantine_withdrawal(&after) {
+        return Err("the workspace-level reset must end saturation".into());
     }
     Ok(())
 }
