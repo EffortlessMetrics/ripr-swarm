@@ -701,19 +701,22 @@ fn perl_variant_command_uses_dedicated_target_overlay() -> Result<(), String> {
     let _cwd_guard = crate::acquire_test_cwd_read_guard();
     let target = std::path::Path::new("owned-target");
     let expected = std::path::absolute(target).map_err(|error| error.to_string())?;
-    let expected = expected.to_str().ok_or("expected target is not UTF-8")?;
+    let expected = expected
+        .to_str()
+        .ok_or("expected target is not UTF-8")?
+        .to_owned();
     build_perl_variant_with(
         target,
         &[("CARGO_HOME", "home".into())],
-        &|program, args, envs| {
+        &move |program, args, envs| {
             assert_eq!(program, "cargo");
             assert_eq!(args, ["build", "-p", "ripr", "--features", "lang-perl"]);
             assert_eq!(
                 envs,
                 [
                     ("CARGO_HOME", "home"),
-                    ("CARGO_TARGET_DIR", expected),
-                    ("CARGO_BUILD_BUILD_DIR", expected),
+                    ("CARGO_TARGET_DIR", expected.as_str()),
+                    ("CARGO_BUILD_BUILD_DIR", expected.as_str()),
                 ]
             );
             Ok(())
