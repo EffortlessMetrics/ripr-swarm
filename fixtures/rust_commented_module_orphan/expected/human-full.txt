@@ -30,7 +30,7 @@ Static exposure
   no_static_path (warning, confidence 0.48)
 
 Evidence
-  - reach no: No static test path found for the changed owner
+  - reach no: No static test path found for the changed owner (unreferenced in workspace)
   - infection unknown: No tests were found, so activation/infection cannot be estimated
   - propagation yes: Changed behavior appears to influence returned value: total - 10
   - observation no: No reachable test oracle found

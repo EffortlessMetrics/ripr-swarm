@@ -182,6 +182,7 @@ Updated:
 
 Reason:
 RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; human rendering unchanged
+Reach summary of a workspace-unreferenced owner now ends '(unreferenced in workspace)' (RIPR-SPEC-0219, #12766); class unchanged
 
 Command:
 `cargo xtask goldens bless cross_crate_trait_impl_borrows_no_doctest --reason "..."`
@@ -195,6 +196,7 @@ Updated:
 
 Reason:
 RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; no test attribution; human rendering unchanged
+Unreferenced-in-workspace marker withheld: the index does not span the workspace (RIPR-SPEC-0219, Devin finding on #13691); class unchanged
 
 Command:
 `cargo xtask goldens bless cross_crate_trait_impl_borrows_no_doctest --reason "..."`

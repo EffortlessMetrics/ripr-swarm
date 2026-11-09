@@ -35,7 +35,7 @@
         "expression": "age >= 18"
        },
       "ripr": {
-        "reach": {"state":"no","confidence":"medium","summary":"No test is seen calling is_adult; tests share only its file or a name token: clamps_above_high, small_order_pays_full_price"},
+        "reach": {"state":"no","confidence":"medium","summary":"No test is seen calling is_adult; tests share only its file or a name token: clamps_above_high, small_order_pays_full_price (unreferenced in workspace)"},
         "infect": {"state":"no","confidence":"medium","summary":"No test reaches the changed owner, so no test can activate this change"},
         "propagate": {"state":"yes","confidence":"medium","summary":"Changed behavior appears to influence returned value: age >= 18"},
         "observe": {"state":"no","confidence":"medium","summary":"No test reaches the changed owner, so no test can observe this change"},
@@ -48,11 +48,11 @@
         {"stage":"observe","state":"no","confidence":"medium"},
         {"stage":"discriminate","state":"no","confidence":"medium"}
       ],
-      "evidence_path": ["reach no: No test is seen calling is_adult; tests share only its file or a name token: clamps_above_high, small_order_pays_full_price", "infection no: No test reaches the changed owner, so no test can activate this change", "propagation yes: Changed behavior appears to influence returned value: age >= 18", "observation no: No test reaches the changed owner, so no test can observe this change", "discriminator no: No test reaches the changed owner, so no test can discriminate this change", "local flow reaches returned value: age >= 18 (line 2)", "related test src/lib.rs:28 clamps_above_high uses strong exact value oracle: assert_eq!(clamp_to_range(15, 0, 10), 10);", "related test src/lib.rs:33 small_order_pays_full_price uses strong exact value oracle: assert_eq!(discounted_total(5_000), 5_000);", "source assertion argument value 0 at line 29", "source assertion argument value 10 at line 29", "source assertion argument value 15 at line 29", "source assertion argument value 5_000 at line 34"],
+      "evidence_path": ["reach no: No test is seen calling is_adult; tests share only its file or a name token: clamps_above_high, small_order_pays_full_price (unreferenced in workspace)", "infection no: No test reaches the changed owner, so no test can activate this change", "propagation yes: Changed behavior appears to influence returned value: age >= 18", "observation no: No test reaches the changed owner, so no test can observe this change", "discriminator no: No test reaches the changed owner, so no test can discriminate this change", "local flow reaches returned value: age >= 18 (line 2)", "related test src/lib.rs:28 clamps_above_high uses strong exact value oracle: assert_eq!(clamp_to_range(15, 0, 10), 10);", "related test src/lib.rs:33 small_order_pays_full_price uses strong exact value oracle: assert_eq!(discounted_total(5_000), 5_000);", "source assertion argument value 0 at line 29", "source assertion argument value 10 at line 29", "source assertion argument value 15 at line 29", "source assertion argument value 5_000 at line 34"],
       "flow_sinks": [
         {"kind":"return_value","text":"age >= 18","line":2}
       ],
-      "evidence": ["Changed behavior appears to influence returned value: age >= 18", "No test is seen calling is_adult; tests share only its file or a name token: clamps_above_high, small_order_pays_full_price", "No test reaches the changed owner, so no test can activate this change", "No test reaches the changed owner, so no test can discriminate this change", "No test reaches the changed owner, so no test can observe this change"],
+      "evidence": ["Changed behavior appears to influence returned value: age >= 18", "No test is seen calling is_adult; tests share only its file or a name token: clamps_above_high, small_order_pays_full_price (unreferenced in workspace)", "No test reaches the changed owner, so no test can activate this change", "No test reaches the changed owner, so no test can discriminate this change", "No test reaches the changed owner, so no test can observe this change"],
       "missing": ["No detected boundary input for the changed predicate", "No relevant oracle was detected", "No static test path reaches the changed owner", "No strong discriminator was detected"],
       "assertion_texts": {
         "29": "assert_eq!(clamp_to_range(15, 0, 10), 10);",
@@ -169,7 +169,7 @@
         "expression": "age >= 18"
        },
       "ripr": {
-        "reach": {"state":"no","confidence":"medium","summary":"No test is seen calling is_adult; tests share only its file or a name token: clamps_above_high, small_order_pays_full_price"},
+        "reach": {"state":"no","confidence":"medium","summary":"No test is seen calling is_adult; tests share only its file or a name token: clamps_above_high, small_order_pays_full_price (unreferenced in workspace)"},
         "infect": {"state":"no","confidence":"medium","summary":"No test reaches the changed owner, so no test can activate this change"},
         "propagate": {"state":"yes","confidence":"high","summary":"Complete propagation witness reaches returned value: age >= 18"},
         "observe": {"state":"no","confidence":"medium","summary":"No test reaches the changed owner, so no test can observe this change"},
@@ -182,11 +182,11 @@
         {"stage":"observe","state":"no","confidence":"medium"},
         {"stage":"discriminate","state":"no","confidence":"medium"}
       ],
-      "evidence_path": ["reach no: No test is seen calling is_adult; tests share only its file or a name token: clamps_above_high, small_order_pays_full_price", "infection no: No test reaches the changed owner, so no test can activate this change", "propagation yes: Complete propagation witness reaches returned value: age >= 18", "observation no: No test reaches the changed owner, so no test can observe this change", "discriminator no: No test reaches the changed owner, so no test can discriminate this change", "local flow reaches returned value: age >= 18 (line 2)", "related test src/lib.rs:28 clamps_above_high uses strong exact value oracle: assert_eq!(clamp_to_range(15, 0, 10), 10);", "related test src/lib.rs:33 small_order_pays_full_price uses strong exact value oracle: assert_eq!(discounted_total(5_000), 5_000);", "source assertion argument value 0 at line 29", "source assertion argument value 10 at line 29", "source assertion argument value 15 at line 29", "source assertion argument value 5_000 at line 34"],
+      "evidence_path": ["reach no: No test is seen calling is_adult; tests share only its file or a name token: clamps_above_high, small_order_pays_full_price (unreferenced in workspace)", "infection no: No test reaches the changed owner, so no test can activate this change", "propagation yes: Complete propagation witness reaches returned value: age >= 18", "observation no: No test reaches the changed owner, so no test can observe this change", "discriminator no: No test reaches the changed owner, so no test can discriminate this change", "local flow reaches returned value: age >= 18 (line 2)", "related test src/lib.rs:28 clamps_above_high uses strong exact value oracle: assert_eq!(clamp_to_range(15, 0, 10), 10);", "related test src/lib.rs:33 small_order_pays_full_price uses strong exact value oracle: assert_eq!(discounted_total(5_000), 5_000);", "source assertion argument value 0 at line 29", "source assertion argument value 10 at line 29", "source assertion argument value 15 at line 29", "source assertion argument value 5_000 at line 34"],
       "flow_sinks": [
         {"kind":"return_value","text":"age >= 18","line":2}
       ],
-      "evidence": ["Complete propagation witness reaches returned value: age >= 18", "No test is seen calling is_adult; tests share only its file or a name token: clamps_above_high, small_order_pays_full_price", "No test reaches the changed owner, so no test can activate this change", "No test reaches the changed owner, so no test can discriminate this change", "No test reaches the changed owner, so no test can observe this change"],
+      "evidence": ["Complete propagation witness reaches returned value: age >= 18", "No test is seen calling is_adult; tests share only its file or a name token: clamps_above_high, small_order_pays_full_price (unreferenced in workspace)", "No test reaches the changed owner, so no test can activate this change", "No test reaches the changed owner, so no test can discriminate this change", "No test reaches the changed owner, so no test can observe this change"],
       "missing": ["No relevant oracle was detected", "No static test path reaches the changed owner", "No strong discriminator was detected"],
       "assertion_texts": {
         "29": "assert_eq!(clamp_to_range(15, 0, 10), 10);",

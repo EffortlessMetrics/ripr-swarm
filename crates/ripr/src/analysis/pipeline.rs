@@ -1485,6 +1485,7 @@ fn run_pipeline_for_diff_text_with_language_config(
         crate::analysis::diagnostic_origin::RustDiagnosticOrigins::default();
     let mut rust_consumed_sources =
         crate::analysis::consumed_source::ConsumedRustSources::default();
+    let mut owner_opt_outs = Vec::new();
     // `changed_rust_files` counts Rust adapter files only (#2103); every
     // adapter that ran records its own count in `changed_files_by_language`.
     let mut rust_changed_files: usize = 0;
@@ -1573,6 +1574,7 @@ fn run_pipeline_for_diff_text_with_language_config(
         harness_projections.extend(result.harness_projections);
         rust_diagnostic_origins = result.rust_diagnostic_origins;
         rust_consumed_sources = result.rust_consumed_sources;
+        owner_opt_outs = result.owner_opt_outs;
         value_origins.extend(result.value_origins);
         findings.extend(result.findings);
         rust_changed_files += result.changed_files;
@@ -2388,6 +2390,7 @@ fn run_pipeline_for_diff_text_with_language_config(
         ignored_source_paths: Vec::new(),
         rust_diagnostic_origins,
         rust_consumed_sources,
+        owner_opt_outs,
         language_view: Some(language_view),
         preview_fact_caches,
     })
@@ -2701,6 +2704,9 @@ pub(crate) fn run_repo_pipeline_with_oracle_policy_and_rust_config(
         ignored_source_paths: Vec::new(),
         rust_diagnostic_origins,
         rust_consumed_sources,
+        // Owner opt-outs are a diff-scope disclosure (#13819); repo scope
+        // reports every owner.
+        owner_opt_outs: Vec::new(),
         language_view: Some(language_view),
         preview_fact_caches: Vec::new(),
     })
@@ -3232,6 +3238,7 @@ fn untouched_preview_result() -> LanguageDiffResult {
         rust_diagnostic_origins: Default::default(),
         rust_consumed_sources: Default::default(),
         preview_fact_cache: crate::analysis::language::PreviewFactCacheStats::zero_work(),
+        owner_opt_outs: Vec::new(),
     }
 }
 

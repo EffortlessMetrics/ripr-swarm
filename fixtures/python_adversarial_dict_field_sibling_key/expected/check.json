@@ -56,11 +56,11 @@
         {"stage":"observe","state":"weak","confidence":"low","basis":[{"code":"observation_not_confirmed","summary":"the assertion is not confirmed to observe the changed value"}]},
         {"stage":"discriminate","state":"weak","confidence":"low"}
       ],
-      "evidence_path": ["reach yes: 1 related Python test(s) found for owner `build_config`", "infection yes: Changed Python field or attribute construction can alter object state: `return {\"host\": \"localhost\", \"port\": 9090}`", "propagation weak: Changed Python field construction can propagate through returned or retained object state; exact runtime object flow is not resolved.", "observation weak: Strongest extracted Python oracle kind: `exact_value` (rank 5)", "discriminator weak: Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior.", "local flow reaches constructed field: return {\"host\": \"localhost\", \"port\": 9090} (line 2)", "related test tests/test_conf.py:4 test_host uses strong exact value oracle: assert build_config()[\"host\"] == \"localhost\"", "missing discriminator host == \"localhost\": changed Python field/object value at line 2 lacks a concrete repair discriminator"],
+      "evidence_path": ["reach yes: 1 related Python test(s) found for owner `build_config`", "infection yes: Changed Python field or attribute construction can alter object state: `return {\"host\": \"localhost\", \"port\": 9090}`", "propagation weak: Changed Python field construction can propagate through returned or retained object state; exact runtime object flow is not resolved.", "observation weak: Strongest extracted Python oracle kind: `exact_value` (rank 5)", "discriminator weak: Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior.", "local flow reaches constructed field: return {\"host\": \"localhost\", \"port\": 9090} (line 2)", "related test tests/test_conf.py:4 test_host uses strong exact value oracle: assert build_config()[\"host\"] == \"localhost\"", "missing discriminator port == 9090: changed Python field/object value at line 2 lacks a concrete repair discriminator"],
       "flow_sinks": [
         {"kind":"struct_field","text":"return {\"host\": \"localhost\", \"port\": 9090}","line":2}
       ],
-      "evidence": ["owner: build_config", "owner_kind: function", "missing_discriminator: host == \"localhost\"", "suggested_repair_action: strengthen_existing_test", "suggested_test_file: tests/test_conf.py", "suggested_test_name: test_host", "suggested_test_node_id: tests/test_conf.py::test_host", "suggested_verify_command: python -m pytest tests/test_conf.py::test_host", "suggested_verify_command_confidence: high", "suggested_test_location_reason: strengthen existing weak pytest relation", "test_framework: pytest (test_host)", "test_verify_command: python -m pytest tests/test_conf.py::test_host (test_host)", "related_test_relation: syntactic_call (test_host)", "test_oracle: exact_value strong (test_host)", "test_oracle_shape: field_assertion (test_host)"],
+      "evidence": ["owner: build_config", "owner_kind: function", "missing_discriminator: port == 9090", "suggested_repair_action: strengthen_existing_test", "suggested_test_file: tests/test_conf.py", "suggested_test_name: test_host", "suggested_test_node_id: tests/test_conf.py::test_host", "suggested_verify_command: python -m pytest tests/test_conf.py::test_host", "suggested_verify_command_confidence: high", "suggested_test_location_reason: strengthen existing weak pytest relation", "test_framework: pytest (test_host)", "test_verify_command: python -m pytest tests/test_conf.py::test_host (test_host)", "related_test_relation: syntactic_call (test_host)", "test_oracle: exact_value strong (test_host)", "test_oracle_shape: field_assertion (test_host)"],
       "missing": ["A strong Python oracle reaches `build_config`, but its assertion does not observe the changed owner's output; static evidence cannot confirm the changed behavior is discriminated. Add an assertion on the changed owner's output."],
       "assertion_texts": {
       },
@@ -69,7 +69,7 @@
         ],
         "missing_discriminators": [
           {
-            "value": "host == \"localhost\"",
+            "value": "port == 9090",
             "reason": "changed Python field/object value at line 2 lacks a concrete repair discriminator",
             "flow_sink": {"kind":"struct_field","text":"return {\"host\": \"localhost\", \"port\": 9090}","line":2}
           }
@@ -79,7 +79,7 @@
       ],
       "missing_discriminators": [
         {
-          "value": "host == \"localhost\"",
+          "value": "port == 9090",
           "reason": "changed Python field/object value at line 2 lacks a concrete repair discriminator",
           "flow_sink": {"kind":"struct_field","text":"return {\"host\": \"localhost\", \"port\": 9090}","line":2}
         }
@@ -113,9 +113,9 @@
         "changed_owner": "build_config",
         "changed_behavior": "field_value changed at src/conf.py:2: `return {\"host\": \"localhost\", \"port\": 9090}`",
         "current_test_evidence": "tests/test_conf.py:4 test_host currently has oracle_strength=strong, oracle_kind=exact_value: assert build_config()[\"host\"] == \"localhost\"",
-        "missing_discriminator": "host == \"localhost\"",
-        "recommended_test_shape": "Strengthen the existing pytest returned mapping field assertion for `host == \"localhost\"`.",
-        "suggested_assertion": "Assert the returned mapping field directly, e.g. `assert result[\"host\"] == \"localhost\"`.",
+        "missing_discriminator": "port == 9090",
+        "recommended_test_shape": "Strengthen the existing pytest returned mapping field assertion for `port == 9090`.",
+        "suggested_assertion": "Assert the returned mapping field directly, e.g. `assert result[\"port\"] == 9090`.",
         "suggested_location": {
           "test_file": "tests/test_conf.py",
           "test_name": "test_host",
@@ -136,8 +136,8 @@
       "stop_reasons": [],
       "oracle_kind": "exact_value",
       "oracle_strength": "strong",
-      "recommended_next_step": "Python preview: strengthen the existing related test with a field/object assertion for the missing check `host == \"localhost\"`.",
-      "suggested_next_action": "Python preview: strengthen the existing related test with a field/object assertion for the missing check `host == \"localhost\"`.",
+      "recommended_next_step": "Python preview: strengthen the existing related test with a field/object assertion for the missing check `port == 9090`.",
+      "suggested_next_action": "Python preview: strengthen the existing related test with a field/object assertion for the missing check `port == 9090`.",
       "language": "python",
       "language_status": "preview",
       "owner_kind": "function",

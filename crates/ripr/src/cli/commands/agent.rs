@@ -4636,6 +4636,57 @@ pub(in crate::cli) fn before_phase_stdout(
     Ok(document)
 }
 
+/// Whether the human before-phase stdout already carries the whole start
+/// result: the target, the one edit surface with its terminality, and the one
+/// next command (#13803). Only then may stderr drop its copies of them, so an
+/// agent reading both streams sees each fact once. `--json`, an ambiguous
+/// baseline, or a packet the summary cannot read keeps the stderr lines.
+pub(in crate::cli) fn before_phase_stdout_owns_start_result(
+    packet: &str,
+    json: bool,
+    continuation: &output::agent_seam_packets::BeforePhaseAttemptContinuation,
+) -> bool {
+    // `edit_directive: true` matches the stdout producer, which passes
+    // `!continuation.baseline_ambiguous`: this predicate already requires an
+    // unambiguous baseline, so both calls render the same summary.
+    !json
+        && !continuation.baseline_ambiguous
+        && before_phase_summary(packet, "", true).is_some()
+        && summary_target_is_the_cage_target(packet)
+}
+
+/// The stdout summary names `recommended_test.file`; the cage binds
+/// `allowed_edit_surface[0]` when the packet carries one. Stderr may drop its
+/// directive only when both name the same file, so the sole remaining
+/// instruction never points at a file the cage refuses (#13803 review).
+fn summary_target_is_the_cage_target(packet: &str) -> bool {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(packet) else {
+        return false;
+    };
+    let Some(item) = value
+        .get("packets")
+        .and_then(serde_json::Value::as_array)
+        .and_then(|packets| packets.first())
+    else {
+        return false;
+    };
+    let summary_target = item
+        .pointer("/recommended_test/file")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim);
+    match item.get("allowed_edit_surface") {
+        None => summary_target.is_some(),
+        Some(surface) => {
+            let cage_target = surface
+                .as_array()
+                .and_then(|paths| paths.first())
+                .and_then(serde_json::Value::as_str)
+                .map(str::trim);
+            summary_target.is_some() && summary_target == cage_target
+        }
+    }
+}
+
 /// The stdout trailer for an attempt born with an ambiguous baseline
 /// (#7204): a driver that captures only stdout must not read the after
 /// command as the unqualified next action, so the warning and the

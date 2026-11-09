@@ -1,0 +1,2 @@
+crates/ripr/tests/mutants_skip_owner_opt_out.rs|Command::new|1|mutants-skip-owner-opt-out-13819|#13819: one helper spawns the worktree-built ripr binary (`ripr check --diff` on a temp fixture) to prove owner opt-out withholding across json, human, github, sarif and badge output; temp fixtures only, no shell, network, git, or user-repository mutation.
+crates/ripr/tests/mutants_skip_owner_opt_out.rs|use std::process::Command|1|mutants-skip-owner-opt-out-13819|#13819: import for the single exact-binary spawn site above.
