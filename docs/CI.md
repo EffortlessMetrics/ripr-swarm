@@ -1409,9 +1409,21 @@ tracker identity is retained so explicit recovery can reconcile an incident
 originally discovered by the former timer. This probe neither qualifies G nor
 authorizes landing, and cannot dispatch another workflow.
 
+The probe also reads the latest completed, non-cancelled, non-skipped main-push
+runs of `routed-rust.yml` and `ci.yml` with `actions: read`, retaining the run,
+commit and failed jobs in its evidence. These are historical push observations,
+not qualification of the selected queue candidate or the current checkout; after
+push retirement, no new push result is expected. A failed observed gate turns
+the advisory verdict red. An unreadable, missing or unexpected result is
+`unknown` and cannot close an open tracker as recovered. Each API read is
+bounded, and a failed read cannot skip the probe judge. The read-only inspection
+rebuilds, reruns and dispatches nothing. Tracker updates are deduplicated by the
+probe result and failed gate run IDs.
+
 `xtask/tests/main_health_sentinel_contract.rs` checks explicit event admission,
-request scope, bounded execution and tracker/evidence behavior. Source tests do
-not establish a completed incident probe or current main health.
+request scope, bounded execution, read-only gate inspection and tracker/evidence
+behavior. Source tests do not establish a completed incident probe or current
+main health.
 
 ### Golden Re-bless
 
