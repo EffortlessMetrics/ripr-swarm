@@ -713,7 +713,7 @@ fn apply_init_plan(plan: &[InitTarget], root: &Path) -> Result<(), String> {
             let cursor_hint = if cursor_planned {
                 ""
             } else {
-                " For Cursor add `--agents cursor`, which also writes `.cursor/mcp.json`."
+                " For Cursor add `--agents cursor --mcp`, which also writes `.cursor/mcp.json`."
             };
             println!(
                 "Claude Code reads `{MCP_CONFIG_FILE_NAME}` and asks you to approve the project server before its tools appear. For Codex run `codex mcp add {MCP_SERVER_NAME} -- ripr mcp --stdio`.{cursor_hint}"

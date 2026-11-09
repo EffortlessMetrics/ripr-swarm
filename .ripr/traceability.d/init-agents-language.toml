@@ -10,6 +10,7 @@ tests = [
   "crates/ripr/src/cli/commands/init_agents.rs::tests::detected_but_not_enabled_languages_are_not_promised",
   "crates/ripr/src/cli/commands/init_agents.rs::tests::force_refreshes_generated_cursor_frontmatter_but_not_user_frontmatter",
   "crates/ripr/tests/cli_smoke.rs::init_agents_writes_language_appropriate_instructions",
+  "crates/ripr/tests/cli_smoke.rs::init_agents_appends_marked_section_idempotently_and_never_clobbers",
 ]
 code = [
   "crates/ripr/src/cli/commands/init_agents.rs",
