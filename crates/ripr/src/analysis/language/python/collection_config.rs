@@ -2,8 +2,11 @@
 //!
 //! A test pytest never collects does not run, so its assertion is no evidence
 //! about the changed behavior. Two project-level sources decide that, and both
-//! are evaluated here so a skipped-at-collection test gets the same
-//! `test_activation_unestablished` limit as a `@pytest.mark.skip` one:
+//! are evaluated here so a skipped-at-collection test gets the
+//! `test_activation_unestablished` limit. Unlike an unconditional
+//! `@pytest.mark.skip`, which provably never runs and so leaves a gap, a
+//! command line naming the file can bypass these rules, so they stay
+//! unestablished:
 //!
 //! - `conftest.py` `collect_ignore` / `collect_ignore_glob`, relative to the
 //!   conftest's directory;
@@ -688,6 +691,23 @@ impl IniRules {
             // An option that is present but empty, quoted oddly, or built from
             // path separators or character classes this pass does not match
             // is not evaluated.
+            // Conservative reading, not pytest semantics: read a single
+            // trailing slash (`env/`) as the basename pattern `env`, which may
+            // withhold more than pytest does but never grants credit. Any other `/`
+            // (`a/b/`, `/`, `env//`) stays unevaluated.
+            let words = if key == "norecursedirs" {
+                words.map(|words| {
+                    words
+                        .into_iter()
+                        .map(|word| match word.strip_suffix('/') {
+                            Some(name) => name.to_string(),
+                            None => word,
+                        })
+                        .collect::<Vec<_>>()
+                })
+            } else {
+                words
+            };
             let usable = words.filter(|words| {
                 !words.is_empty()
                     && words.iter().all(|word| {

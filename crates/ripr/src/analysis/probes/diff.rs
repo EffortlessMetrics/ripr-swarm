@@ -49,6 +49,12 @@ pub(crate) fn probes_for_file_with_relations(
     index: &RustIndex,
     registrations: &[crate::config::TestHarnessRegistration],
 ) -> Vec<SeededProbe> {
+    // #13736: a file only an out-of-line `#[cfg(kani)] mod` compiles is
+    // verification source; its changed lines are disclosed through
+    // `changed_verification_only_lines`, never probed as production.
+    if super::verification_erased::in_cfg_kani_module(index, &changed.path) {
+        return Vec::new();
+    }
     let mut probes = Vec::<SeededProbe>::new();
     // Use `new_side_line` for all lines: for added lines this equals `line`; for
     // removed lines `new_side_line` is the new-file coordinate, which is what
@@ -2815,14 +2821,14 @@ mod tests {
                         start_line: 1,
                         end_line: 5,
                         body: "fn discounted_total() { if amount >= threshold {} }".into(),
-                        calls: vec![],
+                        calls: crate::analysis::facts::SharedFactSlice::empty(),
                         returns: vec![],
-                        literals: vec![],
+                        literals: crate::analysis::facts::SharedFactSlice::empty(),
                         source_role: FunctionSourceRole::Production,
-                        attrs: vec![],
+                        attrs: crate::analysis::facts::SharedFactSlice::empty(),
                         impl_attrs: Vec::new(),
-                        nested_fn_names: Vec::new(),
-                        let_bindings: Vec::new(),
+                        nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+                        let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
                         item: Default::default(),
                         impl_context: Default::default(),
                     }],
@@ -3012,14 +3018,14 @@ mod tests {
             start_line,
             end_line,
             body: String::new().into(),
-            calls: vec![],
+            calls: crate::analysis::facts::SharedFactSlice::empty(),
             returns: vec![],
-            literals: vec![],
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
             source_role: FunctionSourceRole::Production,
-            attrs: vec![],
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
             impl_attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             item: Default::default(),
             impl_context: Default::default(),
         };
@@ -3217,14 +3223,14 @@ mod tests {
                         start_line: 1,
                         end_line: 5,
                         body: format!("fn format() {{ {added} }}").into(),
-                        calls: vec![],
+                        calls: crate::analysis::facts::SharedFactSlice::empty(),
                         returns: vec![],
-                        literals: vec![],
+                        literals: crate::analysis::facts::SharedFactSlice::empty(),
                         source_role: FunctionSourceRole::Production,
-                        attrs: vec![],
+                        attrs: crate::analysis::facts::SharedFactSlice::empty(),
                         impl_attrs: Vec::new(),
-                        nested_fn_names: Vec::new(),
-                        let_bindings: Vec::new(),
+                        nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+                        let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
                         item: Default::default(),
                         impl_context: Default::default(),
                     }],
@@ -4197,14 +4203,14 @@ mod tests {
             start_line: 1,
             end_line: 7,
             body: String::new().into(),
-            calls: vec![],
+            calls: crate::analysis::facts::SharedFactSlice::empty(),
             returns: vec![],
-            literals: vec![],
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
             source_role: FunctionSourceRole::Production,
-            attrs: vec![],
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
             impl_attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             item: Default::default(),
             impl_context: Default::default(),
         };
@@ -4855,14 +4861,14 @@ mod tests {
                         start_line: 1,
                         end_line: 3,
                         body: source.into(),
-                        calls: vec![],
+                        calls: crate::analysis::facts::SharedFactSlice::empty(),
                         returns: vec![],
-                        literals: vec![],
+                        literals: crate::analysis::facts::SharedFactSlice::empty(),
                         source_role: FunctionSourceRole::Production,
-                        attrs: vec![],
+                        attrs: crate::analysis::facts::SharedFactSlice::empty(),
                         impl_attrs: Vec::new(),
-                        nested_fn_names: Vec::new(),
-                        let_bindings: Vec::new(),
+                        nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+                        let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
                         impl_context: Default::default(),
                         item: Default::default(),
                     }],
@@ -4962,14 +4968,14 @@ mod tests {
                         start_line: 1,
                         end_line: 20,
                         body: expression.into(),
-                        calls: vec![],
+                        calls: crate::analysis::facts::SharedFactSlice::empty(),
                         returns: vec![],
-                        literals: vec![],
+                        literals: crate::analysis::facts::SharedFactSlice::empty(),
                         source_role: FunctionSourceRole::Production,
-                        attrs: vec![],
+                        attrs: crate::analysis::facts::SharedFactSlice::empty(),
                         impl_attrs: Vec::new(),
-                        nested_fn_names: Vec::new(),
-                        let_bindings: Vec::new(),
+                        nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+                        let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
                         item: Default::default(),
                         impl_context: Default::default(),
                     }],
@@ -5179,14 +5185,14 @@ mod tests {
                             start_line: 1,
                             end_line: 5,
                             body: "fn parses() { let config = toml::from_str(text)?; }".into(),
-                            calls: vec![],
+                            calls: crate::analysis::facts::SharedFactSlice::empty(),
                             returns: vec![],
-                            literals: vec![],
+                            literals: crate::analysis::facts::SharedFactSlice::empty(),
                             source_role,
-                            attrs: vec![],
+                            attrs: crate::analysis::facts::SharedFactSlice::empty(),
                             impl_attrs: Vec::new(),
-                            nested_fn_names: Vec::new(),
-                            let_bindings: Vec::new(),
+                            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+                            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
                             item: Default::default(),
                             impl_context: Default::default(),
                         }],
@@ -5926,14 +5932,14 @@ mod tests {
                         start_line: 1,
                         end_line: 6,
                         body: "fn record_invoice() { }".into(),
-                        calls: vec![],
+                        calls: crate::analysis::facts::SharedFactSlice::empty(),
                         returns: vec![],
-                        literals: vec![],
+                        literals: crate::analysis::facts::SharedFactSlice::empty(),
                         source_role: FunctionSourceRole::Production,
-                        attrs: vec![],
+                        attrs: crate::analysis::facts::SharedFactSlice::empty(),
                         impl_attrs: Vec::new(),
-                        nested_fn_names: Vec::new(),
-                        let_bindings: Vec::new(),
+                        nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+                        let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
                         item: Default::default(),
                         impl_context: Default::default(),
                     }],
@@ -6383,14 +6389,14 @@ mod tests {
                         start_line: 1,
                         end_line: 4,
                         body: body.into(),
-                        calls: vec![],
+                        calls: crate::analysis::facts::SharedFactSlice::empty(),
                         returns: vec![],
-                        literals: vec![],
+                        literals: crate::analysis::facts::SharedFactSlice::empty(),
                         source_role: FunctionSourceRole::Production,
-                        attrs: vec![],
+                        attrs: crate::analysis::facts::SharedFactSlice::empty(),
                         impl_attrs: Vec::new(),
-                        nested_fn_names: Vec::new(),
-                        let_bindings: Vec::new(),
+                        nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+                        let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
                         item: Default::default(),
                         impl_context: Default::default(),
                     }],
@@ -6457,14 +6463,14 @@ mod tests {
                         start_line: 1,
                         end_line: 9,
                         body: body.into(),
-                        calls: vec![],
+                        calls: crate::analysis::facts::SharedFactSlice::empty(),
                         returns: vec![],
-                        literals: vec![],
+                        literals: crate::analysis::facts::SharedFactSlice::empty(),
                         source_role: FunctionSourceRole::Production,
-                        attrs: vec![],
+                        attrs: crate::analysis::facts::SharedFactSlice::empty(),
                         impl_attrs: Vec::new(),
-                        nested_fn_names: Vec::new(),
-                        let_bindings: Vec::new(),
+                        nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+                        let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
                         item: Default::default(),
                         impl_context: Default::default(),
                     }],
@@ -6533,14 +6539,14 @@ mod tests {
                         start_line: 1,
                         end_line: 8,
                         body: body.into(),
-                        calls: vec![],
+                        calls: crate::analysis::facts::SharedFactSlice::empty(),
                         returns: vec![],
-                        literals: vec![],
+                        literals: crate::analysis::facts::SharedFactSlice::empty(),
                         source_role: FunctionSourceRole::Production,
-                        attrs: vec![],
+                        attrs: crate::analysis::facts::SharedFactSlice::empty(),
                         impl_attrs: Vec::new(),
-                        nested_fn_names: Vec::new(),
-                        let_bindings: Vec::new(),
+                        nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+                        let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
                         item: Default::default(),
                         impl_context: Default::default(),
                     }],
@@ -6597,14 +6603,14 @@ mod tests {
                         start_line: 1,
                         end_line: 8,
                         body: body.into(),
-                        calls: vec![],
+                        calls: crate::analysis::facts::SharedFactSlice::empty(),
                         returns: vec![],
-                        literals: vec![],
+                        literals: crate::analysis::facts::SharedFactSlice::empty(),
                         source_role: FunctionSourceRole::Production,
-                        attrs: vec![],
+                        attrs: crate::analysis::facts::SharedFactSlice::empty(),
                         impl_attrs: Vec::new(),
-                        nested_fn_names: Vec::new(),
-                        let_bindings: Vec::new(),
+                        nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+                        let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
                         item: Default::default(),
                         impl_context: Default::default(),
                     }],
@@ -7149,6 +7155,86 @@ mod source_currentness_tests {
                 .iter()
                 .any(|probe| probe.location.line == 10 && probe.family == ProbeFamily::Predicate),
             "ordinary fn body beside the macro keeps its probe: {probes:?}"
+        );
+    }
+
+    /// #13983: parameter lines of a fn declared in a macro invocation body are
+    /// declarations, never `field_construction`; the fn body keeps its probe,
+    /// the same list outside a macro behaves as before, and a real record
+    /// initializer in a macro body still probes as `field_construction`.
+    #[test]
+    fn macro_body_fn_parameters_are_not_field_construction_probes() {
+        let path = PathBuf::from("src/lib.rs");
+        let line = |number: usize, text: &str| ChangedLine {
+            line: number,
+            new_side_line: number,
+            text: text.to_string(),
+        };
+        let families = |source: &str, lines: &[(usize, &str)]| {
+            let changed = ChangedFile {
+                path: path.clone(),
+                added_lines: lines.iter().map(|(n, t)| line(*n, t)).collect(),
+                removed_lines: Vec::new(),
+            };
+            let index = macro_source_index(&path, source);
+            probes_for_file(Path::new("workspace"), &changed, &index)
+                .iter()
+                .map(|probe| (probe.location.line, probe.family.clone()))
+                .collect::<Vec<_>>()
+        };
+        let params = [
+            (3, "    pub fn mul3("),
+            (4, "        a: u32,"),
+            (5, "        b: u32,"),
+            (6, "        c: u32,"),
+            (7, "    ) -> u32 {"),
+            (8, "        a * b * c"),
+        ];
+        let in_macro = "macro_rules! feature { ($($i:item)*) => { $($i)* } }\nfeature! {\n    pub fn mul3(\n        a: u32,\n        b: u32,\n        c: u32,\n    ) -> u32 {\n        a * b * c\n    }\n}\n";
+        let found = families(in_macro, &params);
+        assert!(
+            !found
+                .iter()
+                .any(|(l, f)| (4..=6).contains(l) && *f == ProbeFamily::FieldConstruction),
+            "macro fn parameter probed as field_construction: {found:?}"
+        );
+        assert!(
+            found.iter().any(|(l, _)| *l == 8),
+            "fn body in the macro keeps a probe: {found:?}"
+        );
+
+        // Control: the same list outside a macro never reads as a field.
+        let plain =
+            "pub fn mul3(\n    a: u32,\n    b: u32,\n    c: u32,\n) -> u32 {\n    a * b * c\n}\n";
+        let found = families(
+            plain,
+            &[(2, "    a: u32,"), (3, "    b: u32,"), (4, "    c: u32,")],
+        );
+        assert!(
+            !found
+                .iter()
+                .any(|(_, f)| *f == ProbeFamily::FieldConstruction),
+            "plain fn parameter probed as field_construction: {found:?}"
+        );
+
+        // Negative control: a record initializer in a macro body still probes.
+        let record = "wrap! {\n    Task {\n        buffered: None,\n    }\n}\n";
+        let found = families(record, &[(3, "        buffered: None,")]);
+        assert!(
+            found
+                .iter()
+                .any(|(l, f)| *l == 3 && *f == ProbeFamily::FieldConstruction),
+            "macro-body construction lost its probe: {found:?}"
+        );
+
+        // A call (not a fn header) in a macro body is not a parameter list.
+        let call = "wrap! {\n    make(\n        a: 1,\n    )\n}\n";
+        let found = families(call, &[(3, "        a: 1,")]);
+        assert!(
+            found
+                .iter()
+                .any(|(l, f)| *l == 3 && *f == ProbeFamily::FieldConstruction),
+            "macro-body call argument lost its probe: {found:?}"
         );
     }
 

@@ -1018,3 +1018,9 @@ reason = "TypeScript per-file fact persistence; a cache-admission behavior, not 
 id = "RIPR-SPEC-0411"
 scope = "out"
 reason = "documents which producers may emit each stop_reason wire value and reserves three unemitted tokens; no verdict a corpus case can label"
+
+# DX scoreboard workload identity pairing
+[[spec]]
+id = "RIPR-SPEC-0436"
+scope = "out"
+reason = "xtask dx-scoreboard workload pairing rule; not an exposure-verdict example a corpus case labels"

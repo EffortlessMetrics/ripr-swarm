@@ -1,0 +1,7 @@
+# Ratchet for fixtures carrying a SPEC.md `expected-classes` block (#12928).
+# `cargo xtask goldens check` fails when a language has fewer such fixtures
+# than its floor, so the count may only rise. Raise a floor in the same PR that
+# adds expectations; never lower it to make a check pass.
+python = 25
+rust = 19
+typescript = 4

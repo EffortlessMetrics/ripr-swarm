@@ -41,6 +41,13 @@
         "observe": {"state":"no","confidence":"medium","summary":"No test reaches the changed owner, so no test can observe this change"},
         "discriminate": {"state":"no","confidence":"medium","summary":"No test reaches the changed owner, so no test can discriminate this change"}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"no","confidence":"medium"},
+        {"stage":"infect","state":"unknown","confidence":"low"},
+        {"stage":"propagate","state":"yes","confidence":"medium"},
+        {"stage":"observe","state":"no","confidence":"medium"},
+        {"stage":"discriminate","state":"no","confidence":"medium"}
+      ],
       "evidence_path": ["reach no: No test is seen calling size_hint; tests share only its file or a name token: util/src/io/take.rs - limit (line 6)", "infection unknown: Predicate compares `x` with `self.remaining`, and ripr can read no literal or same-file constant for either, so it cannot tell which side of the boundary a test reaches (a value taken from a test input, the runtime or a random draw is not decidable statically; a test input that makes the two equal would settle it)", "propagation yes: Changed behavior appears to influence returned value: Some(x) if x <= self.remaining => Some(x)", "observation no: No test reaches the changed owner, so no test can observe this change", "discriminator no: No test reaches the changed owner, so no test can discriminate this change", "local flow reaches returned value: Some(x) if x <= self.remaining => Some(x) (line 10)", "related test util/src/io/take.rs:6 util/src/io/take.rs - limit (line 6) uses strong exact value oracle: assert_eq!(t.limit(), 4);", "source assertion argument value 4 at line 8"],
       "flow_sinks": [
         {"kind":"return_value","text":"Some(x) if x <= self.remaining => Some(x)","line":10}
@@ -125,6 +132,13 @@
         "observe": {"state":"no","confidence":"medium","summary":"No test reaches the changed owner, so no test can observe this change"},
         "discriminate": {"state":"no","confidence":"medium","summary":"No test reaches the changed owner, so no test can discriminate this change"}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"no","confidence":"medium"},
+        {"stage":"infect","state":"no","confidence":"medium"},
+        {"stage":"propagate","state":"weak","confidence":"low"},
+        {"stage":"observe","state":"no","confidence":"medium"},
+        {"stage":"discriminate","state":"no","confidence":"medium"}
+      ],
       "evidence_path": ["reach no: No test is seen calling size_hint; tests share only its file or a name token: util/src/io/take.rs - limit (line 6)", "infection no: No test reaches the changed owner, so no test can activate this change", "propagation weak: No complete owner-bound propagation witness found for returned value: Some(x) if x <= self.remaining => Some(x)", "observation no: No test reaches the changed owner, so no test can observe this change", "discriminator no: No test reaches the changed owner, so no test can discriminate this change", "local flow reaches returned value: Some(x) if x <= self.remaining => Some(x) (line 10)", "related test util/src/io/take.rs:6 util/src/io/take.rs - limit (line 6) uses strong exact value oracle: assert_eq!(t.limit(), 4);", "source assertion argument value 4 at line 8"],
       "flow_sinks": [
         {"kind":"return_value","text":"Some(x) if x <= self.remaining => Some(x)","line":10}

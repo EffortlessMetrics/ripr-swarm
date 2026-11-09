@@ -446,7 +446,9 @@ and the eligible-diagnostic caps are unchanged. It exists only under the
 `actionable` profile (the `full` profile publishes the real INFORMATION
 diagnostics instead), is replaced with the snapshot so it clears when no
 withheld preview gap remains, and is withdrawn with the document's other
-diagnostics while the buffer is quarantined.
+diagnostics while the buffer is quarantined. Since #13442 a preview-language file
+also carries passive per-line Hint rows under the same code (RIPR-SPEC-0076,
+RIPR-SPEC-0127); the marker stays one per file and rows share the same 50 cap.
 
 Static-gap withholding (#11798): the same discipline covers every other
 candidate-actionable finding of a gap class that the `actionable` profile does
@@ -473,7 +475,8 @@ catalog entry, budget exemption, per-snapshot cap, snapshot consistency
 accounting and refresh-only action routing are all keyed on that code, so
 reuse inherits every bound and negative control without a second code that
 could drift from them, and a file never mixes preview and non-preview
-findings, so one marker per file still holds. The typed `data.kind`
+findings, so one marker per file still holds (per-line preview rows, #13442, are separate
+and share the 50 cap). The typed `data.kind`
 (`gap_findings_withheld`, limitation `actionable_profile_withheld_gap`)
 distinguishes it from `preview_findings_withheld`, and the message differs:
 `ripr: N changed-behavior finding(s) with no static test path found or weak
@@ -533,6 +536,20 @@ these states as an actionable offer:
   a scope statement;
 - a command outside the closed command vocabulary.
 
+The line hover for unpublished findings under the `actionable` profile
+(#13440) promises the Inspect finding quick fix with the `full` profile only
+when the negotiated client would be offered it: the sentence is derived from
+the same client-command decision that gates the code action
+(`actions::inspect_finding_quick_fix_offered`, which delegates to the
+code-action gate). A client that did not advertise `ripr.copyContext` is told
+no executable Inspect finding quick fix is offered; the sentence names only
+that quick fix and the `ripr.copyContext` command, makes no claim about
+other actions (related-test navigation survives through `window/showDocument`
+or `ripr.openRelatedTest`), and promises no availability beyond the client
+advertising the command (running or failed analysis still disables Inspect
+actions). The hover adds no
+actionability or repair data and uses static vocabulary only.
+
 ## Acceptance Examples
 
 - An agent connects to `ripr lsp --stdio`, queries diagnostics, and
@@ -570,6 +587,14 @@ these states as an actionable offer:
 - `analysis::diagnostic_origin::tests::standalone_cr_bounds_untrusted_or_missing_anchors`,
   `standalone_cr_deleted_eof_preserves_the_terminal_editor_row`, and
   `standalone_cr_duplicate_expression_uses_the_parser_anchor`: refusal and identity controls.
+
+- `lsp::tests::actionable_line_hover_promises_inspect_quick_fix_only_to_command_capable_clients`:
+  hover guidance matches the code-action gate for command-capable and generic clients.
+- `lsp::tests::backend_line_hover_follows_the_negotiated_client_profile`:
+  the backend hover path passes the negotiated client profile, not a default.
+- `lsp::tests::backend_hover_without_copy_support_does_not_claim_refresh_only_actions`:
+  real initialize + hover + code_action controls for a client without copy
+  support but with each navigation route; the hover makes no Refresh-only claim.
 
 ## Implementation Mapping
 
