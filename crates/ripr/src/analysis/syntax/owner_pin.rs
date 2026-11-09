@@ -690,9 +690,10 @@ pub(crate) fn macro_binding_candidates(source: &ast::SourceFile) -> MacroBinding
 /// (`mod global_rng; pub use global_rng::*;`). The glob then reads that
 /// module's own items, as `crate::global_rng::*` does. A macro it re-exports
 /// is defined or imported inside that module, and the workspace scan reports
-/// it at that site, so the glob is not a foreign one. Only the file root
-/// qualifies: in a 2015-edition nested module the same spelling names a
-/// crate-root item. Longer paths (`vstd::prelude::*`), grouped globs and the
+/// it at that site, so the glob is not a foreign one. Only the top level of
+/// a file qualifies, read with 2018 path semantics; the scan has no edition, so
+/// a 2015-edition non-root file, where the same spelling names a crate-root
+/// item, is an accepted residual (#14031). Longer paths (`vstd::prelude::*`), grouped globs and the
 /// standard roots keep their dedicated rules.
 fn glob_is_root_sibling_module(import: &ast::Use, item: &ast::UseTree, root: &str) -> bool {
     let whole_glob = import

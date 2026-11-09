@@ -174,6 +174,12 @@ to an item-position macro, or one of `std`/`core`/`alloc`. Without this a
 re-export facade (`mod global_rng; pub use global_rng::*;`) made every assertion
 in the crate's tests macro-binding unestablished.
 
+The rule reads the glob with 2018 path semantics at the top level of any file
+and does not consult the edition. In a 2015-edition crate a non-root file's
+`mod name; pub use name::*;` names a crate-root item instead, so a crate-root
+`extern crate dep as name;` could hide a foreign glob there. That is an accepted
+residual; the scan has no edition input.
+
 ## Non-Goals
 
 - Repository mode does not list or name `verus!` regions; it only guarantees
