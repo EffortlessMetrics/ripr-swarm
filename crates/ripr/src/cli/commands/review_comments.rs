@@ -447,6 +447,27 @@ fn load_review_comments_analysis_outcome(
     Ok(Some(outcome))
 }
 
+/// Findings a validated `ripr check --json` document marks suppressed (#13895).
+fn load_check_output_suppressed_findings(
+    path: &Path,
+) -> Result<Vec<output::review_comments::CheckOutputSuppressedFinding>, String> {
+    let text = crate::bounded_input::read_to_string(path).map_err(|error| {
+        format!(
+            "review-comments --check-output {} is invalid: read failed: {error}",
+            path.display()
+        )
+    })?;
+    let document: serde_json::Value = serde_json::from_str(&text).map_err(|error| {
+        format!(
+            "review-comments --check-output {} is invalid: JSON parse failed: {error}",
+            path.display()
+        )
+    })?;
+    Ok(output::review_comments::check_output_suppressed_findings(
+        &document,
+    ))
+}
+
 pub(in crate::cli) fn review_comments(args: &[String]) -> Result<(), String> {
     review_comments_with_diff_loader(args, load_review_comments_diff)
 }
@@ -558,6 +579,12 @@ fn review_comments_with_admission(
     receipt.write_atomic(&receipt_path)?;
 
     if let Some(gap_ledger) = &options.gap_ledger {
+        if options.suppression_policy.is_some() {
+            // The gap-ledger route renders ledger records, whose policy state
+            // is already recorded in the ledger. Ignoring the flag would let
+            // a caller believe a policy was applied.
+            return Err("review-comments --suppression-policy applies to the base/head seam route, not --gap-ledger (ledger records carry their own policy_state); drop one of the two flags".to_string());
+        }
         if options.check_output.is_some() {
             return Err(
                 "review-comments accepts at most one of --gap-ledger or --check-output".to_string(),
@@ -658,6 +685,42 @@ fn review_comments_with_admission(
             error,
         ));
     }
+    // #13895: an explicit policy fails closed (missing or malformed is an
+    // error), exactly like `ripr check --suppression-policy`. The default
+    // `.ripr/suppressions.toml` stays opt-in (#7998); disclose it the way
+    // `ripr check` does instead of applying it silently.
+    let suppression_policy = match &options.suppression_policy {
+        Some(policy) => {
+            let resolved = if policy.is_absolute() {
+                policy.clone()
+            } else {
+                input.root.join(policy)
+            };
+            let entries = output::suppressions::load_check_suppression_policy(&resolved).map_err(
+                |error| {
+                    record_review_comments_error(
+                        &mut receipt,
+                        &receipt_path,
+                        "configuration",
+                        error,
+                    )
+                },
+            )?;
+            Some((policy.display().to_string(), entries))
+        }
+        None => {
+            if input
+                .root
+                .join(output::suppressions::SUPPRESSIONS_PATH)
+                .is_file()
+            {
+                eprintln!(
+                    "ripr: detected .ripr/suppressions.toml under the analyzed root; it was not applied to this review-comments run. Rerun with --suppression-policy .ripr/suppressions.toml to apply it."
+                );
+            }
+            None
+        }
+    };
     receipt.phase("configuration", "diff_discovery");
     receipt.write_atomic(&receipt_path)?;
     let diff_text = analysis::cancellation::with_token(&cancellation, || {
@@ -960,12 +1023,37 @@ fn review_comments_with_admission(
     .map_err(|error| {
         record_review_comments_error(&mut receipt, &receipt_path, "static_rendering", error)
     })?;
+    // The `--check-output` document was validated above as a consumable
+    // producer envelope; honor the suppressions its run recorded. With an
+    // explicit policy as well, the union applies.
+    let check_output_suppressed = match options.check_output.as_deref() {
+        Some(path) => load_check_output_suppressed_findings(path).map_err(|error| {
+            record_review_comments_error(&mut receipt, &receipt_path, "static_rendering", error)
+        })?,
+        None => Vec::new(),
+    };
+    let suppression = match suppression_policy {
+        Some((path, entries)) => Some(output::review_comments::ReviewCommentsSuppression::new(
+            Some(path),
+            entries,
+            check_output_suppressed,
+        )),
+        None if !check_output_suppressed.is_empty() => {
+            Some(output::review_comments::ReviewCommentsSuppression::new(
+                None,
+                Vec::new(),
+                check_output_suppressed,
+            ))
+        }
+        None => None,
+    };
     let render_context = output::review_comments::ReviewCommentsRenderContext {
         root: &input.root,
         base: &options.base,
         head: &options.head,
         mode: &input.mode,
         config: &config,
+        suppression: suppression.as_ref(),
     };
     let rendered_json = output::review_comments::render_review_comments_json_with_scope(
         &render_context,
@@ -1061,6 +1149,7 @@ fn parse_review_comments_options(args: &[String]) -> Result<ReviewCommentsOption
     let mut head: Option<String> = None;
     let mut gap_ledger = None;
     let mut check_output = None;
+    let mut suppression_policy = None;
     let mut out = PathBuf::from("target/ripr/review/comments.json");
     let mut timeout_ms = DEFAULT_REVIEW_COMMENTS_TIMEOUT_MS;
 
@@ -1114,6 +1203,17 @@ fn parse_review_comments_options(args: &[String]) -> Result<ReviewCommentsOption
                 }
                 check_output = Some(PathBuf::from(value));
             }
+            "--suppression-policy" => {
+                i += 1;
+                let value = expect_value(args, i, "--suppression-policy")?;
+                if value.trim().is_empty() {
+                    return Err(
+                        "review-comments --suppression-policy requires a non-empty path"
+                            .to_string(),
+                    );
+                }
+                suppression_policy = Some(PathBuf::from(value));
+            }
             "--out" => {
                 i += 1;
                 let value = expect_value(args, i, "--out")?;
@@ -1138,6 +1238,7 @@ fn parse_review_comments_options(args: &[String]) -> Result<ReviewCommentsOption
         head: head.ok_or_else(|| "review-comments requires --head <sha>; pass the pull request's head commit, for example `--base origin/main --head HEAD`".to_string())?,
         gap_ledger,
         check_output,
+        suppression_policy,
         out,
         timeout_ms,
     })
@@ -1421,6 +1522,7 @@ mod tests {
                 head: "HEAD".to_string(),
                 gap_ledger: None,
                 check_output: None,
+                suppression_policy: None,
                 out: PathBuf::from("target/ripr/review/comments.json"),
                 timeout_ms: DEFAULT_REVIEW_COMMENTS_TIMEOUT_MS,
             })
@@ -1442,9 +1544,38 @@ mod tests {
                     "target/ripr/reports/gap-decision-ledger.json"
                 )),
                 check_output: None,
+                suppression_policy: None,
                 out: PathBuf::from("target/ripr/review/comments.json"),
                 timeout_ms: DEFAULT_REVIEW_COMMENTS_TIMEOUT_MS,
             })
+        );
+    }
+
+    #[test]
+    fn review_comments_parses_suppression_policy_and_rejects_an_empty_value() {
+        let parsed = parse_review_comments_options(&args(&[
+            "--base",
+            "main",
+            "--head",
+            "HEAD",
+            "--suppression-policy",
+            ".ripr/suppressions.toml",
+        ]));
+        assert_eq!(
+            parsed.map(|options| options.suppression_policy),
+            Ok(Some(PathBuf::from(".ripr/suppressions.toml")))
+        );
+        assert_eq!(
+            parse_review_comments_options(&args(&[
+                "--base",
+                "main",
+                "--head",
+                "HEAD",
+                "--suppression-policy",
+                " ",
+            ]))
+            .map(|_| ()),
+            Err("review-comments --suppression-policy requires a non-empty path".to_string())
         );
     }
 

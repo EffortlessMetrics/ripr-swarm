@@ -78,6 +78,8 @@ pub(crate) struct ReviewCommentsOptions {
     pub(crate) head: String,
     pub(crate) gap_ledger: Option<PathBuf>,
     pub(crate) check_output: Option<PathBuf>,
+    /// `--suppression-policy`: explicit opt-in policy file (#13895).
+    pub(crate) suppression_policy: Option<PathBuf>,
     pub(crate) out: PathBuf,
     pub(crate) timeout_ms: u64,
 }

@@ -17,7 +17,7 @@ testing, edit source files, configure CI policy, or make gate decisions.
 "#;
 pub(super) const REVIEW_COMMENTS_HELP: &str = r#"Write advisory PR test guidance on changed lines (does not post to GitHub).
 
-Usage: ripr review-comments [--root PATH] --base SHA --head SHA [--gap-ledger PATH | --check-output PATH] [--out PATH] [--timeout-ms MS]
+Usage: ripr review-comments [--root PATH] --base SHA --head SHA [--gap-ledger PATH | --check-output PATH] [--suppression-policy PATH] [--out PATH] [--timeout-ms MS]
 
 Options:
   --root PATH    Workspace root. Defaults to current directory.
@@ -30,7 +30,17 @@ Options:
   --check-output PATH
                  Optional producer-generated `ripr check --json` artifact.
                  Its typed analysis outcome is projected without rerunning the
-                 producer; incomplete input remains incomplete guidance.
+                 producer; incomplete input remains incomplete guidance. Findings
+                 that artifact marks `suppressed` stay in the `suppressed` array
+                 (not `comments`), so `gate evaluate` does not block on them.
+  --suppression-policy PATH
+                 Explicit opt-in suppression policy (same file and semantics as
+                 `ripr check --suppression-policy`, root-relative when not
+                 absolute; a missing or malformed file is an error). Matching
+                 seams move to the `suppressed` array with reason
+                 `suppressed_by_policy`, which `gate evaluate` treats as
+                 non-blocking. Not combinable with `--gap-ledger`. The default
+                 `.ripr/suppressions.toml` is never applied implicitly.
   --out PATH     JSON output path. Defaults to target/ripr/review/comments.json.
   --timeout-ms MS
                  Cooperative analysis budget (default 120000ms), checked at

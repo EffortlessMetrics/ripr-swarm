@@ -195,6 +195,28 @@ pub(crate) fn probe_id_names_seam(
     }
 }
 
+/// Whether a bare (no collision ordinal) `probe:` / `repo-probe:` check
+/// finding ID names this seam, by the seam-side re-mint alone (#13895).
+///
+/// Unlike [`probe_id_names_seam`] this does not look at the rest of the
+/// inventory: the caller supplies the uniqueness decision over the seams it
+/// holds. An ID carrying an ordinal (`.2`) is refused here because an
+/// ordinal cannot be bound to one seam without the full inventory, so a
+/// policy keyed on it fails closed.
+pub(crate) fn bare_probe_id_names_seam(item: &str, entry: &ClassifiedSeam) -> bool {
+    let prefix = if item.starts_with("probe:") {
+        "probe"
+    } else if item.starts_with("repo-probe:") {
+        "repo-probe"
+    } else {
+        return false;
+    };
+    let has_ordinal = item
+        .rsplit_once(':')
+        .is_some_and(|(_, fingerprint)| fingerprint.contains('.'));
+    !has_ordinal && reminted_probe_id(entry, prefix, 1).as_deref() == Some(item)
+}
+
 /// Re-mint the probe ID for one seam at `ordinal`, or `None` when the
 /// seam's kind names no probe family.
 fn reminted_probe_id(entry: &ClassifiedSeam, prefix: &str, ordinal: u32) -> Option<String> {

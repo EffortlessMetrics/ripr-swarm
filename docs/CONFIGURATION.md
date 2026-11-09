@@ -915,6 +915,10 @@ detailed reports — they only move from `unsuppressed_*` into `suppressed_*`
 in the badge counts.
 
 Validated by `ripr check --format badge-*` (loaded relative to `--root`).
+In CI, pass the same file to `ripr check --suppression-policy` and to
+`ripr review-comments --suppression-policy .ripr/suppressions.toml`;
+`ripr gate evaluate` then reads the suppressed seams as non-blocking. See the
+[cargo-mutants CI recipe](FROM_CARGO_MUTANTS.md#suppressing-in-ci).
 Schema:
 
 ```toml
@@ -953,6 +957,25 @@ reason = "Generated sources are checked by the generator contract."
 owner = "code-generation"
 ```
 
+Finding ids hash the parsed expression, so editing a suppressed function
+changes its id and silently drops an id-keyed entry. To keep suppressing a
+function across edits, select it by owner with an exact `path` plus `function`
+(a Rust owner name such as `retry_allowed` or `impl Retry::allowed`):
+
+```toml
+[[suppressions]]
+kind = "exposure_gap"
+path = "src/retry.rs"
+function = "retry_allowed"
+reason = "Retry policy is covered by the integration suite."
+owner = "team-retry"
+expires = "2026-12-31"
+```
+
+`owner` stays the team that owns the exception; `function` is the code
+identity. Matching is exact on file and function; a missing or ambiguous owner
+never matches.
+
 `static_class` is optional narrowing for a path-glob selector and must name a
 known exposure class. See [the complete example](suppressions.example.toml)
 for expiry and policy-health metadata.
@@ -963,14 +986,14 @@ Supported `kind` values (closed set): `exposure_gap`, `test_efficiency`.
 | --- | --- |
 | `schema_version = 1` required | Missing or other values fail. |
 | `kind`, `owner`, `reason` required and non-blank | Missing or whitespace-only values fail. |
-| `kind = "exposure_gap"` requires `finding_id` or a `path` glob | Rejects `test`; a path-glob selector may narrow by a known `static_class`. |
+| `kind = "exposure_gap"` requires `finding_id`, a `path` glob, or `path` + `function` | Rejects `test`; `function` needs an exact (non-glob) `path` and cannot combine with `finding_id`; a path-glob selector may narrow by a known `static_class`. |
 | `kind = "test_efficiency"` requires `test` | And rejects `finding_id`; `path` is optional for disambiguation. |
 | `path` repo-relative, slash-separated | Absolute paths and backslash paths fail at parse time. |
 | `expires` ISO `YYYY-MM-DD` if present | Other formats fail at parse time. |
 | `created_at`, `last_seen`, `review_by` ISO `YYYY-MM-DD` if present | Other formats fail at parse time. |
 | Unknown fields rejected | Catches typos. |
 | Duplicate fields rejected | Repeated `schema_version` headers or fields within one entry fail with the original and repeated declaration lines, including empty first values. Fields reused in separate entries remain valid. |
-| Duplicate exact selectors rejected | Same `finding_id` (or `(test, path)`) twice fails. This check does not reject duplicate path-glob selectors. |
+| Duplicate exact selectors rejected | Same `finding_id` (or `(test, path)`, or `(path, function)`) twice fails. This check does not reject duplicate path-glob selectors. |
 | Unmatched selectors surface as warnings | Selector that matches no current finding is reported but does not fail the badge. |
 | Expired suppressions do **not** apply | They surface as warnings on the badge so silent green-forever debt is impossible. |
 

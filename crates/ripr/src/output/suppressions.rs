@@ -54,8 +54,15 @@ pub struct SuppressionEntry {
     pub finding_id: Option<String>,
     /// Required when `kind == TestEfficiency`.
     pub test: Option<String>,
-    /// Optional path narrowing for `test_efficiency` selectors.
+    /// Optional path narrowing for `test_efficiency` selectors. For
+    /// `exposure_gap` it is a root-relative path glob, or the exact
+    /// root-relative file when `function` is set.
     pub path: Option<String>,
+    /// Owner-scoped `exposure_gap` selector (#13895): the owning function's
+    /// name exactly as the finding's owner symbol carries it after the file
+    /// (`retry_allowed`, `impl Retry::allowed`, `inner_mod::helper`). Requires
+    /// `path`. Survives expression edits because it ignores `finding_id`.
+    pub function: Option<String>,
     pub reason: String,
     pub owner: String,
     /// ISO-8601 `YYYY-MM-DD` date string, validated at parse time.
@@ -149,6 +156,9 @@ pub fn parse_suppressions_manifest(text: &str) -> (Vec<SuppressionEntry>, Vec<St
                 "path" => assign_field(raw, line_number, &mut violations, |parsed| {
                     pending.path = Some((parsed, line_number));
                 }),
+                "function" => assign_field(raw, line_number, &mut violations, |parsed| {
+                    pending.function = Some((parsed, line_number));
+                }),
                 "reason" => assign_field(raw, line_number, &mut violations, |parsed| {
                     pending.reason = Some((parsed, line_number));
                 }),
@@ -225,9 +235,19 @@ pub fn parse_suppressions_manifest(text: &str) -> (Vec<SuppressionEntry>, Vec<St
     let mut seen_exposure: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     let mut seen_te: std::collections::BTreeSet<(String, Option<String>)> =
         std::collections::BTreeSet::new();
+    let mut seen_function: std::collections::BTreeSet<(String, String)> =
+        std::collections::BTreeSet::new();
     for entry in &entries {
         match entry.kind {
             SuppressionKind::ExposureGap => {
+                if let (Some(path), Some(function)) = (&entry.path, &entry.function)
+                    && !seen_function.insert((path.clone(), function.clone()))
+                {
+                    violations.push(format!(
+                        "{SUPPRESSIONS_PATH} duplicate selector function `{function}` at `{path}` (declared near line {})",
+                        entry.block_line
+                    ));
+                }
                 if let Some(id) = &entry.finding_id
                     && !seen_exposure.insert(id.clone())
                 {
@@ -267,6 +287,7 @@ struct PendingSuppression {
     finding_id: Option<(String, usize)>,
     test: Option<(String, usize)>,
     path: Option<(String, usize)>,
+    function: Option<(String, usize)>,
     reason: Option<(String, usize)>,
     owner: Option<(String, usize)>,
     expires: Option<(String, usize)>,
@@ -289,6 +310,7 @@ impl PendingSuppression {
             finding_id: None,
             test: None,
             path: None,
+            function: None,
             reason: None,
             owner: None,
             expires: None,
@@ -417,6 +439,7 @@ fn finalize_suppression(
 
     let finding_id = non_blank_selector("finding_id", pending.finding_id, violations);
     let test = non_blank_selector("test", pending.test, violations);
+    let function = non_blank_selector("function", pending.function, violations);
     let static_class = pending.static_class;
 
     if let Some(kind) = kind {
@@ -424,9 +447,35 @@ fn finalize_suppression(
             SuppressionKind::ExposureGap => {
                 if finding_id.is_none() && path.is_none() {
                     violations.push(format!(
-                        "{SUPPRESSIONS_PATH}:{block_line} `kind = \"exposure_gap\"` requires `finding_id` or a `path` glob"
+                        "{SUPPRESSIONS_PATH}:{block_line} `kind = \"exposure_gap\"` requires `finding_id`, a `path` glob, or `path` + `function`"
                     ));
                     return;
+                }
+                if let Some(function) = &function {
+                    let Some(path) = &path else {
+                        violations.push(format!(
+                            "{SUPPRESSIONS_PATH}:{block_line} `function` requires `path` (the exact root-relative file that declares it)"
+                        ));
+                        return;
+                    };
+                    if finding_id.is_some() {
+                        violations.push(format!(
+                            "{SUPPRESSIONS_PATH}:{block_line} `function` cannot be combined with `finding_id`; use `finding_id` alone, or `path` + `function`"
+                        ));
+                        return;
+                    }
+                    if path.contains(['*', '?', '[']) {
+                        violations.push(format!(
+                            "{SUPPRESSIONS_PATH}:{block_line} `function` selects by exact file, so `path` `{path}` must not be a glob"
+                        ));
+                        return;
+                    }
+                    if is_ambiguous_owner_function(function) {
+                        violations.push(format!(
+                            "{SUPPRESSIONS_PATH}:{block_line} `function` `{function}` names a line-disambiguated duplicate owner; rename or merge the duplicate functions so the owner is unambiguous"
+                        ));
+                        return;
+                    }
                 }
                 if test.is_some() {
                     violations.push(format!(
@@ -455,6 +504,12 @@ fn finalize_suppression(
                     ));
                     return;
                 }
+                if function.is_some() {
+                    violations.push(format!(
+                        "{SUPPRESSIONS_PATH}:{block_line} `kind = \"test_efficiency\"` does not accept `function`"
+                    ));
+                    return;
+                }
                 if finding_id.is_some() {
                     violations.push(format!(
                         "{SUPPRESSIONS_PATH}:{block_line} `kind = \"test_efficiency\"` does not accept `finding_id`"
@@ -469,6 +524,7 @@ fn finalize_suppression(
                 finding_id,
                 test,
                 path,
+                function,
                 reason,
                 owner,
                 expires,
@@ -753,6 +809,16 @@ pub struct CheckSuppressionCandidate {
     pub finding_id: String,
     pub path: String,
     pub class: String,
+    /// The owning function as the owner symbol carries it after the file
+    /// path (`retry_allowed`, `impl Retry::allowed`), for `function`
+    /// selectors (#13895). `None` when the owner is missing, does not start
+    /// with this finding's own file, or is a line-disambiguated duplicate:
+    /// an unknown or ambiguous owner never matches.
+    pub owner_function: Option<String>,
+    /// Other `finding_id` spellings that name this same candidate. Empty for
+    /// check findings; review-comments seams carry the policy ids that
+    /// uniquely name them (see [`CheckSuppressionCandidate::for_seams`]).
+    pub finding_aliases: Vec<String>,
     /// The id ripr 0.10 gave this finding, when it differs (#4736). Only
     /// names the replacement in a stale-selector warning; never matched.
     pub legacy_finding_id: Option<String>,
@@ -803,11 +869,112 @@ impl CheckSuppressionCandidate {
                     finding_id: finding.id.clone(),
                     path: root_relative_finding_path(root, file),
                     class: finding.class.as_str().to_string(),
+                    owner_function: owner_function_of(
+                        &root_relative_finding_path(root, file),
+                        file,
+                        finding.probe.owner.as_ref().map(|owner| owner.0.as_str()),
+                    ),
                     legacy_finding_id,
+                    finding_aliases: Vec::new(),
                 }
             })
             .collect()
     }
+
+    /// Builds matcher candidates for diff-scoped review-comments seams
+    /// (#13895), so `review-comments --suppression-policy` shares this
+    /// matcher with `ripr check`.
+    ///
+    /// A seam's `finding_id` is its own seam id. A `finding_id` selector
+    /// names a seam through the producer-id joins the repair paths use
+    /// (`producer_gap_id_names_seam`, and the bare `probe:` id re-mint); it applies only when it names exactly
+    /// one seam in `seams`, otherwise it is reported and not applied (fail
+    /// closed). `path` and `function` selectors match the seam's file and
+    /// owner symbol. `static_class` narrowing never matches a seam: seam grip
+    /// classes are a different vocabulary than the exposure class it names.
+    pub(crate) fn for_seams(
+        root: &Path,
+        seams: &[&crate::analysis::ClassifiedSeam],
+        entries: &[SuppressionEntry],
+    ) -> (Vec<Self>, Vec<String>) {
+        let mut aliases: Vec<Vec<String>> = vec![Vec::new(); seams.len()];
+        let mut warnings = Vec::new();
+        let ids: std::collections::BTreeSet<&str> = entries
+            .iter()
+            .filter(|entry| entry.kind == SuppressionKind::ExposureGap)
+            .filter_map(|entry| entry.finding_id.as_deref())
+            .collect();
+        for id in ids {
+            let named: Vec<usize> = seams
+                .iter()
+                .enumerate()
+                .filter(|(_, seam)| {
+                    crate::analysis::canonical_gap::producer_gap_id_names_seam(id, seam)
+                        || crate::analysis::canonical_gap::bare_probe_id_names_seam(id, seam)
+                })
+                .map(|(index, _)| index)
+                .collect();
+            match named.as_slice() {
+                [] => {}
+                [only] => aliases[*only].push(id.to_string()),
+                many => warnings.push(format!(
+                    "exposure_gap suppression for `{id}` names {} review seams, so it was not applied (an ambiguous finding id fails closed); select the owner with `path` + `function` instead",
+                    many.len()
+                )),
+            }
+        }
+        let candidates = seams
+            .iter()
+            .zip(aliases)
+            .map(|(entry, finding_aliases)| Self {
+                finding_id: entry.seam.id().as_str().to_string(),
+                path: root_relative_finding_path(root, entry.seam.file()),
+                class: String::new(),
+                owner_function: owner_function_of(
+                    &root_relative_finding_path(root, entry.seam.file()),
+                    entry.seam.file(),
+                    Some(entry.seam.owner()),
+                ),
+                finding_aliases,
+                legacy_finding_id: None,
+            })
+            .collect();
+        (candidates, warnings)
+    }
+}
+
+/// The `[[suppressions]] function` identity of an owner symbol (#13895).
+///
+/// Rust owner symbols are `<file>::<module>::<impl ...>::<fn>`, where `<file>`
+/// is the root-relative file the index parsed (`src/retry.rs`; the finding's
+/// own location may be root-joined as `./src/retry.rs`). The function identity
+/// is what follows `<file>::`, whichever of the root-relative path or the
+/// location's own path text the owner starts with. Fails closed: a missing owner, an owner that does
+/// not start with its own file, an empty remainder, or a `#L<line>` suffix
+/// (the producer's marker for two same-named owners) yields `None`, which
+/// matches no `function` selector.
+pub(crate) fn owner_function_of(
+    relative_path: &str,
+    file: &Path,
+    owner: Option<&str>,
+) -> Option<String> {
+    let owner = owner?.replace('\\', "/");
+    let located = crate::analysis::stable_path_text(file);
+    let function = [relative_path, located.as_str()]
+        .iter()
+        .find_map(|path| owner.strip_prefix(&format!("{path}::")))?;
+    if function.trim().is_empty() || is_ambiguous_owner_function(function) {
+        return None;
+    }
+    Some(function.to_string())
+}
+
+/// True when `function` ends in the `#L<digits>` suffix the syntax producer
+/// appends to disambiguate duplicate owner symbols.
+fn is_ambiguous_owner_function(function: &str) -> bool {
+    function.rsplit_once("#L").is_some_and(|(_, digits)| {
+        !digits.is_empty() && digits.bytes().all(|byte| byte.is_ascii_digit())
+    })
 }
 
 /// One check finding suppressed by an explicit `--suppression-policy` file.
@@ -856,6 +1023,9 @@ pub(crate) fn exposure_gap_suppression_entries(
 /// Matching rules, in entry order (the first matching entry names the
 /// selector for a finding):
 /// - an entry with `finding_id` matches exactly that finding id;
+/// - an entry with `path` + `function` matches every candidate in exactly that
+///   root-relative file whose owner function equals `function` (#13895),
+///   whatever its `finding_id`; an unknown or ambiguous owner never matches;
 /// - an entry with only a `path` glob matches every candidate whose
 ///   root-relative path matches the glob, narrowed by `static_class` when
 ///   the entry declares one.
@@ -893,8 +1063,11 @@ pub fn apply_check_suppressions(
             }
             SuppressionKind::ExposureGap => {}
         }
-        let Some(selector) = entry.finding_id.clone().or_else(|| entry.path.clone()) else {
-            continue;
+        let selector = match (&entry.finding_id, &entry.path, &entry.function) {
+            (Some(id), _, _) => id.clone(),
+            (None, Some(path), Some(function)) => function_selector_label(path, function),
+            (None, Some(path), None) => path.clone(),
+            (None, None, _) => continue,
         };
         if is_expired(entry.expires.as_deref(), today) {
             warnings.push(format!(
@@ -907,7 +1080,20 @@ pub fn apply_check_suppressions(
         let mut hit = false;
         for candidate in candidates {
             let entry_matches = match &entry.finding_id {
-                Some(id) => id == &candidate.finding_id,
+                Some(id) => id == &candidate.finding_id || candidate.finding_aliases.contains(id),
+                None if entry.function.is_some() => {
+                    // Exact file plus exact owner function (#13895); the
+                    // finding id is deliberately ignored so an expression
+                    // edit keeps the suppression. Unknown owners never match.
+                    entry.path.as_deref() == Some(candidate.path.as_str())
+                        && entry.function.is_some()
+                        && entry.function == candidate.owner_function
+                        && entry
+                            .static_class
+                            .as_deref()
+                            .map(|class| class == candidate.class)
+                            .unwrap_or(true)
+                }
                 None => {
                     entry
                         .path
@@ -952,6 +1138,12 @@ pub fn apply_check_suppressions(
     (matched, warnings)
 }
 
+/// The selector label reported for a `path` + `function` entry: the exact
+/// root-relative file and the owner function, joined as the owner symbol is.
+pub fn function_selector_label(path: &str, function: &str) -> String {
+    format!("{path}::{function}")
+}
+
 /// Loads an explicit `--suppression-policy` file for `ripr check` (#1441).
 ///
 /// Unlike the implicit `.ripr/suppressions.toml` (missing file → no
@@ -992,11 +1184,14 @@ pub fn path_glob_matches(pattern: &str, path: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+
     use super::{
         CheckSuppressionCandidate, SUPPRESSIONS_PATH, SuppressionApplication, SuppressionEntry,
         SuppressionKind, apply_check_suppressions, apply_exposure_suppressions,
         apply_test_efficiency_suppressions, current_iso_date, days_to_civil_date, is_expired,
-        is_iso_date, load_check_suppression_policy, parse_suppressions_manifest, path_glob_matches,
+        is_iso_date, load_check_suppression_policy, owner_function_of, parse_suppressions_manifest,
+        path_glob_matches,
     };
 
     #[test]
@@ -1376,6 +1571,7 @@ reason = "second"
             finding_id: Some(finding_id.to_string()),
             test: None,
             path: None,
+            function: None,
             reason: "stated".to_string(),
             owner: "team".to_string(),
             expires: expires.map(str::to_string),
@@ -1402,6 +1598,7 @@ reason = "second"
             finding_id: None,
             test: Some(test.to_string()),
             path: path.map(str::to_string),
+            function: None,
             reason: "stated".to_string(),
             owner: "team".to_string(),
             expires: expires.map(str::to_string),
@@ -1588,6 +1785,19 @@ reason = "second"
             finding_id: finding_id.to_string(),
             path: path.to_string(),
             class: class.to_string(),
+            owner_function: None,
+            finding_aliases: Vec::new(),
+        }
+    }
+
+    fn candidate_in(
+        finding_id: &str,
+        path: &str,
+        owner_function: Option<&str>,
+    ) -> CheckSuppressionCandidate {
+        CheckSuppressionCandidate {
+            owner_function: owner_function.map(str::to_string),
+            ..candidate(finding_id, path, "weakly_exposed")
         }
     }
 
@@ -1601,6 +1811,7 @@ reason = "second"
             finding_id: None,
             test: None,
             path: Some(glob.to_string()),
+            function: None,
             reason: "generated surface".to_string(),
             owner: "repo-owner".to_string(),
             expires: expires.map(str::to_string),
@@ -1867,6 +2078,265 @@ owner = "repo-owner"
 
         let _ = std::fs::remove_dir_all(&dir);
         Ok(())
+    }
+
+    // ── owner-scoped `function` selector (#13895) ──
+
+    fn function_entry_manifest(extra: &str) -> String {
+        format!(
+            "schema_version = 1\n\n[[suppressions]]\nkind = \"exposure_gap\"\n{extra}reason = \"accepted retry debt\"\nowner = \"team-retry\"\n"
+        )
+    }
+
+    #[test]
+    fn parse_accepts_path_plus_function_selector() {
+        let text =
+            function_entry_manifest("path = \"src/retry.rs\"\nfunction = \"retry_allowed\"\n");
+        let (entries, violations) = parse_suppressions_manifest(&text);
+        assert!(violations.is_empty(), "{violations:?}");
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].path.as_deref(), Some("src/retry.rs"));
+        assert_eq!(entries[0].function.as_deref(), Some("retry_allowed"));
+        assert!(entries[0].finding_id.is_none());
+    }
+
+    #[test]
+    fn parse_rejects_function_without_path() {
+        let text = function_entry_manifest("function = \"retry_allowed\"\n");
+        let (entries, violations) = parse_suppressions_manifest(&text);
+        assert!(entries.is_empty());
+        assert!(
+            violations.iter().any(|v| v.contains("requires `path`")
+                || v.contains("requires `finding_id`, a `path` glob, or `path` + `function`")),
+            "{violations:?}"
+        );
+    }
+
+    #[test]
+    fn parse_rejects_entry_with_no_selector() {
+        let text = function_entry_manifest("");
+        let (entries, violations) = parse_suppressions_manifest(&text);
+        assert!(entries.is_empty());
+        assert!(
+            violations
+                .iter()
+                .any(|v| v.contains("requires `finding_id`, a `path` glob, or `path` + `function`")),
+            "{violations:?}"
+        );
+    }
+
+    #[test]
+    fn parse_rejects_function_with_finding_id_glob_path_or_ambiguous_owner() {
+        let with_id = function_entry_manifest(
+            "finding_id = \"predicate:a6b70212\"\npath = \"src/retry.rs\"\nfunction = \"retry_allowed\"\n",
+        );
+        let (_, violations) = parse_suppressions_manifest(&with_id);
+        assert!(
+            violations
+                .iter()
+                .any(|v| v.contains("cannot be combined with `finding_id`")),
+            "{violations:?}"
+        );
+        let glob = function_entry_manifest("path = \"src/**\"\nfunction = \"retry_allowed\"\n");
+        let (_, violations) = parse_suppressions_manifest(&glob);
+        assert!(
+            violations.iter().any(|v| v.contains("must not be a glob")),
+            "{violations:?}"
+        );
+        let ambiguous =
+            function_entry_manifest("path = \"src/retry.rs\"\nfunction = \"retry_allowed#L12\"\n");
+        let (_, violations) = parse_suppressions_manifest(&ambiguous);
+        assert!(
+            violations.iter().any(|v| v.contains("line-disambiguated")),
+            "{violations:?}"
+        );
+        let blank = function_entry_manifest("path = \"src/retry.rs\"\nfunction = \" \"\n");
+        let (_, violations) = parse_suppressions_manifest(&blank);
+        assert!(
+            violations.iter().any(|v| v.contains("`function` is blank")),
+            "{violations:?}"
+        );
+    }
+
+    #[test]
+    fn parse_rejects_function_on_test_efficiency_and_duplicate_function_selectors() {
+        let te = "schema_version = 1\n\n[[suppressions]]\nkind = \"test_efficiency\"\ntest = \"t\"\nfunction = \"f\"\nreason = \"r\"\nowner = \"o\"\n";
+        let (_, violations) = parse_suppressions_manifest(te);
+        assert!(
+            violations
+                .iter()
+                .any(|v| v.contains("does not accept `function`")),
+            "{violations:?}"
+        );
+        let entry = "[[suppressions]]\nkind = \"exposure_gap\"\npath = \"src/retry.rs\"\nfunction = \"retry_allowed\"\nreason = \"r\"\nowner = \"o\"\n";
+        let dup = format!("schema_version = 1\n\n{entry}\n{entry}");
+        let (_, violations) = parse_suppressions_manifest(&dup);
+        assert!(
+            violations
+                .iter()
+                .any(|v| v.contains("duplicate selector function")),
+            "{violations:?}"
+        );
+    }
+
+    #[test]
+    fn parse_still_rejects_unknown_fields_next_to_function() {
+        let text = function_entry_manifest(
+            "path = \"src/retry.rs\"\nfunction = \"retry_allowed\"\nfunc = \"typo\"\n",
+        );
+        let (_, violations) = parse_suppressions_manifest(&text);
+        assert!(
+            violations
+                .iter()
+                .any(|v| v.contains("unsupported `[[suppressions]]` field `func`")),
+            "{violations:?}"
+        );
+    }
+
+    fn function_entry(path: &str, function: &str, expires: Option<&str>) -> SuppressionEntry {
+        SuppressionEntry {
+            kind: SuppressionKind::ExposureGap,
+            finding_id: None,
+            test: None,
+            path: Some(path.to_string()),
+            function: Some(function.to_string()),
+            reason: "accepted retry debt".to_string(),
+            owner: "team-retry".to_string(),
+            expires: expires.map(str::to_string),
+            scope: None,
+            created_at: None,
+            last_seen: None,
+            review_by: None,
+            expected_visibility: None,
+            static_class: None,
+            language: None,
+            language_status: None,
+            block_line: 3,
+        }
+    }
+
+    #[test]
+    fn function_selector_survives_expression_edit_and_spares_other_functions() {
+        let entries = vec![function_entry("src/retry.rs", "retry_allowed", None)];
+        // `attempts <= 3` -> `predicate:a6b70212`, `attempts <= 4` ->
+        // `predicate:4547a614`: the finding id changes, the owner does not.
+        let before = vec![
+            candidate_in("predicate:a6b70212", "src/retry.rs", Some("retry_allowed")),
+            candidate_in("predicate:other0001", "src/retry.rs", Some("backoff_ms")),
+        ];
+        let after = vec![
+            candidate_in("predicate:4547a614", "src/retry.rs", Some("retry_allowed")),
+            candidate_in("predicate:other0001", "src/retry.rs", Some("backoff_ms")),
+        ];
+        for candidates in [&before, &after] {
+            let (matched, warnings) = apply_check_suppressions(candidates, &entries, "2026-01-01");
+            assert_eq!(matched.len(), 1, "{matched:?}");
+            assert!(warnings.is_empty(), "{warnings:?}");
+            assert_eq!(
+                matched.values().next().map(String::as_str),
+                Some("src/retry.rs::retry_allowed")
+            );
+            // Negative control: the function G in the same file is not suppressed.
+            assert!(!matched.contains_key("predicate:other0001"));
+        }
+        assert!(before[0].finding_id != after[0].finding_id);
+        assert!(
+            apply_check_suppressions(&before, &entries, "2026-01-01")
+                .0
+                .contains_key("predicate:a6b70212")
+        );
+        assert!(
+            apply_check_suppressions(&after, &entries, "2026-01-01")
+                .0
+                .contains_key("predicate:4547a614")
+        );
+    }
+
+    #[test]
+    fn function_selector_fails_closed_on_path_name_missing_or_expired() {
+        let entries = vec![function_entry("src/retry.rs", "retry_allowed", None)];
+        let cases = [
+            // Same function name in another file.
+            candidate_in("a", "src/other.rs", Some("retry_allowed")),
+            // Impl-qualified owner is a different identity than the bare name.
+            candidate_in("b", "src/retry.rs", Some("impl Retry::retry_allowed")),
+            // Prefix of the name is not the name.
+            candidate_in("c", "src/retry.rs", Some("retry_allowed_v2")),
+            // Missing or ambiguous owner identity.
+            candidate_in("d", "src/retry.rs", None),
+        ];
+        let (matched, warnings) = apply_check_suppressions(&cases, &entries, "2026-01-01");
+        assert!(matched.is_empty(), "{matched:?}");
+        assert!(
+            warnings
+                .iter()
+                .any(|w| w.contains("did not match any current finding")),
+            "{warnings:?}"
+        );
+
+        let qualified = vec![function_entry(
+            "src/retry.rs",
+            "impl Retry::retry_allowed",
+            None,
+        )];
+        let (matched, _) = apply_check_suppressions(&cases, &qualified, "2026-01-01");
+        assert_eq!(
+            matched.keys().map(String::as_str).collect::<Vec<_>>(),
+            ["b"]
+        );
+
+        let expired = vec![function_entry(
+            "src/retry.rs",
+            "retry_allowed",
+            Some("2020-01-01"),
+        )];
+        let live = vec![candidate_in("e", "src/retry.rs", Some("retry_allowed"))];
+        let (matched, warnings) = apply_check_suppressions(&live, &expired, "2026-01-01");
+        assert!(matched.is_empty(), "expired entries must not apply");
+        assert!(
+            warnings.iter().any(|w| w.contains("expired")),
+            "{warnings:?}"
+        );
+    }
+
+    #[test]
+    fn owner_function_of_strips_the_file_and_rejects_ambiguous_owners() {
+        let file = Path::new("src/retry.rs");
+        assert_eq!(
+            owner_function_of("src/retry.rs", file, Some("src/retry.rs::retry_allowed")).as_deref(),
+            Some("retry_allowed")
+        );
+        assert_eq!(
+            owner_function_of(
+                "src/retry.rs",
+                file,
+                Some("src/retry.rs::impl Retry::allowed")
+            )
+            .as_deref(),
+            Some("impl Retry::allowed")
+        );
+        assert_eq!(
+            owner_function_of("src/retry.rs", file, Some("src\\retry.rs::inner::helper"))
+                .as_deref(),
+            Some("inner::helper")
+        );
+        assert_eq!(owner_function_of("src/retry.rs", file, None), None);
+        assert_eq!(
+            owner_function_of("src/retry.rs", file, Some("src/other.rs::retry_allowed")),
+            None
+        );
+        assert_eq!(
+            owner_function_of("src/retry.rs", file, Some("src/retry.rs::")),
+            None
+        );
+        assert_eq!(
+            owner_function_of(
+                "src/retry.rs",
+                file,
+                Some("src/retry.rs::retry_allowed#L12")
+            ),
+            None
+        );
     }
 }
 
