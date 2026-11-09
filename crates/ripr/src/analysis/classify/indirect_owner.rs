@@ -676,8 +676,44 @@ struct ItemBindings {
     unreadable: bool,
 }
 
-impl ItemBindings {
-    fn read(source: &str, name: &str, import_is_other: impl Fn(&[String]) -> bool) -> Self {
+/// One `scopes` entry of [`ItemBindings`], in tree order, before the
+/// caller's import resolution is applied.
+#[derive(Clone)]
+enum ScopeSyntax {
+    /// A scope whose shadow flag the tree alone decides.
+    Fixed(ra_ap_syntax::TextRange, bool),
+    /// A block holding a `use` that binds the owner's name. It shadows only
+    /// when `eligible` and the resolver reads every path as another
+    /// definition (`None` is an opaque binding, which never does).
+    Import {
+        block: ra_ap_syntax::TextRange,
+        eligible: bool,
+        paths: Vec<Option<Vec<String>>>,
+    },
+}
+
+/// The pure part of [`ItemBindings::read`]: everything the walk derives from
+/// `(source, name)` alone, so it is computed once per distinct pair per run
+/// scope. The shadow check reads the same test body once per (seam, naming
+/// test, oracle), and each read walked the whole tree and re-collected the
+/// body's non-whitespace text.
+#[derive(Default)]
+struct ItemSyntax {
+    declarations: Vec<ra_ap_syntax::TextRange>,
+    scopes: Vec<ScopeSyntax>,
+    inert_macros: Vec<ra_ap_syntax::TextRange>,
+    unreadable: bool,
+}
+
+impl ItemSyntax {
+    fn memoized(source: &str, name: &str) -> std::rc::Rc<Self> {
+        use crate::analysis::syntax::run_memo::{Product, memoize_with};
+        memoize_with(Product::ItemSyntax, 0, name, source, || {
+            std::rc::Rc::new(Self::scan(source, name))
+        })
+    }
+
+    fn scan(source: &str, name: &str) -> Self {
         use crate::analysis::syntax::{
             UseBinding, parse_clean_source_file_memoized, use_item_bindings,
         };
@@ -705,7 +741,9 @@ impl ItemBindings {
             // shadow. Its imports also need their own module context; leave
             // that identity unresolved instead of borrowing the test's.
             if ast::ItemList::can_cast(node.kind()) {
-                result.scopes.push((node.text_range(), false));
+                result
+                    .scopes
+                    .push(ScopeSyntax::Fixed(node.text_range(), false));
                 continue;
             }
             if let Some(definition) = ast::MacroRules::cast(node.clone()) {
@@ -726,7 +764,13 @@ impl ItemBindings {
                 }
                 continue;
             }
-            let shadow = if let Some(function) = ast::Fn::cast(node.clone()) {
+            // Items in a nested module or impl belong to its ItemList, not the
+            // surrounding test. Never climb across that boundary.
+            let block = node
+                .parent()
+                .and_then(ast::StmtList::cast)
+                .map(|block| block.syntax().text_range());
+            if let Some(function) = ast::Fn::cast(node.clone()) {
                 let Some(declared) = function.name() else {
                     continue;
                 };
@@ -734,7 +778,10 @@ impl ItemBindings {
                     continue;
                 }
                 result.declarations.push(declared.syntax().text_range());
-                function.attrs().next().is_none()
+                if let Some(block) = block {
+                    let shadow = function.attrs().next().is_none();
+                    result.scopes.push(ScopeSyntax::Fixed(block, shadow));
+                }
             } else if let Some(import) = ast::Use::cast(node.clone()) {
                 result.declarations.push(node.text_range());
                 let scope = use_item_bindings(&import);
@@ -746,29 +793,63 @@ impl ItemBindings {
                 if matching.is_empty() && scope.globs.is_empty() {
                     continue;
                 }
-                import.attrs().next().is_none()
+                let Some(block) = block else {
+                    continue;
+                };
+                let eligible = import.attrs().next().is_none()
                     && !node
                         .ancestors()
                         .any(|ancestor| ast::ItemList::can_cast(ancestor.kind()))
                     && scope.globs.is_empty()
-                    && !matching.is_empty()
-                    && matching.iter().all(|import| match &import.binding {
-                        // Absence from a lexical owner-name list is not
-                        // evidence of a different definition: reexports and
-                        // unreadable module layouts retain the limit.
-                        UseBinding::Path(path) | UseBinding::Renamed(path) => import_is_other(path),
-                        UseBinding::Opaque => false,
+                    && !matching.is_empty();
+                // Absence from a lexical owner-name list is not evidence of a
+                // different definition: reexports and unreadable module
+                // layouts retain the limit.
+                let paths = matching
+                    .iter()
+                    .map(|import| match &import.binding {
+                        UseBinding::Path(path) | UseBinding::Renamed(path) => Some(path.clone()),
+                        UseBinding::Opaque => None,
                     })
-            } else {
-                continue;
-            };
-            // Items in a nested module or impl belong to its ItemList, not the
-            // surrounding test. Never climb across that boundary.
-            if let Some(block) = node.parent().and_then(ast::StmtList::cast) {
-                result.scopes.push((block.syntax().text_range(), shadow));
+                    .collect();
+                result.scopes.push(ScopeSyntax::Import {
+                    block,
+                    eligible,
+                    paths,
+                });
             }
         }
         result
+    }
+}
+
+impl ItemBindings {
+    fn read(source: &str, name: &str, import_is_other: impl Fn(&[String]) -> bool) -> Self {
+        let syntax = ItemSyntax::memoized(source, name);
+        let scopes = syntax
+            .scopes
+            .iter()
+            .map(|scope| match scope {
+                ScopeSyntax::Fixed(range, shadow) => (*range, *shadow),
+                ScopeSyntax::Import {
+                    block,
+                    eligible,
+                    paths,
+                } => (
+                    *block,
+                    *eligible
+                        && paths
+                            .iter()
+                            .all(|path| path.as_deref().is_some_and(&import_is_other)),
+                ),
+            })
+            .collect();
+        Self {
+            declarations: syntax.declarations.clone(),
+            scopes,
+            inert_macros: syntax.inert_macros.clone(),
+            unreadable: syntax.unreadable,
+        }
     }
 
     fn declaration_at(&self, at: usize) -> bool {
@@ -938,6 +1019,47 @@ fn call_end(code: &str, open: usize) -> Option<usize> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn item_syntax_is_shared_per_run_while_each_caller_resolves_imports() {
+        let source = "fn t() {\n    use other::inc;\n    let y = inc(1);\n    {\n        fn inc() {}\n        inc();\n    }\n}\n";
+        let import_at = source.find("inc(1)").unwrap_or(0);
+        let fn_scope_at = source.find("inc();").unwrap_or(0);
+        // Fixture construction: both mentions exist and are distinct.
+        assert!(import_at > 0 && fn_scope_at > import_at, "{source}");
+
+        let scope = crate::analysis::syntax::run_memo::enter();
+        let first = ItemSyntax::memoized(source, "inc");
+        let second = ItemSyntax::memoized(source, "inc");
+        assert!(
+            std::rc::Rc::ptr_eq(&first, &second),
+            "one walk per (source, name)"
+        );
+        assert!(!std::rc::Rc::ptr_eq(
+            &first,
+            &ItemSyntax::memoized(source, "dec")
+        ));
+        assert!(!first.unreadable);
+
+        // The same memoized walk answers differently per resolver: the import
+        // shadows only where the caller reads `other::inc` as another item.
+        let other = ItemBindings::read(source, "inc", |_| true);
+        let owner = ItemBindings::read(source, "inc", |_| false);
+        assert!(other.shadows_at(import_at));
+        assert!(!owner.shadows_at(import_at));
+        // A same-name, attribute-free fn shadows in its own block either way.
+        assert!(other.shadows_at(fn_scope_at));
+        assert!(owner.shadows_at(fn_scope_at));
+        // Declarations are tree facts and do not depend on the resolver.
+        assert_eq!(other.declarations, owner.declarations);
+        assert_eq!(other.declarations.len(), 2);
+
+        // Outside a scope the walk still gives the same answer.
+        drop(scope);
+        let unscoped = ItemBindings::read(source, "inc", |_| true);
+        assert!(unscoped.shadows_at(import_at));
+        assert_eq!(unscoped.declarations, other.declarations);
+    }
+
     #[test]
     fn owner_item_syntax_is_detected_conservatively() {
         assert!(body_has_no_owner_item_syntax(
