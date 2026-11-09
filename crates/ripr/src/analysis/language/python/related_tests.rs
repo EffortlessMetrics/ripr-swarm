@@ -17,9 +17,13 @@ use std::rc::Rc;
 mod verify_command_tests;
 
 mod dunder_entries;
+mod dunder_protocol;
+mod project_names;
 pub(super) use dunder_entries::{
     PythonClassFacts, apply_class_facts, operator_entry_in_text, with_entry,
 };
+pub(super) use dunder_protocol::body_exercises_dunder_protocol;
+pub(super) use project_names::{apply_project_module_names, owner_import_modules_for};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum PythonRelationKind {
@@ -151,6 +155,7 @@ pub(super) struct PythonRepairPlacement {
 pub(super) struct RelatedCandidateMemo<'a> {
     by_owner: HashMap<OwnerKey, Vec<PythonRelatedCandidate<'a>>>,
     helpers: HashMap<OwnerKey, Vec<HelperOwnerCallCandidate<'a>>>,
+    dunder_index: Option<Rc<DunderOwnerIndex>>,
     cross_module_over_cap: HashMap<OwnerKey, bool>,
     alignment_preps: HashMap<OwnerKey, AlignmentPrep<'a>>,
     alignment_lookup: Option<Rc<TestLookup<'a>>>,
@@ -188,9 +193,15 @@ impl<'a> RelatedCandidateMemo<'a> {
         owners: &[PythonOwner],
         all_tests: &'a [PythonTest],
     ) -> Vec<HelperOwnerCallCandidate<'a>> {
+        let by_class = Rc::clone(
+            self.dunder_index
+                .get_or_insert_with(|| Rc::new(dunder_owner_index(owners))),
+        );
         self.helpers
             .entry(owner_key(owner))
-            .or_insert_with(|| helper_owner_call_candidates(owner, owners, all_tests))
+            .or_insert_with(|| {
+                helper_owner_call_candidates_indexed(owner, owners, all_tests, Some(&by_class))
+            })
             .clone()
     }
 
@@ -326,19 +337,101 @@ pub(super) struct HelperOwnerCallCandidate<'a> {
 /// the relation never carries an oracle.
 ///
 /// A hop stays in the file of the function it calls, except the first hop may
-/// also enter from a top-level function of another module that binds the owner through
-/// `from <owner module> import <name>` and bare-calls that binding
-/// ([`cross_module_owner_binding`], #12955). A candidate reached that way is
-/// `cross_module_caller_call`, and same-module callers are scanned first so a
-/// test both reach keeps the same-module reading.
+/// also enter from a top-level function of another module that binds the
+/// owner through `from <owner module> import <name>` and bare-calls that
+/// binding ([`cross_module_owner_binding`], #12955). A candidate reached that
+/// way is `cross_module_caller_call`, and same-module callers are scanned first
+/// so a test both reach keeps the same-module reading.
 pub(super) fn helper_owner_call_candidates<'a>(
     owner: &PythonOwner,
     owners: &[PythonOwner],
     all_tests: &'a [PythonTest],
 ) -> Vec<HelperOwnerCallCandidate<'a>> {
-    if !helper_owner_is_unique_top_level_function(owner, owners) {
-        return Vec::new();
+    helper_owner_call_candidates_indexed(owner, owners, all_tests, None)
+}
+
+/// Dunder methods of each (file, class), as positions in the run's owners.
+/// Built once per run so a helper's reaching dunders are found without
+/// scanning every owner (#13776).
+pub(super) type DunderOwnerIndex = HashMap<(PathBuf, String), Vec<usize>>;
+
+pub(super) fn dunder_owner_index(owners: &[PythonOwner]) -> DunderOwnerIndex {
+    let mut by_class = DunderOwnerIndex::new();
+    for (position, owner) in owners.iter().enumerate() {
+        if !owner.class_path.is_empty() && dunder_method_class(owner).is_some() {
+            by_class
+                .entry((owner.file.clone(), owner.class_path.clone()))
+                .or_default()
+                .push(position);
+        }
     }
+    by_class
+}
+
+/// The same-class dunder owners whose `self.` call path reaches the method
+/// `owner` (`__setitem__` for `Cache.getsizeof`, `__getitem__` for
+/// `LFUCache.__touch`), or `None` for an owner no dunder is known to reach.
+fn dunder_entry_callers<'o>(
+    owner: &PythonOwner,
+    owners: &'o [PythonOwner],
+    by_class: Option<&DunderOwnerIndex>,
+) -> Option<Vec<&'o PythonOwner>> {
+    if owner.class_facts.dunder_entries.is_empty()
+        || owner.class_path.is_empty()
+        || !matches!(
+            owner.owner_kind,
+            Some(OwnerKind::Method | OwnerKind::ClassMethod)
+        )
+        || is_dunder_name(&owner.name)
+    {
+        return None;
+    }
+    let wanted = |candidate: &PythonOwner| {
+        candidate.file == owner.file
+            && candidate.class_path == owner.class_path
+            && owner.class_facts.dunder_entries.contains(&candidate.name)
+            && dunder_method_class(candidate).is_some()
+    };
+    let callers: Vec<&PythonOwner> = match by_class {
+        Some(by_class) => by_class
+            .get(&(owner.file.clone(), owner.class_path.clone()))
+            .into_iter()
+            .flatten()
+            .filter_map(|position| owners.get(*position))
+            .filter(|candidate| wanted(candidate))
+            .collect(),
+        None => owners
+            .iter()
+            .filter(|candidate| wanted(candidate))
+            .collect(),
+    };
+    (!callers.is_empty()).then_some(callers)
+}
+
+pub(super) fn helper_owner_call_candidates_indexed<'a>(
+    owner: &PythonOwner,
+    owners: &[PythonOwner],
+    all_tests: &'a [PythonTest],
+    by_class: Option<&DunderOwnerIndex>,
+) -> Vec<HelperOwnerCallCandidate<'a>> {
+    let callers: Vec<(&PythonOwner, bool)> =
+        if let Some(callers) = dunder_entry_callers(owner, owners, by_class) {
+            callers.into_iter().map(|caller| (caller, false)).collect()
+        } else if !helper_owner_is_unique_top_level_function(owner, owners) {
+            return Vec::new();
+        } else {
+            module_function_callers(owner, owners)
+        };
+    helper_candidates_from_callers(owner, callers, all_tests)
+}
+
+/// Callers of the owner within [`MAX_HELPER_CALLER_DEPTH`] hops, each with
+/// whether its path crossed into the owner's module from another module
+/// (#12955). Same-module callers come first, at every hop.
+fn module_function_callers<'o>(
+    owner: &PythonOwner,
+    owners: &'o [PythonOwner],
+) -> Vec<(&'o PythonOwner, bool)> {
     let cross_module_entries: Vec<&PythonOwner> = {
         let entries = cross_module_callers(owner, owners);
         if entries.len() > MAX_CROSS_MODULE_CALLERS {
@@ -349,10 +442,10 @@ pub(super) fn helper_owner_call_candidates<'a>(
     };
     // (file the name is bound in, bare name, path crossed a module boundary)
     let mut frontier: Vec<(&Path, &str, bool)> = vec![(owner.file.as_path(), &owner.name, false)];
-    let mut callers: Vec<(&PythonOwner, bool)> = Vec::new();
+    let mut callers: Vec<(&'o PythonOwner, bool)> = Vec::new();
     for _ in 0..MAX_HELPER_CALLER_DEPTH {
-        let mut same_module: Vec<(&PythonOwner, bool)> = Vec::new();
-        let mut crossing: Vec<(&PythonOwner, bool)> = Vec::new();
+        let mut same_module: Vec<(&'o PythonOwner, bool)> = Vec::new();
+        let mut crossing: Vec<(&'o PythonOwner, bool)> = Vec::new();
         for caller in owners {
             if caller.is_module_owner()
                 || caller.owner_kind.is_none()
@@ -405,13 +498,21 @@ pub(super) fn helper_owner_call_candidates<'a>(
         }
         frontier = next;
     }
+    // Every same-module caller, at any hop, is scanned before any caller on a
+    // path that crossed a module boundary, so a test both reach keeps the
+    // same-module reading (the fold credits the first caller).
+    callers.sort_by_key(|(_, crossed)| *crossed);
+    callers
+}
+
+fn helper_candidates_from_callers<'a>(
+    owner: &PythonOwner,
+    callers: Vec<(&PythonOwner, bool)>,
+    all_tests: &'a [PythonTest],
+) -> Vec<HelperOwnerCallCandidate<'a>> {
     let mut found: Vec<HelperOwnerCallCandidate<'a>> = Vec::new();
     let mut seen: std::collections::HashSet<(&'a Path, &'a str)> = std::collections::HashSet::new();
     let token = crate::analysis::cancellation::current_token();
-    // Every same-module caller, at any hop, is scanned before any caller on a
-    // path that crossed a module boundary, so a test both reach keeps the
-    // same-module reading (the fold below credits the first caller).
-    callers.sort_by_key(|(_, crossed)| *crossed);
     for (caller, cross_module) in callers {
         // The relation is per-test and pure, so a large workspace scans it
         // on the rayon workers; the first caller to reach a test still wins
@@ -894,10 +995,14 @@ fn bare_name_bound_to_other_module(test: &PythonTest, owner: &PythonOwner) -> bo
             path == module
                 || path.ends_with(&format!(".{module}"))
                 || module.ends_with(&format!(".{path}"))
-        }) || owner
-            .ambiguous_src_modules
-            .iter()
-            .any(|ambiguous| ambiguous.module == module)
+        }) || owner.ambiguous_src_modules.iter().any(|ambiguous| {
+            // A src-layout short name is also an owner path; a project-relative
+            // name (#13675) is the owner's only for a test under its project.
+            ambiguous.module == module
+                && (owner_paths.contains(&ambiguous.module)
+                    || owner.reexport_modules.contains(&ambiguous.module)
+                    || module_name_identifies_owner_for(owner, module, &test.file))
+        })
     };
     let imports_name_from_rival = test.imports.iter().any(|import| {
         import.imported == owner.name
@@ -1615,7 +1720,11 @@ pub(super) fn test_imports_owner_module(test: &PythonTest, owner: &PythonOwner) 
 /// import (`from pkg.cache import Cache as C`), or a member of an imported
 /// owner module (`cache.Cache`). A bare `Cache` with no such import, or one
 /// imported from another module, is a different class.
-fn test_references_owner_class(test: &PythonTest, owner: &PythonOwner, class: &str) -> bool {
+pub(super) fn test_references_owner_class(
+    test: &PythonTest,
+    owner: &PythonOwner,
+    class: &str,
+) -> bool {
     test_uses_owner_class(
         test,
         owner,
@@ -2309,7 +2418,7 @@ fn submodule_receivers_scan(
         format!("{}.{}", import.source_module, import.imported)
     };
     let prefix = format!("{bound}.");
-    owner_module_paths(&owner.file)
+    owner_import_modules_for(owner, test_file)
         .iter()
         .filter_map(|path| {
             if *path == bound {
@@ -2650,7 +2759,7 @@ pub(super) fn import_source_module_matches_owner(
     if import.source_module.is_empty() {
         return false;
     }
-    let names_owner_module = owner_module_paths(&owner.file).contains(&import.source_module)
+    let names_owner_module = owner_import_modules_for(owner, test_file).contains(&import.source_module)
         // `from humanize import naturaldelta`: the package re-exports the
         // owner under its own name, so the package path identifies it too.
         || (import.imported == owner.name && owner.reexport_modules.contains(&import.source_module));

@@ -10,9 +10,10 @@ use super::forwarding_decorator::is_forwarding_decorator;
 use super::literal_patch::{literal_patch_calls, without_calls};
 use super::related_tests::{
     HelperOwnerCallCandidate, MAX_CROSS_MODULE_CALLERS, PythonRelatedCandidate, PythonRelationKind,
-    body_calls_owner, dunder_method_class, import_source_module_matches_owner,
-    is_python_identifier_char, line_prefix_looks_like_comment_or_string, test_imports_owner_module,
-    test_may_reach_owner_class,
+    body_calls_owner, body_exercises_dunder_protocol, dunder_method_class,
+    import_source_module_matches_owner, is_python_identifier_char,
+    line_prefix_looks_like_comment_or_string, test_imports_owner_module,
+    test_may_reach_owner_class, test_references_owner_class,
 };
 use super::sink_alignment::CreditedAssertion;
 use super::source_utils::{SourceText, signature_colon_end};
@@ -20,7 +21,7 @@ use super::{
     PythonImport, PythonOracleShape, PythonOwner, PythonTest, expr_full_name,
     split_python_assignment,
 };
-use crate::domain::{OracleStrength, StaticLimitKind};
+use crate::domain::{OracleStrength, OwnerKind, StaticLimitKind};
 use rustpython_parser::ast::{self, Expr};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -235,10 +236,16 @@ pub(super) fn static_limit_for_focused_change(
     // An independent active relation can still supply its own oracle. The
     // shared matcher withholds assertions and boundary inputs from controlled
     // tests, so those tests cannot lend credit to a weaker active relation.
+    // A test that provably never runs (`never_runs`) is no evidence either
+    // way, so it does not raise the limit: with no other relation the
+    // finding is a gap, like an `#[ignore]`d Rust test.
     if !related_candidates
         .iter()
         .any(|candidate| candidate.relation.uses_oracle())
         && let Some((test, decorator)) = related_candidates.iter().find_map(|candidate| {
+            if super::test_activation::never_runs(candidate.test).is_some() {
+                return None;
+            }
             super::test_activation::activation_control(candidate.test)
                 .map(|decorator| (candidate.test, decorator))
         })
@@ -392,21 +399,63 @@ pub(super) fn implicit_dunder_dispatch_limit(
     if !related_candidates.is_empty() {
         return None;
     }
-    let class = dunder_method_class(owner)?;
-    all_tests
+    if let Some(class) = dunder_method_class(owner) {
+        return all_tests
+            .iter()
+            .any(|test| test_may_reach_owner_class(test, owner, class))
+            .then(|| PythonStaticLimit {
+                kind: StaticLimitKind::DynamicDispatch,
+                evidence: format!(
+                    "static_limit dynamic_dispatch: dunder method `{}` is invoked implicitly by Python syntax",
+                    owner.qualified_name
+                ),
+                missing: format!(
+                    "Static limit `dynamic_dispatch`: `{}` is a dunder method Python invokes through syntax on an instance of `{class}`; tests import `{class}`, its module or its package, or name `{class}`, but the preview adapter cannot bind the instance a test builds to the class, so it does not claim that no test reaches the owner.",
+                    owner.qualified_name
+                ),
+            });
+    }
+    // A helper only a dunder of its own class calls through `self.` /
+    // `cls.` (`Cache.getsizeof` via `__setitem__`, `LFUCache.__touch` via
+    // `__getitem__`) may be reached by that dunder's syntax (#13776). The
+    // reading needs both an import-provenanced reference to the owner's class
+    // and, somewhere in the same test body, the protocol syntax of one of the
+    // reaching dunders. The syntax is not tied to an instance of the owner's
+    // class (a dict subscript counts too); that is accepted because the limit
+    // only withdraws the confident `no_static_path` claim and grants no
+    // relation or credit. A test that only builds the class, or names a
+    // same-named class from another module, keeps `no_static_path`
+    // (RIPR-SPEC-0201).
+    if owner.class_facts.dunder_entries.is_empty()
+        || owner.class_path.is_empty()
+        || !matches!(
+            owner.owner_kind,
+            Some(OwnerKind::Method | OwnerKind::ClassMethod)
+        )
+    {
+        return None;
+    }
+    let class = owner.class_path.as_str();
+    // Name a reaching dunder whose protocol the test actually used.
+    let entry = all_tests
         .iter()
-        .any(|test| test_may_reach_owner_class(test, owner, class))
-        .then(|| PythonStaticLimit {
-            kind: StaticLimitKind::DynamicDispatch,
-            evidence: format!(
-                "static_limit dynamic_dispatch: dunder method `{}` is invoked implicitly by Python syntax",
-                owner.qualified_name
-            ),
-            missing: format!(
-                "Static limit `dynamic_dispatch`: `{}` is a dunder method Python invokes through syntax on an instance of `{class}`; tests import `{class}`, its module or its package, or name `{class}`, but the preview adapter cannot bind the instance a test builds to the class, so it does not claim that no test reaches the owner.",
-                owner.qualified_name
-            ),
-        })
+        .filter(|test| test_references_owner_class(test, owner, class))
+        .find_map(|test| {
+            owner.class_facts.dunder_entries.iter().find(|entry| {
+                body_exercises_dunder_protocol(&test.body_text, std::slice::from_ref(*entry))
+            })
+        })?;
+    Some(PythonStaticLimit {
+        kind: StaticLimitKind::DynamicDispatch,
+        evidence: format!(
+            "static_limit dynamic_dispatch: `{}` is called through `self.` from dunder method `{entry}`, which Python invokes implicitly by syntax",
+            owner.qualified_name
+        ),
+        missing: format!(
+            "Static limit `dynamic_dispatch`: `{}` is reached from dunder method `{entry}` of `{class}` through a same-class call path, and Python invokes that dunder through syntax on an instance of `{class}`; a test references `{class}` through an import of its module and uses the protocol syntax of `{entry}` somewhere in its body (not necessarily on an instance of `{class}`), but the preview adapter cannot bind that syntax to the class, so it does not claim that no test reaches the owner.",
+            owner.qualified_name
+        ),
+    })
 }
 
 pub(super) fn contains_dynamic_dispatch(text: &str) -> bool {
