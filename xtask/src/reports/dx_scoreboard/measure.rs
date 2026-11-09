@@ -548,7 +548,19 @@ pub(super) fn measure_corpus_entry(
 
     let (outcome, detail) = contradiction_outcome(contradictions, &missing_sources);
     samples.push(sample("trust.self_contradictions", outcome, detail));
-    measured_corpus_entry(entry, &editor_base)
+    let mut row = measured_corpus_entry(entry, &editor_base);
+    row["terminal_evidence"] = json!({
+        "schema_version": "1",
+        "commands": ["pilot", "check"],
+        "binary_identity_limitation": binary_sha256.is_none().then_some("binary_sha256_unavailable"),
+        "binary_sha256_before_pilot": binary_sha256,
+        "root_identity_sha256": crate::blind_journey::sha256_hex(subject.root.as_bytes()),
+        "base": subject.base,
+        "pilot_mode": "ready",
+        "check_mode": WARM_CHECK_MODE,
+        "invocations": invocations,
+    });
+    row
 }
 
 /// Retain the workload actually selected by the corpus producer. The effective
@@ -563,17 +575,6 @@ pub(super) fn measured_corpus_entry(entry: &CorpusEntry, base: &str) -> Value {
         "expected_partial": entry.expected_partial,
         "size_tier": entry.size_tier,
         "status": "measured",
-        "terminal_evidence": {
-            "schema_version": "1",
-            "commands": ["pilot", "check"],
-            "binary_identity_limitation": binary_sha256.is_none().then_some("binary_sha256_unavailable"),
-            "binary_sha256_before_pilot": binary_sha256,
-            "root_identity_sha256": crate::blind_journey::sha256_hex(subject.root.as_bytes()),
-            "base": subject.base,
-            "pilot_mode": "ready",
-            "check_mode": WARM_CHECK_MODE,
-            "invocations": invocations,
-        },
     })
 }
 
