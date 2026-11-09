@@ -1941,9 +1941,12 @@ impl DocumentState {
     /// analyzed/saved content identities. A document is quarantined while
     /// its buffer digest differs from the analyzed saved digest. While the
     /// buffer is not a synchronization authority (`buffer_authority_unknown`,
-    /// #1746), the invalid-change quarantine is pinned: the ordinary
-    /// recomputation must not silently lift the fail-closed state that only a
-    /// full replacement or client-provided save text may end.
+    /// #1746), the authority-loss quarantine is pinned under whichever
+    /// reason caused it (`InvalidIncrementalChange`, or
+    /// `DocumentStoreLimitReached` when the store caps refused the buffer,
+    /// #11666): the ordinary recomputation must not silently lift the
+    /// fail-closed state that only a full replacement or client-provided
+    /// save text may end.
     pub(super) fn refresh_quarantine(&mut self) -> QuarantineTransition {
         if self.buffer_authority_unknown {
             let was_quarantined = self.quarantine.is_some();
@@ -2661,6 +2664,13 @@ impl DocumentStore {
                 return state.refresh_quarantine();
             }
 
+            // When the store-wide byte headroom is tighter than the
+            // per-notification limit, keep the changes so a refusal can be
+            // attributed: if they would have applied under the ordinary
+            // limits, the retained-text cap was the cause (#11666).
+            let retry_changes = (change_limits.max_document_bytes
+                < CONTENT_CHANGE_LIMITS.max_document_bytes)
+                .then(|| changes.clone());
             if apply_document_content_changes_within(
                 &mut state.text,
                 changes,
@@ -2669,6 +2679,19 @@ impl DocumentStore {
             )
             .is_err()
             {
+                let refused_by_store_cap = retry_changes.is_some_and(|retry| {
+                    let mut candidate = state.text.clone();
+                    apply_document_content_changes_within(
+                        &mut candidate,
+                        retry,
+                        position_encoding,
+                        CONTENT_CHANGE_LIMITS,
+                    )
+                    .is_ok()
+                });
+                if refused_by_store_cap {
+                    state.store_limit_refused = true;
+                }
                 return invalidate_incremental_document_state(&mut state);
             }
             return state.refresh_quarantine();
@@ -3900,6 +3923,82 @@ mod tests {
                 .is_some_and(|quarantine| quarantine.reason.is_buffer_authority_loss())
         {
             return Err("accepted document must not use an authority-loss quarantine".into());
+        }
+        Ok(())
+    }
+
+    fn reason_of(store: &DocumentStore, uri: &Uri) -> Option<DocumentStalenessReason> {
+        store.state_for_uri(uri).and_then(|state| {
+            state
+                .quarantine
+                .as_ref()
+                .map(|quarantine| quarantine.reason)
+        })
+    }
+
+    fn reversed_range_change(uri: Uri, version: i32) -> DidChangeTextDocumentParams {
+        let mut params = full_replace_params(uri, version, "x");
+        params.content_changes[0].range = Some(tower_lsp_server::ls_types::Range {
+            start: Position {
+                line: 0,
+                character: 5,
+            },
+            end: Position {
+                line: 0,
+                character: 1,
+            },
+        });
+        params
+    }
+
+    #[test]
+    fn store_limit_flag_clears_on_recovery_so_a_later_bad_edit_is_an_edit_failure()
+    -> Result<(), String> {
+        let first = test_uri("file:///workspace/src/a.rs")?;
+        let second = test_uri("file:///workspace/src/b.rs")?;
+        let overflow = test_uri("file:///workspace/src/c.rs")?;
+        let encoding = PositionEncodingKind::UTF16;
+        let mut store = DocumentStore::with_limits(tiny_count_limits());
+        store.open(open_params(first, "fn a() {}"));
+        store.open(open_params(second.clone(), "fn b() {}"));
+        store.open(open_params(overflow.clone(), "fn overflow() {}"));
+        if reason_of(&store, &overflow) != Some(DocumentStalenessReason::DocumentStoreLimitReached)
+        {
+            return Err("overflow placeholder must name the store limit".to_string());
+        }
+        store.close(close_params(second));
+        store.change(
+            full_replace_params(overflow.clone(), 2, "fn recovered() {}"),
+            &encoding,
+        );
+        assert_accepted_text(&store, &overflow, "fn recovered() {}")?;
+        store.change(reversed_range_change(overflow.clone(), 3), &encoding);
+        if reason_of(&store, &overflow) != Some(DocumentStalenessReason::InvalidIncrementalChange) {
+            return Err("a failed edit after recovery must report the edit failure".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn existing_document_refused_at_the_byte_cap_names_the_store_limit() -> Result<(), String> {
+        let uri = test_uri("file:///workspace/src/a.rs")?;
+        let encoding = PositionEncodingKind::UTF16;
+        let mut store = DocumentStore::with_limits(tiny_byte_limits());
+        store.open(open_params(uri.clone(), "aaaaaaaa"));
+        assert_accepted_text(&store, &uri, "aaaaaaaa")?;
+        store.change(
+            full_replace_params(uri.clone(), 2, "bbbbbbbbbbbbbbbbbbbbbbbb"),
+            &encoding,
+        );
+        if reason_of(&store, &uri) != Some(DocumentStalenessReason::DocumentStoreLimitReached) {
+            return Err("replacement past the retained-text cap must name the store limit".into());
+        }
+        // A genuinely bad edit under the same tight headroom stays an edit failure.
+        let other = test_uri("file:///workspace/src/b.rs")?;
+        store.open(open_params(other.clone(), "cc"));
+        store.change(reversed_range_change(other.clone(), 2), &encoding);
+        if reason_of(&store, &other) != Some(DocumentStalenessReason::InvalidIncrementalChange) {
+            return Err("a rejected range must not be blamed on the store cap".into());
         }
         Ok(())
     }
