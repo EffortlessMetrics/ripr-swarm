@@ -1531,6 +1531,26 @@ mutant calibrates the rule; ripr reports only the static shape.
     keyword arguments. Over-refusal is accepted: a wrong substituted assertion
     would be a wrong credit.
 
+33. **A name the test package binds by import reaches what it binds**
+    (#13927). `from . import X` (or `from P import X`, or `as alias`) where
+    `X` is not a module file or directory of package `P` reads as the import
+    `P/__init__.py` performed to bind `X`: `import tomli as tomllib` there
+    makes `from . import tomllib` in a test read as `import tomli as
+    tomllib`, and `from M import Y as X` there reads as `from M import Y`
+    under the test's local name. Every reach and oracle reader then sees the
+    same evidence the direct import gives. The initializer must be read and
+    parse and bind `X` exactly once, through one unconditional top-level
+    import statement with one alias of that name; up to three package
+    initializers are followed. The import keeps its unresolved reading (no
+    link) when: the initializer is missing, unread or unparsable; `X` is
+    also bound by an assignment, `def`, `class`, loop, `with`, `del`,
+    `try`/`if` branch or a second import; the initializer has a star import
+    or spells a dynamic namespace write (`global`, `globals(`, `vars(`,
+    `setattr(`, `sys.modules`, `__getattr__`, `exec(`, `__dict__`); or `P`
+    has a submodule or subpackage named `X`, which an import elsewhere could
+    load over the binding. This runs after the rule 32 helper substitution,
+    which keeps its own module-attribute rule.
+
 ### Verdict ladder
 
 No finding is produced for docstring, comment or blank changes, header-only
@@ -2326,6 +2346,8 @@ strong assertions is retained.
 - `oracles.rs` (`is_property_compare`: idempotence and loop-variable identity
   checks, rule 25), pinned by `property_assertion_tests.rs` and the
   `py-grid-*-property` corpus cases.
+- `crates/ripr/src/analysis/language/python/package_aliases.rs`: rule 33,
+  pinned by `package_alias_tests.rs`.
 - `crates/ripr/src/analysis/language/python/param_fixtures.rs` (literal
   `params=` rows and the unpack rewrite) with `fixtures.rs` (isolation) and
   `static_limits.rs` (direct parametrize argnames): L8, example 42.
