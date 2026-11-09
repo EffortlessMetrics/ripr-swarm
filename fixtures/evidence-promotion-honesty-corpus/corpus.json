@@ -282,6 +282,10 @@
         {
           "type": "expected_class",
           "class": "weakly_exposed"
+        },
+        {
+          "type": "expected_finding_owner",
+          "owner": "python:coarse/fees.py::sign_fee"
         }
       ]
     },
@@ -305,6 +309,10 @@
         {
           "type": "expected_class",
           "class": "weakly_exposed"
+        },
+        {
+          "type": "expected_finding_owner",
+          "owner": "python:coarse/fees.py::residue_fee"
         }
       ]
     },
@@ -328,6 +336,10 @@
         {
           "type": "expected_class",
           "class": "weakly_exposed"
+        },
+        {
+          "type": "expected_finding_owner",
+          "owner": "python:coarse/fees.py::length_fee"
         }
       ]
     },

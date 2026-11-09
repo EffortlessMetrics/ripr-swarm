@@ -316,6 +316,12 @@ pub(crate) enum EvidencePromotionSemanticAssertion {
     ExpectedFindingCount {
         count: u64,
     },
+    /// Every finding's `probe.owner` must equal `owner`, so a re-blessed
+    /// report whose weak finding belongs to a different changed owner cannot
+    /// satisfy a count/class pin. Zero findings is a violation, not a pass.
+    ExpectedFindingOwner {
+        owner: String,
+    },
     /// Judged against a repo-exposure report's `seams[]`: the seam whose
     /// `owner` matches and whose `expression` contains the selector must pin
     /// the given `grip_class` and `evidence.reach`. A selector that matches
@@ -870,6 +876,11 @@ fn evidence_promotion_parse_assertion(
         ),
         "expected_finding_count" => Ok(EvidencePromotionSemanticAssertion::ExpectedFindingCount {
             count: evidence_promotion_required_assertion_u64(case_id, index, assertion, "count")?,
+        }),
+        "expected_finding_owner" => Ok(EvidencePromotionSemanticAssertion::ExpectedFindingOwner {
+            owner: evidence_promotion_required_assertion_string(
+                case_id, index, assertion, "owner",
+            )?,
         }),
         "expected_repo_seam_grip" => {
             let grip_class = evidence_promotion_required_assertion_string(
@@ -2308,6 +2319,26 @@ pub(crate) fn evidence_promotion_semantic_violations_scoped(
                     violations.push(format!(
                         "{case_label}: `expected_finding_count` requires {count} finding(s), found {observed}"
                     ));
+                }
+            }
+            EvidencePromotionSemanticAssertion::ExpectedFindingOwner { owner } => {
+                if findings.is_empty() {
+                    violations.push(format!(
+                        "{case_label}: `expected_finding_owner` `{owner}` requires at least one finding"
+                    ));
+                }
+                for finding in &findings {
+                    let observed = finding
+                        .get("probe")
+                        .and_then(|probe| probe.get("owner"))
+                        .and_then(Value::as_str)
+                        .unwrap_or("<missing>");
+                    if observed != owner.as_str() {
+                        let finding_id = evidence_promotion_finding_id(finding);
+                        violations.push(format!(
+                            "{case_label}: `expected_finding_owner` requires probe owner `{owner}`, but finding `{finding_id}` has owner `{observed}`"
+                        ));
+                    }
                 }
             }
             EvidencePromotionSemanticAssertion::ExpectedRelatedTest {

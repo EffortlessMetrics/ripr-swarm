@@ -10,10 +10,16 @@ fn python_coarse_contracts_reject_exposed_and_empty_reports() -> Result<(), Stri
     )?)
     .map_err(|error| error.to_string())?;
     let cases = corpus["cases"].as_array().ok_or("missing corpus cases")?;
-    for id in [
-        "python_coarse_sign",
-        "python_coarse_residue",
-        "python_coarse_text_length",
+    for (id, owner) in [
+        ("python_coarse_sign", "python:coarse/fees.py::sign_fee"),
+        (
+            "python_coarse_residue",
+            "python:coarse/fees.py::residue_fee",
+        ),
+        (
+            "python_coarse_text_length",
+            "python:coarse/fees.py::length_fee",
+        ),
     ] {
         let case = cases
             .iter()
@@ -44,6 +50,14 @@ fn python_coarse_contracts_reject_exposed_and_empty_reports() -> Result<(), Stri
                 true,
             )
         };
+        assert!(
+            assertions.iter().any(|assertion| matches!(
+                assertion,
+                EvidencePromotionSemanticAssertion::ExpectedFindingOwner { owner: pinned }
+                    if pinned.as_str() == owner
+            )),
+            "{id}: case must pin the changed owner {owner}"
+        );
         assert!(judge(&report).is_empty(), "{id}: {:?}", judge(&report));
         let findings = report["findings"]
             .as_array_mut()
@@ -62,6 +76,20 @@ fn python_coarse_contracts_reject_exposed_and_empty_reports() -> Result<(), Stri
                 .iter()
                 .any(|error| error.contains("expected_class")),
             "{id}: false class escaped the literal class pin: {promoted:?}"
+        );
+        // The weak finding must belong to the changed owner: a wrong-owner
+        // finding with the same class and count is not an equivalent report.
+        let findings = report["findings"]
+            .as_array_mut()
+            .ok_or("missing findings")?;
+        findings[0]["classification"] = serde_json::json!("weakly_exposed");
+        findings[0]["probe"]["owner"] = serde_json::json!("python:coarse/fees.py::other_fee");
+        let wrong_owner = judge(&report);
+        assert!(
+            wrong_owner
+                .iter()
+                .any(|error| error.contains("expected_finding_owner")),
+            "{id}: wrong-owner finding escaped the owner pin: {wrong_owner:?}"
         );
         report["findings"] = serde_json::json!([]);
         let empty = judge(&report);
