@@ -875,6 +875,13 @@ mod parser_state {
 
             let Some(path) = parse_new_path_marker(raw) else {
                 if self.saw_old_path_marker && is_dev_null_new_path_marker(raw) {
+                    if self.symlink_section
+                        && let Some(old) = self.section_old_path.clone()
+                    {
+                        // A deleted symlink has no new path; count it by its
+                        // old path so a type change's link half is disclosed.
+                        self.symlink_paths.insert(old);
+                    }
                     self.deletion_section = true;
                     self.record_deleted_file_if_ready();
                 }
