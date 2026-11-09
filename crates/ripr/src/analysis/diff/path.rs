@@ -1649,6 +1649,7 @@ mod tests {
                             4 => 0x20u8..=0x7e,
                             1 => 1u8..=0x1f,
                             2 => 0x80u8..=0xff,
+                            1 => proptest::strategy::Just(b'.'),
                             1 => proptest::strategy::Just(b'"'),
                             1 => proptest::strategy::Just(b'\\'),
                         ],
@@ -1699,7 +1700,7 @@ mod tests {
             // The oracle strips exactly one `b/` and then applies the shared
             // segment rules; a leading `/` is a root and rejects.
             let body = token.strip_prefix("b/").unwrap_or(&token);
-            let expected = if body.starts_with('/') || token == "/dev/null" {
+            let expected = if body.starts_with('/') {
                 None
             } else {
                 expected_confined(body.as_bytes())
