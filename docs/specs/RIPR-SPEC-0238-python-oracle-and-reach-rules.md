@@ -384,6 +384,26 @@ one changed raise only (#12952); the general class-only table row stays weak.
    Decorators, fixtures, parametrization, deferred bodies, dynamic namespace
    access, visible class/framework/builtin writes and unresolved identity
    refuse this reading.
+   Builtin classes (#13869): either class may instead be a builtin whose
+   hierarchy is fixed and whose constructor accepts any positional constants
+   and returns exactly that class: `ArithmeticError`, `AssertionError`,
+   `AttributeError`, `BufferError`, `EOFError`, `ImportError`,
+   `LookupError`, `NameError`, `RuntimeError`, `TypeError`, `ValueError`
+   and their listed subclasses `FloatingPointError`, `OverflowError`,
+   `ZeroDivisionError`, `ModuleNotFoundError`, `IndexError`, `KeyError`,
+   `UnboundLocalError`, `NotImplementedError` and `RecursionError`. The
+   name must be unbound in the owner module before and after the edit, not
+   written by another workspace file, and neither bound nor star-imported by
+   the test. The two classes must be disjoint: neither is the other's
+   listed ancestor (`KeyError` to `LookupError` stays weak), and a local
+   sibling class is disjoint from every listed builtin. `OSError` and its
+   subclasses (an `errno` argument selects a subclass), the `Unicode*Error`
+   classes (fixed constructor arity), `StopIteration` and `SyntaxError` are
+   not listed and keep the general reading.
+   The context may name either class. Naming the new class passes after the
+   edit and fails before; naming the class raised before the edit (a test
+   written before the diff) passes before and fails after. Both distinguish
+   the edit, and the evidence names which class the context rejects.
    Module identity needs a separate positive per-file admission, defaulting
    to false and computed from the raw foreign-module view before legacy path
    refusal flags. Every supported dotted spelling is checked at all known
@@ -1322,10 +1342,15 @@ mutant calibrates the rule; ripr reports only the static shape.
     (`truncate("abc", 5)` is `'abc'` before and after an off-by-one cut),
     so a closed evaluator runs the example on the old and the new function
     and keeps it only when the old result equals the expected value and the
-    new one differs; a function it cannot run (anything beyond a single
-    `return` over integer, boolean and printable-ASCII string operations)
-    drops the example; strings are capped at 4 KiB and expressions at 48
-    levels so a reviewed diff cannot exhaust the analyzer. A credited
+    new one differs. A function it cannot run (anything beyond a single
+    `return` over integer, boolean and printable-ASCII string operations, or
+    a decorated one) leaves the example undecided: it is kept as an opaque
+    comparison (`assert_doctest_output_matches(call, expected)`, an unknown
+    custom helper), so the collected example reaches the owner and the
+    finding abstains (`static_unknown`, `opaque_custom_assertion_helper`)
+    instead of claiming no test path (#13869). An example that calls another
+    function is not read for the owner. Strings are capped at 4 KiB and
+    expressions at 48 levels so a reviewed diff cannot exhaust the analyzer. A credited
     example advertises no verification command, because pytest has no node
     for the synthetic test (`py-idioms-doctest-separator` credited,
     `py-idioms-doctest-short-input` stays a gap, #9619).
@@ -1582,7 +1607,9 @@ rejected alternative. Any can be reversed later without touching the rest.
    does not resolve that hierarchy. Adopted for #12952: rule 6's bounded
    sibling-class proof resolves both identities and the exact changed-raise
    activation, while subtype/base and unknown-identity controls keep the
-   general reading weak.
+   general reading weak. Extended for #13869: the fixed builtin hierarchy is resolved
+   statically for a listed set of builtins, so a swap between two disjoint
+   builtins (`ValueError` to `TypeError`) reads the same way.
 4. **`raises(...) as exc` with a value assertion on `exc.value`.**
    Adopted (amended 2026-10-04, #6603): rule 14 promotes the bound
    `with` item to `exact_error_variant` / strong when the test compares
@@ -1717,7 +1744,7 @@ rejected alternative. Any can be reversed later without touching the rest.
 
 ## Required Evidence
 
-- The eight `specific_exception_variant_*` classifier tests in
+- The `specific_exception_variant_*` and `a_builtin_exception_swap_*` classifier tests in
   `crates/ripr/src/analysis/language/python/exception_variant_tests.rs` pin
   rule 6's class-only credit and refusal cases: exact context retention,
   sibling versus subtype/base identity, import/rebinding custody, builtin

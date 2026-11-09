@@ -41,8 +41,12 @@ fn classify_with_context(
     let file = Path::new("src/fx/core.py");
     let owners = extract_owners(file, source);
     let tests = extract_tests(Path::new("tests/test_core.py"), tests);
-    if !owners.iter().any(|owner| owner.name == "parse") || tests.is_empty() {
-        return Err("the fixture must extract parse and at least one test".to_string());
+    if !owners
+        .iter()
+        .any(|owner| owner.name == "parse" || owner.name == "checked")
+        || tests.is_empty()
+    {
+        return Err("the fixture must extract its owner and at least one test".to_string());
     }
     let line = source
         .lines()
@@ -181,8 +185,36 @@ fn specific_exception_variant_preserves_the_selected_context() -> Check {
 }
 
 #[test]
+fn specific_exception_variant_credits_the_class_raised_before_the_edit() -> Check {
+    let finding = classify(
+        SOURCE,
+        &test_source("EmptyError", "'abcdefghijklmnop'"),
+        OLD,
+        NEW,
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    assert!(
+        finding.evidence.iter().any(|evidence| {
+            evidence.starts_with("exception_variant_read:")
+                && evidence.contains("rejects `TooLongError` and accepts `EmptyError`")
+        }),
+        "{finding:?}"
+    );
+    // A raise the literal input does not reach is still not read.
+    assert_no_credit(&classify(
+        SOURCE,
+        &test_source("EmptyError", "'abc'"),
+        OLD,
+        NEW,
+    )?);
+    Ok(())
+}
+
+#[test]
 fn specific_exception_variant_declines_non_discriminating_types() -> Check {
-    for expected in ["Exception", "EmptyError", "(TooLongError, Exception)"] {
+    // `EmptyError`, the class raised before the edit, is a discriminator in
+    // the other direction (passes before, fails after) and is credited.
+    for expected in ["Exception", "(TooLongError, Exception)"] {
         assert_no_credit(&classify(
             SOURCE,
             &test_source(expected, "'abcdefghijklmnop'"),
@@ -479,5 +511,180 @@ fn specific_exception_variant_requires_verified_module_import() -> Check {
             assert_no_credit(&finding);
         }
     }
+    Ok(())
+}
+
+// Builtin exception classes (#13869): the hierarchy is fixed, so a class-only
+// context naming one of two disjoint builtins discriminates the swap.
+const BUILTIN_SOURCE: &str = "def checked(total):\n    if total < 0:\n        raise ValueError(\"negative\")\n    return total\n";
+const BUILTIN_OLD: &str = "        raise ValueError(\"negative\")";
+const BUILTIN_NEW: &str = "        raise TypeError(\"negative\")";
+
+fn builtin_test(imports: &str, expected: &str) -> String {
+    format!(
+        "import pytest\nfrom fx.core import checked\n{imports}\ndef test_negative():\n    with pytest.raises({expected}):\n        checked(-1)\n"
+    )
+}
+
+/// The owner as it stands after the edit to `new`.
+fn builtin_swap(new: &str) -> String {
+    BUILTIN_SOURCE.replace(BUILTIN_OLD, new)
+}
+
+fn assert_builtin_credit(finding: &Finding, rejected: &str, accepted: &str) {
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    assert_eq!(
+        finding.alignment_reason.as_deref(),
+        Some("strong_oracle_observes_changed_exception_variant"),
+        "{finding:?}"
+    );
+    let read = format!("rejects `{rejected}` and accepts `{accepted}`");
+    assert!(
+        finding
+            .evidence
+            .iter()
+            .any(|evidence| evidence.starts_with("exception_variant_read:")
+                && evidence.contains(&read)),
+        "{finding:?}"
+    );
+    assert!(
+        finding
+            .evidence
+            .iter()
+            .all(|evidence| !evidence.starts_with("suggested_repair_action:")),
+        "an exact builtin variant must not invite repair: {finding:?}"
+    );
+}
+
+#[test]
+fn a_builtin_exception_swap_is_credited_for_either_pinned_class() -> Check {
+    let source = BUILTIN_SOURCE.replace(BUILTIN_OLD, BUILTIN_NEW);
+    // The test updated with the diff pins the new class.
+    let finding = classify(
+        &source,
+        &builtin_test("", "TypeError"),
+        BUILTIN_OLD,
+        BUILTIN_NEW,
+    )?;
+    assert_builtin_credit(&finding, "ValueError", "TypeError");
+    // The test written before the diff pins the old class; it fails after.
+    let finding = classify(
+        &source,
+        &builtin_test("", "ValueError"),
+        BUILTIN_OLD,
+        BUILTIN_NEW,
+    )?;
+    assert_builtin_credit(&finding, "TypeError", "ValueError");
+    // Sibling builtins under one parent are disjoint too.
+    let old = "        raise IndexError(\"negative\")";
+    let new = "        raise KeyError(\"negative\")";
+    let finding = classify(&builtin_swap(new), &builtin_test("", "KeyError"), old, new)?;
+    assert_builtin_credit(&finding, "IndexError", "KeyError");
+    Ok(())
+}
+
+#[test]
+fn a_builtin_exception_swap_declines_classes_that_accept_both() -> Check {
+    let source = BUILTIN_SOURCE.replace(BUILTIN_OLD, BUILTIN_NEW);
+    for expected in [
+        "Exception",
+        "BaseException",
+        "(ValueError, TypeError)",
+        "LookupError",
+    ] {
+        assert_no_credit(&classify(
+            &source,
+            &builtin_test("", expected),
+            BUILTIN_OLD,
+            BUILTIN_NEW,
+        )?);
+    }
+    // A parent and its subclass: `pytest.raises(LookupError)` accepts KeyError,
+    // and `pytest.raises(KeyError)` before the edit is not a parent reading.
+    for (old, new, expected) in [
+        ("KeyError", "LookupError", "LookupError"),
+        ("LookupError", "KeyError", "LookupError"),
+        ("LookupError", "KeyError", "KeyError"),
+        ("ZeroDivisionError", "ArithmeticError", "ArithmeticError"),
+        ("NotImplementedError", "RuntimeError", "RuntimeError"),
+    ] {
+        let old_line = format!("        raise {old}(\"negative\")");
+        let new_line = format!("        raise {new}(\"negative\")");
+        assert_no_credit(&classify(
+            &builtin_swap(&new_line),
+            &builtin_test("", expected),
+            &old_line,
+            &new_line,
+        )?);
+    }
+    // Unlisted builtins: an errno argument can make `OSError(...)` construct a
+    // subclass, and the Unicode errors have a fixed constructor arity.
+    for (old, new) in [
+        ("OSError", "ValueError"),
+        ("FileNotFoundError", "PermissionError"),
+        ("UnicodeDecodeError", "ValueError"),
+        ("StopIteration", "ValueError"),
+    ] {
+        let old_line = format!("        raise {old}(\"negative\")");
+        let new_line = format!("        raise {new}(\"negative\")");
+        assert_no_credit(&classify(
+            &builtin_swap(&new_line),
+            &builtin_test("", new),
+            &old_line,
+            &new_line,
+        )?);
+    }
+    Ok(())
+}
+
+#[test]
+fn a_builtin_exception_swap_requires_unshadowed_builtin_names() -> Check {
+    let source = BUILTIN_SOURCE.replace(BUILTIN_OLD, BUILTIN_NEW);
+    // The owner module rebinds the name.
+    for prefix in [
+        "TypeError = ValueError\n",
+        "from errors import TypeError\n",
+        "import builtins\nbuiltins.TypeError = ValueError\n",
+        "from errors import *\n",
+    ] {
+        let shadowed = format!("{prefix}{source}");
+        assert_no_credit(&classify(
+            &shadowed,
+            &builtin_test("", "TypeError"),
+            BUILTIN_OLD,
+            BUILTIN_NEW,
+        )?);
+    }
+    // The test binds the name to something else.
+    for imports in [
+        "from errors import TypeError\n",
+        "from errors import ValueError\n",
+        "from errors import *\n",
+    ] {
+        assert_no_credit(&classify(
+            &source,
+            &builtin_test(imports, "TypeError"),
+            BUILTIN_OLD,
+            BUILTIN_NEW,
+        )?);
+    }
+    let rebinding = "import pytest\nfrom fx.core import checked\n\ndef test_negative():\n    TypeError = ValueError\n    with pytest.raises(TypeError):\n        checked(-1)\n";
+    assert_no_credit(&classify(&source, rebinding, BUILTIN_OLD, BUILTIN_NEW)?);
+    // One module-level binding in the test file shadows the builtin too.
+    for binding in [
+        "TypeError = Exception\n",
+        "class TypeError(Exception):\n    pass\n",
+        "ValueError = TypeError\n",
+        "if TypeError := Exception:\n    pass\n",
+        "_ = [TypeError := Exception]\n",
+    ] {
+        let shadowed = format!(
+            "import pytest\nfrom fx.core import checked\n{binding}\ndef test_negative():\n    with pytest.raises(TypeError):\n        checked(-1)\n"
+        );
+        assert_no_credit(&classify(&source, &shadowed, BUILTIN_OLD, BUILTIN_NEW)?);
+    }
+    // An input that does not reach the edited raise is not a discriminator.
+    let unreached = "import pytest\nfrom fx.core import checked\n\ndef test_negative():\n    with pytest.raises(TypeError):\n        checked(1)\n";
+    assert_no_credit(&classify(&source, unreached, BUILTIN_OLD, BUILTIN_NEW)?);
     Ok(())
 }

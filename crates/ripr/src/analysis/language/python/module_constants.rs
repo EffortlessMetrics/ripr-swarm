@@ -671,7 +671,12 @@ pub(super) fn with_module_rebinding(
     module_names.sort();
     module_names.dedup();
     let module_names = Arc::new(module_names);
+    // `collect_scope_bindings` does not record `:=` targets, and a module
+    // statement such as `if TypeError := Exception: pass` binds a module
+    // name. Every walrus target in the source is counted as bound: a
+    // function-local one only makes a consumer decline (#13869).
     let mut module_bound = module.names.clone();
+    module_bound.extend(walrus_target_names(source).into_iter().map(str::to_string));
     module_bound.sort();
     module_bound.dedup();
     let module_bound = Arc::new(module_bound);

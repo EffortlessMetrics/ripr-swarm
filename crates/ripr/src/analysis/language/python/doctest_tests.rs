@@ -19,11 +19,14 @@
 //! An exact-value oracle alone does not say the example notices the edit
 //! (`truncate("abc", 5)` returns `'abc'` with or without an off-by-one cut), so
 //! an example is kept only when running it distinguishes the old function from
-//! the new one ([`super::doctest_eval`]); an example the evaluator cannot run
-//! is dropped. An example is read at all only when it is certain to be that
+//! the new one ([`super::doctest_eval`]). An example the evaluator cannot run
+//! still calls the owner and compares its output, so it is kept as an opaque
+//! comparison: it reaches the owner, earns no credit and asks for no repair
+//! (#13869). An example is read at all only when it is certain to be that
 //! assertion:
 //!
-//! - the docstring belongs to an undecorated top-level `def` and every example
+//! - the docstring belongs to a top-level `def` (a decorated one is never
+//!   evaluated, only kept as an opaque comparison) and every example
 //!   in it is one `>>>` line, a call of a bare name with literal arguments,
 //!   followed by one expected line equal to the `repr` of a string, integer or
 //!   boolean. Any other example (a statement, a continuation, a trace, `...`,
@@ -57,7 +60,8 @@ const MAX_CONFIG_BYTES: u64 = 64 * 1024;
 
 /// The tests the doctest examples of changed module `file` state: examples of
 /// the new source that also stand in the old source, that pytest collects and
-/// whose result differs between the old and the new function.
+/// whose result differs between the old and the new function (an exact
+/// assertion), or that the evaluator cannot run (an opaque comparison).
 pub(super) fn doctest_tests(
     file: &Path,
     new_source: &str,
@@ -107,10 +111,8 @@ pub(super) fn doctest_tests(
             continue;
         };
         let old_examples = examples_of(old_function, &old_text, old_source).unwrap_or_default();
-        let (Some(new_body), Some(old_body)) = (Function::of(function), Function::of(old_function))
-        else {
-            continue;
-        };
+        // A body the evaluator cannot run leaves every example undecided.
+        let bodies = Function::of(function).zip(Function::of(old_function));
         for example in new_examples {
             // The example must have been there before the diff.
             if !old_examples
@@ -123,37 +125,39 @@ pub(super) fn doctest_tests(
             if count > MAX_EXAMPLES_PER_MODULE {
                 return tests;
             }
-            if !example_notices_edit(&example, &old_body, &new_body, name) {
+            if !example.calls(name) {
                 continue;
             }
-            if let Some(test) = example_test(file, &import_module, name, &example) {
-                tests.push(test);
-            }
+            let decided = bodies.as_ref().and_then(|(new_body, old_body)| {
+                example_notices_edit(&example, old_body, new_body, name)
+            });
+            let test = match decided {
+                Some(true) => example_test(file, &import_module, name, &example),
+                Some(false) => None,
+                // A collected example the evaluator cannot run still calls the
+                // owner and compares its output; reading nothing would claim
+                // no test path (#13869). It stays an opaque comparison.
+                None => undecided_example_test(file, &import_module, name, &example),
+            };
+            tests.extend(test);
         }
     }
     tests
 }
 
 /// Whether the example, run against the old and the new function, passes on
-/// the old and fails on the new. Anything the evaluator cannot run is `false`.
+/// the old and fails on the new; `None` when the evaluator cannot run it.
 fn example_notices_edit(
     example: &Example,
     old_function: &Function<'_>,
     new_function: &Function<'_>,
     name: &str,
-) -> bool {
-    let Some(arguments) = example.arguments(name) else {
-        return false;
-    };
-    let Some(expected) = example.expected_value() else {
-        return false;
-    };
-    let (Some(before), Some(after)) =
-        (old_function.call(&arguments), new_function.call(&arguments))
-    else {
-        return false;
-    };
-    before == expected && after != expected
+) -> Option<bool> {
+    let arguments = example.arguments(name)?;
+    let expected = example.expected_value()?;
+    let before = old_function.call(&arguments)?;
+    let after = new_function.call(&arguments)?;
+    Some(before == expected && after != expected)
 }
 
 /// Whether pytest collects the doctests of `file` (RIPR-SPEC-0238 rule 26).
@@ -527,6 +531,12 @@ struct Example {
 }
 
 impl Example {
+    /// Whether the example's call names `name` directly.
+    fn calls(&self, name: &str) -> bool {
+        matches!(parse_expression(&self.call), Some(Expr::Call(call))
+            if matches!(call.func.as_ref(), Expr::Name(callee) if callee.id.as_str() == name))
+    }
+
     /// The literal arguments of `name(...)`, in call order.
     fn arguments(&self, name: &str) -> Option<Vec<Value>> {
         let Expr::Call(call) = parse_expression(&self.call)? else {
@@ -646,8 +656,13 @@ fn example_test(
         "from {import_module} import {name}\n\n\ndef {test_name}():\n    assert (\n        {}\n    ) == {}\n",
         example.call, example.expected
     );
+    synthetic_test(file, example, &synthetic)
+}
+
+/// Extract the one test of `synthetic`, placed at the example's line.
+fn synthetic_test(file: &Path, example: &Example, synthetic: &str) -> Option<PythonTest> {
     let path = synthetic_path(file, example.line);
-    let mut tests = extract_source_facts(&path, &synthetic).tests;
+    let mut tests = extract_source_facts(&path, synthetic).tests;
     if tests.len() != 1 {
         return None;
     }
@@ -658,6 +673,33 @@ fn example_test(
         assertion.line = example.line;
     }
     Some(test)
+}
+
+/// The test an example states when the evaluator cannot run it: the owner
+/// call compared by the doctest runner, which ripr does not evaluate. The
+/// comparison is an opaque assertion helper, so the example reaches the owner
+/// without an oracle ripr can credit or call weak.
+fn undecided_example_test(
+    file: &Path,
+    import_module: &str,
+    name: &str,
+    example: &Example,
+) -> Option<PythonTest> {
+    let test_name = format!("test_doctest_line_{}", example.line);
+    let synthetic = format!(
+        "from {import_module} import {name}\n\n\ndef {test_name}():\n    assert_doctest_output_matches(\n        {}\n        ,\n        {},\n    )\n",
+        example.call,
+        python_string_literal(&example.expected)?
+    );
+    synthetic_test(file, example, &synthetic)
+}
+
+/// `text` as a Python string literal, for printable ASCII without a backslash
+/// (the doctest reader admits no backslash); anything else is not written.
+fn python_string_literal(text: &str) -> Option<String> {
+    text.chars()
+        .all(|ch| (' '..='~').contains(&ch) && ch != '\\')
+        .then(|| format!("\"{}\"", text.replace('"', "\\\"")))
 }
 
 /// A path no file has, under a `tests` directory so the test-file predicate

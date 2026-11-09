@@ -1,10 +1,14 @@
-//! A class-only `pytest.raises` can distinguish a changed raised type (#12952).
+//! A class-only `pytest.raises` can distinguish a changed raised type (#12952,
+//! builtin classes #13869).
 //!
 //! This is a finding-specific reading, not a stronger grade for arbitrary
-//! exception names. Two inert sibling classes must directly extend the
-//! unshadowed builtin `Exception`, and the test must import the new class and
-//! owner without aliases from the owner's module. Its own `raises` context
-//! must call the owner with literal inputs that reach the exact edited raise.
+//! exception names. For local classes, two inert sibling classes must directly
+//! extend the unshadowed builtin `Exception`, and the test must import the new
+//! class and owner without aliases from the owner's module. For builtin
+//! classes, the two must be disjoint in the builtin hierarchy, the context may
+//! name either one, and neither name may be imported, bound or shadowed in the
+//! owner or test module. Its own `raises` context must call the owner with
+//! literal inputs that reach the exact edited raise.
 //! Unknown bindings, class behavior, test activation or function flow grant
 //! no credit. The shared repair validator is unchanged.
 
@@ -52,6 +56,9 @@ pub(super) struct ExceptionVariantCredit<'a> {
     pub(super) assertion: &'a PythonAssertion,
     pub(super) old_type: String,
     pub(super) new_type: String,
+    /// The context names the type raised before the edit (it fails after);
+    /// otherwise it names the new type (it fails before).
+    pub(super) pins_old: bool,
 }
 
 pub(super) fn exception_variant_credits<'a>(
@@ -114,15 +121,37 @@ fn credits<'a>(
         || ["Exception", "pytest", "raises"]
             .iter()
             .any(|name| module_owner.foreign_writes.may_rebind(name, edit.file))
-        || names.iter().any(|name| {
-            !new_facts.bound_once(name)
-                || !old_facts.bound_once(name)
-                || module_owner.foreign_writes.may_rebind(name, edit.file)
-        })
-        || ![&new_module, &old_module].iter().all(|module| {
-            plain_exception(&module.body, &old_type) && plain_exception(&module.body, &new_type)
-        })
+        || names
+            .iter()
+            .any(|name| module_owner.foreign_writes.may_rebind(name, edit.file))
+        || !new_facts.bound_once(&owner.name)
+        || !old_facts.bound_once(&owner.name)
     {
+        return None;
+    }
+    // Each raised class is either a plain sibling of `Exception` defined once
+    // in the module, or an untouched builtin whose hierarchy is fixed.
+    let kinds = [old_type.as_str(), new_type.as_str()].map(|name| {
+        let builtin = builtin_exception_ancestors(name).is_some()
+            && new_facts.unbound(name)
+            && old_facts.unbound(name);
+        let local = new_facts.bound_once(name)
+            && old_facts.bound_once(name)
+            && [&new_module, &old_module]
+                .iter()
+                .all(|module| plain_exception(&module.body, name));
+        if builtin {
+            Some(ClassKind::Builtin)
+        } else if local {
+            Some(ClassKind::Local)
+        } else {
+            None
+        }
+    });
+    let [Some(old_kind), Some(new_kind)] = kinds else {
+        return None;
+    };
+    if !disjoint(&old_type, old_kind, &new_type, new_kind) {
         return None;
     }
     let source = SourceText::new(edit.new_source);
@@ -154,9 +183,6 @@ fn credits<'a>(
         .filter(|candidate| candidate.relation.uses_oracle())
     {
         let test = candidate.test;
-        if !test_bindings_intact(test, owner, &old_type, &new_type) {
-            continue;
-        }
         let Ok(Mod::Module(module)) = parse_module_result(&test.file, &test.body_text) else {
             continue;
         };
@@ -187,7 +213,23 @@ fn credits<'a>(
             let [Expr::Name(expected)] = raises.args.as_slice() else {
                 break;
             };
-            if expected.id.as_str() != new_type || !raises.keywords.is_empty() {
+            let (pins_old, expected_kind) = if expected.id.as_str() == new_type {
+                (false, new_kind)
+            } else if expected.id.as_str() == old_type {
+                (true, old_kind)
+            } else {
+                break;
+            };
+            if !raises.keywords.is_empty()
+                || !test_bindings_intact(
+                    test,
+                    owner,
+                    &old_type,
+                    &new_type,
+                    expected.id.as_str(),
+                    expected_kind,
+                )
+            {
                 break;
             }
             let [Stmt::Expr(body)] = context.body.as_slice() else {
@@ -224,6 +266,7 @@ fn credits<'a>(
                 assertion,
                 old_type: old_type.clone(),
                 new_type: new_type.clone(),
+                pins_old,
             });
             break;
         }
@@ -342,6 +385,8 @@ fn test_bindings_intact(
     owner: &PythonOwner,
     old_type: &str,
     new_type: &str,
+    expected: &str,
+    expected_kind: ClassKind,
 ) -> bool {
     let rebinding = &test.constant_rebinding;
     let owner_modules = owner_module_paths(&owner.file);
@@ -384,12 +429,75 @@ fn test_bindings_intact(
                 && import.alias == owner.name
                 && owner_modules.contains(&import.source_module)
                 && import_source_module_matches_owner(import, owner, &test.file)
-                && test.imports.iter().any(|class_import| {
-                    class_import.imported == new_type
-                        && class_import.alias == new_type
-                        && class_import.source_module == import.source_module
-                })
+                && match expected_kind {
+                    // A local class is the owner module's own definition.
+                    ClassKind::Local => test.imports.iter().any(|class_import| {
+                        class_import.imported == expected
+                            && class_import.alias == expected
+                            && class_import.source_module == import.source_module
+                    }),
+                    // A builtin is read only when the test module binds
+                    // neither name, even once (`TypeError = Exception`).
+                    ClassKind::Builtin => {
+                        !rebinding.module_opaque
+                            && !rebinding
+                                .module_bound
+                                .iter()
+                                .any(|bound| bound == old_type || bound == new_type)
+                            && test.imports.iter().all(|other| {
+                                other.alias != old_type
+                                    && other.alias != new_type
+                                    && other.imported != "*"
+                            })
+                    }
+                }
         })
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ClassKind {
+    /// `class Name(Exception): pass`, defined once in the owner module.
+    Local,
+    /// An unshadowed builtin from `builtin_exception_ancestors`.
+    Builtin,
+}
+
+/// Whether neither raised class is a subclass of the other, so a class-only
+/// context naming one rejects the other. A local plain class has exactly the
+/// ancestors `Exception` and `BaseException`, which no listed builtin is.
+fn disjoint(old: &str, old_kind: ClassKind, new: &str, new_kind: ClassKind) -> bool {
+    match (old_kind, new_kind) {
+        (ClassKind::Local, ClassKind::Local) => old != new,
+        (ClassKind::Local, ClassKind::Builtin) | (ClassKind::Builtin, ClassKind::Local) => true,
+        (ClassKind::Builtin, ClassKind::Builtin) => {
+            let (Some(old_ancestors), Some(new_ancestors)) = (
+                builtin_exception_ancestors(old),
+                builtin_exception_ancestors(new),
+            ) else {
+                return false;
+            };
+            old != new && !old_ancestors.contains(&new) && !new_ancestors.contains(&old)
+        }
+    }
+}
+
+/// The builtin ancestors (below `Exception`) of builtin exception classes whose
+/// constructor accepts any positional constants and returns an instance of
+/// exactly that class. `OSError` and its subclasses are left out (an `errno`
+/// argument selects a different subclass), as are the `Unicode*Error` classes
+/// (fixed constructor arity), `StopIteration` and `SyntaxError`.
+fn builtin_exception_ancestors(name: &str) -> Option<&'static [&'static str]> {
+    Some(match name {
+        "ArithmeticError" | "AssertionError" | "AttributeError" | "BufferError" | "EOFError"
+        | "ImportError" | "LookupError" | "NameError" | "RuntimeError" | "TypeError"
+        | "ValueError" => &[],
+        "FloatingPointError" | "OverflowError" | "ZeroDivisionError" => &["ArithmeticError"],
+        "ModuleNotFoundError" => &["ImportError"],
+        "IndexError" | "KeyError" => &["LookupError"],
+        "UnboundLocalError" => &["NameError"],
+        "NotImplementedError" | "RecursionError" => &["RuntimeError"],
+        _ => return None,
+    })
 }
 
 fn pytest_raises(call: &ast::ExprCall) -> bool {

@@ -756,3 +756,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_error_path_shape (35)
+
+Reason:
+RIPR-SPEC-0238: rule 6 reads pytest.raises(ValueError) on a disjoint-builtin TypeError->ValueError swap reaching the edited raise as an exact error variant (#13869); the old weakly_exposed was a false gap
+
+Command:
+`cargo xtask goldens bless python_error_path_shape --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
