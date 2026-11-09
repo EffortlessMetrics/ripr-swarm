@@ -1,5 +1,6 @@
 import * as cp from 'child_process';
 import * as crypto from 'crypto';
+import { promises as fsp } from 'fs';
 import * as https from 'https';
 import * as path from 'path';
 import * as vscode from 'vscode';
@@ -539,6 +540,7 @@ async function fetchBuffer(url: string): Promise<Buffer> {
 
 async function extractArchive(archivePath: string, destination: string, platform: RiprPlatform): Promise<void> {
   if (platform.archiveExtension === 'zip') {
+    await inspectZipArchive(archivePath);
     await runProcess('powershell.exe', [
       '-NoProfile',
       '-ExecutionPolicy',
@@ -596,6 +598,115 @@ export function assertSafeTarListing(nameLines: readonly string[], verboseLines:
       throw new Error(`Refusing server archive hard link member: ${JSON.stringify(line)}.`);
     }
   }
+}
+
+/** One central-directory entry as read from a zip archive. */
+export interface ZipCentralDirectoryEntry {
+  readonly name: string;
+  readonly externalAttributes: number;
+}
+
+const ZIP_EOCD_SIGNATURE = 0x06054b50;
+const ZIP_CENTRAL_SIGNATURE = 0x02014b50;
+/** General-purpose flag bit 11: the member name is UTF-8, not cp437. */
+const ZIP_GP_FLAG_UTF8 = 0x0800;
+/** DOS attribute mask inside `externalAttributes`: FILE_ATTRIBUTE_REPARSE_POINT. */
+const ZIP_DOS_REPARSE_POINT = 0x0400;
+/** Unix mode mask inside the high 16 bits of `externalAttributes`. */
+const ZIP_UNIX_IFMT = 0xf000;
+const ZIP_UNIX_IFREG = 0x8000;
+const ZIP_UNIX_IFDIR = 0x4000;
+const ZIP_MAX_COMMENT_BYTES = 0xffff;
+
+/**
+ * Reads the central directory of a zip archive without extracting anything
+ * (#13904): the listing must be validated before `Expand-Archive` writes a
+ * single member, the same pre-extraction contract `inspectTarArchive` keeps
+ * for the tar path (#13640).
+ */
+export function listZipCentralDirectoryEntries(archive: Buffer): ZipCentralDirectoryEntry[] {
+  // The end-of-central-directory record can sit anywhere in the last
+  // 22 + 65,535 bytes (the whole trailing comment range).
+  const searchFloor = Math.max(0, archive.length - (22 + ZIP_MAX_COMMENT_BYTES));
+  let eocd = -1;
+  for (let cursor = archive.length - 22; cursor >= searchFloor; cursor -= 1) {
+    if (archive.readUInt32LE(cursor) === ZIP_EOCD_SIGNATURE) {
+      eocd = cursor;
+      break;
+    }
+  }
+  if (eocd < 0) {
+    throw new Error('Server archive is not a readable zip: end-of-central-directory record not found.');
+  }
+  if (archive.readUInt16LE(eocd + 4) !== 0 || archive.readUInt16LE(eocd + 6) !== 0) {
+    throw new Error('Refusing multi-disk server archive.');
+  }
+  const recordedCount = archive.readUInt16LE(eocd + 10);
+  const centralSize = archive.readUInt32LE(eocd + 12);
+  const centralOffset = archive.readUInt32LE(eocd + 16);
+  if (centralOffset + centralSize > archive.length) {
+    throw new Error('Refusing server archive: central directory extends past the end of the file.');
+  }
+  const entries: ZipCentralDirectoryEntry[] = [];
+  let cursor = centralOffset;
+  const centralEnd = centralOffset + centralSize;
+  while (cursor < centralEnd) {
+    if (cursor + 46 > archive.length || archive.readUInt32LE(cursor) !== ZIP_CENTRAL_SIGNATURE) {
+      throw new Error('Refusing server archive: malformed central directory entry.');
+    }
+    const flags = archive.readUInt16LE(cursor + 8);
+    const nameLength = archive.readUInt16LE(cursor + 28);
+    const extraLength = archive.readUInt16LE(cursor + 30);
+    const commentLength = archive.readUInt16LE(cursor + 32);
+    const externalAttributes = archive.readUInt32LE(cursor + 38);
+    const nameBytes = archive.subarray(cursor + 46, cursor + 46 + nameLength);
+    // Expand-Archive reads the same flag; a non-UTF-8 name is decoded as
+    // single bytes here and refused below if it spells anything unsafe.
+    const name = (flags & ZIP_GP_FLAG_UTF8) !== 0 ? nameBytes.toString('utf8') : nameBytes.toString('latin1');
+    entries.push({ name, externalAttributes });
+    cursor += 46 + nameLength + extraLength + commentLength;
+  }
+  if (entries.length !== recordedCount) {
+    throw new Error(`Refusing server archive: central directory holds ${entries.length} entries, expected ${recordedCount}.`);
+  }
+  return entries;
+}
+
+/**
+ * Pure policy over a zip central-directory listing, mirroring
+ * `assertSafeTarListing`: rejects traversal, absolute, drive-qualified or NUL
+ * names, symlink members (Unix mode in the external attributes), NTFS reparse
+ * points (DOS attributes), any other non-file/directory member type, and
+ * oversized member counts.
+ */
+export function assertSafeZipListing(entries: readonly ZipCentralDirectoryEntry[]): void {
+  if (entries.length > ARCHIVE_MAX_MEMBERS) {
+    throw new Error(`Server archive lists ${entries.length} members, over the ${ARCHIVE_MAX_MEMBERS} member limit.`);
+  }
+  for (const entry of entries) {
+    const segments = entry.name.split(/[\\/]/);
+    if (/^[\\/]/.test(entry.name) || /^[A-Za-z]:/.test(entry.name) || entry.name.includes('\0') || segments.includes('..')) {
+      throw new Error(`Refusing server archive member with unsafe path ${JSON.stringify(entry.name)}.`);
+    }
+    if ((entry.externalAttributes & ZIP_DOS_REPARSE_POINT) !== 0) {
+      throw new Error(`Refusing server archive reparse-point member: ${JSON.stringify(entry.name)}.`);
+    }
+    const unixMode = (entry.externalAttributes >>> 16) & 0xffff;
+    if (unixMode !== 0) {
+      const fileType = unixMode & ZIP_UNIX_IFMT;
+      if (fileType !== ZIP_UNIX_IFREG && fileType !== ZIP_UNIX_IFDIR) {
+        throw new Error(`Refusing server archive member of unsupported type: ${JSON.stringify(entry.name)}.`);
+      }
+    }
+  }
+}
+
+/**
+ * Lists and validates a zip archive's members before extraction (#13904), so
+ * symlink and reparse-point entries never reach `Expand-Archive`.
+ */
+export async function inspectZipArchive(archivePath: string): Promise<void> {
+  assertSafeZipListing(listZipCentralDirectoryEntries(await fsp.readFile(archivePath)));
 }
 
 function runProcess(command: string, args: string[]): Promise<string> {
