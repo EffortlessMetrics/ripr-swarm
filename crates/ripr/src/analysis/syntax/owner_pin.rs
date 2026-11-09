@@ -144,6 +144,9 @@ pub(crate) enum AssertionContextRefusal {
     /// An attribute other than `#[test]` (for example `#[should_panic]`,
     /// `#[ignore]` or a `#[cfg(..)]`) may change whether or how it runs.
     TestAttribute(String),
+    /// A bare `#[test]` whose name an import in this file rebinds
+    /// (`use .. as test`), so it may be another attribute macro.
+    TestRebound,
     /// The test is nested in an executable body (a function or block).
     NestedItem,
     /// An enclosing module carries an attribute (usually a `cfg`) ripr cannot
@@ -2978,9 +2981,14 @@ fn owner_pin_assertions_with_matches(
             !(runs_body_unchanged(attr, function.syntax())
                 || matches_context && matches_preserves_assertion_execution(attr, &function))
         }) {
-            Some(AssertionContextRefusal::TestAttribute(
-                attr.syntax().text().to_string(),
-            ))
+            // #14028: name the rebinding import, not the attribute itself.
+            if attr.simple_name().as_deref() == Some("test") {
+                Some(AssertionContextRefusal::TestRebound)
+            } else {
+                Some(AssertionContextRefusal::TestAttribute(
+                    attr.syntax().text().to_string(),
+                ))
+            }
         } else {
             item_context_refusal(function.syntax())
         };
