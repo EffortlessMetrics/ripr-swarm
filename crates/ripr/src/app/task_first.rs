@@ -2681,49 +2681,16 @@ fn uncommitted_production_files(
     dirty_paths_outside_surface(root, &policy)
 }
 
-/// The dirty tracked paths the start's own premise check refuses, respelled
-/// relative to `root`.
+/// The dirty tracked paths the start's own premise check refuses. The check
+/// already spells them relative to `root` (paths outside it as `../x`), which
+/// is where the user runs the printed `git commit` (#10698, #13947).
 fn dirty_paths_outside_surface(
     root: &Path,
     policy: &crate::edit_cage::EditCagePolicy,
 ) -> Result<Vec<String>, String> {
     let head = crate::agent::artifact::current_git_head(root).map_err(|e| e.to_string())?;
-    let violations =
-        crate::app::repair_attempt::trusted_head_surface_violations(root, policy, &[], &head)
-            .map_err(|e| e.to_string())?;
-    let prefix = repo_prefix(root)?;
-    Ok(violations
-        .iter()
-        .map(|path| relative_to_cwd_root(path, &prefix))
-        .collect())
-}
-
-/// `git rev-parse --show-prefix`: the analyzed root's path inside its
-/// repository (empty at the top, otherwise `dir/sub/`).
-fn repo_prefix(root: &Path) -> Result<String, String> {
-    crate::git::run_git_output_with_deadline_and_limit(
-        root,
-        &["rev-parse", "--show-prefix"],
-        std::time::Duration::from_secs(10),
-        64 * 1024,
-    )
-    .ok()
-    .filter(|output| output.status.success())
-    .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
-    .ok_or_else(|| "could not resolve repository prefix".to_string())
-}
-
-/// A repository-root-relative path respelled relative to the analyzed root,
-/// which is where the user runs the printed `git commit`.
-fn relative_to_cwd_root(path: &str, prefix: &str) -> String {
-    if prefix.is_empty() {
-        return path.to_string();
-    }
-    if let Some(rest) = path.strip_prefix(prefix) {
-        return rest.to_string();
-    }
-    let depth = prefix.split('/').filter(|part| !part.is_empty()).count();
-    format!("{}{path}", "../".repeat(depth))
+    crate::app::repair_attempt::trusted_head_surface_violations(root, policy, &[], &head)
+        .map_err(|e| e.to_string())
 }
 
 /// The gap-bound start the default human `ripr check` would print for this
@@ -6873,14 +6840,63 @@ pub(crate) mod tests {
         Ok(())
     }
 
-    /// #10698: the commit hint is spelled relative to the analyzed root, which
-    /// may be a subdirectory of the repository.
+    /// #10698, #13947: the commit hint is spelled relative to the analyzed
+    /// root exactly once, even when the root is a subdirectory of the
+    /// repository.
     #[test]
-    fn commit_hint_paths_are_relative_to_the_analyzed_root() {
-        assert_eq!(relative_to_cwd_root("a.py", ""), "a.py");
-        assert_eq!(relative_to_cwd_root("svc/src/a.py", "svc/"), "src/a.py");
-        assert_eq!(relative_to_cwd_root("other/b.py", "svc/"), "../other/b.py");
-        assert_eq!(relative_to_cwd_root("b.py", "svc/deep/"), "../../b.py");
+    fn commit_hint_paths_are_relative_to_a_subdirectory_root() -> Result<(), String> {
+        use crate::testing::fixture_git::fixture_git_ok as run_git;
+
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|error| format!("test clock failed: {error}"))?
+            .as_nanos();
+        let repo = std::env::temp_dir().join(format!(
+            "ripr-task-first-subdir-hint-{}-{stamp}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(repo.join("svc"))
+            .map_err(|error| format!("create {} failed: {error}", repo.display()))?;
+        let repo = repo
+            .canonicalize()
+            .map_err(|error| format!("canonicalize {} failed: {error}", repo.display()))?;
+        let _guard = TempRootGuard { root: repo.clone() };
+        run_git(&repo, &["init"])?;
+        run_git(
+            &repo,
+            &["config", "user.email", "ripr-test@example.invalid"],
+        )?;
+        run_git(&repo, &["config", "user.name", "RIPR Test"])?;
+        for file in ["pricing.py", "svc/pricing.py"] {
+            std::fs::write(repo.join(file), "x = 1\n")
+                .map_err(|error| format!("write {file} failed: {error}"))?;
+        }
+        run_git(&repo, &["add", "."])?;
+        run_git(&repo, &["commit", "--no-gpg-sign", "-m", "initial"])?;
+        for file in ["pricing.py", "svc/pricing.py"] {
+            std::fs::write(repo.join(file), "x = 2\n")
+                .map_err(|error| format!("rewrite {file} failed: {error}"))?;
+        }
+
+        let packet = serde_json::json!({
+            "packets": [{
+                "seam_id": "gap-1",
+                "allowed_edit_surface": ["tests/test_pricing.py"],
+                "forbidden_files": ["pricing.py"],
+                "recommended_test": {"file": "tests/test_pricing.py", "name": "tests/test_pricing.py::t"}
+            }]
+        });
+        let policy =
+            crate::app::repair_attempt::edit_cage_policy_from_packet(&packet.to_string(), "gap-1")?;
+
+        let mut paths = dirty_paths_outside_surface(&repo.join("svc"), &policy)?;
+        paths.sort();
+        assert_eq!(
+            paths,
+            vec!["../pricing.py".to_string(), "pricing.py".to_string()],
+            "the root's own file is spelled root-relative once and the repo-level namesake outside it as ../"
+        );
+        Ok(())
     }
 
     /// Implicit continue skips trust-bound awaiting attempts: the façade
