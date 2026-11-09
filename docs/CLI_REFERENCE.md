@@ -525,7 +525,7 @@ Repair scope: the edit target must match the test-surface path
 convention (`tests`/`test` paths, `*_test`/`*_tests`, `test_*`, and
 TypeScript test-file conventions). For external Rust test files, the cage
 permits only insertion of new test functions and preserves existing test
-bytes; an existing selected file must be committed before the start (#8710).
+bytes; an existing selected file must be committed before the start.
 Other languages retain the whole-file path cage.
 One exception: when a seam's only tests live in one inline `#[cfg(test)]`
 module of the production file, the before phase can bind that module's
