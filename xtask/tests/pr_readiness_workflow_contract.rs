@@ -381,11 +381,10 @@ fn automatic_droid_review_is_retired() -> Result<(), String> {
         );
     }
     // The separately purposed security scan is not a development review loop.
-    for path in [".github/workflows/droid-security-scan.yml"] {
-        assert!(
-            !repo_file(path)?.is_empty(),
-            "{path}: retained Droid workflow is required"
-        );
-    }
+    let path = ".github/workflows/droid-security-scan.yml";
+    assert!(
+        !repo_file(path)?.is_empty(),
+        "{path}: retained Droid workflow is required"
+    );
     Ok(())
 }
