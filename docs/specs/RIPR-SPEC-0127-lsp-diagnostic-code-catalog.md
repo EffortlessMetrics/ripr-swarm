@@ -10,6 +10,7 @@ Linked issues:
 
 - #1662
 - #11253
+- #11666
 
 ## Problem
 
@@ -105,6 +106,38 @@ constructor that is the single source of truth for that family:
   are silent apart from the marker count), are absent in the `full` profile, never use Warning severity, and carry no
   finding id, repair, witness, or `preview_actionability` data.
   These are not analyzer findings or actionable repairs.
+
+The quarantine-withdrawn marker names its cause through `data.reason`, the
+hover and log text, and the workspace-status `staleness_reason`. When a
+`didOpen` is refused because the store-wide open-document or retained-text
+limit was reached (#11666), the document is held as an unknown-authority
+placeholder with empty text and the reason is `document_store_limit_reached`,
+not `invalid_incremental_change`: the text says the editor buffer was not
+tracked because the open-document limit was reached, with the recovery of
+closing other open files and reopening this one (`data.recovery`
+`close_other_documents_then_reopen`). The placeholder stays fail-closed (no
+line-local diagnostics, no restored authority from a save without client text
+or from a replacement past either limit), so the reason changes disclosure
+only and never relaxes withdrawal. A healthy document's client-provided
+`didSave` text is retained text too: when it would exceed the retained-text
+limit it is not adopted (neither the text nor its digest), and the document
+loses buffer authority under the same `document_store_limit_reached` reason,
+as an over-limit full-replacement `didChange` does. Placeholders are bounded as
+well (4,096). A refused URI beyond that bound is not stored at all; instead the
+store withdraws every URI that has no stored state under
+`document_store_limit_reached` (push publication, document and workspace pull,
+hover, lens and actions all read the same accessor), so an untracked buffer is
+never served line-local diagnostics. This is deliberately over-broad: a
+never-opened URI reads as withdrawn too while the latch is set, and closed or
+never-opened workspace files in the workspace pull are likewise withdrawn as
+`document_store_limit_reached`. Closing documents, even all of them, does not
+clear it, because untracked buffers may still be open in the client. Neither
+does a root transition, which keeps the open documents and the client's
+untracked buffers. Only shutdown clears it, so within a session recovery
+requires a server restart. A document already quarantined under another
+reason that then loses authority to the store limit refreshes its marker to
+the new reason without repeating the once-per-episode disclosure. This is a
+static delivery limitation, not a finding, repair, or runtime outcome.
 
 Each catalog entry carries the code identity used today: the stable `code` and
 the deprecated `aliases` that still resolve to it. Compatibility aliases are

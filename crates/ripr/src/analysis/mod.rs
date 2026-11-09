@@ -133,7 +133,11 @@ pub use language::{
     PartialDiffStopReason,
 };
 #[cfg(all(test, feature = "lang-python"))]
-pub(crate) use language::{python_direct_and_advisory_finding, python_miss_matrix_findings};
+pub(crate) use language::{
+    python_direct_and_advisory_finding, python_miss_matrix_findings,
+    python_module_fstring_reader_finding, python_module_reader_assertion_parses,
+    python_module_string_reader_finding, python_module_value_without_import_identity,
+};
 pub(crate) use probes::{
     fingerprint_probe_id, legacy_whole_line_diff_probe_id, normalize_expression,
     normalize_rust_expression, sanitize_path,
@@ -1472,6 +1476,121 @@ mod tests {
             decode_stable_path_text("pricing_%25FF.rs"),
             decode_stable_path_text("pricing_%FF.rs")
         );
+    }
+
+    fn path_text_config() -> proptest::test_runner::Config {
+        proptest::test_runner::Config {
+            cases: std::env::var("PROPTEST_CASES")
+                .ok()
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(256),
+            failure_persistence: None,
+            ..proptest::test_runner::Config::default()
+        }
+    }
+
+    #[cfg(unix)]
+    fn native_path(bytes: Vec<u8>) -> PathBuf {
+        use std::os::unix::ffi::OsStringExt;
+        PathBuf::from(std::ffi::OsString::from_vec(bytes))
+    }
+
+    /// #13949: every `%` the encoder emits starts a `%XX` spelling with
+    /// uppercase hex, the only spelling the decoder reads back.
+    fn percent_spellings_are_canonical(encoded: &str) -> bool {
+        let upper_hex = |byte: &u8| matches!(byte, b'0'..=b'9' | b'A'..=b'F');
+        let bytes = encoded.as_bytes();
+        bytes.iter().enumerate().all(|(at, byte)| {
+            *byte != b'%'
+                || matches!(
+                    bytes.get(at + 1..at + 3),
+                    Some([high, low]) if upper_hex(high) && upper_hex(low)
+                )
+        })
+    }
+
+    /// A small alphabet that keeps the percent layer's hazards in play: `%`,
+    /// hex digits of both cases, separators, a backslash, invalid and
+    /// multi-byte UTF-8 lead bytes, and plain text.
+    #[cfg(unix)]
+    fn hazard_bytes() -> impl proptest::strategy::Strategy<Value = Vec<u8>> {
+        proptest::collection::vec(
+            proptest::sample::select(vec![
+                b'%', b'5', b'C', b'2', b'A', b'F', b'f', b'c', b'8', b'0', b'\\', b'/', b'a',
+                0x80, 0xC3, 0xA9, 0xFF,
+            ]),
+            0..16,
+        )
+    }
+
+    proptest::proptest! {
+        #![proptest_config(path_text_config())]
+
+        /// #13949: the display form round-trips every path without a
+        /// backslash (which display normalization folds into `/` by design,
+        /// see `stable_source_path_text_preserves_literal_backslashes_before_display`),
+        /// whatever percent signs, hex digits, spaces or non-ASCII text it
+        /// carries. The comparison is on the exact OS string, so a decoder
+        /// that normalized repeated or trailing separators would fail.
+        #[test]
+        fn proptest_stable_path_text_round_trips_paths_without_backslashes(
+            text in "[%0-9A-Fa-f/ a-z\u{e9}]{0,24}"
+        ) {
+            let path = PathBuf::from(&text);
+            let encoded = stable_path_text(&path);
+            proptest::prop_assert!(percent_spellings_are_canonical(&encoded));
+            let decoded = decode_stable_path_text(&encoded);
+            proptest::prop_assert_eq!(decoded.as_os_str(), path.as_os_str());
+        }
+    }
+
+    #[cfg(unix)]
+    proptest::proptest! {
+        #![proptest_config(path_text_config())]
+
+        /// #13949: on Unix the source-identity encoding round-trips native
+        /// bytes exactly over a small hazard alphabet (see `hazard_bytes`):
+        /// invalid UTF-8, valid multi-byte sequences, backslashes and literal
+        /// `%XX` spellings that resemble the encoder's own escapes. It does
+        /// not sample the whole byte range.
+        #[test]
+        fn proptest_stable_source_path_text_round_trips_hazard_bytes(
+            bytes in hazard_bytes()
+        ) {
+            let path = native_path(bytes);
+            let encoded = stable_source_path_text(&path);
+            proptest::prop_assert!(percent_spellings_are_canonical(&encoded));
+            let decoded = decode_stable_path_text(&encoded);
+            proptest::prop_assert_eq!(decoded.as_os_str(), path.as_os_str());
+        }
+
+        /// #13949: distinct native paths never share a source-identity
+        /// spelling, so a literal `%80` or `%5C` cannot merge with an invalid
+        /// byte or a backslash. The second path is a one-edit mutation of the
+        /// first, so near-collisions are the common case.
+        #[test]
+        fn proptest_stable_source_path_text_is_injective(
+            left in hazard_bytes(),
+            edit in proptest::sample::select(vec![0u8, 1, 2]),
+            at in 0usize..16,
+            replacement in proptest::sample::select(vec![b'%', b'5', b'C', b'8', b'0', b'\\', 0x80, 0xFF]),
+        ) {
+            let mut right = left.clone();
+            let at = at.min(right.len());
+            match edit {
+                0 if at < right.len() => right[at] = replacement,
+                1 => right.insert(at, replacement),
+                _ if at < right.len() => {
+                    right.remove(at);
+                }
+                _ => {}
+            }
+            proptest::prop_assume!(left != right);
+            proptest::prop_assert_ne!(
+                stable_source_path_text(&native_path(left)),
+                stable_source_path_text(&native_path(right))
+            );
+        }
     }
 
     /// #5996: one finding, one location string. The verbatim-root MCP form
