@@ -548,7 +548,10 @@ fn evidence_path<T>(
         // source-value rows exist, which also dropped the one line saying why
         // an assertion was not credited. The standard report prints it; keep
         // it here so the full report and `explain` name the same reason.
-        lines.push(project(line.clone(), EvidenceSource::Literal(line)));
+        // The note quotes source that can span lines; collapse it like the
+        // standard report does so no continuation lands at column 0.
+        let collapsed = line.split_whitespace().collect::<Vec<_>>().join(" ");
+        lines.push(project(collapsed, EvidenceSource::Literal(line)));
     }
 
     lines
