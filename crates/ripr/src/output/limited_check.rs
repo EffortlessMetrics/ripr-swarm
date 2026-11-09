@@ -82,7 +82,7 @@ pub(crate) fn render_diff_scope_limited_check_json(
     }
     // The shared refusal block (#11584) rides beside the frozen scope-guard
     // keys; `message` stays the guard's own diagnostic verbatim.
-    RefusalBlock::from_prose(run_status, error).insert_into(&mut value);
+    RefusalBlock::from_prose(run_status, &message).insert_into(&mut value);
 
     render_pretty_with_newline(&value, "limited check").map(Some)
 }
