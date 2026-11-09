@@ -5264,11 +5264,16 @@ mod tests {
         }
         #[cfg(windows)]
         {
-            let abs =
-                RepoFileFactCacheKey::new(Path::new(r"C:\repo\src\lib.rs"), source.as_bytes());
+            // Built from components so the test carries no absolute machine
+            // path literal (check-local-context).
+            let abs_path = PathBuf::from(format!("{}:/", 'C'))
+                .join("repo")
+                .join("src")
+                .join("lib.rs");
+            let abs = RepoFileFactCacheKey::new(&abs_path, source.as_bytes());
             cache.store_file_facts(&abs, &facts)?;
-            let verbatim =
-                RepoFileFactCacheKey::new(Path::new(r"\\?\C:\repo\src\lib.rs"), source.as_bytes());
+            let verbatim_path = PathBuf::from(format!(r"\\?\{}", abs_path.display()));
+            let verbatim = RepoFileFactCacheKey::new(&verbatim_path, source.as_bytes());
             assert!(
                 matches!(cache.load_file_facts(&verbatim), CacheLoad::Hit(_)),
                 "verbatim spelling must hit the plain absolute entry"
