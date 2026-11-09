@@ -671,10 +671,9 @@ pub(super) fn machine_refusal_document(
     let notice = error.refusal_notice(&crate::config::config_error_summary);
     match format {
         OutputFormat::Json | OutputFormat::JsonCompact => {
-            let display = error.to_string();
             let rendered = match output::limited_check::render_diff_scope_limited_check_json(
                 envelope_input,
-                &display,
+                error,
             ) {
                 Ok(Some(rendered)) => Ok(rendered),
                 Ok(None) => output::limited_check::render_check_failure_json(envelope_input, error),

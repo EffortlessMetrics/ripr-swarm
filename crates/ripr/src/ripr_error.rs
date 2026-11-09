@@ -98,6 +98,11 @@ impl RiprError {
                     detail,
                 }
             }
+            CoreError::DiffScopeOversized(guard) => Self::CheckFailure {
+                category: RiprErrorCategory::UnsupportedOrLimited,
+                code: crate::diff_scope_guard::DIFF_SCOPE_OVERSIZED_KIND,
+                detail: guard.to_string(),
+            },
             CoreError::Message(message) => Self::Unclassified { detail: message },
             CoreError::Context { context, source } => Self::Context {
                 context,
