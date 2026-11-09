@@ -3260,11 +3260,14 @@ fn qualified_call_names_owner(
 ///
 /// `true` withholds the owner; `false` keeps the production relation. The
 /// reading is lexical and keeps the production relation whenever it is
-/// unsure. Documented cases that therefore still keep it although Rust would
-/// resolve to the local rival: a bare `use local::f; f()`, `use local::*`, a
-/// rival module nested inside another module, a `mod tests` calling a
-/// top-level rival without `super::`, a wrapper module that delegates to the
-/// library, and a fn-body `use` shadowing a file-level alias.
+/// unsure. It reads a qualified call through a module (at any nesting) of the
+/// test's file that defines the rival, a bare call bound to it by a simple
+/// `use`, a `use m::*` glob, and the test's own `use` items, which shadow the
+/// module's. Cases that still keep the production relation although Rust
+/// would resolve to the local rival: grouped or chained `use` items, a
+/// top-level rival fn called without a path, and a renamed bare import
+/// (shared call identity, #10240). A wrapper module that delegates to the
+/// library is withheld too, because its call names the wrapper.
 pub(in crate::analysis) fn test_calls_only_through_local_rival_module(
     index: &RustIndex,
     owner: &FunctionSummary,
@@ -3287,7 +3290,7 @@ pub(in crate::analysis) fn test_calls_only_through_local_rival_module(
     };
     let source = &facts.data().source;
     let integration_crate = under_tests_dir(&test.file);
-    let modules = LocalModules::scan(source, &owner.name, &test.name, test.start_line);
+    let modules = LocalModules::scan(source, &owner.name, &test.name, test.start_line, &test.body);
     let through_local_module = |qualifier: &Option<Vec<String>>| {
         qualifier
             .as_deref()
@@ -3305,15 +3308,82 @@ pub(in crate::analysis) fn test_calls_only_through_local_rival_module(
     !qualifiers.is_empty() && qualifiers.iter().all(through_local_module)
 }
 
+/// One simple `use` item: `use a::b;`, `use a::b as c;` or `use a::*;`.
+/// Grouped, raw-identifier and `::`-rooted items are not read.
+#[derive(Clone)]
+struct UseItem {
+    path: Vec<String>,
+    alias: Option<String>,
+    glob: bool,
+}
+
+impl UseItem {
+    /// Reads the text between a `use` keyword and its `;`.
+    fn parse(text: &str) -> Option<Self> {
+        let mut parts: Vec<&str> = text.split("::").map(str::trim).collect();
+        let last = parts.pop()?;
+        let simple = |word: &str| !word.is_empty() && word.chars().all(is_ident_char);
+        if !parts.iter().all(|part| simple(part)) {
+            return None;
+        }
+        let mut path: Vec<String> = parts.iter().map(|part| (*part).to_string()).collect();
+        let words: Vec<&str> = last.split_whitespace().collect();
+        let (name, alias) = match words.as_slice() {
+            ["*"] => {
+                return (!path.is_empty()).then_some(Self {
+                    path,
+                    alias: None,
+                    glob: true,
+                });
+            }
+            [name] => (*name, None),
+            [name, "as", alias] => (*name, Some((*alias).to_string())),
+            _ => return None,
+        };
+        if !simple(name) || alias.as_deref().is_some_and(|alias| !simple(alias)) {
+            return None;
+        }
+        path.push(name.to_string());
+        Some(Self {
+            path,
+            alias,
+            glob: false,
+        })
+    }
+
+    /// The name this explicit import binds, if any.
+    fn bound_name(&self) -> Option<&str> {
+        if self.glob {
+            return None;
+        }
+        let name = self
+            .alias
+            .as_deref()
+            .or_else(|| self.path.last().map(String::as_str))?;
+        (name != "_" && name != "self").then_some(name)
+    }
+}
+
+/// How an explicit import binds a name at the test.
+enum Binding {
+    Unbound,
+    Path(Vec<String>),
+    Conflict,
+}
+
 /// Lexical module facts of one test file for the local-rival predicate
-/// (#10855): which file-top-level `mod M { .. }` bodies directly define a
-/// body-ful `fn <owner>`, which top-level `use [self::]M as A;` aliases name
-/// such a module, and the module path enclosing the test. Anything nested,
-/// grouped, glob-imported or otherwise unreadable is not local, which keeps
-/// the production relation (fail closed).
+/// (#10855): which `mod M { .. }` bodies (at any nesting) directly define a
+/// body-ful `fn <owner>`, the simple `use` items of each module and of the
+/// test body, and the module path enclosing the test. Anything grouped,
+/// chained or otherwise unreadable is not local, which keeps the production
+/// relation (fail closed).
 struct LocalModules {
-    rivals: BTreeSet<String>,
-    aliases: BTreeMap<String, String>,
+    owner: String,
+    rivals: BTreeSet<Vec<String>>,
+    /// Module-level `use` items with the module path that declares them.
+    file_uses: Vec<(Vec<String>, UseItem)>,
+    /// `use` items inside the test body. They shadow module-level ones.
+    body_uses: Vec<UseItem>,
     scope: Vec<String>,
 }
 
@@ -3326,7 +3396,13 @@ enum LexToken {
 }
 
 impl LocalModules {
-    fn scan(source: &str, owner: &str, test_name: &str, test_start_line: usize) -> Self {
+    fn scan(
+        source: &str,
+        owner: &str,
+        test_name: &str,
+        test_start_line: usize,
+        body: &str,
+    ) -> Self {
         let masked = mask_comments_and_strings(source);
         let test_offset = match test_start_line.checked_sub(2) {
             Some(newlines) => masked
@@ -3357,9 +3433,21 @@ impl LocalModules {
             Some((_, LexToken::Word(word))) => Some(word.as_str()),
             _ => None,
         };
+        // A raw-identifier test (`fn r#match`) lexes as `r` then `match`.
+        let plain_name = test_name.strip_prefix("r#").unwrap_or(test_name);
+        let names_test = |index: usize| {
+            word_at(index) == Some(plain_name)
+                || (word_at(index) == Some("r")
+                    && word_at(index + 1) == Some(plain_name)
+                    && tokens.get(index).zip(tokens.get(index + 1)).is_some_and(
+                        |((first, _), (second, _))| masked.get(first + 1..*second) == Some("#"),
+                    ))
+        };
         let mut found = Self {
+            owner: owner.to_string(),
             rivals: BTreeSet::new(),
-            aliases: BTreeMap::new(),
+            file_uses: Vec::new(),
+            body_uses: Vec::new(),
             scope: Vec::new(),
         };
         let mut scope_set = false;
@@ -3372,7 +3460,7 @@ impl LocalModules {
             // same line.
             let at_test_fn = *offset >= test_offset
                 && matches!(token, LexToken::Word(word) if word == "fn")
-                && word_at(index + 1) == Some(test_name);
+                && names_test(index + 1);
             if !scope_set && at_test_fn {
                 found.scope = stack.iter().map(|(name, _)| name.clone()).collect();
                 scope_set = true;
@@ -3401,62 +3489,159 @@ impl LocalModules {
                         .iter()
                         .skip(index + 2)
                         .find(|(_, token)| matches!(token, LexToken::Open | LexToken::Semi));
-                    if let ([(module, inner)], Some((_, LexToken::Open))) = (stack.as_slice(), body)
+                    if let (Some((_, inner)), Some((_, LexToken::Open))) = (stack.last(), body)
                         && *inner == depth
                     {
-                        found.rivals.insert(module.clone());
+                        found
+                            .rivals
+                            .insert(stack.iter().map(|(name, _)| name.clone()).collect());
                     }
                 }
-                LexToken::Word(word) if word == "use" && depth == 0 => {
-                    let mut words = Vec::new();
-                    for (_, token) in tokens.iter().skip(index + 1) {
-                        match token {
-                            LexToken::Word(word) => words.push(word.as_str()),
-                            LexToken::Semi => break,
-                            _ => {
-                                words.clear();
-                                break;
-                            }
-                        }
-                    }
-                    if let [first, "as", alias] | ["self", first, "as", alias] = words.as_slice() {
-                        found
-                            .aliases
-                            .insert((*alias).to_string(), (*first).to_string());
+                LexToken::Word(word)
+                    if word == "use" && depth == stack.last().map_or(0, |(_, inner)| *inner) =>
+                {
+                    let end = tokens
+                        .iter()
+                        .skip(index + 1)
+                        .find(|(_, token)| matches!(token, LexToken::Semi))
+                        .map(|(at, _)| *at);
+                    let text = end.and_then(|end| masked.get(offset + 3..end));
+                    if let Some(item) = text.and_then(UseItem::parse) {
+                        let module = stack.iter().map(|(name, _)| name.clone()).collect();
+                        found.file_uses.push((module, item));
                     }
                 }
                 LexToken::Word(_) | LexToken::Semi => {}
             }
         }
+        let body_masked = mask_comments_and_strings(body);
+        for range in use_item_ranges(&body_masked) {
+            let text = body_masked.get(range.start + 3..range.end.saturating_sub(1));
+            if let Some(item) = text.and_then(UseItem::parse) {
+                found.body_uses.push(item);
+            }
+        }
         found
     }
 
-    /// Whether the module path `segments` (the qualifier of a call) names a
-    /// top-level module of this file that defines the rival, as spelled from
-    /// the test's own module.
-    fn names_rival(&self, segments: &[String], integration_crate: bool) -> bool {
-        let mut scope = self.scope.clone();
-        let mut rest = segments;
+    /// The module path `path` spells from module `base`, following leading
+    /// `self`, `super` and (in an integration crate) `crate` segments.
+    /// Returns the remaining segments and the module they start from.
+    fn strip_keywords<'a>(
+        base: &[String],
+        path: &'a [String],
+        integration_crate: bool,
+    ) -> Option<(Vec<String>, &'a [String])> {
+        let mut scope = base.to_vec();
+        let mut rest = path;
         while let Some((first, tail)) = rest.split_first() {
             match first.as_str() {
                 "self" => {}
                 "crate" if integration_crate => scope.clear(),
                 "super" => {
-                    if scope.pop().is_none() {
-                        return false;
-                    }
+                    scope.pop()?;
                 }
                 _ => break,
             }
             rest = tail;
         }
-        let [module] = rest else {
+        Some((scope, rest))
+    }
+
+    fn absolute(base: &[String], path: &[String], integration_crate: bool) -> Option<Vec<String>> {
+        let (mut scope, rest) = Self::strip_keywords(base, path, integration_crate)?;
+        scope.extend(rest.iter().cloned());
+        Some(scope)
+    }
+
+    /// What an explicit import binds `name` to at the test. The test's own
+    /// `use` items shadow its module's; two different bindings of one name
+    /// (for example in separate nested blocks) are a conflict, which keeps
+    /// the production relation.
+    fn binding(&self, name: &str, integration_crate: bool) -> Binding {
+        let resolve = |items: Vec<&UseItem>| {
+            let mut paths: Vec<Vec<String>> = Vec::new();
+            for item in items
+                .into_iter()
+                .filter(|item| item.bound_name() == Some(name))
+            {
+                match Self::absolute(&self.scope, &item.path, integration_crate) {
+                    Some(path) if !paths.contains(&path) => paths.push(path),
+                    Some(_) => {}
+                    None => return Binding::Conflict,
+                }
+            }
+            match paths.len() {
+                0 => Binding::Unbound,
+                1 => Binding::Path(paths.remove(0)),
+                _ => Binding::Conflict,
+            }
+        };
+        match resolve(self.body_uses.iter().collect()) {
+            Binding::Unbound => resolve(
+                self.file_uses
+                    .iter()
+                    .filter(|(module, _)| *module == self.scope)
+                    .map(|(_, item)| item)
+                    .collect(),
+            ),
+            bound => bound,
+        }
+    }
+
+    /// Whether a bare call of the owner's name is bound, by an explicit
+    /// import or a glob import, to a function of a local rival module.
+    fn bare_names_rival(&self, integration_crate: bool) -> bool {
+        match self.binding(&self.owner, integration_crate) {
+            Binding::Path(path) => {
+                return path.split_last().is_some_and(|(last, module)| {
+                    *last == self.owner && self.rivals.contains(module)
+                });
+            }
+            Binding::Conflict => return false,
+            Binding::Unbound => {}
+        }
+        let module_uses = self
+            .file_uses
+            .iter()
+            .filter(|(module, _)| *module == self.scope)
+            .map(|(_, item)| item);
+        // A glob that brings a module defining the owner's name into scope.
+        // Two globs providing one name would not compile, so another glob
+        // cannot be the source of this call.
+        self.body_uses.iter().chain(module_uses).any(|item| {
+            item.glob
+                && Self::absolute(&self.scope, &item.path, integration_crate)
+                    .is_some_and(|module| self.rivals.contains(&module))
+        })
+    }
+
+    /// Whether the module path `segments` (the qualifier of a call) names a
+    /// module that defines the rival, as spelled from the test's own module.
+    /// An empty path is a bare call.
+    fn names_rival(&self, segments: &[String], integration_crate: bool) -> bool {
+        if segments.is_empty() {
+            return self.bare_names_rival(integration_crate);
+        }
+        let Some((base, rest)) = Self::strip_keywords(&self.scope, segments, integration_crate)
+        else {
             return false;
         };
-        scope.is_empty()
-            && self
-                .rivals
-                .contains(self.aliases.get(module).unwrap_or(module))
+        let Some((first, tail)) = rest.split_first() else {
+            return false;
+        };
+        let mut module = base.clone();
+        if base == self.scope {
+            match self.binding(first, integration_crate) {
+                Binding::Path(path) => module = path,
+                Binding::Conflict => return false,
+                Binding::Unbound => module.push(first.clone()),
+            }
+        } else {
+            module.push(first.clone());
+        }
+        module.extend(tail.iter().cloned());
+        self.rivals.contains(&module)
     }
 }
 
