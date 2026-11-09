@@ -9263,6 +9263,7 @@ mod tests {
                 partial_scope: None,
                 owner_opt_outs: Vec::new(),
                 analyzed_revisions: None,
+                owner_opt_outs: Vec::new(),
             })
         };
         let packages = ["services/a", "services/b"];
