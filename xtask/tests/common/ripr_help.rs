@@ -149,17 +149,19 @@ pub fn candidate_binary() -> Result<PathBuf, String> {
         .get_or_init(|| {
             // CI shares one prepared binary across every nextest process
             // (nextest runs each test in its own process, so the OnceLock
-            // above cannot share a build). The prepared binary must be
-            // the one this workspace's private build produces: when the
-            // override is set it is accepted only when its canonical
-            // path equals the canonical expected path
-            // `guide_candidate_target_dir()/debug/ripr{EXE_SUFFIX}` for
-            // this workspace, and CI exports exactly that path. Any
-            // other existing file (stale or from another checkout) is
-            // rejected, never used. A set-but-missing path is an error,
-            // never a silent fallback, so a miswired CI step fails
-            // loudly. Local runs leave it unset and take the
-            // private-target-dir build below.
+            // above cannot share a build). The override only identifies
+            // this workspace's private build: when it is set, its canonical
+            // path must equal the canonical expected path
+            // `guide_candidate_target_dir()/debug/ripr{EXE_SUFFIX}`, and CI
+            // exports exactly that path. Any other existing file (stale or
+            // from another checkout) is rejected, never used. A
+            // set-but-missing path is an error, never a silent fallback, so
+            // a miswired CI step fails loudly. Validating the path is not
+            // freshness evidence, so execution continues into the Cargo
+            // build below: Cargo fingerprinting rebuilds the private-dir
+            // binary after source, feature, toolchain or flag changes and
+            // is otherwise a no-op. Local runs leave it unset and take the
+            // same private-target-dir build.
             if let Some(prepared) = std::env::var_os("RIPR_GUIDE_CANDIDATE_BINARY") {
                 let path = PathBuf::from(&prepared);
                 if !path.is_file() {
@@ -193,7 +195,6 @@ pub fn candidate_binary() -> Result<PathBuf, String> {
                         expected.display()
                     ));
                 }
-                return Ok(supplied);
             }
             // Always ask Cargo to select/build the current candidate. An existing
             // target/debug/ripr or an ambient PATH binary is not identity evidence.
