@@ -265,15 +265,10 @@ pub(in crate::cli) fn agent(args: &[String]) -> Result<(), CommandError> {
         // (RIPR-SPEC-0134) treats a rendered stdout on rejection as a breach,
         // because the verify command's stdout is the verify artifact.
         AgentCommand::Verify(options) => run_agent_verify(options).map_err(|error| {
-            // The no-movement class is read from the typed variant (#14021);
-            // the drift and gap-binding classes stay prose-keyed (#12102)
-            // until their producers carry types.
-            if matches!(error, AgentVerifyRenderError::Movement(_))
-                || agent_verify_error_is_typed_refusal(&error.to_string())
-            {
-                CommandError::Decision(error.to_string())
+            if agent_verify_render_error_is_decision(&error) {
+                CommandError::Decision(error.into())
             } else {
-                CommandError::Failure(error.to_string())
+                CommandError::Failure(error.into())
             }
         }),
         // Typed refusals carry the Decision variant (exit code 3).
@@ -1127,6 +1122,7 @@ fn run_agent_verify(options: AgentVerifyOptions) -> Result<(), AgentVerifyRender
 /// their producers carry types too. Rendered output is unchanged: a movement
 /// refusal still prints with the `agent verify ` clause the old `format!`
 /// added.
+#[derive(Debug)]
 enum AgentVerifyRenderError {
     Movement(crate::agent::artifact::AgentVerifyMovementError),
     Other(String),
@@ -1242,6 +1238,15 @@ fn agent_verify_error_is_typed_refusal(error: &str) -> bool {
     error == AGENT_VERIFY_INPUT_DRIFT_ERROR
         || error.starts_with(AGENT_VERIFY_NO_MOVEMENT_PREFIX)
         || error.starts_with(crate::agent::artifact::GAP_BINDING_REFUSAL_PREFIX)
+}
+
+/// #14021: the `agent verify` exit mapping. The no-movement class is read
+/// from the typed variant, so a future reword of the rendered message cannot
+/// flip the exit code; the drift and gap-binding classes stay prose-keyed
+/// (#12102) until their producers carry types too.
+fn agent_verify_render_error_is_decision(error: &AgentVerifyRenderError) -> bool {
+    matches!(error, AgentVerifyRenderError::Movement(_))
+        || agent_verify_error_is_typed_refusal(&error.to_string())
 }
 
 fn run_agent_verify_execute(options: AgentVerifyExecuteOptions) -> Result<(), CommandError> {
@@ -3085,7 +3090,8 @@ fn run_agent_repair_phase(
             let rendered_verify = match render_agent_verify(&verify_options) {
                 Ok(rendered) => rendered,
                 Err(render_error) => {
-                    if let AgentVerifyRenderError::Movement(_) = &render_error {
+                    let error_str = render_error.to_string();
+                    if matches!(&render_error, AgentVerifyRenderError::Movement(_)) {
                         // The typed no-movement class routes directly
                         // (#14021): no message-prefix match can decide this
                         // branch.
@@ -3101,27 +3107,26 @@ fn run_agent_repair_phase(
                         }
                         refusal.typed = true;
                     } else {
-                        let error = render_error.to_string();
                         // Only deliberate named refusals are typed (exit 3):
                         // drifted analysis inputs and a no-movement verify
                         // refusal. Snapshot canonicalization, reads, artifact
                         // validation, and rendering failures are operational
                         // (exit 2) even though the attempt was already
                         // selected.
-                        if agent_verify_error_is_typed_refusal(&error) {
-                            if error == AGENT_VERIFY_INPUT_DRIFT_ERROR {
+                        if agent_verify_error_is_typed_refusal(&error_str) {
+                            if error_str == AGENT_VERIFY_INPUT_DRIFT_ERROR {
                                 for line in
                                     repair_after_input_drift_lines(&caller_root, store_ref, &attempt)
                                 {
                                     refusal.narrate(line);
                                 }
-                            } else if error
+                            } else if error_str
                                 .starts_with(crate::agent::artifact::GAP_BINDING_REFUSAL_PREFIX)
                             {
                                 // The named gap did not close: it is absent, was
                                 // never open, or still reads open. Counts against
                                 // the same retry budget as a no-movement refusal.
-                                refusal.narrate(format!("{error}."));
+                                refusal.narrate(format!("{error_str}."));
                                 refusal.code = Some(no_movement_refusal_code(prior_refusals));
                                 for line in repair_after_no_movement_lines(
                                     &caller_root,
@@ -3136,7 +3141,7 @@ fn run_agent_repair_phase(
                             refusal.typed = true;
                         }
                     }
-                    return Err(render_error.to_string());
+                    return Err(error_str);
                 }
             };
             refusal

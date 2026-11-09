@@ -749,4 +749,28 @@ fn no_movement_class_travels_with_the_variant_not_the_message() {
     );
     // Both render identically for the user; only the class differs.
     assert_eq!(same_text_untyped.to_string(), rendered);
+    // Route the shapes through the production exit mapping
+    // (`agent_verify_render_error_is_decision`, the exact predicate the CLI
+    // dispatch uses): the typed variant decides on the variant alone, so a
+    // future reword of the rendered message cannot flip the exit code. The
+    // identical untyped text classifies only through the legacy prose
+    // fallback retained for drift and gap-binding refusals (#12102); that
+    // fallback is deliberate compat, not the mechanism this change relies
+    // on, and it cannot mint the repair-after narration the variant branch
+    // carries.
+    assert!(
+        agent_verify_render_error_is_decision(&reworded_but_typed),
+        "the typed variant decides the exit even if the prose drifts"
+    );
+    assert!(
+        agent_verify_error_is_typed_refusal(&rendered),
+        "legacy prose fallback still covers an untyped movement message"
+    );
+    let operational = AgentVerifyRenderError::Other(
+        "agent verify could not read after artifact at /tmp/x".to_string(),
+    );
+    assert!(
+        !agent_verify_render_error_is_decision(&operational),
+        "operational failures stay exit 2"
+    );
 }
