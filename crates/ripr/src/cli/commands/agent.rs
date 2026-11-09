@@ -3217,6 +3217,9 @@ fn run_agent_repair_phase(
                         cage_after.verdict.status
                     );
                 }
+                if let Some(line) = line_ending_only_note(&cage_after) {
+                    refusal.narrate(line);
+                }
                 for line in repair_after_cage_recovery_lines(
                     &caller_root,
                     store_ref,
@@ -3812,6 +3815,49 @@ fn repair_after_summary_lines(receipt_path: &Path) -> Vec<String> {
 /// Upper bound on cage violations the after-phase narration lists; the attempt
 /// manifest retains all of them.
 const CAGE_RECOVERY_MAX_VIOLATIONS: usize = 10;
+
+/// Names the files the edit cage left out of the attempt because their only
+/// change was a git-invisible line-ending flip (#13833), so a file the user
+/// knows was rewritten is not silently missing from the verdict. Bounded like
+/// the violation list; the attempt manifest keeps every path.
+fn line_ending_only_note(after: &crate::app::repair_attempt::RepairAttemptAfter) -> Option<String> {
+    let paths = &after.line_ending_only_paths;
+    if paths.is_empty() {
+        return None;
+    }
+    let listed = paths
+        .iter()
+        .take(CAGE_RECOVERY_MAX_VIOLATIONS)
+        // A repository file name is untrusted text: escape control characters
+        // (a newline included) so a crafted name cannot forge another
+        // narration line.
+        .map(|path| {
+            let shown: String = path
+                .chars()
+                .flat_map(|ch| {
+                    if ch.is_control() {
+                        ch.escape_default().collect::<Vec<_>>()
+                    } else {
+                        vec![ch]
+                    }
+                })
+                .collect();
+            format!("`{shown}`")
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    let more = if paths.len() > CAGE_RECOVERY_MAX_VIOLATIONS {
+        format!(
+            " (and {} more; see the attempt manifest)",
+            paths.len() - CAGE_RECOVERY_MAX_VIOLATIONS
+        )
+    } else {
+        String::new()
+    };
+    Some(format!(
+        "not counted as edits: {listed}{more}; only the line endings changed, and Git normalizes these files (`core.autocrlf` or a `text` attribute), so `git status` does not show the change either."
+    ))
+}
 
 /// The receipt's `test_changed` for an after phase: the attempt's selected
 /// test file, named only when the edit cage measured it changing and found
@@ -4588,6 +4634,57 @@ pub(in crate::cli) fn before_phase_stdout(
         }
     }
     Ok(document)
+}
+
+/// Whether the human before-phase stdout already carries the whole start
+/// result: the target, the one edit surface with its terminality, and the one
+/// next command (#13803). Only then may stderr drop its copies of them, so an
+/// agent reading both streams sees each fact once. `--json`, an ambiguous
+/// baseline, or a packet the summary cannot read keeps the stderr lines.
+pub(in crate::cli) fn before_phase_stdout_owns_start_result(
+    packet: &str,
+    json: bool,
+    continuation: &output::agent_seam_packets::BeforePhaseAttemptContinuation,
+) -> bool {
+    // `edit_directive: true` matches the stdout producer, which passes
+    // `!continuation.baseline_ambiguous`: this predicate already requires an
+    // unambiguous baseline, so both calls render the same summary.
+    !json
+        && !continuation.baseline_ambiguous
+        && before_phase_summary(packet, "", true).is_some()
+        && summary_target_is_the_cage_target(packet)
+}
+
+/// The stdout summary names `recommended_test.file`; the cage binds
+/// `allowed_edit_surface[0]` when the packet carries one. Stderr may drop its
+/// directive only when both name the same file, so the sole remaining
+/// instruction never points at a file the cage refuses (#13803 review).
+fn summary_target_is_the_cage_target(packet: &str) -> bool {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(packet) else {
+        return false;
+    };
+    let Some(item) = value
+        .get("packets")
+        .and_then(serde_json::Value::as_array)
+        .and_then(|packets| packets.first())
+    else {
+        return false;
+    };
+    let summary_target = item
+        .pointer("/recommended_test/file")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim);
+    match item.get("allowed_edit_surface") {
+        None => summary_target.is_some(),
+        Some(surface) => {
+            let cage_target = surface
+                .as_array()
+                .and_then(|paths| paths.first())
+                .and_then(serde_json::Value::as_str)
+                .map(str::trim);
+            summary_target.is_some() && summary_target == cage_target
+        }
+    }
 }
 
 /// The stdout trailer for an attempt born with an ambiguous baseline
@@ -6051,6 +6148,80 @@ mod tests {
     }
 
     #[test]
+    fn line_ending_only_note_names_skipped_files_and_stays_silent_without_them()
+    -> Result<(), String> {
+        let mut after = crate::app::repair_attempt::RepairAttemptAfter {
+            attempt_id: crate::app::repair_attempt::RepairAttemptId::parse(
+                "repair-attempt-0123456789abcdef01234567",
+            )?,
+            repository_head: "b".repeat(40),
+            delta_sha256: format!("sha256:{}", "0".repeat(64)),
+            delta_binding: None,
+            receipt_projection_predecessor: None,
+            focused_result: None,
+            packet_sha256: format!("sha256:{}", "1".repeat(64)),
+            line_ending_only_paths: Vec::new(),
+            current: true,
+            verdict: crate::edit_cage::EditCageVerdict {
+                status: crate::edit_cage::EditCageVerdictStatus::Compliant,
+                changed_paths: vec!["tests/target.rs".to_string()],
+                violations: Vec::new(),
+            },
+        };
+        if let Some(line) = line_ending_only_note(&after) {
+            return Err(format!("no skipped file must narrate nothing: {line}"));
+        }
+        after.line_ending_only_paths = vec!["src/lib.rs".to_string()];
+        let line = line_ending_only_note(&after).ok_or("a skipped file must be named")?;
+        if !line.contains("`src/lib.rs`")
+            || !line.contains("only the line endings changed")
+            || line.contains("tests/target.rs")
+            || line.contains("more")
+        {
+            return Err(format!("unexpected note: {line}"));
+        }
+        // The manifest records the list beside the verdict and round-trips
+        // it; an attempt with no skipped file keeps its manifest bytes
+        // unchanged (the key is absent).
+        let recorded = serde_json::to_value(&after).map_err(|err| err.to_string())?;
+        if recorded
+            .pointer("/line_ending_only_paths/0")
+            .and_then(|v| v.as_str())
+            != Some("src/lib.rs")
+            || recorded
+                .pointer("/verdict/line_ending_only_paths")
+                .is_some()
+        {
+            return Err(format!("unexpected manifest shape: {recorded}"));
+        }
+        let reread: crate::app::repair_attempt::RepairAttemptAfter =
+            serde_json::from_value(recorded).map_err(|err| err.to_string())?;
+        if reread != after {
+            return Err("the recorded list must round-trip".to_string());
+        }
+        let mut none = after.clone();
+        none.line_ending_only_paths.clear();
+        let recorded = serde_json::to_value(&none).map_err(|err| err.to_string())?;
+        if recorded.get("line_ending_only_paths").is_some() {
+            return Err(format!("an empty list must not be serialized: {recorded}"));
+        }
+        after.line_ending_only_paths = vec!["src/a\nripr: forged.rs".to_string()];
+        let line = line_ending_only_note(&after).ok_or("a skipped file must be named")?;
+        if line.contains('\n') || !line.contains("`src/a\\nripr: forged.rs`") {
+            return Err(format!("a control character must be escaped: {line:?}"));
+        }
+        after.line_ending_only_paths = (0..12).map(|index| format!("src/f{index}.rs")).collect();
+        let line = line_ending_only_note(&after).ok_or("skipped files must be named")?;
+        if !line.contains("`src/f9.rs`")
+            || line.contains("`src/f10.rs`")
+            || !line.contains("(and 2 more; see the attempt manifest)")
+        {
+            return Err(format!("the note must stay bounded: {line}"));
+        }
+        Ok(())
+    }
+
+    #[test]
     fn repair_after_cage_recovery_repeats_explicit_store() -> Result<(), String> {
         let after = crate::app::repair_attempt::RepairAttemptAfter {
             attempt_id: crate::app::repair_attempt::RepairAttemptId::parse(
@@ -6062,6 +6233,7 @@ mod tests {
             receipt_projection_predecessor: None,
             focused_result: None,
             packet_sha256: format!("sha256:{}", "1".repeat(64)),
+            line_ending_only_paths: Vec::new(),
             current: false,
             verdict: crate::edit_cage::EditCageVerdict {
                 status: crate::edit_cage::EditCageVerdictStatus::Violated,
@@ -6106,6 +6278,7 @@ mod tests {
             receipt_projection_predecessor: None,
             focused_result: None,
             packet_sha256: format!("sha256:{}", "1".repeat(64)),
+            line_ending_only_paths: Vec::new(),
             current: true,
             verdict: crate::edit_cage::EditCageVerdict {
                 status: crate::edit_cage::EditCageVerdictStatus::Violated,
@@ -6165,6 +6338,7 @@ mod tests {
             receipt_projection_predecessor: None,
             focused_result: None,
             packet_sha256: format!("sha256:{}", "1".repeat(64)),
+            line_ending_only_paths: Vec::new(),
             current: true,
             verdict: crate::edit_cage::EditCageVerdict {
                 status: crate::edit_cage::EditCageVerdictStatus::Violated,

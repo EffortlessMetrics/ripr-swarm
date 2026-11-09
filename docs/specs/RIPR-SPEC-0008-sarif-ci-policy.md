@@ -84,6 +84,12 @@ The SARIF layer should:
   The property is absent when the count is zero. Omitted findings stay
   out of `results`; the property only discloses the filter, matching the
   GitHub annotation denominator notice (#4393);
+- drop from diff-scoped `results` any finding whose changed owner carries
+  `#[mutants::skip]` (owner opt-out, #13819), and record the count of such
+  candidate-actionable findings in
+  `runs[].properties.withheld_by_owner_opt_out` (absent when zero).
+  Policy-suppressed findings are unaffected and keep their SARIF
+  `suppressions` marking;
 - fold diff-scoped results that share a rule, file, line and suppression
   state into the first one, so one changed line is one code-scanning alert
   (#11219). The kept result is the one with the smallest fingerprint (input order never
