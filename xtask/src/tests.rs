@@ -50004,21 +50004,21 @@ fn lsp_cockpit_report_reads_boundary_gap_fixture_expectations() -> Result<(), St
             .action_titles
             .contains(&"Write targeted test: open best related test".to_string())
     );
-    assert!(
-        !boundary_gap
-            .action_titles
-            .contains(&"Write targeted test: copy brief".to_string()),
-        "repair-packet brief is gated on fix_site_ready (#1663)"
-    );
+    // #13716: the boundary seam passes the repair-packet flip, so the real
+    // seam diagnostic offers the brief and the repair start.
+    for title in [
+        "Write targeted test: copy brief",
+        "Start repair: copy repair command",
+    ] {
+        assert!(
+            boundary_gap.action_titles.contains(&title.to_string()),
+            "boundary_gap must offer {title}: {:?}",
+            boundary_gap.action_titles
+        );
+    }
     assert!(boundary_gap.context.seam_packet_available);
-    assert!(
-        !boundary_gap.context.targeted_test_brief_available,
-        "pinned fixtures omit copyTargetedTestBrief until fix_site_ready"
-    );
-    assert!(
-        !boundary_gap.context.agent_repair_command_available,
-        "pinned fixtures omit copyAgentRepairCommand until fix_site_ready"
-    );
+    assert!(boundary_gap.context.targeted_test_brief_available);
+    assert!(boundary_gap.context.agent_repair_command_available);
     assert!(boundary_gap.context.agent_packet_command_available);
     assert!(boundary_gap.context.agent_brief_command_available);
     assert!(boundary_gap.context.after_snapshot_command_available);
@@ -50049,14 +50049,10 @@ fn editor_lsp_workflow_fixture_pins_saved_workspace_loop() -> Result<(), String>
     assert_eq!(editor_fixture.diagnostic_count, 1);
     assert_eq!(editor_fixture.seam_diagnostic_count, 1);
     assert!(editor_fixture.context.seam_packet_available);
-    assert!(
-        !editor_fixture.context.targeted_test_brief_available,
-        "editor_lsp_workflow pins repair-packet suppression without fix_site_ready"
-    );
-    assert!(
-        !editor_fixture.context.agent_repair_command_available,
-        "editor_lsp_workflow pins repair start suppression without fix_site_ready"
-    );
+    // #13716: the seam passes the repair-packet flip, so the brief and the
+    // repair start are offered on the real seam diagnostic.
+    assert!(editor_fixture.context.targeted_test_brief_available);
+    assert!(editor_fixture.context.agent_repair_command_available);
     assert!(editor_fixture.context.agent_packet_command_available);
     assert!(editor_fixture.context.agent_brief_command_available);
     assert!(editor_fixture.context.after_snapshot_command_available);

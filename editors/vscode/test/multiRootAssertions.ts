@@ -69,8 +69,8 @@ const artifactFields = {
   agent_receipt_json: 'target/ripr/agent/agent-receipt.json',
 };
 
-// Repair-packet agent repair is gated on fix_site_ready (#1663); multi-root
-// fixtures do not project that state, so omit it from required loop commands.
+// The repair start is checked separately below: its target is the repair
+// attempt directory, not one of the loop artifacts above.
 const commandArtifacts: Record<string, string> = {
   'ripr.copyAgentPacketCommand': artifactFields.agent_packet_json,
   'ripr.copyAgentBriefCommand': artifactFields.agent_brief_json,
@@ -152,6 +152,15 @@ export function assertActionTargets(commands: CommandObservation[], expected: Ro
       }
     }
   }
+  // #13716: the committed boundary change passes the seam's repair gate, so
+  // the real server offers the repair start that `ripr agent repair` accepts.
+  const repairStarts = commands.filter(command => command.command === 'ripr.copyAgentRepairCommand');
+  assert.strictEqual(repairStarts.length, 1,
+    `fixture must offer the repair start (ripr actions: ${commands.map(command => command.command).join(', ')})`);
+  const start = object(repairStarts[0].arguments?.[0]);
+  const startTokens = assertCommandRoot(start.command as string, expected);
+  assert.deepStrictEqual(startTokens.slice(0, 3), ['ripr', 'agent', 'repair']);
+  assert.strictEqual(startTokens[startTokens.indexOf('--phase') + 1], 'before');
   for (const name of Object.keys(commandArtifacts)) {
     const found = commands.filter(command => command.command === name).length;
     assert.strictEqual(found, 1,

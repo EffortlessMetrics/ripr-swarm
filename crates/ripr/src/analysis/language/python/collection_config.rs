@@ -691,6 +691,23 @@ impl IniRules {
             // An option that is present but empty, quoted oddly, or built from
             // path separators or character classes this pass does not match
             // is not evaluated.
+            // Conservative reading, not pytest semantics: read a single
+            // trailing slash (`env/`) as the basename pattern `env`, which may
+            // withhold more than pytest does but never grants credit. Any other `/`
+            // (`a/b/`, `/`, `env//`) stays unevaluated.
+            let words = if key == "norecursedirs" {
+                words.map(|words| {
+                    words
+                        .into_iter()
+                        .map(|word| match word.strip_suffix('/') {
+                            Some(name) => name.to_string(),
+                            None => word,
+                        })
+                        .collect::<Vec<_>>()
+                })
+            } else {
+                words
+            };
             let usable = words.filter(|words| {
                 !words.is_empty()
                     && words.iter().all(|word| {
