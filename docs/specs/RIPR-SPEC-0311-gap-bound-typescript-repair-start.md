@@ -168,6 +168,24 @@ existed with no way to begin the attempt.
     equals the producer's count; otherwise the shape alone is printed. This is
     wording only: no start command is built and readiness stays the shared
     validator's.
+12. Preview Route On Seam Inspection Surfaces (#13791): when the selected
+    scope's changed code is TypeScript or Python preview only (every changed
+    file the shared language router routes is an enabled TypeScript or Python
+    file), an empty `ripr agent brief` replaces its "under the current config"
+    warning with one line that names the language, `ripr check --format
+    agent` and the conditional `agent repair --gap-id` start, and says no
+    config change adds a seam. `agent card --seam-id` and `agent packet
+    --seam-id` given an id shaped like a TypeScript or Python preview finding
+    or gap id say it is shaped like that id family, not a seam id, and name
+    the same route; the packet refusal's derived remedy command and the
+    card's typed `remedy_route` are that `ripr check --format agent` command.
+    A `--diff` brief's route replays `--diff <path>`; a `--files` brief says
+    the current diff need not match its selection. Classification reads every
+    changed path, including files with only removed lines, and stays generic
+    when the diff deletes a whole file. Exit codes (3) and the
+    `seam_id_unknown` status are unchanged, a truly unknown or Rust-shaped
+    stale id keeps its prior wording, and the start stays conditional on
+    `ripr check` printing it, so no readiness claim is added.
 
 ## Required Evidence
 
@@ -202,6 +220,11 @@ existed with no way to begin the attempt.
   `ripr check` prints no start for that gap and keeps the single-boundary
   gap's start; unit negatives for a non-no-card decline, a computed operand, a
   mixed equality term and a row count that disagrees with the producer.
+- Preview route on seam inspection surfaces (#13791): CLI cases for a
+  TypeScript and a Python preview scope (brief, card, packet) with negative
+  controls for a truly unknown seam id and a Rust-shaped stale finding id;
+  unit cases for the preview-only scope predicate (Rust, mixed, other
+  language and disabled adapter scopes stay generic).
 
 ## Non-Goals
 

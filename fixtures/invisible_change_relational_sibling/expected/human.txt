@@ -33,7 +33,7 @@ Start here:
       base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
     - reach yes: Related tests appear to reach backoff_ms: first_attempt_waits_the_base, retries_grow_past_the_first_wait
     - infection weak: Every related test's assertions hold with the same truth value on the baseline and the change, so no assertion tells the versions apart
-    - 11 more detail line(s) in --format human-full
+    - 12 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
   (finding id, for explain/context)

@@ -57,6 +57,106 @@ pub(in crate::analysis::language::python) struct PythonClassFacts {
     /// For a function owner: the names its own body binds (parameters, locals,
     /// walrus targets). None when unknown, which keeps every consumer closed.
     pub(in crate::analysis::language::python) bound_names: Option<Vec<String>>,
+    /// For a non-dunder method: the protocol dunder methods of the same class
+    /// (constructor and finalizer dunders excluded; at most
+    /// [`MAX_DUNDER_ENTRIES`]) from which a `self.` / `cls.` call path of at
+    /// most [`MAX_DUNDER_CALL_DEPTH`] hops reaches it (`cache[key] = v` runs
+    /// `__setitem__`, which calls `self.getsizeof(value)`; #13776). Empty when
+    /// unknown, which keeps every consumer closed.
+    #[serde(default)]
+    pub(in crate::analysis::language::python) dunder_entries: Vec<String>,
+}
+
+/// Most `self.` hops followed from a dunder method to a helper.
+const MAX_DUNDER_CALL_DEPTH: usize = 5;
+/// Most reaching dunders recorded per helper.
+const MAX_DUNDER_ENTRIES: usize = 8;
+
+/// Dunders that run on construction, class creation or finalization, never as
+/// a protocol a test exercises on an instance. They start no search: a helper
+/// called from `__init__` keeps its pre-#13776 reading, so constructing the
+/// class alone never relates it (RIPR-SPEC-0201).
+const NON_ENTRY_DUNDERS: [&str; 5] = [
+    "__init__",
+    "__new__",
+    "__post_init__",
+    "__init_subclass__",
+    "__del__",
+];
+
+/// Dunder methods of a class that reach each non-dunder method through
+/// same-class calls, keyed by (file, class) then method name. Forward search
+/// from each dunder, so the cost is dunders x class edges, not methods x edges.
+fn dunder_entries_by_method(
+    owners: &[PythonOwner],
+) -> HashMap<(std::path::PathBuf, String), HashMap<String, Vec<String>>> {
+    type ClassKey<'o> = (&'o std::path::Path, &'o str);
+    let mut edges: HashMap<ClassKey<'_>, HashMap<&str, Vec<&str>>> = HashMap::new();
+    let mut dunders: HashMap<ClassKey<'_>, Vec<&str>> = HashMap::new();
+    for owner in owners {
+        if owner.class_path.is_empty()
+            || !matches!(
+                owner.owner_kind,
+                Some(OwnerKind::Method | OwnerKind::ClassMethod)
+            )
+        {
+            continue;
+        }
+        let key = (owner.file.as_path(), owner.class_path.as_str());
+        let callees = edges
+            .entry(key)
+            .or_default()
+            .entry(&owner.name)
+            .or_default();
+        callees.extend(owner.same_class_callees.iter().map(String::as_str));
+        if super::is_dunder_name(&owner.name) && !NON_ENTRY_DUNDERS.contains(&owner.name.as_str()) {
+            let names = dunders.entry(key).or_default();
+            if !names.contains(&owner.name.as_str()) {
+                names.push(&owner.name);
+            }
+        }
+    }
+    let mut reached: HashMap<(std::path::PathBuf, String), HashMap<String, Vec<String>>> =
+        HashMap::new();
+    for (key, names) in dunders {
+        let Some(graph) = edges.get(&key) else {
+            continue;
+        };
+        for dunder in names {
+            let mut seen: std::collections::HashSet<&str> =
+                std::collections::HashSet::from([dunder]);
+            let mut frontier = vec![dunder];
+            for _ in 0..MAX_DUNDER_CALL_DEPTH {
+                let mut next = Vec::new();
+                for caller in frontier {
+                    for callee in graph.get(caller).into_iter().flatten() {
+                        if !seen.insert(callee) {
+                            continue;
+                        }
+                        next.push(*callee);
+                        if super::is_dunder_name(callee) || !graph.contains_key(callee) {
+                            continue;
+                        }
+                        let entries = reached
+                            .entry((key.0.to_path_buf(), key.1.to_string()))
+                            .or_default()
+                            .entry((*callee).to_string())
+                            .or_default();
+                        if entries.len() < MAX_DUNDER_ENTRIES
+                            && !entries.iter().any(|d| d == dunder)
+                        {
+                            entries.push(dunder.to_string());
+                        }
+                    }
+                }
+                if next.is_empty() {
+                    break;
+                }
+                frontier = next;
+            }
+        }
+    }
+    reached
 }
 
 /// One class's method names, shared by its methods, and whether `__enter__`
@@ -103,12 +203,20 @@ pub(in crate::analysis::language::python) fn apply_class_facts(owners: &mut [Pyt
             )
         })
         .collect();
+    let reached = dunder_entries_by_method(owners);
     for owner in owners.iter_mut() {
         if let Some((methods, enter_returns_self)) =
             grouped.get(&(owner.file.clone(), owner.class_path.clone()))
         {
             owner.class_facts.methods = std::sync::Arc::clone(methods);
             owner.class_facts.enter_returns_self = *enter_returns_self;
+        }
+        if !owner.class_path.is_empty()
+            && let Some(entries) = reached
+                .get(&(owner.file.clone(), owner.class_path.clone()))
+                .and_then(|methods| methods.get(&owner.name))
+        {
+            owner.class_facts.dunder_entries = entries.clone();
         }
     }
 }

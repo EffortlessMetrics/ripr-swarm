@@ -463,3 +463,15 @@ Source-only edit; native `cargo xtask goldens bless` could not run because the l
 
 Updated:
 - `expected/check.json`
+
+## Pending — binding_predicate_two_uses (33)
+
+Reason:
+Reach summary of a workspace-unreferenced owner now ends '(unreferenced in workspace)' (RIPR-SPEC-0219, #12766); class unchanged
+
+Command:
+`cargo xtask goldens bless binding_predicate_two_uses --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
