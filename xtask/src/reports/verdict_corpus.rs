@@ -379,6 +379,10 @@ pub(crate) fn score(truth: TruthState, observed: Verdict) -> Outcome {
     }
 }
 
+/// Reach-summary suffix `ripr` writes for a workspace-unreferenced owner; the
+/// classifier owns the wording (`UNREFERENCED_IN_WORKSPACE`).
+const UNREFERENCED_IN_WORKSPACE: &str = "(unreferenced in workspace)";
+
 pub(crate) fn finding_verdict(finding: &Value) -> Verdict {
     let class = finding
         .get("classification")
@@ -390,6 +394,20 @@ pub(crate) fn finding_verdict(finding: &Value) -> Verdict {
     let named_limit = finding
         .get("static_limit_kind")
         .is_some_and(|kind| !kind.is_null());
+    // RIPR-SPEC-0219: `no_static_path` on an owner the workspace never names
+    // (`(unreferenced in workspace)` on the reach stage, only set when no
+    // caller, alias, doctest, macro block or language dispatch can run it
+    // unseen) is a plain missing test, so it reads as a gap. A named limit
+    // still wins.
+    if class == "no_static_path"
+        && !named_limit
+        && finding
+            .pointer("/ripr/reach/summary")
+            .and_then(Value::as_str)
+            .is_some_and(|summary| summary.ends_with(UNREFERENCED_IN_WORKSPACE))
+    {
+        return Verdict::Gap;
+    }
     if named_limit
         || matches!(
             class,

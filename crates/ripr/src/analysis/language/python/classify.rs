@@ -901,7 +901,10 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
     // equality side. Unreadable guards, unbound operands, and rows without
     // literal inputs fail open and keep the existing oracle verdict.
     let guarded_arm_gap = (static_limit.is_none()
-        && matches!(family, ProbeFamily::ReturnValue | ProbeFamily::Predicate)
+        && matches!(
+            family,
+            ProbeFamily::ReturnValue | ProbeFamily::FieldConstruction | ProbeFamily::Predicate
+        )
         && boundary_gap.is_none()
         && inactive_term.is_none()
         && !no_behavior.multi_line_def_header_line)
@@ -1140,15 +1143,45 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
             )],
         )
     } else if !has_oracle_eligible_relation {
+        // Every related test provably never runs (an unconditional skip, an
+        // empty or refused parametrize table, a replacing later binding): the
+        // repair is an active test, not a stronger assertion in a dead one.
+        let never_run: Vec<(&str, &str)> = related_candidates
+            .iter()
+            .map_while(|candidate| {
+                super::test_activation::never_runs(candidate.test)
+                    .map(|control| (candidate.test.name.as_str(), control))
+            })
+            .collect();
+        let others = never_run
+            .iter()
+            .map(|(test, _)| *test)
+            .collect::<std::collections::BTreeSet<_>>()
+            .len()
+            .saturating_sub(1);
+        let missing = match never_run.as_slice() {
+            [(test, control), ..] if never_run.len() == related_candidates.len() => {
+                format!(
+                    "Related test `{test}`{} never runs (`{control}`), so no test can notice this change to `{}`; remove the control or add an active pytest or unittest test with an exact-value assertion.",
+                    if others == 0 {
+                        String::new()
+                    } else {
+                        format!(" and {others} other related test(s)")
+                    },
+                    owner.name
+                )
+            }
+            _ => format!(
+                "Only heuristic Python test links were found for `{}`; verify the suggested test location or add a direct pytest or unittest call with an exact-value assertion.",
+                owner.name
+            ),
+        };
         (
             ExposureClass::WeaklyExposed,
             StageState::Weak,
             StageState::Weak,
             StageState::Weak,
-            vec![format!(
-                "Only heuristic Python test links were found for `{}`; verify the suggested test location or add a direct pytest or unittest call with an exact-value assertion.",
-                owner.name
-            )],
+            vec![missing],
         )
     } else if let Some(credit) = log_evidence
         .as_ref()
@@ -1636,7 +1669,14 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
                 drafted_boundary: None,
             }]
         } else {
-            python_missing_discriminators(&family, line, line_text, owner, flow_sink.as_ref())
+            python_missing_discriminators(
+                &family,
+                line,
+                line_text,
+                old_line_text,
+                owner,
+                flow_sink.as_ref(),
+            )
         }
     } else {
         Vec::new()
@@ -1883,6 +1923,12 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
             evidence.push(format!(
                 "related_test_uncertain: {} ({})",
                 candidate.relation.as_str(),
+                test.name
+            ));
+        }
+        if let Some(control) = super::test_activation::never_runs(test) {
+            evidence.push(format!(
+                "related_test_never_runs: `{control}` ({})",
                 test.name
             ));
         }

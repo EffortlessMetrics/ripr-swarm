@@ -1,0 +1,23 @@
+{
+  "id": "typescript_cross_module_reach_chain_cannot_promote",
+  "language": "typescript",
+  "tier": "pure",
+  "source_fixture": "fixtures/ts_cross_module_reach_chain",
+  "vector": "reach_through_an_importing_exported_function_stays_unknown_never_exposed",
+  "assertions": [
+    {
+      "type": "must_not_report_clean"
+    },
+    {
+      "type": "expected_finding_count",
+      "count": 1
+    },
+    {
+      "type": "must_not_promote"
+    },
+    {
+      "type": "expected_class",
+      "class": "static_unknown"
+    }
+  ]
+}
