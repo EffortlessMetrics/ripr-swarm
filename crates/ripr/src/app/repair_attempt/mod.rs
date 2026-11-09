@@ -5410,11 +5410,17 @@ pub(crate) fn conservative_dirty_premise_violations(
     attempt_id: Option<&RepairAttemptId>,
 ) -> Result<Vec<String>, String> {
     let operational = operational_write_rules(root, store, attempt_id)?;
+    // `git diff --name-only` prints repo-top-relative paths whatever the
+    // working directory, so the content sniff must resolve them against the
+    // work-tree top level, not `--root` (#13795). Paths stay repo-top-relative
+    // in the result so they match the refusal text.
+    let sniff_root = crate::git::discovered_work_tree_toplevel(root, GIT_PATHS_DEADLINE)
+        .unwrap_or_else(|| root.to_path_buf());
     Ok(tracked_dirty_paths(root, head)?
         .into_iter()
         .filter(|path| {
             !operational.iter().any(|rule| rule.matches(path))
-                && dirty_path_cannot_be_repair_target(root, path)
+                && dirty_path_cannot_be_repair_target(&sniff_root, path)
         })
         .collect())
 }
@@ -7329,6 +7335,62 @@ mod tests {
             Ok(())
         })();
         let _ = std::fs::remove_dir_all(&root);
+        result
+    }
+
+    /// #13795: with `--root` a subdirectory, git's repo-top-relative dirty
+    /// paths are sniffed against the work-tree top. A dirty production file
+    /// under the root is named; a dirty repo-top file whose relative path
+    /// collides with a production file under the root is judged by its own
+    /// content (here: inline test module, so it defers) and is not misreported.
+    #[test]
+    fn dirty_premise_preflight_resolves_paths_against_repo_top_for_subdirectory_root()
+    -> Result<(), String> {
+        use crate::testing::fixture_git::fixture_git_ok;
+        let top = test_repo_root("dirty-preflight-subroot")?;
+        let result = (|| -> Result<(), String> {
+            let sub = top.join("crate");
+            for (name, content) in [
+                ("crate/src/lib.rs", "pub fn f() {}\n"),
+                ("src/lib.rs", "pub fn g() {}\n#[cfg(test)]\nmod tests {}\n"),
+            ] {
+                let path = top.join(name);
+                if let Some(parent) = path.parent() {
+                    std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+                }
+                std::fs::write(&path, content).map_err(|e| e.to_string())?;
+            }
+            fixture_git_ok(&top, &["add", "-A"])?;
+            fixture_git_ok(&top, &["commit", "--no-gpg-sign", "-m", "files"])?;
+            let head = crate::agent::artifact::current_git_head(&top)?;
+
+            // Collision only: the repo-top file (inline test module) is dirty;
+            // the production file under the root is clean.
+            std::fs::write(
+                top.join("src/lib.rs"),
+                "pub fn g() { }\n#[cfg(test)]\nmod tests {}\n",
+            )
+            .map_err(|e| e.to_string())?;
+            let collision = conservative_dirty_premise_violations(&sub, &head, None, None)?;
+            if !collision.is_empty() {
+                return Err(format!(
+                    "colliding repo-top path misreported: {collision:?}"
+                ));
+            }
+
+            // A dirty production file under the subdirectory root is named
+            // with its repo-top-relative path.
+            std::fs::write(sub.join("src/lib.rs"), "pub fn f() { }\n")
+                .map_err(|e| e.to_string())?;
+            let under_root = conservative_dirty_premise_violations(&sub, &head, None, None)?;
+            if under_root != vec!["crate/src/lib.rs".to_string()] {
+                return Err(format!(
+                    "dirty production file under the root must be named repo-top-relative: {under_root:?}"
+                ));
+            }
+            Ok(())
+        })();
+        let _ = std::fs::remove_dir_all(&top);
         result
     }
 
