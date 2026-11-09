@@ -28,6 +28,9 @@ pub use parse::extract_global_verbose;
 pub(crate) use parse::reconcile_root;
 pub(crate) use suggest::unknown_argument;
 
+#[doc(hidden)]
+pub use commands::impacted_evidence_command::run_impacted_evidence_at;
+
 /// The command completed. Shared by `Ok(())` paths and by the
 /// `help --json` exit contract (`docs/EXIT_CODES.md`).
 pub(crate) const EXIT_COMPLETED: i32 = 0;

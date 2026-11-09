@@ -7158,6 +7158,43 @@ mod tests {
         assert_eq!(detect_languages(&root), vec![LanguageId::TypeScript]);
         std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
 
+        // #13618: a monorepo root with nested Python packages detects Python
+        // and, with no Rust at all, must not demand `cargo init`.
+        let root = unique_command_test_dir("detect-python-monorepo");
+        std::fs::create_dir_all(root.join("services/a"))
+            .map_err(|err| format!("create package: {err}"))?;
+        std::fs::write(
+            root.join("services/a/pyproject.toml"),
+            "[project]\nname='a'\n",
+        )
+        .map_err(|err| format!("write marker: {err}"))?;
+        let detected = detect_languages(&root);
+        assert_eq!(detected, vec![LanguageId::Python]);
+        // The scratch dir may sit under this repository's own Cargo.toml, so
+        // judge the scope decision directly with no manifest found.
+        let config = crate::config::load_for_root(&root);
+        assert!(matches!(
+            output::doctor::rust_toolchain_scope(&config, &detected, false),
+            output::doctor::RustToolchainScope::NotInScope(_)
+        ));
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+
+        // Negative control: the same tree without the nested marker has no
+        // Python, so the Rust manifest demand stays.
+        let root = unique_command_test_dir("detect-no-python-monorepo");
+        std::fs::create_dir_all(root.join("services/a"))
+            .map_err(|err| format!("create package: {err}"))?;
+        std::fs::write(root.join("services/a/README.md"), "docs\n")
+            .map_err(|err| format!("write readme: {err}"))?;
+        let detected = detect_languages(&root);
+        assert!(detected.is_empty());
+        let config = crate::config::load_for_root(&root);
+        assert_eq!(
+            output::doctor::rust_toolchain_scope(&config, &detected, false),
+            output::doctor::RustToolchainScope::Required
+        );
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+
         let root = unique_command_test_dir("detect-near-miss");
         std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
         std::fs::write(root.join("index.mjsx"), "export {};\n")

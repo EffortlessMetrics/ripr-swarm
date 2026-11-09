@@ -291,7 +291,19 @@ mock expectations, and custom `assert_*` helpers.
   elements are not evaluated by this bounded path. An unproved list-equality
   change retains the finding and limitation without inventing a missing exact
   assertion, typed repair placement or repair card.
-- `self.assertTrue(...)` / `assertFalse(...)` â†’ smoke oracle
+- `self.assertTrue(...)` / `assertFalse(...)` → smoke oracle, except the bounded bool-owner exception below
+  Bool-owner exception (#13620): `assert f(lit, ..) is True` / `is False`
+  (either operand order), `self.assertTrue(f(lit, ..))`,
+  `self.assertFalse(f(lit, ..))` and `self.assertIs(f(lit, ..), True|False)`
+  are re-read as `f(lit, ..) == True|False` exact pins only when `f` is a
+  unique function owner that provably returns a `bool` (annotated `-> bool`,
+  or a single `return <comparison>`), every argument is a literal, the test
+  file does not patch or rebind `f`, and, for the unittest forms, the file
+  defines none of `assertTrue`/`assertFalse`/`assertIs`/`assertEqual` and every
+  class base is `unittest.TestCase` or `TestCase` imported from `unittest`.
+  `is not`, `is None`, `isinstance`, `assertIsNot`, `assertIsNotNone`, bare
+  truthiness on a non-bool owner and non-literal arguments stay uncredited.
+  `assertIs(x, True|False)` is recorded as a weak assertion otherwise.
 - `mock.assert_called*` family (`assert_called_once_with`,
   `assert_called_with`, `assert_called`, `assert_not_called`) â†’
   side-effect/call oracle
@@ -348,8 +360,16 @@ with the owner's dotted module path by exact equality. An owner below a
 directory named `src` (the PyPA src layout, including monorepo
 `packages/<pkg>/src/`) also matches the dotted path below that `src` import
 root, so `from pricing.discounts import f` identifies `src/pricing/discounts.py`
-while the repository-relative `src.pricing.discounts` form still matches. Bare
-file stems and arbitrary path suffixes never count as module identity.
+while the repository-relative `src.pricing.discounts` form still matches. An
+owner inside a nested project (the nearest non-root ancestor holding
+`pyproject.toml`, `setup.py`, `setup.cfg`, `pytest.ini` or `tox.ini`) also
+matches its project-relative dotted path, so `from core import f` in
+`svc/b/tests` identifies `svc/b/core.py` (#13675). That name identifies the
+owner only for a test under the same project root; the repository-root `lib/`
+import root is not applied inside a project, and a name another file of the
+same project also yields (`pkg.py` beside `pkg/__init__.py`) identifies
+neither. Bare file stems and arbitrary path suffixes never count as module
+identity.
 A src-layout short name that a plain module of the same project also produces
 (a repository-root `core.py`, or `<project>/core.py` beside `<project>/src/`)
 identifies neither module from any test (#13745).

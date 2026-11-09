@@ -17,9 +17,11 @@ use std::rc::Rc;
 mod verify_command_tests;
 
 mod dunder_entries;
+mod project_names;
 pub(super) use dunder_entries::{
     PythonClassFacts, apply_class_facts, operator_entry_in_text, with_entry,
 };
+pub(super) use project_names::{apply_project_module_names, owner_import_modules_for};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum PythonRelationKind {
@@ -734,10 +736,14 @@ fn bare_name_bound_to_other_module(test: &PythonTest, owner: &PythonOwner) -> bo
             path == module
                 || path.ends_with(&format!(".{module}"))
                 || module.ends_with(&format!(".{path}"))
-        }) || owner
-            .ambiguous_src_modules
-            .iter()
-            .any(|ambiguous| ambiguous.module == module)
+        }) || owner.ambiguous_src_modules.iter().any(|ambiguous| {
+            // A src-layout short name is also an owner path; a project-relative
+            // name (#13675) is the owner's only for a test under its project.
+            ambiguous.module == module
+                && (owner_paths.contains(&ambiguous.module)
+                    || owner.reexport_modules.contains(&ambiguous.module)
+                    || module_name_identifies_owner_for(owner, module, &test.file))
+        })
     };
     let imports_name_from_rival = test.imports.iter().any(|import| {
         import.imported == owner.name
@@ -2095,7 +2101,7 @@ fn submodule_receivers_scan(
         format!("{}.{}", import.source_module, import.imported)
     };
     let prefix = format!("{bound}.");
-    owner_module_paths(&owner.file)
+    owner_import_modules_for(owner, test_file)
         .iter()
         .filter_map(|path| {
             if *path == bound {
@@ -2436,7 +2442,7 @@ pub(super) fn import_source_module_matches_owner(
     if import.source_module.is_empty() {
         return false;
     }
-    let names_owner_module = owner_module_paths(&owner.file).contains(&import.source_module)
+    let names_owner_module = owner_import_modules_for(owner, test_file).contains(&import.source_module)
         // `from humanize import naturaldelta`: the package re-exports the
         // owner under its own name, so the package path identifies it too.
         || (import.imported == owner.name && owner.reexport_modules.contains(&import.source_module));
