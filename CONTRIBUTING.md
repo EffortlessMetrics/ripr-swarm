@@ -115,9 +115,12 @@ node editors/vscode/test/developerSetup.cjs --json
 The activation helper also accepts an installed exact release or `stable`; it
 records the exact resolved compiler and carries it into child and fixture
 directories. It does not install a toolchain. Keep conflicting explicit compiler
-selectors visible and resolve them deliberately. The checkout-local `target`
-directory is still needed for the forced linker temporary paths in
-`.cargo/config.toml`, even with a separate `CARGO_TARGET_DIR`.
+selectors visible and resolve them deliberately. For each unset `TEMP`, `TMP`
+or `TMPDIR`, `.cargo/config.toml` falls back to checkout-local `target/`.
+Prepared temp paths supplied by the caller take precedence. A separate
+`CARGO_TARGET_DIR` does not select linker scratch: use the
+[managed build setup](docs/TESTING.md#focused-local-iteration) to
+prepare and select all three temp paths on the intended build volume.
 
 The source Node command needs no npm packages or RIPR/xtask build. Its human
 view omits `--json`; `npm run setup:check -- --json` from `editors/vscode` is
@@ -136,7 +139,7 @@ The report derives requirements from the existing owners:
 | LLVM and Nextest | `.github/workflows/rust-gates.yml` and the selected compiler's sysroot. The current Nextest install input has no version pin; record the actual `cargo nextest --version` result during verification. |
 | Editor host/version and network | The locked `@vscode/test-electron` downloader owns VS Code version selection, cache and update/download redirects. A network permission or proxy/CA setting is not a successful download. |
 | Native editor dependencies/display | A real host smoke below establishes that the selected host starts with the current native libraries and display. Provision these in the environment before verification. |
-| Output locations | `.cargo/config.toml`, `CARGO_TARGET_DIR`, `RIPR_TEST_ARTIFACT_ROOT` and the existing editor runner; the report observes access without creating directories or claiming a full-build resource budget. |
+| Output locations | `.cargo/config.toml`, `CARGO_TARGET_DIR`, `TEMP`/`TMP`/`TMPDIR`, `RIPR_TEST_ARTIFACT_ROOT` and the existing editor runner; the report observes access without creating directories or claiming a full-build resource budget. Full verification also resolves Cargo's effective target and intermediate directories before compiling. |
 
 ### Explicit setup verification
 
@@ -463,10 +466,11 @@ Use an already built `ripr doctor --profile source-build --root . --json` for th
 existing typed setup diagnosis. Activation is compiler selection, not a second
 doctor or a passing build/test result.
 
-Create the checkout's `target/` even when `CARGO_TARGET_DIR` points elsewhere:
-`.cargo/config.toml` redirects temporary files there. Keep a candidate's target
-directory stable and serialize Cargo writers sharing it or a constrained host;
-an earlier warm cache does not prove a later cold link will fit.
+Prepare each effective `TEMP`, `TMP` and `TMPDIR` before Cargo work. A caller's
+supplied path takes precedence; unset variables use the checkout's `target/`
+fallback independently of `CARGO_TARGET_DIR`. Keep a candidate's target directory
+stable and serialize Cargo writers sharing it or a constrained host; an earlier
+warm cache does not prove a later cold link will fit.
 
 After restoration, repeat activation and the required capability probes in the
 new task. Record the actual compiler identity, native command results, and

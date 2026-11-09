@@ -119,9 +119,10 @@ prevent delivery of a final record.
 
 The metadata-only scan separates plain build output, instrumented build/state,
 direct raw profiles, target/ripr artifacts, fixture native-target directories,
-and remaining target scratch. Cargo force-routes temporary files into target,
-so these fixture roots are separate from raw profiles that outlive fixture
-cleanup. Other declared roots are the checkout Git directory, Cargo home,
+and remaining target scratch. Cargo preserves caller-selected `TEMP`, `TMP`
+and `TMPDIR`; each unset variable falls back to checkout-local `target/`.
+Fixture roots remain separate from raw profiles that outlive fixture cleanup.
+Other declared roots are the checkout Git directory, Cargo home,
 Rustup home and RUNNER_TEMP when available. Root labels and device IDs connect
 the measurements without dumping environment values. These fixed roots are
 not a whole-filesystem inventory and do not discover arbitrary Cargo config
