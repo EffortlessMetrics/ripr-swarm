@@ -11,3 +11,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — same_line_call_inputs_rival (2)
+
+Reason:
+RIPR-SPEC-0422: additive evidence_stages rows (#13443); fixture landed after the 905-fixture bless, main-health recovery
+
+Command:
+`cargo xtask goldens bless same_line_call_inputs_rival --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
