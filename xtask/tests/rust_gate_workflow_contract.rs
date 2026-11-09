@@ -329,7 +329,9 @@ fn user_text_summary_scratch_cleans_up_on_success_error_and_unwind()
         let _scratch = SummaryScratch::new("unwind")?;
         std::panic::resume_unwind(Box::new("injected unwind"));
     });
-    let _unwound = unwind.unwrap_err();
+    let Err(_payload) = unwind else {
+        panic!("scratch unwind injection did not propagate");
+    };
     assert!(!unwind_path.exists());
     Ok(())
 }
