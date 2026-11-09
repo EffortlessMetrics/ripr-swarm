@@ -2930,9 +2930,20 @@ impl DocumentStore {
         if !self.untracked_overflow {
             return None;
         }
-        let mut state = DocumentState::new(uri.clone(), None, String::new());
-        state.buffer_authority_unknown = true;
-        state.store_limit_refused = true;
+        // Built directly: `DocumentState::new` reads and hashes the file,
+        // which must not happen under the documents lock on a read path.
+        let mut state = DocumentState {
+            uri: uri.clone(),
+            path: document_path(uri),
+            version: None,
+            text: String::new(),
+            saved_digest: None,
+            analyzed_saved_digest: None,
+            analyzed_input_identity: None,
+            buffer_authority_unknown: true,
+            store_limit_refused: true,
+            quarantine: None,
+        };
         state.refresh_quarantine();
         Some(std::borrow::Cow::Owned(state))
     }

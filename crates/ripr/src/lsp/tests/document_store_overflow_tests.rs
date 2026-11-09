@@ -490,8 +490,7 @@ async fn overflow_placeholders_are_capped_and_untracked_uris_stay_withdrawn() ->
 
     // Only a workspace-level reset ends it.
     backend.clear_all_diagnostic_uris();
-    let after = pull_document_json(backend, &fixture.uri_b, None).await?;
-    if report_is_quarantine_withdrawal(&after) {
+    if backend.document_quarantine(&fixture.uri_b).is_some() {
         return Err("the workspace-level reset must end saturation".into());
     }
     Ok(())

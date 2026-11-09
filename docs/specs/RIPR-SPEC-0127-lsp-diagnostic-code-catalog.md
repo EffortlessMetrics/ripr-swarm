@@ -128,7 +128,9 @@ store withdraws every URI that has no stored state under
 `document_store_limit_reached` (push publication, document and workspace pull,
 hover, lens and actions all read the same accessor), so an untracked buffer is
 never served line-local diagnostics. This is deliberately over-broad: a
-never-opened URI reads as withdrawn too while the latch is set. Closing
+never-opened URI reads as withdrawn too while the latch is set, and closed or
+never-opened workspace files in the workspace pull are likewise withdrawn as
+`document_store_limit_reached`. Closing
 documents, even all of them, does not clear it, because untracked buffers may
 still be open in the client; only a workspace-level reset (root transition or
 shutdown) clears it. This is a static delivery
