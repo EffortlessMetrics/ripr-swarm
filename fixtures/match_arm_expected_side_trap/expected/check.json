@@ -41,6 +41,13 @@
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"weak","confidence":"medium"},
+        {"stage":"propagate","state":"yes","confidence":"medium"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"weak","confidence":"medium"}
+      ],
       "evidence_path": ["reach yes: Related tests appear to reach flip: alpha_flips_to_beta", "infection weak: No related test call selects arm `Kind::Beta =>`; observed `k` values: `Kind::Alpha`", "propagation yes: Changed behavior appears to influence match arm result: Kind::Beta =>", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches match arm result: Kind::Beta => (line 10)", "related test tests/flip.rs:4 alpha_flips_to_beta uses strong exact value oracle: assert_eq!(flip(Kind::Alpha), Kind::Beta);", "source enum variant value Kind::Alpha at line 5", "source enum variant value Kind::Beta at line 5", "missing discriminator Kind::Beta: No related test call selects arm `Kind::Beta =>`; observed `k` values: `Kind::Alpha`"],
       "flow_sinks": [
         {"kind":"match_arm","text":"Kind::Beta =>","line":10}
