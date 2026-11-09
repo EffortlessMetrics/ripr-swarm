@@ -5377,7 +5377,7 @@ pub(crate) const TRUSTED_SURFACE_REFUSAL_TAIL: &str = "outside trusted edit surf
 /// (#5262), where a dirty allowed-surface test file stays allowed because the
 /// loop expects the focused test edit.
 fn tracked_dirty_paths(root: &Path, head: &str) -> Result<Vec<String>, String> {
-    git_paths(
+    let repo_top_paths = git_paths(
         root,
         &[
             "diff",
@@ -5388,7 +5388,48 @@ fn tracked_dirty_paths(root: &Path, head: &str) -> Result<Vec<String>, String> {
             head,
             "--",
         ],
-    )
+    )?;
+    // `git diff --name-only` spells paths from the repository top, while every
+    // rule they meet (packet surface, operational subtrees) and the untracked
+    // inventory are relative to `root` (#13947). Translate once here.
+    let prefix = git_paths_prefix(root)?;
+    Ok(repo_top_paths
+        .into_iter()
+        .map(|path| root_relative_dirty_path(&prefix, &path))
+        .collect())
+}
+
+/// `git rev-parse --show-prefix`: the root's own path below the repository
+/// top, with a trailing `/`, or empty when the root is the repository top.
+fn git_paths_prefix(root: &Path) -> Result<String, String> {
+    let args = ["rev-parse", "--show-prefix"];
+    let output = crate::git::run_git_output_with_deadline(root, &args, Some(GIT_PATHS_DEADLINE))
+        .map_err(|error| format!("run git {} failed: {error}", args.join(" ")))?;
+    if !output.status.success() {
+        return Err(format!(
+            "git {} failed: {}",
+            args.join(" "),
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    let text = String::from_utf8(output.stdout)
+        .map_err(|_error| "git rev-parse --show-prefix output is not valid UTF-8".to_string())?;
+    Ok(text.trim_end_matches(['\n', '\r']).to_string())
+}
+
+/// Respells one repository-top path relative to the root. A path below the
+/// root loses the prefix; a path outside the root climbs out with `../`, so no
+/// root-relative rule can match a namesake and the refusal pathspec still
+/// resolves from inside the root.
+fn root_relative_dirty_path(prefix: &str, repo_top_path: &str) -> String {
+    if prefix.is_empty() {
+        return repo_top_path.to_string();
+    }
+    if let Some(inside) = repo_top_path.strip_prefix(prefix) {
+        return inside.to_string();
+    }
+    let depth = prefix.split('/').filter(|part| !part.is_empty()).count();
+    format!("{}{repo_top_path}", "../".repeat(depth))
 }
 
 /// Policy-free early subset of [`trusted_head_surface_violations`] (#11458):
@@ -7436,6 +7477,89 @@ mod tests {
             Ok(())
         })();
         let _ = std::fs::remove_dir_all(&root);
+        result
+    }
+
+    /// Builds a repository whose `--root` is the `crate/` subdirectory, with a
+    /// committed production file at both `crate/src/plain.rs` and the
+    /// repository-level `src/plain.rs`, then dirties both and one operational
+    /// file under `crate/target/ripr`.
+    fn subdir_root_fixture(name: &str) -> Result<(PathBuf, PathBuf), String> {
+        let top = test_repo_root(name)?;
+        let sub = top.join("crate");
+        for file in [
+            "crate/src/plain.rs",
+            "src/plain.rs",
+            "crate/target/ripr/workflow/snap.json",
+        ] {
+            let path = top.join(file);
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+            }
+            std::fs::write(&path, "pub fn f() {}\n").map_err(|e| e.to_string())?;
+        }
+        run_git(&top, &["add", "-A"])?;
+        run_git(&top, &["commit", "--no-gpg-sign", "-qm", "subdir"])?;
+        for file in [
+            "crate/src/plain.rs",
+            "src/plain.rs",
+            "crate/target/ripr/workflow/snap.json",
+        ] {
+            std::fs::write(top.join(file), "pub fn g() {}\n").map_err(|e| e.to_string())?;
+        }
+        Ok((top, sub))
+    }
+
+    /// #13947: under a subdirectory `--root`, tracked dirty paths are spelled
+    /// relative to the root. The tracked operational file is exempted (positive),
+    /// the root's own production file is named root-relative, and the
+    /// repository-level namesake is named outside the root rather than
+    /// collapsing onto the same spelling (discriminating negative).
+    #[test]
+    fn dirty_premise_preflight_matches_root_relative_rules_under_a_subdirectory_root()
+    -> Result<(), String> {
+        let (top, sub) = subdir_root_fixture("dirty-preflight-subdir")?;
+        let result = (|| -> Result<(), String> {
+            let head = crate::agent::artifact::current_git_head(&sub)?;
+            let violations = conservative_dirty_premise_violations(&sub, &head, None, None)?;
+            if violations != vec!["src/plain.rs".to_string(), "../src/plain.rs".to_string()] {
+                return Err(format!(
+                    "expected the namesake outside the root and the root's file root-relative, never the operational file: {violations:?}"
+                ));
+            }
+            Ok(())
+        })();
+        let _ = std::fs::remove_dir_all(&top);
+        result
+    }
+
+    /// #13947: the exact check admits the confined target only for the root's
+    /// own file. The repository-level namesake `src/plain.rs` is refused even
+    /// though the packet allows the root-relative `src/plain.rs`.
+    #[test]
+    fn trusted_surface_does_not_admit_a_repository_level_namesake_under_a_subdirectory_root()
+    -> Result<(), String> {
+        let (top, sub) = subdir_root_fixture("trusted-surface-subdir")?;
+        let result = (|| -> Result<(), String> {
+            let packet = serde_json::json!({
+                "seam_id": "seam:sample",
+                "allowed_edit_surface": ["src/plain.rs"],
+                "forbidden_files": []
+            });
+            let policy = edit_cage_policy_from_packet(
+                &serde_json::to_string(&packet).map_err(|error| error.to_string())?,
+                "seam:sample",
+            )?;
+            let head = crate::agent::artifact::current_git_head(&sub)?;
+            let violations = trusted_head_surface_violations(&sub, &policy, &[], &head)?;
+            if violations != vec!["../src/plain.rs".to_string()] {
+                return Err(format!(
+                    "only the repository-level namesake may violate: {violations:?}"
+                ));
+            }
+            Ok(())
+        })();
+        let _ = std::fs::remove_dir_all(&top);
         result
     }
 
