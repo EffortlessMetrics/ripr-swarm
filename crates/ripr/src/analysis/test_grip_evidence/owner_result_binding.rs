@@ -223,15 +223,16 @@ fn owner_result_field_observation(
     }
     if kind.is_none()
         && let [binding] = bindings.as_slice()
-        && binding_never_reads_field(&function, binding, owner_name, field_name)
+        && let Some(reads) = binding_never_reads_field(&function, binding, owner_name, field_name)
         && !file_renames_owner(&parsed.parse, owner_name)
-        // The owner result must reach an oracle: some assertion after the
-        // binding reads it (through another field). A binding no assertion
-        // mentions (`let _c = owner(); assert!(1 > 0);`) observes nothing,
-        // so it stays non-ready.
-        && indexed.test.assertions.iter().any(|oracle| {
-            oracle.line > binding.line
-                && crate::analysis::classify::mentions_in(&oracle.text, &binding.name) > 0
+        // The owner result must reach an oracle: one accepted
+        // `binding.<other_field>` read sits in the discriminating argument of
+        // an assertion after the binding. A raw word (a string literal, a
+        // comment, another value's `.c`) is not a read, and a binding no
+        // assertion reads (`let _c = owner(); assert!(1 > 0);`) observes
+        // nothing, so it stays non-ready.
+        && reads.iter().any(|read| {
+            read_in_assertion_after_binding(&function, *read, binding, indexed, lines)
         })
     {
         return Some(OwnerResultObservation::Unread);
@@ -255,12 +256,15 @@ fn owner_result_field_observation(
 /// the owner made through any of them is not seen. A `use` alias of the
 /// owner in the test file itself is refused separately
 /// ([`file_renames_owner`]).
+///
+/// Answers the ranges of the accepted `binding.<other_field>` reads (the
+/// binding-name tokens), or `None` when any token refuses the shape.
 fn binding_never_reads_field(
     function: &ast::Fn,
     binding: &OwnerResultBinding,
     owner_name: &str,
     field: &str,
-) -> bool {
+) -> Option<Vec<ra_ap_syntax::TextRange>> {
     use ra_ap_syntax::SyntaxKind;
     let declarations = function
         .syntax()
@@ -273,7 +277,7 @@ fn binding_never_reads_field(
         })
         .count();
     if declarations != 1 {
-        return false;
+        return None;
     }
     let tokens: Vec<_> = function
         .syntax()
@@ -282,6 +286,7 @@ fn binding_never_reads_field(
         .filter(|token| !token.kind().is_trivia())
         .collect();
     let capture = format!("{{{}", binding.name);
+    let mut reads = Vec::new();
     for (at, token) in tokens.iter().enumerate() {
         match token.kind() {
             SyntaxKind::STRING | SyntaxKind::BYTE_STRING | SyntaxKind::C_STRING => {
@@ -289,20 +294,20 @@ fn binding_never_reads_field(
                 if crate::analysis::classify::mentions_in(text, field) > 0
                     || text.contains(&capture)
                 {
-                    return false;
+                    return None;
                 }
             }
             SyntaxKind::IDENT => {
                 let text = token.text();
                 if text.trim_start_matches("r#") == field {
-                    return false;
+                    return None;
                 }
                 if text.trim_start_matches("r#") == owner_name
                     && !binding.initializer_range.contains_range(token.text_range())
                 {
                     // A second owner call, path or reference may observe the
                     // field through the whole value.
-                    return false;
+                    return None;
                 }
                 if text != binding.name || token.text_range() == binding.name_range {
                     continue;
@@ -321,13 +326,73 @@ fn binding_never_reads_field(
                         matches!(token.kind(), SyntaxKind::L_PAREN | SyntaxKind::COLON2)
                     });
                 if !other_field_read {
-                    return false;
+                    return None;
                 }
+                reads.push(token.text_range());
             }
             _ => {}
         }
     }
-    true
+    Some(reads)
+}
+
+/// #13700: whether the accepted binding read at `read` lies in the
+/// discriminating argument of an `assert!` (its condition) or an
+/// `assert_eq!`/`assert_ne!` (its two compared operands) whose macro call
+/// starts on an indexed assertion line after the binding. Format arguments,
+/// other macros and reads outside any assertion do not count.
+fn read_in_assertion_after_binding(
+    function: &ast::Fn,
+    read: ra_ap_syntax::TextRange,
+    binding: &OwnerResultBinding,
+    indexed: &CompactTest<'_>,
+    lines: &LineIndex,
+) -> bool {
+    use ra_ap_syntax::SyntaxKind;
+    let ra_ap_syntax::NodeOrToken::Token(token) = function.syntax().covering_element(read) else {
+        return false;
+    };
+    let Some(call) = token.parent_ancestors().find_map(ast::MacroCall::cast) else {
+        return false;
+    };
+    let Some(macro_name) = call
+        .path()
+        .and_then(|path| path.segment())
+        .and_then(|segment| segment.name_ref())
+        .map(|name| name.text().to_string())
+    else {
+        return false;
+    };
+    let allowed_commas = match macro_name.as_str() {
+        "assert" => 0,
+        "assert_eq" | "assert_ne" => 1,
+        _ => return false,
+    };
+    let Some(tree) = call.token_tree() else {
+        return false;
+    };
+    // Count only the call's top-level commas before the read: commas inside
+    // a nested group (`(a, b)`, `vec![a, b]`) belong to that group. A
+    // top-level comma that is not an argument separator (`HashMap<K, V>`)
+    // over-counts, which refuses (fail closed).
+    let commas_before = tree
+        .syntax()
+        .children_with_tokens()
+        .filter_map(|element| element.into_token())
+        .filter(|comma| {
+            comma.kind() == SyntaxKind::COMMA && comma.text_range().end() <= read.start()
+        })
+        .count();
+    if commas_before > allowed_commas {
+        return false;
+    }
+    let call_line = lines.line(call.syntax().text_range().start());
+    call_line > binding.line
+        && indexed
+            .test
+            .assertions
+            .iter()
+            .any(|oracle| oracle.line == call_line)
 }
 
 /// #13700: the owner's declared return type name (generics stripped) when

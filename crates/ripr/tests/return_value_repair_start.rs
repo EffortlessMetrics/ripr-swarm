@@ -477,9 +477,11 @@ const CONFIG_OLD: &str = "pub struct Config {\n    pub timeout_secs: u32,\n    p
 const CONFIG_NEW: &str = "pub struct Config {\n    pub timeout_secs: u32,\n    pub retries: u32,\n}\n\npub fn default_config() -> Config {\n    let retries = 3;\n    Config {\n        timeout_secs: 30,\n        retries,\n    }\n}\n";
 
 /// `ripr repair` agrees with `ripr check` on the struct-field change of
-/// `observation_unverified_field_construction`: a weak assertion on a sibling
-/// field is not a repair start, bare or by location, and the manual stub route
-/// stays named.
+/// A weak assertion on a sibling field read without binding the owner result
+/// is not a repair start, bare or by location, and the manual stub route stays
+/// named. (The `observation_unverified_field_construction` fixture keeps the
+/// bound form, but its candidate line is a shorthand `retries,` return-value
+/// seam, which the #13700 field route does not take.)
 #[test]
 fn repair_agrees_with_check_on_a_statically_limited_struct_field_finding() -> Result<(), String> {
     let repo = assert_no_start(

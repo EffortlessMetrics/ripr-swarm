@@ -561,6 +561,30 @@ fn binding_no_assertion_reads_is_not_unread() -> Result<(), String> {
             "read outside any assertion",
             "let c = default_config();\n    let _quiet = c.verbose;\n    assert!(1 > 0);",
         ),
+        (
+            "binding name only inside a string literal",
+            "let c = default_config();\n    assert!(1 > 0, \"c\");",
+        ),
+        (
+            "binding name only inside a message literal",
+            "let c = default_config();\n    assert!(true, \"c built\");",
+        ),
+        (
+            "binding name only as a field of a record literal",
+            "let c = default_config();\n    let s = S { c: 1 };\n    assert!(s.c > 0);",
+        ),
+        (
+            "binding name only as a field of another value",
+            "let c = default_config();\n    let s = other();\n    assert!(s.c > 0);",
+        ),
+        (
+            "binding name only inside a comment in the assertion",
+            "let c = default_config();\n    assert!(true /* c */);",
+        ),
+        (
+            "binding read only in a format argument",
+            "let c = default_config();\n    assert!(true, \"{}\", c.verbose);",
+        ),
     ] {
         let case = integration_case(
             PUBLIC_CONFIG,
@@ -571,4 +595,22 @@ fn binding_no_assertion_reads_is_not_unread() -> Result<(), String> {
         no_unread_fact(&case, label)?;
     }
     Ok(())
+}
+
+#[test]
+fn sibling_read_in_a_multiline_assert_eq_starts_repair() -> Result<(), String> {
+    let case = integration_case(
+        PUBLIC_CONFIG,
+        r#"
+#[test]
+fn default_config_is_quiet() {
+    let c = default_config();
+    assert_eq!(
+        c.verbose,
+        false
+    );
+}
+"#,
+    )?;
+    unread_route_must_be_ready(&case, "default_config_is_quiet")
 }

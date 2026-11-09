@@ -128,6 +128,31 @@ fn unread_field_of_a_bound_owner_result_starts_repair() -> Result<(), String> {
             "repair must start on the one binding test (exit {code:?}):\n{repair}"
         ));
     }
+    // Check and repair agree: check recommends the same start, and the id it
+    // prints starts the same repair on the same test.
+    let id = check
+        .lines()
+        .find_map(|line| {
+            let mut words = line.split_whitespace();
+            (words.next() == Some("ripr") && words.next() == Some("repair"))
+                .then(|| words.next().map(str::to_string))
+                .flatten()
+        })
+        .ok_or_else(|| format!("check must print the `ripr repair <id>` start:\n{check}"))?;
+    // `--base` only scopes an automatic start; a named item takes none.
+    let by_id = repo.ripr(&["repair", &id])?;
+    let by_id_text = text(&by_id);
+    if by_id.status.code() != Some(0)
+        || !by_id_text.contains("Ready to repair.")
+        || !by_id_text.contains("Changed behavior: retries: 5")
+        || !by_id_text.contains("Test to extend: tests/t.rs:4")
+        || !by_id_text.contains(&format!("Repair ID: {id}"))
+    {
+        return Err(format!(
+            "check's `ripr repair {id}` must start the same repair (exit {:?}):\n{by_id_text}",
+            by_id.status.code()
+        ));
+    }
     Ok(())
 }
 
