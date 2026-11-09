@@ -728,17 +728,14 @@ fn native_muse_semantics_reject_contradictory_success_and_unbound_evidence() -> 
             .ok_or("prose accepted")?
             .contains("repair_manifest")
     );
-    // Partial legs: a counterexample that shares the restored build is not a
-    // wrong-implementation control, even with no original leg to compare.
+    // Partial legs: counterexample must differ from restored without an original.
     let mut partial = full_fixture()?;
-    let restored_impl =
-        partial["observations"]["executions"]["restored"]["implementation_sha256"].clone();
-    partial["observations"]["executions"]
+    let executions = partial["observations"]["executions"]
         .as_object_mut()
-        .ok_or("executions")?
-        .remove("original");
-    partial["observations"]["executions"]["counterexample"]["implementation_sha256"] =
-        restored_impl;
+        .ok_or("executions")?;
+    executions.remove("original");
+    let restored = executions["restored"]["implementation_sha256"].clone();
+    executions["counterexample"]["implementation_sha256"] = restored;
     assert!(
         to_input(&partial)
             .err()

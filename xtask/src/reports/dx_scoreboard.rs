@@ -2201,9 +2201,6 @@ pub(crate) struct RunContext {
     pub(crate) corpus: Vec<Value>,
 }
 
-/// Metric `source` shared by every Muse plugin evaluation row.
-const MUSE_PLUGIN_SOURCE: &str = "ingest:muse-plugin";
-
 pub(crate) fn build_report(
     config: &Config,
     boards: &[String],
@@ -2213,18 +2210,18 @@ pub(crate) fn build_report(
     gate: bool,
 ) -> Value {
     let mut metrics = Vec::new();
-    // Muse plugin rows describe one supplied trial. A run that ingested no
-    // Muse record has nothing to say about them, so their absence must not
-    // dilute the completeness count of every other agent-board report.
-    let muse_ingested = samples.iter().any(|sample| {
-        config
-            .metric
-            .iter()
-            .any(|def| def.id == sample.metric && def.source == MUSE_PLUGIN_SOURCE)
-    });
-    for def in config.metric.iter().filter(|metric| {
-        boards.contains(&metric.board) && (muse_ingested || metric.source != MUSE_PLUGIN_SOURCE)
-    }) {
+    // Muse rows describe one supplied trial; without a Muse record they would
+    // only dilute every other agent-board report's completeness count.
+    let muse = |def: &MetricDef| def.source == "ingest:muse-plugin";
+    let muse_ingested = config
+        .metric
+        .iter()
+        .any(|def| muse(def) && samples.iter().any(|s| s.metric == def.id));
+    for def in config
+        .metric
+        .iter()
+        .filter(|def| boards.contains(&def.board) && (muse_ingested || !muse(def)))
+    {
         let mine: Vec<&Sample> = samples.iter().filter(|s| s.metric == def.id).collect();
         let mut row = metric_row(def, &mine);
         row["baseline"] = compare_with_baseline(def, &row, context, baseline);
@@ -2863,7 +2860,7 @@ pub(crate) fn compare_with_baseline(
     context: &RunContext,
     baseline: Option<&Value>,
 ) -> Value {
-    if def.source == MUSE_PLUGIN_SOURCE {
+    if def.source == "ingest:muse-plugin" {
         return json!({
             "comparable": false,
             "reason": "Muse plugin v1 records one supplied trial; baseline trend and efficacy comparisons are not defined",
