@@ -5383,6 +5383,9 @@ fn tracked_dirty_paths(root: &Path, head: &str) -> Result<Vec<String>, String> {
             "diff",
             "--no-renames",
             "--no-ext-diff",
+            // A user's `diff.relative=true` would otherwise spell paths from
+            // the working directory and drop changes outside it.
+            "--no-relative",
             "--name-only",
             "-z",
             head,
@@ -7525,6 +7528,27 @@ mod tests {
             if violations != vec!["src/plain.rs".to_string(), "../src/plain.rs".to_string()] {
                 return Err(format!(
                     "expected the namesake outside the root and the root's file root-relative, never the operational file: {violations:?}"
+                ));
+            }
+            Ok(())
+        })();
+        let _ = std::fs::remove_dir_all(&top);
+        result
+    }
+
+    /// #13947: a user's `diff.relative=true` must not change which dirty paths
+    /// the preflight names or how they are spelled under a subdirectory root.
+    #[test]
+    fn dirty_premise_preflight_ignores_a_diff_relative_setting_under_a_subdirectory_root()
+    -> Result<(), String> {
+        let (top, sub) = subdir_root_fixture("dirty-preflight-diff-relative")?;
+        let result = (|| -> Result<(), String> {
+            run_git(&top, &["config", "diff.relative", "true"])?;
+            let head = crate::agent::artifact::current_git_head(&sub)?;
+            let violations = conservative_dirty_premise_violations(&sub, &head, None, None)?;
+            if violations != vec!["src/plain.rs".to_string(), "../src/plain.rs".to_string()] {
+                return Err(format!(
+                    "diff.relative must not change the inventory: {violations:?}"
                 ));
             }
             Ok(())
