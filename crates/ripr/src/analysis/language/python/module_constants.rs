@@ -1190,6 +1190,44 @@ pub(super) fn body_bound_names(body: &[Stmt]) -> Option<Vec<String>> {
     (!bindings.opaque && !contains_nested_scope(body)).then_some(bindings.names)
 }
 
+/// A local constructor receiver is not stable after another binding in its
+/// scope. Reuse the scope collector's repeated names (including delete/loop/with
+/// targets), and the shared pattern walker for captures the constant collector
+/// deliberately represents as opaque. Global declarations also abandon a local
+/// receiver. The caller supplies the parsed function suite, without its wrapper.
+pub(super) fn body_rebinds_name(body: &[Stmt], name: &str) -> bool {
+    let mut bindings = ScopeBindings::default();
+    collect_scope_bindings(body, &mut bindings);
+    let mut rebound = false;
+    visit_statements_while(body, &mut |stmt| {
+        match stmt {
+            Stmt::Global(global) => {
+                rebound |= global.names.iter().any(|bound| bound.as_str() == name)
+            }
+            Stmt::Match(statement) => {
+                for case in &statement.cases {
+                    rebound |= super::sink_alignment::pattern_binds_name(&case.pattern, name);
+                    // The constant collector stops at a match as opaque. Its
+                    // suites still share the local receiver's scope.
+                    collect_scope_bindings(&case.body, &mut bindings);
+                }
+            }
+            _ => {}
+        }
+        !matches!(
+            stmt,
+            Stmt::FunctionDef(_) | Stmt::AsyncFunctionDef(_) | Stmt::ClassDef(_)
+        )
+    });
+    rebound
+        || bindings
+            .names
+            .iter()
+            .filter(|bound| bound.as_str() == name)
+            .count()
+            > 1
+}
+
 /// Parameters plus every name bound in a function's own scope, or None when
 /// the scope binds names the walk cannot enumerate.
 fn function_scope_names(args: &ast::Arguments, body: &[Stmt]) -> Option<Vec<String>> {
@@ -1751,49 +1789,59 @@ fn collect_global_declarations(statements: &[Stmt], out: &mut Vec<String>) {
 
 /// Visit statement suites at every nesting depth, without crossing expressions.
 fn visit_statements<F: FnMut(&Stmt)>(statements: &[Stmt], out: &mut F) {
-    for stmt in statements {
+    visit_statements_while(statements, &mut |stmt| {
         out(stmt);
+        true
+    });
+}
+
+/// Returning false visits a scope's definition without entering its suite.
+fn visit_statements_while<F: FnMut(&Stmt) -> bool>(statements: &[Stmt], out: &mut F) {
+    for stmt in statements {
+        if !out(stmt) {
+            continue;
+        }
         match stmt {
-            Stmt::FunctionDef(function) => visit_statements(&function.body, out),
-            Stmt::AsyncFunctionDef(function) => visit_statements(&function.body, out),
-            Stmt::ClassDef(class) => visit_statements(&class.body, out),
+            Stmt::FunctionDef(function) => visit_statements_while(&function.body, out),
+            Stmt::AsyncFunctionDef(function) => visit_statements_while(&function.body, out),
+            Stmt::ClassDef(class) => visit_statements_while(&class.body, out),
             Stmt::For(stmt) => {
-                visit_statements(&stmt.body, out);
-                visit_statements(&stmt.orelse, out);
+                visit_statements_while(&stmt.body, out);
+                visit_statements_while(&stmt.orelse, out);
             }
             Stmt::AsyncFor(stmt) => {
-                visit_statements(&stmt.body, out);
-                visit_statements(&stmt.orelse, out);
+                visit_statements_while(&stmt.body, out);
+                visit_statements_while(&stmt.orelse, out);
             }
             Stmt::While(stmt) => {
-                visit_statements(&stmt.body, out);
-                visit_statements(&stmt.orelse, out);
+                visit_statements_while(&stmt.body, out);
+                visit_statements_while(&stmt.orelse, out);
             }
             Stmt::If(stmt) => {
-                visit_statements(&stmt.body, out);
-                visit_statements(&stmt.orelse, out);
+                visit_statements_while(&stmt.body, out);
+                visit_statements_while(&stmt.orelse, out);
             }
-            Stmt::With(stmt) => visit_statements(&stmt.body, out),
-            Stmt::AsyncWith(stmt) => visit_statements(&stmt.body, out),
+            Stmt::With(stmt) => visit_statements_while(&stmt.body, out),
+            Stmt::AsyncWith(stmt) => visit_statements_while(&stmt.body, out),
             Stmt::Try(stmt) => {
-                visit_statements(&stmt.body, out);
+                visit_statements_while(&stmt.body, out);
                 for ast::ExceptHandler::ExceptHandler(handler) in &stmt.handlers {
-                    visit_statements(&handler.body, out);
+                    visit_statements_while(&handler.body, out);
                 }
-                visit_statements(&stmt.orelse, out);
-                visit_statements(&stmt.finalbody, out);
+                visit_statements_while(&stmt.orelse, out);
+                visit_statements_while(&stmt.finalbody, out);
             }
             Stmt::TryStar(stmt) => {
-                visit_statements(&stmt.body, out);
+                visit_statements_while(&stmt.body, out);
                 for ast::ExceptHandler::ExceptHandler(handler) in &stmt.handlers {
-                    visit_statements(&handler.body, out);
+                    visit_statements_while(&handler.body, out);
                 }
-                visit_statements(&stmt.orelse, out);
-                visit_statements(&stmt.finalbody, out);
+                visit_statements_while(&stmt.orelse, out);
+                visit_statements_while(&stmt.finalbody, out);
             }
             Stmt::Match(stmt) => {
                 for case in &stmt.cases {
-                    visit_statements(&case.body, out);
+                    visit_statements_while(&case.body, out);
                 }
             }
             _ => {}
