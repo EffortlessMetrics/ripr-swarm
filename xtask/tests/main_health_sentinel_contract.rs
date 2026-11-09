@@ -20,6 +20,7 @@ const FORBIDDEN_FRAGMENTS: &[&str] = &[
     "/protection",
     "/rules/",
     "create-pull-request",
+    "/rerun",
 ];
 
 fn repo_file(path: &str) -> Result<String, String> {
@@ -245,5 +246,91 @@ fn sentinel_run_block_budget_is_registered() -> Result<(), String> {
         "check-workflows requires a run-block budget row for every workflow; \
          the sentinel's row in policy/workflow_allowlist.txt is part of its contract"
             .to_string(),
+    )
+}
+
+/// Test-level breaks pass the bounded probe (#13793, #13639, #13783), so the
+/// sentinel also judges the latest completed, non-cancelled main-push run of
+/// each push gate. It reads results only: it never re-runs, dispatches or
+/// rebuilds them, and a failed gate run must turn the verdict red.
+#[test]
+fn sentinel_judges_the_latest_completed_main_push_gates() -> Result<(), String> {
+    let source = repo_file(WORKFLOW)?;
+    let lines = executable_lines(&source);
+    require(
+        &lines,
+        "actions: read",
+        "reading workflow-run results needs only the read scope",
+    )?;
+    require(
+        &lines,
+        "for wf in routed-rust.yml ci.yml; do",
+        "the required Rust gate and the CI lane (Rust-only features, editor e2e) are both judged",
+    )?;
+    require(
+        &lines,
+        "-f branch=main -f event=push -f status=completed",
+        "only finished main-push runs are evidence about main",
+    )?;
+    require(
+        &lines,
+        "select(.conclusion != \"cancelled\" and .conclusion != \"skipped\")",
+        "a superseded run says nothing about main; skip it and read the latest finished one",
+    )?;
+    require(
+        &lines,
+        "echo 1 > \"$d/gates.red\"",
+        "a failed latest gate run must raise the red flag, not only the summary",
+    )?;
+    require(
+        &lines,
+        "gates_red=\"$(cat \"$d/gates.red\" 2>/dev/null || echo 0)\"",
+        "the judge must read the gate red flag into its verdict",
+    )?;
+    require(
+        &lines,
+        "grep -qxF \"$fingerprint\"",
+        "a red tracker gets one comment per new piece of evidence, not one per fire",
+    )?;
+    let read_step = source
+        .split("- name: Read the latest completed main push gates")
+        .nth(1)
+        .and_then(|rest| rest.split("- name:").next())
+        .ok_or("the gate read step must exist")?;
+    if !read_step.contains("continue-on-error: true") {
+        return Err("a hung or failed gate read must not skip the probe judge and tracker".into());
+    }
+    let probe_step = source
+        .split("- name: Probe main build and one focused binary smoke test")
+        .nth(1)
+        .and_then(|rest| rest.split("- name:").next())
+        .ok_or("the probe step must exist")?;
+    if !probe_step.contains("continue-on-error: true") {
+        return Err("a probe terminated at its timeout must still reach the judge".into());
+    }
+    require(
+        &lines,
+        "0:success|0:failure|0:timed_out|0:action_required|0:startup_failure) ;;",
+        "a failed read or an unexpected conclusion must become unknown, not red",
+    )?;
+    require(
+        &lines,
+        "[ \"$(grep -c . \"$d/gates.tsv\" || true)\" -ge 2 ] || echo 1 > \"$d/gates.unknown\"",
+        "a missing gate row must mark the gates unknown",
+    )?;
+    require(
+        &lines,
+        "unknown) echo 1 > \"$d/gates.unknown\" ;;",
+        "an unknown gate row must mark the gates unknown",
+    )?;
+    require(
+        &lines,
+        "run=\"$(timeout 60 gh api -X GET",
+        "each gate read is bounded so a hung API call becomes an unknown row",
+    )?;
+    require(
+        &lines,
+        "elif [ -n \"$number\" ] && [ \"$(cat \"$RUNNER_TEMP/main-health-sentinel/gates.unknown\" 2>/dev/null || echo 1)\" = 0 ]; then",
+        "an unknown gate is not recovery and must not close an open tracker",
     )
 }
