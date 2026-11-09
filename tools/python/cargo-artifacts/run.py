@@ -1,11 +1,9 @@
 #!/usr/bin/env python3
-"""Bound RIPR Cargo build artifacts without erasing ``target/ripr`` evidence.
+"""Inventory and reclaim RIPR Cargo artifacts without erasing target/ripr.
 
-Cargo intermediates live below
-``{cargo-cache-home}/ripr-swarm-build/{workspace-path-hash}``. This tool reports
-that managed root, garbage-collects stale worktree trees, or removes the exact
-current worktree build tree before disposal. Deletion always requires
-``--apply``.
+Large Cargo intermediates live in a same-volume pool shared by sibling
+worktrees and keyed by Cargo's workspace-path hash. Deletion is dry-run by
+default, preserves live worktrees, and requires --apply.
 """
 
 from __future__ import annotations
@@ -26,13 +24,15 @@ from typing import Iterable, Iterator, Sequence
 
 GB = 1_000_000_000
 DAY = 86_400
-DEFAULT_MAX_GB = 20
-DEFAULT_TTL_DAYS = 14
+DEFAULT_MAX_GB = 12
+DEFAULT_TTL_DAYS = 7
 DEFAULT_MIN_AGE_HOURS = 24
+POOL_NAME = ".ripr-swarm-build"
 SHARD_RE = re.compile(r"^[0-9a-f]{2}$")
 HASH_RE = re.compile(r"^[0-9a-f]{8,62}$")
 REPORT_JSON = Path("target/ripr/reports/cargo-artifacts.json")
 REPORT_MD = Path("target/ripr/reports/cargo-artifacts.md")
+OVERRIDE_ENV = ("CARGO_TARGET_DIR", "CARGO_BUILD_TARGET_DIR", "CARGO_BUILD_BUILD_DIR")
 
 
 class ArtifactError(RuntimeError):
@@ -63,11 +63,12 @@ class BuildTree:
     newest_mtime: float
     age_seconds: float
     current: bool
+    live_worktree: bool
     unsafe: tuple[str, ...]
 
     @property
     def eligible(self) -> bool:
-        return not self.current and not self.unsafe
+        return not self.current and not self.live_worktree and not self.unsafe
 
 
 @dataclasses.dataclass(frozen=True)
@@ -90,7 +91,7 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     parser.add_argument(
         "command", nargs="?", choices=("report", "gc", "clean-current"), default="report"
     )
-    parser.add_argument("--root", type=Path, help="Override managed root (recovery/tests).")
+    parser.add_argument("--root", type=Path, help="Override the managed pool (recovery/tests).")
     parser.add_argument("--max-size-gb", type=non_negative, default=DEFAULT_MAX_GB)
     parser.add_argument("--ttl-days", type=non_negative, default=DEFAULT_TTL_DAYS)
     parser.add_argument("--min-age-hours", type=non_negative, default=DEFAULT_MIN_AGE_HOURS)
@@ -100,27 +101,21 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
+def reject_overrides() -> None:
+    active = [name for name in OVERRIDE_ENV if os.environ.get(name, "").strip()]
+    if active:
+        raise ArtifactError(
+            "unset Cargo artifact overrides before using the repo-owned lifecycle: "
+            + ", ".join(active)
+        )
+
+
 def workspace_root(start: Path) -> Path:
     current = start.resolve()
     for candidate in (current, *current.parents):
         if (candidate / "Cargo.toml").is_file() and (candidate / ".cargo/config.toml").is_file():
             return candidate
     raise ArtifactError(f"run from the RIPR repository; no workspace found above {start}")
-
-
-def cargo_home(env: dict[str, str] | None = None) -> Path:
-    values = os.environ if env is None else env
-    configured = values.get("CARGO_HOME", "").strip()
-    if configured:
-        return Path(configured).expanduser().resolve()
-    home = values.get("HOME", "").strip() or values.get("USERPROFILE", "").strip()
-    if not home:
-        raise ArtifactError("CARGO_HOME, HOME, and USERPROFILE are unavailable")
-    return (Path(home).expanduser() / ".cargo").resolve()
-
-
-def managed_root(env: dict[str, str] | None = None) -> Path:
-    return cargo_home(env) / "ripr-swarm-build"
 
 
 def cargo_metadata(root: Path) -> CargoMetadata:
@@ -135,20 +130,24 @@ def cargo_metadata(root: Path) -> CargoMetadata:
             encoding="utf-8",
         )
     except OSError as exc:
-        raise ArtifactError(f"could not execute cargo metadata: {exc}") from exc
+        raise ArtifactError(f"could not execute cargo metadata in {root}: {exc}") from exc
     if result.returncode:
         detail = result.stderr.strip() or result.stdout.strip() or "no diagnostics"
-        raise ArtifactError(f"cargo metadata failed ({result.returncode}): {detail}")
+        raise ArtifactError(f"cargo metadata failed in {root} ({result.returncode}): {detail}")
     try:
         value = json.loads(result.stdout)
         fields = [value[name] for name in ("workspace_root", "target_directory", "build_directory")]
     except (json.JSONDecodeError, KeyError, TypeError) as exc:
         raise ArtifactError(
-            "cargo metadata lacks build_directory; use the pinned Cargo toolchain"
+            f"cargo metadata in {root} lacks build_directory; use the pinned Cargo toolchain"
         ) from exc
     if not all(isinstance(field, str) and field for field in fields):
-        raise ArtifactError("cargo metadata returned empty artifact paths")
-    return CargoMetadata(*(Path(field).resolve() for field in fields))
+        raise ArtifactError(f"cargo metadata in {root} returned empty artifact paths")
+    return CargoMetadata(*(Path(os.path.abspath(field)) for field in fields))
+
+
+def managed_root(metadata: CargoMetadata) -> Path:
+    return Path(os.path.abspath(metadata.workspace_root.parent / POOL_NAME))
 
 
 def is_link(info: os.stat_result) -> bool:
@@ -171,11 +170,11 @@ def require_plain_directory(path: Path, label: str, missing_ok: bool = True) -> 
 
 
 def validate_root(root: Path) -> Path:
-    resolved = root.expanduser().resolve(strict=False)
-    if resolved.name != "ripr-swarm-build" or resolved == Path(resolved.anchor):
-        raise ArtifactError(f"managed root must end in ripr-swarm-build: {resolved}")
-    require_plain_directory(resolved, "managed root")
-    return resolved
+    lexical = Path(os.path.abspath(root.expanduser()))
+    if lexical.name != POOL_NAME or lexical == Path(lexical.anchor):
+        raise ArtifactError(f"managed root must end in {POOL_NAME}: {lexical}")
+    require_plain_directory(lexical, "managed root")
+    return lexical.resolve(strict=False)
 
 
 def within(path: Path, parent: Path) -> bool:
@@ -184,6 +183,120 @@ def within(path: Path, parent: Path) -> bool:
         return True
     except ValueError:
         return False
+
+
+def parse_worktree_porcelain(raw: bytes) -> tuple[Path, ...]:
+    paths: list[Path] = []
+    block: list[bytes] = []
+    for token in raw.split(b"\0"):
+        if token:
+            block.append(token)
+            continue
+        if block:
+            path_token = next((item for item in block if item.startswith(b"worktree ")), None)
+            if path_token is not None and b"bare" not in block:
+                paths.append(Path(os.fsdecode(path_token[len(b"worktree ") :])))
+            block = []
+    if block:
+        path_token = next((item for item in block if item.startswith(b"worktree ")), None)
+        if path_token is not None and b"bare" not in block:
+            paths.append(Path(os.fsdecode(path_token[len(b"worktree ") :])))
+    return tuple(paths)
+
+
+def registered_worktrees(repo: Path) -> tuple[Path, ...]:
+    try:
+        result = subprocess.run(
+            ["git", "worktree", "list", "--porcelain", "-z"],
+            cwd=repo,
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+    except OSError as exc:
+        raise ArtifactError(f"could not enumerate git worktrees: {exc}") from exc
+    if result.returncode:
+        detail = os.fsdecode(result.stderr).strip() or "no diagnostics"
+        raise ArtifactError(f"git worktree list failed ({result.returncode}): {detail}")
+    return parse_worktree_porcelain(result.stdout)
+
+
+def sibling_workspaces(repo: Path) -> tuple[Path, ...]:
+    parent = repo.parent.resolve(strict=False)
+    candidates: set[Path] = {
+        path
+        for path in registered_worktrees(repo)
+        if path.parent.resolve(strict=False) == parent
+    }
+    require_plain_directory(parent, "worktree parent", missing_ok=False)
+    for entry in parent.iterdir():
+        try:
+            info = entry.lstat()
+        except OSError:
+            continue
+        if is_link(info) or not stat.S_ISDIR(info.st_mode):
+            continue
+        config = entry / ".cargo/config.toml"
+        if not (entry / "Cargo.toml").is_file() or not config.is_file():
+            continue
+        try:
+            config_text = config.read_text(encoding="utf-8")
+        except OSError as exc:
+            raise ArtifactError(f"could not inspect sibling Cargo config {config}: {exc}") from exc
+        if POOL_NAME not in config_text:
+            continue
+        candidates.add(entry)
+    return tuple(sorted((path.resolve(strict=False) for path in candidates), key=str))
+
+
+def live_build_directories(repo: Path, pool: Path) -> tuple[Path, ...]:
+    builds: set[Path] = set()
+    for candidate in sibling_workspaces(repo):
+        if not candidate.is_dir():
+            raise ArtifactError(
+                f"registered worktree is missing: {candidate}; repair or prune git worktrees first"
+            )
+        metadata = cargo_metadata(candidate)
+        if within(metadata.build_directory, pool):
+            builds.add(metadata.build_directory)
+    return tuple(sorted(builds, key=str))
+
+
+def pool_anomalies(root: Path) -> tuple[str, ...]:
+    if not root.exists():
+        return ()
+    anomalies: list[str] = []
+    try:
+        shards = sorted(root.iterdir(), key=lambda item: item.name)
+    except OSError as exc:
+        raise ArtifactError(f"could not inspect managed root {root}: {exc}") from exc
+    for shard in shards:
+        try:
+            info = shard.lstat()
+        except OSError as exc:
+            anomalies.append(f"{shard}: {exc}")
+            continue
+        if is_link(info) or not stat.S_ISDIR(info.st_mode) or not SHARD_RE.fullmatch(shard.name):
+            anomalies.append(str(shard))
+            continue
+        try:
+            leaves = sorted(shard.iterdir(), key=lambda item: item.name)
+        except OSError as exc:
+            anomalies.append(f"{shard}: {exc}")
+            continue
+        for leaf in leaves:
+            try:
+                leaf_info = leaf.lstat()
+            except OSError as exc:
+                anomalies.append(f"{leaf}: {exc}")
+                continue
+            if (
+                is_link(leaf_info)
+                or not stat.S_ISDIR(leaf_info.st_mode)
+                or not HASH_RE.fullmatch(leaf.name)
+            ):
+                anomalies.append(str(leaf))
+    return tuple(sorted(anomalies))
 
 
 def build_leaves(root: Path) -> Iterator[Path]:
@@ -236,7 +349,9 @@ def measure_tree(root: Path) -> Measurement:
     return Measurement(size, files, newest, tuple(sorted(unsafe)))
 
 
-def inventory(root: Path, current_build: Path, now: float) -> list[BuildTree]:
+def inventory(
+    root: Path, current_build: Path, live_builds: Sequence[Path], now: float
+) -> list[BuildTree]:
     result: list[BuildTree] = []
     for leaf in build_leaves(root):
         measured = measure_tree(leaf)
@@ -249,6 +364,7 @@ def inventory(root: Path, current_build: Path, now: float) -> list[BuildTree]:
                 measured.newest_mtime,
                 max(0.0, now - measured.newest_mtime),
                 within(current_build, leaf),
+                any(within(build, leaf) for build in live_builds),
                 measured.unsafe,
             )
         )
@@ -284,27 +400,31 @@ def select_gc(
 
 
 def remove_tree(path: Path, root: Path) -> None:
+    require_plain_directory(path, "selected build tree", missing_ok=False)
     resolved = path.resolve(strict=False)
     if resolved == root or not within(resolved, root):
         raise ArtifactError(f"refusing deletion outside managed root: {resolved}")
-    require_plain_directory(resolved, "selected build tree", missing_ok=False)
-    shutil.rmtree(resolved)
+    measured = measure_tree(path)
+    if measured.unsafe:
+        raise ArtifactError(f"selected build tree became unsafe: {measured.unsafe[0]}")
+    shutil.rmtree(path)
     try:
-        resolved.parent.rmdir()
+        path.parent.rmdir()
     except OSError:
         pass
 
 
 def validate_current(metadata: CargoMetadata, root: Path) -> None:
+    expected_target = Path(os.path.abspath(metadata.workspace_root / "target"))
+    actual_target = Path(os.path.abspath(metadata.target_directory))
+    if os.path.normcase(str(actual_target)) != os.path.normcase(str(expected_target)):
+        raise ArtifactError(
+            "clean-current refuses an external target directory: "
+            f"{metadata.target_directory}; expected {expected_target}"
+        )
     if not within(metadata.build_directory, root):
         raise ArtifactError(
             f"current build directory is outside {root}: {metadata.build_directory}"
-        )
-    expected = (metadata.workspace_root / "target").resolve(strict=False)
-    if metadata.target_directory != expected:
-        raise ArtifactError(
-            "clean-current refuses an external/overridden target directory: "
-            f"{metadata.target_directory}; expected {expected}"
         )
 
 
@@ -346,6 +466,9 @@ def remove_target_entry(path: Path, target: Path) -> None:
     if is_link(info):
         raise ArtifactError(f"refusing linked target entry: {path}")
     if stat.S_ISDIR(info.st_mode):
+        measured = measure_tree(path)
+        if measured.unsafe:
+            raise ArtifactError(f"target entry became unsafe: {measured.unsafe[0]}")
         shutil.rmtree(path)
     elif stat.S_ISREG(info.st_mode):
         path.unlink()
@@ -366,29 +489,31 @@ def human_bytes(value: int) -> str:
     return f"{value} B"
 
 
-def report_value(
-    command: str,
-    apply: bool,
+def make_report(
+    args: argparse.Namespace,
     now: float,
     root: Path,
     metadata: CargoMetadata,
+    live_builds: Sequence[Path],
+    anomalies: Sequence[str],
     trees: Sequence[BuildTree],
     selection: Selection,
     deleted: Sequence[str],
-    current_target: Sequence[Path],
+    selected_target: Sequence[Path],
     target_measurement: Measurement,
     target_deleted: Sequence[str],
-    args: argparse.Namespace,
 ) -> dict[str, object]:
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "generated_at": timestamp(now),
-        "command": command,
-        "mode": "apply" if apply else "dry_run",
+        "command": args.command,
+        "mode": "apply" if args.apply else "dry_run",
         "workspace_root": str(metadata.workspace_root),
         "cargo_build_root": str(root),
         "current_build_directory": str(metadata.build_directory),
         "current_target_directory": str(metadata.target_directory),
+        "live_build_directories": [str(path) for path in live_builds],
+        "pool_anomalies": list(anomalies),
         "limits": {
             "max_size_gb": args.max_size_gb,
             "ttl_days": args.ttl_days,
@@ -410,6 +535,7 @@ def report_value(
                     "newest_mtime": timestamp(tree.newest_mtime),
                     "age_hours": round(tree.age_seconds / 3600, 2),
                     "current": tree.current,
+                    "live_worktree": tree.live_worktree,
                     "unsafe_paths": list(tree.unsafe),
                     "selected_reasons": list(selection.reasons.get(tree.relative, ())),
                 }
@@ -418,7 +544,7 @@ def report_value(
         },
         "current_target": {
             "preserved_entry": "ripr",
-            "selected_entries": [path.name for path in current_target],
+            "selected_entries": [path.name for path in selected_target],
             "selected_bytes": target_measurement.bytes,
             "unsafe_paths": list(target_measurement.unsafe),
             "deleted": list(target_deleted),
@@ -437,6 +563,8 @@ def markdown(value: dict[str, object]) -> str:
         f"- Mode: **{value['mode']}**",
         f"- Managed root: `{value['cargo_build_root']}`",
         f"- Current build directory: `{value['current_build_directory']}`",
+        f"- Protected live build directories: {len(value['live_build_directories'])}",
+        f"- Pool anomalies: {len(value['pool_anomalies'])}",
         f"- Managed trees: {builds['trees']}",
         f"- Managed bytes before: {human_bytes(int(builds['bytes_before']))}",
         f"- Selected: {builds['selected_trees']} trees / {human_bytes(int(builds['selected_bytes']))}",
@@ -449,6 +577,11 @@ def markdown(value: dict[str, object]) -> str:
     residual = int(builds["unresolved_over_budget_bytes"])
     if residual:
         lines.insert(-1, f"- Still over budget: **{human_bytes(residual)}**")
+    anomalies = value["pool_anomalies"]
+    if anomalies:
+        lines += ["## Pool anomalies", ""]
+        lines += [f"- `{path}`" for path in anomalies]
+        lines.append("")
     entries = builds["entries"]
     if entries:
         lines += [
@@ -461,6 +594,8 @@ def markdown(value: dict[str, object]) -> str:
             state: list[str] = []
             if entry["current"]:
                 state.append("current")
+            if entry["live_worktree"]:
+                state.append("live-worktree")
             if entry["unsafe_paths"]:
                 state.append("unsafe")
             state += [str(reason) for reason in entry["selected_reasons"]]
@@ -476,20 +611,55 @@ def markdown(value: dict[str, object]) -> str:
     return "\n".join(lines)
 
 
-def write_receipt(root: Path, value: dict[str, object], rendered: str) -> None:
-    json_path = root / REPORT_JSON
-    md_path = root / REPORT_MD
-    json_path.parent.mkdir(parents=True, exist_ok=True)
-    json_path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    md_path.write_text(rendered, encoding="utf-8")
+def ensure_plain_directory_chain(repo: Path, relative: Path) -> Path:
+    current = repo
+    for part in relative.parts:
+        current = current / part
+        if current.exists():
+            require_plain_directory(current, "receipt directory", missing_ok=False)
+        else:
+            current.mkdir()
+    return current
+
+
+def write_plain_text(path: Path, content: str) -> None:
+    try:
+        info = path.lstat()
+    except FileNotFoundError:
+        pass
+    else:
+        if is_link(info) or not stat.S_ISREG(info.st_mode):
+            raise ArtifactError(f"refusing non-regular receipt path: {path}")
+    path.write_text(content, encoding="utf-8")
+
+
+def write_receipt(repo: Path, value: dict[str, object], rendered: str) -> None:
+    report_dir = ensure_plain_directory_chain(repo, REPORT_JSON.parent)
+    write_plain_text(
+        report_dir / REPORT_JSON.name,
+        json.dumps(value, indent=2, sort_keys=True) + "\n",
+    )
+    write_plain_text(report_dir / REPORT_MD.name, rendered)
 
 
 def execute(args: argparse.Namespace, cwd: Path | None = None) -> int:
+    reject_overrides()
     repo = workspace_root(cwd or Path.cwd())
     metadata = cargo_metadata(repo)
-    root = validate_root(args.root or managed_root())
+    configured_root = validate_root(managed_root(metadata))
+    root = validate_root(args.root or configured_root)
+    if args.apply and root != configured_root:
+        raise ArtifactError(
+            f"--apply refuses an override pool: {root}; configured pool is {configured_root}"
+        )
+    anomalies = pool_anomalies(root)
+    if args.apply and anomalies:
+        raise ArtifactError(
+            "managed pool contains unrecognized or linked paths: " + ", ".join(anomalies[:5])
+        )
     now = args.now if args.now is not None else time.time()
-    trees = inventory(root, metadata.build_directory, now)
+    live_builds = () if args.command == "clean-current" else live_build_directories(repo, root)
+    trees = inventory(root, metadata.build_directory, live_builds, now)
     selection = select_gc(
         trees,
         args.max_size_gb * GB,
@@ -505,8 +675,10 @@ def execute(args: argparse.Namespace, cwd: Path | None = None) -> int:
     target_deleted: list[str] = []
 
     if args.command == "gc" and args.apply:
-        if not within(metadata.build_directory, root):
-            raise ArtifactError(f"current build directory is outside {root}")
+        latest_live = live_build_directories(repo, root)
+        for tree in selection.trees:
+            if any(within(build, tree.path) for build in latest_live):
+                raise ArtifactError(f"selected tree became live before deletion: {tree.path}")
         for tree in selection.trees:
             remove_tree(tree.path, root)
             deleted.append(tree.relative)
@@ -538,19 +710,19 @@ def execute(args: argparse.Namespace, cwd: Path | None = None) -> int:
                 remove_target_entry(path, metadata.target_directory)
                 target_deleted.append(path.name)
 
-    value = report_value(
-        args.command,
-        args.apply,
+    value = make_report(
+        args,
         now,
         root,
         metadata,
+        live_builds,
+        anomalies,
         trees,
         selection,
         deleted,
         selected_target,
         target_measurement,
         target_deleted,
-        args,
     )
     rendered = markdown(value)
     if not args.no_receipt:

@@ -10,10 +10,10 @@ xtask = "run -p xtask --"
 policy = "run --locked -p repo-policy --"
 
 [build]
-# Keep final binaries and reports at the established target/ paths, but move
-# bulky compiler intermediates into one managed root. The workspace-path hash
-# is mandatory: worktrees must never mutate one shared Cargo build tree.
-build-dir = "{cargo-cache-home}/ripr-swarm-build/{workspace-path-hash}"
+# Keep final binaries and reports at the established target/ paths. This path
+# is relative to the repository config, so nested fixture workspaces still use
+# one same-volume pool; the hash keeps every manifest's mutable state private.
+build-dir = "../.ripr-swarm-build/{workspace-path-hash}"
 
 [env]
 TEMP = { value = "target", relative = true, force = true }
