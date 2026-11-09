@@ -8076,6 +8076,75 @@ fn gap_code_actions_cross_language_unresolved_yields_disabled_preview_limitation
     {
         return Err("packet action must name preview_or_static_limitation".to_string());
     }
+    let text = packet
+        .disabled
+        .as_ref()
+        .map(|disabled| disabled.reason.as_str());
+    if !text.is_some_and(|text| text.contains("language boundary")) {
+        return Err(format!(
+            "cross-language packet reason must name the language boundary: {text:?}"
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+#[cfg(feature = "lang-python")]
+fn gap_code_actions_same_language_static_limit_does_not_claim_a_language_boundary()
+-> Result<(), String> {
+    // #13797: the same disabled-action shape for a same-language static
+    // limit keeps the machine reason but must not say the finding crosses a
+    // language boundary.
+    let root = unique_lsp_test_root("gap-disabled-same-language")?;
+    let uri = file_uri_for_path(&root.path().join("src/jsc/Blob.rs"))?;
+    let mut diagnostic = gap_action_diagnostic();
+    let data = diagnostic
+        .data
+        .as_mut()
+        .ok_or_else(|| "missing diagnostic data".to_string())?;
+    data["language"] = serde_json::json!("rust");
+    data["gap_state"] = serde_json::json!("static_limitation");
+    data["repairability"] = serde_json::json!("no_action");
+    data["static_limit_kind"] = serde_json::json!("opaque_helper_boundary");
+    data["projection_exclusion_reasons"] = serde_json::json!(["opaque_helper_boundary"]);
+    let mut snapshot = sample_analysis_snapshot(
+        root.path().to_path_buf(),
+        uri.clone(),
+        vec![diagnostic.clone()],
+        Vec::new(),
+    );
+    snapshot.gap_artifacts = vec![validated_gap_artifact()];
+    let params = code_action_params_for(uri, diagnostic.range.start.line, vec![diagnostic])?;
+
+    let actions = code_action_response(
+        &params,
+        Some(&snapshot),
+        &client_features_with_disabled_support(&[])?,
+    );
+    let literals = code_action_literals(&actions)?;
+    let packet = literals
+        .iter()
+        .find(|action| action.title == "Inspect gap: copy repair packet")
+        .ok_or_else(|| "packet action missing".to_string())?;
+    assert_disabled_action_invariants(packet)?;
+    if packet
+        .data
+        .as_ref()
+        .and_then(|data| data["disabled_reason"].as_str())
+        != Some("preview_or_static_limitation")
+    {
+        return Err("packet action must name preview_or_static_limitation".to_string());
+    }
+    let text = packet
+        .disabled
+        .as_ref()
+        .map(|disabled| disabled.reason.as_str())
+        .ok_or_else(|| "packet action must be disabled".to_string())?;
+    if text.contains("language boundary") {
+        return Err(format!(
+            "same-language static limit must not claim a language boundary: {text}"
+        ));
+    }
     Ok(())
 }
 
@@ -8134,6 +8203,15 @@ fn seam_code_actions_cross_language_unresolved_yields_disabled_preview_limitatio
         != Some("preview_or_static_limitation")
     {
         return Err("brief action must name preview_or_static_limitation".to_string());
+    }
+    let text = brief
+        .disabled
+        .as_ref()
+        .map(|disabled| disabled.reason.as_str());
+    if !text.is_some_and(|text| text.contains("language boundary")) {
+        return Err(format!(
+            "cross-language brief reason must name the language boundary: {text:?}"
+        ));
     }
     Ok(())
 }
