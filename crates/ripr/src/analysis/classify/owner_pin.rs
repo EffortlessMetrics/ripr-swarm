@@ -2418,9 +2418,7 @@ impl OwnerPinSyntax {
                 .is_some_and(|assertions| assertions.file_binds_test())
             {
                 return Some(AssertionRefusal::Syntax(
-                    AssertionContextRefusal::TestAttribute(
-                        "#[test] (the file may rebind `test`)".to_string(),
-                    ),
+                    AssertionContextRefusal::TestRebound,
                 ));
             }
         }
@@ -3468,6 +3466,7 @@ impl AssertionRefusal {
                 AssertionContextRefusal::UnparsedFile
                 | AssertionContextRefusal::UnidentifiedTest
                 | AssertionContextRefusal::AsyncTest
+                | AssertionContextRefusal::TestRebound
                 | AssertionContextRefusal::DuplicateSpelling
                 | AssertionContextRefusal::DuplicateSpellingOneRuns
                 | AssertionContextRefusal::ModelCheckClosure
@@ -3538,6 +3537,9 @@ impl AssertionRefusal {
                 }
                 AssertionContextRefusal::AsyncTest => {
                     "the test is `async`, and ripr does not model its executor".into()
+                }
+                AssertionContextRefusal::TestRebound => {
+                    "an import in this file may rebind `test` (for example `use .. as test`), so `#[test]` may not be the built-in attribute and may change whether or how the test runs".into()
                 }
                 AssertionContextRefusal::TestAttribute(attribute) => {
                     format!(
