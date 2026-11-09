@@ -542,6 +542,10 @@ fn run_facade_repair(mut options: RepairFacadeOptions) -> Result<(), CommandErro
         json: false,
     })
     .map_err(|error| {
+        // The held start summary is the only copy of the edit target, cage
+        // and next command on this route (#13803 dropped the stderr copies),
+        // so a card failure moves it to stderr; stdout stays empty (#7032).
+        eprint!("{before_stdout}");
         CommandError::Decision(crate::app::task_first::card_after_publish_message(
             &attempt_id,
             &seam_id,
