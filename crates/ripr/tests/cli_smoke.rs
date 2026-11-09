@@ -17395,6 +17395,21 @@ fn init_dry_run_prints_config_without_writing() -> Result<(), String> {
     ignore_remove_dir_all(&workspace);
     Ok(())
 }
+/// Plain `ripr init --mcp` does not plan `.cursor/mcp.json`, so the Cursor
+/// follow-up is still offered, and it names `--mcp` because that route needs it.
+#[test]
+fn init_mcp_without_cursor_still_offers_the_cursor_route() -> Result<(), String> {
+    let workspace = make_temp_workspace(None)?;
+    let root = workspace.display().to_string();
+    let out = run_ripr(&["init", "--root", &root, "--mcp"]);
+    assert_success(&out);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("For Cursor add `--agents cursor --mcp`"),
+        "{stdout}"
+    );
+    Ok(())
+}
 
 /// `ripr init --agents` end to end: dry run writes nothing, the real run
 /// appends a marked section to the user's file and creates the others, a rerun
@@ -17438,6 +17453,14 @@ fn init_agents_appends_marked_section_idempotently_and_never_clobbers() -> Resul
 
     let first = run_ripr(&["init", "--root", &root, "--agents", "all", "--mcp"]);
     assert_success(&first);
+    // `--agents all` already writes `.cursor/mcp.json`, so the hint to add
+    // `--agents cursor` is not offered.
+    let first_stdout = String::from_utf8_lossy(&first.stdout);
+    assert!(
+        first_stdout.contains("For Codex run `codex mcp add"),
+        "{first_stdout}"
+    );
+    assert!(!first_stdout.contains("For Cursor add"), "{first_stdout}");
     let after_claude = std::fs::read_to_string(&claude).map_err(|e| e.to_string())?;
     assert!(
         after_claude.starts_with(mine),

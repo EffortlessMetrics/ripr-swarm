@@ -90,6 +90,8 @@ The default contract is:
   front-matter globs follow the same languages, and `--force` refreshes that
   front matter only when it exactly matches a shape ripr generated;
   user-authored front matter and content outside the markers stay untouched.
+- `ripr init --mcp` suggests `--agents cursor --mcp` for Cursor only when the
+  run does not already plan `.cursor/mcp.json`.
 - Explicit CLI flags and LSP initialization options override repo config.
 - Repo config overrides built-in defaults.
 - Config discovery stops at a `.git` directory entry, including a dangling or
