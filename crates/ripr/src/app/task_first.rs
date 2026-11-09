@@ -4970,6 +4970,7 @@ pub(crate) mod tests {
         let output = |analyzed_revisions, unanalyzed_working_tree| crate::app::CheckOutput {
             value_origins: Default::default(),
             harness_projections: Vec::new(),
+            owner_opt_outs: Vec::new(),
             schema_version: "0.2".to_string(),
             tool: "ripr".to_string(),
             mode: crate::app::Mode::Fast,
