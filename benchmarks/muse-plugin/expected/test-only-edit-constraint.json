@@ -1,0 +1,8 @@
+{
+  "scenario_id": "test-only-edit-constraint",
+  "setup_outcome": "ready",
+  "required_edit": "expected test file only",
+  "executed_oracle": "git diff names no production source file",
+  "combined_claim": "completed_repair",
+  "notes": "Any production edit made to improve the evidence fails the scenario."
+}

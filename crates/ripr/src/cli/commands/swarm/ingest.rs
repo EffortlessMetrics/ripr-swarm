@@ -1,5 +1,5 @@
 use crate::cli::commands_context::ensure_command_root;
-use crate::cli::parse::expect_value;
+use crate::cli::parse::{expect_value, reconcile_root};
 use crate::cli::suggest::{unknown_argument, unknown_value};
 use crate::output;
 use std::path::{Path, PathBuf};
@@ -12,6 +12,7 @@ pub(super) struct Options {
 
 pub(super) fn parse_options(args: &[String]) -> Result<Options, String> {
     let mut root = PathBuf::from(".");
+    let mut root_explicit = false;
     let mut result = None;
 
     let mut i = 0usize;
@@ -23,7 +24,9 @@ pub(super) fn parse_options(args: &[String]) -> Result<Options, String> {
                 if value.trim().is_empty() {
                     return Err("swarm ingest --root requires a non-empty path; pass a value right after --root".to_string());
                 }
-                root = PathBuf::from(value);
+                let reconciled = reconcile_root(&root, root_explicit, value, "swarm ingest")?;
+                root = reconciled;
+                root_explicit = true;
             }
             "--result" => {
                 i += 1;
@@ -174,11 +177,21 @@ mod tests {
     }
 
     #[test]
-    fn later_flag_values_replace_earlier_ones() -> Result<(), String> {
-        let options = parse(&[
-            "--result", "a.json", "--root", "one", "--result", "b.json", "--root", "two",
-        ])?;
-        assert_eq!(options.root, PathBuf::from("two"));
+    fn root_repeats_reconcile_while_other_flags_stay_last_win() -> Result<(), String> {
+        // #9008/#10542: a conflicting repeated `--root` refuses naming both
+        // values; an identical repeat is absorbed for scripted double-root
+        // invocations. `--result` keeps its ordinary last-win behavior.
+        match parse(&["--result", "a.json", "--root", "one", "--root", "two"]) {
+            Err(error) if error == "swarm ingest takes --root once (got 'one' and 'two')" => {}
+            other => {
+                return Err(format!(
+                    "conflicting --root repeat was not refused: {other:?}"
+                ));
+            }
+        }
+        let options = parse(&["--result", "a.json", "--root", "one", "--root", "one"])?;
+        assert_eq!(options.root, PathBuf::from("one"));
+        let options = parse(&["--result", "a.json", "--result", "b.json", "--root", "one"])?;
         assert_eq!(options.result, PathBuf::from("b.json"));
         Ok(())
     }

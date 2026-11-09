@@ -1,0 +1,31 @@
+# Unread Insta configuration is an analyzer limitation, not a test gap.
+[[extend]]
+id = "RIPR-SPEC-0240"
+tests = [
+  "crates/ripr/tests/framework_oracle_limit.rs::insta_settings::unread_settings_withhold_both_fields",
+  "crates/ripr/tests/framework_oracle_limit.rs::insta_settings::with_settings_withholds_both_fields",
+  "crates/ripr/tests/framework_oracle_limit.rs::insta_settings::inline_snapshot_with_unread_configuration_is_limited",
+  "crates/ripr/tests/framework_oracle_limit.rs::insta_settings::constant_selectors_remain_withheld",
+  "crates/ripr/tests/framework_oracle_limit.rs::insta_settings::unread_settings_still_require_the_owner_result_snapshot",
+  "crates/ripr/tests/framework_oracle_limit.rs::insta_settings::noncode_near_names_and_later_settings_do_not_change_literal_redactions",
+  "crates/ripr/tests/framework_oracle_limit.rs::insta_settings::an_exact_field_assertion_keeps_its_credit_with_unread_settings",
+  "crates/ripr/tests/framework_oracle_limit.rs::insta_settings::test_only_settings_edits_reclassify_a_warm_input",
+]
+
+[[extend]]
+id = "RIPR-SPEC-0108"
+tests = [
+  "fixtures/evidence-promotion-honesty-corpus/cases/rust_insta_settings_id.json",
+  "fixtures/evidence-promotion-honesty-corpus/cases/rust_insta_settings_items.json",
+  "fixtures/evidence-promotion-honesty-corpus/cases/rust_insta_with_settings_id.json",
+  "fixtures/evidence-promotion-honesty-corpus/cases/rust_insta_with_settings_items.json",
+  "fixtures/evidence-promotion-honesty-corpus/cases/rust_insta_inline_settings_id.json",
+  "fixtures/evidence-promotion-honesty-corpus/cases/rust_insta_inline_settings_items.json",
+  "fixtures/evidence-promotion-honesty-corpus/cases/rust_insta_constant_selector_id.json",
+  "fixtures/evidence-promotion-honesty-corpus/cases/rust_insta_constant_selector_items.json",
+  "fixtures/evidence-promotion-honesty-corpus/cases/rust_insta_literal_map_id.json",
+  "fixtures/evidence-promotion-honesty-corpus/cases/rust_insta_literal_map_items.json",
+  "fixtures/evidence-promotion-honesty-corpus/cases/rust_insta_other_result.json",
+  "fixtures/evidence-promotion-honesty-corpus/cases/rust_insta_ordinary_inline.json",
+  "fixtures/evidence-promotion-honesty-corpus/cases/rust_insta_independent_exact.json",
+]

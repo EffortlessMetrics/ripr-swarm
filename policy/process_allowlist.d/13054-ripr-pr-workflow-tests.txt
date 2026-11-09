@@ -1,0 +1,2 @@
+crates/ripr/tests/ripr_pr_workflow.rs|Command::new|1|ci/ripr-pr|#13054: runs the ripr-pr workflow run blocks under bash against stand-in ripr and gh tools in a temp directory; no network.
+crates/ripr/tests/ripr_pr_workflow.rs|use std::process::Command|1|ci/ripr-pr|#13054: imports Command for the bash replay of the workflow run blocks; see the Command::new entry.

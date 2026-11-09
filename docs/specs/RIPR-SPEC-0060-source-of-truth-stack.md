@@ -159,6 +159,12 @@ should precede blocking CI promotion.
 
 ### Local Rust gate selection roots
 
+The existing local fast gate is discoverable through `cargo xtask help --all`,
+`cargo xtask help check-fast`, and the command catalog. Detailed help names its
+committed-diff selection, live-worktree execution, local reports, compilation
+cost, and boundary against broader validation. It remains local-only and is
+not marked CI-enforced.
+
 `check-fast` records the local `origin/main` commit, `HEAD` commit, effective
 merge-base and selected path count before executing gates and in its report.
 The path inventory is computed from those captured commits. Strict receipt
@@ -274,6 +280,11 @@ no changed paths, support-tier validation is not applicable.
 
 ## Test Mapping
 
+`xtask/tests/help_hierarchy.rs::check_fast_is_discoverable_with_its_local_proof_boundary`
+exercises the built binary's exhaustive and detailed help. It rejects an omitted
+or duplicate command, a false CI-enforcement marker, and missing selector, report, build-cost,
+or broader-validation boundaries.
+
 Focused tests for `cargo xtask check-doc-artifacts` include:
 
 - `rejects_duplicate_artifact_id`;
@@ -297,8 +308,10 @@ Local routing controls in `xtask/tests/support_tier_fast_route.rs` and
 `xtask/src/check_fast_strict.rs` include:
 
 - `committed_spec_declarations_reach_actual_check_fast_dispatch`: actual leaf
-  and aggregate execution, invalid/canonical declarations, current failure and
-  success receipts, and zero-path no-op;
+  and aggregate execution in a small independent Git/Cargo repository, extended
+  and inline malformed declarations, canonical `None.`, current selector-bound
+  failure and success receipts, path/root isolation, and zero-path no-op. The
+  same test retains one real-repository support-tier leaf check;
 - `selected_support_tier_inputs_require_leaf_receipt`: every applicable input
   family requires a support-tier entry in the bounded `Ran` section;
 - `support_tier_near_matches_keep_noop_applicability`: unrelated paths and empty

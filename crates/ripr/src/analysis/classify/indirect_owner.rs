@@ -272,6 +272,38 @@ pub(in crate::analysis) fn oracle_owner_call_is_shadowed(
 ) -> Option<bool> {
     use super::call_identity::{CallTarget, shared_owner_call_identity};
     let name = owner.name.as_str();
+    let anchor = oracle_text.trim();
+    if anchor.is_empty() {
+        return None;
+    }
+    // An assertion that never spells the owner has no mention to read: every
+    // remaining path (an unreadable body, a duplicated or unlocated statement, a
+    // located statement with no mention) answers `None`. The statement or its
+    // first line is a part of the anchor, so a whole-identifier mention there is
+    // one here. Checking the short anchor first skips the body-sized work below
+    // for the many oracles of a naming test that do not name the owner (#13577).
+    identifier_offsets(anchor, name).next()?;
+    // The assertion fact's text is a trimmed statement of the body; locate it
+    // (or its first line) to read the mentions in their real lexical scope.
+    // The fact carries the statement's text, not its position: identical text in
+    // two lexical scopes cannot be told apart, so neither scope is established.
+    // One pass finds the first match and whether a second exists.
+    let mut matches = source.match_indices(anchor);
+    let first_match = matches.next();
+    if matches.next().is_some() {
+        return None;
+    }
+    let (at, len, partial) = match first_match.map(|(at, _)| at) {
+        Some(at) => (at, anchor.len(), false),
+        None => {
+            let first = anchor.split('\n').next()?.trim();
+            if first.is_empty() {
+                return None;
+            }
+            (source.find(first)?, first.len(), true)
+        }
+    };
+    let span = source.get(at..at.checked_add(len)?)?;
     let identity = shared_owner_call_identity(index, owner);
     let import_is_other = |path: &[String]| {
         let Some((leaf, qualifier)) = path.split_last() else {
@@ -287,39 +319,16 @@ pub(in crate::analysis) fn oracle_owner_call_is_shadowed(
     // per-assertion tree walk is skipped (it ran once per oracle of every
     // naming test and dominated the large-workspace cold pilot). The parse
     // still decides readability.
-    let items = if body_has_no_owner_item_syntax(source, name) {
-        ItemBindings {
-            unreadable: crate::analysis::syntax::parse_clean_source_file_memoized(source).is_none(),
+    let items = match owner_item_scan(source, name) {
+        OwnerItemScan::NoItemSyntax { unreadable } => ItemBindings {
+            unreadable,
             ..ItemBindings::default()
-        }
-    } else {
-        ItemBindings::read(source, name, import_is_other)
+        },
+        OwnerItemScan::ReadTree => ItemBindings::read(source, name, import_is_other),
     };
     if items.unreadable {
         return None;
     }
-    let anchor = oracle_text.trim();
-    if anchor.is_empty() {
-        return None;
-    }
-    // The assertion fact's text is a trimmed statement of the body; locate it
-    // (or its first line) to read the mentions in their real lexical scope.
-    // The fact carries the statement's text, not its position: identical text in
-    // two lexical scopes cannot be told apart, so neither scope is established.
-    if source.matches(anchor).nth(1).is_some() {
-        return None;
-    }
-    let (at, len, partial) = match source.find(anchor) {
-        Some(at) => (at, anchor.len(), false),
-        None => {
-            let first = anchor.split('\n').next()?.trim();
-            if first.is_empty() {
-                return None;
-            }
-            (source.find(first)?, first.len(), true)
-        }
-    };
-    let span = source.get(at..at.checked_add(len)?)?;
     let mut mentions = 0usize;
     for offset in identifier_offsets(span, name) {
         // A spelling inside a string literal (an assertion message) is text, not a
@@ -575,10 +584,64 @@ fn is_bound_locally(code: &str, name: &str) -> bool {
         })
 }
 
+/// What the item-syntax prefilter says about one test body and owner name.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum OwnerItemScan {
+    /// No `use` or same-name `fn` item: nothing to read, and whether the shared
+    /// parser accepts the body.
+    NoItemSyntax { unreadable: bool },
+    /// Item syntax is present (or in doubt): read the tree.
+    ReadTree,
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Times [`body_has_no_owner_item_syntax`] actually ran on this thread.
+    static OWNER_ITEM_SCANS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// Times the shadow check asked [`owner_item_scan`] on this thread.
+    static OWNER_ITEM_ASKS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Times the item-syntax prefilter has actually run on this thread (tests pin
+/// how many of the shadow check's asks the run memo absorbs).
+#[cfg(test)]
+pub(in crate::analysis) fn owner_item_scan_count() -> usize {
+    OWNER_ITEM_SCANS.with(std::cell::Cell::get)
+}
+
+/// Times the shadow check asked for the prefilter on this thread, memo or not.
+#[cfg(test)]
+pub(in crate::analysis) fn owner_item_ask_count() -> usize {
+    OWNER_ITEM_ASKS.with(std::cell::Cell::get)
+}
+
+/// [`body_has_no_owner_item_syntax`] and the readability parse it feeds, as one
+/// pure function of `(source, name)`. The shadow check asks it once per (seam,
+/// naming test, oracle) triple and the body does not change between those
+/// asks, so it is computed once per distinct pair per run scope (#13577) and
+/// the per-call work is a single digest lookup. Outside a scope it recomputes.
+fn owner_item_scan(source: &str, name: &str) -> OwnerItemScan {
+    use crate::analysis::syntax::run_memo::{Product, memoize_with};
+    #[cfg(test)]
+    OWNER_ITEM_ASKS.with(|n| n.set(n.get() + 1));
+    memoize_with(Product::OwnerItemScan, 0, name, source, || {
+        if body_has_no_owner_item_syntax(source, name) {
+            OwnerItemScan::NoItemSyntax {
+                unreadable: crate::analysis::syntax::parse_clean_source_file_memoized(source)
+                    .is_none(),
+            }
+        } else {
+            OwnerItemScan::ReadTree
+        }
+    })
+}
+
 /// Whether `source` holds no syntax that [`ItemBindings::read`] turns into a
 /// declaration or a shadow of `name`: no `use` item and no `fn` item (or raw
 /// identifier) spelled with `name`. Conservative: any doubt reads the tree.
 fn body_has_no_owner_item_syntax(source: &str, name: &str) -> bool {
+    #[cfg(test)]
+    OWNER_ITEM_SCANS.with(|n| n.set(n.get() + 1));
     if identifier_offsets(source, "use").next().is_some() {
         return false;
     }
