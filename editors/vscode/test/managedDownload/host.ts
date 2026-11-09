@@ -53,8 +53,10 @@ export async function run(): Promise<void> {
       assert.strictEqual(receipt.archiveSha256, input.archiveSha256);
       // A real round trip after initialize, using the client's standard LSP
       // connection. An installed file or version string alone cannot pass.
+      const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+      assert.ok(workspaceFolder, 'workspace folder must be open');
       const hover = await controller.client.sendRequest('textDocument/hover', {
-        textDocument: { uri: vscode.Uri.file(path.join(vscode.workspace.workspaceFolders![0].uri.fsPath, 'src/lib.rs')).toString() },
+        textDocument: { uri: vscode.Uri.file(path.join(workspaceFolder.uri.fsPath, 'src/lib.rs')).toString() },
         position: { line: 0, character: 1 }
       });
       assert.ok(hover === null || typeof hover === 'object');
