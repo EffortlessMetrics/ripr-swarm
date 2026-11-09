@@ -13,6 +13,8 @@ author: 'EffortlessMetrics'
 #   job's other orphan processes at job end; cancellation, timeout, and crash
 #   release it the same way. The holder also expires after the job timeout
 #   plus 60 minutes, so a missed orphan kill cannot pin a tree forever.
+#   Once held, point Cargo's split build directory at the same leased target
+#   tree so repository config cannot leak intermediates beside the checkout.
 # reclaim: look only at top-level entries of the three roots. For a
 #   <run_id>-<run_attempt> directory whose lease this repository owns, take
 #   `flock -n` on the lease and delete that id's trees and lease while holding
@@ -85,6 +87,7 @@ runs:
           for _ in $(seq 1 100); do
             kill -0 "$holder" 2>/dev/null || break
             if ! flock -n -x "$lease" true 2>/dev/null; then
+              echo "CARGO_BUILD_BUILD_DIR=$root/target/$id" >> "$GITHUB_ENV"
               { echo "status=leased"; echo "lease=$lease"; echo "holder_pid=$holder"; } >> "$out"
               echo "ci-scratch-lease acquire: holding $lease for $repo (holder pid $holder)"; exit 0
             fi
