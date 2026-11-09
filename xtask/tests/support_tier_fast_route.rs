@@ -63,6 +63,7 @@ fn fixture() -> Result<Fixture, String> {
     // test target and its source in a second checkout (#12916).
     let scratch =
         std::env::temp_dir().join(format!("rsr{}-{:x}", std::process::id(), nonce & 0xff_ffff));
+    fs::create_dir_all(std::env::temp_dir()).map_err(|error| error.to_string())?;
     fs::create_dir(&scratch).map_err(|error| error.to_string())?;
     let root = scratch.join("repo with spaces");
     fs::create_dir_all(&root).map_err(|error| error.to_string())?;
