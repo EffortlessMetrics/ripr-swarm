@@ -1355,6 +1355,14 @@ mod tests {
                     .contains(&LanguageId::TypeScript),
                 "{label}: {body}"
             );
+            // `init --agents` reads the same written list, so the agent file
+            // promises TypeScript instead of naming it as not analyzed.
+            let agents =
+                super::init_agents::AgentLanguages::detect(&root, parsed.languages().enabled());
+            assert!(
+                agents.typescript && !agents.typescript_not_enabled,
+                "{label}: {agents:?}"
+            );
             std::fs::remove_dir_all(&root).map_err(|err| format!("cleanup: {err}"))?;
         }
         Ok(())
