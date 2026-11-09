@@ -272,6 +272,38 @@ pub(in crate::analysis) fn oracle_owner_call_is_shadowed(
 ) -> Option<bool> {
     use super::call_identity::{CallTarget, shared_owner_call_identity};
     let name = owner.name.as_str();
+    let anchor = oracle_text.trim();
+    if anchor.is_empty() {
+        return None;
+    }
+    // An assertion that never spells the owner has no mention to read: every
+    // remaining path (an unreadable body, a duplicated or unlocated statement, a
+    // located statement with no mention) answers `None`. The statement or its
+    // first line is a part of the anchor, so a whole-identifier mention there is
+    // one here. Checking the short anchor first skips the body-sized work below
+    // for the many oracles of a naming test that do not name the owner (#13577).
+    identifier_offsets(anchor, name).next()?;
+    // The assertion fact's text is a trimmed statement of the body; locate it
+    // (or its first line) to read the mentions in their real lexical scope.
+    // The fact carries the statement's text, not its position: identical text in
+    // two lexical scopes cannot be told apart, so neither scope is established.
+    // One pass finds the first match and whether a second exists.
+    let mut matches = source.match_indices(anchor);
+    let first_match = matches.next();
+    if matches.next().is_some() {
+        return None;
+    }
+    let (at, len, partial) = match first_match.map(|(at, _)| at) {
+        Some(at) => (at, anchor.len(), false),
+        None => {
+            let first = anchor.split('\n').next()?.trim();
+            if first.is_empty() {
+                return None;
+            }
+            (source.find(first)?, first.len(), true)
+        }
+    };
+    let span = source.get(at..at.checked_add(len)?)?;
     let identity = shared_owner_call_identity(index, owner);
     let import_is_other = |path: &[String]| {
         let Some((leaf, qualifier)) = path.split_last() else {
@@ -297,28 +329,6 @@ pub(in crate::analysis) fn oracle_owner_call_is_shadowed(
     if items.unreadable {
         return None;
     }
-    let anchor = oracle_text.trim();
-    if anchor.is_empty() {
-        return None;
-    }
-    // The assertion fact's text is a trimmed statement of the body; locate it
-    // (or its first line) to read the mentions in their real lexical scope.
-    // The fact carries the statement's text, not its position: identical text in
-    // two lexical scopes cannot be told apart, so neither scope is established.
-    if source.matches(anchor).nth(1).is_some() {
-        return None;
-    }
-    let (at, len, partial) = match source.find(anchor) {
-        Some(at) => (at, anchor.len(), false),
-        None => {
-            let first = anchor.split('\n').next()?.trim();
-            if first.is_empty() {
-                return None;
-            }
-            (source.find(first)?, first.len(), true)
-        }
-    };
-    let span = source.get(at..at.checked_add(len)?)?;
     let mut mentions = 0usize;
     for offset in identifier_offsets(span, name) {
         // A spelling inside a string literal (an assertion message) is text, not a

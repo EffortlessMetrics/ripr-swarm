@@ -82,7 +82,12 @@ The default contract is:
   Rust block stays byte-identical to `docs/AGENT_QUICKSTART.md`; a preview
   language (Python, TypeScript/JavaScript) gets its own test runner and
   assertion advice, an advisory label, and the same fail-closed DONE/STOP
-  rules, including STOP on `unanalyzed_working_tree: true`. A language counts
+  rules. Every language variant, including mixed roots, uses one compact
+  post-edit `check --format agent` report for VERIFY and DONE; its final
+  producer-owned `verify=` record enforces complete outcome, equal full
+  findings/exposed counts and source/scope currentness. A missing, refused or
+  cut-off record cannot establish completion. JSON drilldown is not required.
+  A language counts
   only when it is both detected and enabled in the effective
   `[languages].enabled` (the config this run writes, else the one it keeps,
   with an unreadable config enabling none); a detected language that is not
@@ -92,6 +97,9 @@ The default contract is:
   user-authored front matter and content outside the markers stay untouched.
 - `ripr init --mcp` suggests `--agents cursor --mcp` for Cursor only when the
   run does not already plan `.cursor/mcp.json`.
+- `ripr init --agents` repeats the "register the MCP server" follow-up only
+  when the same run does not actually write the MCP config (an existing `ripr`
+  entry left unchanged does not count).
 - Explicit CLI flags and LSP initialization options override repo config.
 - Repo config overrides built-in defaults.
 - Config discovery stops at a `.git` directory entry, including a dangling or
@@ -610,6 +618,9 @@ Given a Python repository whose ripr.toml enables Python,
 when a user runs ripr init --agents all,
 then CLAUDE.md, AGENTS.md and the Cursor rule carry the Python preview loop
 (pytest advice, `**/*.py` globs) without cargo or Rust-only repair commands.
+VERIFY requests one compact post-edit check; DONE reuses that report and
+requires exit 0 and its final verify=complete record. Preview and mixed
+language loops do not request full JSON or fields absent from compact output.
 If ripr.toml enables only rust, the Python loop is not written and the block
 says Python files are not analyzed.
 After Python is added to a Rust repository, ripr init --agents cursor --force

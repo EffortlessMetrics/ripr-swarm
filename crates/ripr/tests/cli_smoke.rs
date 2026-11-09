@@ -5238,7 +5238,7 @@ fn agent_brief_json_unresolvable_base_emits_refusal_envelope() -> Result<(), Str
     ]);
     let value = assert_json_refusal_envelope(
         &output,
-        "0.1",
+        "0.2",
         "repo",
         "base_unresolvable",
         "analysis/base-resolution",
@@ -6263,7 +6263,7 @@ fn agent_brief_diff_scope_outputs_json() -> Result<(), Box<dyn std::error::Error
     assert_success(&output);
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains(r#""schema_version": "0.1""#));
+    assert!(stdout.contains(r#""schema_version": "0.2""#));
     assert!(stdout.contains(r#""scope": "working_set""#));
     assert!(stdout.contains(r#""source": "diff""#));
     assert!(stdout.contains(r#""returned": 2"#));
@@ -17395,6 +17395,37 @@ fn init_dry_run_prints_config_without_writing() -> Result<(), String> {
     ignore_remove_dir_all(&workspace);
     Ok(())
 }
+/// Without `--mcp` the follow-up still points at MCP registration, since the
+/// run did not register the server.
+#[test]
+fn init_agents_without_mcp_keeps_the_register_mcp_follow_up() -> Result<(), String> {
+    let workspace = make_temp_workspace(None)?;
+    let root = workspace.display().to_string();
+    let out = run_ripr(&["init", "--root", &root, "--agents", "claude"]);
+    assert_success(&out);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("Register the MCP server"), "{stdout}");
+    Ok(())
+}
+
+/// An existing `ripr` entry in `.mcp.json` is left unchanged, so this run did
+/// not register anything and the register-the-server follow-up stays.
+#[test]
+fn init_mcp_with_existing_entry_keeps_the_register_mcp_follow_up() -> Result<(), String> {
+    let workspace = make_temp_workspace(None)?;
+    let root = workspace.display().to_string();
+    std::fs::write(
+        workspace.join(".mcp.json"),
+        "{\"mcpServers\":{\"ripr\":{\"command\":\"/removed/ripr\"}}}\n",
+    )
+    .map_err(|e| format!("write .mcp.json: {e}"))?;
+    let out = run_ripr(&["init", "--root", &root, "--agents", "claude", "--mcp"]);
+    assert_success(&out);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("Register the MCP server"), "{stdout}");
+    Ok(())
+}
+
 /// Plain `ripr init --mcp` does not plan `.cursor/mcp.json`, so the Cursor
 /// follow-up is still offered, and it names `--mcp` because that route needs it.
 #[test]
@@ -17461,6 +17492,12 @@ fn init_agents_appends_marked_section_idempotently_and_never_clobbers() -> Resul
         "{first_stdout}"
     );
     assert!(!first_stdout.contains("For Cursor add"), "{first_stdout}");
+    // `--mcp` in the same run already registers the server, so the
+    // "register the MCP server" follow-up is not repeated.
+    assert!(
+        !first_stdout.contains("Register the MCP server"),
+        "{first_stdout}"
+    );
     let after_claude = std::fs::read_to_string(&claude).map_err(|e| e.to_string())?;
     assert!(
         after_claude.starts_with(mine),
