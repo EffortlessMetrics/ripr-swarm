@@ -528,7 +528,7 @@ TypeScript test-file conventions). For external Rust test files, the cage
 permits only insertion of new test functions and preserves existing test
 bytes; an existing selected file must be committed before the start (#8710).
 Other languages retain the whole-file path cage.
-When a seam's only tests live in one inline `#[cfg(test)]`
+One exception: when a seam's only tests live in one inline `#[cfg(test)]`
 module of the production file, the before phase can bind that module's
 body as the edit cage instead — production code outside the module stays
 untouched, and the file must be committed before the start.

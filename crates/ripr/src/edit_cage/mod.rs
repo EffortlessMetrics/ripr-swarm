@@ -1732,8 +1732,18 @@ fn delta_and_line_ending_only_paths(
         .collect::<BTreeSet<_>>();
     let mut changed_symlink = false;
     for path in paths {
-        let old = before.paths.get(&path);
-        let new = overrides.get(&path).or_else(|| after.paths.get(&path));
+        // A retained `Missing` identity with no index entry (an absent external
+        // test target kept in the capture) is absence, so a file created there
+        // reads as Added, not Modified.
+        let is_present = |state: &&RepositoryPathState| {
+            state.index_entry.is_some()
+                || !matches!(state.worktree_identity, WorktreeIdentity::Missing)
+        };
+        let old = before.paths.get(&path).filter(is_present);
+        let new = overrides
+            .get(&path)
+            .or_else(|| after.paths.get(&path))
+            .filter(is_present);
         if old == new {
             continue;
         }
@@ -4021,6 +4031,7 @@ mod tests {
         policy.allowed_edit_surface = vec![CagePathRule::exact(file)?];
         policy.forbidden_paths = vec![CagePathRule::exact("Cargo.toml")?];
         policy.inline_test_module_target = confined;
+        policy.external_test_file_target = false;
         policy.new_test_proposal = Some(FollowedNewTestProposal {
             kind: crate::analysis::new_test_target::NewTestKind::InlineUnit,
             file: file.to_string(),
