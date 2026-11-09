@@ -343,9 +343,9 @@ fn render_unanalyzed_changes(out: &mut String, output: &CheckOutput) -> bool {
 }
 
 /// A weakly exposed preview finding whose producer recorded both a missing
-/// discriminator and a contributing weak related test. Guided repair being
-/// unavailable for preview languages does not mean the test-side action is
-/// absent. Requires the established discriminator, never limitation prose.
+/// discriminator and a contributing weak related test. Preview status does
+/// not decide repair availability. Requires the established discriminator,
+/// never limitation prose.
 fn preview_leaves_test_side_open(finding: &Finding) -> bool {
     triage::is_preview_limited(finding)
         && !triage::is_static_limited(finding)
@@ -406,12 +406,11 @@ pub(super) fn render_finding(
             weak_row,
         )
     } else if preview_leaves_test_side_open(finding) {
-        // #13277: preview evidence is advisory and has no governed repair
-        // route, which is not the same as "nothing more is fixable". The
-        // producer-owned discriminator and related test are shown; nothing
-        // is inferred or promoted.
+        // #13277: preview evidence remains advisory. The producer-owned
+        // discriminator and related test are shown; this projection does
+        // not decide repair availability or infer stronger evidence.
         (
-            "open=preview-language evidence is advisory and offers no guided repair, but a related test asserts too weakly to notice this change; tests may still help; static advisory, not runtime proof",
+            "open=preview-language evidence is advisory, but a related test asserts too weakly to notice this change; tests may still help; static advisory, not runtime proof",
             weak_row,
         )
     } else if finding.class == ExposureClass::Exposed && !triage::is_static_limited(finding) {

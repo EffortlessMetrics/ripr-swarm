@@ -2071,14 +2071,14 @@ const CONTENT_CHANGE_LIMITS: ContentChangeLimits = ContentChangeLimits {
 /// opening many such documents. 4,096 URIs and 512 MiB of retained text are
 /// generous for a real editor workspace and far below 4,096 × 16 MiB.
 #[derive(Clone, Copy)]
-struct DocumentStoreLimits {
+pub(super) struct DocumentStoreLimits {
     /// Most simultaneously retained URIs.
-    max_open_documents: usize,
+    pub(super) max_open_documents: usize,
     /// Most retained buffer bytes across all open documents.
-    max_retained_document_bytes: usize,
+    pub(super) max_retained_document_bytes: usize,
 }
 
-const DOCUMENT_STORE_LIMITS: DocumentStoreLimits = DocumentStoreLimits {
+pub(super) const DOCUMENT_STORE_LIMITS: DocumentStoreLimits = DocumentStoreLimits {
     max_open_documents: 4_096,
     max_retained_document_bytes: 512 * 1024 * 1024,
 };
@@ -2345,7 +2345,7 @@ impl Default for DocumentStore {
 
 impl DocumentStore {
     #[cfg(test)]
-    fn with_limits(limits: DocumentStoreLimits) -> Self {
+    pub(super) fn with_limits(limits: DocumentStoreLimits) -> Self {
         Self {
             limits,
             ..Self::default()
