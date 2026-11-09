@@ -2055,6 +2055,191 @@ fn nested_src_layout_rival_claims_tests_under_its_own_root() {
     ));
 }
 
+/// #13786: a package that re-exports the owner (`core/__init__.py` importing
+/// from `core/impl.py`) is shadowed by a same-project plain `core.py` just as
+/// the owner's own src short name is; without that rival it keeps its credit.
+#[test]
+fn reexport_package_name_with_a_same_project_plain_module_identifies_neither() {
+    let owner = PythonOwner {
+        name: "price".to_string(),
+        qualified_name: "price".to_string(),
+        file: PathBuf::from("svc/a/src/core/impl.py"),
+        start_line: 1,
+        end_line: 4,
+        owner_kind: Some(OwnerKind::Function),
+        decorators: Vec::new(),
+        imports: Vec::new(),
+        cli_receiver_names: Vec::new(),
+        route_paths: Vec::new(),
+        route_methods: Vec::new(),
+        route_receivers: Vec::new(),
+        dynamic_route_decorators: Vec::new(),
+        unplain_decorators: Vec::new(),
+        decorator_lines: None,
+        parameters: Vec::new(),
+        reexport_modules: vec!["core".to_string()],
+        star_exported: false,
+        ambiguous_src_modules: Vec::new(),
+        rival_definition_modules: Vec::new(),
+        module_constants: Vec::new(),
+        same_class_callees: Vec::new(),
+        module_callees: Vec::new(),
+        class_path: String::new(),
+        term_facts: Default::default(),
+        class_facts: Default::default(),
+        foreign_writes: Default::default(),
+        version_conditional: false,
+        cli_subcommand: None,
+        nested_called_by_parent: false,
+        nested_result_discarded: false,
+        trusted_stdlib_click_alias: false,
+    };
+    let import = PythonImport {
+        imported: "price".to_string(),
+        alias: "price".to_string(),
+        source_module: "core".to_string(),
+    };
+    let identifies = |sources: &[&str]| {
+        let sources = sources.iter().map(PathBuf::from).collect::<Vec<_>>();
+        let mut owners = vec![owner.clone()];
+        super::related_tests::apply_src_module_ambiguity(&mut owners, sources.iter());
+        import_source_module_matches_owner(
+            &import,
+            &owners[0],
+            Path::new("svc/a/tests/test_core.py"),
+        )
+    };
+    let package = ["svc/a/src/core/__init__.py", "svc/a/src/core/impl.py"];
+    // Positive control: no rival, the re-exporting package name identifies the owner.
+    assert!(identifies(&package));
+    // A plain module beside the project's `src/` loads instead on some paths.
+    assert!(!identifies(&[package[0], package[1], "svc/a/core.py"]));
+    // So does one at the repository root.
+    assert!(!identifies(&[package[0], package[1], "core.py"]));
+    // A plain `core.py` of a different project does not shadow this one.
+    assert!(identifies(&[package[0], package[1], "svc/b/core.py"]));
+}
+
+/// #13745: a src short name that a plain module of the same project also
+/// produces identifies neither; the same short name with no such rival keeps
+/// its credit (discriminating pair).
+#[test]
+fn src_short_name_with_a_same_project_plain_module_identifies_neither() {
+    let owner = |file: &str| PythonOwner {
+        name: "price".to_string(),
+        qualified_name: "price".to_string(),
+        file: PathBuf::from(file),
+        start_line: 1,
+        end_line: 4,
+        owner_kind: Some(OwnerKind::Function),
+        decorators: Vec::new(),
+        imports: Vec::new(),
+        cli_receiver_names: Vec::new(),
+        route_paths: Vec::new(),
+        route_methods: Vec::new(),
+        route_receivers: Vec::new(),
+        dynamic_route_decorators: Vec::new(),
+        unplain_decorators: Vec::new(),
+        decorator_lines: None,
+        parameters: Vec::new(),
+        reexport_modules: Vec::new(),
+        star_exported: false,
+        ambiguous_src_modules: Vec::new(),
+        rival_definition_modules: Vec::new(),
+        module_constants: Vec::new(),
+        same_class_callees: Vec::new(),
+        module_callees: Vec::new(),
+        class_path: String::new(),
+        term_facts: Default::default(),
+        class_facts: Default::default(),
+        foreign_writes: Default::default(),
+        version_conditional: false,
+        cli_subcommand: None,
+        nested_called_by_parent: false,
+        nested_result_discarded: false,
+        trusted_stdlib_click_alias: false,
+    };
+    let import = |module: &str| PythonImport {
+        imported: "price".to_string(),
+        alias: "price".to_string(),
+        source_module: module.to_string(),
+    };
+    let identifies = |sources: &[&str], owner_file: &str, module: &str, test: &str| {
+        let sources = sources
+            .iter()
+            .map(|file| PathBuf::from(*file))
+            .collect::<Vec<_>>();
+        let mut owners = vec![owner(owner_file)];
+        super::related_tests::apply_src_module_ambiguity(&mut owners, sources.iter());
+        import_source_module_matches_owner(&import(module), &owners[0], Path::new(test))
+    };
+    // Positive control: no rival, the short name identifies the owner.
+    assert!(identifies(
+        &["svc/a/src/core.py"],
+        "svc/a/src/core.py",
+        "core",
+        "svc/a/tests/test_core.py"
+    ));
+    // A repo-root `core.py` (full path `core`) is a rival from every test.
+    let root_rival = ["svc/a/src/core.py", "core.py"];
+    assert!(!identifies(
+        &root_rival,
+        "svc/a/src/core.py",
+        "core",
+        "svc/a/tests/test_core.py"
+    ));
+    // A top-level module beside the project's `src/` is a rival too.
+    let sibling_rival = ["svc/a/src/core.py", "svc/a/core.py"];
+    assert!(!identifies(
+        &sibling_rival,
+        "svc/a/src/core.py",
+        "core",
+        "svc/a/tests/test_core.py"
+    ));
+    // The full repository path stays unambiguous.
+    assert!(identifies(
+        &sibling_rival,
+        "svc/a/src/core.py",
+        "svc.a.src.core",
+        "svc/a/tests/test_core.py"
+    ));
+    // A top-level module of a different project does not shadow this one.
+    assert!(identifies(
+        &["svc/a/src/core.py", "svc/b/core.py"],
+        "svc/a/src/core.py",
+        "core",
+        "svc/a/tests/test_core.py"
+    ));
+    // The repo-root module keeps its credit for tests outside the src
+    // project, and loses it inside (the src project's rival claims them).
+    assert!(identifies(
+        &root_rival,
+        "core.py",
+        "core",
+        "tests/test_core.py"
+    ));
+    assert!(!identifies(
+        &root_rival,
+        "core.py",
+        "core",
+        "svc/a/tests/test_core.py"
+    ));
+    // A root `src/core.py` beside a root `core.py` shadows both.
+    let same_root = ["src/core.py", "core.py"];
+    assert!(!identifies(
+        &same_root,
+        "src/core.py",
+        "core",
+        "tests/test_core.py"
+    ));
+    assert!(!identifies(
+        &same_root,
+        "core.py",
+        "core",
+        "tests/test_core.py"
+    ));
+}
+
 #[test]
 fn same_stem_related_handles_missing_stems() {
     let owner = PythonOwner {
@@ -4459,12 +4644,131 @@ fn print_to_a_standard_stream_is_not_an_unresolved_import() {
 #[test]
 fn classify_probe_shape_assign_with_non_call_rhs_falls_through_to_predicate() {
     // `total = amount + 10` is an assignment whose LHS is a plain
-    // identifier and whose RHS does not look like a call. The
-    // classifier must fall through past the assign branches to the
-    // conservative predicate default.
+    // identifier and whose RHS does not look like a call. Analysis keeps the
+    // conservative predicate default; only the presented shape reads as a
+    // value (#13587).
     let (family, delta) = classify_probe_shape("    total = amount + 10");
     assert_eq!(family, ProbeFamily::Predicate);
     assert_eq!(delta, DeltaKind::Control);
+}
+
+#[test]
+fn plain_local_value_assignment_is_closed() {
+    use super::probe_shape::is_python_plain_local_value_assignment as plain;
+    for line in [
+        "    total = amount + 10",
+        "        text = f\"{text} {label(self.deprecated)}\"",
+        "    total: int = amount + 10",
+        "    items: list[str] = names",
+        "    out = yielded + 1",
+    ] {
+        assert!(plain(line), "{line}");
+    }
+    for line in [
+        "    flag = amount > 10",
+        "    flag = amount == 10",
+        "    flag = amount != 10",
+        "    flag = a and b",
+        "    flag = a or b",
+        "    flag = not a",
+        "    flag = a in items",
+        "    flag = a is None",
+        "    flag = lambda x: x + 1",
+        "    total += amount",
+        "    first, second = pair",
+        "    if self.deprecated:",
+        "    elif amount > 2:",
+        "    received = yield value",
+        "    received = yield",
+        "    data = await fetch_total",
+        "    f: lambda x: x = amount + 1",
+        "    self.total: int = amount + 10",
+        "    a b: int = amount",
+        // One-line compound statements and keyword targets.
+        "    else: x = 3",
+        "    try: x = 3",
+        "    finally: x = 3",
+        "    except ValueError: x = 3",
+        "    except: x = 3",
+        "    class: x = 3",
+        "    def f(): x = 3",
+        "    lambda: x = 3",
+        "    return = 3",
+        // Chained writes, walrus and keyword arguments inside the right side.
+        "    x = y = 1",
+        "    x = obj.status = 1",
+        "    x = (y := 1)",
+        "    x = scale(a) + offset(b=2)",
+        // Bare `ident=value` continuations and boolean-call right sides.
+        "        timeout=30",
+        "    retries=3",
+        "    flag = a and(b)",
+        "    flag = a or(b)",
+        "    flag = x not(y)",
+        // Argument, parameter and dict continuations; joined statements.
+        "        timeout=30,",
+        "        flag=True,",
+        "    total = amount + 1,",
+        "    total = amount + 1; other = 2",
+        "    total = amount + 1;",
+        "    def f(a, timeout=30):",
+        // Multi-line first line: unbalanced brackets.
+        "    total = (amount +",
+        "    items = [a,",
+        "    data = {\"a\": 1,",
+        "    total = amount + \\",
+    ] {
+        assert!(!plain(line), "{line}");
+    }
+}
+
+#[test]
+fn presented_shape_reads_a_guarded_body_value_edit_as_a_value_only_in_a_callable() {
+    use super::probe_shape::presented_python_shape;
+    let owners = super::owners_tests::extract_owners(
+        Path::new("src/label.py"),
+        "def label(deprecated, text):\n    if deprecated:\n        text = text + 1\n    return text\n",
+    );
+    let owner = owners.iter().find(|owner| owner.name == "label");
+    assert!(owner.is_some(), "the function owner must parse");
+    let Some(owner) = owner else { return };
+    let predicate = (ProbeFamily::Predicate, DeltaKind::Control);
+    let value = (ProbeFamily::ReturnValue, DeltaKind::Value);
+    let present = |line: &str| presented_python_shape(owner, &predicate.0, &predicate.1, line);
+    assert_eq!(present("        text = text + 1"), value);
+    // The guard line itself and a comparison assignment stay predicate.
+    assert_eq!(present("    if deprecated:"), predicate);
+    assert_eq!(present("        flag = text > 1"), predicate);
+    // An unindented line is not a body statement.
+    assert_eq!(present("text = text + 1"), predicate);
+    // A class body or module owner (no callable kind) never re-presents.
+    let class_owners = extract_owners(
+        Path::new("src/model.py"),
+        "class Model:\n    size = 1\n\n    def grow(self):\n        self.size = 2\n",
+    );
+    for class_owner in class_owners.iter().filter(|candidate| {
+        !matches!(
+            candidate.owner_kind,
+            Some(OwnerKind::Function | OwnerKind::Method | OwnerKind::ClassMethod)
+        )
+    }) {
+        assert_eq!(
+            presented_python_shape(class_owner, &predicate.0, &predicate.1, "    size = 2"),
+            predicate,
+            "{}",
+            class_owner.qualified_name
+        );
+    }
+    // Only the predicate default is ever re-presented.
+    assert_eq!(
+        presented_python_shape(
+            owner,
+            &ProbeFamily::SideEffect,
+            &DeltaKind::Effect,
+            "        text = text + 1"
+        ),
+        (ProbeFamily::SideEffect, DeltaKind::Effect)
+    );
 }
 
 #[test]

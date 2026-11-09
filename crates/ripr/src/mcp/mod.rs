@@ -4,7 +4,7 @@ pub(crate) mod gaps;
 mod panic_containment;
 mod protocol;
 mod repair;
-mod repair_admission;
+pub(crate) mod repair_admission;
 mod repair_card;
 mod server;
 mod transport;

@@ -134,10 +134,10 @@ The CI row was checked against source on 2026-10-31; the other rows keep their o
 | --- | --- | --- | --- |
 | `cargo install ripr` | crates.io serves 0.10.0 | Publishes with the release | Compiles from source (needs Rust 1.95; minutes, not seconds). |
 | GitHub Release server archives | 0.10.0 has all five targets plus `.sha256` | Rehearsed by `release-server-binaries.yml`; 0.11.0 assets do not exist yet | Release operator publishes from `EffortlessMetrics/ripr`. |
-| `cargo binstall ripr` | Falls back to a source build (0.10.0 carries no binstall metadata) | Metadata added in this change; works once 0.11.0 assets exist | Verify with a real `cargo binstall ripr` after the release. |
+| `cargo binstall ripr` | Falls back to a source build (0.10.0 carries no binstall metadata) | Metadata is in source; works once 0.11.0 assets exist | Verify with a real `cargo binstall ripr` after the release. |
 | CI (`ripr init --ci github`) | Compiles ripr each run | Downloads the release archive and verifies its checksum; falls back to `cargo install` when no archive exists for the runner (`init_workflow.rs`) | Landed in source. A repo that generated its workflow with an older ripr must regenerate it; the download only succeeds once the matching release archives exist. |
-| PyPI `ripr-rs` | Only `0.11.0a1`, Linux x86-64 wheel | Wheel qualification exists | Single platform; no macOS, Windows or ARM wheel is public. |
-| npm `@effortlessmetrics/ripr` | `0.11.0-alpha.2` on `next`, Linux x86-64 only, README says so | Multi-platform launcher is checked in, not published | Platform payload packages (`ripr-darwin-arm64` and the others) do not exist on npm. |
+| PyPI `ripr-rs` | Only `0.11.0a1`, Linux x86-64 wheel | `release-server-binaries.yml` wraps each qualified archive payload into a platform wheel for all five targets and installs each one with pip on its native runner (#5378) | Nothing beyond the Linux x86-64 alpha is public until the release operator uploads the rehearsed wheels. |
+| npm `@effortlessmetrics/ripr` | `0.11.0-alpha.2` on `next`, Linux x86-64 only, README says so | `release-server-binaries.yml` packs the five native packages from the qualified archive payloads plus the launcher, and installs them offline with npm on each native runner (#5378) | Platform payload packages (`ripr-darwin-arm64` and the others) do not exist on npm until the release operator publishes them, native packages before the launcher. |
 | VS Code Marketplace / Open VSX | Marketplace lists 0.10.0 (read back in a browser 2026-10-04; Open VSX not checked) | `publish-extension.yml` is source-owned | The listing's two continuation links omit `/blob/main/` and render "Not Found" (`github.com/EffortlessMetrics/ripr/docs/EDITOR_FIRST_RUN_TO_FIRST_RECEIPT.md` and `.../EDITOR_FIRST_PR_BRIDGE_WORKFLOW.md`); its description still says 0.8.x. A source docs merge does not change a published listing; the next authorized extension publication does. Installed-snippet and continuation work is owned by #4629. |
 | Homebrew | None | Formula draft below | Needs a tap repository and Steven's go-ahead. |
 
@@ -187,21 +187,23 @@ executable; its sample is kept apart from the source-install metric.
    server archives. Binstall, the VS Code server download, the CI install and a
    Homebrew formula all read those assets.
 2. **macOS and Windows users have no non-source path** in the package registries
-   until npm and PyPI publish more than Linux x86-64.
+   until npm and PyPI publish more than Linux x86-64. The release rehearsal now
+   builds and install-tests all five targets for both registries, so this is a
+   publication step, not missing packaging.
 3. **First-run trust:** the archive is unsigned beyond its SHA-256. Binstall
    verifies nothing further, and Homebrew verifies the pinned hash.
 
 ## cargo-binstall
 
-`crates/ripr/Cargo.toml` now carries `[package.metadata.binstall]` pointing at
+`crates/ripr/Cargo.toml` carries `[package.metadata.binstall]` pointing at
 `ripr-server-v{version}-{target}.tar.gz` (`.zip` on `x86_64-pc-windows-msvc`).
 The archive holds `ripr` at its root. The xtask test
 `release_server::binstall_metadata` renders the templates for all five targets
 and compares them with `server_asset_name`, the function the release archive
 command names its assets with; a renamed asset fails the test.
 
-Only releases published after this change contain the metadata. After 0.11.0
-ships, check:
+Only releases built from a tree with that metadata contain it, so 0.11.0 is the
+first. After 0.11.0 ships, check:
 
 ```bash
 cargo binstall ripr --no-confirm   # expect a download, not a compile

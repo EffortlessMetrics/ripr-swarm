@@ -91,6 +91,8 @@ fn compiler_admission_variable(key: &OsStr) -> bool {
 fn run_child(selector: &str, untrusted_wrapper: bool) -> Result<(), String> {
     let mut scratch = Scratch::new()?;
     let acknowledgement = scratch.path.join("assertions-completed");
+    let child_stdout = scratch.path.join("child-stdout.log");
+    let child_stderr = scratch.path.join("child-stderr.log");
     let executable =
         std::env::current_exe().map_err(|error| format!("locate test executable: {error}"))?;
     let mut command = std::process::Command::new(executable);
@@ -110,7 +112,20 @@ fn run_child(selector: &str, untrusted_wrapper: bool) -> Result<(), String> {
     if untrusted_wrapper {
         command.env("RUSTC_WRAPPER", UNTRUSTED_WRAPPER);
     }
-    // Stdout/stderr remain inherited: no pipe can fill while the parent waits.
+    // The child is a full libtest harness: inherited stdout would print its
+    // own `running 1 test` / `test ... ok` / `test result:` rows into the
+    // parent suite's log, where the fail-closed windows-advisory summarizer
+    // cannot attribute them (nightly 42164175174: 14637 provenance errors,
+    // run 1 and run 2 incomplete_evidence, #9272). Files cannot fill, so the
+    // parent's plain `try_wait` loop keeps the no-pipe-to-fill property; the
+    // scratch is retained on failure with the paths in the error.
+    let stdout_file = std::fs::File::create(&child_stdout)
+        .map_err(|error| format!("create compiler fixture stdout capture: {error}"))?;
+    let stderr_file = std::fs::File::create(&child_stderr)
+        .map_err(|error| format!("create compiler fixture stderr capture: {error}"))?;
+    command
+        .stdout(std::process::Stdio::from(stdout_file))
+        .stderr(std::process::Stdio::from(stderr_file));
     let mut child = crate::process_owner::OwnedProcess::spawn_isolated(command)
         .map_err(|error| format!("spawn compiler fixture {selector}: {error}"))?;
     let started = Instant::now();
@@ -118,9 +133,26 @@ fn run_child(selector: &str, untrusted_wrapper: bool) -> Result<(), String> {
         match child.try_wait() {
             Ok(Some(status)) => {
                 if !status.success() {
-                    return Err(format!("compiler fixture {selector} failed: {status}"));
+                    scratch.retain = true;
+                    return Err(format!(
+                        "compiler fixture {selector} failed: {status}; child stdout: {}; child stderr: {}; captured stdout:\n{}; captured stderr:\n{}",
+                        child_stdout.display(),
+                        child_stderr.display(),
+                        capture_text(&child_stdout),
+                        capture_text(&child_stderr)
+                    ));
                 }
-                return verify_acknowledgement(&acknowledgement, selector);
+                if let Err(error) = verify_acknowledgement(&acknowledgement, selector) {
+                    scratch.retain = true;
+                    return Err(format!(
+                        "{error}; child stdout: {}; child stderr: {}; captured stdout:\n{}; captured stderr:\n{}",
+                        child_stdout.display(),
+                        child_stderr.display(),
+                        capture_text(&child_stdout),
+                        capture_text(&child_stderr)
+                    ));
+                }
+                return Ok(());
             }
             Ok(None) => {}
             Err(error) => {
@@ -145,6 +177,25 @@ fn run_child(selector: &str, untrusted_wrapper: bool) -> Result<(), String> {
             return Err(format!("compiler fixture {selector} exceeded 30 seconds"));
         }
         std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+fn capture_text(path: &Path) -> String {
+    const CAPTURED_TAIL: usize = 4000;
+    match std::fs::read(path) {
+        // Byte-slice before the lossy decode: the tail boundary may split a
+        // multi-byte character, and the failure path must not panic or hide
+        // the diagnostic behind a non-UTF-8 refusal.
+        Ok(bytes) if bytes.len() > CAPTURED_TAIL => {
+            let tail = &bytes[bytes.len() - CAPTURED_TAIL..];
+            format!(
+                "...{} bytes total, last {CAPTURED_TAIL}:\n{}",
+                bytes.len(),
+                String::from_utf8_lossy(tail)
+            )
+        }
+        Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
+        Err(error) => format!("<unreadable: {error}>"),
     }
 }
 

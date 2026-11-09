@@ -11,7 +11,6 @@
 //! This avoids recompilation and keeps the analysis in-process.
 
 use crate::app::{CheckInput, Mode, OutputFormat, check_workspace};
-use crate::cli::{reconcile_root, unknown_argument};
 use crate::output::markdown::{code_span, inline_prose, table_cell_text, table_code_span};
 use serde_json::{Map, Value, json};
 use std::collections::BTreeSet;
@@ -19,7 +18,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use super::subcommand::{NonEmptyPlaceholder, invocation_repo_root, non_empty_arg};
+use super::subcommand::invocation_repo_root;
 
 const DEFAULT_ROOT: &str = ".";
 const DEFAULT_BASE: &str = "origin/main";
@@ -29,14 +28,14 @@ const PR_EVIDENCE_MD: &str = "target/ripr/pr/repo-exposure.md";
 const PR_DIFF: &str = "target/ripr/pr/pr.diff";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-struct PrEvidenceOptions {
-    root: String,
-    base: String,
+pub(crate) struct PrEvidenceOptions {
+    pub(crate) root: String,
+    pub(crate) base: String,
     /// `false` when `--base` was omitted: `base` then holds a placeholder
     /// until [`run_pr_evidence`] resolves the repository's default branch.
-    base_explicit: bool,
-    head: String,
-    check: bool,
+    pub(crate) base_explicit: bool,
+    pub(crate) head: String,
+    pub(crate) check: bool,
 }
 
 impl Default for PrEvidenceOptions {
@@ -60,12 +59,9 @@ impl Default for PrEvidenceOptions {
 ///
 /// When the check fails, an `error` packet is still written so downstream
 /// consumers see a contract-valid, actionable artifact rather than a gap.
-pub(crate) fn run_pr_evidence(args: &[String]) -> Result<(), String> {
-    if args.iter().any(|arg| arg == "--help" || arg == "-h") {
-        print_help();
-        return Ok(());
-    }
-    let mut options = parse_options(args)?;
+/// Run `ripr pr-evidence` for parsed options. Argv parsing and `--help` live in
+/// the CLI adapter (`cli::commands::pr_evidence`).
+pub(crate) fn execute_pr_evidence(mut options: PrEvidenceOptions) -> Result<(), String> {
     let repo = invocation_repo_root()?;
     ensure_root_inside_invocation_repo(&repo, &options.root)?;
     if !options.base_explicit {
@@ -82,56 +78,6 @@ pub(crate) fn run_pr_evidence(args: &[String]) -> Result<(), String> {
     } else {
         write_pr_evidence(&repo, &options)
     }
-}
-
-fn parse_options(args: &[String]) -> Result<PrEvidenceOptions, String> {
-    let mut options = PrEvidenceOptions::default();
-    let mut root_explicit = false;
-    let mut i = 0usize;
-    while i < args.len() {
-        match args[i].as_str() {
-            "--root" => {
-                i += 1;
-                let value =
-                    non_empty_arg("pr-evidence", args, i, "--root", NonEmptyPlaceholder::Value)?;
-                // #9008/#10542: an identical repeat is absorbed for scripted
-                // double-root invocations; a conflicting value is a usage
-                // error naming both values.
-                let reconciled = reconcile_root(
-                    std::path::Path::new(&options.root),
-                    root_explicit,
-                    value,
-                    "pr-evidence",
-                )?;
-                options.root = reconciled.display().to_string();
-                root_explicit = true;
-            }
-            "--base" => {
-                i += 1;
-                options.base =
-                    non_empty_arg("pr-evidence", args, i, "--base", NonEmptyPlaceholder::Value)?
-                        .to_string();
-                options.base_explicit = true;
-            }
-            "--head" => {
-                i += 1;
-                options.head =
-                    non_empty_arg("pr-evidence", args, i, "--head", NonEmptyPlaceholder::Value)?
-                        .to_string();
-            }
-            "--check" => options.check = true,
-            other => return Err(unknown_argument("pr-evidence", other)),
-        }
-        i += 1;
-    }
-    Ok(options)
-}
-
-fn print_help() {
-    println!(
-        "{}",
-        crate::cli::help::render_command_help(PR_EVIDENCE_HELP, &[])
-    );
 }
 
 /// Help body for `ripr pr-evidence`. Also the flag source for unknown-argument
@@ -1169,6 +1115,8 @@ fn write_parented_file(path: &Path, label: &str, contents: impl AsRef<[u8]>) -> 
 
 #[cfg(test)]
 mod tests {
+    // cfg(test) only: drive argv through the CLI adapter (tracked in #5193).
+    use crate::cli::commands::pr_evidence_command::parse_options;
 
     #[test]
     fn changed_files_digest_is_nul_framed_sorted_and_deduplicated() {

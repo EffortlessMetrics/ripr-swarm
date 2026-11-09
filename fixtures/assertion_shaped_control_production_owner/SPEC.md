@@ -45,6 +45,13 @@ boundary, and the exact `assert_eq!(.., 90)` pins it: the boundary reads
 RIPR-SPEC-0158, not RIPR-SPEC-0133. The assertion-shaped reframe must not
 leak onto ordinary production owners.
 
+The expected static class per finding (machine-checked against
+`expected/check.json` by `check-fixture-contracts`, #12928):
+
+```expected-classes
+probe:src_lib.rs:predicate:e177493b -> exposed
+```
+
 ## Must Not
 
 - Reframe guidance for an owner that is not assertion-shaped.

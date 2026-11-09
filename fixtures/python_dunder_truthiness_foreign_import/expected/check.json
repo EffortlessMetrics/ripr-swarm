@@ -37,6 +37,13 @@
         "observe": {"state":"no","confidence":"low","summary":"Strongest extracted Python oracle kind: `unknown` (rank 0)"},
         "discriminate": {"state":"no","confidence":"low","summary":"Static limit `dynamic_dispatch` prevents a safe Python discriminator claim."}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"no","confidence":"low"},
+        {"stage":"infect","state":"unknown","confidence":"low"},
+        {"stage":"propagate","state":"unknown","confidence":"low"},
+        {"stage":"observe","state":"no","confidence":"low"},
+        {"stage":"discriminate","state":"no","confidence":"low","basis":[{"code":"discriminator_not_established","summary":"whether a test checks this behavior is not established"}]}
+      ],
       "evidence_path": ["reach no: 0 related Python test(s) found for owner `__bool__`", "infection unknown: Static limit `dynamic_dispatch` prevents a safe Python infection claim.", "propagation unknown: Static limit `dynamic_dispatch` prevents a safe Python propagation claim.", "observation no: Strongest extracted Python oracle kind: `unknown` (rank 0)", "discriminator no: Static limit `dynamic_dispatch` prevents a safe Python discriminator claim."],
       "flow_sinks": [
       ],
