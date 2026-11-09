@@ -698,7 +698,10 @@ fn installed_pin_missing_locked_dependency_refuses_then_seeded_cache_succeeds() 
 
 #[test]
 fn perl_variant_command_uses_dedicated_target_overlay() -> Result<(), String> {
+    let _cwd_guard = crate::acquire_test_cwd_read_guard();
     let target = std::path::Path::new("owned-target");
+    let expected = std::path::absolute(target).map_err(|error| error.to_string())?;
+    let expected = expected.to_str().ok_or("expected target is not UTF-8")?;
     build_perl_variant_with(
         target,
         &[("CARGO_HOME", "home".into())],
@@ -707,7 +710,11 @@ fn perl_variant_command_uses_dedicated_target_overlay() -> Result<(), String> {
             assert_eq!(args, ["build", "-p", "ripr", "--features", "lang-perl"]);
             assert_eq!(
                 envs,
-                [("CARGO_HOME", "home"), ("CARGO_TARGET_DIR", "owned-target")]
+                [
+                    ("CARGO_HOME", "home"),
+                    ("CARGO_TARGET_DIR", expected),
+                    ("CARGO_BUILD_BUILD_DIR", expected),
+                ]
             );
             Ok(())
         },

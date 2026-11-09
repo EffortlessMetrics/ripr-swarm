@@ -16,7 +16,7 @@ use serde_json::Value;
 
 use crate::run::{
     ByteCaptureBudget, TimedBytesOutput, capture_bytes_in_dir_with_env_budget,
-    capture_bytes_in_dir_with_timeout,
+    capture_bytes_in_dir_with_timeout, private_cargo_output_dir,
 };
 
 pub(crate) const RECEIPT_SCHEMA: &str = "ripr_native_libtest_build.v1";
@@ -409,15 +409,11 @@ pub(crate) fn compile_libtest(
     request: &CompileRequest<'_>,
 ) -> Result<NativeLibtestReceipt, String> {
     let args = compile_argv_for(request)?;
-    fs::create_dir_all(request.target_dir).map_err(|error| {
+    let target_dir_value = private_cargo_output_dir(request.target_dir)?;
+    let target_dir = PathBuf::from(&target_dir_value);
+    fs::create_dir_all(&target_dir).map_err(|error| {
         format!(
             "create private libtest target `{}`: {error}",
-            request.target_dir.display()
-        )
-    })?;
-    let target_dir = std::path::absolute(request.target_dir).map_err(|error| {
-        format!(
-            "resolve private libtest target `{}`: {error}",
             request.target_dir.display()
         )
     })?;
@@ -432,13 +428,13 @@ pub(crate) fn compile_libtest(
     let rustflags = std::env::var("RUSTFLAGS")
         .ok()
         .filter(|value| !value.is_empty());
-    let target_dir_value = target_dir.to_string_lossy().into_owned();
     let output = capture_bytes_in_dir_with_timeout(
         Path::new("cargo"),
         &args,
         request.root,
         &[
             ("CARGO_TARGET_DIR", target_dir_value.as_str()),
+            ("CARGO_BUILD_BUILD_DIR", target_dir_value.as_str()),
             ("CARGO_TERM_COLOR", "never"),
             ("CARGO_INCREMENTAL", "0"),
             (
