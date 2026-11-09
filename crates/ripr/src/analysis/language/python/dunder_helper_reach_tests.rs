@@ -339,3 +339,77 @@ fn given_call_chain_from_dunder_when_depth_exceeds_bound_then_helper_has_no_entr
         "a sixth hop is past the bound"
     );
 }
+
+/// The repo-mode reading for `needle` in `src/cachetools/__init__.py`.
+fn repo_finding_at(
+    label: &str,
+    source: &str,
+    tests_source: &str,
+    needle: &str,
+) -> Result<Finding, String> {
+    let root = std::env::temp_dir().join(format!(
+        "ripr-py-dunder-repo-{label}-{}",
+        std::process::id()
+    ));
+    let write = |relative: &str, contents: &str| -> Result<(), String> {
+        let path = root.join(relative);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(|err| format!("create parent: {err}"))?;
+        }
+        std::fs::write(&path, contents).map_err(|err| format!("write {relative}: {err}"))
+    };
+    write("src/cachetools/__init__.py", source)?;
+    write("tests/test_cache.py", tests_source)?;
+    let input = super::repo::select_repo_input_with_limit(
+        &root,
+        super::repo::RepoWorkingSetLimit {
+            limit: 800,
+            source: super::repo::RepoWorkingSetCapSource::Default,
+        },
+    );
+    let evidence = super::repo::build_repo_evidence(&input, &root);
+    let _ = std::fs::remove_dir_all(&root);
+    let line = source
+        .lines()
+        .position(|line| line.trim() == needle)
+        .map(|index| index + 1)
+        .ok_or_else(|| format!("fixture must contain `{needle}`"))?;
+    evidence
+        .findings
+        .into_iter()
+        .find(|finding| finding.probe.location.line == line)
+        .ok_or_else(|| format!("expected a repo finding for `{needle}`"))
+}
+
+#[test]
+fn given_dunder_reached_helper_when_repo_mode_then_reading_matches_diff_mode() -> Result<(), String>
+{
+    let tests = "from cachetools import Cache\n\n\ndef test_setitem():\n    cache = Cache(maxsize=2)\n    cache[1] = 1\n    assert cache is not None\n";
+
+    let diff = finding_at(CACHE_PY, tests, "return 1")?;
+    let repo = repo_finding_at("reach", CACHE_PY, tests, "return 1")?;
+
+    assert_eq!(diff.class, ExposureClass::StaticUnknown, "{diff:?}");
+    assert_eq!(repo.class, diff.class, "{repo:?}");
+    assert_eq!(repo.static_limit_kind, diff.static_limit_kind, "{repo:?}");
+    assert_eq!(
+        repo.static_limit_kind,
+        Some(StaticLimitKind::DynamicDispatch)
+    );
+    assert_reached_without_credit(&repo);
+    Ok(())
+}
+
+#[test]
+fn given_no_dunder_use_when_repo_mode_then_helper_stays_no_static_path() -> Result<(), String> {
+    // Negative control: the same class, but the test never uses the dunder's
+    // protocol syntax, so repo mode must not invent a reach.
+    let tests = "from cachetools import Cache\n\n\ndef test_ctor():\n    cache = Cache(maxsize=2)\n    assert cache is not None\n";
+
+    let diff = finding_at(CACHE_PY, tests, "return 1")?;
+    let repo = repo_finding_at("control", CACHE_PY, tests, "return 1")?;
+
+    assert_eq!(diff.class, ExposureClass::NoStaticPath, "{diff:?}");
+    assert_eq!(repo.class, diff.class, "{repo:?}");
+    Ok(())
+}
