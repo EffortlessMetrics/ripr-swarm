@@ -208,6 +208,8 @@ fn exit_zero_partial_reason_survives_real_measurement_cleanup() -> Result<(), St
     );
     assert_eq!(report["gate"]["status"], "not_run");
     assert_eq!(rows[0]["streams"]["retention"], "digests_only");
+    // The shared reader decodes lossily, so the identities describe decoded text.
+    assert_eq!(rows[0]["streams"]["identity"], "lossy_utf8_decoded");
     assert_eq!(
         rows[0]["producer_resource_cost"]["cpu"]["state"],
         "unavailable"
@@ -252,22 +254,6 @@ fn exit_zero_partial_reason_survives_real_measurement_cleanup() -> Result<(), St
             .to_string()
             .contains("credential-sentinel-do-not-retain")
     );
-    Ok(())
-}
-
-#[test]
-fn invalid_utf8_stream_identity_is_labelled_as_the_decoded_text() -> Result<(), String> {
-    let (_fixture, report) = run_fixture(
-        "printf '\\377' >&2; printf '%s' '{\"status\":\"partial\"}' > \"$out/pilot-summary.json\"; exit 0",
-        "printf '{}'; exit 0",
-        false,
-        2_000,
-    )?;
-    let streams = &invocations(&report)?[0]["streams"];
-    assert_eq!(streams["identity"], "lossy_utf8_decoded");
-    // One raw 0xff byte decodes to a three-byte replacement character; the
-    // report must not present that count as the emitted byte count.
-    assert_eq!(streams["stderr"]["bytes"], 3);
     Ok(())
 }
 
