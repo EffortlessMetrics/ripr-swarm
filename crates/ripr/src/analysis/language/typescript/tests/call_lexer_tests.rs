@@ -148,6 +148,11 @@ fn a_call_in_a_trailing_line_comment_is_not_a_call() {
         "render"
     ));
     assert!(!contains_call_name("`${a // render(x)", "render"));
+    // A regex ending in `\//` is not a trailing comment.
+    assert!(contains_call_name(
+        "if (/^https?:\\/\\//.test(u)) render(u);",
+        "render"
+    ));
     // A URL in a string is not a comment.
     assert!(contains_call_name(
         "const u = \"https://x\"; render(u);",

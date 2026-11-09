@@ -6561,6 +6561,12 @@ fn has_unclosed_quote_or_template(prefix: &str) -> bool {
                 '\'' => stack.push(Mode::Single),
                 '"' => stack.push(Mode::Double),
                 '`' => stack.push(Mode::Template),
+                // Outside strings a backslash belongs to a regex (`/\/\//`)
+                // or an identifier escape; the character it escapes neither
+                // opens a string nor starts a comment.
+                '\\' => {
+                    chars.next();
+                }
                 // A `//` in code starts a trailing comment: the rest of the
                 // line is text (`x = 1; // see render(x)`). A regex holding
                 // `//` reads the same way, which only hides.
