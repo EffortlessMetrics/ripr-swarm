@@ -41,6 +41,13 @@
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"weak","confidence":"medium","summary":"Check unconfirmed: no supported assertion that distinguishes the changed behavior is paired with the owner's boundary call (same_test_pairing_missing); a boundary input and a separate exact assertion do not establish that pairing"}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"yes","confidence":"medium"},
+        {"stage":"propagate","state":"yes","confidence":"medium"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"weak","confidence":"medium"}
+      ],
       "evidence_path": ["reach yes: Related tests appear to reach gate: rebound", "infection yes: Detected related test input at the changed boundary", "propagation yes: Changed behavior appears to influence returned value: input >= 10", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Check unconfirmed: no supported assertion that distinguishes the changed behavior is paired with the owner's boundary call (same_test_pairing_missing); a boundary input and a separate exact assertion do not establish that pairing", "local flow reaches returned value: input >= 10 (line 2)", "related test tests/rebound.rs:4 rebound uses strong exact value oracle: assert_eq!(got, true);", "source function argument value input = 10 at line 5", "source function argument value input == 10 at line 5", "source assertion argument value true at line 8"],
       "flow_sinks": [
         {"kind":"return_value","text":"input >= 10","line":2}
@@ -146,6 +153,13 @@
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"yes","confidence":"medium"},
+        {"stage":"propagate","state":"yes","confidence":"high"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"weak","confidence":"medium"}
+      ],
       "evidence_path": ["reach yes: Related tests appear to reach gate: rebound", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: input >= 10", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches returned value: input >= 10 (line 2)", "related test tests/rebound.rs:4 rebound uses strong exact value oracle: assert_eq!(got, true);", "source function argument value input = 10 at line 5", "source function argument value input == 10 at line 5", "source assertion argument value true at line 8"],
       "flow_sinks": [
         {"kind":"return_value","text":"input >= 10","line":2}
