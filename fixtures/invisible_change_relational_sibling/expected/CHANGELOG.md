@@ -81,7 +81,33 @@ Updated:
 ## Pending — invisible_change_relational_sibling (7)
 
 Reason:
-RIPR-SPEC-0001: correct same-line input evidence and ambiguous rival facts without changing verdicts for issue 13373
+RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; human rendering unchanged
+
+Command:
+`cargo xtask goldens bless invisible_change_relational_sibling --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — invisible_change_relational_sibling (8)
+
+Reason:
+RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; no test attribution; human rendering unchanged
+
+Command:
+`cargo xtask goldens bless invisible_change_relational_sibling --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — invisible_change_relational_sibling (9)
+
+Reason:
+union-head re-bless after main merge: additive evidence_stages rows (RIPR-SPEC-0423) unioned with main-side bless entries
 
 Command:
 `cargo xtask goldens bless invisible_change_relational_sibling --reason "..."`

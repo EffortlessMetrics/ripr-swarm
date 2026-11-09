@@ -697,3 +697,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — typescript_negated_t_oracle (40)
+
+Reason:
+union-head re-bless after main merge: additive evidence_stages rows (RIPR-SPEC-0429)
+
+Command:
+`cargo xtask goldens bless typescript_negated_t_oracle --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
