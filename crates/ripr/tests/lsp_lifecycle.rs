@@ -3141,9 +3141,15 @@ fn real_seam_diagnostic_offers_the_repair_start_on_a_committed_change() -> Resul
         .output()
         .map_err(|err| format!("run agent repair before phase: {err}"))?;
     let stderr = String::from_utf8_lossy(&before.stderr);
-    if !before.status.success() || !stderr.contains("attempt manifest:") {
+    let stdout = String::from_utf8_lossy(&before.stdout);
+    // A started attempt names its next step once (#13803): stdout's
+    // `Next, after the test edit:` line when stdout carries the start
+    // summary, otherwise stderr's attempt manifest line.
+    let started = stdout.contains("Next, after the test edit: ripr continue ")
+        || stderr.contains("attempt manifest:");
+    if !before.status.success() || !started {
         return Err(format!(
-            "`ripr agent repair --phase before` must accept the offered seam: status {:?}\n{stderr}",
+            "`ripr agent repair --phase before` must accept the offered seam: status {:?}\nstdout:\n{stdout}\nstderr:\n{stderr}",
             before.status.code()
         ));
     }
