@@ -1548,9 +1548,11 @@ mutant calibrates the rule; ripr reports only the static shape.
     initializer is missing, unread or unparsable; `X` is also bound by an
     assignment, `def`, `class`, loop, `with`, `del`, `try`/`if` branch or a
     second import, or only inside such a branch; the initializer has a star
-    import, a `match` or `type` statement, or spells a dynamic namespace
-    write (`global`, `globals(`, `locals(`, `vars(`, `modules[`, `:=`,
-    `setattr(`, `sys.modules`, `__getattr__`, `exec(`, `__dict__`); or `P`
+    import, a `match` or `type` statement, or names a dynamic namespace
+    writer anywhere, even in a comment, as an identifier token so spacing
+    (`vars ()`) cannot hide it (`globals`, `locals`, `vars`, `exec`, `eval`,
+    `setattr`, `__dict__`, `global`, `__getattr__`, any `modules`), or a
+    walrus `:=`; or `P`
     has a submodule or subpackage named `X`, which an import elsewhere could
     load over the binding. A followed `from M import Y as X` is a rename
     the package re-export reading does not follow; it is followed here

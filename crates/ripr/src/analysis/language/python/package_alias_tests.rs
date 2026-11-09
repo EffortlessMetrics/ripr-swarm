@@ -136,6 +136,30 @@ fn a_rebound_or_conditional_package_name_stays_unlinked() -> Result<(), String> 
             "import tomli as tomllib\nlocals()[\"tomllib\"] = None\n",
         ),
         (
+            "vars-spaced",
+            "import tomli as tomllib\nvars ()[\"tomllib\"] = None\n",
+        ),
+        (
+            "exec-spaced",
+            "import tomli as tomllib\nexec (\"tomllib = None\")\n",
+        ),
+        (
+            "locals-spaced",
+            "import tomli as tomllib\nlocals ()[\"tomllib\"] = None\n",
+        ),
+        (
+            "eval-walrus",
+            "import tomli as tomllib\neval (\"(tomllib := None)\")\n",
+        ),
+        (
+            "sys-modules-spaced",
+            "import sys\nimport tomli as tomllib\nsetattr (sys . modules[__name__], \"tomllib\", None)\n",
+        ),
+        (
+            "from-sys-modules",
+            "from sys import modules\nimport tomli as tomllib\nmodules[__name__].tomllib = None\n",
+        ),
+        (
             "match-capture",
             "import tomli as tomllib\nmatch 1:\n    case tomllib:\n        pass\n",
         ),

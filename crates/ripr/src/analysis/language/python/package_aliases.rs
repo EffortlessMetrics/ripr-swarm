@@ -29,7 +29,7 @@
 //! initializers stop after [`MAX_ALIAS_HOPS`].
 
 use super::owners_tests::import_source_module;
-use super::reexports::{is_star_import, stmt_binds};
+use super::reexports::{is_star_import, stmt_binds, writes_namespace_dynamically};
 use super::source_facts::parse_module_result;
 use super::{PythonImport, PythonTest};
 use rustpython_parser::ast::{Mod, Stmt};
@@ -39,21 +39,24 @@ use std::path::{Path, PathBuf};
 /// Maximum number of package initializers followed for one import.
 const MAX_ALIAS_HOPS: usize = 3;
 
-/// Source spellings that can rebind a module global outside the statements
-/// this reader checks.
-const DYNAMIC_WRITES: [&str; 11] = [
-    "global",
-    "globals(",
-    "locals(",
-    "vars(",
-    "modules[",
-    ":=",
-    "setattr(",
-    "sys.modules",
-    "__getattr__",
-    "exec(",
-    "__dict__",
-];
+/// Whether the initializer can rebind a module global outside the
+/// statements this reader checks. The shared owner scans identifier tokens,
+/// so whitespace (`vars ()`) cannot hide a call; this rule also refuses
+/// `locals`, `global`, `eval`, a module `__getattr__`, any `modules` name
+/// (`from sys import modules`) and a walrus. Any mention, even in a comment
+/// or string, refuses.
+fn rebinds_dynamically(text: &str) -> bool {
+    writes_namespace_dynamically(text)
+        || text.contains(":=")
+        || text
+            .split(|c: char| !(c.is_alphanumeric() || c == '_'))
+            .any(|token| {
+                matches!(
+                    token,
+                    "locals" | "global" | "eval" | "__getattr__" | "modules"
+                )
+            })
+}
 
 /// Rewrites every test import of a name its package initializer binds by
 /// import. `source` answers for a read workspace file and `is_present` for
@@ -134,10 +137,7 @@ fn initializer_binding<'s>(
     }
     let init = directory.join("__init__.py");
     let text = source(&init)?;
-    if DYNAMIC_WRITES
-        .iter()
-        .any(|spelling| text.contains(spelling))
-    {
+    if rebinds_dynamically(text) {
         return None;
     }
     let Ok(Mod::Module(module)) = parse_module_result(&init, text) else {

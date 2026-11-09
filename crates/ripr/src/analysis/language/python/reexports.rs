@@ -661,7 +661,7 @@ fn handlers_have_star_import(handlers: &[ast::ExceptHandler]) -> bool {
 /// `__dict__`, `setattr`, `sys.modules`). Scans identifier tokens, so
 /// whitespace between the name and its call (`globals ()`) cannot hide a
 /// mention; any mention, even in a comment, fails closed.
-fn writes_namespace_dynamically(source: &str) -> bool {
+pub(super) fn writes_namespace_dynamically(source: &str) -> bool {
     let mut previous = "";
     for token in source
         .split(|c: char| !(c.is_alphanumeric() || c == '_'))
