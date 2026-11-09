@@ -1885,6 +1885,7 @@ mod tests {
                 .iter()
                 .map(|(file, name)| (PathBuf::from(file), (*name).to_string()))
                 .collect(),
+            ..Default::default()
         }
     }
 
@@ -1946,6 +1947,58 @@ mod tests {
             seam,
         )?;
         assert_eq!(named, json!([]));
+        Ok(())
+    }
+
+    /// #13893 negative (Devin on #13917): the reaching test's name is defined
+    /// twice in its file (two modules), and the diff touched the other one,
+    /// which starts on a different head line. A name match alone must not
+    /// waive the gap.
+    #[test]
+    fn changed_same_name_test_in_another_module_is_not_named() -> Result<(), String> {
+        let mut changes =
+            changed_test_set(&[("tests/pricing.rs", "above_threshold_gets_discount")]);
+        changes.ambiguous_names.insert((
+            PathBuf::from("tests/pricing.rs"),
+            "above_threshold_gets_discount".to_string(),
+        ));
+        changes.head_functions.insert((
+            PathBuf::from("tests/pricing.rs"),
+            "above_threshold_gets_discount".to_string(),
+            40,
+        ));
+        let named = card_changed_reaching_tests(changes, classified(88))?;
+        assert_eq!(named, json!([]));
+        Ok(())
+    }
+
+    /// #13893 positive control for an ambiguous name: the touched function
+    /// starts on the related test's own head line, so it is that test.
+    #[test]
+    fn changed_same_name_test_matching_the_head_line_is_named() -> Result<(), String> {
+        let seam = classified(88);
+        let line = seam
+            .evidence
+            .related_tests
+            .first()
+            .map(|test| test.line)
+            .ok_or("fixture seam has no related test")?;
+        let mut changes =
+            changed_test_set(&[("tests/pricing.rs", "above_threshold_gets_discount")]);
+        changes.ambiguous_names.insert((
+            PathBuf::from("tests/pricing.rs"),
+            "above_threshold_gets_discount".to_string(),
+        ));
+        changes.head_functions.insert((
+            PathBuf::from("tests/pricing.rs"),
+            "above_threshold_gets_discount".to_string(),
+            line,
+        ));
+        let named = card_changed_reaching_tests(changes, seam)?;
+        assert_eq!(
+            named,
+            json!(["tests/pricing.rs::above_threshold_gets_discount"])
+        );
         Ok(())
     }
 

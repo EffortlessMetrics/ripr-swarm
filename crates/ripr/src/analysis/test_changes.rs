@@ -22,6 +22,14 @@ pub(crate) struct DiffTestChanges {
     /// be attributed contributes nothing here, so absence never proves a
     /// test is unchanged (#13893).
     pub(crate) functions: BTreeSet<(PathBuf, String)>,
+    /// Head-side touched test functions with their head start line, so a
+    /// related test can be matched by position as well as name.
+    pub(crate) head_functions: BTreeSet<(PathBuf, String, usize)>,
+    /// Test-evidence function names defined more than once in one file (for
+    /// example `checks` in two modules), on either side of the diff. A name
+    /// match alone cannot identify which of them changed, so matching such a
+    /// name requires the head start line too (#13893).
+    pub(crate) ambiguous_names: BTreeSet<(PathBuf, String)>,
 }
 
 #[cfg(test)]
@@ -82,12 +90,14 @@ pub(crate) fn diff_test_changes(
         }
         match attribute_changed_functions(root, head, &file, config, &mut budget) {
             Some((added, removed)) => {
-                let touched = added.as_ref().is_some_and(|names| !names.is_empty())
-                    || removed.as_ref().is_some_and(|names| !names.is_empty());
+                let touched = added.as_ref().is_some_and(|side| !side.touched.is_empty())
+                    || removed
+                        .as_ref()
+                        .is_some_and(|side| !side.touched.is_empty());
                 if !touched && (added.is_none() || removed.is_none()) {
                     changes.unresolved = true;
                 }
-                record_functions(&mut changes, &file.path, [added, removed]);
+                record_functions(&mut changes, &file.path, (added, removed));
                 if touched {
                     changes.files.push(file.path);
                 }
@@ -103,7 +113,7 @@ pub(crate) fn diff_test_changes(
         if let Some((added, removed)) =
             attribute_changed_functions(root, head, &file, config, &mut budget)
         {
-            record_functions(&mut changes, &file.path, [added, removed]);
+            record_functions(&mut changes, &file.path, (added, removed));
         }
     }
     changes.files.sort();
@@ -121,21 +131,40 @@ fn is_rust_path(path: &Path) -> bool {
     path.extension().is_some_and(|extension| extension == "rs")
 }
 
-fn record_functions(
-    changes: &mut DiffTestChanges,
-    path: &Path,
-    sides: [Option<BTreeSet<String>>; 2],
-) {
-    for name in sides.into_iter().flatten().flatten() {
-        changes.functions.insert((path.to_path_buf(), name));
+fn record_functions(changes: &mut DiffTestChanges, path: &Path, sides: ChangedSides) {
+    let (added, removed) = sides;
+    for (side, head) in [(added, true), (removed, false)] {
+        let Some(side) = side else {
+            continue;
+        };
+        for name in side.duplicate_names {
+            changes.ambiguous_names.insert((path.to_path_buf(), name));
+        }
+        for (name, start_line) in side.touched {
+            if head {
+                changes
+                    .head_functions
+                    .insert((path.to_path_buf(), name.clone(), start_line));
+            }
+            changes.functions.insert((path.to_path_buf(), name));
+        }
     }
+}
+
+/// Test-evidence functions one side of a diff touched, as `(name, start line
+/// in that side's coordinates)`, plus the evidence names that side defines
+/// more than once.
+#[derive(Debug, Default)]
+struct TouchedSide {
+    touched: BTreeSet<(String, usize)>,
+    duplicate_names: BTreeSet<String>,
 }
 
 /// Test-evidence functions touched on the added and removed sides of one
 /// changed Rust file. `None` means the file itself could not be read within
 /// budget (or is not Rust); a side of `None` means that side's syntax could
 /// not be attributed.
-type ChangedSides = (Option<BTreeSet<String>>, Option<BTreeSet<String>>);
+type ChangedSides = (Option<TouchedSide>, Option<TouchedSide>);
 
 fn attribute_changed_functions(
     root: &Path,
@@ -179,7 +208,7 @@ fn attribute_changed_functions(
     .and_then(|output| String::from_utf8(output.stdout).ok())?;
     let added = touches_test(root, head, file, &source, false, config, budget);
     let removed = if file.removed_lines.is_empty() {
-        Some(BTreeSet::new())
+        Some(TouchedSide::default())
     } else {
         reconstruct_old_source(&source, file)
             .and_then(|old| touches_test(root, head, file, &old, true, config, budget))
@@ -219,14 +248,14 @@ fn touches_test(
     old: bool,
     config: &RiprConfig,
     budget: &mut DisclosureBudget,
-) -> Option<BTreeSet<String>> {
+) -> Option<TouchedSide> {
     let lines = if old {
         &changed.removed_lines
     } else {
         &changed.added_lines
     };
     if lines.is_empty() {
-        return Some(BTreeSet::new());
+        return Some(TouchedSide::default());
     }
     let facts = RaRustSyntaxAdapter
         .summarize_file(&changed.path, source)
@@ -245,23 +274,31 @@ fn touches_test(
     }
     normalize_reconstructed_source_roles(&mut index, root, config.analysis().test_harnesses())
         .ok()?;
-    Some(
-        index
-            .functions()
+    let evidence = index
+        .functions()
+        .iter()
+        .filter(|function| {
+            function.file == changed.path
+                && function.source_role.is_evidence_role()
+                // A proof harness is verification source, not a test.
+                && function.source_role != crate::analysis::facts::FunctionSourceRole::ProofHarness
+        })
+        .collect::<Vec<_>>();
+    let mut seen = BTreeSet::new();
+    let mut side = TouchedSide::default();
+    for function in &evidence {
+        if !seen.insert(function.name.as_str()) {
+            side.duplicate_names.insert(function.name.clone());
+        }
+        if lines
             .iter()
-            .filter(|function| {
-                function.file == changed.path
-                    && function.source_role.is_evidence_role()
-                    // A proof harness is verification source, not a test.
-                    && function.source_role
-                        != crate::analysis::facts::FunctionSourceRole::ProofHarness
-                    && lines.iter().any(|line| {
-                        function.start_line <= line.line && line.line <= function.end_line
-                    })
-            })
-            .map(|function| function.name.clone())
-            .collect(),
-    )
+            .any(|line| function.start_line <= line.line && line.line <= function.end_line)
+        {
+            side.touched
+                .insert((function.name.clone(), function.start_line));
+        }
+    }
+    Some(side)
 }
 
 fn is_wrapper_test_attr(attr: &str) -> bool {
@@ -793,6 +830,47 @@ mod tests {
         assert!(
             changes.touches_function(Path::new("app/src/user.rs"), "builtin"),
             "the touched test function is attributed by name: {changes:?}"
+        );
+        Ok(())
+    }
+
+    /// #13893 (Devin on #13917): two modules in one test file both define
+    /// `checks`. Editing only the second marks the name ambiguous and records
+    /// only the second's head start line, so a related test at the first's
+    /// line cannot be matched by name alone.
+    #[test]
+    fn duplicate_test_names_record_ambiguity_and_head_start_line() -> Result<(), String> {
+        let fixture = AliasWorkspace::new("duplicate-names", "")?;
+        std::fs::create_dir_all(fixture.root.join("app/tests")).map_err(|err| err.to_string())?;
+        let before = "mod boundary {\n    #[test]\n    fn checks() {\n        assert_eq!(1, 1);\n    }\n}\n\nmod unrelated {\n    #[test]\n    fn checks() {\n        assert_eq!(2, 2);\n    }\n}\n";
+        fixture.write_relative("app/tests/dup.rs", before)?;
+        fixture.commit("add duplicate-name tests")?;
+        fixture.write_relative("app/tests/dup.rs", &before.replace("(2, 2)", "(2, 3)"))?;
+        fixture.commit("change unrelated::checks")?;
+        let diff = fixture_git_stdout(&fixture.root, &["diff", "--unified=0", "HEAD^", "HEAD"])?;
+        assert!(
+            diff.contains("diff --git a/app/tests/dup.rs b/app/tests/dup.rs"),
+            "fixture must change only the duplicate-name test file: {diff}"
+        );
+        let changes = changes_for(&fixture.root, &diff);
+        let file = PathBuf::from("app/tests/dup.rs");
+        assert!(
+            changes
+                .ambiguous_names
+                .contains(&(file.clone(), "checks".to_string())),
+            "{changes:?}"
+        );
+        let lines = changes
+            .head_functions
+            .iter()
+            .filter(|(path, name, _)| path == &file && name == "checks")
+            .map(|(_, _, line)| *line)
+            .collect::<Vec<_>>();
+        // `unrelated::checks` spans head lines 9-12 (attribute through brace);
+        // `boundary::checks` ends by line 5.
+        assert!(
+            matches!(lines.as_slice(), [line] if (9..=12).contains(line)),
+            "only unrelated::checks changed: {changes:?}"
         );
         Ok(())
     }

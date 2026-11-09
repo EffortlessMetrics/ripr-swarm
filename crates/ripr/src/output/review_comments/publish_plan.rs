@@ -87,8 +87,9 @@ pub(super) fn changed_test_paths(working_set: &AgentBriefResolvedWorkingSet) -> 
 /// related test tied to the owner by a relation that establishes reach (the
 /// shared [`RelationReason::establishes_reach`] rule, read conservatively as
 /// a function owner), and the diff must have touched that test function.
-/// Unattributed or unresolved test edits never qualify, so the waiver is
-/// granted only on positive evidence.
+/// Unattributed or unresolved test edits never qualify, and a test name
+/// defined more than once in its file must also match by head start line, so
+/// the waiver is granted only on positive evidence.
 pub(super) fn changed_reaching_tests(
     root: &std::path::Path,
     seam: &ClassifiedSeam,
@@ -97,24 +98,40 @@ pub(super) fn changed_reaching_tests(
     let Some(changes) = test_changes else {
         return Vec::new();
     };
-    let mut names = seam
-        .evidence
-        .related_tests
-        .iter()
-        .filter(|test| test.relation_reason.establishes_reach(true))
-        .filter_map(|test| {
-            let file = test.file.strip_prefix(root).unwrap_or(&test.file);
-            let file_text = normalize_path_text(file);
-            changes
-                .functions
-                .iter()
-                .any(|(changed_file, changed_name)| {
-                    changed_name == &test.test_name
-                        && normalize_path_text(changed_file) == file_text
-                })
-                .then(|| format!("{file_text}::{}", test.test_name))
-        })
-        .collect::<Vec<_>>();
+    let mut names =
+        seam.evidence
+            .related_tests
+            .iter()
+            .filter(|test| test.relation_reason.establishes_reach(true))
+            .filter_map(|test| {
+                let file = test.file.strip_prefix(root).unwrap_or(&test.file);
+                let file_text = normalize_path_text(file);
+                let same_file =
+                    |changed_file: &std::path::Path| normalize_path_text(changed_file) == file_text;
+                // A name defined more than once in the file (for example `checks`
+                // in two modules) cannot say which one changed, so it must match
+                // the related test's head start line too; otherwise no waiver.
+                let ambiguous = changes
+                    .ambiguous_names
+                    .iter()
+                    .any(|(changed_file, name)| name == &test.test_name && same_file(changed_file));
+                let touched = if ambiguous {
+                    changes
+                        .head_functions
+                        .iter()
+                        .any(|(changed_file, name, start_line)| {
+                            name == &test.test_name
+                                && *start_line == test.line
+                                && same_file(changed_file)
+                        })
+                } else {
+                    changes.functions.iter().any(|(changed_file, name)| {
+                        name == &test.test_name && same_file(changed_file)
+                    })
+                };
+                touched.then(|| format!("{file_text}::{}", test.test_name))
+            })
+            .collect::<Vec<_>>();
     names.sort();
     names.dedup();
     names
