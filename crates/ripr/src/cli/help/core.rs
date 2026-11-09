@@ -152,7 +152,7 @@ Timeout exit-code contract: a timeout partial run still exits 0 — the packet,
 not the exit code, is the verdict, and a stderr line discloses this at the
 time it happens. CI must gate on pilot-summary.json's top-level `status`
 field (`complete` vs `partial`), never on the exit code alone, or a timed-out
-run reads as success (#9368).
+run reads as success.
 "#;
 pub(super) const OUTCOME_HELP: &str = r#"Compare before/after static evidence after adding a focused test.
 
@@ -254,7 +254,7 @@ Options:
   --candidate-tree TREE    Analyze exactly this immutable Git tree object.
                            Derives the diff from Git objects alone; the
                            worktree and index are never consulted. Mutually
-                           exclusive with --diff and --base (#3237).
+                           exclusive with --diff and --base.
   --candidate-base BASE    Base treeish for --candidate-tree (a commit, tag,
                            or tree OID). Defaults to the repository's empty
                            tree.
@@ -307,6 +307,8 @@ Options:
                            same findings with repeated evidence prose coded
                            against a document-head legend -> json-terse;
                            compact report for a coding agent -> agent;
+                           one sorted path:line:col gap line per actionable
+                           finding, nothing for exposed -> missed-txt;
                            file annotations in Actions logs -> github; code
                            scanning upload -> sarif (bounded minified:
                            sarif-compact); README badge ->
@@ -317,7 +319,7 @@ Options:
                              Analysis (diff-scoped):
                                human, human-full, json, json-compact,
                                json-terse, github,
-                               sarif, sarif-compact, agent,
+                               sarif, sarif-compact, agent, missed-txt,
                                check-findings-json (identified snapshot
                                for `agent verify`)
                              Badge (diff-scoped, for PR/CI status):
@@ -331,6 +333,12 @@ Options:
                                repo-badge-plus-json, repo-badge-plus-shields
                              Agent (machine-readable repair evidence):
                                agent-seam-packets-json
+                           missed-txt prints `path:line:col: <classification>
+                           <probe family>: <expression> -> <missing
+                           discriminator>` for each candidate-actionable,
+                           unsuppressed, non-exposed finding, sorted; exposed
+                           findings print nothing. Static classification only;
+                           no runtime mutation outcome is claimed.
                            json-compact is the same check document as json,
                            with only insignificant whitespace removed and one
                            final newline. Evidence, source identity, actions,
@@ -361,7 +369,7 @@ Options:
                            Apply a suppressions TOML (same schema as
                            .ripr/suppressions.toml) to the findings-based
                            formats (human, human-full, json, json-compact,
-                           github). exposure_gap
+                           github, missed-txt). exposure_gap
                            entries select findings by finding_id or by a
                            path glob (with optional static_class narrowing).
                            Suppressed findings stay visible in JSON with
@@ -440,7 +448,8 @@ Progress:
   run can be told from a hang. Non-TTY / CI output is newline-delimited
   with no control sequences. A TTY may reuse one line and stays silent
   for sub-threshold flashes. Machine formats (json, json-compact, sarif,
-  github) keep stdout byte-clean. With json, json-compact, sarif, badge-*
+  github, missed-txt) keep stdout byte-clean. With json, json-compact, sarif,
+  missed-txt, badge-*
   or agent selected and stderr not a terminal, the stream is off by default;
   `RIPR_PROGRESS=1` restores it. A terminal and the human formats keep it. Unknown totals
   never become a percentage or ETA. Progress does not mean analysis is faster
@@ -653,26 +662,34 @@ Performance:
   re-classifying every changed behavior — useful for large diffs and scripted workflows
   that run check, explain, and context in sequence.
 "#;
-pub(super) const CONTEXT_HELP: &str = r#"Print the per-change context packet for one finding or location.
+pub(super) const CONTEXT_HELP: &str = r#"Print one finding's changed code and related tests for an agent or script.
 
-The packet is always JSON, for an agent or tool to consume; `--json` is
-accepted and changes nothing. To read the same finding as prose, run
-`ripr explain` with the same selector.
+Use this when an agent or tool needs the facts behind one `ripr check`
+finding: the changed expression ripr examined, the tests that appear to
+reach it, the values they check, and any assertion that seems to be missing.
+Output is always JSON. To read the same finding as prose, run `ripr explain`
+with the same selector.
 
 Usage: ripr context [--root PATH] [--base REV] [--worktree|--committed|--diff PATH] [--from PATH] [--path GLOB] [--exclude GLOB] [--mode MODE] [--no-unchanged-tests] [--perl-facts PATH] [--suppression-policy PATH] --at <finding-id|file:line> [--max-related-tests N] [--json] [--quiet]
 
 Options:
+  --at <finding-id|file:line>
+               Required. The finding to describe: an id from
+               `ripr check --json`, or a changed `file:line`.
+  --finding ID
+               Same as --at.
+  --max-related-tests N
+               List at most N related tests. Defaults to
+               `reports.max_related_tests` in ripr.toml, otherwise 5.
   --root PATH  Workspace root. Defaults to the current directory, then
                walks up to the enclosing workspace or package, or the git
                top level; `--root .` pins this directory. A member-relative
                `file:line` selector binds to the directory you ran from like
                `ripr explain`; --diff and --from paths are read as typed from
                the current directory.
-  --finding ID
-               Select the finding by id or `file:line`, like `--at`.
-  --quiet      Suppress analysis progress and heartbeats on stderr, like
-               `ripr check --quiet`. Does not change stdout, exit codes, or
-               error reporting.
+  --base REV   Compare against this revision, as in `ripr check --base`.
+               Not combinable with --diff unless --from is also given.
+  --diff PATH  Read a diff file instead of running git diff (`-` = stdin).
   --committed  Analyze committed history only (base...HEAD), even when the
                working tree is dirty. Not combinable with --worktree, --diff
                or --from. Without a supplied scope, dirty repositories use
@@ -690,8 +707,8 @@ Options:
                analysis (same identity check as explain --from).
                Stdin (--diff -) cannot verify a recorded diff identity;
                create and reuse the artifact with a named --diff PATH.
-               --max-related-tests is a render-time knob honored fresh,
-               including beyond the check --json render cap.
+               --max-related-tests still applies, including beyond the
+               check --json render cap.
   --mode MODE  How much of the workspace is indexed: instant (changed
                files only, cheapest), draft (packages the diff touches; the
                default), fast (same as draft for now), deep and ready (whole
@@ -705,6 +722,19 @@ Options:
                Use this Perl facts file for replay.
   --suppression-policy PATH
                Apply the explicit suppression policy for replay.
+  --json       Output is already JSON; passing it also makes usage errors
+               and selector misses print a `cli_refusal` JSON document.
+  --quiet      Suppress analysis progress and heartbeats on stderr, like
+               `ripr check --quiet`. Does not change stdout, exit codes, or
+               error reporting.
+
+Exit status:
+  0  the JSON packet was printed
+  2  usage error (no selector, conflicting flags), a selector that matches
+     no finding or several, or a failed analysis. Once the arguments are
+     accepted, a failure also prints a JSON refusal document on stdout.
+     Usage errors and selector misses keep stdout empty unless `--json` is
+     passed, which prints the `cli_refusal` document instead.
 
 Filesystem effects:
   Fresh analysis may create or refresh disposable cache files under
@@ -736,6 +766,26 @@ This is a static registry for this build. Adapter availability (compiled or
 not) is reported separately and never changes a cell. It does not say whether
 a language is enabled for a repository; use `ripr doctor` for that. It reads
 no repository, runs nothing and promotes no support tier.
+"#;
+pub(super) const COMPLETIONS_HELP: &str = r#"Print a tab-completion script for your shell.
+
+Usage: ripr completions <bash|zsh|fish|powershell>
+
+Options:
+  --help  Show this help.
+
+The script completes ripr command names and the word after a command, such as
+`cache status`. It does not complete flags. It prints to stdout and changes
+nothing on your machine.
+
+Try it in the current shell:
+  bash        source <(ripr completions bash)
+  zsh         source <(ripr completions zsh)   (run `compinit` first)
+  fish        ripr completions fish | source
+  powershell  ripr completions powershell | Out-String | Invoke-Expression
+
+To keep it, add that line to your shell startup file (for example ~/.bashrc,
+~/.zshrc, ~/.config/fish/config.fish or your PowerShell profile).
 "#;
 pub(super) const DOCTOR_HELP: &str = r#"Diagnose the local ripr setup (workspace, config, toolchains, paths).
 

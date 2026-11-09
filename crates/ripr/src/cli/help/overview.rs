@@ -99,6 +99,7 @@ Task map:
 Setup:
   ripr doctor
   ripr capabilities [--language NAME] [--json | --markdown]
+  ripr completions <bash|zsh|fish|powershell>
   ripr init [--root PATH] [--ci github] [--mcp] [--agents TARGET] [--dry-run] [--force]
   ripr config validate [--root PATH]
   ripr cache status [--root PATH] [--json]
@@ -162,6 +163,8 @@ PR & Review:
   ripr assistant-loop health --proof target/ripr/reports/test-oracle-assistant-proof.json [--out target/ripr/reports/assistant-loop-health.json]
 
 Policy & Gate:
+  ripr gate check --base REV [--head HEAD] [--mode acknowledgeable|visible-only|baseline-check|calibrated-gate] [--label LABEL] [--labels-json PATH] [--out target/ripr/reports/gate-decision.json]
+  # one-command CI gate: review-comments then gate evaluate; exit 3 blocked, 2 could not complete
   ripr gate evaluate --pr-guidance PATH [--mode visible-only|acknowledgeable|baseline-check|calibrated-gate] [--baseline PATH] [--labels-json PATH] [--out target/ripr/reports/gate-decision.json]
   # acknowledgeable mode blocks eligible gaps unless the PR carries the configured waiver label (default: ripr-waive)
   # baseline-check and calibrated-gate modes require --baseline PATH (otherwise exit 2, config_error)

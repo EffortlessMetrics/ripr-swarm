@@ -261,6 +261,12 @@ pub(crate) fn render_with_config(
                 .map(|entry| (entry.finding_id.as_str(), entry.selector.as_str()))
         })
         .collect();
+    // #13819: findings withheld because their changed owner opted out.
+    let withheld_reasons: BTreeMap<&str, &str> = output
+        .owner_opt_outs
+        .iter()
+        .map(|opt_out| (opt_out.finding_id.as_str(), opt_out.reason.as_str()))
+        .collect();
     // Streaming byte cutoff (#5203): findings render in the pipeline's
     // deterministic `sort_findings` order; once the emitted array bytes
     // (payloads plus separators) exceed the budget, the rest is disclosed
@@ -280,9 +286,14 @@ pub(crate) fn render_with_config(
             2,
             config,
             &canonical_gap_counts,
-            suppressed_selectors
-                .get(output.findings[idx].id.as_str())
-                .copied(),
+            FindingMarks {
+                suppressed_by: suppressed_selectors
+                    .get(output.findings[idx].id.as_str())
+                    .copied(),
+                withheld_by: withheld_reasons
+                    .get(output.findings[idx].id.as_str())
+                    .copied(),
+            },
             &output.root,
         );
     };
@@ -368,6 +379,15 @@ pub(crate) fn render_with_config(
             true,
         );
         array_field(&mut out, 2, "warnings", &suppression.warnings, false);
+        out.push_str("  }");
+    }
+    // Additive (#13819): emitted only when a changed owner's
+    // `#[mutants::skip]` withheld at least one finding. Absent otherwise, so
+    // existing goldens and consumers see identical output.
+    if let Some(first) = output.owner_opt_outs.first() {
+        out.push_str(",\n  \"owner_opt_outs\": {\n");
+        number_field(&mut out, 2, "withheld", output.owner_opt_outs.len(), true);
+        field(&mut out, 2, "reason", first.reason.as_str(), false);
         out.push_str("  }");
     }
     // Additive advisory field — emitted only when at least one enabled language
@@ -821,6 +841,15 @@ fn summary_json(out: &mut String, output: &CheckOutput) {
             suppression.suppressed.len()
         ));
     }
+    // Additive (#13819): present only when an owner opt-out withheld a
+    // finding. Buckets plus `suppressed_by_policy` plus this count add back
+    // up to `findings`.
+    if !output.owner_opt_outs.is_empty() {
+        out.push_str(&format!(
+            ",\"withheld_by_owner_opt_out\":{}",
+            output.owner_opt_outs.len()
+        ));
+    }
     out.push('}');
 }
 
@@ -832,9 +861,18 @@ pub(super) fn finding_json(out: &mut String, finding: &Finding, indent: usize) {
         indent,
         &RiprConfig::default(),
         &BTreeMap::new(),
-        None,
+        FindingMarks::default(),
         Path::new("."),
     );
+}
+
+/// Additive per-finding markers: the `--suppression-policy` selector that
+/// suppressed it (#1441) and the owner opt-out reason that withheld it
+/// (#13819). Both are `None` for an ordinary finding.
+#[derive(Clone, Copy, Default)]
+struct FindingMarks<'a> {
+    suppressed_by: Option<&'a str>,
+    withheld_by: Option<&'a str>,
 }
 
 fn finding_json_with_config_and_counts(
@@ -843,7 +881,7 @@ fn finding_json_with_config_and_counts(
     indent: usize,
     config: &RiprConfig,
     canonical_gap_counts: &BTreeMap<&str, usize>,
-    suppressed_selector: Option<&str>,
+    marks: FindingMarks<'_>,
     root: &Path,
 ) {
     let sp = "  ".repeat(indent);
@@ -852,12 +890,18 @@ fn finding_json_with_config_and_counts(
     // Additive: present only on findings suppressed by an explicit
     // `--suppression-policy` (#1441). The finding stays fully rendered so
     // suppression is visible, not hidden.
-    if let Some(selector) = suppressed_selector {
+    if let Some(selector) = marks.suppressed_by {
         out.push_str(&format!(
             "{}\"suppressed\": true,\n",
             "  ".repeat(indent + 1)
         ));
         field(out, indent + 1, "suppressed_by", selector, true);
+    }
+    // Additive (#13819): present only on findings withheld because their
+    // changed owner opted out (`owner_mutants_skip`). The finding stays fully
+    // rendered with its unchanged class, so the withholding is visible.
+    if let Some(reason) = marks.withheld_by {
+        field(out, indent + 1, "withheld_by", reason, true);
     }
     if let Some(gap) = &finding.canonical_gap {
         field(out, indent + 1, "canonical_gap_id", &gap.id, true);
@@ -1981,6 +2025,7 @@ mod harness_projection_tests {
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
+            owner_opt_outs: Vec::new(),
             suppression: None,
             partial_scope: None,
             analyzed_revisions: None,
