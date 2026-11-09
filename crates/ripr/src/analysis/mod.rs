@@ -1478,6 +1478,86 @@ mod tests {
         );
     }
 
+    fn path_text_config() -> proptest::test_runner::Config {
+        proptest::test_runner::Config {
+            cases: std::env::var("PROPTEST_CASES")
+                .ok()
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(256),
+            failure_persistence: None,
+            ..proptest::test_runner::Config::default()
+        }
+    }
+
+    #[cfg(unix)]
+    fn native_path(bytes: Vec<u8>) -> PathBuf {
+        use std::os::unix::ffi::OsStringExt;
+        PathBuf::from(std::ffi::OsString::from_vec(bytes))
+    }
+
+    /// #13949: every `%` the encoder emits starts a `%XX` spelling with
+    /// uppercase hex, the only spelling the decoder reads back.
+    fn percent_spellings_are_canonical(encoded: &str) -> bool {
+        let upper_hex = |byte: &u8| byte.is_ascii_digit() || (b'A'..=b'F').contains(byte);
+        let bytes = encoded.as_bytes();
+        bytes.iter().enumerate().all(|(at, byte)| {
+            *byte != b'%'
+                || matches!(
+                    bytes.get(at + 1..at + 3),
+                    Some([high, low]) if upper_hex(high) && upper_hex(low)
+                )
+        })
+    }
+
+    proptest::proptest! {
+        #![proptest_config(path_text_config())]
+
+        /// #13949: the display form round-trips every path without a
+        /// backslash (which display normalization folds into `/` by design,
+        /// see `stable_source_path_text_preserves_literal_backslashes_before_display`),
+        /// whatever percent signs, spaces or non-ASCII text it carries.
+        #[test]
+        fn proptest_stable_path_text_round_trips_paths_without_backslashes(
+            text in "[^\\x00\\\\]{0,24}"
+        ) {
+            let path = PathBuf::from(&text);
+            let encoded = stable_path_text(&path);
+            proptest::prop_assert!(percent_spellings_are_canonical(&encoded));
+            proptest::prop_assert_eq!(decode_stable_path_text(&encoded), path);
+        }
+    }
+
+    #[cfg(unix)]
+    proptest::proptest! {
+        #![proptest_config(path_text_config())]
+
+        /// #13949: on Unix the source-identity encoding round-trips arbitrary
+        /// native bytes, including invalid UTF-8, backslashes and percents.
+        #[test]
+        fn proptest_stable_source_path_text_round_trips_arbitrary_bytes(
+            bytes in proptest::collection::vec(1u8..=255, 0..24)
+        ) {
+            let path = native_path(bytes);
+            let encoded = stable_source_path_text(&path);
+            proptest::prop_assert!(percent_spellings_are_canonical(&encoded));
+            proptest::prop_assert_eq!(decode_stable_path_text(&encoded), path);
+        }
+
+        /// #13949: distinct native paths never share a source-identity
+        /// spelling, so finding ids and receipts cannot merge two files.
+        #[test]
+        fn proptest_stable_source_path_text_is_injective(
+            left in proptest::collection::vec(1u8..=255, 0..12),
+            right in proptest::collection::vec(1u8..=255, 0..12)
+        ) {
+            proptest::prop_assume!(left != right);
+            proptest::prop_assert_ne!(
+                stable_source_path_text(&native_path(left)),
+                stable_source_path_text(&native_path(right))
+            );
+        }
+    }
+
     /// #5996: one finding, one location string. The verbatim-root MCP form
     /// and the absolute-root LSP form must both render as the CLI's
     /// workspace-relative shape, and an already-relative CLI location must
