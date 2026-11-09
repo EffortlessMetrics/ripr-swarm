@@ -9247,6 +9247,14 @@ fn a_root_glob_of_a_module_the_file_declares_is_not_a_foreign_glob() -> Result<(
             false,
         ),
         (
+            "mod global;\n#[cfg(not(unix))]\nuse dep::global::{self};\npub use global::*;\n",
+            false,
+        ),
+        (
+            "mod global;\n#[cfg(not(unix))]\nuse dep::global::{self as g2, x};\npub use global::*;\n",
+            false,
+        ),
+        (
             "#[cfg(a)]\nmod global;\n#[cfg(not(a))]\nmod global {}\npub use global::*;\n",
             false,
         ),

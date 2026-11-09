@@ -749,25 +749,19 @@ fn glob_is_root_sibling_module(import: &ast::Use, item: &ast::UseTree, root: &st
             {
                 return false;
             }
+        } else if child == *import.syntax() {
+            // The glob under test names the root by design.
         } else if let Some(other) = ast::Use::cast(child.clone()) {
             // Another import taking the root's name (`use dep as global;`),
             // possibly under a `cfg` the scan does not evaluate.
-            let binds_root = other
-                .syntax()
-                .descendants()
-                .filter_map(ast::UseTree::cast)
-                .any(|leaf| {
-                    if leaf.star_token().is_some() {
-                        return false;
-                    }
-                    if let Some(rename) = leaf.rename() {
-                        return named_root(rename.name());
-                    }
-                    leaf.path()
-                        .and_then(|path| path.segment())
-                        .and_then(|segment| segment.name_ref())
-                        .is_some_and(|name| name.text().trim_start_matches("r#") == root)
-                });
+            // Any spelling of the root name inside the import (`as global`,
+            // `dep::global`, `dep::global::{self}`) may bind it; refuse them all.
+            let binds_root = other.syntax().descendants().any(|node| {
+                ast::NameRef::cast(node.clone())
+                    .map(|name| name.text().to_string())
+                    .or_else(|| ast::Name::cast(node).map(|name| name.text().to_string()))
+                    .is_some_and(|text| text.trim_start_matches("r#") == root)
+            });
             if binds_root {
                 return false;
             }
