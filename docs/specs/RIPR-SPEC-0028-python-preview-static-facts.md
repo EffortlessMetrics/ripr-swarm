@@ -291,7 +291,19 @@ mock expectations, and custom `assert_*` helpers.
   elements are not evaluated by this bounded path. An unproved list-equality
   change retains the finding and limitation without inventing a missing exact
   assertion, typed repair placement or repair card.
-- `self.assertTrue(...)` / `assertFalse(...)` â†’ smoke oracle
+- `self.assertTrue(...)` / `assertFalse(...)` → smoke oracle, except the bounded bool-owner exception below
+  Bool-owner exception (#13620): `assert f(lit, ..) is True` / `is False`
+  (either operand order), `self.assertTrue(f(lit, ..))`,
+  `self.assertFalse(f(lit, ..))` and `self.assertIs(f(lit, ..), True|False)`
+  are re-read as `f(lit, ..) == True|False` exact pins only when `f` is a
+  unique function owner that provably returns a `bool` (annotated `-> bool`,
+  or a single `return <comparison>`), every argument is a literal, the test
+  file does not patch or rebind `f`, and, for the unittest forms, the file
+  defines none of `assertTrue`/`assertFalse`/`assertIs`/`assertEqual` and every
+  class base is `unittest.TestCase` or `TestCase` imported from `unittest`.
+  `is not`, `is None`, `isinstance`, `assertIsNot`, `assertIsNotNone`, bare
+  truthiness on a non-bool owner and non-literal arguments stay uncredited.
+  `assertIs(x, True|False)` is recorded as a weak assertion otherwise.
 - `mock.assert_called*` family (`assert_called_once_with`,
   `assert_called_with`, `assert_called`, `assert_not_called`) â†’
   side-effect/call oracle
@@ -556,7 +568,20 @@ comments, strings, and docstrings:
   `module.Class(...)`) relates `__init__`, `__new__`, and `__post_init__` as
   `constructor_call`, an oracle-eligible relation; for any other dunder it
   relates as `dunder_protocol`, which stays uncertain because syntax cannot
-  bind `obj[key] = value` or `a == b` to the constructed instance. The one
+  bind `obj[key] = value` or `a == b` to the constructed instance. A
+  non-dunder helper that only a same-class dunder reaches through `self.` /
+  `cls.` (at most five hops, keyed by file and class so name-mangled helpers
+  never cross classes) reads `static_unknown` (`dynamic_dispatch`) only when a
+  test both references the helper's class through an import of its module and
+  uses the protocol syntax of one of the reaching dunders somewhere in its body
+  (subscript, `in`, `len(`, `iter(`, `for ... in`, `next(`, `with`, `==` /
+  `!=`, `hash(`, `str(`). The syntax is not tied to an instance of the class
+  (accepted: the limit only withdraws a confident claim). Constructor and
+  finalizer dunders (`__init__`, `__new__`, `__post_init__`,
+  `__init_subclass__`, `__del__`) never start the reach; a test that only
+  constructs the class, or a dunder without a syntactic protocol, keeps
+  `no_static_path`, and the reach never earns an oracle or `exposed`
+  (RIPR-SPEC-0201, #13776). The one
   exception is a builtin protocol entry applied to a sole argument bound to the
   owner class (`reversed(Class(0))` for `__reversed__`, likewise `len`, `bool`,
   `iter`, `next`, `hash`, `str`, `repr`): it relates as `protocol_entry_call`,
