@@ -23,8 +23,6 @@ use render::{SummaryRenderInput, render_pr_evidence_summary};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::cli::{expect_value, reconcile_root, unknown_argument};
-
 use super::subcommand::resolve_selected_root;
 
 const PR_EVIDENCE_JSON: &str = "target/ripr/pr/repo-exposure.json";
@@ -42,10 +40,10 @@ const DIFF_REPORT_JSON: &str = "target/ripr/reports/diff-report.json";
 const ATTEMPT_LEDGER_JSON: &str = "target/ripr/reports/swarm-attempt-ledger.json";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-struct SummaryOptions {
-    root: PathBuf,
-    check: bool,
-    baseline: Option<String>,
+pub(crate) struct SummaryOptions {
+    pub(crate) root: PathBuf,
+    pub(crate) check: bool,
+    pub(crate) baseline: Option<String>,
 }
 
 /// Entry point for `ripr pr-summary`. Composes existing artifacts into a PR
@@ -53,12 +51,10 @@ struct SummaryOptions {
 /// - `target/ripr/pr/summary.md` (legacy PR evidence summary)
 /// - `target/ripr/reports/pr-evidence-summary.json` (v1 JSON)
 /// - `target/ripr/reports/pr-evidence-summary.md` (v1 Markdown panel)
-pub(crate) fn run_pr_summary(args: &[String]) -> Result<(), String> {
-    if args.iter().any(|arg| arg == "--help" || arg == "-h") {
-        print_help();
-        return Ok(());
-    }
-    let options = parse_options(args)?;
+///
+/// Argv parsing and `--help` live in the CLI adapter
+/// (`cli::commands::pr_summary`); this takes parsed options.
+pub(crate) fn execute_pr_summary(options: SummaryOptions) -> Result<(), String> {
     let repo = resolve_selected_root(&options.root)?;
     // The selected root owns every input and output. A missing or file-typed
     // root must refuse before any write: `create_dir_all` below would
@@ -135,68 +131,6 @@ fn summary_text(repo: &Path) -> String {
     })
 }
 
-fn parse_options(args: &[String]) -> Result<SummaryOptions, String> {
-    let mut root = PathBuf::from(".");
-    let mut root_explicit = false;
-    let mut check = false;
-    let mut baseline: Option<String> = None;
-    let mut index = 0;
-    while let Some(arg) = args.get(index) {
-        match arg.as_str() {
-            "--check" => check = true,
-            "--root" | "--baseline" => {
-                index += 1;
-                let path = expect_value(args, index, arg)?;
-                if path.trim().is_empty() || path.starts_with('-') {
-                    return Err(format!(
-                        "pr-summary {arg} requires a non-empty path value; pass `{arg} <path>`"
-                    ));
-                }
-                #[cfg(windows)]
-                {
-                    let parsed = Path::new(path);
-                    if !parsed.is_absolute()
-                        && (parsed.has_root()
-                            || matches!(
-                                parsed.components().next(),
-                                Some(std::path::Component::Prefix(_))
-                            ))
-                    {
-                        return Err(format!(
-                            "pr-summary {arg} requires a fully qualified or ordinary relative path; \
-                             Windows partially qualified paths are not supported; pass a drive-qualified absolute path or a plain relative path"
-                        ));
-                    }
-                }
-                if arg == "--root" {
-                    // #9008/#10542: an identical repeat is absorbed for
-                    // scripted double-root invocations; a conflicting value
-                    // is a usage error naming both values.
-                    let reconciled = reconcile_root(&root, root_explicit, path, "pr-summary")?;
-                    root = reconciled;
-                    root_explicit = true;
-                } else {
-                    baseline = Some(path.to_string());
-                }
-            }
-            other => return Err(unknown_argument("pr-summary", other)),
-        }
-        index += 1;
-    }
-    Ok(SummaryOptions {
-        root,
-        check,
-        baseline,
-    })
-}
-
-fn print_help() {
-    println!(
-        "{}",
-        crate::cli::help::render_command_help(PR_SUMMARY_HELP, &[])
-    );
-}
-
 /// Help body for `ripr pr-summary`. Also the flag source for unknown-argument
 /// suggestions; keep accepted flags on option-list lines.
 pub(crate) const PR_SUMMARY_HELP: &str = "\
@@ -248,6 +182,8 @@ fn write_parented_file(path: &Path, label: &str, contents: impl AsRef<[u8]>) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    // cfg(test) only: drive argv through the CLI adapter (tracked in #5193).
+    use crate::cli::commands::pr_summary_command::{parse_options, pr_summary as run_pr_summary};
 
     #[test]
     fn parse_accepts_check_only() {

@@ -82,3 +82,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — compile_time_assert_stop_reason (8)
+
+Reason:
+RIPR-SPEC-0411: merge main evidence_stages field into compile-time guard goldens
+
+Command:
+`cargo xtask goldens bless compile_time_assert_stop_reason --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

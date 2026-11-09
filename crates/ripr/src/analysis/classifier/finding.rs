@@ -1277,6 +1277,7 @@ mod tests {
             observe: yes.clone(),
             discriminate: yes,
             reach_ruled_out: true,
+            proximity_reach_of_named_owner: false,
             assigned_field_weakly_read: false,
             assertion_refusal: None,
             refusals_are_analyzer_limits: false,

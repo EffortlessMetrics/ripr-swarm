@@ -358,15 +358,42 @@ fn a_proposal_attempt_says_no_test_exists_yet() -> Result<(), String> {
     assert_eq!(notes.len(), 1, "{before}");
     assert!(
         notes[0].contains(PROPOSED_FILE)
-            && notes[0].contains("does not exist yet")
+            && notes[0].contains("at the before phase")
+            && notes[0].contains("had not yet been written")
             && notes[0].contains("package `.`")
-            && notes[0].contains("no test result"),
+            && notes[0].contains("no test result was available"),
         "{}",
         notes[0]
     );
     assert!(
         !root.join(PROPOSED_FILE).exists(),
         "the preflight must not create the file"
+    );
+
+    // #13205: the disclosure is historical wording, so it must stay accurate
+    // once the proposed test exists and the after phase has run.
+    write(root, PROPOSED_FILE, NEW_TEST)?;
+    let output = after(root, &attempt)?;
+    let finished = manifest(root, &attempt)?;
+    assert_eq!(
+        finished
+            .pointer("/after/verdict/status")
+            .and_then(Value::as_str),
+        Some("compliant"),
+        "{}\n{finished}",
+        combined(&output)
+    );
+    let retained: Vec<String> = limitations(&finished)
+        .into_iter()
+        .filter(|note| note.starts_with("target preflight:"))
+        .collect();
+    assert_eq!(retained.len(), 1, "{finished}");
+    assert!(
+        retained[0].contains(PROPOSED_FILE)
+            && retained[0].contains("at the before phase")
+            && retained[0].contains("had not yet been written"),
+        "{}",
+        retained[0]
     );
     Ok(())
 }
