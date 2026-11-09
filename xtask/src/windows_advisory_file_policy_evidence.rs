@@ -540,6 +540,8 @@ mod tests {
         assert!(!workflow_exact_filter_names(&skip_after, FACADE_TEST));
         let skip_before = format!("cargo test -p xtask -- --skip {FACADE_TEST} --exact");
         assert!(!workflow_exact_filter_names(&skip_before, FACADE_TEST));
+        let no_exact = format!("cargo test -p xtask {FACADE_TEST} -- --nocapture");
+        assert!(!workflow_exact_filter_names(&no_exact, FACADE_TEST));
         let longer = format!("cargo test -p xtask {FACADE_TEST}_v2 -- --exact");
         assert!(!workflow_exact_filter_names(&longer, FACADE_TEST));
     }
