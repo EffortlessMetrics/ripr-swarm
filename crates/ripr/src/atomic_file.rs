@@ -221,6 +221,57 @@ pub(crate) fn write(path: &Path, bytes: &[u8], label: &str) -> Result<(), String
     write_with_sync(path, bytes, label, true, ErrorPathPolicy::Include)
 }
 
+/// Cache directories whose mutation is currently suppressed, one entry per
+/// live [`CacheMutationSuppressed`] guard. Keyed by directory so a read-only
+/// caller for one workspace never changes what a concurrent caller for another
+/// workspace's cache may write.
+static SUPPRESSED_CACHE_DIRS: std::sync::Mutex<Vec<std::path::PathBuf>> =
+    std::sync::Mutex::new(Vec::new());
+
+/// While held, no cache write, sweep, prune or build-use marker under the
+/// guarded cache directory happens. A read-only command such as
+/// `ripr agent status` holds it so the seam inventory it needs cannot rewrite
+/// or prune files an attempt's bound verdict already lists (#13945). Reads are
+/// unaffected: a cold cache just recomputes, so suppression costs time, never
+/// correctness.
+pub(crate) struct CacheMutationSuppressed {
+    dir: std::path::PathBuf,
+}
+
+impl CacheMutationSuppressed {
+    pub(crate) fn under(dir: &Path) -> Self {
+        let mut dirs = match SUPPRESSED_CACHE_DIRS.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        dirs.push(dir.to_path_buf());
+        Self {
+            dir: dir.to_path_buf(),
+        }
+    }
+}
+
+impl Drop for CacheMutationSuppressed {
+    fn drop(&mut self) {
+        let mut dirs = match SUPPRESSED_CACHE_DIRS.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        if let Some(index) = dirs.iter().position(|dir| *dir == self.dir) {
+            dirs.remove(index);
+        }
+    }
+}
+
+/// Whether `path` lies under a cache directory some live guard protects.
+pub(crate) fn cache_mutation_suppressed(path: &Path) -> bool {
+    let dirs = match SUPPRESSED_CACHE_DIRS.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    dirs.iter().any(|dir| path.starts_with(dir))
+}
+
 /// Atomically replace an expendable cache entry without forcing a physical
 /// flush for every entry. Rename still prevents readers from observing a
 /// partial file; the cache may be recomputed after a power loss.
@@ -229,6 +280,9 @@ pub(crate) fn write(path: &Path, bytes: &[u8], label: &str) -> Result<(), String
 /// spellings so bounded diagnostics remain portable across checkout/cache
 /// roots and safe to retain in public receipts.
 pub(crate) fn write_cache(path: &Path, bytes: &[u8], label: &str) -> Result<(), String> {
+    if cache_mutation_suppressed(path) {
+        return Ok(());
+    }
     write_with_sync(path, bytes, label, false, ErrorPathPolicy::Omit)?;
     if let Some(dir) = path.parent().filter(|dir| !dir.as_os_str().is_empty()) {
         sweep_stale_temp_files_once(dir);
@@ -237,6 +291,9 @@ pub(crate) fn write_cache(path: &Path, bytes: &[u8], label: &str) -> Result<(), 
 }
 
 pub(crate) fn sweep_stale_temp_files_once(dir: &Path) {
+    if cache_mutation_suppressed(dir) {
+        return;
+    }
     let first_visit = {
         let mut swept = match SWEPT_DIRECTORIES.lock() {
             Ok(guard) => guard,
@@ -330,6 +387,9 @@ pub(crate) fn write_cache_streamed(
     label: &str,
     fill: impl FnOnce(&mut std::fs::File) -> std::io::Result<()>,
 ) -> Result<(), String> {
+    if cache_mutation_suppressed(path) {
+        return Ok(());
+    }
     replace_with(path, false, fill)
         .map_err(|failure| map_replace_failure(failure, label, ErrorPathPolicy::Omit))?;
     if let Some(dir) = path.parent().filter(|dir| !dir.as_os_str().is_empty()) {
@@ -844,6 +904,35 @@ mod tests {
         );
         assert_eq!(kept.map_err(|err| format!("read target: {err}"))?, b"keep");
         Ok(())
+    }
+
+    #[test]
+    fn cache_mutation_suppression_is_scoped_to_its_directory_and_guard() -> Result<(), String> {
+        let root = isolated_dir("suppressed-cache");
+        let guarded = root.join("guarded");
+        let sibling = root.join("sibling");
+        {
+            let _suppressed = super::CacheMutationSuppressed::under(&guarded);
+            super::write_cache(&guarded.join("entry.json"), b"{}", "test")?;
+            super::write_cache_streamed(&guarded.join("streamed.json"), "test", |file| {
+                std::io::Write::write_all(file, b"{}")
+            })?;
+            assert!(
+                !guarded.exists(),
+                "a suppressed cache directory must not be created or written"
+            );
+            super::write_cache(&sibling.join("entry.json"), b"{}", "test")?;
+            assert!(
+                sibling.join("entry.json").is_file(),
+                "another directory stays writable"
+            );
+        }
+        super::write_cache(&guarded.join("entry.json"), b"{}", "test")?;
+        assert!(
+            guarded.join("entry.json").is_file(),
+            "dropping the guard restores writes"
+        );
+        std::fs::remove_dir_all(&root).map_err(|error| error.to_string())
     }
 
     #[test]

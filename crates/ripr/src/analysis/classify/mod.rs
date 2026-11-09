@@ -13,6 +13,7 @@ mod const_flow;
 mod tier_flow;
 #[cfg(feature = "lang-rust")]
 pub(in crate::analysis) use tier_flow::{TierFlow, evaluate_tier_flow};
+mod compile_time_guard;
 mod const_readers;
 mod context;
 mod custom_eq;
@@ -55,6 +56,7 @@ mod related_tests;
 mod reveal;
 mod scanner_transfer;
 mod slice_boundary;
+mod slice_counter_boundary;
 #[cfg(test)]
 mod stop_reason_contract;
 mod targeted_calls;
@@ -93,6 +95,7 @@ pub(in crate::analysis) use call_identity::{
     shared_owner_call_identity, test_calls_only_through_local_rival_module, text_calls_owner,
 };
 pub(in crate::analysis) use caller_loop_selector::withhold_caller_loop_selector_gap;
+pub(in crate::analysis) use compile_time_guard::constrained_by_compile_time_assertion;
 pub(in crate::analysis) use const_flow::{
     ChangedConsts, ConstFlow, associated_const_binding, const_value_changes, evaluate_const_flow,
     shares_module_scope,
@@ -115,7 +118,8 @@ pub(in crate::analysis) use facade_reach::{
 };
 pub(in crate::analysis) use field_reach::{FieldTable, owner_name_mentions};
 pub(in crate::analysis) use flow::{
-    local_flow_sinks, predicate_line_arms_all_agree, propagation_evidence_with_witness,
+    local_flow_sinks, predicate_branch_side_effect_only_in_body, predicate_line_arms_all_agree,
+    propagation_evidence_with_witness,
 };
 pub(in crate::analysis) use framework_oracle::{
     insta_field_snapshot_limitation, withhold_framework_oracle_gap,
@@ -222,6 +226,7 @@ pub(in crate::analysis) use reveal::{
 pub(in crate::analysis) use reveal::{ReturnOracleAdmission, contains_as_whole_word};
 pub(in crate::analysis) use reveal::{only_proximity_oracles, reveal_outcome};
 pub(in crate::analysis) use slice_boundary::refine_slice_boundary;
+pub(in crate::analysis) use slice_counter_boundary::refine_slice_counter_boundary;
 pub(in crate::analysis) use unpolled_future::withhold_unpolled_future_gap;
 // RIPR-SPEC-0106: re-export the variant parsers so test_grip_evidence.rs can
 // apply variant-binding without reaching into the private `text` submodule.
