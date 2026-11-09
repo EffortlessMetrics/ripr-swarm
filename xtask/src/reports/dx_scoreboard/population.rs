@@ -191,6 +191,10 @@ impl Records {
             ));
         }
         let report = verdict_corpus::expected_report(dir)?;
+        // The abstention-expected flag is derived from the case and the specs'
+        // `Reject` examples; re-derive it so a committed row cannot carry a
+        // flag its definition does not support (RIPR-SPEC-0219).
+        let reject_examples = verdict_corpus::coverage::reject_example_ids_for_corpus(dir)?;
         let report_json = serde_json::to_value(&report).map_err(|err| err.to_string())?;
         let mut subjects = BTreeMap::new();
         for subject in &corpus.subjects {
@@ -232,6 +236,8 @@ impl Records {
                 || row.ideal_verdict != case.expected.ideal_verdict
                 || row.packet_provenance != case.perl_facts.as_ref().map(|facts| facts.provenance)
                 || row.outcome != verdict_corpus::score(case.truth.state, row.observed_verdict)
+                || row.abstention_expected
+                    != verdict_corpus::abstention_expected(case, &reject_examples)
             {
                 return Err(format!(
                     "row {} disagrees with its scoring definition",
@@ -324,9 +330,25 @@ impl Records {
             let d = single[leaf]["denominator"]
                 .as_u64()
                 .ok_or_else(|| format!("unsupported case rate `{rate}`"))?;
+            // The avoidable rate also depends on the derived flag, so its case
+            // identity binds it: a case whose spec citation turns Reject is a
+            // changed definition, not an analyzer improvement.
+            let avoidable_hash;
+            let definition_hash = if oracle_rate {
+                oracle_hash
+            } else if leaf == "avoidable_abstention_rate" && row.abstention_expected {
+                avoidable_hash = verdict_corpus::sha256_hex(
+                    json!({"definition": hash, "abstention_expected": true})
+                        .to_string()
+                        .as_bytes(),
+                );
+                &avoidable_hash
+            } else {
+                hash
+            };
             cases.push(Contribution {
                 case_id: row.case_id.clone(),
-                definition_sha256: if oracle_rate { oracle_hash } else { hash }.clone(),
+                definition_sha256: definition_hash.clone(),
                 numerator: n,
                 denominator: d,
             });

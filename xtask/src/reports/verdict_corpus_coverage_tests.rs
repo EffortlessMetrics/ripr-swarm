@@ -979,11 +979,12 @@ fn committed_corpus_tests_do_not_pin_spec_example_counts() -> Result<(), String>
 
 #[test]
 fn reject_examples_are_the_acceptance_items_that_open_with_reject() {
-    let spec = "## Behavior\n\n1. Reject: not an example.\n\n## Acceptance Examples\n\n1. Accept: a resolved row.\n2. Reject: a computed argument keeps the operand unknown.\n3. A plain item that rejects nothing by keyword.\n\n```text\n4. Reject: inside a fence\n```\n\n- example `shadowed-name`: Reject: a shadowed binding.\n- example `kept-name`: Accept: the plain binding.\n\n## Test Mapping\n\n5. Reject: not an example\n";
+    let spec = "## Behavior\n\n1. Reject: not an example.\n\n## Acceptance Examples\n\n1. Accept: a resolved row.\n2. Reject: a computed argument keeps the operand unknown.\n3. A plain item that rejects nothing by keyword.\n6. Rejects is a different word.\n7. Reject (#1): a parenthesized reject.\n\n```text\n4. Reject: inside a fence\n```\n\n- example `shadowed-name`: Reject: a shadowed binding.\n- example `kept-name`: Accept: the plain binding.\n\n## Test Mapping\n\n5. Reject: not an example\n";
     assert_eq!(
         reject_examples(spec),
         [
             ExampleKey::Number(2),
+            ExampleKey::Number(7),
             ExampleKey::Slug("shadowed-name".to_string())
         ]
         .into_iter()
@@ -996,6 +997,8 @@ fn reject_examples_are_the_acceptance_items_that_open_with_reject() {
             ExampleKey::Number(1),
             ExampleKey::Number(2),
             ExampleKey::Number(3),
+            ExampleKey::Number(6),
+            ExampleKey::Number(7),
             ExampleKey::Slug("shadowed-name".to_string()),
             ExampleKey::Slug("kept-name".to_string()),
         ]

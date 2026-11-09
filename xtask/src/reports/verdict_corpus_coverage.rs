@@ -150,13 +150,18 @@ pub(crate) fn acceptance_items(markdown: &str) -> Vec<ExampleKey> {
         .collect()
 }
 
-/// The acceptance examples whose item opens with `Reject`: the spec names an
+/// The acceptance examples whose item opens with the word `Reject` (then `:`,
+/// a space or `(`; `Rejects` does not count): the spec names an
 /// input its rule must not resolve, so the finding keeps its fail-closed
 /// class (RIPR-SPEC-0219 abstention-expected rows).
 pub(crate) fn reject_examples(markdown: &str) -> BTreeSet<ExampleKey> {
     acceptance_items_with_text(markdown)
         .into_iter()
-        .filter(|(_, text)| text.trim_start().starts_with("Reject"))
+        .filter(|(_, text)| {
+            text.trim_start()
+                .strip_prefix("Reject")
+                .is_some_and(|rest| rest.starts_with([':', ' ', '(']))
+        })
         .map(|(key, _)| key)
         .collect()
 }

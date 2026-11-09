@@ -755,10 +755,11 @@ pub(crate) struct CaseRow {
     pub(crate) changed_since_labeling: bool,
     pub(crate) observed_classifications: Vec<String>,
     pub(crate) outcome: Outcome,
-    /// Every spec example the case cites is a `Reject` example and the case
-    /// accepts `limited`: its spec asks ripr not to resolve this input, so an
-    /// abstention here is the specified behavior, not a miss analyzer work
-    /// could remove (RIPR-SPEC-0219). Absent when false.
+    /// The tests catch the change, every spec example the case cites is a
+    /// `Reject` example and the case accepts `limited`: its spec withholds the
+    /// only credit that could resolve it, so an abstention here is the
+    /// specified behavior, not a miss analyzer work could remove
+    /// (RIPR-SPEC-0219, [`abstention_expected`]). Absent when false.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub(crate) abstention_expected: bool,
     pub(crate) contradictions: Vec<String>,
@@ -992,11 +993,16 @@ pub(crate) fn case_row(
     })
 }
 
-/// Whether the case's spec asks for the abstention: it cites at least one
-/// spec example, every cited example is a `Reject` example, and the case
-/// lists `limited` among its acceptable verdicts.
+/// Whether the case's spec asks for the abstention: the tests catch the
+/// change (ideal `credited`), the case cites at least one spec example, every
+/// cited example is a `Reject` example, and the case lists `limited` among
+/// its acceptable verdicts. A Reject example withholds credit, so with
+/// credit ruled out the only verdicts left are `limited`/`silent`. When the
+/// tests miss the change (ideal `gap`), a gap still obeys the Reject example,
+/// so that abstention stays avoidable.
 pub(crate) fn abstention_expected(case: &Case, reject_examples: &BTreeSet<String>) -> bool {
-    !case.spec_examples.is_empty()
+    case.truth.state.ideal() == Verdict::Credited
+        && !case.spec_examples.is_empty()
         && case
             .spec_examples
             .iter()

@@ -4023,8 +4023,8 @@ fn verdict_corpus_sources_derive_each_rate_from_the_committed_rows() -> Result<(
         );
     }
     assert_eq!(
-        seen, 18,
-        "the five Rust verdict rates, two Rust oracle rates, three TypeScript, three Python and five Perl trust rates read the corpus rows"
+        seen, 19,
+        "the six Rust verdict rates (with avoidable abstention), two Rust oracle rates, three TypeScript, three Python and five Perl trust rates read the corpus rows"
     );
 
     // A corpus that cannot be read is not measured, never a perfect rate.

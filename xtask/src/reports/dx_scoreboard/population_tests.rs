@@ -1630,6 +1630,29 @@ fn operational_baseline_refreshes_only_the_five_rust_rates_with_provenance() -> 
         ids.retain(|id| id != "trust.verdict_corpus_spec_example_coverage");
         trust["counts"]["meets_target"] = serde_json::json!(4);
     }
+    // Seeded with the abstention split (RIPR-SPEC-0219, #12766): the
+    // avoidable-abstention row carries its own case population; verify it,
+    // then remove it before the witness equality check.
+    {
+        let metrics = live["metrics"].as_array_mut().ok_or("metrics missing")?;
+        let at = metrics
+            .iter()
+            .position(|metric| metric["id"] == "trust.verdict_corpus_avoidable_abstention")
+            .ok_or("avoidable abstention metric missing")?;
+        let avoidable = metrics.remove(at);
+        assert_eq!(
+            avoidable["source"],
+            "verdict-corpus:fixtures/rust-verdict-corpus#avoidable_abstention_rate"
+        );
+        assert_eq!(avoidable["runner_dependent"], false);
+        let samples = avoidable["samples"].as_array().ok_or("samples missing")?;
+        assert_eq!(samples.len(), 1);
+        let population: Population = serde_json::from_value(samples[0]["population"].clone())
+            .map_err(|err| err.to_string())?;
+        assert_eq!(population.rate, "avoidable_abstention_rate");
+        let (numerator, denominator) = population.totals()?;
+        assert!(numerator > 0 && numerator < denominator);
+    }
     assert_eq!(live, witness);
     assert_eq!(
         include_str!("../../../../metrics/dx-scoreboard/baseline.json"),

@@ -2976,7 +2976,7 @@ fn abstention_by_cause_is_kept_per_origin_and_sums_to_each_abstention_count() ->
 }
 
 #[test]
-fn abstention_is_expected_only_when_every_citation_is_a_reject_example_and_limited_is_acceptable()
+fn abstention_is_expected_only_for_caught_changes_whose_citations_are_all_reject_examples()
 -> Result<(), String> {
     let corpus = load_corpus(&repo_corpus_dir())?;
     let case = corpus
@@ -2984,7 +2984,8 @@ fn abstention_is_expected_only_when_every_citation_is_a_reject_example_and_limit
         .iter()
         .find(|case| case.case_id == "spec-b-0163-computed-argument")
         .ok_or("case spec-b-0163-computed-argument is missing")?;
-    // Premise: one Reject citation and `limited` acceptable.
+    // Premise: tests catch the change, one Reject citation, `limited` acceptable.
+    assert_eq!(case.truth.state, TruthState::Discriminated);
     assert_eq!(case.spec_examples, vec!["RIPR-SPEC-0163#3".to_string()]);
     assert!(
         case.expected
@@ -3006,6 +3007,13 @@ fn abstention_is_expected_only_when_every_citation_is_a_reject_example_and_limit
         .acceptable_verdicts
         .retain(|v| *v != Verdict::Limited);
     assert!(!abstention_expected(&strict, &rejects));
+    // The tests miss the change: a gap obeys the Reject example, so the
+    // abstention stays avoidable even with every other condition met.
+    let mut missed = case.clone();
+    missed.truth.state = TruthState::NotDiscriminated;
+    assert!(!abstention_expected(&missed, &rejects));
+    missed.truth.state = TruthState::PartiallyDiscriminated;
+    assert!(!abstention_expected(&missed, &rejects));
     // No citation at all: avoidable.
     let mut bare = case.clone();
     bare.spec_examples.clear();
