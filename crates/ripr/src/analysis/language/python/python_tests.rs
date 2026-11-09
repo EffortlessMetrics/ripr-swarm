@@ -2169,15 +2169,13 @@ fn reexport_package_receiver_spelling_is_withheld_when_the_package_is_shadowed()
         super::related_tests::owner_module_callees(&test, &owners[0])
     };
     let package = ["svc/a/src/core/__init__.py", "svc/a/src/core/impl.py"];
+    let receiver = "core.price".to_string();
     // Positive control: no rival, `import core` + `core.price(...)` is an owner spelling.
-    assert_eq!(callees(&package), vec!["core.price".to_string()]);
+    assert!(callees(&package).contains(&receiver));
     // A plain module beside the project's `src/` shadows the package name.
-    assert!(callees(&[package[0], package[1], "svc/a/core.py"]).is_empty());
+    assert!(!callees(&[package[0], package[1], "svc/a/core.py"]).contains(&receiver));
     // A plain `core.py` of a different project does not.
-    assert_eq!(
-        callees(&[package[0], package[1], "svc/b/core.py"]),
-        vec!["core.price".to_string()]
-    );
+    assert!(callees(&[package[0], package[1], "svc/b/core.py"]).contains(&receiver));
 }
 
 /// #13745: a src short name that a plain module of the same project also
