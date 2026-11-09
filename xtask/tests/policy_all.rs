@@ -309,7 +309,8 @@ fn policy_all_reads_metadata_without_compiling_members_or_changing_the_lockfile(
         "crates/sample/build.rs",
         "compile_error!(\"policy scans must not compile build scripts\");\nfn main() {}\n",
     )?;
-    let lockfile = std::fs::read(fixture.0.join("Cargo.lock")).map_err(|error| error.to_string())?;
+    let lockfile =
+        std::fs::read(fixture.0.join("Cargo.lock")).map_err(|error| error.to_string())?;
     let output = fixture.run("check-policy-all")?;
     assert!(output.status.success(), "{output:?}");
     assert!(String::from_utf8_lossy(&output.stdout).contains("check-lint-policy: pass"));
@@ -358,7 +359,10 @@ fn policy_all_keeps_membership_discovery_failure_and_other_leaf_failures() -> Re
     assert_ne!(lint_report.as_bytes(), stale_lint_report.as_slice());
     assert!(lint_report.contains("Status: fail"), "{lint_report}");
     assert!(lint_report.contains("unsafe_code"), "{lint_report}");
-    assert!(lint_report.contains("workspace membership"), "{lint_report}");
+    assert!(
+        lint_report.contains("workspace membership"),
+        "{lint_report}"
+    );
     Ok(())
 }
 

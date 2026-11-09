@@ -119,8 +119,8 @@ fn collect_inheritance_violations(
 }
 
 fn validate_inheritance(manifest: &str) -> Result<(), String> {
-    let manifest: toml::Table = toml::from_str(manifest)
-        .map_err(|error| format!("invalid member Cargo.toml: {error}"))?;
+    let manifest: toml::Table =
+        toml::from_str(manifest).map_err(|error| format!("invalid member Cargo.toml: {error}"))?;
     let lints = manifest.get("lints").and_then(toml::Value::as_table);
     if lints.is_some_and(|lints| {
         lints.len() == 1 && lints.get("workspace").and_then(toml::Value::as_bool) == Some(true)
@@ -258,7 +258,10 @@ mod tests {
             let error = validate_inheritance(manifest)
                 .err()
                 .ok_or_else(|| format!("accepted missing or replaced inheritance: {manifest}"))?;
-            assert!(error.contains("must inherit the shared lint policy"), "{error}");
+            assert!(
+                error.contains("must inherit the shared lint policy"),
+                "{error}"
+            );
         }
         Ok(())
     }
