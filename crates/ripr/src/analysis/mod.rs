@@ -1326,7 +1326,10 @@ pub(crate) fn changed_line_ownership_for_lines(
                 })
                 .map(|test| (file.clone(), test.start_line))
                 .collect::<Vec<_>>();
-            functions.chain(tests).collect::<Vec<_>>()
+            functions
+                .chain(tests)
+                .chain(attribute_edited_headers(&index, file, *line))
+                .collect::<Vec<_>>()
         })
         .collect::<BTreeSet<_>>()
         .into_iter()
@@ -1336,6 +1339,44 @@ pub(crate) fn changed_line_ownership_for_lines(
         enclosing_owners: sorted_owners(enclosing_owners),
         edited_function_headers,
     })
+}
+
+/// Largest run of attribute lines above a `fn` token still read as that
+/// function's declaration.
+const MAX_ATTRIBUTE_RUN_LINES: usize = 16;
+
+/// Headers of functions and tests whose attribute block holds `line`: an
+/// indexed start line is the `fn` token, so adding `#[test]` above an
+/// existing function edits that test without touching its span (#12940
+/// review). Every line from `line` up to the `fn` line must be an attribute,
+/// a comment, or blank; a multi-line attribute argument is not followed.
+fn attribute_edited_headers(index: &RustIndex, file: &Path, line: usize) -> Vec<(PathBuf, usize)> {
+    let Some(facts) = rust_index::find_file_facts(index, file) else {
+        return Vec::new();
+    };
+    let source_lines = facts.source.lines().collect::<Vec<_>>();
+    let attribute_like = |number: usize| {
+        number
+            .checked_sub(1)
+            .and_then(|position| source_lines.get(position))
+            .is_some_and(|text| {
+                let text = text.trim_start();
+                text.is_empty() || text.starts_with("#[") || text.starts_with("//")
+            })
+    };
+    facts
+        .functions
+        .iter()
+        .map(|function| function.start_line)
+        .chain(facts.tests.iter().map(|test| test.start_line))
+        .filter(|start| {
+            *start > line
+                && start - line <= MAX_ATTRIBUTE_RUN_LINES
+                && attribute_like(line)
+                && (line..*start).all(attribute_like)
+        })
+        .map(|start| (file.to_path_buf(), start))
+        .collect()
 }
 
 /// #11400: the returned expressions a changed `const` reaches, as
@@ -1947,6 +1988,30 @@ pub fn unrelated() -> i32 {
         {
             return Err(format!("expected unrelated owner, got {owners:?}"));
         }
+        Ok(())
+    }
+
+    #[test]
+    fn edited_headers_name_a_test_whose_attribute_line_was_added() -> Result<(), String> {
+        // #12940 review (Devin): adding `#[test]` above an existing function
+        // edits that test although its indexed span starts at `fn`. An
+        // attribute above a different, untouched test stays unattributed.
+        let root = temp_dir("edited_attribute_headers");
+        fs::create_dir_all(root.join("src"))
+            .map_err(|e| format!("failed to create src dir: {e}"))?;
+        let source = "pub fn one() -> i32 {\n    1\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    // registers the check\n    fn checks_one() {\n        assert_eq!(one(), 1);\n    }\n\n    #[test]\n    fn neighbor() {\n        assert_eq!(one(), 1);\n    }\n}\n";
+        fs::write(root.join("src/lib.rs"), source)
+            .map_err(|e| format!("failed to write src/lib.rs: {e}"))?;
+        // Line 9 is the added `#[test]`; `fn checks_one` is on line 11.
+        let ownership =
+            changed_line_ownership_for_lines(&root, &[(PathBuf::from("src/lib.rs"), 9)]);
+        fs::remove_dir_all(&root).map_err(|e| format!("failed to remove temp dir: {e}"))?;
+        let ownership = ownership?;
+        assert_eq!(
+            ownership.edited_function_headers,
+            vec![(PathBuf::from("src/lib.rs"), 11)],
+            "only the test under the added attribute is edited"
+        );
         Ok(())
     }
 
