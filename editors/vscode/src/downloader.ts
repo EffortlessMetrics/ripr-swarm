@@ -651,13 +651,16 @@ export function listZipCentralDirectoryEntries(archive: Buffer): ZipCentralDirec
   let cursor = centralOffset;
   const centralEnd = centralOffset + centralSize;
   while (cursor < centralEnd) {
-    if (cursor + 46 > archive.length || archive.readUInt32LE(cursor) !== ZIP_CENTRAL_SIGNATURE) {
+    if (cursor + 46 > centralEnd || archive.readUInt32LE(cursor) !== ZIP_CENTRAL_SIGNATURE) {
       throw new Error('Refusing server archive: malformed central directory entry.');
     }
     const flags = archive.readUInt16LE(cursor + 8);
     const nameLength = archive.readUInt16LE(cursor + 28);
     const extraLength = archive.readUInt16LE(cursor + 30);
     const commentLength = archive.readUInt16LE(cursor + 32);
+    if (46 + nameLength + extraLength + commentLength > centralEnd - cursor) {
+      throw new Error('Refusing server archive: central directory entry extends past the directory end.');
+    }
     const externalAttributes = archive.readUInt32LE(cursor + 38);
     const nameBytes = archive.subarray(cursor + 46, cursor + 46 + nameLength);
     // Expand-Archive reads the same flag; a non-UTF-8 name is decoded as
@@ -693,8 +696,12 @@ export function assertSafeZipListing(entries: readonly ZipCentralDirectoryEntry[
     }
     const unixMode = (entry.externalAttributes >>> 16) & 0xffff;
     if (unixMode !== 0) {
+      // Windows tools (Python zipfile.writestr and friends) store permission
+      // bits without a file type, so only a *present* type is classified;
+      // anything typed that is not a regular file or directory is refused,
+      // which catches symlinks (0o120000) and device/fifo members.
       const fileType = unixMode & ZIP_UNIX_IFMT;
-      if (fileType !== ZIP_UNIX_IFREG && fileType !== ZIP_UNIX_IFDIR) {
+      if (fileType !== 0 && fileType !== ZIP_UNIX_IFREG && fileType !== ZIP_UNIX_IFDIR) {
         throw new Error(`Refusing server archive member of unsupported type: ${JSON.stringify(entry.name)}.`);
       }
     }

@@ -344,6 +344,25 @@ suite('VS Code download hardening (#11477 item 5)', () => {
     );
   });
 
+  test('assertSafeZipListing accepts permission-only modes Windows tools write', () => {
+    // Python zipfile.writestr stores 0o600 << 16: permission bits with no
+    // file type. Those entries are regular files and must not be refused.
+    assert.doesNotThrow(() => assertSafeZipListing([
+      { name: 'ripr.exe', externalAttributes: 0o600 * 0x10000 }
+    ]));
+  });
+
+  test('listZipCentralDirectoryEntries refuses entries spilling past the directory end', () => {
+    const archive = buildZipCentralDirectory([{ name: 'ripr' }]);
+    // Inflate the entry's name-length field so the entry no longer fits the
+    // declared central directory, without touching the directory size.
+    archive.writeUInt16LE(0x4000, 28);
+    assert.throws(
+      () => listZipCentralDirectoryEntries(archive),
+      /extends past the directory end/
+    );
+  });
+
   test('listZipCentralDirectoryEntries reads names and attributes from a fabricated zip', () => {
     const archive = buildZipCentralDirectory([
       { name: 'ripr', externalAttributes: UNIX_REGULAR_FILE },
