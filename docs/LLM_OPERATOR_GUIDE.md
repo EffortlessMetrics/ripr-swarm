@@ -373,7 +373,11 @@ Read the receipt's movement from `summary.next_action.kind` conservatively:
 `receipt_movement_improved`, `receipt_movement_unchanged`,
 `receipt_not_applicable`). Missing and stale workflow artifacts are reported
 by `ripr agent status`: run the command it names in `missing_commands`, or
-regenerate the artifact its `stale_artifact` warning names.
+regenerate the artifact its `stale_artifact` warning names. In the JSON
+surface, skip any `missing_commands[]` entry marked `requires_substitution:
+true`: its command still contains the unresolved `<seam-id>` placeholder and
+is a template to fill in after `ripr pilot` selects a seam, not a command to
+execute verbatim (#13244).
 
 ## 7. Build The Reviewer Summary
 

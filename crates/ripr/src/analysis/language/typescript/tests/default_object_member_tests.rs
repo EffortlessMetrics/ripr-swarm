@@ -166,7 +166,6 @@ fn a_file_level_or_setup_replacement_of_the_member_credits_nothing() -> Result<(
             "setup-hook-assignment",
             "beforeEach(() => {\n  utils.merge = () => ({ a: 1, b: 5, c: 4 });\n});\n",
         ),
-        ("other-member-call", "utils.other(1);\n"),
     ] {
         assert_ne!(
             class_of(label, OWNER, &format!("{header}{setup}{test}"))?,
@@ -174,6 +173,17 @@ fn a_file_level_or_setup_replacement_of_the_member_credits_nothing() -> Result<(
             "{label}"
         );
     }
+    // A sibling member's direct call no longer withholds (#6653, amended rule 5):
+    // a direct call cannot replace `merge`, and the owner already runs with
+    // `this === utils`, so a sibling call adds no new way to lose the credit.
+    assert_eq!(
+        class_of(
+            "other-member-call",
+            OWNER,
+            &format!("{header}utils.other(1);\n{test}")
+        )?,
+        ExposureClass::Exposed
+    );
     // Control: the same file without a setup use still credits.
     assert_eq!(
         class_of("control", OWNER, &format!("{header}{test}"))?,
@@ -229,6 +239,308 @@ fn a_named_import_call_cannot_launder_a_replaced_default_member() -> Result<(), 
     let test = "import { it, expect } from 'vitest';\nimport { merge } from '../src/utils';\nimport utils from '../src/utils';\n\nit('merges', () => {\n  utils.merge = () => ({ a: 1, b: 5, c: 4 });\n  merge({ a: 1, b: 2 }, { b: 3, c: 4 });\n  expect(utils.merge({ a: 1, b: 2 }, { b: 3, c: 4 })).toEqual({ a: 1, b: 5, c: 4 });\n});\n";
     assert_ne!(
         class_of("named-plus-replaced-default", &owner, test)?,
+        ExposureClass::Exposed
+    );
+    Ok(())
+}
+
+#[test]
+fn calls_of_several_members_still_credit_each_called_member() -> Result<(), String> {
+    // axios `utils.merge` beside `utils.extend` (#6653): every use is still a
+    // direct member call, so the sibling member no longer withholds `merge`.
+    let two = test_with(&format!(
+        "{CALL}\n  expect(utils.extend({{ a: 1 }}, {{ b: 2 }})).toEqual({{ a: 1, b: 2 }});"
+    ));
+    assert_eq!(
+        class_of("two-members", OWNER, &two)?,
+        ExposureClass::Exposed
+    );
+    // The real axios shape: the default object holds both members.
+    let both = OWNER.replace(
+        "export default { merge };",
+        "function extend(a: any, b: any): any {\n  return { ...a, ...b };\n}\n\nexport default { merge, extend };",
+    );
+    assert_eq!(
+        class_of("two-members-both-exported", &both, &two)?,
+        ExposureClass::Exposed
+    );
+    // A sibling use that is not a direct call still withholds the credit.
+    let leaked = test_with(&format!(
+        "{CALL}\n  const other = utils.extend;\n  other({{}}, {{}});"
+    ));
+    assert_ne!(
+        class_of("sibling-alias", OWNER, &leaked)?,
+        ExposureClass::Exposed
+    );
+    // Only the member the test calls is credited, not an uncalled sibling.
+    let unrelated =
+        test_with("  expect(utils.extend({ a: 1 }, { b: 2 })).toEqual({ a: 1, b: 2 });");
+    assert_ne!(
+        class_of("sibling-only", OWNER, &unrelated)?,
+        ExposureClass::Exposed
+    );
+    Ok(())
+}
+
+#[test]
+fn a_call_beside_a_non_direct_use_of_the_local_credits_nothing() -> Result<(), String> {
+    // Each form sits next to a plain `utils.merge(...)` call; any use that is
+    // not a direct `local.member(` call withholds every member (rule 5).
+    for (label, extra) in [
+        ("optional-call", "  utils.merge?.({}, {});"),
+        ("computed-call", "  utils['merge']({}, {});"),
+        (
+            "destructure",
+            "  const { merge } = utils;\n  merge({}, {});",
+        ),
+        ("value-pass", "  [1].map(() => utils);"),
+    ] {
+        let test = test_with(&format!("{CALL}\n{extra}"));
+        assert_ne!(
+            class_of(label, OWNER, &test)?,
+            ExposureClass::Exposed,
+            "{label}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn a_sibling_that_can_replace_the_member_through_this_credits_nothing() -> Result<(), String> {
+    // `utils.extend()` runs with `this === utils` and can stub `merge` before
+    // the asserted call; no test-file fact sees that write (#13694 review).
+    let test = test_with(&format!("  utils.extend();\n{CALL}"));
+    for (label, extend) in [
+        (
+            "function-this-write",
+            "function extend(): void {\n  this.merge = () => ({ a: 1, b: 5, c: 4 });\n}",
+        ),
+        (
+            "nested-this-escape",
+            "function extend(): void {\n  register(() => this);\n}",
+        ),
+        (
+            "arrow-this",
+            "const extend = (): void => {\n  this.merge = () => ({ a: 1, b: 5, c: 4 });\n};",
+        ),
+    ] {
+        let owner = OWNER.replace(
+            "export default { merge };",
+            &format!("{extend}\n\nexport default {{ merge, extend }};"),
+        );
+        assert_ne!(
+            class_of(label, &owner, &test)?,
+            ExposureClass::Exposed,
+            "{label}"
+        );
+    }
+    // Control: a sibling with no `this` still lets `merge` be credited.
+    let owner = OWNER.replace(
+        "export default { merge };",
+        "function extend(): void {\n  return;\n}\n\nexport default { merge, extend };",
+    );
+    assert_eq!(
+        class_of("sibling-without-this", &owner, &test)?,
+        ExposureClass::Exposed
+    );
+    Ok(())
+}
+
+#[test]
+fn a_sibling_that_can_reach_the_object_without_this_credits_nothing() -> Result<(), String> {
+    // Routes to the anonymous default object that need no `this` (#13694
+    // review): CommonJS globals, a self-import, a dynamic import, or a
+    // helper that does one of those.
+    let test = test_with(&format!("  utils.extend();\n{CALL}"));
+    let stub = "() => ({ a: 1, b: 5, c: 4 })";
+    for (label, prelude, extend) in [
+        (
+            "require-self",
+            "",
+            format!("function extend(): void {{\n  require('./utils').default.merge = {stub};\n}}"),
+        ),
+        (
+            "exports-default",
+            "",
+            format!("function extend(): void {{\n  exports.default.merge = {stub};\n}}"),
+        ),
+        (
+            "self-import",
+            "import self from './utils';\n",
+            format!("function extend(): void {{\n  self.merge = {stub};\n}}"),
+        ),
+        (
+            "dynamic-import",
+            "",
+            format!(
+                "async function extend(): Promise<void> {{\n  (await import('./utils')).default.merge = {stub};\n}}"
+            ),
+        ),
+        (
+            "transitive-helper",
+            "",
+            format!(
+                "function patch(): void {{\n  module.exports.default.merge = {stub};\n}}\n\nfunction extend(): void {{\n  patch();\n}}"
+            ),
+        ),
+        // An imported member's body is invisible here (#13694 review).
+        (
+            "relative-imported-member",
+            "import { extend } from './extend';\n",
+            String::new(),
+        ),
+        (
+            "package-imported-member",
+            "import { extend } from 'lodash';\n",
+            String::new(),
+        ),
+        // Bindings outside the modeled top-level declarations.
+        (
+            "import-equals-self",
+            "import me = require('./utils');\n",
+            format!("function extend(): void {{\n  me.default.merge = {stub};\n}}"),
+        ),
+        (
+            "namespace-helper",
+            "",
+            format!(
+                "namespace N {{\n  export function go(): void {{\n    require('./utils').default.merge = {stub};\n  }}\n}}\n\nfunction extend(): void {{\n  N.go();\n}}"
+            ),
+        ),
+        (
+            "block-hoisted-var",
+            "",
+            format!(
+                "try {{\n  var h = require('./utils');\n}} catch {{}}\n\nfunction extend(): void {{\n  h.default.merge = {stub};\n}}"
+            ),
+        ),
+        // A declared member bound to an opaque package import.
+        (
+            "package-import-alias",
+            "import extendImpl from 'extend';\n",
+            "const extend = extendImpl;".to_string(),
+        ),
+        (
+            "package-import-destructured",
+            "import $ from 'jquery';\n",
+            "const { extend } = $;".to_string(),
+        ),
+        // A top-level reassignment the declaration scan does not see.
+        (
+            "destructured-reassignment",
+            "",
+            format!(
+                "function extend(): void {{}}\nfunction bad(this: any): void {{\n  this.merge = {stub};\n}}\n({{ extend }} = {{ extend: bad }});"
+            ),
+        ),
+        (
+            "destructured-reassignment-in-init",
+            "",
+            format!(
+                "function extend(): void {{}}\nfunction bad(this: any): void {{\n  this.merge = {stub};\n}}\nfunction init(): void {{\n  ({{ extend }} = {{ extend: bad }});\n}}\ninit();"
+            ),
+        ),
+        (
+            "reassigned-member",
+            "",
+            format!(
+                "let extend = (): void => {{}};\nextend = function (this: any): void {{\n  this.merge = {stub};\n}};"
+            ),
+        ),
+    ] {
+        let owner = format!(
+            "{prelude}{}",
+            OWNER.replace(
+                "export default { merge };",
+                &format!("{extend}\n\nexport default {{ merge, extend }};"),
+            )
+        );
+        assert_ne!(
+            class_of(label, &owner, &test)?,
+            ExposureClass::Exposed,
+            "{label}"
+        );
+    }
+    // The unsafe sibling withholds only when the test calls it: a test that
+    // calls `merge` alone keeps the single-member credit.
+    let owner = OWNER.replace(
+        "export default { merge };",
+        &format!("function extend(): void {{\n  exports.default.merge = {stub};\n}}\n\nexport default {{ merge, extend }};"),
+    );
+    assert_eq!(
+        class_of("unsafe-sibling-not-called", &owner, &test_with(CALL))?,
+        ExposureClass::Exposed
+    );
+    Ok(())
+}
+
+#[test]
+fn a_member_name_declared_twice_credits_nothing() -> Result<(), String> {
+    let owner = OWNER.replace(
+        "export default { merge };",
+        "var merge = (base: any, extra: any): any => ({ ...base, ...extra });\n\nexport default { merge };",
+    );
+    assert_ne!(
+        class_of("duplicate-name", &owner, &test_with(CALL))?,
+        ExposureClass::Exposed
+    );
+    Ok(())
+}
+
+#[test]
+fn a_second_binding_of_the_module_withholds_when_a_sibling_is_unsafe() -> Result<(), String> {
+    // #13694 review / #13750: the unsafe sibling is reached through another
+    // binding of the same module, outside the `utils.member(` calls.
+    let unsafe_owner = OWNER.replace(
+        "export default { merge };",
+        "export function extend(): void {\n  exports.default.merge = () => ({ a: 1, b: 5, c: 4 });\n}\n\nexport default { merge, extend };",
+    );
+    let header = "import { it, expect, vi } from 'vitest';\nimport utils from '../src/utils';\n";
+    for (label, binding, call) in [
+        (
+            "named-import",
+            "import { extend } from '../src/utils';\n",
+            "extend();",
+        ),
+        (
+            "second-default",
+            "import u2 from '../src/utils';\n",
+            "u2.extend();",
+        ),
+        (
+            "namespace",
+            "import * as ns from '../src/utils';\n",
+            "ns.extend();",
+        ),
+    ] {
+        let test = format!("{header}{binding}\nit('merges', () => {{\n  {call}\n{CALL}\n}});\n");
+        assert_ne!(
+            class_of(label, &unsafe_owner, &test)?,
+            ExposureClass::Exposed,
+            "{label}"
+        );
+    }
+    // Control: with a `this`-free sibling the second binding is harmless.
+    let safe_owner = OWNER.replace(
+        "export default { merge };",
+        "export function extend(): void {\n  return;\n}\n\nexport default { merge, extend };",
+    );
+    let test = format!(
+        "{header}import {{ extend }} from '../src/utils';\n\nit('merges', () => {{\n  extend();\n{CALL}\n}});\n"
+    );
+    assert_eq!(
+        class_of("named-import-safe-sibling", &safe_owner, &test)?,
+        ExposureClass::Exposed
+    );
+    Ok(())
+}
+
+#[test]
+fn overload_signatures_do_not_count_as_a_second_declaration() -> Result<(), String> {
+    // Bodiless overloads share the implementation's name (#13694 review).
+    let owner = format!("function merge(base: object, extra: object): object;\n{OWNER}");
+    assert_eq!(
+        class_of("overloads", &owner, &test_with(CALL))?,
         ExposureClass::Exposed
     );
     Ok(())

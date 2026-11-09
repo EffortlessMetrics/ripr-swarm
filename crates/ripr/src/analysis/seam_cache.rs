@@ -680,7 +680,61 @@ pub(crate) struct CachedSeamLimitInfo {
 /// statement through the same owner-pin decision as `ripr check` (#12394).
 /// `1.158`: a bounded `.map(owner)` chain is credited at the first input where
 /// the change is visible (#12841).
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.158";
+/// `1.159`: a cloned call-making callback cannot borrow an unrelated plain
+/// helper assertion (#13219). Raw file facts are unchanged; helper credit is
+/// recomputed after loading them.
+/// `1.160`: same-named receiver and free calls no longer lend one another an
+/// assertion oracle; real opposite-kind wrappers retain reach uncertainty (#12234).
+/// `1.161`: owner-bound field snapshots carry the shared framework limit
+/// through full and compact evidence before recommendation admission (#13278).
+/// Panic markers also use the producer-owned discrimination prefix (#13291).
+/// `1.162`: computed local initializer operands do not become boundaries (#12981).
+/// `1.163`: an exact error-variant pin that names a sibling variant of an
+/// `error_variant` seam is graded weak in the related-test record, as the
+/// discriminate stage already grades it (#12836).
+/// `1.164`: a bare `assert_matches!` around a placed inherent owner call names
+/// the unread-macro limitation instead of an unnamed gap (#12829).
+/// `1.165`: a guarded `Result` match that names a sibling variant of an
+/// `error_variant` seam is graded weak in the related-test record (#12897).
+/// `1.166`: predicate-boundary facts carry the concrete drafted boundary
+/// assertion (agent-efficiency study tweak #4). Old classified entries would
+/// keep serving the placeholder template for warm workspaces.
+/// `1.167`: a manifest-verified drop-in assertion import around an inherent
+/// owner call names the unverifiable-macro limit when placement is
+/// unavailable (#12886).
+/// `1.168`: `MissingDiscriminatorFact` carries a typed `shape`; cached facts
+/// written before the field cannot decode and inserted-guard facts name the
+/// guard domain instead of the equality boundary (#12414).
+/// `1.169`: the repo-wide audit withholds a plain `assert_eq!` whose literal the
+/// current owner provably does not return; cached grips decided before the
+/// withhold would keep crediting it (#13005).
+/// `1.170`: an `Err(..)` constructor is credited only when every call between it
+/// and its assertion macro is on the positive allowlist; wrapper and receiver
+/// reads are refused (#12474).
+/// `1.171`: a workspace assertion macro defined in another file that forwards
+/// its operands to a std assertion names the macro-wrapped limit instead of an
+/// unnamed gap, with nothing credited (#12886).
+/// `1.172`: a receiver rebound by a multiline Python target withholds
+/// protocol-entry credit (#9992).
+/// `1.173`: `#[async_std::test]` bodies admit owner-return pins read through one
+/// `.await` on an async owner (#5040). Old entries would keep those assertions
+/// refused as async tests.
+/// `1.174`: the repo-seam proximity gate reads a local's initializer, so an
+/// assertion on a local bound to another function pins that function (#12264).
+/// `1.175`: an equality whose compared error is replaced by an adapter such as
+/// `map_err` classifies as a weak relational check, not an exact value; cached
+/// grips decided before the refusal would keep crediting it (#12610).
+/// `1.176`: a claims `assert_ok_eq!` / `assert_some_eq!` pins a whole-value
+/// field of the struct the owner returns, and a whole-value field pin whose
+/// field value neither owner version computes no longer credits (#12394,
+/// #12864).
+/// `1.177`: same multiline receiver binding refusal as `1.172` (#9992) — the
+/// Python rule rejudges seams the `1.176` transition did not touch.
+/// `1.178`: per-byte slice-counter boundary credit and repeat-array
+/// (`&[x; n]`) input lengths in the shared `literal_slice_length` helper
+/// (#5346, #12641) — cached boundary verdicts from before the widening are not
+/// reused.
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.178";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -880,7 +934,27 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.158";
 /// `0.158`: same different-arm error-pin rule as full `1.156` (#12733, #12734).
 /// `0.159`: same audit claims-payload crediting as full `1.157` (#12394).
 /// `0.160`: same all-input `.map(owner)` visibility rule as full `1.158` (#12841).
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.160";
+/// `0.161`: same cloned-callback withholding as full `1.159` (#13219).
+/// `0.162`: same assertion call-kind refusal as full `1.160` (#12234).
+/// `0.163`: same field-snapshot and panic marker authority as full `1.161`.
+/// `0.164`: same computed-local boundary rule as full `1.162` (#12981).
+/// `0.165`: same sibling-variant error-pin grade as full `1.163` (#12836).
+/// `0.166`: same placed `assert_matches!` limit as full `1.164` (#12829).
+/// `0.167`: same sibling-variant guarded-match grade as full `1.165` (#12897).
+/// `0.168`: same drafted-boundary-assertion transition as full `1.166`.
+/// `0.169`: same drop-in import limit as full `1.167` (#12886).
+/// `0.170`: same typed missing-discriminator shape as full `1.168` (#12414).
+/// `0.171`: same plain `assert_eq!` literal withhold as full `1.169` (#13005).
+/// `0.172`: same positive Err-enclosing rule as full `1.170` (#12474).
+/// `0.173`: same cross-file wrapper limit as full `1.171` (#12886).
+/// `0.174`: same multiline receiver binding refusal as full `1.172` (#9992).
+/// `0.175`: same `#[async_std::test]` admission as full `1.173` (#5040).
+/// `0.176`: same local-bound proximity pin as full `1.174` (#12264).
+/// `0.177`: same adapter-replaced error-read refusal as full `1.175` (#12610).
+/// `0.178`: same claims field-construction pin as full `1.176` (#12394, #12864).
+/// `0.179`: same multiline receiver binding refusal as full `1.177` (#9992).
+/// `0.180`: same slice-counter boundary credit as full `1.178` (#5346, #12641).
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.180";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -1082,7 +1156,27 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.160";
 /// `0.158`: same different-arm error-pin rule as full `1.156` (#12733, #12734).
 /// `0.159`: same audit claims-payload crediting as full `1.157` (#12394).
 /// `0.160`: same all-input `.map(owner)` visibility rule as full `1.158` (#12841).
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.160";
+/// `0.161`: same cloned-callback withholding as full `1.159` (#13219).
+/// `0.162`: same assertion call-kind refusal as full `1.160` (#12234).
+/// `0.163`: same field-snapshot and panic marker authority as full `1.161`.
+/// `0.164`: same computed-local boundary rule as full `1.162` (#12981).
+/// `0.165`: same sibling-variant error-pin grade as full `1.163` (#12836).
+/// `0.166`: same placed `assert_matches!` limit as full `1.164` (#12829).
+/// `0.167`: same sibling-variant guarded-match grade as full `1.165` (#12897).
+/// `0.168`: same drafted-boundary-assertion transition as full `1.166`.
+/// `0.169`: same drop-in import limit as full `1.167` (#12886).
+/// `0.170`: same typed missing-discriminator shape as full `1.168` (#12414).
+/// `0.171`: same plain `assert_eq!` literal withhold as full `1.169` (#13005).
+/// `0.172`: same positive Err-enclosing rule as full `1.170` (#12474).
+/// `0.173`: same cross-file wrapper limit as full `1.171` (#12886).
+/// `0.174`: same multiline receiver binding refusal as full `1.172` (#9992).
+/// `0.175`: same `#[async_std::test]` admission as full `1.173` (#5040).
+/// `0.176`: same local-bound proximity pin as full `1.174` (#12264).
+/// `0.177`: same adapter-replaced error-read refusal as full `1.175` (#12610).
+/// `0.178`: same claims field-construction pin as full `1.176` (#12394, #12864).
+/// `0.179`: same multiline receiver binding refusal as full `1.177` (#9992).
+/// `0.180`: same slice-counter boundary credit as full `1.178` (#5346, #12641).
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.180";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -1293,7 +1387,9 @@ pub(crate) const COUNT_CACHE_SCHEMA_VERSION: &str = "0.2";
 /// facts for reach (#9478); `1.55` facts lack them.
 /// `1.57`: `FileFacts` carry parsed `verus_guard_facts` (#10747); `1.56`
 /// warm entries deserialize with an empty guard vector.
-pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.57";
+/// `1.58`: the positive Err-enclosing allowlist refuses wrapper and receiver
+/// shapes that still read as `ExactErrorVariant` under the denylist (#12474).
+pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.58";
 
 /// Keep the best-effort classified-seam cache from turning a successful live
 /// analysis into an unbounded post-analysis stall on large repos. Larger live
@@ -1309,6 +1405,11 @@ pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_STORE_LIMIT_ENV: &str =
 pub(crate) const CLASSIFIED_SEAM_CACHE_ENCODED_SHARD_CEILING_BYTES: usize = 8 * 1024 * 1024;
 pub(crate) const CLASSIFIED_SEAM_CACHE_ENCODED_SHARD_CEILING_ENV: &str =
     "RIPR_CLASSIFIED_SEAM_CACHE_SHARD_BYTES";
+/// Load ceiling for the single module-tree scan bundle (`scans.json`). The
+/// bundle holds one small edge list per distinct source text, so a file
+/// above this is corrupt, legacy, or hostile. Not a process-RSS guarantee.
+pub(crate) const MODULE_TREE_SCAN_CACHE_MAX_BYTES: usize = 32 * 1024 * 1024;
+pub(crate) const MODULE_TREE_SCAN_CACHE_MAX_BYTES_ENV: &str = "RIPR_MODULE_TREE_SCAN_CACHE_BYTES";
 pub(crate) const CLASSIFIED_SEAM_CACHE_STORE_IO_BUFFER_BYTES: usize = 64 * 1024;
 const CACHE_ENVELOPE_DIGEST_DOMAIN: &str = "ripr-cache:CacheEnvelope:v1";
 const SHARDED_ENVELOPE_DIGEST_DOMAIN: &str = "ripr-cache:ShardedCacheEnvelope:v1";
@@ -1558,6 +1659,14 @@ fn parse_positive_seam_cache_store_limit(value: &str, env_name: &str) -> Result<
     Ok(parsed)
 }
 
+pub(crate) fn module_tree_scan_cache_max_bytes() -> Result<usize, String> {
+    seam_cache_store_limit_from_env(
+        std::env::var(MODULE_TREE_SCAN_CACHE_MAX_BYTES_ENV),
+        MODULE_TREE_SCAN_CACHE_MAX_BYTES_ENV,
+        MODULE_TREE_SCAN_CACHE_MAX_BYTES,
+    )
+}
+
 pub(crate) fn classified_seam_cache_encoded_shard_ceiling_bytes() -> Result<usize, String> {
     classified_seam_cache_encoded_shard_ceiling_from_env(std::env::var(
         CLASSIFIED_SEAM_CACHE_ENCODED_SHARD_CEILING_ENV,
@@ -1713,6 +1822,18 @@ pub(crate) enum CacheLoad<T> {
     Hit(T),
     Miss,
     CorruptIgnored { reason: String },
+}
+
+/// Bounded read of a classified-seam cache file (single entry, shard, or
+/// manifest). The store never publishes a file above the encoded shard
+/// ceiling, so a larger file on disk is corrupt, legacy, or hostile: the
+/// bounded read fails instead of allocating it whole, and callers degrade
+/// to `CorruptIgnored` rebuild. An unparseable ceiling env falls back to
+/// the default ceiling rather than failing the load.
+fn read_classified_cache_file(path: &Path) -> std::io::Result<Vec<u8>> {
+    let ceiling = classified_seam_cache_encoded_shard_ceiling_bytes()
+        .unwrap_or(CLASSIFIED_SEAM_CACHE_ENCODED_SHARD_CEILING_BYTES);
+    crate::bounded_input::read_with_limit(path, ceiling as u64)
 }
 
 /// Names the entry file in a corrupt-load reason so a burst of
@@ -2330,7 +2451,13 @@ impl RepoModuleTreeScanCache {
         {
             return BTreeMap::new();
         }
-        let Ok(bytes) = std::fs::read(self.entry_path()) else {
+        // Bounded read: a bundle above the ceiling is never allocated
+        // whole; it degrades to a cold rebuild like any unusable bundle.
+        // An unparseable ceiling env falls back to the default ceiling.
+        let ceiling =
+            module_tree_scan_cache_max_bytes().unwrap_or(MODULE_TREE_SCAN_CACHE_MAX_BYTES);
+        let Ok(bytes) = crate::bounded_input::read_with_limit(self.entry_path(), ceiling as u64)
+        else {
             return BTreeMap::new();
         };
         let Ok(envelope) = serde_json::from_slice::<ModuleTreeScanEnvelope>(&bytes) else {
@@ -2553,7 +2680,7 @@ impl RepoSeamFactCache {
         Vec<PathBuf>,
     )> {
         let path = self.entry_path(key);
-        let bytes = match std::fs::read(&path) {
+        let bytes = match read_classified_cache_file(&path) {
             Ok(b) => b,
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => return CacheLoad::Miss,
             Err(err) => {
@@ -2671,7 +2798,7 @@ impl RepoSeamFactCache {
         Vec<PathBuf>,
     )> {
         let manifest_path = self.sharded_manifest_path(key);
-        let bytes = match std::fs::read(&manifest_path) {
+        let bytes = match read_classified_cache_file(&manifest_path) {
             Ok(bytes) => bytes,
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => return CacheLoad::Miss,
             Err(err) => {
@@ -2751,7 +2878,7 @@ impl RepoSeamFactCache {
                     Ok(path) => path,
                     Err(reason) => return CacheLoad::CorruptIgnored { reason },
                 };
-            let bytes = match std::fs::read(&shard_path) {
+            let bytes = match read_classified_cache_file(&shard_path) {
                 Ok(bytes) => bytes,
                 Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
                     return CacheLoad::CorruptIgnored {
@@ -2766,7 +2893,7 @@ impl RepoSeamFactCache {
             };
             let envelope = match codec::decode_shard(&bytes) {
                 Ok(envelope) => envelope,
-                Err(reason) => return CacheLoad::CorruptIgnored { reason },
+                Err(reason) => return corrupt_entry(&shard_path, reason),
             };
             if !envelope.matches_key(key) {
                 return CacheLoad::CorruptIgnored {
@@ -3010,6 +3137,46 @@ impl FileFactCacheStats {
 /// Layer directories whose stale schema siblings were already pruned this
 /// process (#7047). Mirrors the once-per-directory latch in
 /// `atomic_file::sweep_stale_temp_files_once`.
+/// Other analyzer identities whose current-schema file-fact entries survive
+/// the per-run prune (#7047): enough for an editor-managed server and a local
+/// CLI build to alternate on one cache without evicting each other.
+const FILE_FACT_RETAINED_OTHER_BUILDS: usize = 2;
+
+/// An other build whose use marker (a cache hit) is younger than this is
+/// never pruned, whatever its rank: a frequently rebuilt local CLI must not
+/// evict an editor server that is still in use. Builds that only wrote get no
+/// grace, so dirty rebuilds cannot accumulate.
+const FILE_FACT_RECENT_BUILD_GRACE: std::time::Duration = std::time::Duration::from_hours(7 * 24);
+
+/// Directory, beside the schema directories, holding one "last used" marker
+/// per build. Its name never parses as a schema version, so the
+/// schema-sibling prune keeps it.
+const FILE_FACT_BUILD_USE_DIR: &str = ".build-use";
+
+/// A long-running process (the editor server) refreshes its marker this often.
+const FILE_FACT_BUILD_USE_REFRESH: std::time::Duration = std::time::Duration::from_hours(1);
+
+static FILE_FACT_BUILD_USE_NOTED: Mutex<BTreeMap<PathBuf, std::time::Instant>> =
+    Mutex::new(BTreeMap::new());
+
+/// Whether `path` is a directory that is not a symlink.
+fn is_real_dir(path: &Path) -> bool {
+    std::fs::symlink_metadata(path)
+        .is_ok_and(|meta| meta.is_dir() && !meta.file_type().is_symlink())
+}
+
+/// [`is_real_dir`], or nothing exists at `path` yet.
+fn is_real_dir_or_absent(path: &Path) -> bool {
+    match std::fs::symlink_metadata(path) {
+        Ok(meta) => meta.is_dir() && !meta.file_type().is_symlink(),
+        Err(err) => err.kind() == std::io::ErrorKind::NotFound,
+    }
+}
+
+fn build_use_marker_name(identity: &str) -> String {
+    format!("{:016x}", fnv1a_64(identity.as_bytes()))
+}
+
 static FILE_FACT_STALE_SCHEMA_PRUNED: Mutex<BTreeSet<PathBuf>> = Mutex::new(BTreeSet::new());
 
 pub(crate) struct RepoFileFactCache {
@@ -3456,6 +3623,9 @@ impl RepoFileFactCache {
     /// best-effort remove sibling schema directories this build can never
     /// serve (#7047). A process-wide latch avoids a new struct field.
     fn prune_stale_schema_siblings_once(&self) {
+        if crate::atomic_file::cache_mutation_suppressed(&self.dir) {
+            return;
+        }
         let Some(layer_dir) = self.file_fact_schema_layer_dir() else {
             return;
         };
@@ -3471,6 +3641,196 @@ impl RepoFileFactCache {
         };
         if first_visit {
             self.prune_stale_schema_siblings(&layer_dir);
+            self.prune_stale_build_entries();
+        }
+    }
+
+    /// Records that this build served a hit, at most once per
+    /// [`FILE_FACT_BUILD_USE_REFRESH`] per process. A warm run never writes an
+    /// entry, so entry mtimes alone would make an editor server that only
+    /// hits look abandoned to the prune; this marker is its "last used" time.
+    /// Called by the fact build when it serves a hit, not by
+    /// `load_file_facts` itself, so read-only consumers (cache export
+    /// validation) never write. Production layout, usable base and a real
+    /// (non-symlink) marker directory only; the write is atomic and failures
+    /// are ignored.
+    pub(crate) fn note_build_use(&self) {
+        if crate::atomic_file::cache_mutation_suppressed(&self.dir) {
+            return;
+        }
+        let Some(layer_dir) = self.file_fact_schema_layer_dir() else {
+            return;
+        };
+        if self.unusable_base_reason().is_some() {
+            return;
+        }
+        let due = {
+            let mut noted = match FILE_FACT_BUILD_USE_NOTED.lock() {
+                Ok(guard) => guard,
+                Err(poisoned) => poisoned.into_inner(),
+            };
+            let now = std::time::Instant::now();
+            let due = noted
+                .get(&layer_dir)
+                .is_none_or(|last| now.duration_since(*last) >= FILE_FACT_BUILD_USE_REFRESH);
+            if due {
+                noted.insert(layer_dir.clone(), now);
+            }
+            due
+        };
+        if !due {
+            return;
+        }
+        let marker_dir = layer_dir.join(FILE_FACT_BUILD_USE_DIR);
+        if !cache_path_contained_in_base(&self.base, &marker_dir)
+            || !is_real_dir_or_absent(&layer_dir)
+            || !is_real_dir_or_absent(&marker_dir)
+        {
+            return;
+        }
+        let identity = crate::build_identity::cache_identity();
+        let marker = marker_dir.join(build_use_marker_name(identity));
+        // A planted symlink at the marker path is replaced by the atomic
+        // rename, never written through.
+        let _ = std::fs::create_dir_all(&marker_dir)
+            .map_err(|err| err.to_string())
+            .and_then(|()| {
+                crate::atomic_file::write_cache(&marker, identity.as_bytes(), "build use marker")
+            });
+    }
+
+    /// Last-hit time per other build, from the use markers. A marker counts
+    /// only when it is a small regular file whose name is the hash of its
+    /// content.
+    fn other_build_use_markers(
+        &self,
+        identity: &str,
+    ) -> HashMap<String, (std::time::SystemTime, PathBuf)> {
+        let mut markers = HashMap::new();
+        let Some(layer_dir) = self.file_fact_schema_layer_dir() else {
+            return markers;
+        };
+        let marker_dir = layer_dir.join(FILE_FACT_BUILD_USE_DIR);
+        if !is_real_dir(&layer_dir) || !is_real_dir(&marker_dir) {
+            return markers;
+        }
+        let Ok(entries) = std::fs::read_dir(&marker_dir) else {
+            return markers;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let Ok(metadata) = std::fs::symlink_metadata(&path) else {
+                continue;
+            };
+            if !metadata.is_file() || metadata.len() > 4096 {
+                continue;
+            }
+            let Ok(build) = std::fs::read_to_string(&path) else {
+                continue;
+            };
+            if build == identity
+                || entry.file_name().to_str() != Some(build_use_marker_name(&build).as_str())
+            {
+                continue;
+            }
+            let modified = metadata.modified().unwrap_or(std::time::UNIX_EPOCH);
+            markers.insert(build, (modified, path));
+        }
+        markers
+    }
+
+    /// Best-effort removal of current-schema entries written by older builds
+    /// (#7047). A key embeds the analyzer identity, so such an entry is never
+    /// served again, yet every ripr upgrade (and every dirty local rebuild)
+    /// used to leave a full generation behind.
+    ///
+    /// Kept: the current build; the [`FILE_FACT_RETAINED_OTHER_BUILDS`] most
+    /// recently used other builds, where "used" is the later of a build's
+    /// newest entry and its use marker; and any build whose use marker (proof
+    /// of a hit, see `note_build_use`) is younger than
+    /// [`FILE_FACT_RECENT_BUILD_GRACE`], so an editor server that only hits
+    /// survives a run of local rebuilds while write-only rebuilds do not pile
+    /// up. Entries whose header cannot be read, temp files and non-JSON files
+    /// are left alone; nothing is removed through a symlinked directory.
+    fn prune_stale_build_entries(&self) {
+        let identity = crate::build_identity::cache_identity();
+        // Both the layer and the schema directory must be real directories:
+        // containment is lexical, so a symlinked `repo-file-facts` would
+        // otherwise let the prune delete JSON outside the cache.
+        let Some(layer_dir) = self.file_fact_schema_layer_dir() else {
+            return;
+        };
+        if !is_real_dir(&layer_dir) || !is_real_dir(&self.dir) {
+            return;
+        }
+        let Ok(entries) = std::fs::read_dir(&self.dir) else {
+            return;
+        };
+        let mut by_build: HashMap<String, (std::time::SystemTime, Vec<PathBuf>)> = HashMap::new();
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
+                continue;
+            }
+            let Ok(metadata) = std::fs::symlink_metadata(&path) else {
+                continue;
+            };
+            if !metadata.is_file() {
+                continue;
+            }
+            let Some(header) = read_file_fact_header(&path) else {
+                continue;
+            };
+            if header.file_fact_cache_schema_version != FILE_FACT_CACHE_SCHEMA_VERSION
+                || header.analyzer_version == identity
+            {
+                continue;
+            }
+            let modified = metadata.modified().unwrap_or(std::time::UNIX_EPOCH);
+            let slot = by_build
+                .entry(header.analyzer_version)
+                .or_insert_with(|| (std::time::UNIX_EPOCH, Vec::new()));
+            slot.0 = slot.0.max(modified);
+            slot.1.push(path);
+        }
+        let mut markers = self.other_build_use_markers(identity);
+        for (build, (hit, _)) in &markers {
+            if let Some(slot) = by_build.get_mut(build) {
+                slot.0 = slot.0.max(*hit);
+            }
+        }
+        let now = std::time::SystemTime::now();
+        let hit_recently = |hit: std::time::SystemTime| {
+            now.duration_since(hit)
+                .map_or(true, |age| age < FILE_FACT_RECENT_BUILD_GRACE)
+        };
+        let mut builds: Vec<(String, (std::time::SystemTime, Vec<PathBuf>))> =
+            by_build.into_iter().collect();
+        // Newest first; the identity breaks ties so the choice is deterministic.
+        builds.sort_by(|(left_id, (left, _)), (right_id, (right, _))| {
+            right.cmp(left).then_with(|| left_id.cmp(right_id))
+        });
+        for (rank, (build, (_, paths))) in builds.into_iter().enumerate() {
+            let marker = markers.remove(&build);
+            if rank < FILE_FACT_RETAINED_OTHER_BUILDS
+                || marker.as_ref().is_some_and(|(hit, _)| hit_recently(*hit))
+            {
+                continue;
+            }
+            for path in paths {
+                if cache_path_contained_in_base(&self.base, &path) {
+                    let _ = std::fs::remove_file(&path);
+                }
+            }
+            if let Some((_, marker_path)) = marker {
+                let _ = std::fs::remove_file(marker_path);
+            }
+        }
+        // Markers of builds that no longer have entries, once past the grace.
+        for (hit, marker_path) in markers.into_values() {
+            if !hit_recently(hit) && cache_path_contained_in_base(&self.base, &marker_path) {
+                let _ = std::fs::remove_file(marker_path);
+            }
         }
     }
 
@@ -3630,7 +3990,10 @@ struct CacheEnvelope {
     workspace_manifests_hash: String,
     lockfile_hash: String,
     toolchain_hash: String,
-    #[serde(with = "related_test_table")]
+    #[serde(
+        serialize_with = "related_test_table::serialize",
+        deserialize_with = "related_test_table::deserialize_classified"
+    )]
     classified_seams: Vec<ClassifiedSeam>,
     /// `None` means this is a complete run (all seams were analyzed).
     /// `Some(...)` means the run was capped; the renderer uses this to
@@ -3972,7 +4335,10 @@ struct ShardedCacheEnvelope {
     toolchain_hash: String,
     shard_index: usize,
     shard_count: usize,
-    #[serde(with = "related_test_table")]
+    #[serde(
+        serialize_with = "related_test_table::serialize",
+        deserialize_with = "related_test_table::deserialize_classified"
+    )]
     classified_seams: Vec<ClassifiedSeam>,
 }
 
@@ -4201,6 +4567,20 @@ pub(crate) fn semantic_body_digest<T: serde::Serialize>(
     });
     Ok(format!("sha256:{:x}", writer.0.finalize()))
 }
+/// Digest of an already-serialized body. Byte-identical to
+/// [`semantic_body_digest`] of the value that produced `bytes` when `bytes`
+/// is that value's compact serialization, so a reader can verify integrity
+/// over the stored bytes it already read instead of re-serializing the
+/// decoded body on every warm read.
+pub(crate) fn semantic_digest_for_bytes(domain: &str, bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(domain.as_bytes());
+    hasher.update([0]);
+    hasher.update(bytes);
+    format!("sha256:{:x}", hasher.finalize())
+}
+
 pub(crate) fn encode_integrity_body<T: serde::Serialize>(
     body: &T,
     payload_digest: String,
@@ -4213,7 +4593,8 @@ pub(crate) fn encode_integrity_body<T: serde::Serialize>(
 }
 /// [`encode_integrity_body`] without pretty-printing, for envelopes large
 /// enough that indentation would dominate their size (the Python per-file
-/// fact store, #10914). Decoding and the digest are unchanged.
+/// fact store, #10914, and Rust file facts, #9216). Decoding and the digest
+/// are unchanged.
 pub(crate) fn encode_integrity_body_compact<T: serde::Serialize>(
     body: &T,
     payload_digest: String,
@@ -4363,13 +4744,13 @@ mod codec {
 
     #[cfg(test)]
     pub(super) fn encode_file_facts(envelope: &FileFactCacheEnvelope) -> Result<Vec<u8>, String> {
-        super::encode_integrity_body(envelope, envelope.expected_digest()?)
+        super::encode_integrity_body_compact(envelope, envelope.expected_digest()?)
     }
 
     pub(super) fn encode_file_facts_ref(
         envelope: &FileFactCacheEnvelopeRef<'_>,
     ) -> Result<Vec<u8>, String> {
-        super::encode_integrity_body(envelope, envelope.expected_digest()?)
+        super::encode_integrity_body_compact(envelope, envelope.expected_digest()?)
     }
 
     pub(super) fn decode_file_facts(bytes: &[u8]) -> Result<FileFactCacheEnvelope, String> {
@@ -4977,7 +5358,8 @@ mod tests {
         // 1.49 -> 1.50: arrow row inputs substituted (RIPR-SPEC-0231 rule 9, #10797).
         // 1.55 -> 1.56: path-value `.map(owner)` synthetic call facts (#9478).
         // 1.56 -> 1.57: Verus guard facts on file facts (#10747).
-        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.57");
+        // 1.57 -> 1.58: positive Err-enclosing allowlist (#12474).
+        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.58");
         // 1.4 -> 1.5: metadata-sourced harness validation (#3634) flips
         // verdicts for workspaces the manifest emulation approximated.
         // 1.5 -> 1.6: the #3636 reachability authority excludes
@@ -5164,7 +5546,28 @@ mod tests {
         // 1.155 -> 1.156: different-arm error pin is one fact in every view (#12733, #12734).
         // 1.156 -> 1.157: the audit credits claims payload equality via the owner pin (#12394).
         // 1.157 -> 1.158: `.map(owner)` chain credits at the first visible input (#12841).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.158");
+        // 1.158 -> 1.159: cloned callbacks cannot borrow plain-helper oracles (#13219).
+        // 1.159 -> 1.160: assertion call-kind identity separates same-named owners (#12234).
+        // 1.160 -> 1.161: unresolved field snapshots cannot remain marker-free (#13278).
+        // 1.161 -> 1.162: computed local operands are not predicate boundaries (#12981).
+        // 1.162 -> 1.163: a sibling-variant error pin reads weak in the record, as in the stage (#12836).
+        // 1.163 -> 1.164: a placed bare `assert_matches!` names the unread-macro limit (#12829).
+        // 1.164 -> 1.165: a sibling-variant guarded match reads weak in the record (#12897).
+        // 1.163 -> 1.164: predicate-boundary facts carry the concrete drafted
+        // boundary assertion (agent-efficiency study tweak #4).
+        // 1.166 -> 1.167: a drop-in assertion import names the unverifiable-macro limit (#12886).
+        // 1.167 -> 1.168: typed missing-discriminator shape (#12414).
+        // 1.169 -> 1.170: positive Err-enclosing allowlist (#12474).
+        // 1.170 -> 1.171: cross-file forwarding wrapper names the limit (#12886).
+        // 1.171 -> 1.172: multiline Python receiver rebindings withhold protocol-entry credit (#9992).
+        // 1.172 -> 1.173: `#[async_std::test]` owner-return pins (#5040).
+        // 1.173 -> 1.174: local-bound proximity pin (#12264).
+        // 1.174 -> 1.175: adapter-replaced error-read refusal (#12610).
+        // 1.175 -> 1.176: claims field-construction pin; field value neither version computes (#12394, #12864).
+        // 1.176 -> 1.177: multiline receiver rebindings rejudged (#9992).
+        // 1.177 -> 1.178: per-byte slice-counter boundary credit (#5346, #12641).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.178");
+        // 1.168 -> 1.169: plain `assert_eq!` literal withhold in the audit (#13005).
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -5304,8 +5707,28 @@ mod tests {
         // 0.157 -> 0.158: same different-arm error-pin rule as full 1.156 (#12733, #12734).
         // 0.158 -> 0.159: same audit claims-payload crediting as full 1.157 (#12394).
         // 0.159 -> 0.160: same all-input visibility rule as full 1.158 (#12841).
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.160");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.160");
+        // 0.160 -> 0.161: same cloned-callback withholding as full 1.159 (#13219).
+        // 0.161 -> 0.162: same assertion call-kind identity as full 1.160 (#12234).
+        // 0.162 -> 0.163: same field-snapshot limitation as full 1.161 (#13278).
+        // 0.163 -> 0.164: same computed-local rule as full 1.162 (#12981).
+        // 0.164 -> 0.165: same sibling-variant error-pin grade as full 1.163 (#12836).
+        // 0.165 -> 0.166: same placed `assert_matches!` limit as full 1.164 (#12829).
+        // 0.166 -> 0.167: same sibling-variant guarded-match grade as full 1.165 (#12897).
+        // 0.167 -> 0.168: same drafted-boundary-assertion transition as full 1.166.
+        // 0.168 -> 0.169: same drop-in import limit as full 1.167 (#12886).
+        // 0.169 -> 0.170: same typed missing-discriminator shape as full 1.168 (#12414).
+        // 0.171 -> 0.172: same positive Err-enclosing rule as full 1.170 (#12474).
+        // 0.172 -> 0.173: same cross-file wrapper limit as full 1.171 (#12886).
+        // 0.173 -> 0.174: same multiline receiver binding refusal as full 1.172 (#9992).
+        // 0.174 -> 0.175: same async_std test admission as full 1.173 (#5040).
+        // 0.175 -> 0.176: same local-bound proximity pin as full 1.174 (#12264).
+        // 0.176 -> 0.177: same adapter-replaced refusal as full 1.175 (#12610).
+        // 0.177 -> 0.178: same claims field-construction pin as full 1.176 (#12394, #12864).
+        // 0.178 -> 0.179: same multiline receiver rejudgment as full 1.177 (#9992).
+        // 0.179 -> 0.180: same slice-counter boundary credit as full 1.178 (#5346, #12641).
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.180");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.180");
+        // 0.170 -> 0.171: same plain `assert_eq!` literal withhold as full 1.169 (#13005).
     }
 
     #[test]
@@ -5342,6 +5765,106 @@ mod tests {
             CacheLoad::Hit(facts) => assert_eq!(facts, current_facts),
             other => return Err(format!("quarantined facts did not round trip: {other:?}")),
         }
+        Ok(())
+    }
+
+    #[test]
+    fn file_fact_store_compacts_bytes_without_changing_legacy_admission() -> Result<(), String> {
+        use crate::analysis::syntax::{RaRustSyntaxAdapter, RustSyntaxAdapter};
+        let scratch = integrity_scratch("compact-file-facts")?;
+        let cache = RepoFileFactCache::at_dir(scratch.0.clone());
+        let samples = [
+            ("src/empty.rs", ""),
+            (
+                "src/unicode.rs",
+                "pub fn café() -> &'static str { \"line\\n\\\"quoted\\\"\" }\n#[test] fn check() { assert_eq!(café(), \"line\\n\\\"quoted\\\"\"); }\n",
+            ),
+            (
+                "src/macros.rs",
+                include_str!("classify/macro_item_names.rs"),
+            ),
+        ];
+        let mut stored_bytes = 0;
+        let mut legacy_bytes = 0;
+        for (file, source) in samples {
+            let file = Path::new(file);
+            let facts = RaRustSyntaxAdapter.summarize_file(file, source)?;
+            if !source.is_empty() {
+                assert!(
+                    !facts.functions.is_empty(),
+                    "fixture must contain functions"
+                );
+                assert!(!facts.tests.is_empty(), "fixture must contain tests");
+            }
+            let key = RepoFileFactCacheKey::new(file, source.as_bytes());
+            let envelope = FileFactCacheEnvelope::new(key.clone(), facts.clone());
+            let legacy = encode_integrity_body(&envelope, envelope.expected_digest()?)?;
+            cache.store_file_facts(&key, &facts)?;
+            let entry = cache.entry_path(&key);
+            let stored = std::fs::read(&entry).map_err(|err| err.to_string())?;
+            let stored_value: serde_json::Value =
+                serde_json::from_slice(&stored).map_err(|err| err.to_string())?;
+            let legacy_value: serde_json::Value =
+                serde_json::from_slice(&legacy).map_err(|err| err.to_string())?;
+            assert_eq!(
+                stored_value, legacy_value,
+                "all fields and digest stay equal"
+            );
+            for bytes in [&stored, &legacy] {
+                std::fs::write(&entry, bytes).map_err(|err| err.to_string())?;
+                match cache.load_file_facts(&key) {
+                    CacheLoad::Hit(loaded) => assert_eq!(loaded, facts),
+                    other => return Err(format!("old/new encoding failed admission: {other:?}")),
+                }
+                assert!(cache.known_file_paths().contains(file));
+                let header = read_file_fact_header(&entry).ok_or("missing header")?;
+                assert_eq!(header.file_path, file);
+                assert_eq!(header.analyzer_version, key.analyzer_version);
+            }
+            // Corruption must still be rejected after reformatting. Do not
+            // recompute the digest when changing a served fact.
+            let mut corrupt = stored_value;
+            corrupt["file_facts"]["source"] = serde_json::json!("tampered");
+            std::fs::write(
+                &entry,
+                serde_json::to_vec(&corrupt).map_err(|err| err.to_string())?,
+            )
+            .map_err(|err| err.to_string())?;
+            assert!(matches!(
+                cache.load_file_facts(&key),
+                CacheLoad::CorruptIgnored { .. }
+            ));
+            println!(
+                "file-fact-storage {file:?}: source={} legacy={} stored={}",
+                source.len(),
+                legacy.len(),
+                stored.len()
+            );
+            let mut timings = Vec::new();
+            for compact in [false, true] {
+                let start = std::time::Instant::now();
+                for _ in 0..10 {
+                    let digest = envelope.expected_digest()?;
+                    let bytes = if compact {
+                        encode_integrity_body_compact(&envelope, digest)?
+                    } else {
+                        encode_integrity_body(&envelope, digest)?
+                    };
+                    std::hint::black_box(bytes);
+                }
+                timings.push(start.elapsed().as_micros());
+            }
+            println!(
+                "file-fact-encode {file:?}: rounds=10 pretty_us={} compact_us={} (debug profile; includes digest; excludes parse/IO)",
+                timings[0], timings[1]
+            );
+            stored_bytes += stored.len();
+            legacy_bytes += legacy.len();
+        }
+        assert!(
+            stored_bytes < legacy_bytes,
+            "production store must remove formatting bytes: stored={stored_bytes}, legacy={legacy_bytes}"
+        );
         Ok(())
     }
 
@@ -5528,8 +6051,11 @@ mod tests {
         // Explicit synthesized e290-shaped predecessor, not an execution of
         // an old parser. The separate retained CLI receipt owns that capture.
         let mut favorable = current.clone();
-        let restore_old_text = |calls: &mut Vec<crate::analysis::facts::CallFact>| {
+        let restore_old_text = |calls: &mut crate::analysis::facts::SharedFactSlice<
+            crate::analysis::facts::CallFact,
+        >| {
             for call in calls
+                .make_mut()
                 .iter_mut()
                 .filter(|call| call.name == "discounted_total" && call.line == old_offset + 1)
             {
@@ -6198,6 +6724,120 @@ mod tests {
             assert!(Arc::ptr_eq(&tests(0)[0], &tests(2)[0]), "{label}: a");
             assert!(Arc::ptr_eq(&tests(0)[1], &tests(1)[0]), "{label}: b");
         }
+        Ok(())
+    }
+
+    #[test]
+    fn classified_reference_budget_rejects_single_and_late_shard_without_a_prefix()
+    -> Result<(), String> {
+        use super::related_test_table::tests::{related, seam};
+        use crate::domain::RelationReason;
+
+        let test = related("budget", RelationReason::SameModule);
+        let seams = vec![
+            seam(1, vec![test.clone(), test.clone()]),
+            seam(2, vec![test]),
+        ];
+        for compact in [false, true] {
+            for sharded in [false, true] {
+                let scratch = integrity_scratch("reference-budget")?;
+                let cache = RepoSeamFactCache::at_dir(scratch.0.clone());
+                let mut key = empty_state().cache_key();
+                if compact {
+                    key.schema_version = COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION.to_owned();
+                }
+                cache.store_classified_seams_with_limit(
+                    &key,
+                    &seams,
+                    None,
+                    if sharded { 1 } else { 10 },
+                )?;
+                let load = || {
+                    related_test_table::with_test_classified_reference_limit(3, || {
+                        cache.load_classified_seams_with_fallback(&key)
+                    })
+                };
+                assert!(matches!(load(), CacheLoad::Hit((ref loaded, _, _)) if loaded.len() == 2));
+                related_test_table::take_test_reference_clones();
+                let path = if sharded {
+                    let manifest = codec::decode_sharded_manifest(
+                        &std::fs::read(cache.sharded_manifest_path(&key))
+                            .map_err(|err| err.to_string())?,
+                    )?;
+                    assert_eq!(manifest.shards.len(), 2);
+                    cache.sharded_entry_dir(&key).join(&manifest.shards[1].file)
+                } else {
+                    cache.entry_path(&key)
+                };
+                let mut body: serde_json::Value =
+                    serde_json::from_slice(&std::fs::read(&path).map_err(|err| err.to_string())?)
+                        .map_err(|err| err.to_string())?;
+                let seam_index = if sharded { 0 } else { 1 };
+                body["classified_seams"]["seams"][seam_index]["evidence"]["related_tests"] =
+                    if sharded {
+                        serde_json::json!([0, 0, 0, 0])
+                    } else {
+                        serde_json::json!([0, 0])
+                    };
+                std::fs::write(
+                    &path,
+                    serde_json::to_vec(&body).map_err(|err| err.to_string())?,
+                )
+                .map_err(|err| err.to_string())?;
+                match load() {
+                    CacheLoad::CorruptIgnored { reason } => {
+                        assert!(reason.contains("related-test reference limit"), "{reason}");
+                        assert!(reason.contains(&path.display().to_string()), "{reason}");
+                    }
+                    other => {
+                        return Err(format!("over-limit generation must be rejected: {other:?}"));
+                    }
+                }
+                assert_eq!(
+                    related_test_table::take_test_reference_clones(),
+                    if sharded { 2 } else { 0 },
+                    "only the earlier valid shard may expand references"
+                );
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn classified_reference_budget_refuses_default_scale_amplification() -> Result<(), String> {
+        use super::related_test_table::tests::{related, seam};
+        use crate::domain::RelationReason;
+
+        let scratch = integrity_scratch("reference-budget-scale")?;
+        let cache = RepoSeamFactCache::at_dir(scratch.0.clone());
+        let key = empty_state().cache_key();
+        let seams = [seam(1, vec![related("scale", RelationReason::SameModule)])];
+        cache.store_classified_seams_with_limit(&key, &seams, None, 10)?;
+        let path = cache.entry_path(&key);
+        let mut body: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).map_err(|err| err.to_string())?)
+                .map_err(|err| err.to_string())?;
+        let slot_bytes = std::mem::size_of::<Arc<RelatedTestGrip>>();
+        let limit = CLASSIFIED_SEAM_CACHE_ENCODED_SHARD_CEILING_BYTES / slot_bytes.max(8);
+        body["classified_seams"]["seams"][0]["evidence"]["related_tests"] =
+            serde_json::Value::Array(vec![serde_json::json!(0); limit + 1]);
+        let encoded = serde_json::to_vec(&body).map_err(|err| err.to_string())?;
+        assert!(encoded.len() < CLASSIFIED_SEAM_CACHE_ENCODED_SHARD_CEILING_BYTES);
+        related_test_table::take_test_reference_clones();
+        let result = related_test_table::with_test_classified_reference_limit(limit, || {
+            codec::decode(&encoded)
+        });
+        assert!(
+            matches!(result, Err(ref reason) if reason.contains("related-test reference limit"))
+        );
+        assert_eq!(related_test_table::take_test_reference_clones(), 0);
+        println!(
+            "reference-budget: encoded={} references={} limit={} requested-slot-bytes={}",
+            encoded.len(),
+            limit + 1,
+            limit,
+            (limit + 1) * slot_bytes
+        );
         Ok(())
     }
 
@@ -7936,6 +8576,37 @@ mod tests {
     }
 
     #[test]
+    fn given_oversized_cache_entry_when_loading_then_corrupt_ignored_is_reported()
+    -> Result<(), String> {
+        // Memory bound: a cache file above the encoded shard ceiling is
+        // never allocated whole; the load degrades to a rebuild.
+        let dir = isolated_dir("oversized");
+        ignore_remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).map_err(|err| format!("mkdir: {err}"))?;
+        let cache = RepoSeamFactCache::at_dir(dir.clone());
+        let key = empty_state().cache_key();
+        let path = cache.entry_path(&key);
+        let oversized = vec![b'x'; CLASSIFIED_SEAM_CACHE_ENCODED_SHARD_CEILING_BYTES + 1];
+        std::fs::write(&path, oversized).map_err(|err| format!("write oversized entry: {err}"))?;
+        let result = match cache.load_classified_seams(&key) {
+            CacheLoad::CorruptIgnored { reason } => {
+                if reason.contains("exceeds") {
+                    Ok(())
+                } else {
+                    Err(format!(
+                        "oversized reason should name the byte limit, got {reason}"
+                    ))
+                }
+            }
+            other => Err(format!(
+                "expected CorruptIgnored on oversized entry, got {other:?}"
+            )),
+        };
+        ignore_remove_dir_all(&dir);
+        result
+    }
+
+    #[test]
     fn given_corrupt_cache_entry_when_loading_then_corrupt_ignored_is_reported_without_failing()
     -> Result<(), String> {
         let dir = isolated_dir("corrupt");
@@ -8372,6 +9043,36 @@ mod tests {
 
         std::fs::write(&path, b"{not json").map_err(|error| error.to_string())?;
         assert!(cache.load().is_empty(), "undecodable bundle reads as empty");
+        ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn module_tree_scan_bundle_above_the_byte_ceiling_reads_as_empty() -> Result<(), String> {
+        // Memory bound: a bundle file above the load ceiling is never
+        // allocated whole; the load degrades to a cold rebuild. Trailing
+        // spaces keep the oversized file decodable, so only the byte
+        // ceiling can explain an empty read.
+        let dir = isolated_dir("module-tree-scans-oversized");
+        ignore_remove_dir_all(&dir);
+        let cache = RepoModuleTreeScanCache::at_dir(dir.clone());
+        let scans = sample_module_tree_scans();
+        cache.store(&scans)?;
+        assert_eq!(cache.load(), scans, "control: the stored bundle loads");
+
+        let path = cache.entry_path();
+        let mut bytes = std::fs::read(&path).map_err(|error| error.to_string())?;
+        let ceiling = module_tree_scan_cache_max_bytes()
+            .map_err(|error| format!("ceiling must resolve: {error}"))?;
+        if bytes.len() > ceiling {
+            return Err("control: stored bundle already exceeds the ceiling".to_string());
+        }
+        bytes.resize(ceiling + 1, b' ');
+        std::fs::write(&path, &bytes).map_err(|error| error.to_string())?;
+        assert!(
+            cache.load().is_empty(),
+            "a bundle above the byte ceiling reads as empty, not allocated whole"
+        );
         ignore_remove_dir_all(&dir);
         Ok(())
     }
@@ -9887,6 +10588,350 @@ mod file_fact_stale_schema_prune_tests {
             );
         }
         super::ignore_remove_dir_all(&root);
+        Ok(())
+    }
+}
+
+/// #7047: after a successful file-fact store, entries written by older builds
+/// in the current schema directory are removed, keeping the current build and
+/// the most recently written other builds.
+#[cfg(test)]
+mod file_fact_stale_build_prune_tests {
+    use super::*;
+
+    fn scratch(label: &str) -> Result<PathBuf, String> {
+        std::fs::create_dir_all(std::env::temp_dir()).map_err(|error| error.to_string())?;
+        let dir = super::tests::isolated_dir(label);
+        super::ignore_remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).map_err(|error| format!("create scratch: {error}"))?;
+        Ok(dir)
+    }
+
+    /// Bytes of a real current-build entry, from a throwaway cache.
+    fn current_entry_bytes(label: &str) -> Result<Vec<u8>, String> {
+        let base = scratch(label)?;
+        let cache = RepoFileFactCache::at_dir(base.clone());
+        let key = RepoFileFactCacheKey::new(Path::new("src/template.rs"), b"pub fn t() {}\n");
+        cache
+            .store_file_facts(&key, &FileFacts::default())
+            .map_err(|error| error.message)?;
+        let bytes = std::fs::read(base.join(key.filename()))
+            .map_err(|error| format!("read template entry: {error}"));
+        super::ignore_remove_dir_all(&base);
+        bytes
+    }
+
+    /// Plants an entry whose header names `analyzer` and whose mtime is
+    /// `age_days` days in the past.
+    fn plant_build_entry(
+        dir: &Path,
+        template: &[u8],
+        name: &str,
+        analyzer: &str,
+        age_days: u64,
+    ) -> Result<PathBuf, String> {
+        let text = String::from_utf8(template.to_vec()).map_err(|error| error.to_string())?;
+        let identity = crate::build_identity::cache_identity();
+        let needle = format!("\"analyzer_version\":\"{identity}\"");
+        let pretty_needle = format!("\"analyzer_version\": \"{identity}\"");
+        let replaced = if text.contains(&needle) {
+            text.replacen(&needle, &format!("\"analyzer_version\":\"{analyzer}\""), 1)
+        } else if text.contains(&pretty_needle) {
+            text.replacen(
+                &pretty_needle,
+                &format!("\"analyzer_version\": \"{analyzer}\""),
+                1,
+            )
+        } else {
+            return Err("template entry has no analyzer_version field".to_string());
+        };
+        std::fs::create_dir_all(dir).map_err(|error| error.to_string())?;
+        let path = dir.join(name);
+        std::fs::write(&path, replaced).map_err(|error| format!("plant {name}: {error}"))?;
+        let when =
+            std::time::SystemTime::now() - std::time::Duration::from_secs(age_days * 24 * 60 * 60);
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(&path)
+            .and_then(|file| file.set_modified(when))
+            .map_err(|error| format!("set mtime {name}: {error}"))?;
+        let header = read_file_fact_header(&path).ok_or("planted header unreadable")?;
+        if header.analyzer_version != analyzer {
+            return Err(format!("planted header names {}", header.analyzer_version));
+        }
+        Ok(path)
+    }
+
+    fn store_one(cache: &RepoFileFactCache) -> Result<PathBuf, String> {
+        let key = RepoFileFactCacheKey::new(Path::new("src/lib.rs"), b"pub fn cached() {}\n");
+        cache
+            .store_file_facts(&key, &FileFacts::default())
+            .map_err(|error| error.message)?;
+        Ok(cache.entry_path(&key))
+    }
+
+    #[test]
+    fn store_keeps_current_and_two_newest_other_builds_and_removes_older() -> Result<(), String> {
+        let template = current_entry_bytes("build-prune-template")?;
+        let base = scratch("build-prune-retention")?;
+        let cache = RepoFileFactCache::at_base(&base);
+        let dir = base
+            .join(CacheLayer::FileFacts.name())
+            .join(FILE_FACT_CACHE_SCHEMA_VERSION);
+        let oldest_a = plant_build_entry(&dir, &template, "a1.json", "0.9.0+old", 40)?;
+        let oldest_b = plant_build_entry(&dir, &template, "a2.json", "0.9.0+old", 39)?;
+        let middle = plant_build_entry(&dir, &template, "b.json", "0.10.0+mid", 20)?;
+        let newest = plant_build_entry(&dir, &template, "c.json", "0.10.1+new", 10)?;
+        let current = store_one(&cache)?;
+
+        let state = |path: &Path| path.exists();
+        let observed = (
+            state(&oldest_a),
+            state(&oldest_b),
+            state(&middle),
+            state(&newest),
+            state(&current),
+        );
+        super::ignore_remove_dir_all(&base);
+        if observed != (false, false, true, true, true) {
+            return Err(format!(
+                "expected (oldest gone x2, middle, newest, current kept), got {observed:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn store_leaves_unreadable_temp_and_non_json_files() -> Result<(), String> {
+        let template = current_entry_bytes("build-prune-template-2")?;
+        let base = scratch("build-prune-unreadable")?;
+        let cache = RepoFileFactCache::at_base(&base);
+        let dir = base
+            .join(CacheLayer::FileFacts.name())
+            .join(FILE_FACT_CACHE_SCHEMA_VERSION);
+        for (index, age) in [40_u64, 30, 20].iter().enumerate() {
+            plant_build_entry(
+                &dir,
+                &template,
+                &format!("old{index}.json"),
+                &format!("0.8.{index}+x"),
+                *age,
+            )?;
+        }
+        let garbage = dir.join("garbage.json");
+        std::fs::write(&garbage, b"not json").map_err(|error| error.to_string())?;
+        let temp = dir.join(".ripr-atomic-1-2-3.tmp");
+        std::fs::write(&temp, b"partial").map_err(|error| error.to_string())?;
+        let note = dir.join("README");
+        std::fs::write(&note, b"keep").map_err(|error| error.to_string())?;
+        store_one(&cache)?;
+
+        let observed = (
+            dir.join("old0.json").exists(),
+            garbage.exists(),
+            temp.exists(),
+            note.exists(),
+        );
+        super::ignore_remove_dir_all(&base);
+        if observed != (false, true, true, true) {
+            return Err(format!(
+                "expected (oldest build gone, garbage/temp/note kept), got {observed:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn at_dir_test_roots_never_prune_other_builds() -> Result<(), String> {
+        let template = current_entry_bytes("build-prune-template-3")?;
+        let dir = scratch("build-prune-at-dir")?;
+        let cache = RepoFileFactCache::at_dir(dir.clone());
+        let mut planted = Vec::new();
+        for (index, age) in [40_u64, 30, 20].iter().enumerate() {
+            planted.push(plant_build_entry(
+                &dir,
+                &template,
+                &format!("old{index}.json"),
+                &format!("0.7.{index}+x"),
+                *age,
+            )?);
+        }
+        store_one(&cache)?;
+        let all_kept = planted.iter().all(|path| path.exists());
+        super::ignore_remove_dir_all(&dir);
+        if !all_kept {
+            return Err("a non-production cache root must not prune".to_string());
+        }
+        Ok(())
+    }
+
+    fn plant_use_marker(layer: &Path, build: &str, age_days: u64) -> Result<(), String> {
+        let dir = layer.join(FILE_FACT_BUILD_USE_DIR);
+        std::fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
+        let path = dir.join(build_use_marker_name(build));
+        std::fs::write(&path, build).map_err(|error| error.to_string())?;
+        let when =
+            std::time::SystemTime::now() - std::time::Duration::from_secs(age_days * 24 * 60 * 60);
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(&path)
+            .and_then(|file| file.set_modified(when))
+            .map_err(|error| format!("set marker mtime: {error}"))
+    }
+
+    #[test]
+    fn hit_only_build_with_a_fresh_use_marker_is_kept_over_newer_writers() -> Result<(), String> {
+        let template = current_entry_bytes("build-prune-template-4")?;
+        let base = scratch("build-prune-use-marker")?;
+        let cache = RepoFileFactCache::at_base(&base);
+        let layer = base.join(CacheLayer::FileFacts.name());
+        let dir = layer.join(FILE_FACT_CACHE_SCHEMA_VERSION);
+        // The editor build wrote its entries long ago but still serves hits.
+        let editor = plant_build_entry(&dir, &template, "editor.json", "0.11.0+editor", 60)?;
+        plant_use_marker(&layer, "0.11.0+editor", 0)?;
+        let dev_old = plant_build_entry(&dir, &template, "dev1.json", "0.11.0+dev1", 30)?;
+        let dev_mid = plant_build_entry(&dir, &template, "dev2.json", "0.11.0+dev2", 20)?;
+        let dev_new = plant_build_entry(&dir, &template, "dev3.json", "0.11.0+dev3", 10)?;
+        store_one(&cache)?;
+        let observed = (
+            editor.exists(),
+            dev_old.exists(),
+            dev_mid.exists(),
+            dev_new.exists(),
+        );
+        super::ignore_remove_dir_all(&base);
+        if observed != (true, false, false, true) {
+            return Err(format!(
+                "expected (editor kept, dev1 gone, dev2 gone, dev3 kept), got {observed:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn grace_needs_a_hit_marker_and_write_only_builds_get_none() -> Result<(), String> {
+        let template = current_entry_bytes("build-prune-template-5")?;
+        let base = scratch("build-prune-grace")?;
+        let cache = RepoFileFactCache::at_base(&base);
+        let layer = base.join(CacheLayer::FileFacts.name());
+        let dir = layer.join(FILE_FACT_CACHE_SCHEMA_VERSION);
+        // Four write-only dirty rebuilds from the last few days, plus one
+        // build that only hits, last seen 5 days ago (inside the grace).
+        let hitter = plant_build_entry(&dir, &template, "hitter.json", "0.6.9+hits", 50)?;
+        plant_use_marker(&layer, "0.6.9+hits", 5)?;
+        let mut writers = Vec::new();
+        for (index, age) in [4_u64, 3, 2, 1].iter().enumerate() {
+            writers.push(plant_build_entry(
+                &dir,
+                &template,
+                &format!("dirty{index}.json"),
+                &format!("0.6.{index}+dirty"),
+                *age,
+            )?);
+        }
+        // A spoofed marker (name is not the hash of its content) is ignored.
+        let spoof_dir = layer.join(FILE_FACT_BUILD_USE_DIR);
+        std::fs::write(spoof_dir.join("0000000000000000"), "0.6.0+dirty")
+            .map_err(|error| error.to_string())?;
+        store_one(&cache)?;
+        let observed = (
+            hitter.exists(),
+            writers.iter().map(|path| path.exists()).collect::<Vec<_>>(),
+        );
+        super::ignore_remove_dir_all(&base);
+        if observed != (true, vec![false, false, true, true]) {
+            return Err(format!(
+                "expected hitter kept, two oldest dirty builds gone, two newest kept; got {observed:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn use_marker_is_never_written_through_a_symlinked_marker_dir() -> Result<(), String> {
+        let base = scratch("build-prune-marker-symlink")?;
+        let outside = scratch("build-prune-marker-outside")?;
+        let layer = base.join(CacheLayer::FileFacts.name());
+        std::fs::create_dir_all(&layer).map_err(|error| error.to_string())?;
+        std::os::unix::fs::symlink(&outside, layer.join(FILE_FACT_BUILD_USE_DIR))
+            .map_err(|error| format!("symlink: {error}"))?;
+        let cache = RepoFileFactCache::at_base(&base);
+        let key = RepoFileFactCacheKey::new(Path::new("src/sym.rs"), b"pub fn s() {}\n");
+        cache
+            .store_file_facts(&key, &FileFacts::default())
+            .map_err(|error| error.message)?;
+        let hit = matches!(cache.load_file_facts(&key), CacheLoad::Hit(_));
+        cache.note_build_use();
+        let outside_written = std::fs::read_dir(&outside)
+            .map(|entries| entries.count())
+            .unwrap_or(0);
+        super::ignore_remove_dir_all(&base);
+        super::ignore_remove_dir_all(&outside);
+        if !hit || outside_written != 0 {
+            return Err(format!("hit={hit} files written outside={outside_written}"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn noting_a_hit_records_the_use_marker_and_a_plain_read_does_not() -> Result<(), String> {
+        let base = scratch("build-prune-hit-marker")?;
+        let cache = RepoFileFactCache::at_base(&base);
+        let key = RepoFileFactCacheKey::new(Path::new("src/hit.rs"), b"pub fn hit() {}\n");
+        cache
+            .store_file_facts(&key, &FileFacts::default())
+            .map_err(|error| error.message)?;
+        let identity = crate::build_identity::cache_identity();
+        let marker = base
+            .join(CacheLayer::FileFacts.name())
+            .join(FILE_FACT_BUILD_USE_DIR)
+            .join(build_use_marker_name(identity));
+        let before_hit = marker.exists();
+        let plain_read_wrote = {
+            let _ = cache.load_file_facts(&key);
+            marker.exists()
+        };
+        let hit = matches!(cache.load_file_facts(&key), CacheLoad::Hit(_));
+        cache.note_build_use();
+        let content = std::fs::read_to_string(&marker).unwrap_or_default();
+        super::ignore_remove_dir_all(&base);
+        if before_hit || plain_read_wrote || !hit || content != identity {
+            return Err(format!(
+                "before_hit={before_hit} plain_read_wrote={plain_read_wrote} hit={hit} marker_content_matches={}",
+                content == identity
+            ));
+        }
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn prune_never_deletes_through_a_symlinked_layer_dir() -> Result<(), String> {
+        let template = current_entry_bytes("build-prune-template-6")?;
+        let base = scratch("build-prune-layer-symlink")?;
+        let outside = scratch("build-prune-layer-outside")?;
+        let outside_schema = outside.join(FILE_FACT_CACHE_SCHEMA_VERSION);
+        let mut planted = Vec::new();
+        for (index, age) in [40_u64, 30, 20].iter().enumerate() {
+            planted.push(plant_build_entry(
+                &outside_schema,
+                &template,
+                &format!("victim{index}.json"),
+                &format!("0.5.{index}+x"),
+                *age,
+            )?);
+        }
+        std::os::unix::fs::symlink(&outside, base.join(CacheLayer::FileFacts.name()))
+            .map_err(|error| format!("symlink: {error}"))?;
+        let cache = RepoFileFactCache::at_base(&base);
+        let _ = store_one(&cache);
+        let all_kept = planted.iter().all(|path| path.exists());
+        super::ignore_remove_dir_all(&base);
+        super::ignore_remove_dir_all(&outside);
+        if !all_kept {
+            return Err("prune deleted files through a symlinked layer dir".to_string());
+        }
         Ok(())
     }
 }

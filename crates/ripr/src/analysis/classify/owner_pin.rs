@@ -166,6 +166,9 @@ pub(in crate::analysis) struct OwnerReturnPin {
     /// arithmetic subset, when both are and it is called by its bare name. It
     /// lets a pinned literal that neither version returns withhold the credit.
     closed_owner: Option<super::owner_value::ClosedChange>,
+    /// #13005: set only while [`Self::literal_check_withholds`] asks whether
+    /// the current-owner literal check is the one gate refusing an assertion.
+    skip_current_literal_check: Cell<bool>,
 }
 
 /// A file's `std`/`core`-rooted `assert_eq!` paths and, for each of the four
@@ -383,6 +386,11 @@ pub(in crate::analysis) struct OwnerPinSyntax {
     /// pass retained, completed on demand, so naming a refusal never
     /// rescans the workspace per (name, test root).
     workspace_site_scan: SyncMemo<Option<WorkspaceMacroSiteIndex>>,
+    /// #13269: per module file, whether it may carry an ancestor's private
+    /// glob import down to its own modules (see [`source_may_carry_glob_chain`]).
+    glob_chain_by_file: SyncMemo<BTreeMap<PathBuf, bool>>,
+    /// Files that may import from an ancestor beyond their immediate parent.
+    glob_jump_by_file: SyncMemo<BTreeMap<PathBuf, bool>>,
     /// #8255 test witness: full-index macro-site passes this run paid.
     #[cfg(test)]
     workspace_scan_passes: SyncMemo<u32>,
@@ -774,7 +782,7 @@ impl OwnerPinSyntax {
     }
 
     /// Whether a macro in the workspace may declare a type named `name`.
-    fn macro_may_declare(&self, name: &str, index: &RustIndex) -> bool {
+    pub(super) fn macro_may_declare(&self, name: &str, index: &RustIndex) -> bool {
         self.macro_type_names
             .get_or_init(|| macro_type_names(index))
             .as_ref()
@@ -949,6 +957,18 @@ impl OwnerPinSyntax {
             && self
                 .matches_expected_panic_refusal(probe, test, assertion, index)
                 .is_none()
+    }
+
+    /// The execution and macro-binding admission for a plain returned-value
+    /// equality. A caller must separately establish the value-flow relation.
+    pub(super) fn admits_tier_return_assertion(
+        &self,
+        test: &TestSummary,
+        assertion: &OracleFact,
+        index: &RustIndex,
+    ) -> bool {
+        !test.attrs.iter().any(|attr| attr.contains("should_panic"))
+            && self.admits_assertion_family(ProbeFamily::ReturnValue, test, assertion, index)
     }
 
     fn matches_expected_panic_refusal(
@@ -1247,6 +1267,36 @@ impl OwnerPinSyntax {
                     })
                     .map(|(_, site)| (test.file.clone(), site.clone()))
             })
+    }
+
+    /// #13269: memoized [`source_may_carry_glob_chain`] for an indexed file;
+    /// an unindexed file is read as carrying one.
+    fn file_may_carry_glob_chain(&self, file: &Path, index: &RustIndex) -> bool {
+        if let Some(known) = self.glob_chain_by_file.borrow().get(file) {
+            return *known;
+        }
+        let carries = index
+            .files()
+            .get(file)
+            .is_none_or(|facts| source_may_carry_glob_chain(facts.data().source.as_ref()));
+        self.glob_chain_by_file
+            .borrow_mut()
+            .insert(file.to_path_buf(), carries);
+        carries
+    }
+
+    fn file_may_skip_glob_parent(&self, file: &Path, index: &RustIndex) -> bool {
+        if let Some(known) = self.glob_jump_by_file.borrow().get(file) {
+            return *known;
+        }
+        let jumps = index
+            .files()
+            .get(file)
+            .is_none_or(|facts| source_may_skip_glob_parent(facts.data().source.as_ref()));
+        self.glob_jump_by_file
+            .borrow_mut()
+            .insert(file.to_path_buf(), jumps);
+        jumps
     }
 
     fn execution_context(
@@ -1627,7 +1677,17 @@ impl OwnerPinSyntax {
         let module_resolved = |file: &Path, line: usize, declaration: &str| {
             resolved_modules.contains(&(file.to_path_buf(), line, declaration.to_string()))
         };
-        let sites = scan_macro_sites(&files, index, self.target_roots(index), &module_resolved);
+        // Limit naming only (#12886): with placement unavailable, a drop-in
+        // assertion import the test file's own manifest verifies is a
+        // binding to a macro that evaluates its operands. This scan feeds
+        // only the unplaced limit pass; the credit path never reads it.
+        let sites = scan_macro_sites(
+            &files,
+            index,
+            self.target_roots(index),
+            &module_resolved,
+            true,
+        );
         let names: BTreeSet<String> = sites
             .ambiguities
             .into_iter()
@@ -1728,6 +1788,8 @@ impl OwnerPinSyntax {
             let context = self.execution_context(&file.to_path_buf(), index);
             module_ancestry(&context, file, self.target_roots(index), index)
         });
+        let carries = |file: &Path| self.file_may_carry_glob_chain(file, index);
+        let jumps = |file: &Path| self.file_may_skip_glob_parent(file, index);
         let scan = self.workspace_site_scan.borrow();
         let retained = scan.as_ref()?;
         let mut rebinding: Option<&OrderedMacroSite> = None;
@@ -1746,8 +1808,14 @@ impl OwnerPinSyntax {
             }
         }
         for (file, binding) in &retained.by_module {
-            if module_binding_reaches(file, binding, ancestry.as_ref(), test_roots)
-                && let Some(rank) = binding.sites.get(name)
+            if module_binding_reaches(
+                file,
+                binding,
+                ancestry.as_ref(),
+                test_roots,
+                &carries,
+                &jumps,
+            ) && let Some(rank) = binding.sites.get(name)
             {
                 merge_macro_site_rank(&mut rebinding, &mut may_rebind, rank);
                 keep_earliest_site(&mut field_blocking, rank.field_blocking.as_ref());
@@ -2468,22 +2536,163 @@ struct ModuleLocalBinding {
 }
 
 /// Whether a module-local binding in `file` reaches a test. With the test's
-/// module ancestry the rule is exact: the declaring file is the test's file
-/// or one of its ancestors. Without it the binding keeps its crate-local
+/// module ancestry the declaring file must be the test's file or an ancestor.
+/// A private `use` is not inherited by a child module, but qualified globs
+/// can skip intermediate modules. Such imports, macro expansion and unknown
+/// syntax retain the refusal; otherwise follow possible single-parent chains.
+/// Without the ancestry the binding keeps its crate-local
 /// reach: every test of its crate roots, or every test when unrooted.
 fn module_binding_reaches(
     file: &Path,
     binding: &ModuleLocalBinding,
-    ancestry: Option<&BTreeSet<PathBuf>>,
+    ancestry: Option<&ModuleAncestry>,
     test_roots: Option<&BTreeSet<PathBuf>>,
+    carries: &dyn Fn(&Path) -> bool,
+    jumps: &dyn Fn(&Path) -> bool,
 ) -> bool {
     match ancestry {
-        Some(ancestors) => ancestors.contains(file),
+        Some(ancestry) => {
+            ancestry.files.contains(file)
+                && (file == ancestry.test_file
+                    || ancestry
+                        .files
+                        .iter()
+                        .any(|child| child != file && jumps(child))
+                    || glob_chain_reaches(file, ancestry, carries))
+        }
         None => match (test_roots, binding.roots.as_ref()) {
             (Some(test), Some(site)) => !test.is_disjoint(site),
             _ => true,
         },
     }
+}
+
+/// Whether some path of module edges leads from the glob's file down to the
+/// test's file with every file entered after the glob's own possibly carrying
+/// a glob. A file ripr cannot establish is read as carrying one.
+fn glob_chain_reaches(
+    glob_file: &Path,
+    ancestry: &ModuleAncestry,
+    carries: &dyn Fn(&Path) -> bool,
+) -> bool {
+    let mut seen: BTreeSet<&Path> = BTreeSet::from([glob_file]);
+    let mut frontier = vec![glob_file];
+    while let Some(parent) = frontier.pop() {
+        for (edge_parent, child) in &ancestry.edges {
+            if edge_parent != parent || seen.contains(child.as_path()) || !carries(child) {
+                continue;
+            }
+            if child == &ancestry.test_file {
+                return true;
+            }
+            seen.insert(child);
+            frontier.push(child);
+        }
+    }
+    false
+}
+
+/// Whether a file may import an ancestor module's private glob into its own
+/// modules (#13269): it holds a glob `use` anywhere, or an item-position macro
+/// call whose expansion could emit one, or it does not parse cleanly. A file
+/// with none cannot name the parent's glob-imported items, so the parent's
+/// glob stops there.
+fn source_may_carry_glob_chain(source: &str) -> bool {
+    let Some(parse) = parse_clean_source_file(source) else {
+        return true;
+    };
+    parse.tree().syntax().descendants().any(|node| {
+        if let Some(tree) = ast::UseTree::cast(node.clone()) {
+            return tree.star_token().is_some();
+        }
+        ast::MacroCall::can_cast(node.kind())
+            && node.parent().is_some_and(|parent| {
+                ast::SourceFile::can_cast(parent.kind()) || ast::ItemList::can_cast(parent.kind())
+            })
+    })
+}
+
+/// A qualified glob can jump over a file edge, and macro expansion or a broken
+/// parse can hide one. Only a plain single-parent glob is known not to jump;
+/// unknown attributes and other forms deliberately over-refuse.
+fn source_may_skip_glob_parent(source: &str) -> bool {
+    const BUILTIN_DERIVES: &[&str] = &[
+        "Clone",
+        "Copy",
+        "Debug",
+        "Default",
+        "PartialEq",
+        "Eq",
+        "PartialOrd",
+        "Ord",
+        "Hash",
+    ];
+    let Some(parse) = parse_clean_source_file(source) else {
+        return true;
+    };
+    parse.tree().syntax().descendants().any(|node| {
+        if let Some(attr) = ast::Attr::cast(node.clone()) {
+            let compact: String = attr
+                .syntax()
+                .text()
+                .to_string()
+                .chars()
+                .filter(|ch| !ch.is_whitespace())
+                .collect();
+            let builtin_derive = compact
+                .strip_prefix("#[derive(")
+                .and_then(|value| value.strip_suffix(")]"))
+                .is_some_and(|names| names.split(',').all(|name| BUILTIN_DERIVES.contains(&name)));
+            let inert = compact == "#[test]"
+                || builtin_derive
+                || compact.starts_with("///")
+                || compact.starts_with("//!")
+                || compact.starts_with("#[doc=")
+                || ["cfg", "allow", "warn", "deny", "forbid"]
+                    .iter()
+                    .any(|name| {
+                        compact.starts_with(&format!("#[{name}(")) && compact.ends_with(")]")
+                    });
+            if !inert {
+                return true;
+            }
+        }
+        if let Some(item) = ast::Use::cast(node.clone()) {
+            let text = item.syntax().text().to_string();
+            // A named assertion import can reach a child file outside the
+            // declaring file's scoped lookup. An imported `test` can also
+            // shadow the built-in attribute and expand to a glob.
+            if text.contains("test")
+                || BUILTIN_DERIVES.iter().any(|name| text.contains(*name))
+                || assertion_context_macros()
+                    .iter()
+                    .any(|name| text.contains(*name))
+            {
+                return true;
+            }
+            let has_glob = item
+                .syntax()
+                .descendants()
+                .filter_map(ast::UseTree::cast)
+                .any(|tree| tree.star_token().is_some());
+            if has_glob {
+                let compact: String = text.chars().filter(|ch| !ch.is_whitespace()).collect();
+                return compact != "usesuper::*;";
+            }
+        }
+        ast::MacroCall::can_cast(node.kind())
+            && node.parent().is_some_and(|parent| {
+                ast::SourceFile::can_cast(parent.kind()) || ast::ItemList::can_cast(parent.kind())
+            })
+    })
+}
+
+/// A test file's established module ancestry: the files whose module subtree
+/// holds it, with the module edges that compose them.
+struct ModuleAncestry {
+    files: BTreeSet<PathBuf>,
+    edges: Vec<(PathBuf, PathBuf)>,
+    test_file: PathBuf,
 }
 
 /// Whether a site can be confined to its file's module subtree: a private
@@ -2516,7 +2725,7 @@ fn module_ancestry(
     file: &Path,
     roots: &TargetRoots,
     index: &RustIndex,
-) -> Option<BTreeSet<PathBuf>> {
+) -> Option<ModuleAncestry> {
     // A file no recognized target places may be compiled under any module the
     // indexer never recorded (a `mod` inside a macro body), so its context of
     // just itself is not an established ancestry.
@@ -2537,7 +2746,15 @@ fn module_ancestry(
         ancestors.insert(edge.parent.clone());
         ancestors.insert(edge.child.clone());
     }
-    Some(ancestors)
+    Some(ModuleAncestry {
+        files: ancestors,
+        edges: context
+            .edges
+            .iter()
+            .map(|edge| (edge.parent.clone(), edge.child.clone()))
+            .collect(),
+        test_file: file.to_path_buf(),
+    })
 }
 
 /// The earliest rebinding site, else the earliest site that only may
@@ -2973,10 +3190,19 @@ impl OwnerPinSyntax {
         let roots = self.target_roots(index);
         let ancestry = module_ancestry(&context, &test.file, roots, index);
         let test_roots = roots.roots(&test.file, index);
+        let carries = |file: &Path| self.file_may_carry_glob_chain(file, index);
+        let jumps = |file: &Path| self.file_may_skip_glob_parent(file, index);
         by_module
             .iter()
             .filter(|(file, binding)| {
-                module_binding_reaches(file, binding, ancestry.as_ref(), test_roots.as_ref())
+                module_binding_reaches(
+                    file,
+                    binding,
+                    ancestry.as_ref(),
+                    test_roots.as_ref(),
+                    &carries,
+                    &jumps,
+                )
             })
             .flat_map(|(_, binding)| binding.names.iter().cloned())
             .collect()
@@ -3274,11 +3500,14 @@ impl AssertionRefusal {
 
     /// One reader-facing clause: what blocked crediting the assertion.
     pub(in crate::analysis) fn describe(&self) -> String {
+        // Evidence text is host-independent: use the stable slash spelling
+        // so Windows and Unix emit identical bytes (#2337 family).
         let at = |path: &Path, line: usize| {
+            let text = crate::analysis::stable_path_text(path);
             if line == 0 {
-                path.display().to_string()
+                text
             } else {
-                format!("{}:{line}", path.display())
+                format!("{text}:{line}")
             }
         };
         match self {
@@ -3361,7 +3590,7 @@ impl AssertionRefusal {
                     match &site.kind {
                         MacroBindingKind::Unparsed => format!(
                             "{} did not parse cleanly, so it may redefine `{name}!`",
-                            path.display()
+                            crate::analysis::stable_path_text(path)
                         ),
                         MacroBindingKind::NoImplicitPrelude => format!(
                             "`#![no_implicit_prelude]` at {place} removes the standard `{name}!`"
@@ -3731,6 +3960,18 @@ fn macro_root_verified_in_contexts(
         })
 }
 
+/// Whether the file's own physical manifest resolves `krate` to the drop-in
+/// package, with no placement. Names a limit only; it never certifies a
+/// binding for credit (#12886). `std` and `core` roots keep their existing
+/// unplaced handling; only a drop-in crate name widens here.
+fn own_manifest_verifies_root(path: &Path, krate: &str, index: &RustIndex) -> bool {
+    if krate == "serde_json" {
+        index.drop_in_manifests.verified_literal_json(path)
+    } else {
+        index.drop_in_manifests.verified_root(path, krate)
+    }
+}
+
 /// Trusted macro names some workspace file may rebind for every test, and
 /// the scoped sites (an inline module or block) kept per file.
 ///
@@ -3825,6 +4066,7 @@ fn scan_macro_sites(
     index: &RustIndex,
     roots: &TargetRoots,
     module_resolved: &(dyn Fn(&Path, usize, &str) -> bool + Sync),
+    own_manifest_when_unplaced: bool,
 ) -> ScannedMacroSites {
     #[cfg(test)]
     {
@@ -3857,7 +4099,13 @@ fn scan_macro_sites(
                 &names,
                 &singleton_names,
                 &|line, declaration| module_resolved(path, line, declaration),
-                &|krate| macro_root_verified_in_contexts(path, krate, index, roots),
+                &|krate| {
+                    macro_root_verified_in_contexts(path, krate, index, roots)
+                        || (own_manifest_when_unplaced
+                            && roots.disabled
+                            && !matches!(krate, "std" | "core")
+                            && own_manifest_verifies_root(path, krate, index))
+                },
             );
             ((*path).clone(), union, singleton)
         })
@@ -4192,6 +4440,15 @@ enum ReceiverType {
 enum ReturnPathGate {
     /// The changed expression is the owner's only exit.
     Any,
+    /// #13037 Defect A: the changed exit (`return <lit>;` or the tail) is a
+    /// whole decimal scalar literal and every other exit builds a different
+    /// whole decimal scalar literal, so the changed exit is the owner's only
+    /// source of `<lit>`. A passing exact pin at `<lit>` on an owner call
+    /// then proves the changed exit ran: any other exit would return its own
+    /// distinct literal and fail the pin. A second source of the same
+    /// literal, a parameter/computed exit (which may alias `<lit>` under
+    /// some input), a `?`, or a nested-closure return refuses (fail closed).
+    EarlyScalar { literal: String },
     /// The pinned value must start with this constructor. `Head("Err")`
     /// comes only from an early `return Err(..)`, and like `EarlyHead` it
     /// refuses an owner file that binds `Ok` or `Err` as a value.
@@ -4289,6 +4546,10 @@ struct WholeValueField {
     /// non-std `use` of it), so an expected `String::from(..)` is not the
     /// standard conversion and gives no credit (#7066 review).
     string_from_may_be_rebound: bool,
+    /// #12394 item 5: the changed field's initializer before and after the
+    /// diff, when both read as the closed integer subset. A pinned field value
+    /// that neither computes for the call fails on both versions.
+    closed: Option<Box<super::owner_value::ClosedChange>>,
 }
 
 /// #8480: records constructed in exit positions of `body`: the block
@@ -4740,6 +5001,7 @@ impl OwnerReturnPin {
             trait_scope_by_file: SyncMemo::default(),
             identity,
             closed_owner,
+            skip_current_literal_check: Cell::new(false),
         })
     }
 
@@ -4864,6 +5126,7 @@ impl OwnerReturnPin {
             pointer_return_change: None,
             tuple_projection: None,
             closed_owner: None,
+            skip_current_literal_check: Cell::new(false),
             awaited: declares_async(owner, index),
             poll_helpers: if declares_async(owner, index) {
                 super::poll_helper::verified_helpers(index)
@@ -4947,6 +5210,29 @@ impl OwnerReturnPin {
                 candidate.name.as_deref() == Some(field) && candidate.ty == "String"
             })
         });
+        let field_ty = derived_equality(&type_name, index).and_then(|(facts, _)| {
+            facts
+                .fields
+                .iter()
+                .find(|candidate| candidate.name.as_deref() == Some(field))
+                .map(|candidate| candidate.ty.clone())
+        });
+        let closed =
+            probe
+                .before
+                .as_deref()
+                .zip(field_ty.as_deref())
+                .and_then(|(before, field_ty)| {
+                    super::owner_value::ClosedChange::read_field(
+                        &owner.body,
+                        &owner.name,
+                        changed_line,
+                        before,
+                        field,
+                        field_ty,
+                    )
+                    .map(Box::new)
+                });
         let call = pin_call(owner, index)?;
         // #6617 keeps the associated-function pin to a return value: a
         // `T::new()` whole-value field pin is a separate claim.
@@ -4966,6 +5252,7 @@ impl OwnerReturnPin {
                 computed_names: camel_case_value_items(index),
                 constructor_names: declared_constructor_names(index),
                 string_from_may_be_rebound: wrapper_may_be_rebound("String", index),
+                closed,
             }),
             walked_positions: Vec::new(),
             returns_bool: false,
@@ -4975,6 +5262,7 @@ impl OwnerReturnPin {
             pointer_return_change: None,
             tuple_projection: None,
             closed_owner: None,
+            skip_current_literal_check: Cell::new(false),
             awaited: declares_async(owner, index),
             poll_helpers: if declares_async(owner, index) {
                 super::poll_helper::verified_helpers(index)
@@ -5078,6 +5366,7 @@ impl OwnerReturnPin {
             pointer_return_change: None,
             tuple_projection: None,
             closed_owner: None,
+            skip_current_literal_check: Cell::new(false),
             awaited: declares_async(owner, index),
             poll_helpers: if declares_async(owner, index) {
                 super::poll_helper::verified_helpers(index)
@@ -5254,6 +5543,40 @@ impl OwnerReturnPin {
             self.closed_owner = super::owner_value::ClosedChange::current(&owner.body, &self.name);
         }
         self
+    }
+
+    /// #13005: whether the closed subset can read `owner` as it stands. A cheap
+    /// pre-check on the owner's text alone, so the audit builds a pin for a
+    /// plain `assert_eq!` only where the literal check could ever withhold.
+    pub(in crate::analysis) fn owner_literal_readable(owner: &FunctionSummary) -> bool {
+        super::owner_value::ClosedChange::current(&owner.body, &owner.name).is_some()
+    }
+
+    /// #13005: whether the current-owner literal check (see
+    /// [`Self::with_current_owner_literal_check`]) is the one gate that
+    /// refuses `assertion`: [`Self::admits`] refuses it, and would admit it
+    /// without that check. The repo-wide audit credits a plain `assert_eq!`
+    /// from its extracted oracle, so it asks this to withhold a literal the
+    /// current owner provably does not return, the audit twin of the diff
+    /// path's neither-version check (#12716). Every other refusal reading is
+    /// left to the audit's existing credit.
+    pub(in crate::analysis) fn literal_check_withholds(
+        &self,
+        test: &TestSummary,
+        assertion: &OracleFact,
+        index: &RustIndex,
+        imports_foreign: ForeignImport<'_>,
+        syntax: &OwnerPinSyntax,
+    ) -> bool {
+        if self.closed_owner.is_none()
+            || self.admits(test, assertion, index, imports_foreign, syntax)
+        {
+            return false;
+        }
+        self.skip_current_literal_check.set(true);
+        let admitted_without = self.admits(test, assertion, index, imports_foreign, syntax);
+        self.skip_current_literal_check.set(false);
+        admitted_without
     }
 
     /// RIPR-SPEC-0197 claims payload equality: whether `assert_ok_eq!(call,
@@ -5484,10 +5807,15 @@ impl OwnerReturnPin {
             // only a pin on the macro's own variant reads.
             let direction = claims_payload_variant(spelling)
                 .is_some_and(|variant| unwrap_wrapper == Some(variant));
-            // Only a literal expected operand is a discriminator. The cheap
+            // Only a literal expected operand is a discriminator. A whole-value
+            // field gate reads the struct literal itself (`Config { .. }`
+            // beside an `Ok(..)` tail), so it judges that operand below;
+            // every other gate needs a scalar literal here. The cheap
             // refusals come first: the import check parses the whole file.
+            let literal_expected = matches!(self.path, ReturnPathGate::WholeValueField(_))
+                || helper_arguments::expected_literal(second, index).is_some();
             if !direction
-                || helper_arguments::expected_literal(second, index).is_none()
+                || !literal_expected
                 || doctest.is_some()
                 || !index.files().get(&test.file).is_some_and(|facts| {
                     source_imported_claims_macros(&facts.source, (test.start_line, test.end_line))
@@ -5975,11 +6303,28 @@ impl OwnerReturnPin {
         // above.
         if helper.is_none()
             && substituted.is_none()
+            && !self.skip_current_literal_check.get()
             && let Some(closed) = &self.closed_owner
             && let Some(call) = call_text
                 .map(str::to_string)
                 .or_else(|| owner_call_in(&assertion.text, &self.name, unwrapped))
             && closed.provably_unpinned(&self.name, call.trim_end_matches(".unwrap()"), expected)
+        {
+            return false;
+        }
+        // #12394 item 5: the same for a whole-value field pin. The field's
+        // pinned value is read against both versions of the changed field's
+        // initializer; a value neither computes for the call's literal
+        // arguments fails the test on both versions.
+        if helper.is_none()
+            && substituted.is_none()
+            && let ReturnPathGate::WholeValueField(gate) = &self.path
+            && let Some(closed) = &gate.closed
+            && let Some(call) = call_text
+                .map(str::to_string)
+                .or_else(|| owner_call_in(&assertion.text, &self.name, unwrapped))
+            && let Some(pinned) = gate.pinned_field_text(expected)
+            && closed.provably_unpinned(&self.name, call.trim_end_matches(".unwrap()"), &pinned)
         {
             return false;
         }
@@ -7468,6 +7813,9 @@ impl ReturnPathGate {
                 constructor_call_span(expected.trim(), head).is_some()
             }
             Self::Exact(value) => expected.trim() == *value,
+            Self::EarlyScalar { literal } => {
+                super::boundary_pairing::same_scalar_literal(expected.trim(), literal)
+            }
             Self::ErrVariant {
                 qualifier, variant, ..
             } => {
@@ -8390,7 +8738,10 @@ fn return_path_gate_from(
             return None;
         }
         return early_return_gate(body, inner, inner_text, changed, &spans_changed_line)
-            .or_else(|| err_variant_gate(body, inner, inner_text, changed, &spans_changed_line));
+            .or_else(|| err_variant_gate(body, inner, inner_text, changed, &spans_changed_line))
+            .or_else(|| {
+                scalar_early_return_gate(body, inner, inner_text, changed, &spans_changed_line)
+            });
     }
     if has_unbounded_macro(inner) {
         return None;
@@ -8420,6 +8771,18 @@ fn return_path_gate_from(
     if early_exits == 0 {
         return Some(ReturnPathGate::Any);
     }
+    // #13037 Defect A: a scalar literal tail beside early returns that build
+    // only different scalar literals is the owner's only source of its value,
+    // like `Any` but multi-exit. Refused when any exit may alias the tail
+    // value (a parameter, computed exit or same literal elsewhere).
+    if !conditional
+        && !inner.contains('?')
+        && scalar_exits_are_distinct_literals(inner, inner_text, changed).is_some()
+    {
+        return Some(ReturnPathGate::EarlyScalar {
+            literal: changed.to_string(),
+        });
+    }
     let (head, other) = if constructor_call_span(changed, "Ok").is_some() {
         ("Ok", "Err")
     } else if constructor_call_span(changed, "Some").is_some() {
@@ -8442,6 +8805,40 @@ fn return_path_gate_from(
             || starts_with_word(inner[offset + "return".len()..].trim_start(), other)
     });
     returns_agree.then_some(ReturnPathGate::Head(head))
+}
+
+/// #13037 Defect A, the propagation witness's owner-side question: whether the
+/// changed early `return <lit>;` on `changed_line` is the owner's only exit
+/// producing `<lit>`. Returns the literal when the same fail-closed exit rule
+/// as the [`ReturnPathGate::EarlyScalar`] pin gate establishes it; the witness
+/// may then complete the direct-return edge, and reveal's per-test pin
+/// admission (the value check) remains the authority for whether a test
+/// observes the exit.
+pub(in crate::analysis) fn scalar_early_return_exit(
+    body: &str,
+    expression: &str,
+    changed_line: usize,
+) -> Option<String> {
+    let masked = mask_comments_and_strings(body);
+    let open = body_block_open(&masked)?;
+    let close = matching_close(&masked, open, b'{', b'}')?;
+    let inner = &masked[open + 1..close];
+    let inner_text = &body[open + 1..close];
+    let changed = collapse_whitespace(expression.trim().trim_end_matches(';'));
+    let changed = changed
+        .strip_prefix("return ")
+        .map_or(changed.as_str(), str::trim);
+    let spans_changed_line = |start: usize, end: usize| {
+        let line_of = |offset: usize| body[..open + 1 + offset].matches('\n').count();
+        let text = &inner_text[start..end];
+        let first = start + (text.len() - text.trim_start().len());
+        let last = start + text.trim_end().len();
+        (line_of(first)..=line_of(last)).contains(&changed_line)
+    };
+    match scalar_early_return_gate(body, inner, inner_text, changed, &spans_changed_line)? {
+        ReturnPathGate::EarlyScalar { literal } => Some(literal),
+        _ => None,
+    }
 }
 
 /// An early `return None;` / `return Err(..);` is the only source of that
@@ -8510,6 +8907,87 @@ fn early_return_gate(
     // The tail must itself build the opposite constructor: an empty tail
     // after a trailing `if .. { .. } else { None }` hides a second source.
     (changed_returns == 1 && opposite(tail)).then_some(gate)
+}
+
+/// #13037 Defect A: an early `return <lit>;` whose value is a whole decimal
+/// scalar literal is the owner's only source of `<lit>` when every other
+/// `return` builds a different whole scalar literal and the tail is also a
+/// different whole scalar literal. A pin expecting `<lit>` on an owner call
+/// then observes the changed return: the sibling exits would return their own
+/// distinct literals and fail the pin, so a passing pin proves the changed
+/// exit ran. Fail closed (no gate) for a second source of the same literal
+/// (`return 0; .. 0`), a parameter or computed exit (which may alias `<lit>`
+/// for some input the gate does not read), a `?`, a nested-closure return, an
+/// unbounded macro, or a conditionally-evaluated changed value.
+fn scalar_early_return_gate(
+    body: &str,
+    inner: &str,
+    inner_text: &str,
+    changed: &str,
+    spans_changed_line: &dyn Fn(usize, usize) -> bool,
+) -> Option<ReturnPathGate> {
+    if !super::boundary_pairing::is_whole_decimal_literal(changed)
+        || evaluates_conditionally(&mask_comments_and_strings(changed))
+        || inner.contains('?')
+        || !returns_leave_the_function(body)
+    {
+        return None;
+    }
+    let mut changed_returns = 0usize;
+    for offset in whole_word_offsets(inner, "return") {
+        let value_start = offset + "return".len();
+        let value_end = value_start + inner[value_start..].find(';')?;
+        let value = collapse_whitespace(&inner_text[value_start..value_end]);
+        let value = value.trim();
+        if !super::boundary_pairing::is_whole_decimal_literal(value) {
+            // A parameter, const or computed exit may alias the changed
+            // literal under an input this static read does not evaluate.
+            return None;
+        }
+        if super::boundary_pairing::same_scalar_literal(value, changed) {
+            // Only the changed line may produce this literal; a second
+            // `return` of it elsewhere is a second source.
+            if !spans_changed_line(offset, value_end) {
+                return None;
+            }
+            changed_returns += 1;
+        }
+    }
+    let (after_semicolon, after_brace) = top_level_tail_starts(inner);
+    let tail = collapse_whitespace(&inner_text[after_semicolon.max(after_brace)..]);
+    let tail = tail.trim();
+    (changed_returns == 1
+        && super::boundary_pairing::is_whole_decimal_literal(tail)
+        && !super::boundary_pairing::same_scalar_literal(tail, changed))
+    .then(|| ReturnPathGate::EarlyScalar {
+        literal: changed.to_string(),
+    })
+}
+
+/// #13037 Defect A, tail direction: whether every early `return` in `inner`
+/// builds a whole decimal scalar literal different from `changed`. Used for a
+/// scalar literal tail beside early returns: with the tail established as the
+/// changed expression and no `?` in the body, the tail is then the owner's
+/// only source of its value. A parameter, computed or same-literal return
+/// refuses (fail closed), as does a second return of the tail's own literal.
+fn scalar_exits_are_distinct_literals(inner: &str, inner_text: &str, changed: &str) -> Option<()> {
+    if !super::boundary_pairing::is_whole_decimal_literal(changed) {
+        return None;
+    }
+    for offset in whole_word_offsets(inner, "return") {
+        let value_start = offset + "return".len();
+        let value_end = value_start + inner[value_start..].find(';')?;
+        let value = collapse_whitespace(&inner_text[value_start..value_end]);
+        let value = value.trim();
+        if !super::boundary_pairing::is_whole_decimal_literal(value)
+            || super::boundary_pairing::same_scalar_literal(value, changed)
+        {
+            // A parameter/computed exit may alias the tail value; a return of
+            // the tail's own literal is a second source of it.
+            return None;
+        }
+    }
+    Some(())
 }
 
 /// #7063: the enum and variant segments (`ConfigError`, `MissingEquals`) of
@@ -9147,6 +9625,37 @@ fn returns_other_variant(exit: &ast::ReturnExpr, wrapper: &str) -> bool {
 }
 
 impl WholeValueField {
+    /// The source text a literal `expected` gives the field (`3` for
+    /// `Ok(Config { retries: 3 })`), when [`Self::admits`] reads it.
+    fn pinned_field_text(&self, expected: &str) -> Option<String> {
+        let parse = parse_clean_source_file(&format!("fn ripr_expected() {{ ({expected}); }}"))?;
+        let mut value = parse
+            .tree()
+            .syntax()
+            .descendants()
+            .find_map(ast::ParenExpr::cast)?
+            .expr()?;
+        if self.wrapper.is_some() {
+            let ast::Expr::CallExpr(call) = value else {
+                return None;
+            };
+            value = call.arg_list()?.args().next()?;
+        }
+        let ast::Expr::RecordExpr(literal) = value else {
+            return None;
+        };
+        literal
+            .record_expr_field_list()?
+            .fields()
+            .find(|candidate| {
+                candidate
+                    .field_name()
+                    .is_some_and(|name| name.text().trim_start_matches("r#") == self.field)
+            })?
+            .expr()
+            .map(|pinned| pinned.syntax().text().to_string())
+    }
+
     /// RIPR-SPEC-0225 rule 2: `expected` is a literal of the owner's type,
     /// in the owner's wrapper, that names the field once, explicitly, with an
     /// independent value ([`independent_value`]), and no functional-update
@@ -9825,7 +10334,7 @@ fn workspace_enum_declares_variant(qualifier: &str, variant: &str, index: &RustI
 /// #7063: whether `qualifier` names one workspace type whose `==` is the
 /// derived one over fields that each compare by value, so an equality
 /// against one constructed variant compares that variant's payload.
-fn error_enum_compares_payload(qualifier: &str, index: &RustIndex) -> bool {
+pub(super) fn error_enum_compares_payload(qualifier: &str, index: &RustIndex) -> bool {
     derived_equality(qualifier, index).is_some_and(|(facts, declaring)| {
         facts.fields.iter().all(|field| {
             !field.has_attributes && type_compares_by_value(&field.ty, declaring, index, 0)
@@ -15747,15 +16256,15 @@ pub(super) fn imported_enum_variant_value(
     if name.is_empty() || enum_name.is_empty() || PRELUDE_VALUES.contains(&name) {
         return false;
     }
-    let declaring: Vec<_> = index
-        .files()
-        .values()
-        .filter(|facts| {
+    let declaring_path = index.call_identity_memos.sole_type_declarer(enum_name, || {
+        let mut matching = index.files().iter().filter(|(_, facts)| {
             facts.source.contains(enum_name)
                 && declares_type(&mask_comments_and_strings(&facts.source), enum_name)
-        })
-        .collect();
-    let [declaring] = declaring.as_slice() else {
+        });
+        let first = matching.next()?;
+        matching.next().is_none().then(|| first.0.clone())
+    });
+    let Some(declaring) = declaring_path.and_then(|path| index.files().get(&path)) else {
         return false;
     };
     // Equality facts are not needed (and can be unavailable for an enum with
