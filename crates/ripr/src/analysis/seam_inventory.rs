@@ -2692,7 +2692,12 @@ fn classify_scoped_seams_streamed(
     }
     trace_latency_phase(
         "review_scope_partition",
-        &format!("seams_{}_first_{}_rest_{}", seams.len(), first.len(), rest.len()),
+        &format!(
+            "seams_{}_first_{}_rest_{}",
+            seams.len(),
+            first.len(),
+            rest.len()
+        ),
         Duration::ZERO,
     );
     if latency_trace::latency_trace_enabled() {
