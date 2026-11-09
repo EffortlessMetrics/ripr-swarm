@@ -341,7 +341,7 @@ fn policy_all_keeps_membership_discovery_failure_and_other_leaf_failures() -> Re
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         stderr.contains(
-            "check-policy-all: 2 gate(s) failed: check-executable-files, check-lint-policy"
+            "check-policy-all: 3 gate(s) failed: check-covered-by, check-executable-files, check-lint-policy"
         ),
         "{stderr}"
     );

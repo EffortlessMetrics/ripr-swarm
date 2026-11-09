@@ -132,8 +132,9 @@ cargo xtask check-doc-artifacts
    build scripts, the command reads member metadata and returns success without
    changing the lockfile.
 7. Given failed workspace discovery and lint-ledger drift, plus an independent
-   executable violation, the command reports both failing leaves and publishes
-   a new lint-policy report containing both lint errors despite an old pass.
+   executable violation, the command reports every failing leaf (including the
+   covered-by enumeration, which shares the missing member) and publishes a new
+   lint-policy report containing both lint errors despite an old pass.
 8. Given a workspace member that omits, disables or replaces
    `[lints] workspace = true`, `check-lint-policy` fails and names the manifest.
 
