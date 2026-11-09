@@ -743,9 +743,12 @@ made required without blocking unrelated PRs (#12904).
   `merge-ready` for a later head). The trigger has no `paths` filter. On a
   merge-ready request the `Detect Kani Surface` job diffs base...head and runs
   `kani` only when the diff touches the lane's inputs: `crates/ripr/src/**`,
-  `crates/ripr/build.rs`, `crates/ripr/Cargo.toml`, the root `Cargo.toml`,
-  `Cargo.lock`, `rust-toolchain.toml`, `.cargo/**`, `xtask/src/kani_lane.rs` or
-  the workflow. Anything it cannot classify (missing history, a failed diff, an
+  `crates/ripr/build.rs`, `crates/ripr/Cargo.toml`, `crates/ripr-contract/**`
+  (a path dependency whose domain types the harnesses use), the root
+  `Cargo.toml`, `Cargo.lock`, `rust-toolchain.toml`, `.cargo/**`, the lane
+  driver (`xtask/Cargo.toml`, `xtask/src/main.rs`, `xtask/src/run.rs`,
+  `xtask/src/kani_lane.rs`) or the workflow. Detection writes only fixed
+  output values, never a PR-controlled path. Anything it cannot classify (missing history, a failed diff, an
   empty diff) runs the lane. Schedule and dispatch always run `kani`. Kani
   compiles the whole `ripr` library, so a run takes minutes and several GB of
   memory.
