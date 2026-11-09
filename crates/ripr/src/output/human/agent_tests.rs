@@ -515,6 +515,25 @@ fn exposed_only_run_is_done_with_no_gap_lines_or_next() {
 }
 
 #[test]
+fn exposed_only_run_with_unanalyzed_files_stops_instead_of_done() {
+    let mut blocked = output(vec![finding("probe:ok", ExposureClass::Exposed, 4)]);
+    blocked.unanalyzed_working_tree = true;
+    let text = rendered(&blocked);
+    assert!(text.contains("\nunanalyzed=uncommitted_edits|"), "{text}");
+    assert!(text.contains("\nstop=changes were not analyzed"), "{text}");
+    assert!(!text.contains("done="), "{text}");
+
+    let mut ignored = output(vec![finding("probe:ok", ExposureClass::Exposed, 4)]);
+    ignored.ignored_working_tree_source_paths = vec!["gen/a.rs".to_string()];
+    let text = rendered(&ignored);
+    assert!(text.contains("\nunanalyzed=gitignored|"), "{text}");
+    assert!(
+        text.contains("\ndone=no weak or unobserved gap left"),
+        "{text}"
+    );
+}
+
+#[test]
 fn static_limited_run_stops_and_names_the_limit_instead_of_a_gap() {
     let text = rendered(&output(vec![finding(
         "probe:np",
@@ -902,6 +921,44 @@ fn nothing_analyzed_stops_and_refuses_verify_while_a_valid_diff_stays_done() -> 
 }
 
 #[test]
+fn empty_report_over_unanalyzed_files_stops_instead_of_done() {
+    let mut untracked = output(Vec::new());
+    untracked.unanalyzed_working_tree = true;
+    untracked.untracked_working_tree_source_paths = vec!["src/new.rs".to_string()];
+    let text = rendered(&untracked);
+    assert!(
+        text.contains("\nunanalyzed=uncommitted_edits|fix="),
+        "{text}"
+    );
+    assert!(
+        text.contains("\nunanalyzed=untracked|files=src/new.rs|fix=git add -N PATH"),
+        "{text}"
+    );
+    assert!(text.contains("\nstop=changes were not analyzed"), "{text}");
+    assert!(!text.contains("done="), "{text}");
+
+    let mut ignored = output(Vec::new());
+    ignored.ignored_working_tree_source_paths = vec!["gen/a.rs".to_string()];
+    let text = rendered(&ignored);
+    assert!(
+        text.contains("\nunanalyzed=gitignored|files=gen/a.rs|fix=git add -f -N PATH"),
+        "{text}"
+    );
+    // Gitignored source is disclosed but the shared verification owner never
+    // refuses on it, so the clean claim stands (negative control).
+    assert!(text.contains("\ndone=no changed behavior"), "{text}");
+    assert!(!text.contains("stop=changes were not analyzed"), "{text}");
+
+    // Negative: untracked paths without an unanalyzed or working-tree read
+    // are not this run's concern, so a clean report stays `done=`.
+    let mut quiet = output(Vec::new());
+    quiet.untracked_working_tree_source_paths = vec!["src/new.rs".to_string()];
+    let text = rendered(&quiet);
+    assert!(!text.contains("unanalyzed="), "{text}");
+    assert!(text.contains("\ndone=no changed behavior"), "{text}");
+}
+
+#[test]
 fn non_current_findings_are_never_listed_as_gaps() {
     let mut base_side = weak_gap("probe:old", 3);
     base_side.source_currentness = SourceCurrentness::BaseDeleted;
@@ -1086,6 +1143,7 @@ fn explain_agent_preview_weak_gap_keeps_the_discriminator_and_test_open() {
         "{text}"
     );
     assert!(!text.contains("nothing more is fixable"), "{text}");
+    assert!(!text.contains("offers no guided repair"), "{text}");
     assert!(!text.contains("\nstop="), "{text}");
     assert!(
         text.contains("static advisory, not runtime proof"),

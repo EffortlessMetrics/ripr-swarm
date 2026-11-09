@@ -2644,3 +2644,41 @@ fn a_src_short_name_shadowed_by_a_plain_module_is_not_exposed() -> Result<(), St
     );
     Ok(())
 }
+
+/// #13786: a package re-export (`svc/a/src/core/__init__.py` re-exports `price`
+/// from `impl.py`) is shadowed by a same-project plain `core` module the same
+/// way, so `from core import price` credits neither.
+#[test]
+fn a_reexported_package_name_shadowed_by_a_plain_module_is_not_exposed() -> Result<(), String> {
+    let reexport_class = |workspace_sources: &[&str]| -> Result<ExposureClass, String> {
+        let owner_file = Path::new("svc/a/src/core/impl.py");
+        let mut owners = extract_owners(owner_file, SHADOW_OWNER);
+        for owner in &mut owners {
+            owner.reexport_modules = vec!["core".to_string()];
+        }
+        let files = workspace_sources
+            .iter()
+            .map(|file| std::path::PathBuf::from(*file))
+            .collect::<Vec<_>>();
+        related_tests::apply_src_module_ambiguity(&mut owners, files.iter());
+        let tests = extract_tests(Path::new("svc/a/tests/test_core.py"), SHADOW_TEST);
+        classify::classify_change_with_context(
+            owner_file,
+            2,
+            "    return x + 2",
+            Some(SHADOW_OLD),
+            &owners,
+            &tests,
+            classify::PythonNoBehaviorContext::default(),
+            None,
+        )
+        .map(|finding| finding.class)
+        .ok_or_else(|| "changed line should classify".to_string())
+    };
+    let package = ["svc/a/src/core/__init__.py", "svc/a/src/core/impl.py"];
+    // Unshadowed control credits the re-export.
+    assert_eq!(reexport_class(&package)?, ExposureClass::Exposed);
+    let shadowed = [package[0], package[1], "svc/a/core.py"];
+    assert_ne!(reexport_class(&shadowed)?, ExposureClass::Exposed);
+    Ok(())
+}
