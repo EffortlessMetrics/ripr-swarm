@@ -700,6 +700,9 @@ fn bound_identifiers_from_owner_calls(body: &str, owner_name: &str) -> Vec<Strin
     fn is_ident_byte(byte: u8) -> bool {
         byte.is_ascii_alphanumeric() || byte == b'_'
     }
+    // Quoted text and comments are not code: mask them before every scan.
+    let masked = crate::analysis::extract::mask::mask_comments_and_strings(body);
+    let body = masked.as_str();
     let bytes = body.as_bytes();
     // Every binding event: (name, initializer calls the owner).
     let mut events: Vec<(String, bool)> = Vec::new();
@@ -744,8 +747,17 @@ fn bound_identifiers_from_owner_calls(body: &str, owner_name: &str) -> Vec<Strin
                 events.push((name.to_string(), text_calls_owner(initializer, owner_name)))
             }
             None => {
+                // In a struct pattern `field: binding` only the name after the
+                // colon is bound; the field label is not a shadow.
                 for word in words {
-                    events.push((word.to_string(), false));
+                    let after_word = pattern
+                        .find(word)
+                        .map(|at| pattern[at + word.len()..].trim_start())
+                        .unwrap_or("");
+                    let label = after_word.starts_with(':') && !after_word.starts_with("::");
+                    if !label {
+                        events.push((word.to_string(), false));
+                    }
                 }
             }
         }
@@ -782,14 +794,27 @@ fn bound_identifiers_from_owner_calls(body: &str, owner_name: &str) -> Vec<Strin
                 continue;
             }
             let tail = body[from..].trim_start();
-            if !tail.starts_with('=') || tail.starts_with("==") || tail.starts_with("=>") {
+            // `=` or a compound assignment (`+=`, `<<=`, ...); comparisons
+            // (`==`, `<=`, `>=`, `!=`) and `=>` are not rebindings.
+            let operator = ["<<", ">>"]
+                .iter()
+                .find(|operator| tail.starts_with(**operator))
+                .map_or_else(
+                    || usize::from(tail.starts_with(['+', '-', '*', '/', '%', '&', '|', '^'])),
+                    |operator| operator.len(),
+                );
+            let assign = &tail[operator..];
+            if !assign.starts_with('=') || assign.starts_with("==") || assign.starts_with("=>") {
+                continue;
+            }
+            if at > 0 && bytes[at - 1] == b'.' {
                 continue;
             }
             let head = body[..at].trim_end();
             if head.ends_with("let") || head.ends_with("mut") || head.ends_with("ref") {
                 continue;
             }
-            let initializer = tail[1..].split(';').next().unwrap_or("");
+            let initializer = assign[1..].split(';').next().unwrap_or("");
             events.push((name.clone(), text_calls_owner(initializer, owner_name)));
         }
     }
@@ -1728,6 +1753,14 @@ mod tests {
                 "let mut amount = tax(100); amount = 0; assert_eq!(amount, 0);",
             ),
             (
+                "compound assignment",
+                "let mut amount = tax(100); amount *= 0; assert_eq!(amount, 0);",
+            ),
+            (
+                "shifted assignment",
+                "let mut amount = tax(100); amount <<= 1; assert_eq!(amount, 0);",
+            ),
+            (
                 "for variable",
                 "let amount = tax(100); for amount in 0..3 { assert_eq!(amount, 0); }",
             ),
@@ -1743,6 +1776,33 @@ mod tests {
             bound("let amount = tax(1); assert!(amount == 1); let other = 0;"),
             vec!["amount".to_string()]
         );
+        assert_eq!(
+            bound("let amount = tax(1); assert!(amount <= 1 && amount >= 0 && amount != 2);"),
+            vec!["amount".to_string()]
+        );
+        // Only a real rebinding of the local counts: a field write, a quoted
+        // or commented loop, a struct-pattern field label and a comparison
+        // leave the owner binding in place.
+        for (label, body) in [
+            (
+                "field write",
+                "let amount = tax(100); other.amount = 0; assert_eq!(amount, 90);",
+            ),
+            (
+                "quoted loop",
+                "let amount = tax(100); let note = \"for amount in examples\"; assert_eq!(amount, 90);",
+            ),
+            (
+                "commented loop",
+                "let amount = tax(100); // for amount in examples\n assert_eq!(amount, 90);",
+            ),
+            (
+                "struct field label",
+                "let amount = tax(100); let Record { amount: other } = record; assert_eq!(amount, 90);",
+            ),
+        ] {
+            assert_eq!(bound(body), vec!["amount".to_string()], "{label}: {body}");
+        }
         // The shadowed test is not credited as observing the owner.
         assert!(!oracle_binds_sink_identity(
             "assert_eq!(amount, 0)",

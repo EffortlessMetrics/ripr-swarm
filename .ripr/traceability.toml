@@ -8844,7 +8844,9 @@ tests = [
   "crates/ripr/src/analysis/classify/effect_carrier/tests.rs::whole_object_refused_when_owner_fed_binding_is_rewritten_before_assertion",
   "crates/ripr/src/analysis/classify/effect_carrier/tests.rs::whole_object_refused_when_compared_binding_reassigned_after_owner_call",
   "crates/ripr/src/analysis/classify/effect_carrier/tests.rs::unrelated_binding_rewrite_does_not_veto_compared_receiver_equality",
-  "crates/ripr/src/analysis/classify/reveal.rs::tests::a_refused_effect_carrier_withholds_only_the_whole_object_observer"
+  "crates/ripr/src/analysis/classify/reveal.rs::tests::a_refused_effect_carrier_withholds_only_the_whole_object_observer",
+  "crates/ripr/src/analysis/classifier/finding.rs::tests::owner_binding_scan_drops_a_name_the_body_rebinds",
+  "crates/ripr/src/analysis/classifier/finding.rs::tests::owner_binding_scan_handles_mut_and_fails_closed_on_patterns"
 ]
 fixtures = [
   "fixtures/rust_unused_trait_effect_oracle",
