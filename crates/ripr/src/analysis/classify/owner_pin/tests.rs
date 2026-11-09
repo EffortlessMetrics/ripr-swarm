@@ -3065,6 +3065,42 @@ fn a_constant_counts_only_from_a_package_the_test_belongs_to_tests_or_names() {
 }
 
 #[test]
+fn receiver_let_bindings_scan_each_body_and_receiver_once_per_run() {
+    let tests = "use demo::weight;\n#[test]\nfn weighs() {\nlet e = weight(2);\nlet f = e;\nassert_eq!(weight(2), f);\n}\n";
+    let index = index(&[(LIB, WEIGHT_LIB), (TESTS, tests)]);
+    assert_eq!(index.tests().len(), 1, "fixture must hold exactly one test");
+    let test = index.tests().at(0);
+    let answer = |receiver: &str| receiver_let_bindings(test, receiver);
+    let unscoped: Vec<_> = ["e", "f", "weight"].into_iter().map(answer).collect();
+    assert_eq!(
+        unscoped[0].as_deref(),
+        Some(&[" = weight(2)"][..]),
+        "one readable binding of `e`"
+    );
+    assert_eq!(unscoped[1].as_deref(), Some(&[" = e"][..]));
+    assert_eq!(
+        unscoped[2].as_deref(),
+        Some(&[][..]),
+        "no binding of the owner"
+    );
+    let before = RECEIVER_LET_SCANS.with(Cell::get);
+    let scoped: Vec<Vec<_>> = {
+        let _scope = crate::analysis::syntax::run_memo::enter();
+        (0..4)
+            .map(|_| ["e", "f", "weight"].into_iter().map(answer).collect())
+            .collect()
+    };
+    for round in &scoped {
+        assert_eq!(round, &unscoped, "the memo never changes an answer");
+    }
+    assert_eq!(
+        RECEIVER_LET_SCANS.with(Cell::get) - before,
+        3,
+        "one scan per distinct (body, receiver), not one per ask"
+    );
+}
+
+#[test]
 fn the_reveal_side_reads_an_expected_name_only_through_one_readable_let_or_constant() {
     let value = |items: &str, body: &str, operand: &str| -> Option<String> {
         let tests = format!("use demo::weight;\n{items}\n#[test]\nfn weighs() {{\n{body}\n}}\n");
