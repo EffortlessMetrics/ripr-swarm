@@ -379,7 +379,7 @@ fn reuse_cached_index(
             path,
             &build::rust_source_text(bytes).text,
             &kept,
-            !cached.index.include_parents.is_empty(),
+            includes::index_holds_include_state(&cached.index),
         )
     });
     if retracts || rebases_includes {

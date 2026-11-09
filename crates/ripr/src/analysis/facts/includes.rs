@@ -139,6 +139,9 @@ pub(super) fn resolve_repository_local_includes(root: &Path, index: &mut RustInd
             "rust_include_edge_limit_exceeded",
         ));
         index.include_parents.clear();
+        // A fresh build starts with no targets; an index extended in place
+        // would otherwise keep the set an earlier pass found.
+        index.include_targets.clear();
         sort_limitations(&mut limitations);
         index.include_limitations = limitations;
         return;
@@ -241,6 +244,15 @@ pub(super) fn resolve_repository_local_includes(root: &Path, index: &mut RustInd
 /// index already holds rebased include edges (`core_has_include_edges`) any
 /// directive in an added file could push the merged total over the budget,
 /// which clears the edges without undoing the rebased identities: it counts.
+/// Whether the index already carries include state from an earlier
+/// resolution pass: resolved parents (whose function identities are rebased)
+/// or physical include targets. The overflow path of the resolution pass
+/// returns before replacing the targets, so a stale set would survive an
+/// in-place extension that a fresh build never had.
+pub(super) fn index_holds_include_state(index: &RustIndex) -> bool {
+    !index.include_parents.is_empty() || !index.include_targets.is_empty()
+}
+
 pub(super) fn added_file_may_rebase_includes(
     path: &Path,
     source: &str,
@@ -875,6 +887,50 @@ mod tests {
         );
         fs::remove_dir_all(&root)?;
         Ok(())
+    }
+
+    /// An index extended in place can carry the target set an earlier pass
+    /// found; the budget-overflow path must leave none, as a fresh build does.
+    #[test]
+    fn edge_budget_overflow_leaves_no_stale_include_targets() -> Result<(), String> {
+        let root = std::env::temp_dir().join(format!(
+            "ripr-include-overflow-{}-{}",
+            std::process::id(),
+            NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed)
+        ));
+        let mut many = String::new();
+        for _ in 0..=MAX_INCLUDE_EDGES {
+            many.push_str("mod m { include!(\"frag.rs\"); }\n");
+        }
+        let sources = [
+            ("src/lib.rs", many.as_str()),
+            ("src/frag.rs", "pub fn f() {}\n"),
+        ];
+        write_fixture(&root, &sources).map_err(|error| error.to_string())?;
+        let mut index = manual_index(&sources);
+        index.include_targets.insert(PathBuf::from("src/frag.rs"));
+        resolve_repository_local_includes(&root, &mut index);
+        let _ = fs::remove_dir_all(&root);
+        assert!(index.include_parents.is_empty());
+        assert!(index.include_targets.is_empty());
+        assert!(
+            index
+                .include_limitations
+                .iter()
+                .any(|limit| limit.reason_code == "rust_include_edge_limit_exceeded")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn include_state_covers_targets_left_without_resolved_parents() {
+        let mut index = RustIndex::default();
+        assert!(!index_holds_include_state(&index));
+        index.include_targets.insert(PathBuf::from("src/frag.rs"));
+        assert!(
+            index_holds_include_state(&index),
+            "ambiguous parents leave targets but no include_parents"
+        );
     }
 
     #[test]
