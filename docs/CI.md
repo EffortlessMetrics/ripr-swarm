@@ -717,8 +717,11 @@ normalization behavior surfaced only on a maintainer's local run.
 ### Advisory Kani Lane
 
 `.github/workflows/kani.yml` (RIPR-SPEC-0371) runs Kani bounded model checking
-over pure cores. It follows "lighter, later, tighter": it is not a required
-check and does not run on ordinary pushes or PR updates.
+over pure cores. It follows "lighter, later, tighter": it does not run on
+ordinary pushes or PR updates. It is not a required check: branch protection in
+`.github/settings.yml` still lists only `Ripr Rust Small Result` until the owner
+changes it, but the lane now posts a stable `Kani Result` context so it can be
+made required without blocking unrelated PRs (#12904).
 
 - **What runs.** `cargo xtask kani`, which runs `cargo kani -p ripr` over every
   `#[kani::proof]` harness (harnesses live in `#[cfg(kani)]` modules next to the
@@ -736,10 +739,23 @@ check and does not run on ordinary pushes or PR updates.
   full-program proof, not a runtime-mutation result and not evidence about code
   a harness does not call.
 - **Selection.** A daily schedule, `workflow_dispatch`, and `merge-ready` on a
-  pull request that touches `crates/ripr/src/**`, `xtask/src/kani_lane.rs` or the
-  workflow (same guard shape as the merge-ready label flow; re-apply
-  `merge-ready` for a later head). Kani compiles the whole `ripr` library, so a
-  run takes minutes and several GB of memory.
+  pull request (same guard shape as the merge-ready label flow; re-apply
+  `merge-ready` for a later head). The trigger has no `paths` filter. On a
+  merge-ready request the `Detect Kani Surface` job diffs base...head and runs
+  `kani` only when the diff touches the lane's inputs: `crates/ripr/src/**`,
+  `crates/ripr/build.rs`, `crates/ripr/Cargo.toml`, the root `Cargo.toml`,
+  `Cargo.lock`, `rust-toolchain.toml`, `.cargo/**`, `xtask/src/kani_lane.rs` or
+  the workflow. Anything it cannot classify (missing history, a failed diff, an
+  empty diff) runs the lane. Schedule and dispatch always run `kani`. Kani
+  compiles the whole `ripr` library, so a run takes minutes and several GB of
+  memory.
+- **Kani Result.** Every schedule, dispatch and merge-ready run posts
+  `Kani Result`. It passes only when `kani` succeeded, or when `kani` was
+  skipped because detection succeeded and found no lane input. It fails when
+  detection failed, when `kani` failed, was cancelled or timed out, and when
+  detection reported a relevant diff but `kani` was skipped. Any other
+  pull_request label event names the result job `Kani Nonrequest`, never
+  `Kani Result`, so a nonrequest or skipped job cannot earn the context.
 
 ### Advisory Printed-Command Paste Lane
 

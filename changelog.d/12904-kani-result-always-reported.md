@@ -1,0 +1,2 @@
+<!-- section: Internal / CI -->
+- The Kani lane posts an always-reported `Kani Result` context on every schedule, dispatch and `merge-ready` run: the trigger-level `paths` filter is replaced by an in-workflow detection job, `kani` runs only when the PR diff touches the lane's inputs, and the result fails on a detection failure, a failed, cancelled or timed-out `kani`, or a skipped `kani` on a relevant diff. Branch protection is unchanged (#12904).

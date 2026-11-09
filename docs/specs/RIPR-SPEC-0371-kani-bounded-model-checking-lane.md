@@ -105,10 +105,15 @@ checkouts; the CI lane never passes it.
 
 ### The lane
 
-`.github/workflows/kani.yml` is advisory and not a required check. It runs
-nightly, on dispatch and when `merge-ready` is applied to a pull request that
-touches ripr source, with `kani-verifier` pinned to an exact version. See
-[CI](../CI.md#advisory-kani-lane).
+`.github/workflows/kani.yml` runs nightly, on dispatch and when `merge-ready`
+is applied to a pull request, with `kani-verifier` pinned to an exact version.
+On a merge-ready request a detection job runs the harnesses only when the pull
+request diff touches the lane's inputs (ripr source and build inputs, the lane
+driver or the workflow); anything it cannot classify runs them. Every such run
+posts a `Kani Result` context that passes only on a harness run that succeeded
+or a detection-established irrelevant skip, and fails otherwise; it never passes by
+absence. The lane is not a required check until branch protection lists that
+context. See [CI](../CI.md#advisory-kani-lane).
 
 ## What a proof does and does not claim
 
