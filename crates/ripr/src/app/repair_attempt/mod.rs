@@ -419,7 +419,7 @@ pub(crate) fn receipt_binding_from(
     seam_id: &str,
     packet_path: &Path,
     attempt_id: Option<&str>,
-) -> Result<serde_json::Value, String> {
+) -> Result<serde_json::Value, ReceiptBindingError> {
     // Refusals name the root the caller typed, bound lexically against the
     // working directory so a pasted command runs from anywhere (#3999), never
     // the canonicalized verbatim path the store resolver hands back below
@@ -439,11 +439,11 @@ pub(crate) fn receipt_binding_from(
         let attempt_id = RepairAttemptId::parse(attempt_id.to_string())?;
         let loaded = load_repair_attempt_by_id(&store, &attempt_id)?;
         if loaded.1.seam_id != seam_id {
-            return Err(format!(
+            return Err(ReceiptBindingError::Other(format!(
                 "repair attempt {} belongs to seam `{}`, not `{seam_id}`",
                 attempt_id.as_str(),
                 loaded.1.seam_id
-            ));
+            )));
         }
         loaded
     } else {
@@ -483,9 +483,9 @@ pub(crate) fn receipt_binding_from(
                     matches.len()
                 )
             };
-            return Err(format!(
+            return Err(ReceiptBindingError::Other(format!(
                 "receipt requires exactly one repair attempt for seam `{seam_id}`: {detail} (`ripr agent status` lists the attempts)"
-            ));
+            )));
         }
         matches.pop().ok_or_else(|| {
             "missing attempt; start one with `ripr agent repair`, then rerun".to_string()
@@ -519,14 +519,14 @@ pub(crate) fn receipt_binding_from(
         } else {
             " (repository HEAD moved since the after phase recorded its verdict; `ripr agent status` reads which head)".to_string()
         };
-        return Err(format!(
+        return Err(ReceiptBindingError::Other(format!(
             "repair attempt {} is not receipt-ready: state `{}`, current {}{}, verdict `{}`; run `ripr agent status` to see why, then start a new attempt with `ripr agent repair`",
             manifest.repair_attempt_id.as_str(),
             repair_attempt_state_label(&manifest.state),
             after.current,
             current_gloss,
             after.verdict.status.as_label(),
-        ));
+        )));
     }
     // The receipt names the after head the finish recorded. That head is the
     // prepared head, or a descendant reached only by commits the edit cage
@@ -540,7 +540,7 @@ pub(crate) fn receipt_binding_from(
                 &current_head,
             )?)
     {
-        return Err("repair attempt receipt is stale relative to repository HEAD; start a new attempt with `ripr agent repair` on the current HEAD".to_string());
+        return Err(ReceiptBindingError::Other("repair attempt receipt is stale relative to repository HEAD; start a new attempt with `ripr agent repair` on the current HEAD".to_string()));
     }
     let packet_artifact = find_manifest_artifact(&manifest, "agent_packet")?;
     let packet_artifact_bytes = std::fs::read(root.join(&packet_artifact.path))
@@ -549,7 +549,7 @@ pub(crate) fn receipt_binding_from(
         || packet_artifact.sha256 != packet_sha256
         || after.packet_sha256 != packet_sha256
     {
-        return Err("repair attempt packet binding is tampered or replayed".to_string());
+        return Err(ReceiptBindingError::Other("repair attempt packet binding is tampered or replayed".to_string()));
     }
     let (verdict, binding_holds) = recompute_after_verdict_binding(&root, &manifest, after)?;
     if !binding_holds {
@@ -573,7 +573,7 @@ pub(crate) fn receipt_binding_from(
         // A staging name an interrupted writer left beside a retained artifact
         // is the one cause with a one-step fix, so name it first.
         let residue = staged_residue_cause(&root, &manifest);
-        return Err(format!(
+        return Err(ReceiptBindingError::Other(format!(
             "repair attempt after verdict binding is tampered or stale: the recorded binding no longer matches the attempt.\n\
              {residue}Causes: command output redirected into a repository file during the run (stdout or stderr, including under `target/ripr`), or a path outside `target/ripr` that changed after the after phase bound it.\n\
              Next: `{status}` reads the attempt's state.\n\
@@ -585,7 +585,7 @@ pub(crate) fn receipt_binding_from(
              3. Run `{restart}`; if it fails, put your copy back.\n\
              4. Re-apply your edit and run the new --attempt command it prints.\n\
              Write command output outside the repository."
-        ));
+        )));
     }
     validate_trusted_head_surface(
         &root,
@@ -5350,24 +5350,69 @@ fn validate_manifest_at(
 /// phase (for example a `Cargo.lock` an earlier build generated) is not an
 /// attempt write, and the cage's compliant verdict already reported it as
 /// unchanged, so refusing it here would contradict the cage's own delta.
+/// Typed refusal class for repair-receipt admission (#12102): which record
+/// authority a refusal narrates into, whether the focused evaluation restores,
+/// and whether the refusal maps to the decision exit code are all read from
+/// this type at the call sites, never re-derived from message text. The
+/// rendered messages stay byte-identical to the historical strings.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum ReceiptBindingError {
+    /// The repository differs from the attempt's trusted edit surface
+    /// (#5262); carries the first refusing path. This is the deliberate named
+    /// refusal: the attempt is terminal and the recovery is to commit or
+    /// remove the observed change first.
+    TrustedSurfaceUntrusted {
+        /// The repository-relative path outside the allowed edit surface.
+        path: String,
+    },
+    /// Every other admission refusal (stale or tampered binding, wrong seam,
+    /// not receipt-ready, ambiguous attempt selection). The message text is
+    /// the full contract for these.
+    Other(String),
+}
+
+impl ReceiptBindingError {
+    /// The refusal message exactly as the historical `String` errors rendered
+    /// it, so consumers that log or persist the text see unchanged bytes.
+    pub(crate) fn message(&self) -> String {
+        match self {
+            Self::TrustedSurfaceUntrusted { path } => format!(
+                "repair receipt observed repository path {TRUSTED_SURFACE_REFUSAL_TAIL}: {path}"
+            ),
+            Self::Other(message) => message.clone(),
+        }
+    }
+}
+
+impl std::fmt::Display for ReceiptBindingError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.message())
+    }
+}
+
+impl From<String> for ReceiptBindingError {
+    fn from(message: String) -> Self {
+        Self::Other(message)
+    }
+}
+
 fn validate_trusted_head_surface(
     root: &Path,
     policy: &EditCagePolicy,
     observed_changes: &[String],
     before_head: &str,
-) -> Result<(), String> {
+) -> Result<(), ReceiptBindingError> {
     match trusted_head_surface_violations(root, policy, observed_changes, before_head)?.as_slice() {
         [] => Ok(()),
-        [path, ..] => Err(format!(
-            "repair receipt observed repository path {TRUSTED_SURFACE_REFUSAL_TAIL}: {path}"
-        )),
+        [path, ..] => Err(ReceiptBindingError::TrustedSurfaceUntrusted { path: path.clone() }),
     }
 }
 
 /// The stable tail of the receipt's trusted-surface admission refusal. The
-/// after phase matches it to narrate the commit-first recovery when the
-/// refusal still fires mid-loop, so the shared vocabulary cannot drift
-/// between the refusing validator and its narration (#5262).
+/// after phase's narration names this same vocabulary (through
+/// [`ReceiptBindingError::message`]) when the refusal still fires mid-loop, so
+/// the shared vocabulary cannot drift between the refusing validator and its
+/// narration (#5262).
 pub(crate) const TRUSTED_SURFACE_REFUSAL_TAIL: &str = "outside trusted edit surface";
 
 /// The repository paths a receipt would refuse for this head: tracked paths
@@ -7402,7 +7447,8 @@ mod tests {
                 .map_err(|error| format!("write test: {error}"))?;
             run_git(&root, &["add", "tests/target.rs"])?;
             run_git(&root, &["commit", "--no-gpg-sign", "-qm", "focused test"])?;
-            validate_trusted_head_surface(&root, &policy, &[], &prepared_head)?;
+            validate_trusted_head_surface(&root, &policy, &[], &prepared_head)
+                .map_err(|error| error.message())?;
 
             std::fs::write(root.join("src.rs"), "pub fn moved() {}\n")
                 .map_err(|error| format!("write production file: {error}"))?;
@@ -7414,7 +7460,9 @@ mod tests {
                 return Err("the production change must be committed".to_string());
             }
             match validate_trusted_head_surface(&root, &policy, &[], &prepared_head) {
-                Err(error) if error.contains("outside trusted edit surface: src.rs") => Ok(()),
+                Err(ReceiptBindingError::TrustedSurfaceUntrusted { path }) if path == "src.rs" => {
+                    Ok(())
+                }
                 other => Err(format!(
                     "a committed production change must block the receipt: {other:?}"
                 )),
@@ -8623,7 +8671,7 @@ mod tests {
             let packet = root.join(&find_manifest_artifact(&finished, "agent_packet")?.path);
             let attempt = finished.repair_attempt_id.as_str();
             match receipt_binding_from(&root, None, "seam:sample", &packet, Some(attempt)) {
-                Err(error) if error.contains("no post-change path identity binding") => {}
+                Err(error) if error.message().contains("no post-change path identity binding") => {}
                 other => return Err(format!("legacy receipt must be unavailable: {other:?}")),
             }
             std::fs::write(&prepared.manifest_path, manifest_bytes)
@@ -8640,7 +8688,7 @@ mod tests {
                 return Err("second edit to bound selected path remained current".to_string());
             }
             match receipt_binding_from(&root, None, "seam:sample", &packet, Some(attempt)) {
-                Err(error) if error.contains("tampered or stale") => {}
+                Err(error) if error.message().contains("tampered or stale") => {}
                 other => return Err(format!("receipt must refuse changed test bytes: {other:?}")),
             }
             std::fs::write(&selected, original).map_err(|error| error.to_string())?;
@@ -8703,7 +8751,7 @@ mod tests {
             // The authority path refuses the same state, and issues the
             // receipt before the drift.
             match receipt_binding_from(&root, None, "seam:sample", &packet, Some(attempt)) {
-                Err(error) if error.contains("tampered or stale") => {}
+                Err(error) if error.message().contains("tampered or stale") => {}
                 other => return Err(format!("receipt must refuse drift: {other:?}")),
             }
             std::fs::remove_file(&production)
@@ -8714,7 +8762,8 @@ mod tests {
                     "reverting the drift must restore current: {restored:?}"
                 ));
             }
-            receipt_binding_from(&root, None, "seam:sample", &packet, Some(attempt))?;
+            receipt_binding_from(&root, None, "seam:sample", &packet, Some(attempt))
+                .map_err(|error| error.message())?;
             Ok(())
         })();
         let _ = std::fs::remove_dir_all(&root);
