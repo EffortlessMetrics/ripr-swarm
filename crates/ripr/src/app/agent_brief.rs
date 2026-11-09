@@ -288,20 +288,23 @@ pub(crate) struct AgentBriefWithheldChangedGap {
     pub(crate) seam_id: String,
     pub(crate) file: PathBuf,
     pub(crate) line: usize,
+    /// The seam's static class, so consumers do not invent one.
+    pub(crate) class: String,
     pub(crate) message: String,
 }
 
 impl AgentBriefWithheldChangedGap {
     fn for_omission(
         entry: &ClassifiedSeam,
-        why_now: &AgentBriefWhyNow,
+        working_set: &NormalizedAgentBriefWorkingSet<'_>,
         omission: AgentBriefOmission,
     ) -> Option<Self> {
-        if !matches!(
-            why_now.reason,
-            AgentBriefWhyNowReason::ChangedLineIntersectsSeam
-                | AgentBriefWhyNowReason::ChangedOwnerFunction
-        ) {
+        // Membership is checked directly, not through the ranked why-now
+        // reason: a changed related-test line outranks a changed owner there,
+        // and must not hide a changed owner's withheld gap.
+        if matching_changed_line(&entry.seam, working_set).is_none()
+            && matching_changed_owner(&entry.seam, working_set).is_none()
+        {
             return None;
         }
         let class = match omission {
@@ -326,6 +329,7 @@ impl AgentBriefWithheldChangedGap {
             seam_id: entry.seam.id().as_str().to_string(),
             file: entry.seam.file().to_path_buf(),
             line: entry.seam.display_line(),
+            class: class.as_str().to_string(),
             message: format!(
                 "Changed {} seam in {} is withheld from repair guidance as a static \
                  limitation ({categories}). Its absence from comments is not evidence the gap \
@@ -494,7 +498,9 @@ fn direct_candidates<'a>(
         if let Some(omission) = AgentBriefOmission::for_entry(entry, policy) {
             omitted_by_policy += 1;
             withheld_changed_gaps.extend(AgentBriefWithheldChangedGap::for_omission(
-                entry, &why_now, omission,
+                entry,
+                &normalized_working_set,
+                omission,
             ));
             // A large diff can match thousands of hidden seams; name
             // the first few and count the rest per reason.
@@ -2689,6 +2695,63 @@ weakly_gripped = "off"
         for (ordinal, entry) in seams.iter().enumerate().rev() {
             bounded.observe(ordinal, entry.clone())?;
         }
+        let streamed = bounded.selection()?;
+        assert_eq!(streamed.withheld_changed_gaps, direct.withheld_changed_gaps);
+        Ok(())
+    }
+
+    #[test]
+    fn changed_owner_gap_is_itemized_even_when_a_related_test_line_also_changed()
+    -> Result<(), String> {
+        // Devin on #13924: the PR edits another line inside the owner and the
+        // related test's own line. The ranked why-now reason is then the
+        // related-test reason, but the owner still changed, so the withheld
+        // gap must still be itemized on both selection paths.
+        let mut withheld = classified(
+            "src/pricing.rs",
+            3,
+            "pricing::untested_rounding",
+            "cents % 100 > 49",
+            SeamGripClass::Ungripped,
+        );
+        withheld.evidence.reach = stage(StageState::No);
+        withheld.evidence.activate = stage(StageState::Unknown);
+        withheld.evidence.activate.summary = "Boundary activation operands are local or computed for seam `cents % 100 > 49`; add analyzer support for local/computed boundary operand resolution before emitting an actionable repair packet".to_string();
+        let related = withheld
+            .evidence
+            .related_tests
+            .first()
+            .map(|test| (test.file.clone(), test.line))
+            .ok_or("fixture seam has no related test")?;
+        let seams = vec![withheld];
+        let working_set = AgentBriefResolvedWorkingSet::base(
+            "main",
+            vec![
+                AgentBriefLine::new("src/pricing.rs", 2),
+                AgentBriefLine::new(related.0.clone(), related.1),
+            ],
+        )
+        .with_changed_owners(vec![AgentBriefChangedOwner::new(
+            "src/pricing.rs",
+            2,
+            "pricing::untested_rounding",
+        )]);
+        let normalized = NormalizedAgentBriefWorkingSet::new(&working_set);
+        let why_now = why_now_for(&seams[0], &normalized).ok_or("seam must be in scope")?;
+        assert_eq!(
+            why_now.reason,
+            AgentBriefWhyNowReason::ChangedTestForRelatedSeam,
+            "fixture must exercise the ranked related-test reason"
+        );
+
+        let direct = select(&seams, &working_set, 3);
+        assert_eq!(direct.withheld_changed_gaps.len(), 1, "{direct:?}");
+        assert_eq!(direct.withheld_changed_gaps[0].line, 3);
+
+        let config = RiprConfig::default();
+        let mut bounded =
+            BoundedAgentBrief::new(&working_set, 3, AgentBriefPolicy::from_config(&config))?;
+        bounded.observe(0, seams[0].clone())?;
         let streamed = bounded.selection()?;
         assert_eq!(streamed.withheld_changed_gaps, direct.withheld_changed_gaps);
         Ok(())

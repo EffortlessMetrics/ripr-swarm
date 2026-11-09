@@ -334,9 +334,18 @@ fn gate_evaluates_the_withheld_uncalled_gap_with_its_named_reason() -> Result<()
     }
     let markdown = std::fs::read_to_string(fixture.0.join(GATE_MD))
         .map_err(|error| format!("read {GATE_MD}: {error}"))?;
-    if !markdown.contains("static_limitation") {
+    let anchor = format!("src/lib.rs:{UNCALLED_LINE}");
+    let suppressed_section = markdown
+        .split("## Suppressed")
+        .nth(1)
+        .map(|rest| rest.split("\n## ").next().unwrap_or(rest))
+        .ok_or_else(|| format!("gate-decision.md has no Suppressed section:\n{markdown}"))?;
+    let disclosed = suppressed_section
+        .lines()
+        .any(|line| line.contains(&anchor) && line.contains("static_limitation"));
+    if !disclosed {
         return Err(format!(
-            "gate-decision.md does not disclose the withheld seam:\n{markdown}"
+            "gate-decision.md does not name the withheld seam at {anchor}:\n{markdown}"
         ));
     }
     Ok(())

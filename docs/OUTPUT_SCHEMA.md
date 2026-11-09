@@ -10596,8 +10596,9 @@ Field contract:
   not hide unresolved headline-eligible recommendations or strengthen their
   evidence; `summary.unchanged_tests` still records that tests changed.
   A gap-class seam on a changed line or in a changed owner that selection
-  withholds as a static limitation is itemized here with `reason =
-  "static_limitation"` and a `message` naming the limitation category (#13892).
+  withholds as a static limitation is itemized here with `seam_id`, `file`,
+  `line`, its static `class`, `reason = "static_limitation"` and a `message`
+  naming the limitation category (#13892).
   `ripr check` can list such a seam (for example as `no_static_path` when no
   test calls the changed owner), so it is disclosed instead of appearing only
   in `warnings[]` and `omitted_by_policy`. The record is not a repair card and

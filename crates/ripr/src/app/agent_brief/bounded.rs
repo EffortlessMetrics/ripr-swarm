@@ -87,7 +87,9 @@ impl<'a> BoundedAgentBrief<'a> {
             if let Some(omission) = AgentBriefOmission::for_entry(&entry, self.policy) {
                 self.withheld_changed_gaps
                     .extend(AgentBriefWithheldChangedGap::for_omission(
-                        &entry, &why_now, omission,
+                        &entry,
+                        &self.normalized,
+                        omission,
                     ));
                 self.record_omission(ordinal, &entry, omission)?;
                 return Ok(());

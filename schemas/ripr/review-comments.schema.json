@@ -1537,6 +1537,11 @@
               "type": "integer",
               "minimum": 1
             },
+            "class": {
+              "description": "Static class of a seam withheld as a static limitation (#13892).",
+              "type": "string",
+              "minLength": 1
+            },
             "reason": {
               "type": "string",
               "minLength": 1

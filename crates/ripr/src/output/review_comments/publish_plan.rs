@@ -71,6 +71,7 @@ pub(super) fn withheld_changed_gap_json(gap: &AgentBriefWithheldChangedGap) -> V
         "seam_id": gap.seam_id,
         "file": display_path(&gap.file),
         "line": gap.line,
+        "class": gap.class,
         "reason": WITHHELD_CHANGED_GAP_REASON,
         "message": gap.message,
     })

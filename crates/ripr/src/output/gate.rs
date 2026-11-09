@@ -676,11 +676,14 @@ fn candidate_from_guidance_item(
         .to_string();
     let placement = GatePlacement {
         path: string_field(item.pointer("/placement/path"))
-            .or_else(|| string_field(item.pointer("/seam/file"))),
+            .or_else(|| string_field(item.pointer("/seam/file")))
+            // Withheld changed-gap entries (#13892) carry a flat file/line.
+            .or_else(|| string_field(item.get("file"))),
         line: item
             .pointer("/placement/line")
             .and_then(Value::as_u64)
-            .or_else(|| item.pointer("/seam/line").and_then(Value::as_u64)),
+            .or_else(|| item.pointer("/seam/line").and_then(Value::as_u64))
+            .or_else(|| item.get("line").and_then(Value::as_u64)),
     };
     let recommended_file = item
         .pointer("/suggested_test/recommended_file")
@@ -1264,6 +1267,11 @@ fn gate_reason(
     context: GateReasonContext<'_>,
     configured_acknowledgement_labels: &[String],
 ) -> String {
+    if candidate.suppression_reason.as_deref() == Some("static_limitation") {
+        return "changed gap withheld from repair guidance as `static_limitation`; \
+                preserved as advisory, not resolved"
+            .to_string();
+    }
     if candidate.suppressed || candidate.configured_off {
         return format!(
             "configured-hidden or suppressed candidate preserved as `{}`",
