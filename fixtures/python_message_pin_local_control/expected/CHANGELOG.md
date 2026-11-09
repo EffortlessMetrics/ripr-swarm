@@ -46,3 +46,15 @@ Command:
 
 Updated:
 - `expected/check.json`
+
+## Pending — python_message_pin_local_control (5)
+
+Reason:
+union-head re-bless after main merge: additive evidence_stages rows (RIPR-SPEC-0429)
+
+Command:
+`cargo xtask goldens bless python_message_pin_local_control --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

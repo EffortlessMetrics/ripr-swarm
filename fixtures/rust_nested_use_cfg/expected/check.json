@@ -41,6 +41,13 @@
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"weak","confidence":"high","summary":"Only relational oracle found; it may not discriminate the changed value exactly"}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"unknown","confidence":"low"},
+        {"stage":"propagate","state":"yes","confidence":"medium"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"weak","confidence":"high"}
+      ],
       "evidence_path": ["reach yes: Related tests appear to reach thr: at, high, low", "infection unknown: Changed boundary input is unresolved: call identity does not resolve to the owner, so ripr cannot establish the boundary inputs; activation/infection is unknown", "propagation yes: Changed behavior appears to influence returned value: x > 101", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Only relational oracle found; it may not discriminate the changed value exactly", "local flow reaches returned value: x > 101 (line 2)", "related test tests/api.rs:12 at uses weak relational check oracle: assert!(!thr::thr(101));", "related test tests/api.rs:7 high uses weak relational check oracle: assert!(thr::internal::thr(500));", "related test tests/api.rs:2 low uses weak relational check oracle: assert!(!thr::internal::thr(50));", "source function argument value x = 50 at line 3", "source function argument value x = 500 at line 8", "source function argument value x = 101 at line 13"],
       "flow_sinks": [
         {"kind":"return_value","text":"x > 101","line":2}
@@ -165,6 +172,13 @@
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"weak","confidence":"high","summary":"Only relational oracle found; it may not discriminate the changed value exactly"}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"unknown","confidence":"low"},
+        {"stage":"propagate","state":"unknown","confidence":"low"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"weak","confidence":"high"}
+      ],
       "evidence_path": ["reach yes: Related tests appear to reach thr: at, high, low", "infection unknown: Changed boundary input is unresolved: call identity does not resolve to the owner, so ripr cannot establish the boundary inputs; activation/infection is unknown", "propagation unknown: Propagation is not statically obvious from syntax-first analysis", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Only relational oracle found; it may not discriminate the changed value exactly", "related test tests/api.rs:12 at uses weak relational check oracle: assert!(!thr::thr(101));", "related test tests/api.rs:7 high uses weak relational check oracle: assert!(thr::internal::thr(500));", "related test tests/api.rs:2 low uses weak relational check oracle: assert!(!thr::internal::thr(50));", "source function argument value x = 50 at line 3", "source function argument value x = 500 at line 8", "source function argument value x = 101 at line 13"],
       "flow_sinks": [
       ],
@@ -288,6 +302,13 @@
         "observe": {"state":"no","confidence":"medium","summary":"No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)"},
         "discriminate": {"state":"no","confidence":"medium","summary":"No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)"}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"unknown","confidence":"low"},
+        {"stage":"propagate","state":"yes","confidence":"high"},
+        {"stage":"observe","state":"no","confidence":"medium"},
+        {"stage":"discriminate","state":"no","confidence":"medium"}
+      ],
       "evidence_path": ["reach yes: Related tests appear to reach thr: at, high, low", "infection unknown: Changed boundary input is unresolved: call identity does not resolve to the owner, so ripr cannot establish the boundary inputs; activation/infection is unknown", "propagation yes: Complete propagation witness reaches returned value: x > 101", "observation no: No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)", "discriminator no: No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)", "local flow reaches returned value: x > 101 (line 2)", "related test tests/api.rs:12 at uses no oracle", "related test tests/api.rs:7 high uses no oracle", "related test tests/api.rs:2 low uses no oracle", "source function argument value x = 50 at line 3", "source function argument value x = 500 at line 8", "source function argument value x = 101 at line 13"],
       "flow_sinks": [
         {"kind":"return_value","text":"x > 101","line":2}

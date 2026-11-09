@@ -148,6 +148,12 @@ pub struct RustIndex {
     /// All module parents approved by composition, independently of its
     /// canonical role explanation. Transient: rebuilt after file-cache reads.
     pub(crate) execution_module_parents: Option<BTreeMap<PathBuf, Vec<SourceRoleProvenanceEdge>>>,
+    /// Files whose module context passes through an exact `#[cfg(kani)]`
+    /// out-of-line module declaration (#13736): compiled only by the Kani
+    /// verifier, so verification source rather than production. Set by the
+    /// composition pass; transient like `execution_module_parents`, and
+    /// cleared on any membership change so a stale verdict cannot linger.
+    pub(crate) cfg_kani_module_files: BTreeSet<PathBuf>,
     pub include_parents: BTreeMap<PathBuf, ResolvedIncludeParent>,
     pub include_limitations: Vec<RustIncludeLimitation>,
     pub non_utf8_sources: BTreeSet<PathBuf>,
@@ -626,6 +632,7 @@ impl RustIndex {
     /// equal names, coordinates and bodies never collapse two occurrences.
     pub fn insert_file(&mut self, path: PathBuf, facts: FileFacts, flat: bool) {
         self.execution_module_parents = None;
+        self.cfg_kani_module_files.clear();
         self.call_identity_memos.clear();
         self.bump_membership_revision();
         let FileFacts {
@@ -719,6 +726,7 @@ impl RustIndex {
         };
         self.call_identity_memos.clear();
         self.execution_module_parents = None;
+        self.cfg_kani_module_files.clear();
         // Purge the flat memberships too: `finalize` keeps every record a
         // flat order names, so a removed file's tests and functions would
         // otherwise survive as evidence (and a changed file would appear

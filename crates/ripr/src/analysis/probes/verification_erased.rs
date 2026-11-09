@@ -14,6 +14,9 @@
 //! `#[cfg_attr(kani, kani::requires(..), ..)]` contract are recognised from the
 //! text of whichever side holds them, so a harness that a diff only *deletes*
 //! (absent from the new-side index) is still known to be verification source.
+//! The file behind an out-of-line `#[cfg(kani)] mod name;` (#13736) is
+//! resolved by the module-composition pass, which owns declaration-to-file
+//! resolution, and every changed line in it is verification source.
 //!
 //! This module only recognises such lines. Runtime code that merely carries a
 //! contract attribute (`#[check(ghost)]`, `#[trusted]`, Prusti `#[pure]`) is
@@ -27,6 +30,7 @@ use crate::analysis::extract::mask_comments_and_strings;
 use crate::analysis::facts::attributes_define_proof_harness;
 use crate::analysis::rust_index::{RustIndex, find_file_facts};
 use std::collections::BTreeSet;
+use std::path::Path;
 
 /// Specification attributes distinctive enough to trust bare. The runtime
 /// `contracts` crate shares these names, so a file that names it is excluded.
@@ -309,9 +313,32 @@ pub(super) fn whole_file_old_source_from_removed_lines(changed: &ChangedFile) ->
     )
 }
 
+/// True when the composition pass placed `path` inside an exact out-of-line
+/// `#[cfg(kani)] mod` (#13736), directly or through a Kani-only parent. The
+/// whole file is then verification source, the same as the body of an inline
+/// `#[cfg(kani)] mod` above: only the Kani verifier compiles it.
+pub(crate) fn in_cfg_kani_module(index: &RustIndex, path: &Path) -> bool {
+    let files = &index.cfg_kani_module_files;
+    if files.contains(path) {
+        return true;
+    }
+    // Same separator-tolerant identity as `find_file_facts`; a non-UTF-8 path
+    // fails closed and keeps production probing.
+    let Some(target) = path.to_str().map(|text| text.replace('\\', "/")) else {
+        return false;
+    };
+    files.iter().any(|file| {
+        file.to_str()
+            .is_some_and(|text| text.replace('\\', "/") == target)
+    })
+}
+
 /// Count of `changed` lines (added, on the new side; removed, on the old side)
 /// that are verification-erased text.
 pub(crate) fn changed_verification_only_lines(index: &RustIndex, changed: &ChangedFile) -> usize {
+    if in_cfg_kani_module(index, &changed.path) {
+        return changed.added_lines.len() + changed.removed_lines.len();
+    }
     let added = find_file_facts(index, &changed.path)
         .map(|facts| verification_only_lines(&facts.source))
         .unwrap_or_default();

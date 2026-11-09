@@ -49,6 +49,13 @@
         "observe": {"state":"weak","confidence":"low","summary":"Strongest extracted Python oracle kind: `exact_value` (rank 5)"},
         "discriminate": {"state":"weak","confidence":"low","summary":"Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior."}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"low"},
+        {"stage":"infect","state":"yes","confidence":"low"},
+        {"stage":"propagate","state":"weak","confidence":"low"},
+        {"stage":"observe","state":"weak","confidence":"low","basis":[{"code":"observation_not_confirmed","summary":"the assertion is not confirmed to observe the changed value"}]},
+        {"stage":"discriminate","state":"weak","confidence":"low"}
+      ],
       "evidence_path": ["reach yes: 1 related Python test(s) found for owner `note`", "infection yes: Changed Python field or attribute construction can alter object state: `self.last = \"fault\"; self.last = \"settled\"`", "propagation weak: Changed Python field construction can propagate through returned or retained object state; exact runtime object flow is not resolved.", "observation weak: Strongest extracted Python oracle kind: `exact_value` (rank 5)", "discriminator weak: Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior.", "local flow reaches constructed field: self.last = \"fault\"; self.last = \"settled\" (line 7)", "related test tests/test_noter.py:3 test_note uses strong exact value oracle: assert rec.last == \"settled\"", "missing discriminator self.last == <expected value>: changed Python field/object value at line 7 lacks a concrete repair discriminator"],
       "flow_sinks": [
         {"kind":"struct_field","text":"self.last = \"fault\"; self.last = \"settled\"","line":7}

@@ -49,6 +49,13 @@
         "observe": {"state":"weak","confidence":"low","summary":"Strongest extracted Python oracle kind: `relational_check` (rank 3)"},
         "discriminate": {"state":"weak","confidence":"low","summary":"Python preview adapter found no strong discriminator; missing proof: `call includes \"msgs: 5\"`."}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"low"},
+        {"stage":"infect","state":"yes","confidence":"low"},
+        {"stage":"propagate","state":"weak","confidence":"low"},
+        {"stage":"observe","state":"weak","confidence":"low"},
+        {"stage":"discriminate","state":"weak","confidence":"low"}
+      ],
       "evidence_path": ["reach yes: 1 related Python test(s) found for owner `check_balance`", "infection yes: Changed Python call or output effect can alter observable side effects: `log.warning(\"msgs: 5\")`", "propagation weak: Changed Python call/output behavior can propagate through side effects; runtime target resolution is not inferred.", "observation weak: Strongest extracted Python oracle kind: `relational_check` (rank 3)", "discriminator weak: Python preview adapter found no strong discriminator; missing proof: `call includes \"msgs: 5\"`.", "local flow reaches call effect: log.warning(\"msgs: 5\") (line 8)", "related test tests/test_audit.py:6 test_low_balance uses weak relational check oracle: assert \"msgs: 5\" in msgs", "missing discriminator call includes \"msgs: 5\": changed Python output/log/call effect at line 8 lacks a concrete repair discriminator"],
       "flow_sinks": [
         {"kind":"call_effect","text":"log.warning(\"msgs: 5\")","line":8}

@@ -41,6 +41,13 @@
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact value or pattern assertion"}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"yes","confidence":"medium"},
+        {"stage":"propagate","state":"yes","confidence":"high"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"yes","confidence":"medium"}
+      ],
       "evidence_path": ["reach yes: Related tests appear to reach size_hint: while_some_size_hint_upper_bound", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: (0, Some(self.remaining))", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator yes: Strong oracle found: exact value or pattern assertion", "local flow reaches returned value: (0, Some(self.remaining)) (line 22)", "related test tests/size_hints.rs:4 while_some_size_hint_upper_bound uses strong exact value oracle: assert_eq!(it.size_hint().1, Some(it.remaining));"],
       "flow_sinks": [
         {"kind":"return_value","text":"(0, Some(self.remaining))","line":22}

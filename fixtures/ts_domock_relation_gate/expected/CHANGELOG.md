@@ -384,3 +384,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — ts_domock_relation_gate (33)
+
+Reason:
+union-head re-bless after main merge: additive evidence_stages rows (RIPR-SPEC-0429)
+
+Command:
+`cargo xtask goldens bless ts_domock_relation_gate --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

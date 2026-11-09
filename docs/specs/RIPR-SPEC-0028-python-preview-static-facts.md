@@ -591,7 +591,7 @@ comments, strings, and docstrings:
   bindings: a builtin shadowed by an import, a module or test-local binding
   (including tuple and annotated targets), or a receiver rebound by a chained,
   bracketed (spaced or nested too: `( r), x = ...`, `((r), x) = ...`,
-  `for ((r), x) in ...`; #9178; non-adjacent single-line targets
+  `for ((r), x) in ...`; #9178; non-adjacent targets
   `(x, (r)) = ...`, `[a, [r]] = ...`, outer/chained targets and inline
   loop/with header targets too; #9531), loop, `with`, walrus or augmented target
   (`(r) += ...` and `(r): list = ...` included), or not the whole bound value,
@@ -607,22 +607,22 @@ comments, strings, and docstrings:
   `assert "for" and ((r)) in [r]` stays a credited read. Loop-keyword masking
   retains earlier lines for multiline literals while searching only the current
   line; an unterminated literal supplies no parsed test or protocol-entry credit.
-  Known limits, none of
-  them closed by this: a non-adjacent assignment inside an inline compound
-  body (`if c: (x, (r)) = ...`) is outside the complete-target fallback;
-  a multi-line tuple target whose earlier elements sit on
-  other lines (`(x,\n r) = ...`) is not seen, so the receiver stays credited
-  (the credit-keeping direction); and a dict key at the start of a continuation
-  line (`{\n (r): 1\n}`) reads as an annotated target and withholds credit
-  (a miss). A `:` ends a target
-  position only when it closes a compound-statement header whose brackets
-  balance outside string literals (single, double and tripled quotes, escaped
-  quotes) and comments (`if ")": ( r), x = ...` and
-  `if x == '''it's''': ( r), x = ...` rebind, a dict value `{"k": (r), 1}` does
-  not). A header whose brackets do not balance, or that is split across
-  lines, is not read as a header, so a one-line-suite rebind after it is not
-  seen and the receiver stays credited (the credit-keeping direction, a known
-  limit). Extra, keyword, starred or trailing-comma
+  The shared budgeted parser and scope-binding collector also read complete
+  multiline tuple/list targets, split compound headers and assignments in their
+  inline suites, multiline loop/with targets, and multiline case captures
+  (#9992). The constructor assignment counts once; another target binding the
+  same local withholds credit. Tuple RHS values, call arguments, subscript
+  indices and dotted/class pattern reads do not bind the local. The parsed collector
+  does not enter nested function or class suites for outer-scope case captures.
+  Existing textual guards retain their conservative boundaries: a dict key at
+  the start of a continuation line (`{\n (r): 1\n}`) can read as an annotated
+  target and withhold credit (a miss), and a same-line case guard read can
+  withhold credit too. A `:` ends a textual target position only when it closes
+  a compound-statement header whose brackets balance outside string literals
+  (single, double and tripled quotes, escaped quotes) and comments. Malformed
+  or unsupported source cannot obtain parsed test credit; the fallback does
+  not invent a suite to repair an incomplete header. Extra, keyword, starred
+  or trailing-comma
   arguments are not the entry and fall back to `dunder_protocol`. A dunder
   owner with no related test, in a workspace whose tests import its class,
   its module, or anything from a package above it, reads `static_unknown`

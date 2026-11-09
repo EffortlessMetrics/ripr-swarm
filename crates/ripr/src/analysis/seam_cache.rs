@@ -714,7 +714,8 @@ pub(crate) struct CachedSeamLimitInfo {
 /// `1.171`: a workspace assertion macro defined in another file that forwards
 /// its operands to a std assertion names the macro-wrapped limit instead of an
 /// unnamed gap, with nothing credited (#12886).
-/// `1.172`: reserved for #12669 (in flight).
+/// `1.172`: a receiver rebound by a multiline Python target withholds
+/// protocol-entry credit (#9992).
 /// `1.173`: `#[async_std::test]` bodies admit owner-return pins read through one
 /// `.await` on an async owner (#5040). Old entries would keep those assertions
 /// refused as async tests.
@@ -727,7 +728,9 @@ pub(crate) struct CachedSeamLimitInfo {
 /// field of the struct the owner returns, and a whole-value field pin whose
 /// field value neither owner version computes no longer credits (#12394,
 /// #12864).
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.176";
+/// `1.177`: same multiline receiver binding refusal as `1.172` (#9992) — the
+/// Python rule rejudges seams the `1.176` transition did not touch.
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.177";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -940,12 +943,13 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.176";
 /// `0.171`: same plain `assert_eq!` literal withhold as full `1.169` (#13005).
 /// `0.172`: same positive Err-enclosing rule as full `1.170` (#12474).
 /// `0.173`: same cross-file wrapper limit as full `1.171` (#12886).
-/// `0.174`: reserved for #12669 (in flight).
+/// `0.174`: same multiline receiver binding refusal as full `1.172` (#9992).
 /// `0.175`: same `#[async_std::test]` admission as full `1.173` (#5040).
 /// `0.176`: same local-bound proximity pin as full `1.174` (#12264).
 /// `0.177`: same adapter-replaced error-read refusal as full `1.175` (#12610).
 /// `0.178`: same claims field-construction pin as full `1.176` (#12394, #12864).
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.178";
+/// `0.179`: same multiline receiver binding refusal as full `1.177` (#9992).
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.179";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -1160,12 +1164,13 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.178";
 /// `0.171`: same plain `assert_eq!` literal withhold as full `1.169` (#13005).
 /// `0.172`: same positive Err-enclosing rule as full `1.170` (#12474).
 /// `0.173`: same cross-file wrapper limit as full `1.171` (#12886).
-/// `0.174`: reserved for #12669 (in flight).
+/// `0.174`: same multiline receiver binding refusal as full `1.172` (#9992).
 /// `0.175`: same `#[async_std::test]` admission as full `1.173` (#5040).
 /// `0.176`: same local-bound proximity pin as full `1.174` (#12264).
 /// `0.177`: same adapter-replaced error-read refusal as full `1.175` (#12610).
 /// `0.178`: same claims field-construction pin as full `1.176` (#12394, #12864).
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.178";
+/// `0.179`: same multiline receiver binding refusal as full `1.177` (#9992).
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.179";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -5542,12 +5547,13 @@ mod tests {
         // 1.167 -> 1.168: typed missing-discriminator shape (#12414).
         // 1.169 -> 1.170: positive Err-enclosing allowlist (#12474).
         // 1.170 -> 1.171: cross-file forwarding wrapper names the limit (#12886).
-        // 1.171 -> 1.172: reserved for #12669 (in flight).
+        // 1.171 -> 1.172: multiline Python receiver rebindings withhold protocol-entry credit (#9992).
         // 1.172 -> 1.173: `#[async_std::test]` owner-return pins (#5040).
         // 1.173 -> 1.174: local-bound proximity pin (#12264).
         // 1.174 -> 1.175: adapter-replaced error-read refusal (#12610).
         // 1.175 -> 1.176: claims field-construction pin; field value neither version computes (#12394, #12864).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.176");
+        // 1.176 -> 1.177: multiline receiver rebindings rejudged (#9992).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.177");
         // 1.168 -> 1.169: plain `assert_eq!` literal withhold in the audit (#13005).
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
@@ -5700,13 +5706,14 @@ mod tests {
         // 0.169 -> 0.170: same typed missing-discriminator shape as full 1.168 (#12414).
         // 0.171 -> 0.172: same positive Err-enclosing rule as full 1.170 (#12474).
         // 0.172 -> 0.173: same cross-file wrapper limit as full 1.171 (#12886).
-        // 0.173 -> 0.174: reserved for #12669 (in flight).
+        // 0.173 -> 0.174: same multiline receiver binding refusal as full 1.172 (#9992).
         // 0.174 -> 0.175: same async_std test admission as full 1.173 (#5040).
         // 0.175 -> 0.176: same local-bound proximity pin as full 1.174 (#12264).
         // 0.176 -> 0.177: same adapter-replaced refusal as full 1.175 (#12610).
         // 0.177 -> 0.178: same claims field-construction pin as full 1.176 (#12394, #12864).
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.178");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.178");
+        // 0.178 -> 0.179: same multiline receiver rejudgment as full 1.177 (#9992).
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.179");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.179");
         // 0.170 -> 0.171: same plain `assert_eq!` literal withhold as full 1.169 (#13005).
     }
 

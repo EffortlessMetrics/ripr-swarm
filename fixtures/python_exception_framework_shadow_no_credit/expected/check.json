@@ -49,6 +49,13 @@
         "observe": {"state":"weak","confidence":"low","summary":"Strongest extracted Python oracle kind: `broad_error` (rank 3)"},
         "discriminate": {"state":"weak","confidence":"low","summary":"Python preview adapter found no strong discriminator; missing proof: `raises TooLongError`."}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"low"},
+        {"stage":"infect","state":"yes","confidence":"low"},
+        {"stage":"propagate","state":"yes","confidence":"low"},
+        {"stage":"observe","state":"weak","confidence":"low"},
+        {"stage":"discriminate","state":"weak","confidence":"low"}
+      ],
       "evidence_path": ["reach yes: 1 related Python test(s) found for owner `parse`", "infection yes: Changed Python error path can alter raised exception/control behavior: `raise TooLongError()`", "propagation yes: Changed Python error path propagates through the exception/control boundary.", "observation weak: Strongest extracted Python oracle kind: `broad_error` (rank 3)", "discriminator weak: Python preview adapter found no strong discriminator; missing proof: `raises TooLongError`.", "local flow reaches error variant: raise TooLongError() (line 8)", "related test tests/test_core.py:4 test_parse uses weak broad error oracle: pytest.raises(TooLongError)", "missing discriminator raises TooLongError: changed Python exception at line 8 lacks a concrete repair discriminator"],
       "flow_sinks": [
         {"kind":"error_variant","text":"raise TooLongError()","line":8}

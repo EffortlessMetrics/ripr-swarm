@@ -41,6 +41,13 @@
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"weak","confidence":"medium"},
+        {"stage":"propagate","state":"yes","confidence":"medium"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"weak","confidence":"medium"}
+      ],
       "evidence_path": ["reach yes: Related tests appear to reach route: sibling_proof_arm_is_observed", "infection weak: No related test call selects arm `\"sensor\" =>`; observed `kind` values: `\"focused-test\"`", "propagation yes: Changed behavior appears to influence match arm result: \"sensor\" =>", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches match arm result: \"sensor\" => (line 3)", "related test tests/route.rs:7 sibling_proof_arm_is_observed uses strong exact value oracle: assert_eq!(route(\"focused-test\"), \"sensor-v2\");", "source assertion argument value \"sensor-v2\" at line 8", "source function argument value kind = \"focused-test\" at line 8", "missing discriminator \"sensor\": No related test call selects arm `\"sensor\" =>`; observed `kind` values: `\"focused-test\"`"],
       "flow_sinks": [
         {"kind":"match_arm","text":"\"sensor\" =>","line":3}

@@ -38,6 +38,13 @@
         "observe": {"state":"weak","confidence":"low","summary":"An exact assertion was extracted, but this evidence does not establish discrimination of the changed appended value."},
         "discriminate": {"state":"weak","confidence":"low","summary":"TypeScript preview: this evidence does not establish discrimination of the changed appended value; use an input changed by the edit and assert the appended element."}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"low"},
+        {"stage":"infect","state":"unknown","confidence":"low"},
+        {"stage":"propagate","state":"unknown","confidence":"low"},
+        {"stage":"observe","state":"weak","confidence":"low","basis":[{"code":"observation_not_confirmed","summary":"the assertion is not confirmed to observe the changed value"}]},
+        {"stage":"discriminate","state":"weak","confidence":"low"}
+      ],
       "evidence_path": ["reach yes: 1 related test(s) found for owner `logLine`", "infection unknown: TypeScript preview adapter does not yet model infection.", "propagation unknown: TypeScript preview adapter does not yet model propagation.", "observation weak: An exact assertion was extracted, but this evidence does not establish discrimination of the changed appended value.", "discriminator weak: TypeScript preview: this evidence does not establish discrimination of the changed appended value; use an input changed by the edit and assert the appended element.", "local flow reaches call effect: buf.push(msg.toUpperCase()); (line 2)", "related test test/log.test.ts:3 escaped expected value is different uses strong exact value oracle: expect(...).toBe(...)", "missing discriminator call buf.push includes msg.toUpperCase(: changed TypeScript call side effect at line 2 lacks a concrete preview discriminator"],
       "flow_sinks": [
         {"kind":"call_effect","text":"buf.push(msg.toUpperCase());","line":2}
