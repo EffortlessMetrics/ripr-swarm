@@ -223,11 +223,12 @@ that ineligibility and remains the sole packet-readiness authority.
     120 characters) containing a word of at least three letters;
   - the analyzer emits `typescript_error_message_pin: <message>`. It does so
     only at the owner's sole throw site, and only when the old side cannot
-    satisfy the same substring check: a pure addition, or an old message that
+    satisfy the same substring check: a pure addition (no paired old line,
+    and the diff removes no `throw` or `reject` line), or an old message that
     does not contain the new one.
 
-  A lookup key, ternary, `||` fallback, concatenation, shortened message or
-  second throw site gets no packet. Such a packet also carries a stop condition
+  A lookup key, ternary, `||` fallback, concatenation, shortened message,
+  moved throw or second throw site gets no packet. Such a packet also carries a stop condition
   for a test that reaches a different `throw`.
 - **G-D. Oracle-eligible, token-aware relation.**
   `has_oracle_eligible_relation == true` — the related test is linked by

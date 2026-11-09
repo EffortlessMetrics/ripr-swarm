@@ -1507,6 +1507,15 @@ impl TypeScriptAdapter {
                                 (changed.added_lines.as_slice(), changed.removed_lines.as_slice()),
                                 ([added], [removed]) if added.line == removed.new_side_line
                             );
+                            context.removes_throw_or_reject =
+                                changed.removed_lines.iter().any(|removed| {
+                                    removed
+                                        .text
+                                        .split(|c: char| {
+                                            !(c.is_alphanumeric() || c == '_' || c == '$')
+                                        })
+                                        .any(|word| word == "throw" || word == "reject")
+                                });
                             context
                         });
                         classify_resolved_owner(

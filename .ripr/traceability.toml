@@ -8413,6 +8413,8 @@ tests = [
   "crates/ripr/src/app/tests/typescript_error_variant_packets.rs::bare_tothrow_generic_error_lookup_message_offers_no_packet",
   "crates/ripr/src/app/tests/typescript_error_variant_packets.rs::bare_tothrow_shortened_message_offers_no_message_packet",
   "crates/ripr/src/app/tests/typescript_error_variant_packets.rs::bare_tothrow_message_at_one_of_two_throws_offers_no_message_packet",
+  "crates/ripr/src/app/tests/typescript_error_variant_packets.rs::bare_tothrow_moved_throw_with_contained_message_offers_no_message_packet",
+  "crates/ripr/src/analysis/language/typescript/error_payload_guard.rs::tests::pinnable_generic_error_message_needs_a_literal_the_old_side_cannot_satisfy",
   "crates/ripr/tests/cli_smoke/typescript_finally_completion.rs::completion_replacing_finalizers_cannot_confirm_the_changed_throw",
   "crates/ripr/tests/cli_smoke/typescript_finally_completion.rs::benign_and_independent_finalizers_keep_credit",
   "crates/ripr/src/analysis/language/typescript/tests.rs::extract_tests_withholds_assertions_a_finalizer_completion_can_replace",

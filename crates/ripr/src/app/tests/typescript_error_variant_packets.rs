@@ -36,6 +36,10 @@ const DIVIDE_SHORTENED_TS: &str = "export function divide(a: number, b: number):
 
 const DIVIDE_SHORTENED_DIFF: &str = "diff --git a/src/index.ts b/src/index.ts\nindex 0000000..1111111 100644\n--- a/src/index.ts\n+++ b/src/index.ts\n@@ -1,6 +1,6 @@\n export function divide(a: number, b: number): number {\n   if (b === 0) {\n-    throw new Error('division by zero occurred');\n+    throw new Error('division by zero');\n   }\n   return Math.floor(a / b);\n }\n";
 
+const DIVIDE_MOVED_TS: &str = "export function divide(a: number, b: number): number {\n  const q = Math.floor(a / b);\n  if (b === 0) {\n    throw new Error('division by zero');\n  }\n  return q;\n}\n";
+
+const DIVIDE_MOVED_DIFF: &str = "diff --git a/src/index.ts b/src/index.ts\nindex 0000000..1111111 100644\n--- a/src/index.ts\n+++ b/src/index.ts\n@@ -1,5 +1,7 @@\n export function divide(a: number, b: number): number {\n-  if (b === 0) throw new Error('division by zero occurred');\n   const q = Math.floor(a / b);\n+  if (b === 0) {\n+    throw new Error('division by zero');\n+  }\n   return q;\n }\n";
+
 const DIVIDE_TWO_THROWS_TS: &str = "export function divide(a: number, b: number): number {\n  if (a < 0) {\n    throw new Error('negative dividend');\n  }\n  if (b === 0) {\n    throw new Error('division by zero');\n  }\n  return Math.floor(a / b);\n}\n";
 
 const DIVIDE_TWO_THROWS_DIFF: &str = "diff --git a/src/index.ts b/src/index.ts\nindex 0000000..1111111 100644\n--- a/src/index.ts\n+++ b/src/index.ts\n@@ -1,6 +1,9 @@\n export function divide(a: number, b: number): number {\n   if (a < 0) {\n     throw new Error('negative dividend');\n   }\n+  if (b === 0) {\n+    throw new Error('division by zero');\n+  }\n   return Math.floor(a / b);\n }\n";
@@ -305,6 +309,51 @@ fn bare_tothrow_message_at_one_of_two_throws_offers_no_message_packet() -> Resul
     {
         return Err(format!(
             "a non-sole throw must not be pinned: {}",
+            check.finding
+        ));
+    }
+    Ok(())
+}
+
+/// #13827 negative control: the old throw is deleted in one place and a
+/// shorter message is thrown from another, so the added throw has no paired
+/// old line. It is not a pure addition: the deleted message already contains
+/// the new one, so `toThrow('division by zero')` would pass on both versions.
+#[test]
+fn bare_tothrow_moved_throw_with_contained_message_offers_no_message_packet() -> Result<(), String>
+{
+    let changed = crate::analysis::parse_unified_diff(DIVIDE_MOVED_DIFF);
+    let [file] = changed.as_slice() else {
+        return Err(format!("fixture: one changed file, got {}", changed.len()));
+    };
+    if file.aligned_counterparts().contains_key(&4) {
+        return Err("fixture: the moved throw must have no paired old line".to_string());
+    }
+    let check = check_typescript_with(
+        "divide-moved",
+        DIVIDE_MOVED_TS,
+        DIVIDE_MOVED_DIFF,
+        DIVIDE_BARE_TEST,
+    )?;
+    let discriminator = check
+        .finding
+        .pointer("/activation/missing_discriminators/0/value")
+        .and_then(Value::as_str);
+    if check.class() != Some("weakly_exposed")
+        || discriminator != Some("throws Error matching 'division by zero'")
+    {
+        return Err(format!(
+            "fixture: the throw must still read a missing message discriminator: {}",
+            check.finding
+        ));
+    }
+    if check
+        .assertion_shape()
+        .is_some_and(|shape| shape.contains("toThrow('"))
+        || check.any_agent_packet_eligible()
+    {
+        return Err(format!(
+            "a moved throw whose old message contains the new one must not be pinned: {}",
             check.finding
         ));
     }

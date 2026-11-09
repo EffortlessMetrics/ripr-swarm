@@ -3106,7 +3106,8 @@ JSON fields:
   evidence names the literal message of a changed `throw new Error('<message>')`.
   It is emitted only when that line is the owner's sole throw site and the old
   side cannot satisfy the same substring check, either because the line is a
-  pure addition or because the old message does not contain the new one. With
+  pure addition (no paired old line, and the diff removes no `throw` or
+  `reject` line) or because the old message does not contain the new one. With
   it, a bare `toThrow()` packet targets `toThrow('<message>')` (RIPR-SPEC-0087
   G-C). Without it, the generic `Error` gets no packet.
   Derived boundary input (#4215 follow-up): when the finding carries

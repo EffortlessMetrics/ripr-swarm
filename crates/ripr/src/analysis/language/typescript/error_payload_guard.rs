@@ -200,14 +200,16 @@ fn calls_unknown_function(masked: &str, params: &[String]) -> bool {
     calls_unknown_function_except(masked, params, false)
 }
 
-/// Pure `Math` methods that cannot throw for any argument: they coerce and
-/// return a number (or `NaN`).
+/// `Math` methods that return a number (or `NaN`) and throw only while
+/// coercing an argument: a BigInt, a throwing `valueOf`, or a spread
+/// iterator. Such an error does not carry the owner's literal message, so a
+/// test pinning that message still fails on it rather than passing.
 const PURE_MATH_METHODS: &[&str] = &[
     "abs", "ceil", "floor", "max", "min", "round", "sign", "sqrt", "trunc",
 ];
 
 /// [`calls_unknown_function`], optionally treating a pure `Math` method call
-/// (`Math.floor(a / b)`) as known: it runs no user code and cannot throw.
+/// (`Math.floor(a / b)`) as known: it throws no message of its own.
 fn calls_unknown_function_except(masked: &str, params: &[String], pure_math: bool) -> bool {
     const KEYWORDS: [&str; 9] = [
         "if", "for", "while", "switch", "catch", "function", "return", "typeof", "await",
@@ -1968,5 +1970,44 @@ mod tests {
             &payload(Kind::AssertThrowsRegex, "/^Error: unsupported $/"),
             &shortened
         ));
+    }
+
+    #[test]
+    fn pinnable_generic_error_message_needs_a_literal_the_old_side_cannot_satisfy() {
+        let new = "throw new Error('division by zero');";
+        let source = |line: &str| {
+            format!(
+                "function divide(a, b) {{\n  if (b === 0) {{\n    {line}\n  }}\n  return Math.floor(a / b);\n}}"
+            )
+        };
+        let pin = |old: Option<&str>, new: &str| {
+            ErrorChangeFacts::read(old, new)
+                .with_owner_source(Some(&source(new)), &["a".to_string(), "b".to_string()], new)
+                .pinnable_generic_error_message()
+                .map(str::to_string)
+        };
+        // A pure addition, and a known old message the new one is not part of.
+        assert_eq!(pin(None, new).as_deref(), Some("division by zero"));
+        assert_eq!(
+            pin(Some("throw new Error('empty divisor');"), new).as_deref(),
+            Some("division by zero")
+        );
+        // The old side would satisfy the substring pin too.
+        assert_eq!(
+            pin(Some("throw new Error('division by zero occurred');"), new),
+            None
+        );
+        assert_eq!(
+            pin(Some("throw new RangeError('division by zero');"), new),
+            None
+        );
+        assert_eq!(pin(Some("throw 'division by zero';"), new), None);
+        // A replaced non-throw line or an unread old message is not established.
+        assert_eq!(pin(Some("return a / b;"), new), None);
+        assert_eq!(pin(Some("throw new Error(`div ${b}`);"), new), None);
+        // Only a generic `Error` with a plain literal.
+        assert_eq!(pin(None, "throw new RangeError('division by zero');"), None);
+        assert_eq!(pin(None, "throw new Error(`division by ${b}`);"), None);
+        assert_eq!(pin(None, "throw new Error('');"), None);
     }
 }
