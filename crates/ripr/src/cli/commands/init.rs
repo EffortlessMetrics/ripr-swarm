@@ -724,7 +724,20 @@ fn apply_init_plan(plan: &[InitTarget], root: &Path) -> Result<(), String> {
                 && target.action != InitAction::LeaveUnchanged
         }) {
             println!();
-            println!("{}", init_agents::FOLLOW_UP);
+            let mcp_planned = plan.iter().any(|target| {
+                target
+                    .path
+                    .file_name()
+                    .is_some_and(|name| name == MCP_CONFIG_FILE_NAME)
+            });
+            println!(
+                "{}",
+                if mcp_planned {
+                    init_agents::FOLLOW_UP_WITH_MCP
+                } else {
+                    init_agents::FOLLOW_UP
+                }
+            );
         }
         if let Some((workflow, ci)) = plan.iter().find_map(|target| {
             [InitCi::Github, InitCi::Gitlab]
