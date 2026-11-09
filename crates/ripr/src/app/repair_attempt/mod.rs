@@ -3179,6 +3179,8 @@ pub(crate) fn edit_cage_policy_from_packet(
     // verdict admits only a pure insertion of test functions into it.
     let inline_test_module_target = !is_test_surface_path(selected_target_text)
         && is_inline_test_module_candidate(selected_target_text);
+    let external_test_file_target = is_test_surface_path(selected_target_text)
+        && Path::new(selected_target_text).extension() == Some(std::ffi::OsStr::new("rs"));
     if !is_test_surface_path(selected_target_text) && !inline_test_module_target {
         return Err(format!(
             "repair packet selected edit target `{selected_target_text}` is not a test surface ({}); a source file is never the test to edit, so no allowed-files list is built",
@@ -3312,6 +3314,7 @@ pub(crate) fn edit_cage_policy_from_packet(
         ignored_build_output,
         untracked_build_lockfile,
         inline_test_module_target,
+        external_test_file_target,
         new_test_proposal,
     })
 }
@@ -7634,6 +7637,7 @@ mod tests {
             }
             // The terminal authority refuses an attempt that never finished:
             // its observation belongs to the resumable authority.
+            run_git(&root, &["checkout", "--", "tests/target.rs"])?;
             let awaiting = prepare_sample_attempt(&root, "seam:sample", "b")?;
             match record_repair_attempt_terminal_receipt_refusal_from(
                 &root,
@@ -7685,6 +7689,7 @@ mod tests {
 
             // The terminal authority refuses an attempt that never finished:
             // its observation belongs to the resumable authority.
+            run_git(&root, &["checkout", "--", "tests/target.rs"])?;
             let awaiting = prepare_sample_attempt(&root, "seam:sample", "b")?;
             match record_repair_attempt_terminal_after_refusal_from(
                 &root,
@@ -8625,7 +8630,7 @@ mod tests {
                 .map_err(|error| error.to_string())?;
 
             // The selected path already appears in the finished delta. A
-            // second edit keeps its kind (Added) but changes its identity.
+            // second edit keeps its kind (Modified) but changes its identity.
             let selected = root.join("tests/target.rs");
             let original = std::fs::read(&selected).map_err(|error| error.to_string())?;
             std::fs::write(&selected, b"#[test]\nfn focused() { assert!(false); }\n")
@@ -8720,20 +8725,38 @@ mod tests {
     fn ignored_selected_test_uses_content_identity_for_currentness() -> Result<(), String> {
         let root = test_repo_root("ignored-bound-test")?;
         let result = (|| -> Result<(), String> {
-            std::fs::write(root.join(".gitignore"), "tests/target.rs\n")
+            std::fs::write(root.join(".gitignore"), "tests/target.py\n")
                 .map_err(|error| error.to_string())?;
             run_git(&root, &["add", ".gitignore"])?;
             run_git(&root, &["commit", "-q", "-m", "ignore selected test"])?;
-            let prepared = prepare_sample_attempt(&root, "seam:sample", "ignored")?;
-            let finished = finish_sample_attempt(&root, &prepared)?;
+            // Rust external targets must already be committed; an ignored
+            // Python test retains the path-only content-identity control.
+            let prepared = prepare_sample_attempt_for_target(
+                &root,
+                "seam:sample",
+                "ignored",
+                "tests/target.py",
+            )?;
+            std::fs::write(root.join("tests/target.py"), "def test_focused(): pass\n")
+                .map_err(|error| error.to_string())?;
+            let packet =
+                root.join(&find_manifest_artifact(&prepared.manifest, "agent_packet")?.path);
+            finish_repair_attempt(
+                &root,
+                &prepared.manifest.repair_attempt_id,
+                &packet,
+                HeadMovement::AdmitDescendantCommits,
+            )?;
+            let finished =
+                load_repair_attempt_manifest(&root, &prepared.manifest.repair_attempt_id)?;
             let head = crate::agent::artifact::current_git_head(&root)?;
             if repair_attempt_head_reading(&root, &finished, Some(&head)).head_current != Some(true)
             {
                 return Err("ignored selected test was not initially current".to_string());
             }
-            let selected = root.join("tests/target.rs");
+            let selected = root.join("tests/target.py");
             let original = std::fs::read(&selected).map_err(|error| error.to_string())?;
-            std::fs::write(&selected, b"#[test]\nfn changed() {}\n")
+            std::fs::write(&selected, b"def test_changed(): pass\n")
                 .map_err(|error| error.to_string())?;
             if repair_attempt_head_reading(&root, &finished, Some(&head)).head_current == Some(true)
             {
@@ -8811,6 +8834,15 @@ mod tests {
         seam_id: &str,
         label: &str,
     ) -> Result<BeginRepairAttemptResult, String> {
+        prepare_sample_attempt_for_target(root, seam_id, label, "tests/target.rs")
+    }
+
+    fn prepare_sample_attempt_for_target(
+        root: &Path,
+        seam_id: &str,
+        label: &str,
+        target: &str,
+    ) -> Result<BeginRepairAttemptResult, String> {
         let workflow = root.join("target/ripr/workflow");
         std::fs::create_dir_all(&workflow)
             .map_err(|error| format!("create {} failed: {error}", workflow.display()))?;
@@ -8834,7 +8866,7 @@ mod tests {
             .map_err(|error| format!("write {} failed: {error}", before.display()))?;
         let packet_value = serde_json::json!({
             "seam_id": seam_id,
-            "allowed_edit_surface": ["tests/target.rs"],
+            "allowed_edit_surface": [target],
             "forbidden_files": []
         });
         let packet_text = serde_json::to_string_pretty(&packet_value)
@@ -8878,6 +8910,13 @@ mod tests {
         let readme = root.join("README.md");
         std::fs::write(&readme, "# test\n")
             .map_err(|error| format!("write {} failed: {error}", readme.display()))?;
+        // The external Rust cage requires a committed selected target at
+        // before-time. An empty Rust file is a clean insertion surface for
+        // the lifecycle fixtures that add focused() after preparing an attempt.
+        std::fs::create_dir_all(root.join("tests"))
+            .map_err(|error| format!("create tests dir failed: {error}"))?;
+        std::fs::write(root.join("tests/target.rs"), "")
+            .map_err(|error| format!("write baseline target failed: {error}"))?;
         run_git(&root, &["add", "."])?;
         run_git(&root, &["commit", "--no-gpg-sign", "-m", "initial"])?;
         Ok(root)
