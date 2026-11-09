@@ -1,0 +1,1 @@
+tools/python/cargo-artifacts/run.py|subprocess.run|2|rust/build|#13965: resolve Cargo metadata and registered worktrees before fail-closed build-pool inventory or deletion.
