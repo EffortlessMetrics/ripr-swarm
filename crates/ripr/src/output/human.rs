@@ -9235,6 +9235,7 @@ mod tests {
         let render_with = |root: &str, packages: &[&str], sample: &str| {
             render(&CheckOutput {
                 value_origins: Default::default(),
+                owner_opt_outs: Vec::new(),
                 harness_projections: Vec::new(),
                 schema_version: "0.1".to_string(),
                 tool: "ripr".to_string(),
