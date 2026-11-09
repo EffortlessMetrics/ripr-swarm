@@ -1,3 +1,3 @@
 <!-- section: Internal / CI -->
 
-- Preserve manual-only TypeScript mutation proof while reconciling its upstream Stryker 9.6.1 corpus, peer-dependency installation fixes and first hosted evidence into the auxiliary workflow retirement (#12973).
+- Preserve manual-only TypeScript mutation proof while reconciling its upstream Stryker 9.6.1 corpus, peer-dependency installation fixes and first hosted evidence into the auxiliary workflow retirement; describe dependency refresh per invocation rather than weekly (#12973).

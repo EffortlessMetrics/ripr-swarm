@@ -175,8 +175,8 @@ join rule. The report is advisory and is not a suite adequacy measure.
 ## TypeScript: real Stryker mutants (synthetic-diff verdict join)
 
 The hosted run installs with `--no-package-lock`, so transitive dependencies
-resolve fresh each week; the receipt records the package revision and Stryker
-version but not resolved dependency versions, so weekly results can drift for
+resolve fresh on each run; the receipt records the package revision and Stryker
+version but not resolved dependency versions, so results can drift for
 reasons outside ripr. The lane is advisory.
 
 `ripr check --format repo-exposure-json` lists no seams for TypeScript (or
