@@ -36,6 +36,8 @@ pub(crate) enum Product {
     ModuleScopes,
     ClosureArgumentPositions,
     InvokedCallbackParams,
+    StrippedFileImports,
+    ItemSyntax,
 }
 
 impl Product {
@@ -51,6 +53,8 @@ impl Product {
             Self::ModuleScopes => "module_scopes",
             Self::ClosureArgumentPositions => "closure_argument_positions",
             Self::InvokedCallbackParams => "invoked_callback_params",
+            Self::StrippedFileImports => "stripped_file_imports",
+            Self::ItemSyntax => "item_syntax",
         }
     }
 }
