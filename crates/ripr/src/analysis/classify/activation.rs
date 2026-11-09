@@ -273,33 +273,30 @@ fn value_facts_for_test(
         if !owner_name.is_empty() && call.name != owner_name {
             continue;
         }
-        let Some(arguments) = owner_name_call_text(&call.text, owner_name, free_owner)
-            .and_then(|text| call_arguments(text, &call.name))
-        else {
-            continue;
-        };
-        for (idx, argument) in arguments.iter().enumerate() {
-            for value in owner_row_argument_values(test, argument, false, scope) {
-                let value = parameters
-                    .get(idx)
-                    .map(|parameter| format!("{parameter} = {value}"))
-                    .unwrap_or(value);
-                facts.push(ValueFact {
-                    file: None,
-                    line: call.line,
-                    text: call.text.to_string(),
-                    value,
-                    context: ValueContext::FunctionArgument,
-                });
-            }
-            for value in enum_variant_values(argument) {
-                facts.push(ValueFact {
-                    file: None,
-                    line: call.line,
-                    text: call.text.to_string(),
-                    context: path_value_context(&value),
-                    value,
-                });
+        for arguments in same_line_call_argument_lists(&call.text, &call.name, free_owner) {
+            for (idx, argument) in arguments.iter().enumerate() {
+                for value in owner_row_argument_values(test, argument, false, scope) {
+                    let value = parameters
+                        .get(idx)
+                        .map(|parameter| format!("{parameter} = {value}"))
+                        .unwrap_or(value);
+                    facts.push(ValueFact {
+                        file: None,
+                        line: call.line,
+                        text: call.text.to_string(),
+                        value,
+                        context: ValueContext::FunctionArgument,
+                    });
+                }
+                for value in enum_variant_values(argument) {
+                    facts.push(ValueFact {
+                        file: None,
+                        line: call.line,
+                        text: call.text.to_string(),
+                        context: path_value_context(&value),
+                        value,
+                    });
+                }
             }
         }
     }
@@ -5411,6 +5408,57 @@ impl<'a> ReceiverParameters<'a> {
     }
 }
 
+/// Argument lists of every call of `name` spelled on one captured line
+/// (#13373). A `CallFact`'s text is the whole source line and call
+/// extraction keeps one fact per name per line, so reading only the first
+/// call would duplicate its arguments for a second same-line call and make
+/// that call's input invisible. Occurrences are found on the masked line
+/// (a spelling in a comment or string is no call), a free owner must spell
+/// a bare or module-qualified call at every occurrence (never
+/// `Type::name(..)` or `value.name(..)`, #6713), and an occurrence nested
+/// inside an earlier accepted call's arguments is that call's argument,
+/// not a separate input row.
+fn same_line_call_argument_lists(text: &str, name: &str, free_owner: bool) -> Vec<Vec<String>> {
+    if name.is_empty() {
+        return Vec::new();
+    }
+    let Some(base) = owner_name_call_text(text, name, free_owner) else {
+        return Vec::new();
+    };
+    let masked = crate::analysis::extract::mask_comments_and_strings(base);
+    let needle = format!("{name}(");
+    let mut lists = Vec::new();
+    let mut occupied_until = 0usize;
+    let mut from = 0usize;
+    while from < masked.len() {
+        let Some(rel) = masked[from..].find(&needle) else {
+            break;
+        };
+        let at = from + rel;
+        from = at + needle.len();
+        if at < occupied_until {
+            continue;
+        }
+        if at > 0 {
+            let before = masked.as_bytes()[at - 1];
+            if before.is_ascii_alphanumeric() || before == b'_' {
+                continue;
+            }
+        }
+        if free_owner && !super::related_tests::is_free_function_call_at(&masked, at, name) {
+            continue;
+        }
+        let Some(arguments) = base.get(at..).and_then(|rest| call_arguments(rest, name)) else {
+            continue;
+        };
+        if let Some(contents) = delimited_contents_at(base, at + name.len()) {
+            occupied_until = at + name.len() + 1 + contents.len() + 1;
+        }
+        lists.push(arguments);
+    }
+    lists
+}
+
 /// `owner_call_parameter_values` over only the calls `keep` admits.
 fn owner_call_parameter_values_where(
     related_tests: &[&TestSummary],
@@ -5429,128 +5477,78 @@ fn owner_call_parameter_values_where(
             if call.name != owner_name || !keep(test, call) {
                 continue;
             }
-            let Some(arguments) = owner_name_call_text(&call.text, owner_name, free_owner)
-                .and_then(|text| call_arguments(text, &call.name))
-            else {
-                continue;
-            };
-            // A constant-row `for` table (#5328) yields one value per row,
-            // and cells of the same row belong together: the call runs once
-            // per row, so it contributes one input row per table row. A
-            // single value spreads to every row only when it holds for all
-            // of them (a literal or `let`); an rstest `#[case]` column drops
-            // the cases it cannot read, so its slots no longer line up with
-            // rows and it keeps contributing its first value alone.
-            let cells = arguments
-                .iter()
-                .enumerate()
-                .filter_map(|(idx, argument)| {
-                    let parameter = parameters.get(idx)?;
-                    if let Some(values) = receivers.cell(test, parameter, argument) {
-                        return Some((parameter, values, argument.trim(), false));
-                    }
-                    let values = owner_row_argument_values(
-                        test,
-                        argument,
-                        receivers.text_cells,
-                        receivers.fold_scope(test),
-                    );
-                    let table_column = !values.is_empty()
-                        && crate::analysis::syntax::constant_table_column(
-                            &test.body,
-                            argument.trim(),
-                        )
-                        .is_some();
-                    Some((parameter, values, argument.trim(), table_column))
-                })
-                .filter(|(_, values, _, _)| !values.is_empty())
-                .collect::<Vec<_>>();
-            let case_column = |argument: &str| {
-                !crate::analysis::value_resolution::test_case_bound_literals(test, argument)
-                    .is_empty()
-            };
-            let case_arguments = cells
-                .iter()
-                .filter(|(_, _, argument, table)| !*table && case_column(argument))
-                .map(|(_, _, argument, _)| *argument)
-                .collect::<Vec<_>>();
-            let readable_case_rows = if case_arguments.is_empty() {
-                Vec::new()
-            } else {
-                (0..crate::analysis::value_resolution::rstest_case_row_count(test))
-                    .filter(|&case_index| {
-                        case_arguments.iter().all(|argument| {
-                            test_case_scalar_at(test, argument, case_index).is_some()
-                        })
-                    })
-                    .collect::<Vec<_>>()
-            };
-            let table_height = cells
-                .iter()
-                .filter(|(_, _, _, table)| *table)
-                .map(|(_, values, _, _)| values.len())
-                .max();
-            let by_row = cells.iter().any(|(_, _, _, table)| *table)
-                && cells.iter().all(|(_, values, argument, table)| {
-                    *table || (values.len() == 1 && !case_column(argument))
-                });
-            let mut push_row = |case_index: Option<usize>, table_index: Option<usize>| {
-                let row = cells
+            for arguments in same_line_call_argument_lists(&call.text, owner_name, free_owner) {
+                // A constant-row `for` table (#5328) yields one value per row,
+                // and cells of the same row belong together: the call runs once
+                // per row, so it contributes one input row per table row. A
+                // single value spreads to every row only when it holds for all
+                // of them (a literal or `let`); an rstest `#[case]` column drops
+                // the cases it cannot read, so its slots no longer line up with
+                // rows and it keeps contributing its first value alone.
+                let cells = arguments
                     .iter()
-                    .filter_map(|(parameter, values, argument, table)| {
-                        let value = if *table {
-                            table_index.and_then(|idx| values.get(idx)).cloned()?
-                        } else if case_column(argument) {
-                            test_case_scalar_at(test, argument, case_index?)?
-                        } else {
-                            values.first()?.clone()
-                        };
-                        Some(ParameterValue {
-                            parameter: (*parameter).clone(),
-                            value: value.clone(),
-                            line: call.line,
-                            text: call.text.to_string(),
-                            file: Some(test.file.clone()),
-                        })
+                    .enumerate()
+                    .filter_map(|(idx, argument)| {
+                        let parameter = parameters.get(idx)?;
+                        if let Some(values) = receivers.cell(test, parameter, argument) {
+                            return Some((parameter, values, argument.trim(), false));
+                        }
+                        let values = owner_row_argument_values(
+                            test,
+                            argument,
+                            receivers.text_cells,
+                            receivers.fold_scope(test),
+                        );
+                        let table_column = !values.is_empty()
+                            && crate::analysis::syntax::constant_table_column(
+                                &test.body,
+                                argument.trim(),
+                            )
+                            .is_some();
+                        Some((parameter, values, argument.trim(), table_column))
                     })
+                    .filter(|(_, values, _, _)| !values.is_empty())
                     .collect::<Vec<_>>();
-                if !row.is_empty() {
-                    rows.push(row);
-                }
-            };
-            if let Some(table_height) = table_height.filter(|_| !readable_case_rows.is_empty()) {
-                // Each rstest case runs the inner constant-row loop, so case
-                // rows and table rows are independent dimensions (#7127).
-                for &case_index in &readable_case_rows {
-                    for table_index in 0..table_height {
-                        push_row(Some(case_index), Some(table_index));
-                    }
-                }
-            } else if table_height.is_none() && !readable_case_rows.is_empty() {
-                // Columns of the same `#[case(..)]` row stay correlated.
-                for &case_index in &readable_case_rows {
-                    push_row(Some(case_index), None);
-                }
-            } else if table_height.is_none() {
-                let height = if by_row {
-                    cells
-                        .iter()
-                        .map(|(_, values, _, _)| values.len())
-                        .max()
-                        .unwrap_or(0)
-                } else {
-                    usize::from(!cells.is_empty())
+                let case_column = |argument: &str| {
+                    !crate::analysis::value_resolution::test_case_bound_literals(test, argument)
+                        .is_empty()
                 };
-                for position in 0..height {
+                let case_arguments = cells
+                    .iter()
+                    .filter(|(_, _, argument, table)| !*table && case_column(argument))
+                    .map(|(_, _, argument, _)| *argument)
+                    .collect::<Vec<_>>();
+                let readable_case_rows = if case_arguments.is_empty() {
+                    Vec::new()
+                } else {
+                    (0..crate::analysis::value_resolution::rstest_case_row_count(test))
+                        .filter(|&case_index| {
+                            case_arguments.iter().all(|argument| {
+                                test_case_scalar_at(test, argument, case_index).is_some()
+                            })
+                        })
+                        .collect::<Vec<_>>()
+                };
+                let table_height = cells
+                    .iter()
+                    .filter(|(_, _, _, table)| *table)
+                    .map(|(_, values, _, _)| values.len())
+                    .max();
+                let by_row = cells.iter().any(|(_, _, _, table)| *table)
+                    && cells.iter().all(|(_, values, argument, table)| {
+                        *table || (values.len() == 1 && !case_column(argument))
+                    });
+                let mut push_row = |case_index: Option<usize>, table_index: Option<usize>| {
                     let row = cells
                         .iter()
-                        .filter_map(|(parameter, values, _, _)| {
-                            let value = match values.len() {
-                                _ if !by_row => values.first(),
-                                1 => values.first(),
-                                len if len == height => values.get(position),
-                                _ => None,
-                            }?;
+                        .filter_map(|(parameter, values, argument, table)| {
+                            let value = if *table {
+                                table_index.and_then(|idx| values.get(idx)).cloned()?
+                            } else if case_column(argument) {
+                                test_case_scalar_at(test, argument, case_index?)?
+                            } else {
+                                values.first()?.clone()
+                            };
                             Some(ParameterValue {
                                 parameter: (*parameter).clone(),
                                 value: value.clone(),
@@ -5563,38 +5561,86 @@ fn owner_call_parameter_values_where(
                     if !row.is_empty() {
                         rows.push(row);
                     }
-                }
-            } else {
-                let height = if by_row {
-                    cells
-                        .iter()
-                        .map(|(_, values, _, _)| values.len())
-                        .max()
-                        .unwrap_or(0)
-                } else {
-                    usize::from(!cells.is_empty())
                 };
-                for position in 0..height {
-                    let row = cells
-                        .iter()
-                        .filter_map(|(parameter, values, _, _)| {
-                            let value = match values.len() {
-                                _ if !by_row => values.first(),
-                                1 => values.first(),
-                                len if len == height => values.get(position),
-                                _ => None,
-                            }?;
-                            Some(ParameterValue {
-                                parameter: (*parameter).clone(),
-                                value: value.clone(),
-                                line: call.line,
-                                text: call.text.to_string(),
-                                file: Some(test.file.clone()),
+                if let Some(table_height) = table_height.filter(|_| !readable_case_rows.is_empty())
+                {
+                    // Each rstest case runs the inner constant-row loop, so case
+                    // rows and table rows are independent dimensions (#7127).
+                    for &case_index in &readable_case_rows {
+                        for table_index in 0..table_height {
+                            push_row(Some(case_index), Some(table_index));
+                        }
+                    }
+                } else if table_height.is_none() && !readable_case_rows.is_empty() {
+                    // Columns of the same `#[case(..)]` row stay correlated.
+                    for &case_index in &readable_case_rows {
+                        push_row(Some(case_index), None);
+                    }
+                } else if table_height.is_none() {
+                    let height = if by_row {
+                        cells
+                            .iter()
+                            .map(|(_, values, _, _)| values.len())
+                            .max()
+                            .unwrap_or(0)
+                    } else {
+                        usize::from(!cells.is_empty())
+                    };
+                    for position in 0..height {
+                        let row = cells
+                            .iter()
+                            .filter_map(|(parameter, values, _, _)| {
+                                let value = match values.len() {
+                                    _ if !by_row => values.first(),
+                                    1 => values.first(),
+                                    len if len == height => values.get(position),
+                                    _ => None,
+                                }?;
+                                Some(ParameterValue {
+                                    parameter: (*parameter).clone(),
+                                    value: value.clone(),
+                                    line: call.line,
+                                    text: call.text.to_string(),
+                                    file: Some(test.file.clone()),
+                                })
                             })
-                        })
-                        .collect::<Vec<_>>();
-                    if !row.is_empty() {
-                        rows.push(row);
+                            .collect::<Vec<_>>();
+                        if !row.is_empty() {
+                            rows.push(row);
+                        }
+                    }
+                } else {
+                    let height = if by_row {
+                        cells
+                            .iter()
+                            .map(|(_, values, _, _)| values.len())
+                            .max()
+                            .unwrap_or(0)
+                    } else {
+                        usize::from(!cells.is_empty())
+                    };
+                    for position in 0..height {
+                        let row = cells
+                            .iter()
+                            .filter_map(|(parameter, values, _, _)| {
+                                let value = match values.len() {
+                                    _ if !by_row => values.first(),
+                                    1 => values.first(),
+                                    len if len == height => values.get(position),
+                                    _ => None,
+                                }?;
+                                Some(ParameterValue {
+                                    parameter: (*parameter).clone(),
+                                    value: value.clone(),
+                                    line: call.line,
+                                    text: call.text.to_string(),
+                                    file: Some(test.file.clone()),
+                                })
+                            })
+                            .collect::<Vec<_>>();
+                        if !row.is_empty() {
+                            rows.push(row);
+                        }
                     }
                 }
             }
@@ -9501,6 +9547,78 @@ mod tests {
         assert!(activation.missing_discriminators.is_empty());
         assert_eq!(owner_input_values(&activation), vec!["10"]);
         assert_equality_facts_name_file(&activation, "tests/score.rs");
+    }
+
+    #[test]
+    fn owner_pin_same_line_two_calls_credit_both_boundary_inputs() {
+        // #13373: two calls to the same owner on one test line are one
+        // captured call fact whose text is the whole line. The second
+        // call's argument (the boundary 10) must read as its own input
+        // row, not as a duplicate of the first call's 11.
+        let test = test_with_body_call(
+            "fn score_boundary() {\n    assert!(score(11)); assert!(score(10));\n}",
+            11,
+            "assert!(score(11)); assert!(score(10));",
+        );
+        let activation = boundary_activation(&test);
+
+        assert!(has_observed_boundary_equality(&activation));
+        assert!(
+            activation.missing_discriminators.is_empty(),
+            "the same-line second call supplies the boundary; got {:?}",
+            activation.missing_discriminators
+        );
+        assert_eq!(owner_input_values(&activation), vec!["10", "11"]);
+    }
+
+    #[test]
+    fn owner_pin_same_line_second_call_stays_weak_without_a_boundary_input() {
+        // #13373 fail-closed controls: no blanket promotion for a second
+        // same-line call that is off-boundary, spelled in a string, or a
+        // same-named associated call of another type.
+        for call in [
+            "assert!(score(11)); assert!(score(9));",
+            "assert!(score(11)); note(\"score(10)\");",
+            "assert!(score(11)); /* score(10) */",
+        ] {
+            let test =
+                test_with_body_call(&format!("fn score_boundary() {{\n    {call}\n}}"), 11, call);
+            let activation = boundary_activation(&test);
+
+            assert!(
+                !has_observed_boundary_equality(&activation),
+                "`{call}` must not supply the boundary input"
+            );
+            assert!(
+                !activation.missing_discriminators.is_empty(),
+                "`{call}` must stay a missing-boundary (weak) reading"
+            );
+        }
+    }
+
+    #[test]
+    fn owner_pin_same_line_associated_call_is_not_a_free_owner_input() {
+        // #13373 / #6713: for an established free owner, a same-named
+        // `Kind::score(..)` on the same line is another type's call.
+        let mut owner = function("pub fn score(amount: i32) -> bool {\n    amount > 10\n}");
+        owner.impl_context = crate::analysis::facts::FunctionImplContext::Free;
+        let test = test_with_body_call(
+            "fn score_boundary() {\n    assert!(score(11)); assert!(Kind::score(10));\n}",
+            11,
+            "assert!(score(11)); assert!(Kind::score(10));",
+        );
+        let activation = activation_evidence(
+            &probe(ProbeFamily::Predicate, "amount > 10"),
+            Some(&owner),
+            &[&test],
+            &[],
+            None,
+            &crate::analysis::rust_index::RustIndex::default(),
+            false,
+        );
+
+        assert!(!has_observed_boundary_equality(&activation));
+        assert!(!activation.missing_discriminators.is_empty());
     }
 
     #[test]
