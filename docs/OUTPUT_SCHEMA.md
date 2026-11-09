@@ -282,6 +282,7 @@ terse document rewrites repeated content. Exactly what differs:
 | `evidence_legend` | absent | code → full template, emitted only when useful, in first-appearance order; codes avoid literal values on coded surfaces |
 | Next-action alias | both keys emitted | `suggested_next_action` is omitted only when its value equals `recommended_next_step` and is at least 24 UTF-8 bytes; the alias is listed once in `dropped_aliases` |
 | Activation aliases (#13673) | finding-level `observed_values` and `missing_discriminators` repeat `activation` | each is omitted only when it is non-empty and equal to the same-named array in that finding's `activation`; each dropped alias is listed once in `dropped_aliases` |
+| Gap id and stage-row aliases (#13673) | `canonical_gap_id` repeats `canonical_gap.id`; `evidence_stages` rows repeat the `ripr` stage states | `canonical_gap_id` is omitted when equal to `canonical_gap.id`. `evidence_stages` is omitted only when it is exactly the five `{stage, state, confidence}` rows (no `basis`) that `ripr` yields in order `reach, infect, propagate, observe, discriminate`; restore each row from `ripr.<stage>.state` and `.confidence`. Each dropped alias is listed once in `dropped_aliases` |
 
 Guarantees and limits, stated precisely:
 
@@ -292,8 +293,10 @@ Guarantees and limits, stated precisely:
 - Expanding every code through `evidence_legend` reconstructs the exact
   original strings in the original order, so the prose is recoverable from
   the terse document alone. Restore an omitted `suggested_next_action` from
-  that finding's `recommended_next_step`, and an omitted `observed_values` or
-  `missing_discriminators` from that finding's `activation`. All other fields remain verbatim
+  that finding's `recommended_next_step`, an omitted `observed_values` or
+  `missing_discriminators` from that finding's `activation`, an omitted
+  `canonical_gap_id` from `canonical_gap.id`, and an omitted `evidence_stages`
+  from `ripr` as described above. All other fields remain verbatim
   even when their strings coincide. The schema permits omitting
   `suggested_next_action` only when both `rendering: "terse"` and the known
   alias declaration are present; full JSON continues to require it. The
