@@ -9261,7 +9261,6 @@ mod tests {
                 suppression: None,
                 analysis_outcome: None,
                 partial_scope: None,
-                owner_opt_outs: Vec::new(),
                 analyzed_revisions: None,
                 owner_opt_outs: Vec::new(),
             })
