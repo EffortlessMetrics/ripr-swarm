@@ -11,8 +11,9 @@
 //! reference estimate only — no tokenizer or provider billing is claimed.
 //! Provider input/cached/output/reasoning tokens are host-recorded and
 //! out of scope for this CLI test. This is a deterministic output-budget
-//! instrument: it must not be cited as an observed agent token saving or
-//! as a completed repair workflow.
+//! instrument over a fixed fixture (five changed predicates yielding four
+//! agent gap records): it must not be cited as an observed agent token
+//! saving or as a completed repair workflow.
 use super::{printed_path, run_command, unique_external_workspace};
 use std::collections::BTreeSet;
 use std::fs;
@@ -59,19 +60,25 @@ fn workspace(label: &str) -> TestResult<std::path::PathBuf> {
     Ok(project)
 }
 
-fn normalize_root(text: &str, project: &Path) -> String {
-    // `unique_external_workspace` canonicalizes, which yields a verbatim
-    // `\\?\` spelling on Windows, while ripr prints the bound root folded
-    // (`root_path_display`: verbatim fold + `/` separators). Replace both
-    // spellings so the budget does not depend on checkout path length.
-    let raw = project.to_string_lossy().into_owned();
-    let printed = printed_path(project);
-    let once = text.replace(&raw, "<root>");
+fn normalize_root_text(text: &str, raw: &str, printed: &str) -> String {
+    // Both spellings must fold: the raw canonical path (verbatim `\\?\`
+    // on Windows) and ripr's printed form (verbatim fold + `/`
+    // separators). Tested with fixed Windows-like spellings below so the
+    // fold is discriminated on every host.
+    let once = text.replace(raw, "<root>");
     if printed == raw {
         once
     } else {
-        once.replace(&printed, "<root>")
+        once.replace(printed, "<root>")
     }
+}
+
+fn normalize_root(text: &str, project: &Path) -> String {
+    // `unique_external_workspace` canonicalizes, which yields a verbatim
+    // `\\?\` spelling on Windows, while ripr prints the bound root folded
+    // (`root_path_display`). Replace both spellings so the budget does not
+    // depend on checkout path length.
+    normalize_root_text(text, &project.to_string_lossy(), &printed_path(project))
 }
 
 fn run(project: &Path, args: &[&str]) -> TestResult<String> {
@@ -97,7 +104,8 @@ fn receipt(label: &str, text: &str, ceiling: usize) {
     );
 }
 
-fn first_gap_id(check: &str) -> TestResult<String> {
+fn gap_ids(check: &str) -> BTreeSet<String> {
+    let mut ids = BTreeSet::new();
     for line in check.lines() {
         if let Some(at) = line.find("|id=") {
             let id: String = line[at + 4..]
@@ -105,11 +113,18 @@ fn first_gap_id(check: &str) -> TestResult<String> {
                 .take_while(|c| !c.is_whitespace() && *c != '|')
                 .collect();
             if !id.is_empty() {
-                return Ok(id);
+                ids.insert(id);
             }
         }
     }
-    Err(format!("journey fixture must print a gap with |id=:\n{check}").into())
+    ids
+}
+
+fn first_gap_id(check: &str) -> TestResult<String> {
+    gap_ids(check)
+        .into_iter()
+        .next()
+        .ok_or_else(|| format!("journey fixture must print a gap with |id=:\n{check}").into())
 }
 
 #[test]
@@ -180,6 +195,24 @@ fn agent_journey_stays_inside_byte_budget_and_keeps_verify_record() -> TestResul
     )?;
 
     // Identity and completion authority survive every step.
+    // The budget only means something if the fixture actually yields its
+    // workload: fewer findings would shrink every output and pass
+    // vacuously. Five changed predicates yield four agent gap records
+    // here (`age >= 18` surfaces two probes; the clamp/parse changes stay
+    // hidden on this compact surface, as in the sibling budget). Pin the
+    // header count and the distinct record IDs together.
+    for (label, check) in [("cold", &cold), ("steady", &steady), ("verify", &verify)] {
+        let ids = gap_ids(check);
+        assert!(
+            check.contains(" gaps=4 "),
+            "{label} header must count four gaps:\n{check}"
+        );
+        assert!(
+            ids.len() == 4,
+            "journey fixture must yield four distinct gap IDs, {label} yielded {}",
+            ids.len()
+        );
+    }
     assert!(
         explained.contains(&id),
         "explain lost finding {id}:\n{explained}"
@@ -199,11 +232,14 @@ fn agent_journey_stays_inside_byte_budget_and_keeps_verify_record() -> TestResul
     );
 
     // Ceilings sit just above the measured receipts on this fixture
-    // (2026-11-09 normalized: cold 1047, steady 1047, explain 455,
-    // context 4862, verify 1047; pre-normalization 2026-11-08 receipts
-    // were 1169/1169/577/4984/1169, the 122-byte gap per output being
-    // unnormalized checkout-path text). Cold equals steady here because
-    // the one-time legend is a human-format surface, not an agent-format one.
+    // (2026-11-09 normalized, four-gap workload: cold 1336, steady 1336,
+    // explain 543, context 4974, verify 1336; pre-normalization 2026-11-08
+    // receipts were 1169/1169/577/4984/1169, the ~122-byte gap per output
+    // being unnormalized checkout-path text). Cold equals steady here
+    // because the one-time legend is a human-format surface, not an
+    // agent-format one. Post-rebase receipts grew vs the pre-rebase
+    // normalized run (1047/455/4862) with main movement since ab93e28
+    // (includes #13443 staged-evidence rows); ceilings still hold.
     receipt("check cold", &cold, 1_400);
     receipt("check steady", &steady, 1_400);
     receipt("explain --format agent", &explained, 800);
@@ -237,6 +273,31 @@ fn agent_journey_stays_inside_byte_budget_and_keeps_verify_record() -> TestResul
     assert!(
         dup_bytes <= 3_000,
         "journey repeats {dup_bytes} duplicate bytes over its 3000-byte redundancy budget"
+    );
+    Ok(())
+}
+
+#[test]
+fn journey_root_normalization_folds_both_windows_spellings() -> TestResult {
+    // Fixed Windows-like spellings discriminate both replacements on every
+    // host: on Windows `/tmp/...` would make `printed_path` equal the raw
+    // path, so a test using only host paths stays green if either
+    // replacement disappears. Removing either `replace` below must fail.
+    let raw = r"\\?\C:\ws\proj";
+    let printed = "C:/ws/proj";
+    let fake = format!("cmd --root {raw} --diff {printed}/change.diff next {printed}");
+    assert_eq!(
+        normalize_root_text(&fake, raw, printed),
+        "cmd --root <root> --diff <root>/change.diff next <root>",
+        "both spellings must fold to the same token"
+    );
+    assert!(
+        fake.replace(raw, "<root>").contains(printed),
+        "fixture must carry the printed spelling or the second fold is vacuous"
+    );
+    assert!(
+        fake.replace(printed, "<root>").contains(raw),
+        "fixture must carry the raw spelling or the first fold is vacuous"
     );
     Ok(())
 }
