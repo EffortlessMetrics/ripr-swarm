@@ -675,6 +675,8 @@ fn a_builtin_exception_swap_requires_unshadowed_builtin_names() -> Check {
         "TypeError = Exception\n",
         "class TypeError(Exception):\n    pass\n",
         "ValueError = TypeError\n",
+        "if TypeError := Exception:\n    pass\n",
+        "_ = [TypeError := Exception]\n",
     ] {
         let shadowed = format!(
             "import pytest\nfrom fx.core import checked\n{binding}\ndef test_negative():\n    with pytest.raises(TypeError):\n        checked(-1)\n"

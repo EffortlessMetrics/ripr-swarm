@@ -1349,8 +1349,8 @@ mutant calibrates the rule; ripr reports only the static shape.
     custom helper), so the collected example reaches the owner and the
     finding abstains (`static_unknown`, `opaque_custom_assertion_helper`)
     instead of claiming no test path (#13869). An example that calls another
-    function is not read for the owner. Strings are capped at 4 KiB and expressions at 48
-    levels so a reviewed diff cannot exhaust the analyzer. A credited
+    function is not read for the owner. Strings are capped at 4 KiB and
+    expressions at 48 levels so a reviewed diff cannot exhaust the analyzer. A credited
     example advertises no verification command, because pytest has no node
     for the synthetic test (`py-idioms-doctest-separator` credited,
     `py-idioms-doctest-short-input` stays a gap, #9619).

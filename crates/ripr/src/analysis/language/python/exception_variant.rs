@@ -2,10 +2,13 @@
 //! builtin classes #13869).
 //!
 //! This is a finding-specific reading, not a stronger grade for arbitrary
-//! exception names. Two inert sibling classes must directly extend the
-//! unshadowed builtin `Exception`, and the test must import the new class and
-//! owner without aliases from the owner's module. Its own `raises` context
-//! must call the owner with literal inputs that reach the exact edited raise.
+//! exception names. For local classes, two inert sibling classes must directly
+//! extend the unshadowed builtin `Exception`, and the test must import the new
+//! class and owner without aliases from the owner's module. For builtin
+//! classes, the two must be disjoint in the builtin hierarchy, the context may
+//! name either one, and neither name may be imported, bound or shadowed in the
+//! owner or test module. Its own `raises` context must call the owner with
+//! literal inputs that reach the exact edited raise.
 //! Unknown bindings, class behavior, test activation or function flow grant
 //! no credit. The shared repair validator is unchanged.
 
