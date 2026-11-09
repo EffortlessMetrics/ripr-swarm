@@ -1525,9 +1525,13 @@ mod tests {
             assert_eq!(parse_new_path_marker(marker), None, "{marker}");
             assert!(is_new_path_marker(marker), "{marker} must stay a boundary");
         }
+        // `Path` equality compares components, so compare the stored spelling
+        // as text: the confined path must keep git's `/`, not the native `\`.
         assert_eq!(
-            parse_new_path_marker("+++ b/src\\a.rs"),
-            Some(PathBuf::from("src/a.rs"))
+            parse_new_path_marker("+++ b/src\\a.rs")
+                .as_deref()
+                .and_then(Path::to_str),
+            Some("src/a.rs")
         );
     }
 
