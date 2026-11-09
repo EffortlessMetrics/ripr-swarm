@@ -101,8 +101,10 @@ const RELATION_TRIGRAM_WIDTH: usize = 3;
 
 /// Run-scoped masked-source cache for helper-entry call lines (#13868).
 ///
-/// `masked_call_line` used to mask the FULL test file on every
-/// (probe x candidate test x matching call x hop) evaluation. This memo
+/// `masked_call_line` used to re-request the FULL masked test file on
+/// every (probe x candidate test x matching call x hop) evaluation: an
+/// `extract::mask` memo compare and copy for sources inside its
+/// 16 KiB-2 MiB / 8-slot window, or a full re-mask outside it. This memo
 /// masks each indexed test file once per classification run and hands back
 /// only the requested line. Entries are pure in their file key, so a
 /// concurrent first miss may build the same mask twice and the first insert
