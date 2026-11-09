@@ -53,7 +53,9 @@ use super::{
 };
 use crate::analysis::cancellation::AnalysisCancellationToken;
 use crate::analysis::is_test_surface_path;
-use crate::analysis::repair_route::repair_packet_eligibility;
+use crate::analysis::repair_route::{
+    cross_language_test_target_unresolved, repair_packet_eligibility,
+};
 use crate::analysis::seams::{ExpectedSink, RepoSeam, RequiredDiscriminator, SeamKind};
 use crate::app::Mode;
 use crate::domain::{
@@ -5223,10 +5225,8 @@ fn editor_adoption_baseline_pins_gap_repair_action_contract() -> Result<(), Stri
 #[test]
 fn seam_code_actions_surface_packet_assertion_related_test_and_refresh() -> Result<(), String> {
     let seam = sample_classified_seam();
-    let diagnostic = diagnostic_with_fix_site_ready(
-        diagnostic_for_classified_seam(Path::new("/workspace"), &seam)
-            .ok_or_else(|| "expected seam diagnostic".to_string())?,
-    );
+    let diagnostic = diagnostic_for_classified_seam(Path::new("/workspace"), &seam)
+        .ok_or_else(|| "expected seam diagnostic".to_string())?;
     let uri = test_uri("file:///workspace/src/pricing.rs")?;
     let mut snapshot = sample_analysis_snapshot(
         PathBuf::from("/workspace"),
@@ -6251,10 +6251,22 @@ fn eligible_seam_with_inline_test_module_target() -> crate::analysis::Classified
 fn seam_code_action_commands_for(
     seam: &crate::analysis::ClassifiedSeam,
 ) -> Result<Vec<(String, String, Vec<serde_json::Value>)>, String> {
-    let diagnostic = diagnostic_with_fix_site_ready(
-        diagnostic_for_classified_seam(Path::new("/workspace"), seam)
-            .ok_or_else(|| "expected seam diagnostic".to_string())?,
-    );
+    let diagnostic = diagnostic_for_classified_seam(Path::new("/workspace"), seam)
+        .ok_or_else(|| "expected seam diagnostic".to_string())?;
+    // #13716: the production seam diagnostic carries no fix-instruction,
+    // witness or finding id. Every assertion built on this helper therefore
+    // exercises the seam's own repair gate, not an injected summary.
+    let data = diagnostic
+        .data
+        .as_ref()
+        .ok_or("the seam diagnostic carries data")?;
+    for injected in ["fix_instruction", "witness", "finding_id"] {
+        if data.get(injected).is_some() {
+            return Err(format!(
+                "production seam diagnostic unexpectedly carries `{injected}`: {data}"
+            ));
+        }
+    }
     let uri = test_uri("file:///workspace/src/pricing.rs")?;
     let mut snapshot = sample_analysis_snapshot(
         PathBuf::from("/workspace"),
@@ -7570,11 +7582,10 @@ fn code_action_response_disabled_capable_client_receives_inert_client_command_ac
             .data
             .as_ref()
             .and_then(|data| data["disabled_reason"].as_str());
-        let expected_reason = if action.title == "Write targeted test: copy brief" {
-            "preview_or_static_limitation"
-        } else {
-            "client_capability_missing"
-        };
+        // #13716: the sample seam is a same-language Rust seam past the
+        // repair-packet flip, so the brief is ready and only the missing
+        // client command disables it, like every other client action.
+        let expected_reason = "client_capability_missing";
         if reason != Some(expected_reason) {
             return Err(format!(
                 "policy-disabled action {} must name {expected_reason}, got {reason:?}",
@@ -7795,6 +7806,14 @@ fn retained_health_preserves_gap_producer_refusals() -> Result<(), String> {
             "Inspect gap: copy repair packet",
             "preview_or_static_limitation",
         ),
+        // #13716: an actionable gap with no anchor and no repair target is
+        // inspect-only; it names `repair_route_not_ready`, not a language
+        // boundary, and keeps that reason through the health conversion.
+        (
+            "route",
+            "Inspect gap: copy repair packet",
+            "repair_route_not_ready",
+        ),
     ];
     let commands = vscode_advertised_client_commands()?;
     let borrowed = commands.iter().map(String::as_str).collect::<Vec<_>>();
@@ -7833,6 +7852,10 @@ fn retained_health_preserves_gap_producer_refusals() -> Result<(), String> {
                     "projection_exclusion_reasons".to_string(),
                     serde_json::json!(["cross_language_target_unresolved"]),
                 );
+            }
+            "route" => {
+                data.remove("anchor");
+                data.remove("repair_route");
             }
             _ => return Err(format!("unsupported gap producer fixture: {producer}")),
         }
@@ -8189,6 +8212,70 @@ fn seam_code_actions_cross_language_unresolved_yields_disabled_preview_limitatio
         return Err(format!(
             "cross-language brief reason must name the language boundary: {text:?}"
         ));
+    }
+    Ok(())
+}
+
+#[test]
+fn seam_not_yet_repairable_names_route_not_ready_not_a_language_boundary() -> Result<(), String> {
+    // #13716: a same-language Rust seam that only lacks a bounded test target
+    // (route not ready) must not be blamed on a language boundary. The brief
+    // stays inert naming `repair_route_not_ready`, and no repair start is
+    // offered, because `agent repair` would refuse the seam.
+    let mut seam = sample_classified_seam();
+    seam.evidence.related_tests.clear();
+    seam.evidence.new_test_target = None;
+    // Preconditions: no cross-language fact, and the flip fails only on
+    // route readiness, so the reason below is decided by that gate alone.
+    assert!(!cross_language_test_target_unresolved(&seam));
+    assert_eq!(
+        repair_packet_eligibility(&seam).ineligibility,
+        Some(crate::analysis::repair_route::RepairPacketIneligibility::RouteNotReady)
+    );
+    let diagnostic = diagnostic_for_classified_seam(Path::new("/workspace"), &seam)
+        .ok_or_else(|| "expected seam diagnostic".to_string())?;
+    let uri = test_uri("file:///workspace/src/pricing.rs")?;
+    let mut snapshot = sample_analysis_snapshot(
+        PathBuf::from("/workspace"),
+        uri.clone(),
+        vec![diagnostic.clone()],
+        Vec::new(),
+    );
+    snapshot.classified_seams = vec![seam];
+    let params = code_action_params_for(uri, diagnostic.range.start.line, vec![diagnostic])?;
+    let actions = code_action_response(
+        &params,
+        Some(&snapshot),
+        &client_features_with_disabled_support(&[])?,
+    );
+    let literals = code_action_literals(&actions)?;
+    if literals
+        .iter()
+        .any(|action| action.title == "Start repair: copy repair command")
+    {
+        return Err("a seam agent repair would refuse must not offer the start".to_string());
+    }
+    let brief = literals
+        .iter()
+        .find(|action| action.title == "Write targeted test: copy brief")
+        .ok_or_else(|| "targeted-test brief action missing".to_string())?;
+    assert_disabled_action_invariants(brief)?;
+    let reason = brief
+        .data
+        .as_ref()
+        .and_then(|data| data["disabled_reason"].as_str());
+    if reason != Some("repair_route_not_ready") {
+        return Err(format!(
+            "brief must name repair_route_not_ready, got {reason:?}"
+        ));
+    }
+    let text = brief
+        .disabled
+        .as_ref()
+        .map(|disabled| disabled.reason.as_str())
+        .unwrap_or_default();
+    if text.contains("language boundary") {
+        return Err(format!("reason text blames a language boundary: {text}"));
     }
     Ok(())
 }
@@ -8880,6 +8967,8 @@ fn seam_code_actions_keep_legacy_finding_context_when_both_diagnostics_are_prese
             .collect::<Vec<_>>(),
         vec![
             "Inspect Test Gap - Copy Context",
+            "Write targeted test: copy brief",
+            "Start repair: copy repair command",
             "Agent handoff: copy packet command",
             "Agent handoff: copy brief command",
             "Verify after test: copy after-snapshot command",
@@ -8892,8 +8981,11 @@ fn seam_code_actions_keep_legacy_finding_context_when_both_diagnostics_are_prese
         ]
     );
     assert_eq!(commands[0].2[0]["seam_id"], seam.seam.id().as_str());
-    assert_eq!(commands[8].2[0]["finding_id"], "probe:pricing:88:predicate");
-    assert_eq!(commands[8].2[0]["probe_id"], "probe:pricing:88:predicate");
+    assert_eq!(
+        commands[10].2[0]["finding_id"],
+        "probe:pricing:88:predicate"
+    );
+    assert_eq!(commands[10].2[0]["probe_id"], "probe:pricing:88:predicate");
     Ok(())
 }
 
@@ -16194,27 +16286,6 @@ fn client_features_with_commands(commands: &[&str]) -> Result<ClientFeatureProfi
     Ok(ClientFeatureProfile::from_initialize_params(&params))
 }
 
-fn diagnostic_with_fix_site_ready(
-    mut diagnostic: tower_lsp_server::ls_types::Diagnostic,
-) -> tower_lsp_server::ls_types::Diagnostic {
-    let mut data = diagnostic
-        .data
-        .take()
-        .and_then(|value| value.as_object().cloned())
-        .unwrap_or_default();
-    data.insert(
-        "fix_instruction".to_string(),
-        serde_json::json!({
-            "state": "fix_site_ready",
-            "has_fix_site": true,
-            "has_suggested_assertion": true,
-            "limitation_kinds": [],
-        }),
-    );
-    diagnostic.data = Some(serde_json::Value::Object(data));
-    diagnostic
-}
-
 /// The seam code-action scenario shared by the client-command filter tests
 /// (#1776): one seam diagnostic whose snapshot resolves to a classified
 /// seam, so the unfiltered response carries every client command the
@@ -16241,9 +16312,8 @@ fn retained_seam_action_request_at(
     root: &Path,
 ) -> Result<(CodeActionParams, AnalysisSnapshot), String> {
     let seam = sample_classified_seam();
-    let diagnostic = diagnostic_with_fix_site_ready(
-        diagnostic_for_classified_seam(root, &seam).ok_or("expected seam diagnostic")?,
-    );
+    let diagnostic =
+        diagnostic_for_classified_seam(root, &seam).ok_or("expected seam diagnostic")?;
     let uri = file_uri_for_path(&root.join("src/pricing.rs"))?;
     let mut snapshot = sample_analysis_snapshot(
         root.to_path_buf(),
@@ -21388,6 +21458,69 @@ fn execute_command_collect_repair_packet_withheld_during_debounce_window() -> Re
     })
 }
 
+#[test]
+fn execute_command_workspace_status_is_not_current_during_pending_save() -> Result<(), String> {
+    // #13783: status read surfaces must agree with code actions. While a save
+    // is pending (debounce open, or the revision ahead of the snapshot), the
+    // status must not report the pre-save snapshot as current.
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|err| format!("failed to start test runtime: {err}"))?;
+    runtime.block_on(async {
+        let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
+        let backend = service.inner();
+        seed_successful_snapshot(backend)?;
+        backend.set_analysis_attempt_state_for_test(AnalysisAttemptState::Succeeded);
+        let before = workspace_status_for(backend).await?;
+        assert_ne!(before["run_status"], "stale", "{before}");
+        assert_eq!(before["analysis_status"]["state"], "succeeded", "{before}");
+        backend.set_interactive_debounce_open_for_test(true);
+        let during = workspace_status_for(backend).await?;
+        assert_eq!(during["run_status"], "stale", "{during}");
+        assert_eq!(during["analysis_status"]["state"], "queued", "{during}");
+        assert!(during["top_actionable_packet"].is_null(), "{during}");
+        let limitation = top_limitation_for(backend).await?;
+        assert_eq!(limitation["run_status"], "stale", "{limitation}");
+        assert_eq!(limitation, during["top_limitation"]);
+        backend.set_interactive_debounce_open_for_test(false);
+        let after = workspace_status_for(backend).await?;
+        assert_eq!(after["run_status"], before["run_status"]);
+        assert_eq!(after["analysis_status"]["state"], "succeeded");
+        advance_revision_past_snapshot(backend)?;
+        let moved = workspace_status_for(backend).await?;
+        assert_eq!(moved["run_status"], "stale", "{moved}");
+        assert_eq!(moved["analysis_status"]["state"], "queued", "{moved}");
+        assert!(moved["top_actionable_packet"].is_null(), "{moved}");
+        assert_eq!(top_limitation_for(backend).await?, moved["top_limitation"]);
+        Ok(())
+    })
+}
+
+async fn top_limitation_for(backend: &Backend) -> Result<serde_json::Value, String> {
+    backend
+        .execute_command(ExecuteCommandParams {
+            command: COLLECT_TOP_LIMITATION_COMMAND.to_string(),
+            arguments: vec![],
+            work_done_progress_params: Default::default(),
+        })
+        .await
+        .map_err(|err| format!("execute_command failed: {err}"))?
+        .ok_or_else(|| "expected top limitation".to_string())
+}
+
+async fn workspace_status_for(backend: &Backend) -> Result<serde_json::Value, String> {
+    backend
+        .execute_command(ExecuteCommandParams {
+            command: COLLECT_WORKSPACE_STATUS_COMMAND.to_string(),
+            arguments: vec![],
+            work_done_progress_params: Default::default(),
+        })
+        .await
+        .map_err(|err| format!("execute_command failed: {err}"))?
+        .ok_or_else(|| "expected workspace status".to_string())
+}
+
 async fn repair_packet_sentinel_for(backend: &Backend) -> Result<serde_json::Value, String> {
     backend
         .execute_command(ExecuteCommandParams {
@@ -24648,6 +24781,7 @@ fn python_disabled_adapter_coverage(
                 .collect(),
             javascript_file_count: 0,
             enabled: false,
+            nested_packages: Vec::new(),
         },
     ])
 }
@@ -25193,6 +25327,7 @@ async fn workspace_status_uncompiled_perl_recovery_does_not_claim_enablement() -
                 sample_paths: vec!["pricing.pl".to_string()],
                 javascript_file_count: 0,
                 enabled: false,
+                nested_packages: Vec::new(),
             },
         ]),
         language_view: Some(not_selected_language_view("perl")),
@@ -30744,10 +30879,8 @@ fn backend_hover_without_copy_support_does_not_claim_refresh_only_actions() -> R
                 .map_err(|err| format!("{leg}: initialize failed: {err}"))?;
 
             let seam = sample_classified_seam();
-            let mut diagnostic = diagnostic_with_fix_site_ready(
-                diagnostic_for_classified_seam(root.path(), &seam)
-                    .ok_or_else(|| format!("{leg}: expected seam diagnostic"))?,
-            );
+            let mut diagnostic = diagnostic_for_classified_seam(root.path(), &seam)
+                .ok_or_else(|| format!("{leg}: expected seam diagnostic"))?;
             // The producer-owned delivery signal both transports serve (#1973).
             diagnostic
                 .data

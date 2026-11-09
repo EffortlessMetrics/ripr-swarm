@@ -111,6 +111,7 @@ fn output(findings: Vec<Finding>) -> CheckOutput {
         untracked_working_tree_source_paths: Vec::new(),
         ignored_working_tree_source_paths: Vec::new(),
         unlinked_python_tests: None,
+        owner_opt_outs: Vec::new(),
         suppression: None,
         analysis_outcome: None,
         partial_scope: None,
@@ -516,12 +517,11 @@ fn static_limited_run_stops_and_names_the_limit_instead_of_a_gap() {
     assert!(text.contains("co-located test"), "{text}");
     assert!(text.contains("\nlimits=no_static_path:1\n"), "{text}");
     assert!(text.contains(" gaps=0 "), "{text}");
-    // The all-limited run still carries a bounded route to the evidence:
-    // one record per counted finding plus the ripr explain drill-in.
-    assert!(
-        text.contains("no_static_path|src/lib.rs:7|pct >= 50|missing=-|test=-|id=probe:np"),
-        "{text}"
-    );
+    // The all-limited run still carries a bounded route to the evidence: the
+    // ripr explain drill-in.
+    // #13594: a `missing=-` record names nothing to fix, so it is omitted.
+    assert!(!text.contains("no_static_path|src/lib.rs:7"), "{text}");
+    assert!(!text.contains("missing=-"), "{text}");
     assert!(
         text.lines()
             .any(|line| line == "next=ripr explain --format agent probe:np"),
@@ -566,7 +566,7 @@ fn static_limited_weakly_exposed_alone_keeps_stop() {
     let text = rendered(&output(vec![limited_weak]));
     assert!(text.contains("\nstop="), "{text}");
     assert!(text.contains(" gaps=0 "), "{text}");
-    assert!(text.contains("|id=probe:limited-weak"), "{text}");
+    assert!(!text.contains("|id=probe:limited-weak"), "{text}");
     assert!(
         text.lines()
             .any(|line| line == "next=ripr explain --format agent probe:limited-weak"),
@@ -592,7 +592,8 @@ fn reach_limit_with_weak_assertion_row_does_not_stop() {
         finding("probe:enum", ExposureClass::StaticUnknown, 316),
     ]));
     assert!(!text.contains("stop="), "{text}");
-    assert!(text.contains(" gaps=0 "), "{text}");
+    // #13803: the listed open row is counted beside `gaps=0`.
+    assert!(text.contains(" gaps=0 unconfirmed_gaps=1 "), "{text}");
     assert!(
         text.contains("\nopen=a static limit leaves reach unconfirmed"),
         "{text}"
@@ -653,7 +654,8 @@ fn reach_limit_without_weak_assertion_row_keeps_stop() {
     let text = rendered(&output(vec![fixed]));
     assert!(text.contains("\nstop="), "{text}");
     assert!(!text.contains("open="), "{text}");
-    assert!(text.contains("|id=probe:fixed"), "{text}");
+    assert!(!text.contains("unconfirmed_gaps="), "{text}");
+    assert!(!text.contains("|id=probe:fixed"), "{text}");
     assert!(
         text.lines()
             .any(|line| line == "next=ripr explain --format agent probe:fixed"),
@@ -665,7 +667,7 @@ fn reach_limit_without_weak_assertion_row_keeps_stop() {
     let text = rendered(&output(vec![other_kind]));
     assert!(text.contains("\nstop="), "{text}");
     assert!(!text.contains("open="), "{text}");
-    assert!(text.contains("|id=probe:macro"), "{text}");
+    assert!(!text.contains("|id=probe:macro"), "{text}");
     assert!(
         text.lines()
             .any(|line| line == "next=ripr explain --format agent probe:macro"),
@@ -691,14 +693,11 @@ fn all_limited_records_cap_over_the_floor_and_count_the_rest() {
     let text = rendered(&output(findings));
     assert!(text.contains("\nstop="), "{text}");
     assert!(text.contains(" gaps=0 "), "{text}");
-    assert!(
-        text.matches("\nno_static_path|src/lib.rs:").count() == MIN_GAP_LINES,
-        "{text}"
-    );
-    assert!(
-        text.contains("\n+2 more limited findings not shown; `--format json` lists all\n"),
-        "{text}"
-    );
+    // #13594: none of these carries a concrete next step, so no records and
+    // no "not shown" count; `limits=` and the drill-in carry the route.
+    assert!(!text.contains("no_static_path|src/lib.rs:"), "{text}");
+    assert!(!text.contains("more limited findings not shown"), "{text}");
+    assert!(text.contains("\nlimits=no_static_path:7\n"), "{text}");
     assert!(
         text.lines()
             .any(|line| line == "next=ripr explain --format agent probe:lim0"),
@@ -727,11 +726,7 @@ fn all_no_static_path_run_matches_the_human_surface_route() {
     assert!(text.contains("no_static_path=2"), "{text}");
     assert!(!text.contains("nothing more is fixable"), "{text}");
     assert!(text.contains("co-located test"), "{text}");
-    assert!(text.contains("src/lib.rs:15"), "{text}");
-    assert!(
-        text.contains("id=gap:rust:src/lib.rs:levy:predicate_boundary:predicate:vip"),
-        "{text}"
-    );
+    assert!(!text.contains("missing=-"), "{text}");
     assert!(
         text.contains(
             "next=ripr explain --format agent gap:rust:src/lib.rs:levy:predicate_boundary:predicate:vip\n"
@@ -758,7 +753,7 @@ fn reach_limit_with_a_proximity_only_weak_row_keeps_stop() {
         let text = rendered(&output(vec![limited]));
         assert!(text.contains("\nstop="), "{reason:?}: {text}");
         assert!(!text.contains("open="), "{reason:?}: {text}");
-        assert!(text.contains("|id=probe:unrelated"), "{reason:?}: {text}");
+        assert!(!text.contains("|id=probe:unrelated"), "{reason:?}: {text}");
         assert!(
             text.lines()
                 .any(|line| line == "next=ripr explain --format agent probe:unrelated"),
@@ -823,6 +818,69 @@ fn empty_scope_and_no_scope_are_distinct_terminal_states() {
         "{stopped}"
     );
     assert!(!stopped.contains("done="), "{stopped}");
+}
+
+/// #13658: a no-scope or no-analyzable-source diff examined nothing, so the
+/// agent format stops with a refused `verify=` instead of `done=`; a diff that
+/// changed analyzable Rust source and found nothing keeps `done=`.
+#[test]
+fn nothing_analyzed_stops_and_refuses_verify_while_a_valid_diff_stays_done() -> Result<(), String> {
+    use crate::analysis_outcome::{
+        AnalysisIdentity, AnalysisOutcome, AnalysisOutcomeCounts, AnalysisOutcomeKind,
+    };
+    let outcome = |kind, changed_file_count| {
+        AnalysisOutcome::new(
+            kind,
+            AnalysisIdentity::default(),
+            AnalysisOutcomeCounts {
+                changed_file_count,
+                changed_line_count: changed_file_count,
+                ..AnalysisOutcomeCounts::default()
+            },
+            Vec::new(),
+        )
+    };
+    let mut empty = output(Vec::new());
+    empty.analysis_outcome = Some(outcome(AnalysisOutcomeKind::NoScope, 0)?);
+    let stopped = rendered(&empty);
+    assert!(
+        stopped.contains("\nstop=nothing was in scope;"),
+        "{stopped}"
+    );
+    assert!(!stopped.contains("done="), "{stopped}");
+    // The completion record must not contradict the stop: nothing analyzed is
+    // a refused verification (producer-owned `no_behavior_in_scope`).
+    assert!(
+        stopped.contains("\nverify=refused|outcome=no_scope|"),
+        "{stopped}"
+    );
+    assert!(!stopped.contains("verify=complete"), "{stopped}");
+
+    // A docs-only diff changed files but none ripr analyzes: also nothing
+    // examined, matching the human "Nothing to check" state.
+    let mut docs_only = output(Vec::new());
+    docs_only.summary.changed_rust_files = 0;
+    docs_only.analysis_outcome = Some(outcome(AnalysisOutcomeKind::NoBehavioralCandidates, 1)?);
+    assert_eq!(docs_only.summary.changed_rust_files, 0);
+    let docs_text = rendered(&docs_only);
+    assert!(
+        docs_text.contains("\nstop=nothing was analyzed"),
+        "{docs_text}"
+    );
+    assert!(!docs_text.contains("done="), "{docs_text}");
+    assert!(docs_text.contains("\nverify=refused|"), "{docs_text}");
+    assert!(!docs_text.contains("verify=complete"), "{docs_text}");
+
+    let mut healthy = output(Vec::new());
+    healthy.summary.changed_rust_files = 1;
+    healthy.analysis_outcome = Some(outcome(AnalysisOutcomeKind::NoBehavioralCandidates, 1)?);
+    let done = rendered(&healthy);
+    assert!(
+        done.contains("\ndone=no changed behavior found in scope"),
+        "{done}"
+    );
+    assert!(!done.contains("stop="), "{done}");
+    Ok(())
 }
 
 #[test]
@@ -1112,23 +1170,113 @@ fn check_agent_preview_only_run_projects_the_discriminator_and_stops_advisory() 
     assert!(!drill.contains("nothing more is fixable"), "{drill}");
 }
 
+/// A preview run whose only finding already reads exposed (the agent's new
+/// test closed it) ends with `done=`, not the advisory `stop=` that says a
+/// test-side improvement "may still be possible". Negative control: the weak
+/// preview gap above keeps its `stop=`.
+#[test]
+fn check_agent_exposed_preview_finding_reads_done_not_stop() {
+    let mut exposed = preview_weak_gap("probe:a", 2);
+    exposed.class = ExposureClass::Exposed;
+    exposed.activation.missing_discriminators.clear();
+    let text = rendered(&output(vec![exposed]));
+    assert!(text.contains(" exposed=1"), "{text}");
+    assert!(
+        text.contains(
+            "\ndone=preview-language evidence is advisory only; a related test appears to observe this change, so there is no test-side gap to fix"
+        ),
+        "{text}"
+    );
+    assert!(!text.contains("\nstop="), "{text}");
+    assert!(!text.contains("open="), "{text}");
+    assert!(!text.contains("may still be possible"), "{text}");
+    let weak = rendered(&output(vec![preview_weak_gap("probe:a", 2)]));
+    assert!(weak.contains("\nstop=preview-language"), "{weak}");
+    assert!(!weak.contains("\ndone="), "{weak}");
+    // The explain drill-in for the same exposed preview finding agrees.
+    let mut exposed = preview_weak_gap("probe:a", 2);
+    exposed.class = ExposureClass::Exposed;
+    exposed.activation.missing_discriminators.clear();
+    let drill = explained(&exposed);
+    assert!(
+        drill.contains("\ndone=preview-language evidence is advisory only; a related test appears to notice this change"),
+        "{drill}"
+    );
+    assert!(!drill.contains("\nstop="), "{drill}");
+    assert!(!drill.contains("co-located test"), "{drill}");
+    // A static-limited exposed preview finding fails closed on both surfaces.
+    let mut limited = preview_weak_gap("probe:a", 2);
+    limited.class = ExposureClass::Exposed;
+    limited.activation.missing_discriminators.clear();
+    limited.static_limit_kind = Some(StaticLimitKind::RustMacroWrappedAssertionUnresolved);
+    let limited_check = rendered(&output(vec![limited.clone()]));
+    assert!(!limited_check.contains("\ndone="), "{limited_check}");
+    let limited_drill = explained(&limited);
+    assert!(!limited_drill.contains("\ndone="), "{limited_drill}");
+}
+
 /// A preview finding without a producer-established discriminator has nothing
-/// to project: the record keeps `missing=-` and the terminal stays the honest
+/// to project: no record is printed (#13594) and the terminal stays the honest
 /// advisory stop.
 #[test]
-fn check_agent_preview_record_without_a_discriminator_keeps_missing_dash() {
+fn check_agent_preview_finding_without_a_discriminator_prints_no_record() {
     let mut bare = preview_weak_gap("probe:a", 2);
     bare.activation.missing_discriminators.clear();
     let text = rendered(&output(vec![bare]));
-    assert!(
-        text.contains("weakly_exposed|src/lib.rs:2|pct >= 50|missing=-|test=t1|id=probe:a"),
-        "{text}"
-    );
+    // #13594: no discriminator means no record at all, not a `missing=-` one.
+    assert!(!text.contains("weakly_exposed|src/lib.rs:2"), "{text}");
+    assert!(!text.contains("missing=-"), "{text}");
     assert!(
         text.contains("stop=preview-language evidence is advisory only"),
         "{text}"
     );
     assert!(!text.contains("nothing more is fixable"), "{text}");
+}
+
+/// #13594 positive cap: preview findings that carry a discriminator keep their
+/// records, capped at the floor with the rest counted.
+#[test]
+fn preview_limited_records_with_discriminators_cap_and_count_the_rest() {
+    let total = MIN_GAP_LINES + 2;
+    let findings: Vec<Finding> = (0..total)
+        .map(|index| preview_weak_gap(&format!("probe:pv{index}"), 10 + index))
+        .collect();
+    let text = rendered(&output(findings));
+    assert!(text.contains(" gaps=0 "), "{text}");
+    assert!(
+        text.matches("|missing=pct == 50|").count() == MIN_GAP_LINES,
+        "{text}"
+    );
+    assert!(
+        text.contains("\n+2 more limited findings not shown; `--format json` lists all\n"),
+        "{text}"
+    );
+}
+
+/// #13594 review: with a static-limited finding beside a preview finding that
+/// carries a discriminator, `next=` drills into the printed record, not the
+/// unprinted static-limited one.
+#[test]
+fn mixed_limited_run_drills_into_the_printed_record() {
+    for order in [false, true] {
+        let mut findings = vec![
+            finding("probe:np", ExposureClass::NoStaticPath, 1),
+            preview_weak_gap("probe:pv", 2),
+        ];
+        if order {
+            findings.reverse();
+        }
+        let text = rendered(&output(findings));
+        assert!(text.contains(" gaps=0 "), "{text}");
+        assert!(text.contains("|missing=pct == 50|"), "{text}");
+        assert!(text.contains("|id=probe:pv"), "{text}");
+        assert!(!text.contains("|id=probe:np"), "{text}");
+        assert!(
+            text.lines()
+                .any(|line| line == "next=ripr explain --format agent probe:pv"),
+            "{text}"
+        );
+    }
 }
 
 /// #13339 review (thread 1): a preview finding can also be static-limited —
@@ -1139,7 +1287,7 @@ fn check_agent_preview_record_without_a_discriminator_keeps_missing_dash() {
 /// otherwise the two compact surfaces would disagree about the same fact and
 /// a limitation would read as an actionable value.
 #[test]
-fn check_agent_static_limited_preview_record_keeps_missing_dash() {
+fn check_agent_static_limited_preview_finding_prints_no_record() {
     let mut opaque = preview_weak_gap("probe:a", 2);
     opaque.class = ExposureClass::StaticUnknown;
     let mut named = preview_weak_gap("probe:a", 2);
@@ -1149,9 +1297,11 @@ fn check_agent_static_limited_preview_record_keeps_missing_dash() {
         // the producer discriminator.
         assert!(!variant.activation.missing_discriminators.is_empty());
         let text = rendered(&output(vec![variant.clone()]));
+        // #13594: the static limit withholds the discriminator, and a record
+        // that would read `missing=-` is omitted rather than printed.
         assert!(
-            text.contains("|missing=-|"),
-            "a static-limited preview record must not project the discriminator:\n{text}"
+            !text.contains("|missing="),
+            "a static-limited preview finding must not print a record:\n{text}"
         );
         assert!(!text.contains("missing=pct == 50"), "{text}");
         // The explain drill-in for the same finding agrees: missing stays
@@ -1323,6 +1473,102 @@ fn check_agent_incomplete_run_does_not_claim_repairable() -> Result<(), String> 
     Ok(())
 }
 
+/// #13803: a preview gap is never a counted `gaps=` entry, but the header
+/// must not read `gaps=0` alone beside the listed gap record and its `open=`
+/// line. `unconfirmed_gaps=` counts it in every route state (startable,
+/// blocked, no route), and stays absent when nothing unconfirmed is listed.
+#[test]
+fn check_agent_header_counts_a_listed_preview_gap_as_unconfirmed() -> Result<(), String> {
+    let header = |text: &str| text.lines().next().unwrap_or_default().to_string();
+    let config = RiprConfig::default();
+    let committed = CheckDiffProvenance::CommittedHistory;
+
+    let routed = render(
+        &output(vec![python_card_gap("probe:a")]),
+        &config,
+        Some(&gap_route_drill_in("probe:a")),
+        committed,
+    );
+    assert_eq!(
+        header(&routed),
+        "#ripr agent static-advisory base=origin/main findings=1 gaps=0 unconfirmed_gaps=1 repairable=1 weakly_exposed=1",
+        "{routed}"
+    );
+    assert!(routed.contains("|missing=pct == 50|"), "{routed}");
+    assert!(routed.contains("\nopen=preview-language"), "{routed}");
+
+    let blocked_route = crate::app::FindingDrillIn::Commands(
+        crate::app::FindingNavigation::legacy().with_repair_route_outcome(
+            crate::app::CheckRepairRoute::GapRoute(crate::app::GapRepairRoute {
+                finding_id: "probe:a".to_string(),
+                gap_id: "gap:python:src/lib.rs:pricing:predicate_boundary:predicate:pct==50"
+                    .to_string(),
+                base: "origin/main".to_string(),
+                uncommitted_files: vec!["src/lib.rs".to_string()],
+            }),
+        ),
+    );
+    let blocked = render(
+        &output(vec![python_card_gap("probe:a")]),
+        &config,
+        Some(&blocked_route),
+        committed,
+    );
+    assert_eq!(
+        header(&blocked),
+        "#ripr agent static-advisory base=origin/main findings=1 gaps=0 unconfirmed_gaps=1 weakly_exposed=1",
+        "{blocked}"
+    );
+
+    let unrouted = render(
+        &output(vec![preview_weak_gap("probe:a", 2)]),
+        &config,
+        None,
+        committed,
+    );
+    assert!(
+        header(&unrouted).contains(" gaps=0 unconfirmed_gaps=1 "),
+        "{unrouted}"
+    );
+
+    // A confirmed gap beside the preview one: the preview record is not
+    // listed (only `limits=` counts it), so the header counts nothing
+    // unconfirmed.
+    let mixed = rendered(&output(vec![
+        weak_gap("probe:rust", 3),
+        preview_weak_gap("probe:py", 4),
+    ]));
+    assert!(header(&mixed).contains(" gaps=1 "), "{mixed}");
+    assert!(!mixed.contains("unconfirmed_gaps="), "{mixed}");
+
+    // An exposed preview finding, a static-limited preview gap and a preview
+    // finding of a non-gap class are not unconfirmed gaps.
+    let mut exposed = preview_weak_gap("probe:e", 2);
+    exposed.class = ExposureClass::Exposed;
+    let mut limited = preview_weak_gap("probe:l", 2);
+    limited.static_limit_kind = Some(StaticLimitKind::RustMacroWrappedAssertionUnresolved);
+    let mut unknown = preview_weak_gap("probe:u", 2);
+    unknown.class = ExposureClass::StaticUnknown;
+    for negative in [exposed, limited, unknown] {
+        let text = rendered(&output(vec![negative]));
+        assert!(!text.contains("unconfirmed_gaps="), "{text}");
+    }
+
+    // An incomplete analysis lists no limited records, so it counts no
+    // preview gaps.
+    let incomplete = render(
+        &outcome_output(
+            crate::analysis_outcome::AnalysisOutcomeKind::PartialWithLimitations,
+            vec![python_card_gap("probe:a")],
+        )?,
+        &config,
+        Some(&gap_route_drill_in("probe:a")),
+        committed,
+    );
+    assert!(!incomplete.contains("unconfirmed_gaps="), "{incomplete}");
+    Ok(())
+}
+
 #[test]
 fn explain_agent_agrees_with_check_agent_on_gap_membership() {
     // One predicate decides "gap" for both surfaces: for every class, explain
@@ -1453,6 +1699,71 @@ fn the_open_path_stays_at_the_floor_however_many_findings() {
         text.contains("\n+7 more open findings not shown;"),
         "{text}"
     );
+}
+
+/// #13603: the named test is the one that calls the changed function, not a
+/// same-file neighbor that sits first and holds a stronger oracle.
+#[test]
+fn a_direct_owner_caller_is_named_ahead_of_a_same_file_neighbor() {
+    use crate::domain::{RelationConfidence, RelationReason};
+    let mut gap = weak_gap("probe:caller", 2);
+    let mut neighbor = gap.related_tests[0].clone();
+    neighbor.name = "shipping_free_for_big_order".to_string();
+    neighbor.line = 17;
+    neighbor.relation_reason = Some(RelationReason::SameTestFile);
+    neighbor.relation_confidence = Some(RelationConfidence::Medium);
+    // As in the repro, the neighbor holds the stronger oracle (an exact pin on
+    // another function); strength alone would have named it.
+    neighbor.oracle_strength = OracleStrength::Strong;
+    gap.related_tests[0].name = "find_exists".to_string();
+    gap.related_tests[0].line = 24;
+    gap.related_tests[0].relation_reason = Some(RelationReason::DirectOwnerCall);
+    gap.related_tests[0].relation_confidence = Some(RelationConfidence::High);
+    // The neighbor is listed first, as in the issue's repro.
+    gap.related_tests.insert(0, neighbor);
+    let text = rendered(&output(vec![gap]));
+    assert!(text.contains("find_exists"), "{text}");
+    assert!(!text.contains("shipping_free_for_big_order"), "{text}");
+}
+
+/// #13603 negative: with no recorded relation on either row, the stronger
+/// oracle still wins, as before.
+#[test]
+fn rows_without_a_recorded_relation_still_pick_the_stronger_oracle() {
+    let mut gap = weak_gap("probe:strength", 2);
+    let mut stronger = gap.related_tests[0].clone();
+    stronger.name = "exact_pin".to_string();
+    stronger.oracle_strength = OracleStrength::Strong;
+    gap.related_tests.push(stronger);
+    let text = rendered(&output(vec![gap]));
+    assert!(text.contains("exact_pin"), "{text}");
+    assert!(!text.contains("discount_runs"), "{text}");
+}
+
+/// #13603 review: a `done=` line names the test that appears to notice the
+/// change, so a stronger pin outranks a direct caller holding a smoke check.
+#[test]
+fn a_done_line_names_the_pinning_test_over_a_smoke_only_direct_caller() {
+    use crate::domain::{RelationConfidence, RelationReason};
+    let mut done = weak_gap("probe:done", 4);
+    done.class = ExposureClass::Exposed;
+    done.activation.missing_discriminators.clear();
+    let mut caller = done.related_tests[0].clone();
+    caller.name = "caller_smoke".to_string();
+    caller.oracle_strength = OracleStrength::Smoke;
+    caller.miss = None;
+    caller.relation_reason = Some(RelationReason::DirectOwnerCall);
+    caller.relation_confidence = Some(RelationConfidence::High);
+    done.related_tests[0].name = "exact_pin".to_string();
+    done.related_tests[0].oracle_strength = OracleStrength::Strong;
+    done.related_tests[0].miss = None;
+    done.related_tests[0].relation_reason = Some(RelationReason::SameTestFile);
+    done.related_tests[0].relation_confidence = Some(RelationConfidence::Medium);
+    done.related_tests.insert(0, caller);
+    let text = explained(&done);
+    assert!(text.lines().any(|line| line.starts_with("done=")), "{text}");
+    assert!(text.contains("exact_pin"), "{text}");
+    assert!(!text.contains("caller_smoke"), "{text}");
 }
 
 fn verify_line(output: &CheckOutput) -> Result<String, String> {
