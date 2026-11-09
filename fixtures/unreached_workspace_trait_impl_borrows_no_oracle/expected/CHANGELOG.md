@@ -229,3 +229,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — unreached_workspace_trait_impl_borrows_no_oracle (18)
+
+Reason:
+RIPR-SPEC-0423: merge of origin/main union re-bless; additive evidence_stages rows combined with main-side bless entries and wording updates
+
+Command:
+`cargo xtask goldens bless unreached_workspace_trait_impl_borrows_no_oracle --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

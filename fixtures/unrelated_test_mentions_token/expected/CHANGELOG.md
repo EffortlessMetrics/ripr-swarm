@@ -654,3 +654,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — unrelated_test_mentions_token (30)
+
+Reason:
+RIPR-SPEC-0423: merge of origin/main union re-bless; additive evidence_stages rows combined with main-side bless entries and wording updates
+
+Command:
+`cargo xtask goldens bless unrelated_test_mentions_token --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

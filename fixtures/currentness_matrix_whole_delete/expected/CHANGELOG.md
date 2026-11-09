@@ -403,3 +403,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — currentness_matrix_whole_delete (32)
+
+Reason:
+RIPR-SPEC-0423: merge of origin/main union re-bless; additive evidence_stages rows combined with main-side bless entries and wording updates
+
+Command:
+`cargo xtask goldens bless currentness_matrix_whole_delete --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

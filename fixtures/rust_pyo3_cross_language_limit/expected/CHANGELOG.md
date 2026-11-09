@@ -429,3 +429,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — rust_pyo3_cross_language_limit (36)
+
+Reason:
+RIPR-SPEC-0423: merge of origin/main union re-bless; additive evidence_stages rows combined with main-side bless entries and wording updates
+
+Command:
+`cargo xtask goldens bless rust_pyo3_cross_language_limit --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
