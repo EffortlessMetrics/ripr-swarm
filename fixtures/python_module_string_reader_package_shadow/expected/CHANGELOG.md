@@ -34,3 +34,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — python_module_string_reader_package_shadow (1)
+
+Reason:
+Main added the staged evidence_stages rows (RIPR-SPEC-0423) to check.json; re-bless the Python module string reader fixtures so the golden carries them. Verdict, reach and repair state are unchanged.
+
+Command:
+`cargo xtask goldens bless python_module_string_reader_package_shadow --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
