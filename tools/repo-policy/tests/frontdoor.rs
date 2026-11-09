@@ -957,3 +957,124 @@ fn native_preflight_receipt_crosses_independent_directories_without_reexecution(
     assert!(!consumer.run("verify-preflight")?.status.success());
     Ok(())
 }
+
+#[test]
+fn lightweight_product_route_parity_preserves_cli_and_provenance() -> Result<(), String> {
+    let source = test_support::workspace_root()?;
+    let fixture = Fixture::from_paths(
+        &source,
+        test_support::scratch("product-route-parity-frontdoor")?,
+        &["fixtures/product-route-parity"],
+    )?;
+    let run = |cwd: &Path, args: &[&str]| -> Result<Output, String> {
+        Command::new(env!("CARGO_BIN_EXE_repo-policy"))
+            .current_dir(cwd)
+            .arg("check-product-route-parity")
+            .args(args)
+            .output()
+            .map_err(|e| e.to_string())
+    };
+    let decode = |out: Output| -> Result<serde_json::Value, String> {
+        if !out.status.success() {
+            return Err(String::from_utf8_lossy(&out.stderr).into_owned());
+        }
+        serde_json::from_slice(&out.stdout).map_err(|e| e.to_string())
+    };
+    let root_report = decode(run(&fixture.0, &["--json"])?)?;
+    let read_report = |cwd: &Path| -> Result<serde_json::Value, String> {
+        serde_json::from_slice(
+            &std::fs::read(cwd.join("target/ripr/reports/product-route-parity.json"))
+                .map_err(|e| e.to_string())?,
+        )
+        .map_err(|e| e.to_string())
+    };
+    assert_eq!(root_report, read_report(&fixture.0)?);
+    let subdir = fixture.0.join("nested");
+    std::fs::create_dir(&subdir).map_err(|e| e.to_string())?;
+    assert_eq!(decode(run(&subdir, &["--json"])?)?, root_report);
+    assert_eq!(read_report(&subdir)?, root_report);
+    assert_eq!(
+        decode(run(
+            &subdir,
+            &[
+                "--corpus",
+                "../fixtures/product-route-parity/corpus.json",
+                "--json"
+            ]
+        )?)?,
+        root_report
+    );
+    let human = run(&fixture.0, &[])?;
+    assert!(human.status.success());
+    assert!(String::from_utf8_lossy(&human.stdout).contains("product route parity:"));
+    for args in [
+        vec!["--corpus"],
+        vec!["--unknown"],
+        vec!["--corpus", "missing.json"],
+    ] {
+        assert!(!run(&fixture.0, &args)?.status.success());
+    }
+    let corpus_path = fixture.0.join("fixtures/product-route-parity/corpus.json");
+    let original = std::fs::read(&corpus_path).map_err(|e| e.to_string())?;
+    let original_json: serde_json::Value =
+        serde_json::from_slice(&original).map_err(|e| e.to_string())?;
+    let selected = [
+        "--corpus",
+        "fixtures/product-route-parity/corpus.json",
+        "--json",
+    ];
+    std::fs::write(&corpus_path, b"{").map_err(|e| e.to_string())?;
+    assert!(!run(&fixture.0, &selected)?.status.success());
+    for mutation in 0..3 {
+        let mut changed = original_json.clone();
+        if mutation == 0 {
+            changed["subjects"][0]["subject"]["changed_surfaces"] = serde_json::json!(["unknown"]);
+        } else if mutation == 1 {
+            let expected = changed["subjects"][0]["expect_semantic_parity"]
+                .as_bool()
+                .ok_or("missing expectation")?;
+            changed["subjects"][0]["expect_semantic_parity"] = (!expected).into();
+            changed["subjects"][0]["expect_mismatch_owner"] = "not_proven".into();
+        } else {
+            let subjects = changed["subjects"]
+                .as_array_mut()
+                .ok_or("missing subjects")?;
+            let fork = subjects
+                .iter_mut()
+                .find(|s| s["public_fork"] == true)
+                .ok_or("missing fork")?;
+            fork["reusable_runner"] = "contabo-self-hosted".into();
+            fork["expect_public_fork_trust"] = false.into();
+        }
+        std::fs::write(&corpus_path, changed.to_string()).map_err(|e| e.to_string())?;
+        assert!(
+            !run(&fixture.0, &selected)?.status.success(),
+            "mutation {mutation}"
+        );
+    }
+    std::fs::write(&corpus_path, &original).map_err(|e| e.to_string())?;
+    let validate = || {
+        let mut violations = Vec::new();
+        repo_policy::product_route_parity::validate_product_route_parity_fixture_corpus(
+            &fixture.0,
+            &mut violations,
+        );
+        violations
+    };
+    assert!(validate().is_empty());
+    let mut drift = original.clone();
+    drift.push(b' ');
+    std::fs::write(&corpus_path, drift).map_err(|e| e.to_string())?;
+    assert!(validate().iter().any(|v| v.contains("digest drifted")));
+    std::fs::write(&corpus_path, original).map_err(|e| e.to_string())?;
+    let provenance = fixture
+        .0
+        .join("fixtures/product-route-parity/provenance.json");
+    let mut manifest: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&provenance).map_err(|e| e.to_string())?)
+            .map_err(|e| e.to_string())?;
+    manifest["files"] = serde_json::json!([]);
+    std::fs::write(&provenance, manifest.to_string()).map_err(|e| e.to_string())?;
+    assert!(validate().iter().any(|v| v.contains("must bind")));
+    Ok(())
+}

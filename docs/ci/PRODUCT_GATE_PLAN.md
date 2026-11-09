@@ -489,3 +489,14 @@ any ancestor or home config refuse. This deliberately unsupported inherited
 configuration requires a separate reviewed contract before use. Job count and private
 target-directory placement remain operational inputs. This is no published-result
 reuse authority and does not prove complete hosted latency below twenty minutes.
+
+### Lightweight proposition parity command
+
+`cargo policy check-product-route-parity [--corpus <path>] [--json]` runs the
+existing ordinary/reusable proposition comparator in `repo-policy`. The xtask
+command and fixture-provenance validator delegate to that same implementation.
+Default corpus lookup stays bound to the source workspace; explicit relative
+corpus paths and `target/ripr/reports/product-route-parity.json` stay relative to
+the invoking working directory, as before. No corpus schema or gate selection
+semantics change. This compares the ordinary 13-row plan on the committed
+corpus; it does not execute either route or qualify the 24-obligation DAG.
