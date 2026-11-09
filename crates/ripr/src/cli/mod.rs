@@ -516,6 +516,39 @@ fn baseline_ambiguous_disclosure_lines(baseline_path: &Path) -> Vec<String> {
     ]
 }
 
+/// The before phase's stderr attempt lines (waiting state, manifest path,
+/// and the `ripr: attempt next command:` protocol line), printed only when
+/// stdout does not already carry the start result (#13803).
+fn before_phase_attempt_stderr(
+    attempt_id: &str,
+    manifest_path: &Path,
+    next_command: &str,
+    baseline_ambiguous: bool,
+) {
+    if baseline_ambiguous {
+        eprintln!(
+            "ripr: repair attempt {attempt_id} is waiting for your test, though its unclear starting state (above) means ripr cannot score this attempt either way; for a scorable attempt, restart from a clean state as described above."
+        );
+    } else {
+        eprintln!("ripr: repair attempt {attempt_id} is waiting for your test");
+    }
+    eprintln!(
+        "{}",
+        crate::output::human::terminal_safe(format!(
+            "ripr: attempt manifest: {}",
+            crate::output::path::human_path(manifest_path)
+        ))
+    );
+    // Human next-step lines teach `ripr continue` for ordinary attempts
+    // (#7879). The persisted manifest and JSON continuation keep the
+    // advanced `--phase after` spelling.
+    let follow_up = crate::agent::human_after_phase_follow_up(next_command);
+    eprintln!("ripr: attempt next command: {follow_up}");
+    if let Some(form) = crate::output::markdown::powershell_text_variant(&follow_up) {
+        eprintln!("ripr: attempt next command (PowerShell): {form}");
+    }
+}
+
 /// Publish one before attempt and return its success stdout: the exact
 /// document the caller prints (or holds, façade-side, until its follow-on
 /// card renders). Composing the document without printing keeps one owner
@@ -743,6 +776,19 @@ fn persist_before_repair_attempt(
             binding.verified.attempt_id, binding.verified.selection_digest
         );
     }
+    // #13803: without `--json` the stdout summary already names the target,
+    // the one edit surface with its terminality, the packet path, and the
+    // one next command. Stderr then keeps only what stdout does not say
+    // (progress narration and the redirect warning), so an agent reading
+    // both streams sees one copy of the next command instead of two. The
+    // gap-bound start keeps its stderr route: its directive (commit the
+    // test; closure is checked first) is not in the stdout summary.
+    let stdout_owns_start = options.gap_id.is_none()
+        && commands::before_phase_stdout_owns_start_result(
+            &packet_text,
+            options.json,
+            &continuation,
+        );
     // #7204: an attempt whose captured baseline is already ambiguous can
     // never be scored, so the disclosure comes BEFORE any edit directive and
     // the ambiguous branch replaces the unqualified "Next: add ..." line —
@@ -760,6 +806,8 @@ fn persist_before_repair_attempt(
         eprintln!(
             "ripr: repair started. Next: add or strengthen one focused test in the packet's test file and commit it (leave production code unchanged), then run the command printed below. The after phase checks closure first: a gap that does not read exposed is refused and the attempt stays retryable; once the gap reads exposed, the attempt fails if any file outside that test file changed."
         );
+    } else if stdout_owns_start {
+        // The stdout summary carries this seam route's edit directive.
     } else if policy.inline_test_module_target {
         // #5210: the cage admits only new test functions inserted into the
         // target's inline test module, so "strengthen" an existing test, or
@@ -778,35 +826,27 @@ fn persist_before_repair_attempt(
     } else {
         "target/ripr/workflow/agent-packet.json"
     };
-    eprintln!(
-        "ripr: write this command's output outside the repo (for example under target/ripr/): a file inside it (such as `> packet.json` or `2> before.err`) counts as an edit and fails the repair. The packet is already at {packet_location}. The same applies to the next step."
-    );
-    if baseline_ambiguous {
+    if stdout_owns_start {
+        // The stdout summary already names the packet path.
         eprintln!(
-            "ripr: repair attempt {} is waiting for your test, though its unclear starting state (above) means ripr cannot score this attempt either way; for a scorable attempt, restart from a clean state as described above.",
-            result.manifest.repair_attempt_id.as_str()
+            "ripr: write this command's output outside the repo (for example under target/ripr/): a file inside it (such as `> packet.json` or `2> before.err`) counts as an edit and fails the repair. The same applies to the next step."
         );
     } else {
         eprintln!(
-            "ripr: repair attempt {} is waiting for your test",
-            result.manifest.repair_attempt_id.as_str()
+            "ripr: write this command's output outside the repo (for example under target/ripr/): a file inside it (such as `> packet.json` or `2> before.err`) counts as an edit and fails the repair. The packet is already at {packet_location}. The same applies to the next step."
         );
     }
-    eprintln!(
-        "{}",
-        crate::output::human::terminal_safe(format!(
-            "ripr: attempt manifest: {}",
-            crate::output::path::human_path(&result.manifest_path)
-        ))
-    );
-    // Human next-step lines teach `ripr continue` for ordinary attempts
-    // (#7879). The persisted manifest and JSON continuation keep the
-    // advanced `--phase after` spelling.
-    let follow_up = crate::agent::human_after_phase_follow_up(&result.manifest.next_command);
-    eprintln!("ripr: attempt next command: {follow_up}");
-    let next_powershell = crate::output::markdown::powershell_text_variant(&follow_up);
-    if let Some(form) = &next_powershell {
-        eprintln!("ripr: attempt next command (PowerShell): {form}");
+    if !stdout_owns_start {
+        // With `--json` (or an unreadable or ambiguous summary) stderr keeps
+        // the protocol-bearing attempt lines; otherwise stdout's
+        // `Next, after the test edit:` line is the one copy, and the
+        // manifest stays reachable through `ripr agent status`.
+        before_phase_attempt_stderr(
+            result.manifest.repair_attempt_id.as_str(),
+            &result.manifest_path,
+            &result.manifest.next_command,
+            baseline_ambiguous,
+        );
     }
     // The stdout document owns its trailer: the after-edit directive, or the
     // #7204 ambiguity warning and clean-state restart for an unscorable
