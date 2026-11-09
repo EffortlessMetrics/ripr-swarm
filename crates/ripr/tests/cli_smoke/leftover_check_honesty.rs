@@ -77,9 +77,10 @@ fn commit_all(root: &std::path::Path, message: &str) -> Result<(), Box<dyn std::
     Ok(())
 }
 
-// #13036: a zero-diff result on the comparison base names the empty diff and
-// prints the paste-ready `--base HEAD~1`; a tests-only range says the base
-// probably already includes the production change.
+// #13036/#13644: a bare check on the comparison base analyzes the last commit
+// (the paste-ready `--base HEAD~1` hint remains for runs the fallback skips);
+// a tests-only range says the base probably already includes the production
+// change.
 #[test]
 fn empty_diff_and_tests_only_ranges_name_the_real_cause_and_command()
 -> Result<(), Box<dyn std::error::Error>> {
@@ -101,6 +102,7 @@ fn empty_diff_and_tests_only_ranges_name_the_real_cause_and_command()
 
     let on_base = run_ripr(&["check", "--root", &root_arg, "--quiet"]);
     let on_base_out = String::from_utf8_lossy(&on_base.stdout).into_owned();
+    let on_base_err = String::from_utf8_lossy(&on_base.stderr).into_owned();
 
     std::fs::create_dir_all(root.join("tests"))?;
     std::fs::write(
@@ -112,13 +114,13 @@ fn empty_diff_and_tests_only_ranges_name_the_real_cause_and_command()
     let tests_only_out = String::from_utf8_lossy(&tests_only.stdout).into_owned();
     let _ = std::fs::remove_dir_all(&root);
 
+    // #13644 supersedes the #13036 hint for this state: a bare human check
+    // on a clean base branch with a parent analyzes the last commit and says
+    // so instead of printing the command to paste.
+    assert!(on_base_out.contains("base: HEAD~1"), "{on_base_out}");
     assert!(
-        on_base_out.contains("the diff against the comparison base is empty"),
-        "{on_base_out}"
-    );
-    assert!(
-        on_base_out.contains("ripr check --base HEAD~1"),
-        "{on_base_out}"
+        on_base_err.contains("analyzed the last commit (--base HEAD~1)"),
+        "{on_base_err}"
     );
     assert!(
         tests_only_out.contains("choose a base before that change"),

@@ -14679,11 +14679,12 @@ thread_local! {
     static DISK_EQUALITY_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
+/// Resets this thread's read counter. The digest cache itself is process-wide
+/// and the tests run in parallel, so clearing it here would evict another
+/// test's entry between that test's two lookups and make it count a second
+/// read. Each test digests its own per-thread temp path, so no clear is needed.
 #[cfg(test)]
 fn reset_disk_equality_read_cache_for_tests() {
-    if let Ok(mut cache) = DISK_EQUALITY_DIGEST_CACHE.lock() {
-        cache.clear();
-    }
     DISK_EQUALITY_READS.with(|reads| reads.set(0));
 }
 
