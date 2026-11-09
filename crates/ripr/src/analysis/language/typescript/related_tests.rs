@@ -2747,9 +2747,292 @@ pub(crate) fn receiver_owner_call_relation(
         return receiver_names
             .iter()
             .any(|receiver| contains_member_read_name(&test.body_text, receiver, &owner.name))
+            || receiver_matcher_key_getter_read(
+                test,
+                &receiver_names,
+                &constructor_names,
+                &owner.name,
+            )
             || factory_built_getter_read(test, owner, alias_map, workspace_root);
     }
     false
+}
+
+/// Getter owner (#13592-B4) observed only as a literal key of a property
+/// matcher on the constructed receiver itself: `expect(url).toMatchObject({
+/// origin: "https://host" })` reads `url.origin`, which runs the `get origin()`
+/// body, and so does `expect(url).toHaveProperty("origin", "https://host")`.
+///
+/// Allowlist, fail-closed. The receiver is one `receiver_names` already
+/// admitted through the identity, shadow and rebinding gates; the `expect(...)`
+/// subject is exactly that name; the matcher is un-negated (a negated matcher
+/// carries no expected value); `toMatchObject` carries a flat all-literal
+/// object whose top-level literal keys include the getter (nested values,
+/// spreads, computed keys and asymmetric matchers are not literal and leave the
+/// argument without an expected value); `toHaveProperty` names the getter as a
+/// plain identifier string with a value argument (dotted paths refuse). No spy,
+/// mock or member replacement in the file may name the getter. The oracle
+/// stays `relational_check` / weak, so the verdict is capped at
+/// `weakly_exposed` and no repair start follows (#11391).
+fn receiver_matcher_key_getter_read(
+    test: &TypeScriptTest,
+    receiver_names: &[String],
+    constructor_names: &[String],
+    getter: &str,
+) -> bool {
+    if !is_safe_javascript_identifier(getter) {
+        return false;
+    }
+    let replaced = |name: &str| test.member_replacements_in_file.iter().any(|n| n == name);
+    if replaced(super::tests_extract::MEMBER_REPLACEMENT_ANY) || replaced(getter) {
+        return false;
+    }
+    test.assertions.iter().any(|assertion| {
+        let Some(subject) = assertion.observed_expression.as_deref().map(str::trim) else {
+            return false;
+        };
+        if !receiver_names.iter().any(|receiver| receiver == subject) {
+            return false;
+        }
+        // Key, argument count and value literalness all come from the same
+        // direct call text, never from the parsed assertion or another call
+        // on the same subject.
+        let names_getter = direct_matcher_call_args(&test.body_text, subject, &assertion.matcher)
+            .iter()
+            .any(|args| match assertion.matcher.as_str() {
+                "toMatchObject" => args.len() == 1 && literal_object_has_key(&args[0], getter),
+                "toHaveProperty" => {
+                    args.len() == 2
+                        && quoted_literal_text(&args[0]) == Some(getter)
+                        && is_plain_literal_value(&args[1])
+                }
+                _ => false,
+            });
+        // The body scans run last: a `catch (url)`, parameter or loop binding
+        // of the subject name is a different object at the assertion, and a
+        // receiver the body writes again (`url = {...}`) may no longer be the
+        // constructed instance.
+        names_getter
+            && receiver_initializer_is_exact_constructor(
+                &test.body_text,
+                subject,
+                constructor_names,
+            )
+            && !body_binds_shadow_identifier(&test.body_text, subject)
+            && !receiver_written_after_declaration(&test.body_text, subject)
+    })
+}
+
+/// Argument texts of every `expect(<subject>).<matcher>(...)` call in `body`
+/// whose matcher is chained directly on the `expect(...)` call: a `.not`,
+/// `.resolves` or `.rejects` modifier between them leaves the call out, since
+/// each changes what the matcher is applied to or what it asserts.
+fn direct_matcher_call_args(body: &str, subject: &str, matcher: &str) -> Vec<Vec<String>> {
+    let needle = format!("expect({subject})");
+    let call = format!(".{matcher}");
+    let mut found = Vec::new();
+    for (idx, _) in body.match_indices(&call) {
+        let Some(open) = body[idx + call.len()..].trim_start().strip_prefix('(') else {
+            continue;
+        };
+        let Some(head) = body[..idx].trim_end().strip_suffix(&needle) else {
+            continue;
+        };
+        if head
+            .chars()
+            .next_back()
+            .is_some_and(|ch| is_javascript_identifier_char(ch) || ch == '.')
+        {
+            continue;
+        }
+        let Some(end) = super::classifier::balanced_close_offset(open) else {
+            continue;
+        };
+        found.push(split_top_level_arguments(&open[..end]));
+    }
+    found
+}
+
+/// Top-level comma-separated pieces of an argument list (a trailing comma adds
+/// no empty argument), string- and bracket-aware.
+fn split_top_level_arguments(args: &str) -> Vec<String> {
+    let mut pieces = Vec::new();
+    let mut depth = 0usize;
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+    let mut start = 0usize;
+    for (idx, ch) in args.char_indices() {
+        if let Some(open) = quote {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == open {
+                quote = None;
+            }
+            continue;
+        }
+        match ch {
+            '"' | '\'' | '`' => quote = Some(ch),
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth = depth.saturating_sub(1),
+            ',' if depth == 0 => {
+                pieces.push(args[start..idx].trim().to_string());
+                start = idx + 1;
+            }
+            _ => {}
+        }
+    }
+    let last = args[start..].trim();
+    if !last.is_empty() {
+        pieces.push(last.to_string());
+    }
+    pieces
+}
+
+/// The inside of a single- or double-quoted string literal with no escape.
+fn quoted_literal_text(text: &str) -> Option<&str> {
+    let text = text.trim();
+    ['"', '\''].iter().find_map(|quote| {
+        text.strip_prefix(*quote)
+            .and_then(|rest| rest.strip_suffix(*quote))
+            .filter(|inner| !inner.contains([*quote, '\\']))
+    })
+}
+
+/// `true` when `text` is a flat object whose every value is a scalar literal
+/// and whose top-level keys include `key`.
+fn literal_object_has_key(text: &str, key: &str) -> bool {
+    let text = text.trim();
+    let Some(inner) = text
+        .strip_prefix('{')
+        .and_then(|rest| rest.strip_suffix('}'))
+    else {
+        return false;
+    };
+    split_top_level_arguments(inner).iter().all(|part| {
+        part.split_once(':')
+            .is_some_and(|(_, value)| is_plain_literal_value(value))
+    }) && flat_object_keys(text).is_some_and(|keys| keys.iter().any(|name| name == key))
+}
+
+/// `true` for a scalar literal argument: one quoted string without
+/// interpolation or an inner quote, a number, `true`, `false` or `null`. A
+/// variable, call, `expect.any(...)` or other asymmetric matcher is not.
+fn is_plain_literal_value(text: &str) -> bool {
+    let text = text.trim();
+    if matches!(text, "true" | "false" | "null") {
+        return true;
+    }
+    if text.parse::<f64>().is_ok() {
+        return true;
+    }
+    ['"', '\'', '`'].iter().any(|quote| {
+        text.len() >= 2
+            && text.starts_with(*quote)
+            && text.ends_with(*quote)
+            && !text[1..text.len() - 1].contains([*quote, '\\'])
+            && !(text.starts_with('`') && text.contains("${"))
+    })
+}
+
+/// `true` when every `const`/`let`/`var` declaration of `name` in `body` is
+/// initialised by exactly `new <Ctor>(...)` for a constructor in `ctors`: the
+/// call is balanced and nothing continues the expression after it (no ternary,
+/// `||`/`??`, member chain, `await`, parentheses or `as` cast). A receiver the
+/// body does not declare (a scope binding) has no initializer to inspect.
+fn receiver_initializer_is_exact_constructor(body: &str, name: &str, ctors: &[String]) -> bool {
+    for keyword in ["const", "let", "var"] {
+        for (idx, _) in body.match_indices(keyword) {
+            let before = body[..idx].chars().next_back();
+            if before.is_some_and(|ch| is_javascript_identifier_char(ch) || ch == '.') {
+                continue;
+            }
+            let Some(rest) = body[idx + keyword.len()..].strip_prefix(char::is_whitespace) else {
+                continue;
+            };
+            let Some(rest) = rest.trim_start().strip_prefix(name) else {
+                continue;
+            };
+            if rest
+                .chars()
+                .next()
+                .is_some_and(is_javascript_identifier_char)
+            {
+                continue;
+            }
+            let Some(init) = rest
+                .trim_start()
+                .strip_prefix('=')
+                .filter(|init| !init.starts_with('='))
+            else {
+                return false;
+            };
+            if !exact_constructor_initializer(init.trim_start(), ctors) {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+fn exact_constructor_initializer(init: &str, ctors: &[String]) -> bool {
+    let Some(rest) = init
+        .strip_prefix("new")
+        .and_then(|rest| rest.strip_prefix(char::is_whitespace))
+    else {
+        return false;
+    };
+    let rest = rest.trim_start();
+    let len: usize = rest
+        .chars()
+        .take_while(|ch| is_javascript_identifier_char(*ch))
+        .map(char::len_utf8)
+        .sum();
+    if !ctors.iter().any(|ctor| ctor == &rest[..len]) {
+        return false;
+    }
+    let Some(args) = rest[len..].trim_start().strip_prefix('(') else {
+        return false;
+    };
+    let Some(end) = super::classifier::balanced_close_offset(args) else {
+        return false;
+    };
+    let tail = args[end + 1..].trim_start_matches([' ', '\t']);
+    match tail.chars().next() {
+        None | Some(';') => true,
+        Some('\n' | '\r') => tail
+            .trim_start()
+            .chars()
+            .next()
+            .is_none_or(|ch| !".?|&+-*/%[(`,<>=:".contains(ch)),
+        Some(_) => false,
+    }
+}
+
+/// `true` when `body` writes `name` anywhere but its single `const`/`let`/`var`
+/// declaration (`url = other`, `url++`, a second declaration). A receiver
+/// declared outside the body has no write in it.
+fn receiver_written_after_declaration(body: &str, name: &str) -> bool {
+    let writes: Vec<usize> = super::tests_extract::identifier_writes(body)
+        .into_iter()
+        .filter(|(written, _)| written == name)
+        .map(|(_, at)| at)
+        .collect();
+    match writes.as_slice() {
+        [] => false,
+        [at] => {
+            let before = body[..*at].trim_end();
+            !["const", "let", "var"].iter().any(|keyword| {
+                before.strip_suffix(keyword).is_some_and(|head| {
+                    head.chars()
+                        .next_back()
+                        .is_none_or(|ch| !is_javascript_identifier_char(ch))
+                })
+            })
+        }
+        _ => true,
+    }
 }
 
 /// Getter owner reached through an exported factory that returns a fresh

@@ -21209,6 +21209,7 @@ mod error_payload_tests;
 mod floating_promise_tests;
 mod function_reference_callback_tests;
 mod gap_reach_config_tests;
+mod getter_matcher_key_tests;
 mod guard_entry_tests;
 mod infection_tests;
 mod instance_class_tests;
