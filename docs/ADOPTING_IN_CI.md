@@ -134,7 +134,9 @@ runs `ripr check` and `ripr review-comments` and keeps `target/ripr/` as a job
 artifact for 14 days. It does not post merge-request comments, render SARIF, or
 configure gate modes. For a merge request from a fork, it fetches the target
 project's branch as the diff base. It needs no secrets (only public release downloads), so
-keep protected CI/CD variables out of merge-request pipelines. Details: [CI strategy](CI.md).
+keep protected CI/CD variables out of merge-request pipelines. To turn it off, delete
+the `ripr-advisory` job from `.gitlab-ci.yml`; "Rolling back" below is GitHub-only.
+Details: [CI strategy](CI.md).
 
 ## Rolling back
 
