@@ -1844,6 +1844,10 @@ pub(super) enum QuarantineTransition {
         /// caller restores only what it disclosed.
         was_disclosed: bool,
     },
+    /// Still quarantined, under a different reason than before (for example a
+    /// divergent buffer that then loses authority to the store limit). The
+    /// episode and its disclosure continue; only the marker text changes.
+    ReasonChanged,
     Unchanged,
 }
 
@@ -2219,6 +2223,10 @@ fn apply_document_content_changes_within(
 
 fn invalidate_incremental_document_state(state: &mut DocumentState) -> QuarantineTransition {
     let was_quarantined = state.quarantine.is_some();
+    let prior_reason = state
+        .quarantine
+        .as_ref()
+        .map(|quarantine| quarantine.reason);
     let was_disclosed = state
         .quarantine
         .as_ref()
@@ -2231,10 +2239,12 @@ fn invalidate_incremental_document_state(state: &mut DocumentState) -> Quarantin
         reason: state.authority_loss_reason(),
         withdrawal_disclosed: was_disclosed,
     });
-    if was_quarantined {
-        QuarantineTransition::Unchanged
-    } else {
+    if !was_quarantined {
         QuarantineTransition::Entered
+    } else if prior_reason != Some(state.authority_loss_reason()) {
+        QuarantineTransition::ReasonChanged
+    } else {
+        QuarantineTransition::Unchanged
     }
 }
 
@@ -2904,7 +2914,7 @@ impl DocumentStore {
                 QuarantineTransition::Exited { was_disclosed } => {
                     edges.exited.push((uri.clone(), was_disclosed));
                 }
-                QuarantineTransition::Unchanged => {}
+                QuarantineTransition::ReasonChanged | QuarantineTransition::Unchanged => {}
             }
         });
         edges

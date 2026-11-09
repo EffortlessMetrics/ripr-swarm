@@ -132,8 +132,11 @@ never-opened URI reads as withdrawn too while the latch is set, and closed or
 never-opened workspace files in the workspace pull are likewise withdrawn as
 `document_store_limit_reached`. Closing
 documents, even all of them, does not clear it, because untracked buffers may
-still be open in the client; only a workspace-level reset (root transition or
-shutdown) clears it. This is a static delivery
+still be open in the client; neither does a root transition, which keeps the open documents and the
+client's untracked buffers; only shutdown clears it. A document already
+quarantined under another reason that then loses authority to the store limit
+refreshes its marker to the new reason without repeating the once-per-episode
+disclosure. This is a static delivery
 limitation, not a finding, repair, or runtime outcome.
 
 Each catalog entry carries the code identity used today: the stable `code` and

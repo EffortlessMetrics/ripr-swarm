@@ -488,10 +488,78 @@ async fn overflow_placeholders_are_capped_and_untracked_uris_stay_withdrawn() ->
         return Err("a never-opened URI reads withdrawn while saturated".into());
     }
 
-    // Only a workspace-level reset ends it.
+    // A root transition (which runs `clear_all_diagnostic_uris`) keeps the
+    // documents and the client's untracked buffers, so it must not end it.
     backend.clear_all_diagnostic_uris();
+    if backend.document_quarantine(&fixture.uri_b).is_none() {
+        return Err("a root transition must not end saturation".into());
+    }
+    // Only shutdown ends it.
+    backend
+        .shutdown()
+        .await
+        .map_err(|err| format!("shutdown failed: {err}"))?;
     if backend.document_quarantine(&fixture.uri_b).is_some() {
         return Err("the workspace-level reset must end saturation".into());
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn did_save_over_cap_refreshes_the_marker_of_an_already_quarantined_document()
+-> Result<(), String> {
+    let fixture = quarantine_fixture("docstore-save-reason-change")?;
+    let (service, socket) = LspService::new(|client| Backend::new(client, fixture.root.clone()));
+    drop(socket);
+    let backend = service.inner();
+    backend
+        .with_documents_for_test(|store| {
+            *store = DocumentStore::with_limits(DocumentStoreLimits {
+                max_open_documents: 8,
+                max_retained_document_bytes: QUARANTINE_TEXT_A.len() + 8,
+                max_overflow_placeholders: 8,
+            });
+        })
+        .ok_or_else(|| "SETUP: document store lock failed".to_string())?;
+    backend
+        .did_open(quarantine_open_params(&fixture.uri_a, QUARANTINE_TEXT_A))
+        .await;
+    commit_quarantine_snapshot(backend, &fixture, QUARANTINE_TEXT_A)?;
+    let marker_reason = |label: &str| -> Result<String, String> {
+        backend
+            .last_diagnostics_for_uri_for_test(&fixture.uri_a)
+            .and_then(|items| {
+                items.first().and_then(|item| {
+                    item.data
+                        .as_ref()
+                        .and_then(|data| data.get("reason"))
+                        .and_then(serde_json::Value::as_str)
+                        .map(str::to_string)
+                })
+            })
+            .ok_or_else(|| format!("{label}: no withdrawal marker recorded"))
+    };
+    // A divergent buffer quarantines the document under the divergence reason.
+    backend
+        .did_change(quarantine_change_params(
+            &fixture.uri_a,
+            2,
+            QUARANTINE_TEXT_A_DIRTY,
+        ))
+        .await;
+    let before = marker_reason("after divergent didChange")?;
+    if before != "buffer_diverges_from_analyzed_saved_content" {
+        return Err(format!("SETUP: unexpected first marker reason {before}"));
+    }
+    // An over-cap save changes the reason while it stays quarantined; the
+    // marker must follow instead of staying stale.
+    let oversized = format!("{QUARANTINE_TEXT_A_DIRTY}{}", "// padding\n".repeat(4));
+    backend
+        .did_save(save_params(&fixture.uri_a, &oversized))
+        .await;
+    let after = marker_reason("after over-cap didSave")?;
+    if after != "document_store_limit_reached" {
+        return Err(format!("the marker stayed stale: {after}"));
     }
     Ok(())
 }

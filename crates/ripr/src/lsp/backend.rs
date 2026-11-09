@@ -1565,12 +1565,8 @@ impl Backend {
             *diagnostic_result_ids = None;
         }
         let mut uris = take_all_uris(&mut last_diagnostic_uris);
-        if let Ok(mut documents) = self.quarantine.documents.lock() {
-            if marker_served {
-                uris.extend(documents.documents.keys().cloned());
-            }
-            // Workspace-level reset: the only point that ends saturation.
-            documents.clear_untracked_overflow();
+        if marker_served && let Ok(documents) = self.quarantine.documents.lock() {
+            uris.extend(documents.documents.keys().cloned());
         }
         // #8732: a root transition or shutdown must also retract any
         // analysis-pending marker published to a push client while no
@@ -4154,6 +4150,14 @@ impl Backend {
             }
             QuarantineTransition::Exited { was_disclosed } => {
                 self.restore_document_diagnostics(uri, was_disclosed, decision_version)
+                    .await;
+            }
+            QuarantineTransition::ReasonChanged => {
+                // Still quarantined, but under a different reason: the
+                // marker the client holds names the old one. Re-withdraw so
+                // it names the current reason; the once-per-episode
+                // disclosure is already recorded and is not repeated.
+                self.withdraw_document_diagnostics(uri, decision_version)
                     .await;
             }
             QuarantineTransition::Unchanged => {
@@ -6971,6 +6975,12 @@ impl LanguageServer for Backend {
         // Mirror the root-change path: dropping the tracked URIs without
         // publishing leaves stale diagnostics in the client (#5202).
         let uris = self.clear_all_diagnostic_uris();
+        // Shutdown is the only reset of untracked-overflow saturation: a root
+        // transition keeps the documents (and the client's untracked buffers),
+        // so it must not end the fail-closed withdrawal (#11666).
+        if let Ok(mut documents) = self.quarantine.documents.lock() {
+            documents.clear_untracked_overflow();
+        }
         if !self.pull_diagnostics_enabled() {
             for uri in uris {
                 self.client
