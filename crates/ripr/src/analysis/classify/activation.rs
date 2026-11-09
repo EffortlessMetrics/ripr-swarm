@@ -2682,6 +2682,9 @@ pub(in crate::analysis) struct GuardedComparison {
     comparison: String,
     /// `(parameter, value it must hold)`; `!express` requires `false`.
     guards: Vec<(String, bool)>,
+    /// A pure insertion has no old comparison to tell apart: as for a lone
+    /// inserted guard (#12414), a credited row must also enter it.
+    inserted: bool,
 }
 
 impl GuardedComparison {
@@ -2725,12 +2728,29 @@ impl GuardedComparison {
             index,
             false,
         );
-        if rows.is_empty() {
+        // Every row must spell each guard as a literal: a guard fed from a
+        // variable or a helper row without the guard column is not a row
+        // that misses the guard, so neither credit nor the unreached reason
+        // may rest on it.
+        let guards_readable = |row: &Vec<ParameterValue>| {
+            self.guards.iter().all(|(guard, _)| {
+                parameter_value(row, guard)
+                    .is_some_and(|cell| matches!(cell.value.trim(), "true" | "false"))
+            })
+        };
+        if rows.is_empty() || !rows.iter().all(guards_readable) {
             return GuardedReading::Unread;
         }
-        let facts = rows
-            .iter()
-            .filter(|row| self.holds(row))
+        let guarded_rows = || rows.iter().filter(|row| self.holds(row));
+        if self.inserted
+            && !guarded_rows().any(|row| {
+                parameter_value(row, &parameter)
+                    .is_some_and(|cell| self.enters(&parameter, &cell.value, &boundary_value.value))
+            })
+        {
+            return GuardedReading::Unread;
+        }
+        let facts = guarded_rows()
             .filter_map(|row| parameter_value(row, &parameter))
             .filter(|cell| comparable_value(&cell.value) == comparable_value(&boundary_value.value))
             .map(|cell| ValueFact {
@@ -2760,6 +2780,42 @@ impl GuardedComparison {
             ))
         } else {
             GuardedReading::Reached(facts)
+        }
+    }
+
+    /// Whether the comparison holds for `parameter = value` against the
+    /// boundary, read only for plain decimal integers.
+    fn enters(&self, parameter: &str, value: &str, boundary: &str) -> bool {
+        let integer = |text: &str| -> Option<i128> {
+            let digits = text.trim().replace('_', "");
+            let unsigned = digits.strip_prefix('-').unwrap_or(&digits);
+            (!unsigned.is_empty() && unsigned.chars().all(|ch| ch.is_ascii_digit()))
+                .then(|| digits.parse().ok())
+                .flatten()
+        };
+        let (Some(value), Some(boundary)) = (integer(value), integer(boundary)) else {
+            return false;
+        };
+        let Some(operator) = [">=", "<=", "==", "!=", ">", "<"]
+            .into_iter()
+            .find(|operator| self.comparison.contains(operator))
+        else {
+            return false;
+        };
+        let parameter_left =
+            comparison_operands(&self.comparison).is_some_and(|(left, _)| left == parameter);
+        let (left, right) = if parameter_left {
+            (value, boundary)
+        } else {
+            (boundary, value)
+        };
+        match operator {
+            ">=" => left >= right,
+            "<=" => left <= right,
+            "==" => left == right,
+            "!=" => left != right,
+            ">" => left > right,
+            _ => left < right,
         }
     }
 
@@ -2798,6 +2854,30 @@ impl GuardedComparison {
         Some((parameter, boundary, value))
     }
 
+    /// The comparison alone, without its guards (`amount >= LIMIT`).
+    pub(in crate::analysis) fn comparison(&self) -> &str {
+        &self.comparison
+    }
+
+    /// Whether one owner call's argument values (one list per parameter, in
+    /// order) hold every guard as a single literal.
+    pub(in crate::analysis) fn guards_hold_in(
+        &self,
+        parameters: &[String],
+        arguments: &[Vec<String>],
+    ) -> bool {
+        self.guards.iter().all(|(guard, required)| {
+            parameters
+                .iter()
+                .position(|parameter| parameter == guard)
+                .and_then(|at| arguments.get(at))
+                .is_some_and(|values| {
+                    values.len() == 1
+                        && values[0].trim() == if *required { "true" } else { "false" }
+                })
+        })
+    }
+
     /// Whether one owner call's argument values (one list per parameter, in
     /// order) sit on the boundary while holding every guard. Same-test
     /// pairing reads this per observed call, so a call that misses a guard
@@ -2811,23 +2891,16 @@ impl GuardedComparison {
     ) -> Option<bool> {
         let (parameter, _, value) = self.resolved_boundary(probe, owner, index)?;
         let parameters = function_parameters(owner);
-        let column = |name: &str| {
-            parameters
-                .iter()
-                .position(|parameter| parameter == name)
-                .and_then(|at| arguments.get(at))
-        };
-        let on_boundary = column(&parameter).is_some_and(|values| {
-            values
-                .iter()
-                .any(|fed| comparable_value(fed) == comparable_value(&value.value))
-        });
-        let guards_hold = self.guards.iter().all(|(guard, required)| {
-            column(guard).is_some_and(|values| {
-                values.len() == 1 && values[0].trim() == if *required { "true" } else { "false" }
-            })
-        });
-        Some(on_boundary && guards_hold)
+        let on_boundary = parameters
+            .iter()
+            .position(|name| *name == parameter)
+            .and_then(|at| arguments.get(at))
+            .is_some_and(|values| {
+                values
+                    .iter()
+                    .any(|fed| comparable_value(fed) == comparable_value(&value.value))
+            });
+        Some(on_boundary && self.guards_hold_in(&parameters, arguments))
     }
 
     fn holds(&self, row: &[ParameterValue]) -> bool {
@@ -2838,15 +2911,45 @@ impl GuardedComparison {
     }
 }
 
-/// The comparison and guards of a `comparison && guard && ...` predicate.
-/// `None` for anything else: no top-level `&&`, an `||` anywhere at top
-/// level, more or fewer than one comparison, or a guard that is not a bare
-/// owner parameter (optionally negated) the owner never rebinds.
+/// The comparison and guards of a changed `comparison && guard && ...`
+/// predicate. `None` for anything else: no top-level `&&`, an `||` anywhere
+/// at top level, more or fewer than one comparison, a guard that is not a
+/// bare owner parameter (optionally negated) the owner never rebinds, or an
+/// edit that touches the guards (`a >= T` to `a >= T && !x`, or a flipped or
+/// added guard): rows that hold the new guards may not see that change.
 pub(in crate::analysis) fn guarded_comparison(
     probe: &Probe,
     owner: &FunctionSummary,
 ) -> Option<GuardedComparison> {
-    let expression = clean_operand(&probe.expression);
+    let (comparison, guards) = split_guarded(&probe.expression, owner, probe.location.line)?;
+    let inserted = match probe.before.as_deref() {
+        None => true,
+        Some(before) => {
+            let (_, old_guards) = split_guarded(before, owner, probe.location.line)?;
+            let sorted = |guards: &[(String, bool)]| {
+                let mut guards = guards.to_vec();
+                guards.sort();
+                guards
+            };
+            if sorted(&old_guards) != sorted(&guards) {
+                return None;
+            }
+            false
+        }
+    };
+    Some(GuardedComparison {
+        comparison,
+        guards,
+        inserted,
+    })
+}
+
+fn split_guarded(
+    expression: &str,
+    owner: &FunctionSummary,
+    line: usize,
+) -> Option<(String, Vec<(String, bool)>)> {
+    let expression = clean_operand(expression);
     let masked = crate::analysis::language::mask_rust_comments_and_strings(&expression);
     if masked.len() != expression.len() {
         return None;
@@ -2884,7 +2987,7 @@ pub(in crate::analysis) fn guarded_comparison(
             None => (false, part),
         };
         if parameters.iter().any(|parameter| parameter == name) {
-            if parameter_may_be_rebound(owner, name, probe.location.line) {
+            if parameter_may_be_rebound(owner, name, line) {
                 return None;
             }
             guards.push((name.to_string(), !negated));
@@ -2896,7 +2999,7 @@ pub(in crate::analysis) fn guarded_comparison(
         comparison = Some(part.to_string());
     }
     let comparison = comparison?;
-    (!guards.is_empty()).then_some(GuardedComparison { comparison, guards })
+    (!guards.is_empty()).then_some((comparison, guards))
 }
 
 #[allow(

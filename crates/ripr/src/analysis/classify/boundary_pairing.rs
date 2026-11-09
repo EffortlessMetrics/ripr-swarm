@@ -1289,10 +1289,23 @@ fn argument_list_activates_boundary(
         .iter()
         .map(|argument| pairing_argument_values(test, argument, scope))
         .collect();
-    let Some((left, right)) = comparison_operands(&probe.expression) else {
+    let parameters = function_parameters(owner);
+    // #13037: a guarded comparison is reached only by a call that holds
+    // every guard, and its boundary operand is the comparison's alone (not
+    // `5 && !x`).
+    let guarded = super::activation::guarded_comparison(probe, owner);
+    if guarded
+        .as_ref()
+        .is_some_and(|guarded| !guarded.guards_hold_in(&parameters, &arg_values))
+    {
+        return false;
+    }
+    let expression = guarded
+        .as_ref()
+        .map_or(probe.expression.as_str(), |guarded| guarded.comparison());
+    let Some((left, right)) = comparison_operands(expression) else {
         return false;
     };
-    let parameters = function_parameters(owner);
     let left_index = parameter_index(&parameters, &left);
     let right_index = parameter_index(&parameters, &right);
     if let (Some(left_index), Some(right_index)) = (left_index, right_index) {

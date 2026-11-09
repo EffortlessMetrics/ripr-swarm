@@ -602,13 +602,19 @@ Guarded boundary rule (#13037): a changed comparison joined by top-level
 (`order_cents >= FREE_OVER_CENTS && !express`) compares the parameter with
 the boundary; the guards are not part of either operand. The boundary must
 be a literal or a constant the rules above resolve, the compared parameter
-and every guard must be parameters the owner never rebinds, and nothing
-before the changed line may divert a row. Then:
+and every guard must be parameters the owner never rebinds, nothing
+before the changed line may divert a row, and the edit must leave the
+guards as they were (same names and polarity): an edit that adds, removes
+or flips a guard is not read this way, since rows that hold the new guards
+may behave the same on both sides. Every related row must spell each guard
+as a literal. Then:
 
 - only a test call that holds every guard as a literal (`express = false`)
   and sits on the boundary value activates the boundary, and same-test
-  pairing reads each observed call on its own, so a boundary call that
-  misses a guard never pairs with an exact assertion on another call;
+  pairing reads each observed call (and each bound result) on its own, so a
+  boundary call that misses a guard never pairs with an exact assertion;
+- a pure insertion also needs a guard-holding row that enters the inserted
+  branch, as for a lone inserted guard (#12414);
 - when readable rows exist but none holding the guards sits on the
   boundary, the boundary is unresolved (`infection unknown`) with the guard
   and boundary value named. It is never reported as an actionable missing
@@ -623,7 +629,8 @@ Fixture coverage:
 
 - `crates/ripr/tests/guarded_boundary_13037.rs` (guarded boundary rule: a
   guard-holding boundary pin is exposed; guard-missing rows, no boundary
-  row, split tests and a rebound guard are not credited)
+  row, split tests, a guard-missing bound result, an added guard, an
+  unentered insertion and a rebound guard are not credited)
 
 - `unindexed_doc_assertion_prompts_inspection_without_credit_or_gap_claim`
 - `weak_direct_owner_assertion_keeps_exact_value_advice`
