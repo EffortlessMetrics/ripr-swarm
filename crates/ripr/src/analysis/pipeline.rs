@@ -5590,14 +5590,13 @@ mod tests {
     fn symlink_disclosure_names_type_changes_and_non_claim() -> Result<(), String> {
         let message = symlink_disclosure_message(1)
             .ok_or_else(|| "a symlink change must produce a disclosure".to_string())?;
-        if !message.contains("skipped 1 symlink change(s)") || !message.contains("does not mean") {
-            return Err(format!(
-                "disclosure must name the count and non-claim: {message}"
-            ));
-        }
-        if symlink_disclosure_message(0).is_some() {
-            return Err("zero symlink changes must not produce a disclosure".to_string());
-        }
+        assert!(
+            message.starts_with("ripr: skipped 1 symlink change(s);"),
+            "{message}"
+        );
+        assert!(message.contains("does not mean"), "{message}");
+        assert!(message.contains("analyzed normally"), "{message}");
+        assert_eq!(symlink_disclosure_message(0), None);
         Ok(())
     }
 
