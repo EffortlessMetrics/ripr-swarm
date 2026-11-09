@@ -18,7 +18,11 @@ legend cost, independent of encounter order. The selected set shares the field
 overhead once; marginal byte savings alone do not admit an entry. The 24-byte
 threshold is UTF-8 length, which may differ from schema character length. Singletons
 stay inline. Its marker is always emitted; token cost and overall byte savings
-are not guaranteed. The precise fields, alias behavior, and decoding rules are
+are not guaranteed. A finding-level `observed_values` or `missing_discriminators`
+array is omitted only when it is non-empty and equal to the same array in that
+finding's `activation`, and each omitted alias name is listed once in
+`dropped_aliases` so the value is restored from `activation`; unequal, empty or
+activation-less copies stay verbatim. The precise fields, alias behavior, and decoding rules are
 specified in [Output Schema](../OUTPUT_SCHEMA.md#json-terse-semantically-compacted-check-json).
 
 Given a Rust/Cargo workspace and a diff, `ripr` identifies changed Rust behavior,
@@ -637,6 +641,7 @@ Fixture coverage:
 - `unresolved_boundary_input_is_unknown_not_weak`
 - `computed_comparison_operand_is_not_its_contained_literal`
 - `given_constant_minus_offset_boundary_then_boundary_is_the_offset_value_not_the_offset`
+- `given_field_assignment_to_named_constant_then_reversed_predicate_credits_boundary`
 - `constant_offset_operands_name_the_constant_and_signed_offset`
 - `offset_integer_values_add_only_to_plain_decimal_constants`
 - `given_computed_helper_hop_argument_then_boundary_is_unresolved_not_missing`

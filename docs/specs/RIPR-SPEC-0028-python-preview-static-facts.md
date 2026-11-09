@@ -407,6 +407,10 @@ definition, an assignment, `del`, a loop or `with` target, or any binding
 inside a conditional block), the re-export is not followed, because the
 reader does not order bindings. An unreadable or unparsable initializer
 re-exports nothing.
+A re-exported package name is shadowed like an src-layout short name: when a plain
+module of the same project (beside `src/` or at the repo root) resolves under the
+package's name, `from core import price` cannot be told apart from it, so the
+re-export identifies no owner and credits no test.
 Methods and module owners are never re-exported. The test must still call the owner's own name through
 the package, so a test that only calls a sibling name from the same package
 stays unrelated, and a test that binds a local named like the package alias
@@ -643,8 +647,9 @@ comments, strings, and docstrings:
   module.
 
 A module-level `NAME = <literal>` edit (#9423) relates as `module_value_call`,
-an oracle-eligible relation, only to a test whose straight-line `assert`
-provably holds under the old literal and fails under the new one. The module
+an oracle-eligible relation, when a test's straight-line `assert` provably
+holds under the old literal and fails under the new one. The bounded string
+reader extension below also recognizes the reverse distinction (#12950). The module
 binds `NAME` once (no `global`, walrus, attribute write, star import or dynamic
 namespace writer), the edit is the file's only changed line, no test file
 writes the attribute, and the test keeps its imported names. Reader functions
@@ -667,11 +672,92 @@ expressions all evaluate to strings under the same bounded evaluator (#12950).
 Interpolation has no conversion (`!s`, `!r`, `!a`) or format specification,
 including an empty specification, and the resulting UTF-8 string is at most
 65,536 bytes on each evaluated side. Non-string values and custom formatting
-remain unresolved. This extends exact old-true/new-false credit only; a weak
-substring check, an old-failing/new-passing pin, or an unresolved consumer does
-not gain credit or a repair route. F-string text that merely spells the constant
-name is not a read. All existing binding, import, writer and activation guards
-remain required. A body-only edit of
+remain unresolved. F-string text that merely spells the constant name is not
+a read. All existing binding, import, writer and activation guards remain
+required.
+
+A string-to-string module constant edit additionally requires a positive,
+per-changed-file module-import identity fact from the workspace producer. The
+fact defaults to false; an import spelling alone cannot establish it. It
+requires a complete source view, intact regular package paths, and no competing
+source module, source package, compiled shadow, unchecked bytecode or unresolved
+configured import root. The canonical root `pyproject.toml` setting
+`pythonpath = ["src"]` is admitted only when the physical, scanned `src` layout
+and every accepted owner-module spelling satisfy that custody proof. The
+existing global import uncertainty flags remain unchanged. This requirement
+precedes every string-value route, including direct and forwarded old-value
+pins and the older `flips` fallback. Opaque foreign reflection, import hooks,
+non-byte-exact bindings and dunder writes also withhold string evidence; a
+positive physical import fact does not override those binding facts.
+A competing `tests/fx/core.py` or
+`tests/fx/core/__init__.py` returning the asserted value cannot lend reach,
+discrimination or repair guidance to an edit of `src/fx/core.py`. Without the
+positive fact, the string edit retains unknown reach and no repair card, even
+if an exact current pin was added to the test.
+String reader spellings are restricted to the checked owner-module paths and
+their aliases or module receivers. A package re-export or sibling forwarder
+has an additional import identity that the changed file's fact does not prove,
+so those string routes remain unresolved. In particular, a shadow of
+`wrapper` cannot borrow `fx.core` custody through `from wrapper import greet`
+or `import wrapper; wrapper.greet(...)`.
+
+For an admitted string-to-string module constant edit, a direct call to such a reader
+compared with an independent string literal can establish either truth
+direction: an exact equality pin of `greet('bob') == 'hello, bob'` distinguishes
+`GREETING = 'hello'` from `GREETING = 'hi'`, and the current pin
+`greet('bob') == 'hi, bob'` distinguishes the same edit. Both returned values
+must resolve to strings within the 65,536-byte bound; the comparison must have
+one operator and two operands, with the call on either side of `==` or on the
+right side of `in`/`not in`. A membership assertion that changes truth is a
+strong discriminator while retaining its `relational_check` oracle kind.
+Outer boolean expressions, conditional wrappers, comparison chains and an
+unevaluated call spelling supply no new string-reader credit. The original
+source assertion and every preceding assertion are read in full: a normalized
+strong `and` conjunct cannot erase a false prefix or invent an executed call.
+Every preceding assertion must resolve true on both sides. Only a fully
+evaluated exact current pin, false before and true after, may be in a test
+edited by the same diff; edited weak assertions, edited membership discriminators and edited
+old-side pins stay ineligible. Lambda, dataclass and non-string direct-read
+and forwarder paths retain their existing old-true/new-false convention.
+An admitted direct string-constant read also retains that direction; the
+reverse distinction is specific to the bounded direct reader comparison.
+
+An unchanged test with exactly one direct string membership assertion may
+instead establish weak observation: the call resolves through the same
+binding, import, writer and activation guards, the assertion evaluates true on
+both sides, and the returned strings differ. For example, `assert 'bob' in greet('bob')`
+accepts both `'hello, bob'` and `'hi, bob'`. Its separate
+`module_value_reader_call` relation establishes reach, a reader `return_value`
+flow sink and weak observation/discrimination; it is never a strong
+`module_value_call` credit. The finding is `weakly_exposed` and names the
+selected call with an exact current-value discriminator, such as
+`greet('bob') == "hi, bob"`. The suggested Python string literal preserves
+control-character escapes. The selected test, node id, source line when names
+collide and verify command stay attached to that same reader witness.
+The existing canonical module-constant gap identity is retained when the pin
+is added; return-value repair guidance follows the supplied sink without
+changing that identity. The existing Python gap-bound repair start is
+available only when the resulting record passes the shared agent-packet
+validator; missing verification data still refuses the route. Adding the
+current exact assertion, including after the original membership assertion
+in an edited test, exposes that same gap and removes its repair card. Both
+weak observations and fully evaluated string pins retain the concrete reader
+return sink with propagation `yes`; strengthening the oracle does not erase
+that established return path. Generic scalar and other module-value credits
+do not gain this string-reader propagation witness.
+The real producer regression uses the canonical `src/fx/core.py` layout and
+its configured import root. Adding a competing test-root module or package
+withdraws both the weak route and exact-pin credit; removing only that shadow
+restores the existing validator-complete route.
+
+Both-false assertions, equal reader returns, discarded or unresolved calls,
+and guarded or rebound consumers supply no actionable weak witness. A
+recognized string replacement in this sole-line path with no bounded
+discriminating or weak reader evidence stays `static_unknown` with
+`missing_import_graph` and unknown reach; it does not claim that there is no
+consumer path and offers no repair card.
+
+A body-only edit of
 a top-level `NAME = lambda a, b: <body>` binding (#9619) credits the same way:
 the parameters are unchanged positional ones without defaults, `*args` or
 keywords, `NAME` is bound once in the old and new module, no file writes or
@@ -680,8 +766,9 @@ the same evaluator; a test that calls `NAME` with literal arguments in a
 straight-line `assert` that holds with the old body and fails with the new one
 is the oracle, and only then is the lambda-syntax limit lifted. A changed
 parameter list, a default, a body outside the evaluator, a second binding or a
-test that shadows, patches or may skip the call keeps `unsupported_syntax`. A value no
-assertion distinguishes is never graded as a gap. A default edit of a field in
+test that shadows, patches or may skip the call keeps `unsupported_syntax`.
+Without the bounded weak string-reader observation above, a value no assertion
+distinguishes is not graded as a gap. A default edit of a field in
 a plain `@dataclass` class (#9619) relates the same way: the class is a
 top-level `@dataclass` or `@dataclasses.dataclass` with no arguments, bases or
 keywords, imported from `dataclasses` and bound once; its body holds only

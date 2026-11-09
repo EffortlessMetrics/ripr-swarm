@@ -1,4 +1,5 @@
 pub(crate) mod agent_brief;
+pub(crate) mod agent_card;
 pub(crate) mod agent_receipt;
 #[path = "agent_seam_packets_live.rs"]
 pub(crate) mod agent_seam_packets;
@@ -91,6 +92,7 @@ pub(crate) mod review_comments_receipt;
 pub(crate) mod ripr_zero_status;
 pub(crate) mod sarif;
 pub(crate) mod schemas;
+pub(crate) mod stage_rows;
 pub mod start_here_state;
 pub(crate) mod suppression_health;
 pub(crate) mod suppressions;
