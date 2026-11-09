@@ -207,6 +207,7 @@ Updated:
 
 Reason:
 RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; no test attribution; human rendering unchanged
+RIPR-SPEC-0028: preserve no-exposed-credit output for eleven receiver-rebinding subjects, including multiline targets and split headers
 
 Command:
 `cargo xtask goldens bless python_protocol_entry_bracketed_rebind_no_exposed_credit --reason "..."`
