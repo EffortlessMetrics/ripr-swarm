@@ -4858,9 +4858,23 @@ pub(crate) fn owner_namespace_receivers(
                             .default_member_only_locals_in_file
                             .iter()
                             .any(|(local, member)| *local == import.local && *member == owner.name)
+                        && !test
+                            .default_member_only_locals_in_file
+                            .iter()
+                            .any(|(local, member)| {
+                                *local == import.local
+                                    && owner.default_object_unsafe_siblings.contains(member)
+                            })
                         && import_source_matches_owner(
                             import,
                             &test.file,
+                            owner,
+                            alias_map,
+                            workspace_root,
+                        )
+                        && !super::related_tests::default_object_second_binding(
+                            import,
+                            test,
                             owner,
                             alias_map,
                             workspace_root,

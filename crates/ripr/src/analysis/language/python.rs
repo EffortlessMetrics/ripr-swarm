@@ -2309,6 +2309,7 @@ impl PythonAdapter {
             rust_diagnostic_origins: Default::default(),
             rust_consumed_sources: Default::default(),
             preview_fact_cache: fact_cache_stats,
+            owner_opt_outs: Vec::new(),
         })
     }
 
@@ -2488,6 +2489,8 @@ mod literal_patch_tests;
 mod cli_runner_tests;
 #[cfg(test)]
 mod cli_subcommand_tests;
+#[cfg(test)]
+mod dunder_helper_reach_tests;
 #[cfg(test)]
 mod helper_owner_call_tests;
 #[cfg(test)]
