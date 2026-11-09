@@ -2692,19 +2692,16 @@ fn classify_scoped_seams_streamed(
     }
     trace_latency_phase(
         "review_scope_partition",
-        &format!(
-            "seams_{}_first_{}_rest_{}_{}",
-            seams.len(),
-            first.len(),
-            rest.len(),
-            if latency_trace::latency_trace_enabled() {
-                super::resource_cost::current_rss_trace_fragment()
-            } else {
-                String::new()
-            }
-        ),
+        &format!("seams_{}_first_{}_rest_{}", seams.len(), first.len(), rest.len()),
         Duration::ZERO,
     );
+    if latency_trace::latency_trace_enabled() {
+        trace_latency_phase(
+            "review_scope_partition_diagnostics",
+            &super::resource_cost::current_rss_trace_fragment(),
+            Duration::ZERO,
+        );
+    }
     let mut evaluated = classify_evidence_windows(seams, &first, &pass, consumer, window_size)?;
     if consumer.first_stage_sufficient() {
         trace_latency_phase(
@@ -2772,24 +2769,27 @@ fn classify_evidence_windows(
             .ok_or("review evidence evaluation count overflow")?;
         // Memo counts and the current-RSS read are diagnostic sampling:
         // they run only while the opt-in trace family is enabled, so the
-        // default path pays nothing per window.
-        let diagnostic_fragment = if latency_trace::latency_trace_enabled() {
-            format!(
-                "{}_{}",
-                pass.window_memo_lengths(),
-                super::resource_cost::current_rss_trace_fragment()
-            )
-        } else {
-            String::new()
-        };
+        // default path pays nothing per window. They ride their own trace
+        // phase so the window status keeps its exact retained-count token
+        // for existing trace consumers.
+        if latency_trace::latency_trace_enabled() {
+            trace_latency_phase(
+                "review_window_memo_diagnostics",
+                &format!(
+                    "evaluated_{evaluated}_{}_{}",
+                    pass.window_memo_lengths(),
+                    super::resource_cost::current_rss_trace_fragment()
+                ),
+                Duration::ZERO,
+            );
+        }
         pass.clear_window_memos();
         trace_latency_phase(
             "review_evidence_window",
             &format!(
-                "evaluated_{evaluated}_window_{}_retained_{}_{}",
+                "evaluated_{evaluated}_window_{}_retained_{}",
                 window.len(),
-                consumer.retained_payloads(),
-                diagnostic_fragment
+                consumer.retained_payloads()
             ),
             window_started.elapsed(),
         );
