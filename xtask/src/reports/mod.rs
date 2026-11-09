@@ -16,6 +16,7 @@ mod eval_sweep_refresh;
 mod eval_sweep_report;
 mod first_pr;
 mod fixtures;
+mod fv_scoreboard;
 mod index;
 mod issue_intake;
 mod issue_lifecycle;
@@ -24,6 +25,7 @@ mod lsp_performance;
 mod merge_queue;
 mod metrics;
 mod module_health;
+mod muse_plugin_setup;
 mod mutation;
 mod mutation_spot_check;
 mod operator;
@@ -137,6 +139,7 @@ pub(crate) use fixtures::{
     is_manifest_only_fixture_dir, normalize_fixture_human_output, normalize_fixture_json_output,
     ripr_fixture_binary, run_fixture_check, yes_no,
 };
+pub(crate) use fv_scoreboard::fv_scoreboard;
 pub(crate) use index::{reports, reports_index};
 pub(crate) use issue_intake::issue_intake;
 pub(crate) use issue_lifecycle::{
@@ -149,6 +152,7 @@ pub(crate) use lsp_performance::lsp_performance_report;
 pub(crate) use merge_queue::merge_queue;
 pub(crate) use metrics::metrics_report;
 pub(crate) use module_health::module_health;
+pub(crate) use muse_plugin_setup::muse_plugin_setup;
 pub(crate) use mutation::mutation_calibration;
 #[cfg(test)]
 pub(crate) use mutation::{

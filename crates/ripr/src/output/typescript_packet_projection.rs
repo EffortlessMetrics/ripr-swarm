@@ -1544,6 +1544,16 @@ pub(crate) fn typescript_gap_record_for(finding: &Finding) -> Option<GapRecord> 
     // same record, so the packet and the ledger agree. `ripr outcome` is a
     // movement command and must not appear here.
     record.receipt_command = Some(preview_receipt_write_command(&record));
+    // #11691 parity (RIPR-SPEC-0088 §PR8): `unknown` is reserved for
+    // non-promotable preview findings. A projected packet that passes the
+    // shared validator IS promotable, so the agent GapRecord must flip to
+    // `actionable` on the same condition the JSON `preview_actionability`
+    // surface uses; keeping the stale `unknown` here would make the agent
+    // packet contradict the completed packet and hide a delegatable repair
+    // from agent consumers.
+    if crate::output::agent_seam_packets::validate_agent_gap_record_packet(&record).is_ok() {
+        record.gap_state = "actionable".to_string();
+    }
     Some(record)
 }
 
@@ -1716,10 +1726,10 @@ pub(crate) mod tests {
     // ──────────────────────────────────────────────────────────────────────
 
     use crate::domain::{
-        ActivationEvidence, Confidence, DeltaKind, ExposureClass, Finding, LanguageId,
-        LanguageStatus, MissingDiscriminatorFact, OracleKind, OracleStrength, OwnerKind, Probe,
-        ProbeFamily, ProbeId, RelatedTest, RevealEvidence, RiprEvidence, SourceLocation,
-        StageEvidence, StageState, SymbolId,
+        ActivationEvidence, Confidence, DeltaKind, DiscriminatorShape, ExposureClass, Finding,
+        LanguageId, LanguageStatus, MissingDiscriminatorFact, OracleKind, OracleStrength,
+        OwnerKind, Probe, ProbeFamily, ProbeId, RelatedTest, RevealEvidence, RiprEvidence,
+        SourceLocation, StageEvidence, StageState, SymbolId,
     };
     use crate::output::agent_seam_packets::{
         gap_record_packet_do_not_do, validate_agent_gap_record_packet,
@@ -1801,8 +1811,9 @@ pub(crate) mod tests {
                     value: "amount >= threshold".to_string(),
                     reason: "changed TypeScript equality-boundary at line 3 lacks a concrete preview discriminator".to_string(),
                     flow_sink: None,
-                drafted_boundary: None
-                }],
+                                    shape: DiscriminatorShape::Other,
+                                    drafted_boundary: None,
+}],
             },
             stop_reasons: Vec::new(),
             related_tests_matched_total: None,

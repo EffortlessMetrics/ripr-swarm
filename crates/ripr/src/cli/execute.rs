@@ -59,6 +59,7 @@ pub(super) fn execute(command: CliCommand) -> Result<(), CommandError> {
         // Doctor completed-with-findings carries the Decision variant (exit 3, #5102).
         CliCommand::Doctor(args) => commands::doctor(&args),
         CliCommand::Capabilities(args) => commands::capabilities(&args).map_err(CommandError::from),
+        CliCommand::Completions(args) => commands::completions(&args).map_err(CommandError::from),
         CliCommand::Lsp(args) => commands::lsp(&args).map_err(CommandError::from),
         CliCommand::PrSummary(args) => commands::pr_summary(&args).map_err(CommandError::from),
         CliCommand::Annotations(args) => commands::annotations(&args).map_err(CommandError::from),

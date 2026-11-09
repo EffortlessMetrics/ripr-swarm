@@ -106,10 +106,10 @@ mod tests {
     use crate::app::{CheckOutput, Mode};
     use crate::config::RiprConfig;
     use crate::domain::{
-        ActivationEvidence, Confidence, DeltaKind, ExposureClass, Finding, LanguageId,
-        LanguageStatus, MissingDiscriminatorFact, OracleKind, OracleStrength, OwnerKind, Probe,
-        ProbeFamily, ProbeId, RelatedTest, RevealEvidence, RiprEvidence, SourceLocation,
-        StageEvidence, StageState, Summary, SymbolId,
+        ActivationEvidence, Confidence, DeltaKind, DiscriminatorShape, ExposureClass, Finding,
+        LanguageId, LanguageStatus, MissingDiscriminatorFact, OracleKind, OracleStrength,
+        OwnerKind, Probe, ProbeFamily, ProbeId, RelatedTest, RevealEvidence, RiprEvidence,
+        SourceLocation, StageEvidence, StageState, Summary, SymbolId,
     };
     use crate::output::github::render_with_config as github_render_with_config;
     use crate::output::human::render_with_config as human_render_with_config;
@@ -262,8 +262,9 @@ mod tests {
                         "changed TypeScript equality-boundary at line 2 lacks a concrete preview discriminator"
                             .to_string(),
                     flow_sink: None,
-                drafted_boundary: None
-                }],
+                                    shape: DiscriminatorShape::Boundary,
+                                    drafted_boundary: None,
+}],
             },
             stop_reasons: Vec::new(),
             related_tests_matched_total: None,
@@ -325,6 +326,7 @@ mod tests {
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
+            owner_opt_outs: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,

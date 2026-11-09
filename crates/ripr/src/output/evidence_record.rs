@@ -2008,6 +2008,7 @@ fn presentation_text_json(presentation_text: &EvidenceRecordPresentationText) ->
 mod tests {
     use super::*;
     use crate::analysis::is_test_surface_path;
+    use crate::domain::DiscriminatorShape;
 
     #[test]
     fn consumer_evidence_state_preserves_wire_values_and_rejects_unknown_words() {
@@ -2111,6 +2112,7 @@ mod tests {
                         line: 88,
                         owner: None,
                     }),
+                    shape: DiscriminatorShape::Other,
                     drafted_boundary: None,
                 }],
                 new_test_target: None,
@@ -2176,6 +2178,7 @@ mod tests {
                     value: "resizable_array_buffer".to_string(),
                     reason: "external TypeScript oracle visibility is unresolved".to_string(),
                     flow_sink: None,
+                    shape: DiscriminatorShape::Other,
                     drafted_boundary: None,
                 }],
                 new_test_target: None,
@@ -2535,6 +2538,7 @@ mod tests {
                 value: discriminator_value,
                 reason: "exact family evidence".to_string(),
                 flow_sink: None,
+                shape: DiscriminatorShape::Other,
                 drafted_boundary: None,
             }];
             entry.class = classify_seam(&entry.seam, &entry.evidence);
@@ -2554,6 +2558,7 @@ mod tests {
             value: "producer-owned fact".to_string(),
             reason: "exact family evidence".to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Other,
             drafted_boundary: None,
         }];
         std::sync::Arc::make_mut(&mut entry.evidence.related_tests[0]).test_target = None;
@@ -2679,6 +2684,7 @@ mod tests {
             value: "PricingError::Other".to_string(),
             reason: "the changed error variant is not asserted exactly".to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Other,
             drafted_boundary: None,
         }];
         entry.class = classify_seam(&entry.seam, &entry.evidence);

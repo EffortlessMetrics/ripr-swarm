@@ -13,8 +13,8 @@ use crate::analysis::syntax::{
 };
 use crate::{
     domain::{
-        FlowSinkFact, FlowSinkKind, MissingDiscriminatorFact, ProbeFamily, RelationReason,
-        ValueContext,
+        DiscriminatorShape, FlowSinkFact, FlowSinkKind, MissingDiscriminatorFact, ProbeFamily,
+        RelationReason, ValueContext,
     },
     value_origins::LocatedValueFact as ValueFact,
 };
@@ -67,7 +67,8 @@ pub(in crate::analysis) fn refine_slice_boundary(
                     value: equality,
                     reason: format!("No related test call uses {} equal to {}; observed {} values: {observed}; target {} value: {}", values.operand, values.boundary, values.operand, values.boundary, values.target),
                     flow_sink: flow_sinks.iter().find(|sink| sink.kind != FlowSinkKind::Unknown).cloned(),
-                drafted_boundary: None
+                    shape: DiscriminatorShape::Boundary,
+                    drafted_boundary: None,
                 });
             }
         }
@@ -368,14 +369,14 @@ mod tests {
             start_line: 1,
             end_line: 3,
             body: body.into(),
-            calls: Vec::new(),
+            calls: crate::analysis::facts::SharedFactSlice::empty(),
             returns: Vec::new(),
-            literals: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
             source_role: FunctionSourceRole::Production,
-            attrs: Vec::new(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
             impl_attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             item: Default::default(),
             impl_context: Default::default(),
         }

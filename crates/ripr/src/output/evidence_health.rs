@@ -708,6 +708,7 @@ fn usize_field(value: &Value, path: &[&str]) -> usize {
 
 #[cfg(test)]
 mod tests {
+    use crate::domain::DiscriminatorShape;
     use std::path::PathBuf;
 
     use serde_json::Value;
@@ -1004,6 +1005,7 @@ mod tests {
                     value: "amount == threshold".to_string(),
                     reason: "equality boundary not observed".to_string(),
                     flow_sink: None,
+                    shape: DiscriminatorShape::Boundary,
                     drafted_boundary: None,
                 }],
                 new_test_target: None,

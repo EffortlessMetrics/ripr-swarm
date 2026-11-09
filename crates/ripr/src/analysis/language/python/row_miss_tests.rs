@@ -1172,7 +1172,14 @@ fn skipped_and_xfail_rows_gain_no_miss() -> Result<(), String> {
             "import pytest\n\n@{decorator}\ndef test_score():\n    assert score(0) == 8\n"
         ))?;
         // #5389: the class is the classifier's, and no row is credited a miss.
-        assert_eq!(finding.class, ExposureClass::StaticUnknown, "{decorator}");
+        // An unconditional skip never runs, so it is a gap; a bare `xfail`
+        // depends on `strict` and `xfail_strict` and stays unestablished.
+        let expected = if decorator.starts_with("pytest.mark.skip") {
+            ExposureClass::WeaklyExposed
+        } else {
+            ExposureClass::StaticUnknown
+        };
+        assert_eq!(finding.class, expected, "{decorator}");
         assert!(
             finding.related_tests.iter().all(|row| row.miss.is_none()),
             "{decorator}: {:?}",
@@ -2473,7 +2480,9 @@ mod direct {
     /// pass is handed the finding's boundary fact (with its sink).
     #[test]
     fn strong_on_boundary_row_gets_no_miss_and_no_support() -> Result<(), String> {
-        use crate::domain::{FlowSinkFact, FlowSinkKind, MissingDiscriminatorFact};
+        use crate::domain::{
+            DiscriminatorShape, FlowSinkFact, FlowSinkKind, MissingDiscriminatorFact,
+        };
         let case = reserve(
             "def test_off_boundary():\n    assert can_reserve(5, 3) == True\n\ndef test_on_boundary():\n    assert can_reserve(4, 4) == True\n",
         )?;
@@ -2486,6 +2495,7 @@ mod direct {
                 line: 3,
                 owner: None,
             }),
+            shape: DiscriminatorShape::Boundary,
             drafted_boundary: None,
         };
         let family = classify_probe_shape(&case.after).0;

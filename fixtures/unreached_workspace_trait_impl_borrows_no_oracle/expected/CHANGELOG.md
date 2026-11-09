@@ -191,3 +191,42 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — unreached_workspace_trait_impl_borrows_no_oracle (15)
+
+Reason:
+RIPR-SPEC-0001: evidence-first human output now states a repeated related-test miss sentence once per test and the explain verdict block references the Evidence row instead of re-listing the assertion and reason; every fact remains exactly once (agent-efficiency study, Nov 2-4)
+
+Command:
+`cargo xtask goldens bless unreached_workspace_trait_impl_borrows_no_oracle --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — unreached_workspace_trait_impl_borrows_no_oracle (16)
+
+Reason:
+Reach summary of a workspace-unreferenced owner now ends '(unreferenced in workspace)' (RIPR-SPEC-0219, #12766); class unchanged
+
+Command:
+`cargo xtask goldens bless unreached_workspace_trait_impl_borrows_no_oracle --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — unreached_workspace_trait_impl_borrows_no_oracle (17)
+
+Reason:
+Unreferenced-in-workspace marker withheld: the owner carries an exporting attribute or its name appears elsewhere as a whole word (RIPR-SPEC-0219 review fix, #12766); class unchanged
+
+Command:
+`cargo xtask goldens bless unreached_workspace_trait_impl_borrows_no_oracle --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

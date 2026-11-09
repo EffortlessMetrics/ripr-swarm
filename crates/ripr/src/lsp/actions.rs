@@ -195,6 +195,14 @@ fn command_permitted(command: &str, client_features: &ClientFeatureProfile) -> b
     SERVER_EXECUTED_COMMANDS.contains(&command) || client_features.supports_client_command(command)
 }
 
+/// Whether the negotiated client is offered an executable "Inspect finding"
+/// quick fix (#13440). It is the same `command_permitted` decision that
+/// gates `copy_context_action` in `code_action_response`, so hover guidance
+/// can never promise the action to a client the gate would strip or disable.
+pub(super) fn inspect_finding_quick_fix_offered(client_features: &ClientFeatureProfile) -> bool {
+    command_permitted(COPY_CONTEXT_COMMAND, client_features)
+}
+
 /// The capability the client must hold for a command (#1892): a
 /// server-executed command runs inside the server (`"server"`); any other
 /// command requires the client-command advertisement itself (#1776).
@@ -304,6 +312,7 @@ pub(super) fn disable_retained_analysis_actions(
                         | "verification_route_unavailable"
                         | "receipt_route_unavailable"
                         | "preview_or_static_limitation"
+                        | "repair_route_not_ready"
                 )
             )
         {
@@ -677,11 +686,8 @@ fn push_seam_actions(
         }
         return;
     }
-    let instruction_summary = fix_instruction_authority::summary_for_seam_action(
-        context.snapshot,
-        context.diagnostic,
-        context.seam,
-    );
+    let instruction_summary =
+        fix_instruction_authority::summary_for_seam_action(context.diagnostic, context.seam);
     let instruction_blocks_repair =
         fix_instruction_authority::blocks_repair_ready_actions(&instruction_summary);
     // The targeted-test brief is the editor's repair-packet surface, so the
@@ -693,7 +699,7 @@ fn push_seam_actions(
     if instruction_blocks_repair {
         if client_features.code_action_disabled
             && let Some(reason) = fix_instruction_authority::disabled_reason_for_instruction_state(
-                instruction_summary.state,
+                &instruction_summary,
             )
             && let Some(action) = disabled_action(
                 TARGETED_TEST_BRIEF_TITLE,
@@ -1054,7 +1060,7 @@ fn push_gap_actions(
             if client_features.code_action_disabled
                 && let Some(reason) =
                     fix_instruction_authority::disabled_reason_for_instruction_state(
-                        instruction_summary.state,
+                        &instruction_summary,
                     )
                 && let Some(action) = disabled_action(
                     INSPECT_GAP_PACKET_TITLE,

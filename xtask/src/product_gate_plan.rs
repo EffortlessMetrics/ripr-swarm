@@ -12,6 +12,8 @@
 
 use std::collections::BTreeSet;
 
+use serde::{Deserialize, Serialize};
+
 /// The selected #3825 runner contract. Nextest owns compiled lib, bin,
 /// integration, and example test binaries; Cargo and rustdoc own doctests,
 /// which nextest cannot execute. Both rows are required, both run with default
@@ -64,14 +66,14 @@ pub(crate) enum ProductSurface {
     Evidence,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub(crate) enum ProductGateRole {
     Required,
     Advisory,
     Scheduled,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub(crate) enum ProductGateSelection {
     Selected,
     NoOp,
@@ -79,7 +81,7 @@ pub(crate) enum ProductGateSelection {
     NotProven,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub(crate) enum ProductGateTrustClass {
     Repository,
     ExternalTree,
@@ -198,7 +200,7 @@ impl ProductGatePlan {
     }
 }
 
-fn product_gate_definitions() -> Vec<ProductGateDefinition> {
+pub(crate) fn product_gate_definitions() -> Vec<ProductGateDefinition> {
     let mut rust = BTreeSet::new();
     rust.insert(ProductSurface::Rust);
     let mut policy = BTreeSet::new();
@@ -219,9 +221,9 @@ fn product_gate_definitions() -> Vec<ProductGateDefinition> {
             ProductGateId::AllFeaturesCheck,
             ProductGateRole::Required,
             rust.clone(),
-            "cargo check -p ripr --all-targets --all-features",
-            "feature-gated ripr targets, including tests, type-check",
-            "does not run or lint feature-gated tests",
+            "cargo clippy -p ripr --all-targets --all-features -- -D warnings",
+            "all-feature ripr targets, including tests, type-check and satisfy the configured lint contract",
+            "does not execute feature-gated tests or check every feature combination",
         ),
         gate(
             ProductGateId::Clippy,

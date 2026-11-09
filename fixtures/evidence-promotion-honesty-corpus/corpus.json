@@ -3,7 +3,113 @@
   "kind": "evidence_promotion_honesty_corpus",
   "spec": "RIPR-SPEC-0108",
   "description": "Cross-language pinned adversarial corpus: evidence may not promote to exposed/strong unless it structurally matches the seam.",
-  "report_cache_schema_pins": [],
+  "report_cache_schema_pins": [
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-closure-callback-benign-macro-operand.json",
+      "cache_schema_version": "1.167",
+      "reason": "the typed missing-discriminator shape (#12414) adds a field the regeneration guard does not judge; this capture's judged seams are unchanged and are held at its recorded generation until the next corpus recapture"
+    },
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-closure-callback-macro-operand-return.json",
+      "cache_schema_version": "1.167",
+      "reason": "the typed missing-discriminator shape (#12414) adds a field the regeneration guard does not judge; this capture's judged seams are unchanged and are held at its recorded generation until the next corpus recapture"
+    },
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-closure-callback-macro-preceding-return.json",
+      "cache_schema_version": "1.167",
+      "reason": "the typed missing-discriminator shape (#12414) adds a field the regeneration guard does not judge; this capture's judged seams are unchanged and are held at its recorded generation until the next corpus recapture"
+    },
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-field-snapshot-missing-expected.json",
+      "cache_schema_version": "1.167",
+      "reason": "the typed missing-discriminator shape (#12414) adds a field the regeneration guard does not judge; this capture's judged seams are unchanged and are held at its recorded generation until the next corpus recapture"
+    },
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-field-snapshot-wrong-receiver.json",
+      "cache_schema_version": "1.167",
+      "reason": "the typed missing-discriminator shape (#12414) adds a field the regeneration guard does not judge; this capture's judged seams are unchanged and are held at its recorded generation until the next corpus recapture"
+    },
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-bound-cloned-unused-callback.json",
+      "cache_schema_version": "1.167",
+      "reason": "the typed missing-discriminator shape (#12414) adds a field the regeneration guard does not judge; this capture's judged seams are unchanged and are held at its recorded generation until the next corpus recapture"
+    },
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-cloned-unused-callback.json",
+      "cache_schema_version": "1.167",
+      "reason": "the typed missing-discriminator shape (#12414) adds a field the regeneration guard does not judge; this capture's judged seams are unchanged and are held at its recorded generation until the next corpus recapture"
+    },
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-eager-literal-callback.json",
+      "cache_schema_version": "1.167",
+      "reason": "the typed missing-discriminator shape (#12414) adds a field the regeneration guard does not judge; this capture's judged seams are unchanged and are held at its recorded generation until the next corpus recapture"
+    },
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-field-snapshot-exact.json",
+      "cache_schema_version": "1.167",
+      "reason": "the typed missing-discriminator shape (#12414) adds a field the regeneration guard does not judge; this capture's judged seams are unchanged and are held at its recorded generation until the next corpus recapture"
+    },
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-field-snapshot-inline.json",
+      "cache_schema_version": "1.167",
+      "reason": "the typed missing-discriminator shape (#12414) adds a field the regeneration guard does not judge; this capture's judged seams are unchanged and are held at its recorded generation until the next corpus recapture"
+    },
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-field-snapshot-literal.json",
+      "cache_schema_version": "1.167",
+      "reason": "the typed missing-discriminator shape (#12414) adds a field the regeneration guard does not judge; this capture's judged seams are unchanged and are held at its recorded generation until the next corpus recapture"
+    },
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-field-snapshot-other.json",
+      "cache_schema_version": "1.167",
+      "reason": "the typed missing-discriminator shape (#12414) adds a field the regeneration guard does not judge; this capture's judged seams are unchanged and are held at its recorded generation until the next corpus recapture"
+    },
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-field-snapshot-settings.json",
+      "cache_schema_version": "1.167",
+      "reason": "the typed missing-discriminator shape (#12414) adds a field the regeneration guard does not judge; this capture's judged seams are unchanged and are held at its recorded generation until the next corpus recapture"
+    },
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-field-snapshot-weak.json",
+      "cache_schema_version": "1.167",
+      "reason": "the typed missing-discriminator shape (#12414) adds a field the regeneration guard does not judge; this capture's judged seams are unchanged and are held at its recorded generation until the next corpus recapture"
+    },
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-literal-unused-callback.json",
+      "cache_schema_version": "1.167",
+      "reason": "the typed missing-discriminator shape (#12414) adds a field the regeneration guard does not judge; this capture's judged seams are unchanged and are held at its recorded generation until the next corpus recapture"
+    },
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-ordinary-value-clone.json",
+      "cache_schema_version": "1.167",
+      "reason": "the typed missing-discriminator shape (#12414) adds a field the regeneration guard does not judge; this capture's judged seams are unchanged and are held at its recorded generation until the next corpus recapture"
+    },
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-panic-marker-coexist.json",
+      "cache_schema_version": "1.167",
+      "reason": "the typed missing-discriminator shape (#12414) adds a field the regeneration guard does not judge; this capture's judged seams are unchanged and are held at its recorded generation until the next corpus recapture"
+    },
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-panic-marker-collision.json",
+      "cache_schema_version": "1.167",
+      "reason": "the typed missing-discriminator shape (#12414) adds a field the regeneration guard does not judge; this capture's judged seams are unchanged and are held at its recorded generation until the next corpus recapture"
+    },
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-panic-marker-neutral.json",
+      "cache_schema_version": "1.167",
+      "reason": "the typed missing-discriminator shape (#12414) adds a field the regeneration guard does not judge; this capture's judged seams are unchanged and are held at its recorded generation until the next corpus recapture"
+    },
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-same-named-call-kinds.json",
+      "cache_schema_version": "1.167",
+      "reason": "the typed missing-discriminator shape (#12414) adds a field the regeneration guard does not judge; this capture's judged seams are unchanged and are held at its recorded generation until the next corpus recapture"
+    },
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-uncalled-sibling.json",
+      "cache_schema_version": "1.167",
+      "reason": "the typed missing-discriminator shape (#12414) adds a field the regeneration guard does not judge; this capture's judged seams are unchanged and are held at its recorded generation until the next corpus recapture"
+    }
+  ],
   "report_digest_exemptions": [],
   "report_digest_required": [
     "fixtures/evidence-promotion-honesty-corpus/reports/rust-closure-callback-benign-macro-operand.json",
@@ -46,9 +152,40 @@
     "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-field-snapshot-weak.json",
     "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-panic-marker-coexist.json",
     "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-panic-marker-collision.json",
-    "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-panic-marker-neutral.json"
+    "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-panic-marker-neutral.json",
+    "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-wrapper-fed-error.json"
   ],
   "cases": [
+    {
+      "id": "typescript_jest_only_literal_timeout_push_argument_length",
+      "language": "typescript",
+      "tier": "pure",
+      "source_fixture": "fixtures/typescript_jest_only_literal_timeout_push_argument_length",
+      "vector": "count_does_not_pin_changed_argument",
+      "probe_family": "side_effect",
+      "assertions": [
+        {"type": "must_not_report_clean"},
+        {"type": "expected_finding_count", "count": 1},
+        {"type": "must_not_promote"},
+        {"type": "expected_class", "class": "weakly_exposed"},
+        {"type": "expected_oracle", "kind": "exact_value", "strength": "strong"}
+      ]
+    },
+    {
+      "id": "typescript_jest_only_push_argument_length",
+      "language": "typescript",
+      "tier": "pure",
+      "source_fixture": "fixtures/typescript_jest_only_push_argument_length",
+      "vector": "count_does_not_pin_changed_argument",
+      "probe_family": "side_effect",
+      "assertions": [
+        {"type": "must_not_report_clean"},
+        {"type": "expected_finding_count", "count": 1},
+        {"type": "must_not_promote"},
+        {"type": "expected_class", "class": "weakly_exposed"},
+        {"type": "expected_oracle", "kind": "exact_value", "strength": "strong"}
+      ]
+    },
     {
       "id": "typescript_jest_push_argument_length",
       "language": "typescript",
@@ -211,6 +348,35 @@
       ]
     },
     {
+      "id": "typescript_sinon_spy_arguments",
+      "language": "typescript",
+      "tier": "pure",
+      "source_fixture": "fixtures/typescript_sinon_spy_arguments",
+      "vector": "sinon_argument_pin_control_keeps_credit",
+      "probe_family": "side_effect",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "exposed"
+        },
+        {
+          "type": "expected_oracle",
+          "kind": "exact_value",
+          "strength": "strong"
+        }
+      ]
+    },
+    {
       "id": "typescript_mock_count_nested_alias",
       "language": "typescript",
       "tier": "pure",
@@ -245,6 +411,35 @@
       "tier": "pure",
       "source_fixture": "fixtures/typescript_mock_count_block_alias",
       "vector": "unconditional_block_count_alias_does_not_pin_changed_argument",
+      "probe_family": "side_effect",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "expected_oracle",
+          "kind": "exact_value",
+          "strength": "strong"
+        }
+      ]
+    },
+    {
+      "id": "typescript_sinon_spy_count",
+      "language": "typescript",
+      "tier": "pure",
+      "source_fixture": "fixtures/typescript_sinon_spy_count",
+      "vector": "sinon_spy_count_does_not_pin_changed_argument",
       "probe_family": "side_effect",
       "assertions": [
         {
@@ -5235,6 +5430,30 @@
         },
         {
           "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
+      "id": "python_guarded_field_value_untaken",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_guarded_field_value_untaken",
+      "vector": "guarded_field_value_no_entering_input",
+      "probe_family": "field_construction",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
         },
         {
           "type": "must_not_promote"
@@ -11222,6 +11441,52 @@
         {
           "type": "expected_repo_seam_grip",
           "owner": "src/lib.rs::parse_masked",
+          "expression": "n % 2 == 1",
+          "grip_class": "activation_unknown",
+          "reach": "yes"
+        },
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::parse_remapped",
+          "expression": "n % 3 == 1",
+          "grip_class": "activation_unknown",
+          "reach": "yes"
+        },
+        {
+          "type": "expected_repo_seam_related_test",
+          "owner": "src/lib.rs::parse_remapped",
+          "expression": "n % 3 == 1",
+          "test": "remapped_odd",
+          "file": "src/lib.rs",
+          "oracle_strength": "weak",
+          "relation_reason": "direct_owner_call"
+        },
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::parse_remapped",
+          "expression": "Err(Fault::Odd)",
+          "grip_class": "weakly_gripped",
+          "reach": "yes"
+        },
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::parse_remapped",
+          "expression": "Ok(n)",
+          "grip_class": "weakly_gripped",
+          "reach": "yes"
+        },
+        {
+          "type": "expected_repo_seam_related_test",
+          "owner": "src/lib.rs::parse_remapped",
+          "expression": "Ok(n)",
+          "test": "remapped_odd",
+          "file": "src/lib.rs",
+          "oracle_strength": "weak",
+          "relation_reason": "direct_owner_call"
+        },
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::parse_masked",
           "expression": "Err(Fault::Odd)",
           "grip_class": "weakly_gripped",
           "reach": "yes"
@@ -11275,6 +11540,37 @@
           "file": "src/lib.rs",
           "oracle_strength": "none",
           "relation_reason": "direct_owner_call"
+        }
+      ]
+    },
+    {
+      "id": "rust_repo_exposure_wrapper_fed_error_not_promoted",
+      "language": "rust",
+      "tier": "pure",
+      "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-wrapper-fed-error.json",
+      "report_subject": "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/wrapper-fed-error",
+      "vector": "repo_exposure_err_inside_a_wrapper_call_or_mem_replace_is_written_by_the_test_and_cannot_grade_an_error_seam_up",
+      "assertions": [
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::parse_wrapped",
+          "expression": "Err(Fault::Wrapped)",
+          "grip_class": "weakly_gripped",
+          "reach": "yes"
+        },
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::parse_replaced",
+          "expression": "Err(Fault::Replaced)",
+          "grip_class": "weakly_gripped",
+          "reach": "yes"
+        },
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::parse_pinned",
+          "expression": "Err(Fault::Pinned)",
+          "grip_class": "strongly_gripped",
+          "reach": "yes"
         }
       ]
     },

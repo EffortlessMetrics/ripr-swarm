@@ -1,6 +1,7 @@
 use super::PythonOwner;
 use super::probe_shape::looks_like_call_expression;
 use super::related_tests::is_python_identifier_char;
+use super::sink_alignment::parse_dict_literal_fields;
 use super::static_limits::{
     contains_python_call_shape, is_simple_python_identifier, line_prefix_before,
     python_callee_start_has_boundary, python_prefix_hides_code,
@@ -11,31 +12,36 @@ pub(super) fn python_missing_discriminators(
     probe_family: &ProbeFamily,
     line: usize,
     line_text: &str,
+    old_line_text: Option<&str>,
     owner: &PythonOwner,
     flow_sink: Option<&FlowSinkFact>,
 ) -> Vec<MissingDiscriminatorFact> {
-    let Some(value) = python_missing_discriminator_value(probe_family, line_text, owner) else {
+    let Some(value) =
+        python_missing_discriminator_value(probe_family, line_text, old_line_text, owner)
+    else {
         return Vec::new();
     };
 
-    vec![MissingDiscriminatorFact {
+    vec![MissingDiscriminatorFact::equality_spelled(
         value,
-        reason: python_missing_discriminator_reason(probe_family, line),
-        flow_sink: flow_sink.cloned(),
-        drafted_boundary: None,
-    }]
+        python_missing_discriminator_reason(probe_family, line),
+        flow_sink.cloned(),
+    )]
 }
 
 fn python_missing_discriminator_value(
     probe_family: &ProbeFamily,
     line_text: &str,
+    old_line_text: Option<&str>,
     owner: &PythonOwner,
 ) -> Option<String> {
     match probe_family {
         ProbeFamily::Predicate => python_boundary_discriminator(line_text),
         ProbeFamily::ReturnValue => python_return_value_discriminator(line_text),
         ProbeFamily::ErrorPath => python_exception_discriminator(line_text),
-        ProbeFamily::FieldConstruction => python_field_value_discriminator(line_text, owner),
+        ProbeFamily::FieldConstruction => {
+            python_field_value_discriminator(line_text, old_line_text, owner)
+        }
         ProbeFamily::SideEffect | ProbeFamily::CallDeletion => {
             python_output_or_call_discriminator(line_text)
         }
@@ -122,14 +128,30 @@ fn python_exception_discriminator(line_text: &str) -> Option<String> {
     }
 }
 
-fn python_field_value_discriminator(line_text: &str, owner: &PythonOwner) -> Option<String> {
+fn python_field_value_discriminator(
+    line_text: &str,
+    old_line_text: Option<&str>,
+    owner: &PythonOwner,
+) -> Option<String> {
     let text = line_text.trim();
-    if let Some((field, value)) = python_return_dict_field_parts(text) {
-        let value = python_expected_value_or_placeholder(&value);
-        if !owner.route_paths.is_empty() {
-            return Some(format!("response.json()[\"{field}\"] == {value}"));
-        }
-        return Some(format!("{field} == {value}"));
+    if let Some(pick) = python_return_dict_discriminator_pick(text, old_line_text) {
+        let routed = !owner.route_paths.is_empty();
+        return Some(match pick {
+            PythonDictDiscriminatorPick::Entry { key, value } => {
+                let value = python_expected_value_or_placeholder(&value);
+                if routed {
+                    format!("response.json()[\"{key}\"] == {value}")
+                } else {
+                    format!("{key} == {value}")
+                }
+            }
+            PythonDictDiscriminatorPick::WholeDict if routed => {
+                format!("response.json() == {PYTHON_EXPECTED_VALUE_PLACEHOLDER}")
+            }
+            PythonDictDiscriminatorPick::WholeDict => {
+                format!("return value == {PYTHON_EXPECTED_VALUE_PLACEHOLDER}")
+            }
+        });
     }
     if let Some((_constructor, field, value)) = python_return_constructor_field_parts(text) {
         let value = python_expected_value_or_placeholder(&value);
@@ -152,6 +174,67 @@ fn python_field_value_discriminator(line_text: &str, owner: &PythonOwner) -> Opt
         "{lhs} == {}",
         python_expected_value_or_placeholder(rhs)
     ))
+}
+
+/// Which part of a changed `return {...}` dict the repair discriminator names.
+#[derive(Debug, PartialEq, Eq)]
+enum PythonDictDiscriminatorPick {
+    /// One entry: the single changed entry when the paired old line localizes
+    /// it, otherwise the unlocalized first-literal/first-entry pick.
+    Entry { key: String, value: String },
+    /// The paired old line shows the change is not inside one surviving entry
+    /// (several entries changed, or an entry was removed without one new key
+    /// replacing it). Naming any
+    /// single key could name an unchanged sibling, so the whole returned dict
+    /// is the discriminator (#13630).
+    WholeDict,
+}
+
+/// The discriminator pick for a `return {...}` changed line. With a paired old
+/// dict line, the changed entries are localized with the same dict-literal
+/// parser the sink alignment uses (`parse_dict_literal_fields`): exactly one
+/// changed new-side entry is named, including a renamed key (the new key
+/// replaces one removed old key), never the unchanged sibling the first-entry
+/// pick would choose; several changed entries, or a removal with no
+/// replacing entry, name the whole dict. Without a paired old dict line, or
+/// when no entry differs, the existing unlocalized pick stands.
+fn python_return_dict_discriminator_pick(
+    line_text: &str,
+    old_line_text: Option<&str>,
+) -> Option<PythonDictDiscriminatorPick> {
+    let (fallback_key, fallback_value) = python_return_dict_field_parts(line_text)?;
+    let fallback = PythonDictDiscriminatorPick::Entry {
+        key: fallback_key,
+        value: fallback_value,
+    };
+    let (Some(old), Some(new)) = (
+        old_line_text.and_then(parse_dict_literal_fields),
+        parse_dict_literal_fields(line_text),
+    ) else {
+        return Some(fallback);
+    };
+    let old_value = |key: &str| old.iter().find(|(k, _)| k == key).map(|(_, v)| v);
+    let changed: Vec<&(String, String)> = new
+        .iter()
+        .filter(|(key, value)| old_value(key) != Some(value))
+        .collect();
+    let removed = old
+        .iter()
+        .filter(|(key, _)| !new.iter().any(|(k, _)| k == key))
+        .count();
+    let pick = match (changed.as_slice(), removed) {
+        ([], 0) => fallback,
+        ([(key, value)], 0) => PythonDictDiscriminatorPick::Entry {
+            key: key.clone(),
+            value: value.clone(),
+        },
+        ([(key, value)], 1) if old_value(key).is_none() => PythonDictDiscriminatorPick::Entry {
+            key: key.clone(),
+            value: value.clone(),
+        },
+        _ => PythonDictDiscriminatorPick::WholeDict,
+    };
+    Some(pick)
 }
 
 pub(super) fn python_route_response_field_discriminator(

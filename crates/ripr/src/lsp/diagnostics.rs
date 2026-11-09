@@ -502,6 +502,7 @@ pub(super) fn canonical_group_has_mixed_classes(raw_findings: &[Finding]) -> boo
 /// Profile, encoding, and producer-owned ranges for one finding diagnostic
 /// projection. Bundled so the grouping function stays under the arity gate.
 pub(super) struct FindingDiagnosticProjection<'a> {
+    pub analysis_outcome: Option<&'a AnalysisOutcome>,
     pub profile: LspDiagnosticProfile,
     pub position_encoding: &'a PositionEncodingKind,
     pub origins: &'a crate::analysis::diagnostic_origin::RustDiagnosticOrigins,
@@ -520,12 +521,18 @@ impl<'a> FindingDiagnosticProjection<'a> {
         origins: &'a crate::analysis::diagnostic_origin::RustDiagnosticOrigins,
     ) -> Self {
         Self {
+            analysis_outcome: None,
             profile,
             position_encoding,
             origins,
             causal_projection: None,
             navigation: None,
         }
+    }
+
+    pub(super) fn with_analysis_outcome(mut self, outcome: Option<&'a AnalysisOutcome>) -> Self {
+        self.analysis_outcome = outcome;
+        self
     }
 
     fn with_causal(mut self, causal_projection: Option<&'a CausalDeltaArtifact>) -> Self {
@@ -573,7 +580,13 @@ pub(super) fn finding_diagnostics_by_uri_with_profile(
 ) -> Result<BTreeMap<Uri, Vec<Diagnostic>>, String> {
     let mut grouped = BTreeMap::<Uri, Vec<Diagnostic>>::new();
     for (primary, raw_findings) in canonical_finding_groups(findings) {
-        if !finding_is_visible_in_profile(projection.profile, &primary) {
+        if !finding_is_visible_in_profile(projection.profile, &primary)
+            || file_has_parse_failure(
+                root,
+                &primary.probe.location.file,
+                projection.analysis_outcome,
+            )
+        {
             continue;
         }
         let path = absolute_finding_path(root, &primary);
@@ -611,7 +624,7 @@ pub(super) fn finding_diagnostics_by_uri_with_profile(
             if canonical_group_has_mixed_classes(&raw_findings) {
                 diagnostic.severity = Some(DiagnosticSeverity::INFORMATION);
                 diagnostic.message = format!(
-                    "{}; canonical group contains mixed static classes; inspect raw findings",
+                    "{}; findings for this change disagree about test evidence; inspect the individual findings",
                     diagnostic.message
                 );
                 if let Some(data) = diagnostic
@@ -849,7 +862,94 @@ pub(super) fn delivered_diagnostics_for_uri(
         diagnostics.push(delivery_omission_diagnostic(omission));
     }
     push_unlisted_language_not_analyzed(snapshot, uri, &mut diagnostics);
+    push_empty_scope_marker(snapshot, uri, &mut diagnostics);
     diagnostics
+}
+
+/// The passive Information marker served on a document of a snapshot whose
+/// analysis scope was empty (#13441). A clean tree publishes no row, so a
+/// pull-only or push client otherwise sees silence that reads as an
+/// all-clear; the not-all-clear fact lived only in the line-0 hover and the
+/// refresh log (#12416). Served at serve time, not stored: there is no
+/// changed file to anchor it to, and a stored batch would make a first
+/// finding look like a delivery change. It is gated on the same fact as the
+/// other empty-scope disclosures (an empty-scope outcome kind and no row of
+/// any kind in the snapshot), so a snapshot with findings, gap rows or other
+/// markers never carries it, and it disappears with the next real snapshot.
+/// No finding identity, repair data or actionability; never a Warning.
+fn push_empty_scope_marker(
+    snapshot: &AnalysisSnapshot,
+    uri: &Uri,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    if diagnostics.is_empty()
+        && snapshot_serves_empty_scope_marker(snapshot)
+        && super::uri::file_uri_relative_to_root(&snapshot.root, uri).is_some()
+    {
+        diagnostics.push(empty_scope_diagnostic(snapshot));
+    }
+}
+
+/// True when the snapshot is an empty-scope outcome with no row of any kind,
+/// the one state in which its documents carry the empty-scope marker.
+pub(super) fn snapshot_serves_empty_scope_marker(snapshot: &AnalysisSnapshot) -> bool {
+    snapshot.diagnostic_count() == 0
+        && snapshot.findings.is_empty()
+        && snapshot.gap_artifacts.is_empty()
+        && snapshot
+            .analysis_outcome
+            .as_ref()
+            .is_some_and(|outcome| outcome.kind.is_empty_scope())
+}
+
+/// True for the served-not-stored empty-scope marker (#13441). It is never
+/// line-local evidence and never part of the committed baseline.
+pub(super) fn is_empty_scope_marker(diagnostic: &Diagnostic) -> bool {
+    diagnostic
+        .data
+        .as_ref()
+        .is_some_and(|data| data["kind"] == "empty_scope")
+        && diagnostic.code
+            == Some(NumberOrString::String(
+                super::diagnostic_catalog::DIAGNOSTIC_LANGUAGE_NOT_ANALYZED_CODE.to_string(),
+            ))
+}
+
+/// The marker payload a snapshot would serve, or `None`. Comparing payloads
+/// (not just presence) lets a committed snapshot whose marker text changed
+/// (a different base or empty-scope cause) be re-served.
+pub(super) fn empty_scope_marker_payload(snapshot: &AnalysisSnapshot) -> Option<Diagnostic> {
+    snapshot_serves_empty_scope_marker(snapshot).then(|| empty_scope_diagnostic(snapshot))
+}
+
+/// The marker for an empty analysis scope. Shares the governed
+/// `ripr-diagnostic-language-not-analyzed` code (nothing was analyzed, so an
+/// empty list is not a clean result) with `data.kind` `empty_scope`.
+pub(super) fn empty_scope_diagnostic(snapshot: &AnalysisSnapshot) -> Diagnostic {
+    // The not-all-clear fact and recovery route come from the shared wording
+    // owner (#12416), so the marker cannot drift from hover and status.
+    let disclosure = super::backend::empty_scope_disclosure(
+        snapshot.analysis_outcome.as_ref(),
+        snapshot.base.as_deref(),
+        false,
+    )
+    .unwrap_or_else(|| super::backend::EMPTY_SCOPE_LSP_RETRY_ROUTE.to_string());
+    Diagnostic {
+        range: Range::default(),
+        severity: Some(DiagnosticSeverity::INFORMATION),
+        code: Some(NumberOrString::String(
+            super::diagnostic_catalog::DIAGNOSTIC_LANGUAGE_NOT_ANALYZED_CODE.to_string(),
+        )),
+        source: Some("ripr".to_string()),
+        message: format!("ripr: {disclosure} This is a static advisory, not runtime evidence."),
+        data: Some(serde_json::json!({
+            "delivery_eligible": true,
+            "kind": "empty_scope",
+            "not_analyzed_reason": "empty_scope",
+            "recovery": super::backend::EMPTY_SCOPE_LSP_RETRY_ROUTE,
+        })),
+        ..Default::default()
+    }
 }
 
 /// The producer names at most three changed files per disabled language, so
@@ -1138,6 +1238,13 @@ pub(super) fn workspace_diagnostic_result_id(snapshot: &AnalysisSnapshot) -> Str
             .clone()
             .unwrap_or_else(|| "no-base".to_string()),
     ];
+    // #13441: the served empty-scope marker is not a stored document, so its
+    // payload joins the workspace identity directly; otherwise a marker, a
+    // changed marker and no marker could share one identity.
+    if let Some(marker) = empty_scope_marker_payload(snapshot) {
+        parts.push("empty-scope-marker".to_string());
+        parts.push(marker.message);
+    }
     for uri in snapshot.diagnostics_by_uri.keys() {
         parts.push(normalized_document_uri(&snapshot.root, uri));
         parts.push(document_diagnostic_result_id_with_omissions(
@@ -1628,6 +1735,7 @@ pub(super) fn workspace_diagnostics_with_config_and_open_rust_paths_and_progress
             &origins,
         )
         .with_causal(causal_projection.as_ref())
+        .with_analysis_outcome(analysis_outcome.as_ref())
         .with_navigation(Some(&navigation)),
     )?;
 
@@ -1703,7 +1811,14 @@ pub(super) fn workspace_diagnostics_with_config_and_open_rust_paths_and_progress
         language_view.as_ref(),
         &mut grouped,
     );
-    append_withheld_preview_diagnostics(&root, &findings, config, &origins, &mut grouped);
+    append_withheld_preview_diagnostics(
+        &root,
+        &findings,
+        config,
+        &origins,
+        analysis_outcome.as_ref(),
+        &mut grouped,
+    );
     append_parse_failed_file_diagnostics(&root, analysis_outcome.as_ref(), &mut grouped);
 
     let batches = canonicalize_diagnostic_batches(
@@ -1814,6 +1929,7 @@ fn append_withheld_preview_diagnostics(
     findings: &[Finding],
     config: &LspAnalysisConfig,
     origins: &crate::analysis::diagnostic_origin::RustDiagnosticOrigins,
+    analysis_outcome: Option<&AnalysisOutcome>,
     grouped: &mut BTreeMap<Uri, Vec<Diagnostic>>,
 ) {
     let mut by_file = BTreeMap::<PathBuf, Vec<&Finding>>::new();
@@ -1832,6 +1948,9 @@ fn append_withheld_preview_diagnostics(
             .or_default()
             .push(finding);
     }
+    // Full also withholds parse-failed rows: switching profiles is not their
+    // recovery. The parse-failure marker owns that file's disclosure (#13374).
+    by_file.retain(|file, _| !file_has_parse_failure(root, file, analysis_outcome));
     // One shared bound (#13442): markers are reserved first (one per file, at
     // most the cap), rows only spend what remains, so markers plus rows never
     // exceed `MAX_WITHHELD_PREVIEW_MARKERS`.
@@ -2108,6 +2227,7 @@ pub(super) fn limitation_is_file_parse_failure(
         AnalysisLimitationKind::ProducerFailure => matches!(
             recovery,
             crate::analysis_outcome::RUST_PARSE_FAILURE_RECOVERY
+                | crate::analysis_outcome::RUST_NESTING_BUDGET_RECOVERY
                 | crate::analysis_outcome::RUST_NOT_UTF8_RECOVERY
                 | crate::analysis_outcome::PYTHON_PARSE_FAILURE_RECOVERY
         ),
@@ -2119,6 +2239,56 @@ pub(super) fn limitation_is_file_parse_failure(
         }
         _ => false,
     }
+}
+
+/// The diagnostic, accounting and lens projections share the same file match.
+/// The parse-failure meaning remains owned by the producer predicate above.
+pub(super) fn file_has_parse_failure(
+    root: &Path,
+    file: &Path,
+    outcome: Option<&AnalysisOutcome>,
+) -> bool {
+    file_parse_failure_limitation(root, file, outcome).is_some()
+}
+
+/// True when the file's parse-failure limitation is the
+/// `rust_nesting_budget` decline rather than a syntax error (#13660). A file
+/// that also carries a real parse failure is not a nesting decline.
+pub(super) fn file_parse_failure_is_nesting_budget(
+    root: &Path,
+    file: &Path,
+    outcome: Option<&AnalysisOutcome>,
+) -> bool {
+    file_parse_failure_limitation(root, file, outcome).is_some_and(|limitation| {
+        limitation.recovery.detail == crate::analysis_outcome::RUST_NESTING_BUDGET_RECOVERY
+    })
+}
+
+fn file_parse_failure_limitation<'a>(
+    root: &Path,
+    file: &Path,
+    outcome: Option<&'a AnalysisOutcome>,
+) -> Option<&'a crate::analysis_outcome::AnalysisLimitation> {
+    let relative = if file.is_absolute() {
+        file.strip_prefix(root).ok()?
+    } else {
+        file
+    };
+    let path = crate::analysis_outcome::normalize_portable_analysis_path(
+        relative.to_string_lossy().as_ref(),
+    )
+    .ok()?;
+    // Prefer a real parse failure over a nesting-budget decline for one path.
+    outcome?
+        .limitations
+        .iter()
+        .filter(|limitation| {
+            limitation_is_file_parse_failure(limitation)
+                && limitation.path.as_deref() == Some(path.as_str())
+        })
+        .min_by_key(|limitation| {
+            limitation.recovery.detail == crate::analysis_outcome::RUST_NESTING_BUDGET_RECOVERY
+        })
 }
 
 /// One Information diagnostic on each changed file the language adapter could
@@ -6348,6 +6518,7 @@ mod diagnostic_policy_tests {
         AnalysisOutcomeCounts, AnalysisOutcomeKind, AnalysisRecovery, AnalysisRecoveryKind,
         AnalysisStage,
     };
+    use crate::domain::DiscriminatorShape;
     use crate::domain::{
         ActivationEvidence, Confidence, DeltaKind, ExposureClass, LanguageStatus,
         MissingDiscriminatorFact, OracleKind, OracleStrength, Probe, ProbeFamily, ProbeId,
@@ -6587,6 +6758,7 @@ mod diagnostic_policy_tests {
                 crate::domain::GUARD_UNENTERED_REASON_PREFIX
             ),
             flow_sink: None,
+            shape: DiscriminatorShape::GuardDomain,
             drafted_boundary: None,
         }];
         let message = lsp_message(&finding);
@@ -6608,6 +6780,7 @@ mod diagnostic_policy_tests {
             value: "age == 18".to_string(),
             reason: "no test uses 18".to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Boundary,
             drafted_boundary: None,
         }];
         let message = lsp_message(&finding);
@@ -6630,6 +6803,7 @@ mod diagnostic_policy_tests {
                 value,
                 reason: "no test uses it".to_string(),
                 flow_sink: None,
+                shape: DiscriminatorShape::Other,
                 drafted_boundary: None,
             }];
             lsp_message(finding)
@@ -6679,14 +6853,21 @@ mod diagnostic_policy_tests {
             matches!(finding.probe.family, ProbeFamily::Predicate),
             "fixture must be a predicate probe"
         );
-        let fact = |value: &str| MissingDiscriminatorFact {
-            value: value.to_string(),
-            reason: "no test uses it".to_string(),
-            flow_sink: None,
-            drafted_boundary: None,
-        };
-        finding.activation.missing_discriminators =
-            vec![fact("PriceError::Negative"), fact("n == 0")];
+        let fact =
+            |value: &str, shape: crate::domain::DiscriminatorShape| MissingDiscriminatorFact {
+                value: value.to_string(),
+                reason: "no test uses it".to_string(),
+                flow_sink: None,
+                shape,
+                drafted_boundary: None,
+            };
+        finding.activation.missing_discriminators = vec![
+            fact(
+                "PriceError::Negative",
+                crate::domain::DiscriminatorShape::Other,
+            ),
+            fact("n == 0", crate::domain::DiscriminatorShape::Boundary),
+        ];
         assert_eq!(
             lsp_message(&finding),
             "Add boundary tests for below, equal, and above the changed threshold. \
@@ -6694,7 +6875,10 @@ mod diagnostic_policy_tests {
         );
 
         // Without a boundary input the first check is still named.
-        finding.activation.missing_discriminators = vec![fact("PriceError::Negative")];
+        finding.activation.missing_discriminators = vec![fact(
+            "PriceError::Negative",
+            crate::domain::DiscriminatorShape::Other,
+        )];
         assert!(
             lsp_message(&finding).ends_with("Missing check: `PriceError::Negative`."),
             "{}",
@@ -6704,8 +6888,13 @@ mod diagnostic_policy_tests {
         // A non-predicate probe keeps its first check even when a later one
         // is spelled as an equality.
         finding.probe.family = ProbeFamily::ErrorPath;
-        finding.activation.missing_discriminators =
-            vec![fact("PriceError::Negative"), fact("n == 0")];
+        finding.activation.missing_discriminators = vec![
+            fact(
+                "PriceError::Negative",
+                crate::domain::DiscriminatorShape::Other,
+            ),
+            fact("n == 0", crate::domain::DiscriminatorShape::Boundary),
+        ];
         assert!(
             lsp_message(&finding).ends_with("Missing check: `PriceError::Negative`."),
             "{}",
@@ -6723,6 +6912,7 @@ mod diagnostic_policy_tests {
             value: "Price::Boundary".to_string(),
             reason: "exact boundary is not observed".to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Other,
             drafted_boundary: None,
         }];
         finding.related_tests.push(RelatedTest {
@@ -6757,6 +6947,7 @@ mod diagnostic_policy_tests {
             value: "Price::Boundary".to_string(),
             reason: "exact boundary is not observed".to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Other,
             drafted_boundary: None,
         }];
         finding.related_tests.push(RelatedTest {
@@ -6837,6 +7028,7 @@ mod diagnostic_policy_tests {
                         value: "amount == threshold".to_string(),
                         reason: "exact boundary is not observed".to_string(),
                         flow_sink: None,
+                        shape: DiscriminatorShape::Boundary,
                         drafted_boundary: None,
                     }];
                     if with_fix_site {
@@ -6882,6 +7074,7 @@ mod diagnostic_policy_tests {
                 value: "amount == threshold".to_string(),
                 reason: "exact boundary is not observed".to_string(),
                 flow_sink: None,
+                shape: DiscriminatorShape::Boundary,
                 drafted_boundary: None,
             }];
             finding.evidence = vec![
@@ -6925,6 +7118,7 @@ mod diagnostic_policy_tests {
                 value: "Price::Boundary".to_string(),
                 reason: "exact boundary is not observed".to_string(),
                 flow_sink: None,
+                shape: DiscriminatorShape::Other,
                 drafted_boundary: None,
             }];
             finding.related_tests.push(RelatedTest {
@@ -7071,6 +7265,7 @@ mod diagnostic_policy_tests {
             findings,
             &withheld_preview_config(profile),
             &crate::analysis::diagnostic_origin::RustDiagnosticOrigins::default(),
+            None,
             &mut grouped,
         );
         grouped
@@ -7624,6 +7819,7 @@ mod diagnostic_policy_tests {
             value: "Price::Boundary".to_string(),
             reason: "exact boundary is not observed".to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Other,
             drafted_boundary: None,
         }];
         published.related_tests.push(RelatedTest {
@@ -8494,10 +8690,10 @@ mod diagnostic_policy_tests {
 mod lsp_next_step_parity_tests {
     use super::lsp_message;
     use crate::domain::{
-        ActivationEvidence, Confidence, DeltaKind, ExposureClass, Finding, LanguageId,
-        LanguageStatus, MissingDiscriminatorFact, OracleKind, OracleStrength, OwnerKind, Probe,
-        ProbeFamily, ProbeId, RelatedTest, RevealEvidence, RiprEvidence, SourceLocation,
-        StageEvidence, StageState, SymbolId,
+        ActivationEvidence, Confidence, DeltaKind, DiscriminatorShape, ExposureClass, Finding,
+        LanguageId, LanguageStatus, MissingDiscriminatorFact, OracleKind, OracleStrength,
+        OwnerKind, Probe, ProbeFamily, ProbeId, RelatedTest, RevealEvidence, RiprEvidence,
+        SourceLocation, StageEvidence, StageState, SymbolId,
     };
     use std::path::PathBuf;
 
@@ -8573,8 +8769,9 @@ mod lsp_next_step_parity_tests {
                     value: "amount == threshold".to_string(),
                     reason: "changed TypeScript equality-boundary at line 2 lacks a concrete preview discriminator".to_string(),
                     flow_sink: None,
-                drafted_boundary: None
-                }],
+                                    shape: DiscriminatorShape::Boundary,
+                                    drafted_boundary: None,
+}],
             },
             stop_reasons: Vec::new(),
             related_tests_matched_total: None,
@@ -8732,6 +8929,7 @@ mod lsp_next_step_parity_tests {
 #[cfg(test)]
 mod canonical_group_member_tests {
     use super::*;
+    use crate::domain::DiscriminatorShape;
     use crate::domain::{
         ActivationEvidence, Confidence, DeltaKind, ExposureClass, FindingCanonicalGap,
         MissingDiscriminatorFact, Probe, ProbeFamily, ProbeId, RevealEvidence, RiprEvidence,
@@ -8806,12 +9004,12 @@ mod canonical_group_member_tests {
         finding.class = ExposureClass::WeaklyExposed;
         finding.recommended_next_step =
             Some("Add boundary tests for below, equal, and above the changed threshold with exact assertions.".to_string());
-        finding.activation.missing_discriminators = vec![MissingDiscriminatorFact {
-            value: missing.to_string(),
-            reason: "no test uses the boundary".to_string(),
-            flow_sink: None,
-            drafted_boundary: None,
-        }];
+        finding.activation.missing_discriminators =
+            vec![MissingDiscriminatorFact::equality_spelled(
+                missing.to_string(),
+                "no test uses the boundary".to_string(),
+                None,
+            )];
         finding.canonical_gap = Some(FindingCanonicalGap {
             id: gap_id.to_string(),
             language: "rust".to_string(),
@@ -8931,6 +9129,7 @@ mod canonical_group_member_tests {
             value: "age >= 18".to_string(),
             reason: "missing return pin".to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Other,
             drafted_boundary: None,
         }];
 
