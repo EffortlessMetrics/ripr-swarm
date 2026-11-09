@@ -340,18 +340,19 @@ fn render_pilot_summary_md_with_target(
     }
     if let Some(limit) = context.seam_limit {
         // #5371: name how the analyzed slice was chosen. The pilot budget
-        // keeps the inventory's path-order prefix plus the actionable seams
-        // the current change touches that still fit the budget
-        // (keeps_past_budget; the final truncate can drop even those), and
-        // ranking reorders only that slice — so the top gap is the most
-        // actionable seam in the slice, not necessarily of the whole
-        // repository. Saying "ranked" alone overstated it.
+        // keeps the inventory's path-order prefix plus the seams the current
+        // change touches that still fit the budget (keeps_past_budget; the
+        // final truncate can drop even those — on the inventory-only path
+        // changed seams are added regardless of actionability), and ranking
+        // reorders only that slice — so a Rust recommendation, when present,
+        // is the highest-ranked seam in the slice, not necessarily of the
+        // whole repository. Saying "ranked" alone overstated it.
         out.push_str(&format!(
             "- Seam limit reached: analyzed {} of {} seams, kept as the inventory's path-order \
-             slice plus the actionable seams your change touches that fit the budget, then \
-             ranked by actionability within that slice -- the top gap is the most actionable \
-             seam in this slice, not of the whole repository; Rust seam counts below cover \
-             those only\n",
+             slice plus seams your change touches that fit the budget, then ranked by \
+             actionability within that slice -- a Rust recommendation, when present, is the \
+             highest-ranked seam in this slice, not of the whole repository; actionable-seam \
+             and owner counts below cover this slice only\n",
             limit.analyzed, limit.total
         ));
         out.push_str(&format!(

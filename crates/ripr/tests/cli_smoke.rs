@@ -23076,7 +23076,7 @@ fn pilot_ranks_multiline_match_head_edits_with_warm_caches_and_caps() -> Result<
                     "{summary}"
                 );
             }
-            assert!(md.contains("ranked 1 of "), "{md}");
+            assert!(md.contains("analyzed 1 of "), "{md}");
         }
         ignore_remove_dir_all(&root);
         ignore_remove_dir_all(&out);
