@@ -5238,7 +5238,7 @@ fn agent_brief_json_unresolvable_base_emits_refusal_envelope() -> Result<(), Str
     ]);
     let value = assert_json_refusal_envelope(
         &output,
-        "0.1",
+        "0.2",
         "repo",
         "base_unresolvable",
         "analysis/base-resolution",
@@ -6263,7 +6263,7 @@ fn agent_brief_diff_scope_outputs_json() -> Result<(), Box<dyn std::error::Error
     assert_success(&output);
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains(r#""schema_version": "0.1""#));
+    assert!(stdout.contains(r#""schema_version": "0.2""#));
     assert!(stdout.contains(r#""scope": "working_set""#));
     assert!(stdout.contains(r#""source": "diff""#));
     assert!(stdout.contains(r#""returned": 2"#));
@@ -23522,7 +23522,7 @@ fn python_preview_weak_gap_agent_surfaces_keep_the_discriminator_open() -> Resul
         "missing=amount == threshold|",
         "test=t1|",
         "t1=tests/test_pricing.py:4 test_calculate_discount_smoke smoke_only",
-        "open=preview-language evidence is advisory and offers no guided repair",
+        "open=preview-language evidence is advisory, but a related test asserts too weakly to notice this change",
         "tests may still help",
         "static advisory, not runtime proof",
         "next=ripr context ",
