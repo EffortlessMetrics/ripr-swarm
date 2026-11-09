@@ -9,6 +9,12 @@ build-lld = [
 xtask = "run -p xtask --"
 policy = "run --locked -p repo-policy --"
 
+[build]
+# Keep final binaries and reports at the established target/ paths, but move
+# bulky compiler intermediates into one managed root. The workspace-path hash
+# is mandatory: worktrees must never mutate one shared Cargo build tree.
+build-dir = "{cargo-cache-home}/ripr-swarm-build/{workspace-path-hash}"
+
 [env]
 TEMP = { value = "target", relative = true, force = true }
 TMP = { value = "target", relative = true, force = true }
