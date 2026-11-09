@@ -162,6 +162,18 @@ creusot_std::*;`, `use vstd::*;`, `use prusti_contracts::prelude::*;`, other
 crate names (including the older `creusot_contracts`) and renamed or
 substituted dependencies remain foreign globs.
 
+A top-level `mod name; pub use name::*;` (or `use name::*;`) in one file is
+not a foreign glob either (#14031): the whole `name::*` glob of an out-of-line
+module the same file declares reads that module's own items, as `crate::name::*`
+does, and the module's definitions and public imports are reported at their own
+file. It stays foreign when the module is inline (its imports are scoped to it),
+mounted with `#[path]`, declared twice (for example under exclusive `cfg`s),
+shadowed by an `extern crate`, `use` or other item of the same name, written
+with a longer path, a group or a leading `::`, nested in a module, reached next
+to an item-position macro, or one of `std`/`core`/`alloc`. Without this a
+re-export facade (`mod global_rng; pub use global_rng::*;`) made every assertion
+in the crate's tests macro-binding unestablished.
+
 ## Non-Goals
 
 - Repository mode does not list or name `verus!` regions; it only guarantees
@@ -224,7 +236,8 @@ substituted dependencies remain foreign globs.
   (`repo_analysis_excludes_verus_region_and_keeps_sibling_fn`).
 - `crates/ripr/src/analysis/language/rust/probes.rs`: finding limit tests.
 - `crates/ripr/src/analysis/syntax/owner_pin.rs` and the classify owner-pin
-  tests: prelude-glob tests, including `verification_prelude_globs_credit_only_audited_locked_versions`.
+  tests: prelude-glob tests, including `verification_prelude_globs_credit_only_audited_locked_versions`
+  and `a_root_glob_of_a_module_the_file_declares_is_not_a_foreign_glob`.
 - Corpus: `prusti-prelude-glob-boundary` in `fixtures/rust-verdict-corpus`
   (credited under the allowlisted glob, runtime-labeled). Verus and Creusot
   prelude cases need their toolchains to produce runtime truth and are not in

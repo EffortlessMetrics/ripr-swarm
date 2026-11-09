@@ -686,7 +686,7 @@ pub(crate) fn macro_binding_candidates(source: &ast::SourceFile) -> MacroBinding
 }
 
 /// Whether `item` is the whole `root::*` glob of a top-level `use` whose
-/// `root` is a module the same file declares at its top level
+/// `root` is an out-of-line module the same file declares at its top level
 /// (`mod global_rng; pub use global_rng::*;`). The glob then reads that
 /// module's own items, as `crate::global_rng::*` does. A macro it re-exports
 /// is defined or imported inside that module, and the workspace scan reports
@@ -727,16 +727,16 @@ fn glob_is_root_sibling_module(import: &ast::Use, item: &ast::UseTree, root: &st
                 continue;
             }
             declared += 1;
-            // `#[path]` can mount a file the scan never reads, and an
-            // item-position macro inside an inline module may emit any item.
-            if module
-                .attrs()
-                .any(|attr| attr.syntax().text().to_string().contains("path"))
-                || module.item_list().is_some_and(|list| {
-                    list.syntax()
-                        .children()
-                        .any(|item| ast::MacroCall::can_cast(item.kind()))
-                })
+            // `#[path]` can mount a file the scan never reads. An inline
+            // module is refused outright: its own imports are scoped to the
+            // module, so a `pub use dep::assert_eq;` inside it would reach the
+            // root through this glob without a site that covers the root's
+            // tests. An out-of-line module's public imports are reported
+            // workspace-wide at their own file.
+            if module.item_list().is_some()
+                || module
+                    .attrs()
+                    .any(|attr| attr.syntax().text().to_string().contains("path"))
             {
                 return false;
             }

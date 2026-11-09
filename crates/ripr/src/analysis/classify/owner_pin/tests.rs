@@ -9222,7 +9222,13 @@ fn a_root_glob_of_a_module_the_file_declares_is_not_a_foreign_glob() -> Result<(
     // that the workspace scan does not already report at its own site (#14031).
     for (source, local) in [
         ("mod global;\npub use global::*;\n", true),
-        ("mod global {}\nuse global::*;\n", true),
+        // An inline module's own imports are scoped to it, so a `pub use` inside
+        // would reach the root through the glob unseen.
+        ("mod global {}\nuse global::*;\n", false),
+        (
+            "mod global { pub use pretty_assertions::assert_eq; }\npub use global::*;\n",
+            false,
+        ),
         ("#[cfg(unix)]\nmod global;\nuse global::*;\n", true),
         // The root is no module of this file: another crate may supply it.
         ("pub use global::*;\n", false),
