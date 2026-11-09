@@ -70,6 +70,9 @@ pub(in crate::analysis) struct DependencyEdgeContext<'a> {
     pub(in crate::analysis) unindexed_manifests: &'a BTreeSet<String>,
     /// The scan root, for reading a manifest's package and library name.
     pub(in crate::analysis) root: &'a std::path::Path,
+    /// Admitted SCIP reference bindings when the caller supplied a matching
+    /// index and manifest (#8116).
+    pub(in crate::analysis) scip_bindings: Option<&'a crate::analysis::scip::ScipReferenceBindings>,
 }
 
 /// #6617: the nearest-manifest identity of every package that has an
@@ -1430,6 +1433,10 @@ fn find_related_tests_with_candidates<'a>(
                         )
                     })
                 }))
+            && !(calls_owner
+                && owner_fn.is_some_and(|owner| {
+                    scip_reference_admits_owner_call(dependency_edges, owner, test, &owner.name)
+                }))
         {
             continue;
         }
@@ -1845,6 +1852,66 @@ struct SameNameDefinitions<'s> {
 /// - the index must span the workspace (`workspace_complete`), except for
 ///   the type-path route on an inherent-impl owner whose whole package is
 ///   indexed (#6617): see `type_path_index_covers_competitors`.
+fn same_line_same_name_call_count(test: &TestSummary, callee: &str, line: usize) -> usize {
+    test.calls
+        .iter()
+        .filter(|call| call.name == callee && call.line == line)
+        .count()
+}
+
+fn scip_reference_admits_owner_call(
+    dependency_edges: Option<&DependencyEdgeContext<'_>>,
+    owner: &FunctionSummary,
+    test: &TestSummary,
+    callee: &str,
+) -> bool {
+    let Some(context) = dependency_edges else {
+        return false;
+    };
+    let Some(bindings) = context.scip_bindings else {
+        return false;
+    };
+    let Some(owner_range) = context
+        .index
+        .files()
+        .get(&owner.file)
+        .and_then(|facts| owner.body.range_in(&facts.data().source))
+    else {
+        return false;
+    };
+    // #8116: a test is related through SCIP only when every call it makes to
+    // this name resolves to the owner. One call that binds a local function
+    // (beside a discarded owner call) leaves the assertion's own callee
+    // unestablished, so the whole test keeps the conservative relation.
+    if !test.calls.iter().any(|call| call.name == callee) {
+        return false;
+    }
+    test.calls
+        .iter()
+        .filter(|call| call.name == callee)
+        .all(|call| {
+            // CallFact.text is trimmed or synthesized deny-only text, not a source span.
+            let Some(source_line) = context.index.files().get(&test.file).and_then(|facts| {
+                call.line
+                    .checked_sub(1)
+                    .and_then(|line| facts.data().source.lines().nth(line))
+            }) else {
+                return false;
+            };
+            bindings.call_resolves_to_owner(
+                context.root,
+                &test.file,
+                call.line,
+                source_line,
+                callee,
+                &owner.file,
+                &owner.name,
+                owner_range.clone(),
+                same_line_same_name_call_count(test, callee, call.line),
+            )
+        })
+}
+
 fn dependency_edge_admits_owner_call(
     context: &DependencyEdgeContext<'_>,
     owner: &FunctionSummary,
@@ -11638,6 +11705,7 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
             index,
             unindexed_manifests: &NONE_UNINDEXED,
             root: std::path::Path::new("."),
+            scip_bindings: None,
         }
     }
 
@@ -11656,6 +11724,483 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
             false,
         );
         (adjacency, crate_abc_prefixes())
+    }
+
+    #[test]
+    fn scip_consumer_refuses_bom_normalized_coordinate_authority() -> Result<(), String> {
+        use crate::analysis::scip::{
+            ScipReferenceBindings,
+            generated::scip::{Document, Index, Occurrence, PositionEncoding, SymbolRole},
+        };
+        use prost::Message;
+        use sha2::{Digest, Sha256};
+        let root = temp_dir("scip-bom-coordinate")?;
+        write(
+            &root,
+            "Cargo.toml",
+            "[workspace]\nmembers=['alpha','beta','consumer']\nresolver='2'\n",
+        )?;
+        for package in ["alpha", "beta", "consumer"] {
+            let dependencies = if package == "consumer" {
+                "\n[dependencies]\nalpha={path='../alpha'}\nbeta={path='../beta'}\n"
+            } else {
+                ""
+            };
+            write(
+                &root,
+                &format!("{package}/Cargo.toml"),
+                &format!(
+                    "[package]\nname='{package}'\nversion='0.0.0'\nedition='2024'\n{dependencies}"
+                ),
+            )?;
+        }
+        for scenario in [0, 1, 2, 3] {
+            let duplicate = matches!(scenario, 1 | 3);
+            let alpha_source = if scenario == 2 {
+                "#[cfg(any())] mod inactive { pub fn f() -> u32 { 99 } }\nmod active { pub const f: fn() -> u32 = || 1; }\npub use active::f;\n"
+            } else if scenario == 3 {
+                "#[cfg(any())] mod inactive { pub fn f() -> u32 { 1 } } mod active { pub fn f() -> u32 { 1 } } pub use active::f;\n"
+            } else if duplicate {
+                "#[cfg(any())] mod inactive { pub fn r#f() -> u32 { 1 } }\nmod active { pub fn f() -> u32 { 1 } }\npub use active::f;\n"
+            } else {
+                "pub fn f() -> u32 { 1 }\n"
+            };
+            let beta_source = "pub fn f() -> u32 { 7 }\n";
+            let alpha = if scenario == 2 {
+                "scip rust-analyzer cargo alpha 0.1.0 alpha/f."
+            } else {
+                "scip rust-analyzer cargo alpha 0.1.0 alpha/f()."
+            };
+            let beta = "scip rust-analyzer cargo beta 0.1.0 beta/f().";
+            for bom in [true, false] {
+                for targets_alpha in [false, true] {
+                    let import = if targets_alpha { "alpha" } else { "beta" };
+                    let expected = if targets_alpha { 1 } else { 7 };
+                    let source = format!(
+                        "{}use {import}::f; #[test] fn unrelated() {{ let (_, value) = (alpha::f, f()); assert_eq!(value, {expected}); }}",
+                        if bom { "\u{feff}" } else { "" }
+                    );
+                    let loaded = vec![
+                        (
+                            write(&root, "alpha/src/lib.rs", alpha_source)?,
+                            alpha_source.as_bytes().to_vec(),
+                        ),
+                        (
+                            write(&root, "beta/src/lib.rs", beta_source)?,
+                            beta_source.as_bytes().to_vec(),
+                        ),
+                        (
+                            write(&root, "consumer/src/lib.rs", &source)?,
+                            source.as_bytes().to_vec(),
+                        ),
+                    ];
+                    let mut consumed =
+                        crate::analysis::consumed_source::ConsumedRustSources::default();
+                    for (path, bytes) in &loaded {
+                        consumed.record(path, Some(bytes));
+                    }
+                    let index = crate::analysis::facts::build_analysis_index_from_loaded_files(
+                        &root,
+                        &loaded,
+                        &[],
+                    )?
+                    .index;
+                    let owners = index
+                        .functions()
+                        .iter()
+                        .filter(|function| {
+                            function.name.trim_start_matches("r#") == "f"
+                                && function.file.ends_with("alpha/src/lib.rs")
+                        })
+                        .collect::<Vec<_>>();
+                    assert_eq!(
+                        owners.len(),
+                        if duplicate { 2 } else { 1 },
+                        "retained owner inventory"
+                    );
+                    let test = index.tests().first().ok_or("missing test")?;
+                    let retained = index.files().get(&test.file).ok_or("missing test facts")?;
+                    assert_eq!(
+                        retained.data().source.as_ref(),
+                        source.trim_start_matches('\u{feff}'),
+                        "actual coordinate normalization premise"
+                    );
+                    let pointer = source.find("alpha::f").ok_or("pointer")? + "alpha::".len();
+                    let call = source.find(", f()").ok_or("call")? + 2;
+                    let definition_byte = alpha_source
+                        .rfind(if scenario == 2 { "f:" } else { "f()" })
+                        .ok_or("alpha definition")?;
+                    let definition_line = alpha_source[..definition_byte]
+                        .bytes()
+                        .filter(|byte| *byte == b'\n')
+                        .count();
+                    let definition_column = alpha_source[..definition_byte]
+                        .rfind('\n')
+                        .map_or(definition_byte, |last| definition_byte - last - 1);
+                    let scip = Index {
+                        documents: vec![
+                            Document {
+                                relative_path: "alpha/src/lib.rs".into(),
+                                position_encoding: PositionEncoding::Utf8CodeUnitOffsetFromLineStart
+                                    as i32,
+                                occurrences: vec![Occurrence {
+                                    symbol: alpha.into(),
+                                    range: vec![
+                                        definition_line as i32,
+                                        definition_column as i32,
+                                        (definition_column + 1) as i32,
+                                    ],
+                                    symbol_roles: SymbolRole::Definition as i32,
+                                    ..Occurrence::default()
+                                }],
+                                ..Document::default()
+                            },
+                            Document {
+                                relative_path: "beta/src/lib.rs".into(),
+                                position_encoding: PositionEncoding::Utf8CodeUnitOffsetFromLineStart
+                                    as i32,
+                                occurrences: vec![Occurrence {
+                                    symbol: beta.into(),
+                                    range: vec![0, 7, 8],
+                                    symbol_roles: SymbolRole::Definition as i32,
+                                    ..Occurrence::default()
+                                }],
+                                ..Document::default()
+                            },
+                            Document {
+                                relative_path: "consumer/src/lib.rs".into(),
+                                position_encoding: PositionEncoding::Utf8CodeUnitOffsetFromLineStart
+                                    as i32,
+                                occurrences: vec![
+                                    Occurrence {
+                                        symbol: alpha.into(),
+                                        range: vec![0, pointer as i32, (pointer + 1) as i32],
+                                        ..Occurrence::default()
+                                    },
+                                    Occurrence {
+                                        symbol: if targets_alpha { alpha } else { beta }.into(),
+                                        range: vec![0, call as i32, (call + 1) as i32],
+                                        ..Occurrence::default()
+                                    },
+                                ],
+                                ..Document::default()
+                            },
+                        ],
+                        ..Index::default()
+                    };
+                    let bytes = scip.encode_to_vec();
+                    let index_path = root.join("index.scip");
+                    let manifest_path = root.join("manifest.json");
+                    std::fs::write(&index_path, &bytes).map_err(|e| e.to_string())?;
+                    let sources=loaded.iter().map(|(path,bytes)|serde_json::json!({"relative_path":crate::analysis::workspace::normalize_path(path),"source_sha256":format!("{:x}",Sha256::digest(bytes))})).collect::<Vec<_>>();
+                    let manifest = serde_json::json!({"schema_version":"ripr-scip-admission-manifest-v1","index_sha256":format!("{:x}",Sha256::digest(&bytes)),"producer":{"name":"retained-coordinate-consumer","version":"1"},"project_root_relative":".","source_files":sources});
+                    std::fs::write(&manifest_path, manifest.to_string())
+                        .map_err(|e| e.to_string())?;
+                    let bindings = ScipReferenceBindings::from_admitted_index(
+                        &root,
+                        &index_path,
+                        &manifest_path,
+                        &consumed,
+                        index
+                            .files()
+                            .iter()
+                            .map(|(path, facts)| (path.as_path(), facts.data().source.as_ref())),
+                    )
+                    .map_err(|e| e.reason())?;
+                    let (adjacency, prefixes) = crate_a_dependency_context();
+                    let mut context = edge_context(&adjacency, &prefixes, &index);
+                    context.root = &root;
+                    context.scip_bindings = Some(&bindings);
+                    for owner in owners {
+                        let owner_facts = index.files().get(&owner.file).ok_or("owner source")?;
+                        let owner_range = owner.body.range_in(&owner_facts.data().source).ok_or(
+                            "actual indexed owner must share its retained source allocation",
+                        )?;
+                        let expected = !bom
+                            && targets_alpha
+                            && scenario != 2
+                            && Some(owner_range.start) == alpha_source.rfind("fn f");
+                        assert_eq!(
+                            scip_reference_admits_owner_call(Some(&context), owner, test, "f"),
+                            expected,
+                            "BOM={bom}, actual_alpha={targets_alpha}, definition scenario={scenario}, owner={:?}",
+                            owner.id
+                        );
+                        for owner_path in [owner.file.clone(), root.join(&owner.file)] {
+                            assert_eq!(
+                                bindings.call_resolves_to_owner(
+                                    &root,
+                                    &test.file,
+                                    1,
+                                    index
+                                        .files()
+                                        .get(&test.file)
+                                        .ok_or("test source")?
+                                        .data()
+                                        .source
+                                        .lines()
+                                        .next()
+                                        .ok_or("test source line")?,
+                                    "f",
+                                    &owner_path,
+                                    &owner.name,
+                                    owner_range.clone(),
+                                    1
+                                ),
+                                expected,
+                                "relative/absolute retained owner handoff: {}",
+                                owner_path.display()
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// #8116 review 5783736897: one call that resolves to the owner must not
+    /// relate a test whose other same-named call binds a different symbol, in
+    /// either call order. Only a test whose every such call resolves relates.
+    #[test]
+    fn scip_consumer_requires_every_same_name_call_to_resolve_to_owner() -> Result<(), String> {
+        use crate::analysis::scip::{
+            ScipReferenceBindings,
+            generated::scip::{Document, Index, Occurrence, PositionEncoding, SymbolRole},
+        };
+        use prost::Message;
+        use sha2::{Digest, Sha256};
+        let root = temp_dir("scip-every-call")?;
+        write_manifest(&root)?;
+        let source = "pub fn score(value: u32) -> u32 { value + 1 }\n#[test]\nfn observes() {\n    let value = 3;\n    let _ = score(value);\n    assert_eq!(score(value), value + 1);\n}\n";
+        let relative = write(&root, "src/lib.rs", source)?;
+        let index = crate::analysis::facts::build_index(&root, &[relative])?;
+        let owner = index
+            .functions()
+            .iter()
+            .find(|owner| owner.name == "score")
+            .ok_or("missing indexed owner")?;
+        let test = index.tests().first().ok_or("missing indexed test")?;
+        assert_eq!(
+            test.calls
+                .iter()
+                .filter(|call| call.name == "score")
+                .count(),
+            2,
+            "fixture must parse both calls"
+        );
+        let alpha = "scip rust-analyzer cargo alpha 0.1.0 alpha/score().";
+        let beta = "scip rust-analyzer cargo beta 0.1.0 beta/score().";
+        let lines: Vec<&str> = source.lines().collect();
+        let column = |line: usize| -> Result<i32, String> {
+            lines
+                .get(line)
+                .and_then(|text| text.find("score("))
+                .and_then(|col| i32::try_from(col).ok())
+                .ok_or_else(|| "missing call column".to_string())
+        };
+        let mut consumed = crate::analysis::consumed_source::ConsumedRustSources::default();
+        consumed.record(std::path::Path::new("src/lib.rs"), Some(source.as_bytes()));
+        let (adjacency, prefixes) = crate_a_dependency_context();
+        let resolves = |first: &str, second: &str| -> Result<bool, String> {
+            let call = |line: usize, symbol: &str| -> Result<Occurrence, String> {
+                let col = column(line)?;
+                Ok(Occurrence {
+                    symbol: symbol.into(),
+                    range: vec![line as i32, col, col + 5],
+                    ..Occurrence::default()
+                })
+            };
+            let scip = Index {
+                documents: vec![Document {
+                    relative_path: "src/lib.rs".into(),
+                    position_encoding: PositionEncoding::Utf8CodeUnitOffsetFromLineStart as i32,
+                    occurrences: vec![
+                        Occurrence {
+                            symbol: alpha.into(),
+                            range: vec![0, 7, 12],
+                            symbol_roles: SymbolRole::Definition as i32,
+                            ..Occurrence::default()
+                        },
+                        call(4, first)?,
+                        call(5, second)?,
+                    ],
+                    ..Document::default()
+                }],
+                ..Index::default()
+            };
+            let bytes = scip.encode_to_vec();
+            let index_path = root.join("index.scip");
+            let manifest_path = root.join("manifest.json");
+            std::fs::write(&index_path, &bytes).map_err(|e| e.to_string())?;
+            let manifest = serde_json::json!({
+                "schema_version": "ripr-scip-admission-manifest-v1",
+                "index_sha256": format!("{:x}", Sha256::digest(&bytes)),
+                "producer": {"name":"synthetic-every-call-regression", "version":"1"},
+                "project_root_relative":".",
+                "source_files":[{"relative_path":"src/lib.rs", "source_sha256":format!("{:x}",Sha256::digest(source.as_bytes()))}]
+            });
+            std::fs::write(&manifest_path, manifest.to_string()).map_err(|e| e.to_string())?;
+            let bindings = ScipReferenceBindings::from_admitted_index(
+                &root,
+                &index_path,
+                &manifest_path,
+                &consumed,
+                index
+                    .files()
+                    .iter()
+                    .map(|(path, facts)| (path.as_path(), facts.data().source.as_ref())),
+            )
+            .map_err(|e| e.reason())?;
+            let mut context = edge_context(&adjacency, &prefixes, &index);
+            context.root = &root;
+            context.scip_bindings = Some(&bindings);
+            Ok(scip_reference_admits_owner_call(
+                Some(&context),
+                owner,
+                test,
+                "score",
+            ))
+        };
+        assert!(
+            resolves(alpha, alpha)?,
+            "every call resolving to the owner relates the test"
+        );
+        assert!(
+            !resolves(alpha, beta)?,
+            "a discarded owner call must not relate a test asserting on another symbol"
+        );
+        assert!(
+            !resolves(beta, alpha)?,
+            "call order must not change the refusal"
+        );
+        std::fs::remove_dir_all(root).map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    #[test]
+    fn scip_consumer_uses_retained_source_columns_with_indentation_and_unicode()
+    -> Result<(), String> {
+        use crate::analysis::scip::{
+            ScipReferenceBindings,
+            generated::scip::{Document, Index, Occurrence, PositionEncoding, SymbolRole},
+        };
+        use prost::Message;
+        use sha2::{Digest, Sha256};
+        let root = temp_dir("scip-retained-columns")?;
+        write_manifest(&root)?;
+        let source = "pub fn score() -> u32 { 1 }\n#[test]\nfn observes() {\n    let prefix = \"🚀\"; let pointer = score; assert_eq!(score(), 1);\n}\n";
+        let relative = write(&root, "src/lib.rs", source)?;
+        let index = crate::analysis::facts::build_index(&root, &[relative])?;
+        let owner = index
+            .functions()
+            .iter()
+            .find(|owner| owner.name == "score")
+            .ok_or("missing indexed owner")?;
+        let test = index.tests().first().ok_or("missing indexed test")?;
+        let line = source.lines().nth(3).ok_or("missing call source")?;
+        let call = line.find("score()").ok_or("missing call")?;
+        let pointer = line.find("score;").ok_or("missing pointer")?;
+        let fact = test
+            .calls
+            .iter()
+            .find(|fact| fact.name == "score")
+            .ok_or("missing call fact")?;
+        assert_eq!(fact.line, 4);
+        assert_ne!(
+            fact.text.find("score()"),
+            Some(call),
+            "setup must exercise trimmed call text"
+        );
+        let alpha = "scip rust-analyzer cargo alpha 0.1.0 alpha/score().";
+        let beta = "scip rust-analyzer cargo beta 0.1.0 beta/score().";
+        let mut scip = Index {
+            documents: vec![Document {
+                relative_path: "src/lib.rs".into(),
+                position_encoding: PositionEncoding::Utf8CodeUnitOffsetFromLineStart as i32,
+                occurrences: vec![
+                    Occurrence {
+                        symbol: alpha.into(),
+                        range: vec![0, 7, 12],
+                        symbol_roles: SymbolRole::Definition as i32,
+                        ..Occurrence::default()
+                    },
+                    Occurrence {
+                        symbol: alpha.into(),
+                        range: vec![3, pointer as i32, (pointer + 5) as i32],
+                        ..Occurrence::default()
+                    },
+                    Occurrence {
+                        symbol: alpha.into(),
+                        range: vec![3, call as i32, (call + 5) as i32],
+                        ..Occurrence::default()
+                    },
+                ],
+                ..Document::default()
+            }],
+            ..Index::default()
+        };
+        let mut consumed = crate::analysis::consumed_source::ConsumedRustSources::default();
+        consumed.record(std::path::Path::new("src/lib.rs"), Some(source.as_bytes()));
+        let admit = |scip: &Index| -> Result<ScipReferenceBindings, String> {
+            let bytes = scip.encode_to_vec();
+            let index_path = root.join("index.scip");
+            let manifest_path = root.join("manifest.json");
+            std::fs::write(&index_path, &bytes).map_err(|e| e.to_string())?;
+            let manifest = serde_json::json!({
+                "schema_version": "ripr-scip-admission-manifest-v1",
+                "index_sha256": format!("{:x}", Sha256::digest(&bytes)),
+                "producer": {"name":"synthetic-consumer-regression", "version":"1"},
+                "project_root_relative":".",
+                "source_files":[{"relative_path":"src/lib.rs", "source_sha256":format!("{:x}",Sha256::digest(source.as_bytes()))}]
+            });
+            std::fs::write(&manifest_path, manifest.to_string()).map_err(|e| e.to_string())?;
+            ScipReferenceBindings::from_admitted_index(
+                &root,
+                &index_path,
+                &manifest_path,
+                &consumed,
+                index
+                    .files()
+                    .iter()
+                    .map(|(path, facts)| (path.as_path(), facts.data().source.as_ref())),
+            )
+            .map_err(|e| e.reason())
+        };
+        let (adjacency, prefixes) = crate_a_dependency_context();
+        let resolves = |bindings: &ScipReferenceBindings| {
+            let mut context = edge_context(&adjacency, &prefixes, &index);
+            context.root = &root;
+            context.scip_bindings = Some(bindings);
+            scip_reference_admits_owner_call(Some(&context), owner, test, "score")
+        };
+        let bindings = admit(&scip)?;
+        assert!(
+            resolves(&bindings),
+            "actual indexed call keeps original Unicode/indentation columns"
+        );
+        scip.documents[0].occurrences[2].symbol = beta.into();
+        assert!(
+            !resolves(&admit(&scip)?),
+            "pointer reference cannot bind unrelated call"
+        );
+        scip.documents[0].occurrences.push(Occurrence {
+            symbol: alpha.into(),
+            range: vec![3, call as i32, (call + 5) as i32],
+            ..Occurrence::default()
+        });
+        assert!(
+            !resolves(&admit(&scip)?),
+            "conflicting same-span bindings stay unknown"
+        );
+        std::fs::write(root.join("src/lib.rs"), "// changed live file\n")
+            .map_err(|e| e.to_string())?;
+        assert!(
+            resolves(&bindings),
+            "consumer reads the retained index, not the changed live file"
+        );
+        std::fs::remove_dir_all(root).map_err(|e| e.to_string())?;
+        Ok(())
     }
 
     /// #2972 positive control: the owner name `score` is ambiguous (crate_a
@@ -13805,6 +14350,7 @@ fn crate_c_score_test() {
             index: &index,
             unindexed_manifests: &unindexed_manifests,
             root: std::path::Path::new("."),
+            scip_bindings: None,
         };
         let probe = probe("crates/crate_a/src/lib.rs", "42");
         find_related_tests(

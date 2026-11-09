@@ -1607,6 +1607,15 @@ pub fn check(x: i32) -> bool {
         assert_eq!(warm.file_fact_cache.misses, 0);
         assert_eq!(warm.file_fact_cache.stores, 0);
         assert_eq!(warm.index.files().get(&file), cold.index.files().get(&file));
+        for index in [&cold.index, &warm.index] {
+            let owner = index.functions().first().ok_or("missing cached owner")?;
+            let facts = index.files().get(&file).ok_or("missing cached file")?;
+            assert_eq!(
+                owner.body.range_in(&facts.data().source),
+                Some(4..bytes.len() - 1),
+                "cold and cached indexed owners retain their exact file allocation/range"
+            );
+        }
         Ok(())
     }
 

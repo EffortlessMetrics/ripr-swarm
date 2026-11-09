@@ -65,6 +65,13 @@ impl ConsumedRustSources {
         }
     }
 
+    /// Whether this producer attempted to capture the path, including failed
+    /// or conflicting reads. Distinguishes an unavailable capture from a file
+    /// outside this analysis when binding optional semantic enrichment.
+    pub(crate) fn was_observed(&self, relative: &Path) -> bool {
+        self.paths.contains_key(relative)
+    }
+
     /// Resolve an observed relative key. The consumer owns admission under the
     /// snapshot root; this carrier never reads or canonicalizes the filesystem.
     pub(crate) fn digest(&self, relative: &Path) -> Option<String> {

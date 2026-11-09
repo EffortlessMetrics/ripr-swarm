@@ -383,6 +383,8 @@ pub(crate) fn targeted_typescript_findings_for_scope(
         resolve_tsconfig_paths: config.typescript().resolve_tsconfig_paths(),
         perl_facts_path: None,
         perl_producer_failure: None,
+        scip_index_path: None,
+        scip_manifest_path: None,
         git_timeout: None,
         git_candidate: None,
         production_like_targets: Default::default(),
@@ -899,6 +901,10 @@ pub struct AnalysisOptions {
     /// diff identities. Never caller-settable.
     pub(crate) resolved_subject_identity:
         Option<crate::analysis_outcome::GitCandidateSubjectIdentity>,
+    /// Optional admitted SCIP index and companion manifest for semantic
+    /// reference edges (#8116). Both must be set together.
+    pub scip_index_path: Option<PathBuf>,
+    pub scip_manifest_path: Option<PathBuf>,
 }
 
 /// Advisory record for one compiled preview-language adapter whose files are
@@ -1742,6 +1748,9 @@ index 0000000..1111111 100644
             open_rust_index_paths: Default::default(),
             production_like_targets: Default::default(),
             test_harnesses: Vec::new(),
+
+            scip_index_path: None,
+            scip_manifest_path: None,
         })?;
         assert!(!out.findings.is_empty());
         assert!(
@@ -1766,6 +1775,9 @@ index 0000000..1111111 100644
             open_rust_index_paths: Default::default(),
             production_like_targets: Default::default(),
             test_harnesses: Vec::new(),
+
+            scip_index_path: None,
+            scip_manifest_path: None,
         })?;
         assert!(instant.findings.iter().any(|finding| {
             finding.class == crate::domain::ExposureClass::NoStaticPath
@@ -1822,6 +1834,9 @@ fn premium_customer_gets_discount() {
             open_rust_index_paths: Default::default(),
             production_like_targets: Default::default(),
             test_harnesses: Vec::new(),
+
+            scip_index_path: None,
+            scip_manifest_path: None,
         })?;
 
         if out.findings.is_empty() {
@@ -2039,6 +2054,9 @@ fn test_with_predicate() {
             open_rust_index_paths: Default::default(),
             production_like_targets: Default::default(),
             test_harnesses: Vec::new(),
+
+            scip_index_path: None,
+            scip_manifest_path: None,
         })?;
 
         for finding in &out.findings {
@@ -2110,6 +2128,9 @@ index 0000000..1111111 100644
             open_rust_index_paths: Default::default(),
             production_like_targets: Default::default(),
             test_harnesses: Vec::new(),
+
+            scip_index_path: None,
+            scip_manifest_path: None,
         })?;
 
         if !diff_out.findings.is_empty() {
@@ -2131,6 +2152,9 @@ index 0000000..1111111 100644
             open_rust_index_paths: Default::default(),
             production_like_targets: Default::default(),
             test_harnesses: Vec::new(),
+
+            scip_index_path: None,
+            scip_manifest_path: None,
         })?;
 
         if repo_out.findings.is_empty() {
@@ -2179,6 +2203,8 @@ mod git_candidate_entry_tests {
             open_rust_index_paths: Default::default(),
             production_like_targets: Default::default(),
             test_harnesses: Vec::new(),
+            scip_index_path: None,
+            scip_manifest_path: None,
         })
     }
 

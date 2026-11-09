@@ -370,3 +370,53 @@ a build script, so `test_grip_evidence` needs no guard. Fixture:
 
 - unit_test_pass_rate
 - golden_fixture_pass_rate
+
+Optional admitted SCIP references (#8116) must bind the actual callee token,
+including its start and end columns in the document's declared position encoding.
+A pointer reference or another same-named occurrence on that line does not
+establish the invocation's identity. Conflicting bindings at the call, unknown
+position encodings and multiple same-named calls on one source line preserve the
+conservative fallback. Semantic identity alone does not establish oracle grip.
+
+Admitted SCIP relation consumers must retain the exact validated decoded index
+and companion project root in one owned snapshot. They must not reread either
+file after admission and treat the replacement as admitted authority. A fresh
+admission independently rejects changed digests or a project root escape.
+
+The enrichment constructor must also compare the retained raw Rust source
+commitments captured with the analysis index to the admitted manifest digests.
+Observed mismatches, failed captures and conflicting captures refuse enrichment.
+Documents outside the captured analysis subset contribute no binding authority;
+a broader valid SCIP index need not force unrelated source capture. Both the
+call document and definition document must remain in the matched subset. Later
+live edits cannot replace a matching retained capture. The facts-only admission
+API retains its original scope independently of this analysis binding contract.
+
+Binding authority additionally requires the exact coordinate text retained in
+FileFacts to match the committed raw source digest. A document whose index text
+was normalized (including UTF-8 BOM stripping) is excluded from reference and
+definition authority until a source-coordinate mapping is owned. Matching raw
+capture alone does not establish coordinate identity. Both adapters supply the
+actual retained source iterator; no live reread can replace it. Ordinary matching
+UTF-8/16/32 position controls and post-admission mutation behavior remain intact.
+
+Definition authority must match an actual retained `ast::Fn` name-token range,
+converted with the document's declared UTF-8/16/32 encoding, and the exact
+function range starting at its `fn` token. A terminal name, SCIP symbol kind or
+unique function count alone cannot identify the owner: a callable constant or
+another same-line function can have the same name. Exact function spans
+separate supported sibling owners; unrelated term definitions contribute no
+function authority.
+
+The consumer obtains that function range only from `SourceText` sharing the
+actual retained `FileData.source` allocation. Owned, lexical or equal-text
+foreign allocations have no range authority. Attached cached `FileFacts` link
+function spans into their newly decoded parent allocation and preserve this
+proof; detached/inline bodies remain unknown. Both production consumers require
+this range. No new cache schema or public analysis option is introduced.
+
+Document keys use strict lexical UTF8 workspace/project-relative paths. Live
+owner-file canonicalization, symlink changes and lossy filename projection may
+not redirect a captured owner to another admitted document. Escaping or
+unrepresentable keys withhold enrichment within this adapter; general path
+behavior is unchanged.

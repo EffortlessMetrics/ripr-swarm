@@ -58,6 +58,8 @@ fn options(root: &Path, mode: AnalysisMode) -> AnalysisOptions {
         git_candidate: None,
         production_like_targets: Default::default(),
         test_harnesses: Vec::new(),
+        scip_index_path: None,
+        scip_manifest_path: None,
     }
 }
 
