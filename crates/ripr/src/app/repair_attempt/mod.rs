@@ -549,7 +549,9 @@ pub(crate) fn receipt_binding_from(
         || packet_artifact.sha256 != packet_sha256
         || after.packet_sha256 != packet_sha256
     {
-        return Err(ReceiptBindingError::Other("repair attempt packet binding is tampered or replayed".to_string()));
+        return Err(ReceiptBindingError::Other(
+            "repair attempt packet binding is tampered or replayed".to_string(),
+        ));
     }
     let (verdict, binding_holds) = recompute_after_verdict_binding(&root, &manifest, after)?;
     if !binding_holds {
@@ -8674,7 +8676,10 @@ mod tests {
             let packet = root.join(&find_manifest_artifact(&finished, "agent_packet")?.path);
             let attempt = finished.repair_attempt_id.as_str();
             match receipt_binding_from(&root, None, "seam:sample", &packet, Some(attempt)) {
-                Err(error) if error.message().contains("no post-change path identity binding") => {}
+                Err(error)
+                    if error
+                        .message()
+                        .contains("no post-change path identity binding") => {}
                 other => return Err(format!("legacy receipt must be unavailable: {other:?}")),
             }
             std::fs::write(&prepared.manifest_path, manifest_bytes)

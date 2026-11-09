@@ -1255,8 +1255,7 @@ fn run_agent_receipt(options: AgentReceiptOptions) -> Result<(), String> {
         )
         .map_err(|error| error.message());
     }
-    run_agent_receipt_for_attempt(options, None, None, None, None)
-        .map_err(|error| error.message())
+    run_agent_receipt_for_attempt(options, None, None, None, None).map_err(|error| error.message())
 }
 
 fn run_agent_receipt_for_attempt(
@@ -1298,10 +1297,12 @@ fn run_agent_receipt_for_attempt(
     if gap_subject
         && output::agent_receipt::bound_gap_for_seam(&validated.verify, &options.seam_id).is_none()
     {
-        return Err(crate::app::repair_attempt::ReceiptBindingError::Other(format!(
-            "agent receipt for gap `{}` requires an agent verify document bound to that gap (`ripr agent verify --gap-id`) that records it closed; an unbound pair, an open gap or an absent gap is not closure evidence",
-            options.seam_id
-        )));
+        return Err(crate::app::repair_attempt::ReceiptBindingError::Other(
+            format!(
+                "agent receipt for gap `{}` requires an agent verify document bound to that gap (`ripr agent verify --gap-id`) that records it closed; an unbound pair, an open gap or an absent gap is not closure evidence",
+                options.seam_id
+            ),
+        ));
     }
     if let Some(attempt_id) = attempt_id {
         let before_sha256 = validated
@@ -3284,41 +3285,39 @@ fn run_agent_repair_phase(
                 // verify document closed (`bound_gap`); a cage that did not
                 // admit the edit is a terminal refusal with no closure
                 // reported, so no receipt is attempted for it.
-                let receipt_result: Result<
-                    (),
-                    crate::app::repair_attempt::ReceiptBindingError,
-                > = if gap_bound
-                    && cage_after.verdict.status
-                        != crate::edit_cage::EditCageVerdictStatus::Compliant
-                {
-                    Err(crate::app::repair_attempt::ReceiptBindingError::from(
-                        gap_bound_rejected_attempt_message(
-                            cage_after.attempt_id.as_str(),
-                            cage_after.verdict.status,
-                            &attempt.seam_id,
-                        ),
-                    ))
-                } else {
-                    run_agent_receipt_for_attempt(
-                        AgentReceiptOptions {
-                            root: root.clone(),
-                            root_explicit: true,
-                            verify_json: verify_json.clone(),
-                            seam_id: attempt.seam_id.clone(),
-                            attempt_id: None,
-                            test_changed,
-                            commands_run: Vec::new(),
-                            json: true,
-                            out: Some(root.join("target/ripr/reports/agent-receipt.json")),
-                        },
-                        Some(cage_after.attempt_id.as_str()),
-                        Some(&packet_path),
-                        store_ref,
-                        evaluation_custody
-                            .as_mut()
-                            .map(|custody| (&cage_after, custody)),
-                    )
-                };
+                let receipt_result: Result<(), crate::app::repair_attempt::ReceiptBindingError> =
+                    if gap_bound
+                        && cage_after.verdict.status
+                            != crate::edit_cage::EditCageVerdictStatus::Compliant
+                    {
+                        Err(crate::app::repair_attempt::ReceiptBindingError::from(
+                            gap_bound_rejected_attempt_message(
+                                cage_after.attempt_id.as_str(),
+                                cage_after.verdict.status,
+                                &attempt.seam_id,
+                            ),
+                        ))
+                    } else {
+                        run_agent_receipt_for_attempt(
+                            AgentReceiptOptions {
+                                root: root.clone(),
+                                root_explicit: true,
+                                verify_json: verify_json.clone(),
+                                seam_id: attempt.seam_id.clone(),
+                                attempt_id: None,
+                                test_changed,
+                                commands_run: Vec::new(),
+                                json: true,
+                                out: Some(root.join("target/ripr/reports/agent-receipt.json")),
+                            },
+                            Some(cage_after.attempt_id.as_str()),
+                            Some(&packet_path),
+                            store_ref,
+                            evaluation_custody
+                                .as_mut()
+                                .map(|custody| (&cage_after, custody)),
+                        )
+                    };
 
                 if let Err(error) = &receipt_result
                     && cage_after.focused_result.is_some()
@@ -5721,7 +5720,15 @@ mod tests {
             // caller attests its own tail committed the verdict.
             let other_error =
                 "repair attempt changed while the after phase ran; retry the after phase";
-            record_after_phase_refusal(&root, None, attempt_id, other_error, "changed", true, false)?;
+            record_after_phase_refusal(
+                &root,
+                None,
+                attempt_id,
+                other_error,
+                "changed",
+                true,
+                false,
+            )?;
             let rerouted = load_repair_attempt_manifest(&root, attempt_id)?;
             match rerouted.last_after_refusal {
                 Some(refusal) if refusal.reason == "changed" => {}
@@ -5777,8 +5784,7 @@ mod tests {
     /// message that still carries the tail no longer routes there when the
     /// class says otherwise — rewording the message cannot move the record.
     #[test]
-    fn after_phase_refusal_recording_reads_the_typed_class_not_the_message()
-    -> Result<(), String> {
+    fn after_phase_refusal_recording_reads_the_typed_class_not_the_message() -> Result<(), String> {
         use crate::app::repair_attempt::{
             TRUSTED_SURFACE_REFUSAL_TAIL, load_repair_attempt_manifest,
         };
