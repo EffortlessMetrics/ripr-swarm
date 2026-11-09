@@ -17438,6 +17438,14 @@ fn init_agents_appends_marked_section_idempotently_and_never_clobbers() -> Resul
 
     let first = run_ripr(&["init", "--root", &root, "--agents", "all", "--mcp"]);
     assert_success(&first);
+    // `--agents all` already writes `.cursor/mcp.json`, so the hint to add
+    // `--agents cursor` is not offered.
+    let first_stdout = String::from_utf8_lossy(&first.stdout);
+    assert!(
+        first_stdout.contains("For Codex run `codex mcp add"),
+        "{first_stdout}"
+    );
+    assert!(!first_stdout.contains("For Cursor add"), "{first_stdout}");
     let after_claude = std::fs::read_to_string(&claude).map_err(|e| e.to_string())?;
     assert!(
         after_claude.starts_with(mine),
