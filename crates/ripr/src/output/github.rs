@@ -38,11 +38,23 @@ pub(crate) fn render_with_config(output: &CheckOutput, config: &RiprConfig) -> S
                 .map(|entry| entry.finding_id.as_str())
         })
         .collect();
+    // #13819: a finding whose changed owner carries `#[mutants::skip]` is
+    // withheld the same way and counted under its own reason.
+    let withheld_ids: std::collections::BTreeSet<&str> = output
+        .owner_opt_outs
+        .iter()
+        .map(|opt_out| opt_out.finding_id.as_str())
+        .collect();
     let mut suppressed = 0usize;
+    let mut withheld = 0usize;
     let mut not_current = 0usize;
     for finding in &output.findings {
         if suppressed_ids.contains(finding.id.as_str()) {
             suppressed += 1;
+            continue;
+        }
+        if withheld_ids.contains(finding.id.as_str()) {
+            withheld += 1;
             continue;
         }
         // Candidate-actionable eligibility (#3281): annotations are current
@@ -281,10 +293,11 @@ pub(crate) fn render_with_config(output: &CheckOutput, config: &RiprConfig) -> S
         *per_level.entry("warning").or_default() += 1;
         out.push_str(warning);
     }
-    if !output.findings.is_empty() && (suppressed > 0 || not_current > 0) {
+    if !output.findings.is_empty() && (suppressed > 0 || withheld > 0 || not_current > 0) {
         out.push_str(&unannotated_denominator_notice(
             output,
             suppressed,
+            withheld,
             not_current,
         ));
     }
@@ -588,10 +601,11 @@ fn display_limit_notice(
 fn unannotated_denominator_notice(
     output: &CheckOutput,
     suppressed: usize,
+    withheld: usize,
     not_current: usize,
 ) -> String {
     let total = output.findings.len();
-    let annotated = total - suppressed - not_current;
+    let annotated = total - suppressed - withheld - not_current;
     let mut parts = Vec::new();
     if suppressed > 0 {
         let policy = output
@@ -600,6 +614,16 @@ fn unannotated_denominator_notice(
             .map(|outcome| outcome.policy_path.as_str())
             .unwrap_or_default();
         parts.push(format!("{suppressed} suppressed by policy {policy}"));
+    }
+    if withheld > 0 {
+        let reason = output
+            .owner_opt_outs
+            .first()
+            .map(|opt_out| opt_out.reason.as_str())
+            .unwrap_or_default();
+        parts.push(format!(
+            "{withheld} withheld by owner opt-out ({reason}: the changed function carries #[mutants::skip])"
+        ));
     }
     if not_current > 0 {
         parts.push(format!(
@@ -754,6 +778,7 @@ mod tests {
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
+            owner_opt_outs: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -1399,6 +1424,7 @@ mod tests {
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
+            owner_opt_outs: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -1479,6 +1505,7 @@ mod tests {
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
+            owner_opt_outs: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -2244,6 +2271,7 @@ mod tests {
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
+            owner_opt_outs: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -2607,6 +2635,7 @@ mod tests {
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
+            owner_opt_outs: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,

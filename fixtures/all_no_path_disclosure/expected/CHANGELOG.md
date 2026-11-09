@@ -636,3 +636,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — all_no_path_disclosure (36)
+
+Reason:
+Reach summary of a workspace-unreferenced owner now ends '(unreferenced in workspace)' (RIPR-SPEC-0219, #12766); class unchanged
+
+Command:
+`cargo xtask goldens bless all_no_path_disclosure --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

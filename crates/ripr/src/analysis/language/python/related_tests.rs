@@ -17,10 +17,12 @@ use std::rc::Rc;
 mod verify_command_tests;
 
 mod dunder_entries;
+mod dunder_protocol;
 mod project_names;
 pub(super) use dunder_entries::{
     PythonClassFacts, apply_class_facts, operator_entry_in_text, with_entry,
 };
+pub(super) use dunder_protocol::body_exercises_dunder_protocol;
 pub(super) use project_names::{apply_project_module_names, owner_import_modules_for};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -146,6 +148,7 @@ pub(super) struct PythonRepairPlacement {
 pub(super) struct RelatedCandidateMemo<'a> {
     by_owner: HashMap<OwnerKey, Vec<PythonRelatedCandidate<'a>>>,
     helpers: HashMap<OwnerKey, Vec<HelperOwnerCallCandidate<'a>>>,
+    dunder_index: Option<Rc<DunderOwnerIndex>>,
     alignment_preps: HashMap<OwnerKey, AlignmentPrep<'a>>,
     alignment_lookup: Option<Rc<TestLookup<'a>>>,
 }
@@ -182,9 +185,15 @@ impl<'a> RelatedCandidateMemo<'a> {
         owners: &[PythonOwner],
         all_tests: &'a [PythonTest],
     ) -> Vec<HelperOwnerCallCandidate<'a>> {
+        let by_class = Rc::clone(
+            self.dunder_index
+                .get_or_insert_with(|| Rc::new(dunder_owner_index(owners))),
+        );
         self.helpers
             .entry(owner_key(owner))
-            .or_insert_with(|| helper_owner_call_candidates(owner, owners, all_tests))
+            .or_insert_with(|| {
+                helper_owner_call_candidates_indexed(owner, owners, all_tests, Some(&by_class))
+            })
             .clone()
     }
 
@@ -299,12 +308,83 @@ pub(super) fn helper_owner_call_candidates<'a>(
     owners: &[PythonOwner],
     all_tests: &'a [PythonTest],
 ) -> Vec<HelperOwnerCallCandidate<'a>> {
+    helper_owner_call_candidates_indexed(owner, owners, all_tests, None)
+}
+
+/// Dunder methods of each (file, class), as positions in the run's owners.
+/// Built once per run so a helper's reaching dunders are found without
+/// scanning every owner (#13776).
+pub(super) type DunderOwnerIndex = HashMap<(PathBuf, String), Vec<usize>>;
+
+pub(super) fn dunder_owner_index(owners: &[PythonOwner]) -> DunderOwnerIndex {
+    let mut by_class = DunderOwnerIndex::new();
+    for (position, owner) in owners.iter().enumerate() {
+        if !owner.class_path.is_empty() && dunder_method_class(owner).is_some() {
+            by_class
+                .entry((owner.file.clone(), owner.class_path.clone()))
+                .or_default()
+                .push(position);
+        }
+    }
+    by_class
+}
+
+/// The same-class dunder owners whose `self.` call path reaches the method
+/// `owner` (`__setitem__` for `Cache.getsizeof`, `__getitem__` for
+/// `LFUCache.__touch`), or `None` for an owner no dunder is known to reach.
+fn dunder_entry_callers<'o>(
+    owner: &PythonOwner,
+    owners: &'o [PythonOwner],
+    by_class: Option<&DunderOwnerIndex>,
+) -> Option<Vec<&'o PythonOwner>> {
+    if owner.class_facts.dunder_entries.is_empty()
+        || owner.class_path.is_empty()
+        || !matches!(
+            owner.owner_kind,
+            Some(OwnerKind::Method | OwnerKind::ClassMethod)
+        )
+        || is_dunder_name(&owner.name)
+    {
+        return None;
+    }
+    let wanted = |candidate: &PythonOwner| {
+        candidate.file == owner.file
+            && candidate.class_path == owner.class_path
+            && owner.class_facts.dunder_entries.contains(&candidate.name)
+            && dunder_method_class(candidate).is_some()
+    };
+    let callers: Vec<&PythonOwner> = match by_class {
+        Some(by_class) => by_class
+            .get(&(owner.file.clone(), owner.class_path.clone()))
+            .into_iter()
+            .flatten()
+            .filter_map(|position| owners.get(*position))
+            .filter(|candidate| wanted(candidate))
+            .collect(),
+        None => owners
+            .iter()
+            .filter(|candidate| wanted(candidate))
+            .collect(),
+    };
+    (!callers.is_empty()).then_some(callers)
+}
+
+pub(super) fn helper_owner_call_candidates_indexed<'a>(
+    owner: &PythonOwner,
+    owners: &[PythonOwner],
+    all_tests: &'a [PythonTest],
+    by_class: Option<&DunderOwnerIndex>,
+) -> Vec<HelperOwnerCallCandidate<'a>> {
     let top_level_function = |candidate: &PythonOwner| {
         candidate.owner_kind == Some(OwnerKind::Function)
             && candidate.class_path.is_empty()
             && candidate.qualified_name == candidate.name
     };
-    if !top_level_function(owner)
+    let callers: Vec<&PythonOwner> = if let Some(callers) =
+        dunder_entry_callers(owner, owners, by_class)
+    {
+        callers
+    } else if !top_level_function(owner)
         || owners
             .iter()
             .filter(|other| {
@@ -314,7 +394,17 @@ pub(super) fn helper_owner_call_candidates<'a>(
             != 1
     {
         return Vec::new();
-    }
+    } else {
+        module_function_callers(owner, owners, top_level_function)
+    };
+    helper_candidates_from_callers(callers, all_tests)
+}
+
+fn module_function_callers<'o>(
+    owner: &PythonOwner,
+    owners: &'o [PythonOwner],
+    top_level_function: impl Fn(&PythonOwner) -> bool,
+) -> Vec<&'o PythonOwner> {
     let mut frontier = vec![owner.name.clone()];
     let mut callers: Vec<&PythonOwner> = Vec::new();
     for _ in 0..MAX_HELPER_CALLER_DEPTH {
@@ -345,6 +435,13 @@ pub(super) fn helper_owner_call_candidates<'a>(
         }
         frontier = next;
     }
+    callers
+}
+
+fn helper_candidates_from_callers<'a>(
+    callers: Vec<&PythonOwner>,
+    all_tests: &'a [PythonTest],
+) -> Vec<HelperOwnerCallCandidate<'a>> {
     let mut found: Vec<HelperOwnerCallCandidate<'a>> = Vec::new();
     let mut seen: std::collections::HashSet<(&'a Path, &'a str)> = std::collections::HashSet::new();
     let token = crate::analysis::cancellation::current_token();
@@ -1461,7 +1558,11 @@ pub(super) fn test_imports_owner_module(test: &PythonTest, owner: &PythonOwner) 
 /// import (`from pkg.cache import Cache as C`), or a member of an imported
 /// owner module (`cache.Cache`). A bare `Cache` with no such import, or one
 /// imported from another module, is a different class.
-fn test_references_owner_class(test: &PythonTest, owner: &PythonOwner, class: &str) -> bool {
+pub(super) fn test_references_owner_class(
+    test: &PythonTest,
+    owner: &PythonOwner,
+    class: &str,
+) -> bool {
     test_uses_owner_class(
         test,
         owner,

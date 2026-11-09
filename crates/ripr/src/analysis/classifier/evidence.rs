@@ -554,14 +554,8 @@ impl ClassifiedProbeEvidence {
         // expands to a call is invisible to `calls`, so the bare name in
         // either counts as another caller.
         let owner_has_other_callers = context.owner_fn.is_none_or(|owner| {
-            let other_function_holds_owner = context.index.functions().iter().any(|function| {
-                function.id != owner.id
-                    && !test_summaries
-                        .iter()
-                        .any(|test| test.file == function.file && test.name == function.name)
-                    && (function.calls.iter().any(|call| call.name == owner.name)
-                        || mentions_identifier(function.body.as_str(), &owner.name))
-            });
+            let other_function_holds_owner =
+                other_function_holds_owner(context.index, owner, &test_summaries);
             // Only the `&&`/`||` operand reading consumes this, so other
             // families skip the per-file macro scan.
             other_function_holds_owner
@@ -1748,6 +1742,45 @@ impl ClassifiedProbeEvidence {
             && context
                 .owner_fn
                 .is_some_and(|owner| !context.owner_may_be_reached_unseen(owner));
+        // RIPR-SPEC-0219: a ruled-out owner is one the whole workspace never
+        // names (no caller, alias, doctest, macro block or language-dispatch
+        // clause can run it unseen), so no test can reach it. Say so on the
+        // reach stage; the verdict corpus reads this as a gap, not an
+        // abstention.
+        // Fail closed for programs a build or subprocess runs without any
+        // source naming them (`main`, build scripts, binary targets) and for
+        // owners the stricter unreferenced check does not admit.
+        let entry_point = context.unmounted_build_script
+            || context
+                .probe
+                .location
+                .file
+                .file_name()
+                .is_some_and(|name| name == "build.rs")
+            || context
+                .probe
+                .location
+                .file
+                .components()
+                .any(|part| part.as_os_str() == "bin");
+        // The claim is workspace-wide, so it needs an index that spans the
+        // workspace: a mode that indexed only changed files may have left the
+        // caller out.
+        let unreferenced = reach_ruled_out
+            && context.workspace_complete
+            && !entry_point
+            && context.owner_fn.is_some_and(|owner| {
+                crate::analysis::classify::owner_unreferenced_in_workspace(owner, context.index)
+            });
+        let reach = if unreferenced {
+            StageEvidence::new(
+                reach.state,
+                reach.confidence,
+                format!("{} {UNREFERENCED_IN_WORKSPACE}", reach.summary),
+            )
+        } else {
+            reach
+        };
         // A weak stage is replaced too: with no reaching test, an
         // unconfirmed oracle (#5830 withholds confirmation from tokens that
         // only coincide with the owner's) is no discriminator at all.
@@ -2379,6 +2412,10 @@ impl PropagationWitnessDiagnostic {
     }
 }
 
+/// Reach-summary suffix for an owner no source, test or doc in the workspace
+/// names (RIPR-SPEC-0219). The verdict corpus keys on this wording.
+pub(in crate::analysis) const UNREFERENCED_IN_WORKSPACE: &str = "(unreferenced in workspace)";
+
 fn unreached_stage(stage: &str) -> StageEvidence {
     StageEvidence::new(
         StageState::No,
@@ -2717,6 +2754,37 @@ fn preferred_refusal_note(notes: Vec<AssertionRefusalNote>) -> Option<AssertionR
     // `min_by_key` keeps the first of equal ranks, so test order still
     // decides within a rank.
     notes.into_iter().min_by_key(rank)
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Test witness: related-test membership checks that
+    /// [`other_function_holds_owner`] paid on this thread.
+    static MEMBERSHIP_CHECKS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Whether a function other than `owner` that is not one of the related tests
+/// calls or names `owner`. The mention test is cheap and selective and the
+/// related-test membership test compares two paths per related test, so the
+/// mention test runs first and only the few functions that name the owner pay
+/// for membership (#13577); both are pure, so the answer is unchanged.
+fn other_function_holds_owner(
+    index: &RustIndex,
+    owner: &FunctionSummary,
+    test_summaries: &[&TestSummary],
+) -> bool {
+    index.functions().iter().any(|function| {
+        function.id != owner.id
+            && (function.calls.iter().any(|call| call.name == owner.name)
+                || mentions_identifier(function.body.as_str(), &owner.name))
+            && {
+                #[cfg(test)]
+                MEMBERSHIP_CHECKS.with(|checks| checks.set(checks.get() + 1));
+                !test_summaries
+                    .iter()
+                    .any(|test| test.file == function.file && test.name == function.name)
+            }
+    })
 }
 
 /// True when `name` occurs as a whole identifier in the code of `text`,
@@ -4178,5 +4246,70 @@ mod tests {
     #[test]
     fn trailing_path_segments_steps_past_a_multi_byte_separator() {
         assert_eq!(trailing_path_segments("x→Stack::new"), vec!["Stack", "new"]);
+    }
+
+    // --- #13577: the other-holder scan names the owner before it pays for
+    // related-test membership ---
+
+    fn indexed_lib(source: &str) -> Result<RustIndex, String> {
+        use crate::analysis::rust_index::{RaRustSyntaxAdapter, RustSyntaxAdapter};
+        let path = PathBuf::from("src/lib.rs");
+        let facts = RaRustSyntaxAdapter.summarize_file(&path, source)?;
+        let functions = facts.functions.clone();
+        let tests = facts.tests.clone();
+        let mut index = RustIndex::default();
+        index.insert_file_only(path, facts);
+        index.extend_functions(functions);
+        index.extend_tests(tests);
+        Ok(index)
+    }
+
+    #[test]
+    fn other_holder_scan_pays_membership_only_for_functions_naming_the_owner() -> Result<(), String>
+    {
+        let mut source = String::from("pub fn tax(x: i64) -> i64 { x * 8 / 100 }\n");
+        for number in 0..40 {
+            source.push_str(&format!(
+                "pub fn filler_{number}(x: i64) -> i64 {{ x + {number} }}\n"
+            ));
+        }
+        source.push_str("#[test]\nfn tax_is_eight() { assert_eq!(tax(100), 8); }\n");
+        let index = indexed_lib(&source)?;
+        let owner = index
+            .functions()
+            .iter()
+            .find(|function| function.name == "tax")
+            .ok_or("owner tax indexed")?;
+        // Independent reference: the functions other than the owner whose
+        // own text names `tax(`.
+        let naming = index
+            .functions()
+            .iter()
+            .filter(|function| function.id != owner.id && function.body.contains("tax("))
+            .count();
+        assert_eq!(naming, 1, "only the test names the owner");
+        assert!(
+            index.functions().len() > 40,
+            "the filler functions are indexed"
+        );
+
+        let related: Vec<&TestSummary> = index.tests().iter().collect();
+        assert_eq!(related.len(), 1, "the one test is a related test");
+        super::MEMBERSHIP_CHECKS.with(|checks| checks.set(0));
+        assert!(
+            !super::other_function_holds_owner(&index, owner, &related),
+            "the only other function naming the owner is a related test"
+        );
+        assert_eq!(
+            super::MEMBERSHIP_CHECKS.with(std::cell::Cell::get),
+            naming,
+            "membership is paid once per function that names the owner, not once per function"
+        );
+
+        // Not related: the same function now counts as another holder.
+        super::MEMBERSHIP_CHECKS.with(|checks| checks.set(0));
+        assert!(super::other_function_holds_owner(&index, owner, &[]));
+        assert_eq!(super::MEMBERSHIP_CHECKS.with(std::cell::Cell::get), naming);
+        Ok(())
     }
 }

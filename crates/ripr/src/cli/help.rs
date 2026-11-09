@@ -331,9 +331,13 @@ pub(super) fn print_review_comments_help() {
 }
 
 pub(super) fn print_gate_help() {
-    // `ripr gate evaluate --help` prints this same body; the catalog carries a
-    // richer example for that nested path than the bare `gate` row.
-    println!("{}", render_command_help(GATE_HELP, &["gate evaluate"]));
+    // `ripr gate evaluate --help` and `ripr gate check --help` print this same
+    // body; the catalog carries richer examples for those nested paths than
+    // the bare `gate` row.
+    println!(
+        "{}",
+        render_command_help(GATE_HELP, &["gate evaluate", "gate check"])
+    );
 }
 
 /// Help for a group command (`policy`, `reports`, `baseline`, `pr-comments`).
@@ -1623,7 +1627,11 @@ mod tests {
             &["parse_first_action_options"],
         ),
         ("first-pr", FIRST_PR_PARSER_RS, &["parse_options"]),
-        ("gate", GATE_PARSER_RS, &["parse_gate_options"]),
+        (
+            "gate",
+            GATE_PARSER_RS,
+            &["parse_gate_options", "parse_gate_check_plan"],
+        ),
         (
             "impacted-evidence",
             IMPACTED_EVIDENCE_PARSER_RS,
