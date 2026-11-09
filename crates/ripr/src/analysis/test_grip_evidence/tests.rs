@@ -22810,6 +22810,79 @@ fn given_integration_test_when_nested_raw_identifier_test_reaches_local_rival_th
     Ok(())
 }
 
+/// Review findings on the bare-call reading (#10855): each shape keeps the
+/// production relation because the call may name the owner. The controls with
+/// a rival the call really reaches are the bare/glob test above.
+#[test]
+fn given_integration_test_when_unreadable_or_shadowed_glob_import_then_owner_keeps_related_test()
+-> Result<(), String> {
+    let rival = format!("mod local {{\n    {LOCAL_RIVAL_FN}\n}}\n");
+    let private =
+        "mod local {\n    fn discounted_total(_amount: i32, _threshold: i32) -> i32 { 777 }\n}\n";
+    let test = "#[test]\nfn bare_real() {\n    assert_eq!(discounted_total(100, 100), 90);\n}\n";
+    for (label, source) in [
+        (
+            "grouped production import",
+            format!(
+                "{rival}use lib_proptest::{{discounted_total, other}};\nuse local::*;\n\n{test}"
+            ),
+        ),
+        (
+            "rooted production import",
+            format!("{rival}use ::lib_proptest::discounted_total;\nuse local::*;\n\n{test}"),
+        ),
+        (
+            "private rival under a glob",
+            format!("{private}use lib_proptest::discounted_total;\nuse local::*;\n\n{test}"),
+        ),
+        (
+            "own definition shadowing a glob",
+            format!(
+                "{rival}use local::*;\nfn discounted_total(_amount: i32, _threshold: i32) -> i32 {{ 1 }}\n\n{test}"
+            ),
+        ),
+    ] {
+        let related = related_test_names_for_boundary_seam(&source)?;
+        assert_eq!(related, vec!["bare_real".to_string()], "{label}: {source}");
+    }
+    Ok(())
+}
+
+#[test]
+fn given_integration_test_when_nested_block_use_binds_the_rival_then_owner_keeps_related_test()
+-> Result<(), String> {
+    let rival =
+        format!("mod local {{\n    {LOCAL_RIVAL_FN}\n}}\nuse lib_proptest::discounted_total;\n\n");
+    for (label, test) in [
+        (
+            "nested explicit use",
+            "#[test]\nfn nested() {\n    {\n        use local::discounted_total;\n        assert_eq!(discounted_total(100, 100), 777);\n    }\n    assert_eq!(discounted_total(100, 100), 90);\n}\n",
+        ),
+        (
+            "nested glob use",
+            "#[test]\nfn nested() {\n    {\n        use local::*;\n        assert_eq!(discounted_total(100, 100), 777);\n    }\n    assert_eq!(discounted_total(100, 100), 90);\n}\n",
+        ),
+    ] {
+        let source = format!("{rival}{test}");
+        let related = related_test_names_for_boundary_seam(&source)?;
+        assert_eq!(related, vec!["nested".to_string()], "{label}: {source}");
+    }
+    Ok(())
+}
+
+#[test]
+fn given_integration_test_when_nested_raw_identifier_test_calls_the_library_then_owner_keeps_related_test()
+-> Result<(), String> {
+    // Control for the raw-identifier test above. The top-level raw-identifier
+    // test does not discriminate (its scope is the file root either way).
+    let source = format!(
+        "mod local {{\n    {LOCAL_RIVAL_FN}\n}}\n\nmod inner {{\n    #[test]\n    fn r#match() {{\n        assert_eq!(lib_proptest::discounted_total(100, 100), 90);\n    }}\n}}\n"
+    );
+    let related = related_test_names_for_boundary_seam(&source)?;
+    assert_eq!(related, vec!["r#match".to_string()], "{source}");
+    Ok(())
+}
+
 /// #12266: a direct owner test that compares the inline `.unwrap_err()` result
 /// with the seam's own variant discriminates an `ErrorVariant` seam, as the
 /// bound-variable spelling already did. A different variant, or an opaque

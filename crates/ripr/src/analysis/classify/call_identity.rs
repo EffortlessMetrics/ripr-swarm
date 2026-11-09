@@ -3384,6 +3384,19 @@ struct LocalModules {
     file_uses: Vec<(Vec<String>, UseItem)>,
     /// `use` items inside the test body. They shadow module-level ones.
     body_uses: Vec<UseItem>,
+    /// `use` items inside nested blocks of the test body: they bind only
+    /// part of it, so a name they bind is a conflict.
+    nested_uses: Vec<UseItem>,
+    /// Modules (the file root is the empty path) directly defining a
+    /// body-ful `fn <owner>`; such a definition shadows a glob import.
+    defining: BTreeSet<Vec<String>>,
+    /// The rivals declared `pub`, the only ones a glob import reaches.
+    public_rivals: BTreeSet<Vec<String>>,
+    /// A `use` mentioning the owner's name that the reader could not parse.
+    unreadable_owner_use: bool,
+    /// A nested-block `use` that is a glob or unreadable: it may bind any
+    /// name, so no call is settled.
+    nested_blocked: bool,
     scope: Vec<String>,
 }
 
@@ -3448,6 +3461,11 @@ impl LocalModules {
             rivals: BTreeSet::new(),
             file_uses: Vec::new(),
             body_uses: Vec::new(),
+            nested_uses: Vec::new(),
+            defining: BTreeSet::new(),
+            public_rivals: BTreeSet::new(),
+            unreadable_owner_use: false,
+            nested_blocked: false,
             scope: Vec::new(),
         };
         let mut scope_set = false;
@@ -3489,12 +3507,24 @@ impl LocalModules {
                         .iter()
                         .skip(index + 2)
                         .find(|(_, token)| matches!(token, LexToken::Open | LexToken::Semi));
-                    if let (Some((_, inner)), Some((_, LexToken::Open))) = (stack.last(), body)
-                        && *inner == depth
-                    {
-                        found
-                            .rivals
-                            .insert(stack.iter().map(|(name, _)| name.clone()).collect());
+                    let in_module = stack
+                        .last()
+                        .map_or(depth == 0, |(_, inner)| *inner == depth);
+                    if let (true, Some((_, LexToken::Open))) = (in_module, body) {
+                        let module: Vec<String> =
+                            stack.iter().map(|(name, _)| name.clone()).collect();
+                        found.defining.insert(module.clone());
+                        if !module.is_empty() {
+                            let is_pub = (0..index)
+                                .rev()
+                                .map_while(|back| word_at(back))
+                                .take(6)
+                                .any(|word| word == "pub");
+                            if is_pub {
+                                found.public_rivals.insert(module.clone());
+                            }
+                            found.rivals.insert(module);
+                        }
                     }
                 }
                 LexToken::Word(word)
@@ -3509,6 +3539,8 @@ impl LocalModules {
                     if let Some(item) = text.and_then(UseItem::parse) {
                         let module = stack.iter().map(|(name, _)| name.clone()).collect();
                         found.file_uses.push((module, item));
+                    } else if text.is_none_or(|text| mentions_word(text, owner)) {
+                        found.unreadable_owner_use = true;
                     }
                 }
                 LexToken::Word(_) | LexToken::Semi => {}
@@ -3517,8 +3549,20 @@ impl LocalModules {
         let body_masked = mask_comments_and_strings(body);
         for range in use_item_ranges(&body_masked) {
             let text = body_masked.get(range.start + 3..range.end.saturating_sub(1));
-            if let Some(item) = text.and_then(UseItem::parse) {
-                found.body_uses.push(item);
+            let top_block = body_masked.get(..range.start).is_some_and(|before| {
+                before.matches('{').count() == before.matches('}').count() + 1
+            });
+            match (text.and_then(UseItem::parse), top_block) {
+                (Some(item), true) => found.body_uses.push(item),
+                (Some(item), false) => {
+                    found.nested_blocked |= item.glob;
+                    found.nested_uses.push(item);
+                }
+                (None, true) => {
+                    found.unreadable_owner_use |=
+                        text.is_none_or(|text| mentions_word(text, owner));
+                }
+                (None, false) => found.nested_blocked = true,
             }
         }
         found
@@ -3577,6 +3621,13 @@ impl LocalModules {
                 _ => Binding::Conflict,
             }
         };
+        if self
+            .nested_uses
+            .iter()
+            .any(|item| item.bound_name() == Some(name))
+        {
+            return Binding::Conflict;
+        }
         match resolve(self.body_uses.iter().collect()) {
             Binding::Unbound => resolve(
                 self.file_uses
@@ -3592,6 +3643,10 @@ impl LocalModules {
     /// Whether a bare call of the owner's name is bound, by an explicit
     /// import or a glob import, to a function of a local rival module.
     fn bare_names_rival(&self, integration_crate: bool) -> bool {
+        // An import the reader could not parse may bind the owner's name.
+        if self.unreadable_owner_use {
+            return false;
+        }
         match self.binding(&self.owner, integration_crate) {
             Binding::Path(path) => {
                 return path.split_last().is_some_and(|(last, module)| {
@@ -3606,13 +3661,17 @@ impl LocalModules {
             .iter()
             .filter(|(module, _)| *module == self.scope)
             .map(|(_, item)| item);
-        // A glob that brings a module defining the owner's name into scope.
-        // Two globs providing one name would not compile, so another glob
-        // cannot be the source of this call.
+        // A glob that brings a public rival into scope. A definition of the
+        // name in the test's own module shadows a glob, and two globs
+        // providing one name would not compile, so another glob cannot be
+        // the source of this call.
+        if self.defining.contains(&self.scope) {
+            return false;
+        }
         self.body_uses.iter().chain(module_uses).any(|item| {
             item.glob
                 && Self::absolute(&self.scope, &item.path, integration_crate)
-                    .is_some_and(|module| self.rivals.contains(&module))
+                    .is_some_and(|module| self.public_rivals.contains(&module))
         })
     }
 
@@ -3620,6 +3679,9 @@ impl LocalModules {
     /// module that defines the rival, as spelled from the test's own module.
     /// An empty path is a bare call.
     fn names_rival(&self, segments: &[String], integration_crate: bool) -> bool {
+        if self.nested_blocked {
+            return false;
+        }
         if segments.is_empty() {
             return self.bare_names_rival(integration_crate);
         }
