@@ -53,7 +53,7 @@
         {"stage":"reach","state":"yes","confidence":"low"},
         {"stage":"infect","state":"yes","confidence":"low"},
         {"stage":"propagate","state":"yes","confidence":"low"},
-        {"stage":"observe","state":"weak","confidence":"low"},
+        {"stage":"observe","state":"weak","confidence":"low","basis":[{"code":"observation_not_confirmed","summary":"the assertion is not confirmed to observe the changed value"}]},
         {"stage":"discriminate","state":"weak","confidence":"low"}
       ],
       "evidence_path": ["reach yes: 1 related Python test(s) found for owner `residue_fee`", "infection yes: Changed Python return expression can alter the owner return value: `return x * 3`", "propagation yes: Changed Python return value is already at the owner output boundary.", "observation weak: Strongest extracted Python oracle kind: `exact_value` (rank 5)", "discriminator weak: Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior.", "local flow reaches returned value: return x * 3 (line 6)", "related test tests/test_fees.py:10 test_residue_fee uses strong exact value oracle: assert residue_fee(3) % 3 == 0", "missing discriminator return value == <expected value>: changed Python returned-value at line 6 lacks a concrete repair discriminator"],
