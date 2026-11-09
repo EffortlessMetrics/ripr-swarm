@@ -17408,6 +17408,24 @@ fn init_agents_without_mcp_keeps_the_register_mcp_follow_up() -> Result<(), Stri
     Ok(())
 }
 
+/// An existing `ripr` entry in `.mcp.json` is left unchanged, so this run did
+/// not register anything and the register-the-server follow-up stays.
+#[test]
+fn init_mcp_with_existing_entry_keeps_the_register_mcp_follow_up() -> Result<(), String> {
+    let workspace = make_temp_workspace(None)?;
+    let root = workspace.display().to_string();
+    std::fs::write(
+        workspace.join(".mcp.json"),
+        "{\"mcpServers\":{\"ripr\":{\"command\":\"/removed/ripr\"}}}\n",
+    )
+    .map_err(|e| format!("write .mcp.json: {e}"))?;
+    let out = run_ripr(&["init", "--root", &root, "--agents", "claude", "--mcp"]);
+    assert_success(&out);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("Register the MCP server"), "{stdout}");
+    Ok(())
+}
+
 /// Plain `ripr init --mcp` does not plan `.cursor/mcp.json`, so the Cursor
 /// follow-up is still offered, and it names `--mcp` because that route needs it.
 #[test]

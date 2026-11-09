@@ -729,6 +729,7 @@ fn apply_init_plan(plan: &[InitTarget], root: &Path) -> Result<(), String> {
                     .path
                     .file_name()
                     .is_some_and(|name| name == MCP_CONFIG_FILE_NAME)
+                    && target.action != InitAction::LeaveUnchanged
             });
             println!(
                 "{}",

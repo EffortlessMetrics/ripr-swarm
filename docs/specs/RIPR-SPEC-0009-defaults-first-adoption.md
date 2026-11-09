@@ -93,7 +93,8 @@ The default contract is:
 - `ripr init --mcp` suggests `--agents cursor --mcp` for Cursor only when the
   run does not already plan `.cursor/mcp.json`.
 - `ripr init --agents` repeats the "register the MCP server" follow-up only
-  when the same run does not already write the MCP config.
+  when the same run does not actually write the MCP config (an existing `ripr`
+  entry left unchanged does not count).
 - Explicit CLI flags and LSP initialization options override repo config.
 - Repo config overrides built-in defaults.
 - Config discovery stops at a `.git` directory entry, including a dangling or
