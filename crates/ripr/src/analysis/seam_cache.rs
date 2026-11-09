@@ -175,6 +175,19 @@ pub(crate) fn production_entry_dirs(base: &Path) -> Vec<(PathBuf, bool)> {
     dirs
 }
 
+/// Entries and bytes under `base` that this build never reads (#7047):
+/// per-file fact entries written by other ripr builds or under older schema
+/// versions, across the Rust, TypeScript and Python fact stores this build
+/// knows. `ripr cache status` reports it; the next store prunes most of it.
+pub(crate) fn file_fact_reclaimable(base: &Path) -> Reclaimable {
+    let mut total = RepoFileFactCache::at_base(base).reclaimable();
+    #[cfg(feature = "lang-typescript")]
+    total.add(TypeScriptFileFactStore::at_base(base).reclaimable());
+    #[cfg(feature = "lang-python")]
+    total.add(PythonFileFactStore::at_base(base).reclaimable());
+    total
+}
+
 /// On-disk representation of seam-limit metadata embedded in the cache envelope.
 /// Mirrors `SeamLimitInfo` but lives in the cache module to avoid a circular dep.
 /// `#[serde(default)]` ensures old cache entries without this field deserialize
@@ -1409,6 +1422,10 @@ const CACHE_ENVELOPE_DIGEST_DOMAIN: &str = "ripr-cache:CacheEnvelope:v1";
 const SHARDED_ENVELOPE_DIGEST_DOMAIN: &str = "ripr-cache:ShardedCacheEnvelope:v1";
 const SHARDED_MANIFEST_DIGEST_DOMAIN: &str = "ripr-cache:ShardedCacheManifest:v1";
 
+mod build_retention;
+pub(crate) use build_retention::{
+    BuildRetention, Reclaimable, analyzer_version_from_entry_prefix, integer_schema_rank,
+};
 mod export;
 pub(crate) mod path_dependencies;
 mod scoped_inventory;
@@ -3128,51 +3145,6 @@ impl FileFactCacheStats {
     }
 }
 
-/// Layer directories whose stale schema siblings were already pruned this
-/// process (#7047). Mirrors the once-per-directory latch in
-/// `atomic_file::sweep_stale_temp_files_once`.
-/// Other analyzer identities whose current-schema file-fact entries survive
-/// the per-run prune (#7047): enough for an editor-managed server and a local
-/// CLI build to alternate on one cache without evicting each other.
-const FILE_FACT_RETAINED_OTHER_BUILDS: usize = 2;
-
-/// An other build whose use marker (a cache hit) is younger than this is
-/// never pruned, whatever its rank: a frequently rebuilt local CLI must not
-/// evict an editor server that is still in use. Builds that only wrote get no
-/// grace, so dirty rebuilds cannot accumulate.
-const FILE_FACT_RECENT_BUILD_GRACE: std::time::Duration = std::time::Duration::from_hours(7 * 24);
-
-/// Directory, beside the schema directories, holding one "last used" marker
-/// per build. Its name never parses as a schema version, so the
-/// schema-sibling prune keeps it.
-const FILE_FACT_BUILD_USE_DIR: &str = ".build-use";
-
-/// A long-running process (the editor server) refreshes its marker this often.
-const FILE_FACT_BUILD_USE_REFRESH: std::time::Duration = std::time::Duration::from_hours(1);
-
-static FILE_FACT_BUILD_USE_NOTED: Mutex<BTreeMap<PathBuf, std::time::Instant>> =
-    Mutex::new(BTreeMap::new());
-
-/// Whether `path` is a directory that is not a symlink.
-fn is_real_dir(path: &Path) -> bool {
-    std::fs::symlink_metadata(path)
-        .is_ok_and(|meta| meta.is_dir() && !meta.file_type().is_symlink())
-}
-
-/// [`is_real_dir`], or nothing exists at `path` yet.
-fn is_real_dir_or_absent(path: &Path) -> bool {
-    match std::fs::symlink_metadata(path) {
-        Ok(meta) => meta.is_dir() && !meta.file_type().is_symlink(),
-        Err(err) => err.kind() == std::io::ErrorKind::NotFound,
-    }
-}
-
-fn build_use_marker_name(identity: &str) -> String {
-    format!("{:016x}", fnv1a_64(identity.as_bytes()))
-}
-
-static FILE_FACT_STALE_SCHEMA_PRUNED: Mutex<BTreeSet<PathBuf>> = Mutex::new(BTreeSet::new());
-
 pub(crate) struct RepoFileFactCache {
     /// Entry directory: `{cache_base}/repo-file-facts/{schema_version}`.
     dir: PathBuf,
@@ -3613,270 +3585,68 @@ impl RepoFileFactCache {
         self.dir.join(key.filename())
     }
 
-    /// Once per run and cache layer directory, after a successful store,
-    /// best-effort remove sibling schema directories this build can never
-    /// serve (#7047). A process-wide latch avoids a new struct field.
-    fn prune_stale_schema_siblings_once(&self) {
-        let Some(layer_dir) = self.file_fact_schema_layer_dir() else {
-            return;
-        };
-        if !cache_path_contained_in_base(&self.base, &layer_dir) {
+    /// The shared build-retention policy (#7047) over this cache's
+    /// production layout `{base}/repo-file-facts/{current-version}`. Skips
+    /// `act` for test `at_dir` roots, which write entries directly in `dir`
+    /// and must never prune.
+    fn with_retention(&self, act: impl FnOnce(&build_retention::BuildRetention<'_>)) {
+        let layer_dir = self.base.join(CacheLayer::FileFacts.name());
+        if self.dir != layer_dir.join(FILE_FACT_CACHE_SCHEMA_VERSION) {
             return;
         }
-        let first_visit = {
-            let mut pruned = match FILE_FACT_STALE_SCHEMA_PRUNED.lock() {
-                Ok(guard) => guard,
-                Err(poisoned) => poisoned.into_inner(),
-            };
-            pruned.insert(layer_dir.clone())
-        };
-        if first_visit {
-            self.prune_stale_schema_siblings(&layer_dir);
-            self.prune_stale_build_entries();
-        }
+        let read_build = rust_file_fact_entry_build;
+        act(&build_retention::BuildRetention::new(
+            &self.base,
+            layer_dir,
+            FILE_FACT_CACHE_SCHEMA_VERSION,
+            file_fact_schema_rank,
+            &read_build,
+        ));
     }
 
-    /// Records that this build served a hit, at most once per
-    /// [`FILE_FACT_BUILD_USE_REFRESH`] per process. A warm run never writes an
-    /// entry, so entry mtimes alone would make an editor server that only
-    /// hits look abandoned to the prune; this marker is its "last used" time.
-    /// Called by the fact build when it serves a hit, not by
-    /// `load_file_facts` itself, so read-only consumers (cache export
-    /// validation) never write. Production layout, usable base and a real
-    /// (non-symlink) marker directory only; the write is atomic and failures
-    /// are ignored.
+    /// Once per run and cache layer directory, after a successful store,
+    /// best-effort remove sibling schema directories and other builds'
+    /// entries this build can never serve (#7047).
+    fn prune_stale_schema_siblings_once(&self) {
+        self.with_retention(|retention| retention.prune_once());
+    }
+
+    /// Records that this build served a hit, so the prune sees an editor
+    /// server that only hits as in use. Called by the fact build when it
+    /// serves a hit, not by `load_file_facts` itself, so read-only consumers
+    /// (cache export validation) never write.
     pub(crate) fn note_build_use(&self) {
-        let Some(layer_dir) = self.file_fact_schema_layer_dir() else {
-            return;
-        };
         if self.unusable_base_reason().is_some() {
             return;
         }
-        let due = {
-            let mut noted = match FILE_FACT_BUILD_USE_NOTED.lock() {
-                Ok(guard) => guard,
-                Err(poisoned) => poisoned.into_inner(),
-            };
-            let now = std::time::Instant::now();
-            let due = noted
-                .get(&layer_dir)
-                .is_none_or(|last| now.duration_since(*last) >= FILE_FACT_BUILD_USE_REFRESH);
-            if due {
-                noted.insert(layer_dir.clone(), now);
-            }
-            due
-        };
-        if !due {
-            return;
-        }
-        let marker_dir = layer_dir.join(FILE_FACT_BUILD_USE_DIR);
-        if !cache_path_contained_in_base(&self.base, &marker_dir)
-            || !is_real_dir_or_absent(&layer_dir)
-            || !is_real_dir_or_absent(&marker_dir)
-        {
-            return;
-        }
-        let identity = crate::build_identity::cache_identity();
-        let marker = marker_dir.join(build_use_marker_name(identity));
-        // A planted symlink at the marker path is replaced by the atomic
-        // rename, never written through.
-        let _ = std::fs::create_dir_all(&marker_dir)
-            .map_err(|err| err.to_string())
-            .and_then(|()| {
-                crate::atomic_file::write_cache(&marker, identity.as_bytes(), "build use marker")
-            });
+        self.with_retention(|retention| retention.note_use());
     }
 
-    /// Last-hit time per other build, from the use markers. A marker counts
-    /// only when it is a small regular file whose name is the hash of its
-    /// content.
-    fn other_build_use_markers(
-        &self,
-        identity: &str,
-    ) -> HashMap<String, (std::time::SystemTime, PathBuf)> {
-        let mut markers = HashMap::new();
-        let Some(layer_dir) = self.file_fact_schema_layer_dir() else {
-            return markers;
-        };
-        let marker_dir = layer_dir.join(FILE_FACT_BUILD_USE_DIR);
-        if !is_real_dir(&layer_dir) || !is_real_dir(&marker_dir) {
-            return markers;
-        }
-        let Ok(entries) = std::fs::read_dir(&marker_dir) else {
-            return markers;
-        };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            let Ok(metadata) = std::fs::symlink_metadata(&path) else {
-                continue;
-            };
-            if !metadata.is_file() || metadata.len() > 4096 {
-                continue;
-            }
-            let Ok(build) = std::fs::read_to_string(&path) else {
-                continue;
-            };
-            if build == identity
-                || entry.file_name().to_str() != Some(build_use_marker_name(&build).as_str())
-            {
-                continue;
-            }
-            let modified = metadata.modified().unwrap_or(std::time::UNIX_EPOCH);
-            markers.insert(build, (modified, path));
-        }
-        markers
-    }
-
-    /// Best-effort removal of current-schema entries written by older builds
-    /// (#7047). A key embeds the analyzer identity, so such an entry is never
-    /// served again, yet every ripr upgrade (and every dirty local rebuild)
-    /// used to leave a full generation behind.
-    ///
-    /// Kept: the current build; the [`FILE_FACT_RETAINED_OTHER_BUILDS`] most
-    /// recently used other builds, where "used" is the later of a build's
-    /// newest entry and its use marker; and any build whose use marker (proof
-    /// of a hit, see `note_build_use`) is younger than
-    /// [`FILE_FACT_RECENT_BUILD_GRACE`], so an editor server that only hits
-    /// survives a run of local rebuilds while write-only rebuilds do not pile
-    /// up. Entries whose header cannot be read, temp files and non-JSON files
-    /// are left alone; nothing is removed through a symlinked directory.
-    fn prune_stale_build_entries(&self) {
-        let identity = crate::build_identity::cache_identity();
-        // Both the layer and the schema directory must be real directories:
-        // containment is lexical, so a symlinked `repo-file-facts` would
-        // otherwise let the prune delete JSON outside the cache.
-        let Some(layer_dir) = self.file_fact_schema_layer_dir() else {
-            return;
-        };
-        if !is_real_dir(&layer_dir) || !is_real_dir(&self.dir) {
-            return;
-        }
-        let Ok(entries) = std::fs::read_dir(&self.dir) else {
-            return;
-        };
-        let mut by_build: HashMap<String, (std::time::SystemTime, Vec<PathBuf>)> = HashMap::new();
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
-                continue;
-            }
-            let Ok(metadata) = std::fs::symlink_metadata(&path) else {
-                continue;
-            };
-            if !metadata.is_file() {
-                continue;
-            }
-            let Some(header) = read_file_fact_header(&path) else {
-                continue;
-            };
-            if header.file_fact_cache_schema_version != FILE_FACT_CACHE_SCHEMA_VERSION
-                || header.analyzer_version == identity
-            {
-                continue;
-            }
-            let modified = metadata.modified().unwrap_or(std::time::UNIX_EPOCH);
-            let slot = by_build
-                .entry(header.analyzer_version)
-                .or_insert_with(|| (std::time::UNIX_EPOCH, Vec::new()));
-            slot.0 = slot.0.max(modified);
-            slot.1.push(path);
-        }
-        let mut markers = self.other_build_use_markers(identity);
-        for (build, (hit, _)) in &markers {
-            if let Some(slot) = by_build.get_mut(build) {
-                slot.0 = slot.0.max(*hit);
-            }
-        }
-        let now = std::time::SystemTime::now();
-        let hit_recently = |hit: std::time::SystemTime| {
-            now.duration_since(hit)
-                .map_or(true, |age| age < FILE_FACT_RECENT_BUILD_GRACE)
-        };
-        let mut builds: Vec<(String, (std::time::SystemTime, Vec<PathBuf>))> =
-            by_build.into_iter().collect();
-        // Newest first; the identity breaks ties so the choice is deterministic.
-        builds.sort_by(|(left_id, (left, _)), (right_id, (right, _))| {
-            right.cmp(left).then_with(|| left_id.cmp(right_id))
-        });
-        for (rank, (build, (_, paths))) in builds.into_iter().enumerate() {
-            let marker = markers.remove(&build);
-            if rank < FILE_FACT_RETAINED_OTHER_BUILDS
-                || marker.as_ref().is_some_and(|(hit, _)| hit_recently(*hit))
-            {
-                continue;
-            }
-            for path in paths {
-                if cache_path_contained_in_base(&self.base, &path) {
-                    let _ = std::fs::remove_file(&path);
-                }
-            }
-            if let Some((_, marker_path)) = marker {
-                let _ = std::fs::remove_file(marker_path);
-            }
-        }
-        // Markers of builds that no longer have entries, once past the grace.
-        for (hit, marker_path) in markers.into_values() {
-            if !hit_recently(hit) && cache_path_contained_in_base(&self.base, &marker_path) {
-                let _ = std::fs::remove_file(marker_path);
-            }
-        }
-    }
-
-    fn prune_stale_schema_siblings(&self, layer_dir: &Path) {
-        let Ok(layer_meta) = std::fs::symlink_metadata(layer_dir) else {
-            return;
-        };
-        if layer_meta.file_type().is_symlink() || !layer_meta.is_dir() {
-            return;
-        }
-        let Ok(entries) = std::fs::read_dir(layer_dir) else {
-            return;
-        };
-        for entry in entries.flatten() {
-            let name = entry.file_name();
-            let Some(name) = name.to_str() else {
-                continue;
-            };
-            if name == FILE_FACT_CACHE_SCHEMA_VERSION || !parses_as_file_fact_schema_version(name) {
-                continue;
-            }
-            let path = layer_dir.join(name);
-            if !cache_path_contained_in_base(&self.base, &path) {
-                continue;
-            }
-            let Ok(metadata) = std::fs::symlink_metadata(&path) else {
-                continue;
-            };
-            if metadata.file_type().is_symlink() || !metadata.is_dir() {
-                continue;
-            }
-            let _ = std::fs::remove_dir_all(&path);
-        }
-    }
-
-    /// Production layout `{base}/repo-file-facts/{current-version}` only.
-    /// Test `at_dir` roots write entries directly in `dir` and must not prune.
-    fn file_fact_schema_layer_dir(&self) -> Option<PathBuf> {
-        let layer_dir = self.base.join(CacheLayer::FileFacts.name());
-        let expected = layer_dir.join(FILE_FACT_CACHE_SCHEMA_VERSION);
-        (self.dir == expected).then_some(layer_dir)
+    /// Entries and bytes in this layer that this build never reads.
+    pub(crate) fn reclaimable(&self) -> build_retention::Reclaimable {
+        let mut total = build_retention::Reclaimable::default();
+        self.with_retention(|retention| total = retention.reclaimable());
+        total
     }
 }
 
-/// File-fact schema directories are `{major}.{minor}` decimal generations.
-fn parses_as_file_fact_schema_version(name: &str) -> bool {
-    let mut parts = name.split('.');
-    let Some(major) = parts.next() else {
-        return false;
+/// The analyzer identity of a current-schema Rust file-fact entry.
+fn rust_file_fact_entry_build(path: &Path) -> Option<String> {
+    read_file_fact_header(path)
+        .filter(|header| header.file_fact_cache_schema_version == FILE_FACT_CACHE_SCHEMA_VERSION)
+        .map(|header| header.analyzer_version)
+}
+
+/// Order of a file-fact schema directory, a `{major}.{minor}` decimal
+/// generation; `None` for any other name.
+fn file_fact_schema_rank(name: &str) -> Option<(u64, u64)> {
+    let (major, minor) = name.split_once('.')?;
+    let decimal = |part: &str| {
+        (!part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit()))
+            .then(|| part.parse::<u64>().ok())
+            .flatten()
     };
-    let Some(minor) = parts.next() else {
-        return false;
-    };
-    parts.next().is_none()
-        && !major.is_empty()
-        && !minor.is_empty()
-        && major.bytes().all(|byte| byte.is_ascii_digit())
-        && minor.bytes().all(|byte| byte.is_ascii_digit())
+    Some((decimal(major)?, decimal(minor)?))
 }
 
 /// Lexical containment under the cache base: no `.` / `..`, and a nonempty
@@ -10583,6 +10353,7 @@ mod file_fact_stale_schema_prune_tests {
 /// the most recently written other builds.
 #[cfg(test)]
 mod file_fact_stale_build_prune_tests {
+    use super::build_retention::{BUILD_USE_DIR as FILE_FACT_BUILD_USE_DIR, build_use_marker_name};
     use super::*;
 
     fn scratch(label: &str) -> Result<PathBuf, String> {
