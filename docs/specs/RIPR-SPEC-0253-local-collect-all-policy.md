@@ -134,6 +134,8 @@ cargo xtask check-doc-artifacts
 7. Given failed workspace discovery and lint-ledger drift, plus an independent
    executable violation, the command reports both failing leaves and publishes
    a new lint-policy report containing both lint errors despite an old pass.
+8. Given a workspace member that omits, disables or replaces
+   `[lints] workspace = true`, `check-lint-policy` fails and names the manifest.
 
 ## Test Mapping
 
@@ -146,6 +148,7 @@ All cases invoke the real driver through `xtask/tests/policy_all.rs`:
 - Example 5: `policy_all_healthy_leaves_still_fail_when_aggregate_report_cannot_be_written`.
 - Example 6: `policy_all_reads_metadata_without_compiling_members_or_changing_the_lockfile`.
 - Example 7: `policy_all_keeps_membership_discovery_failure_and_other_leaf_failures`.
+- Example 8: `lint_policy_rejects_missing_disabled_and_replaced_member_inheritance`.
 
 `.ripr/traceability.toml` registers the exact file/symbol references. A
 traceability-check pass validates registered paths; it does not itself show
