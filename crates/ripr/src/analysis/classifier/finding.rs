@@ -748,12 +748,24 @@ fn bound_identifiers_from_owner_calls(body: &str, owner_name: &str) -> Vec<Strin
             }
             None => {
                 // In a struct pattern `field: binding` only the name after the
-                // colon is bound; the field label is not a shadow.
-                for word in words {
-                    let after_word = pattern
-                        .find(word)
-                        .map(|at| pattern[at + word.len()..].trim_start())
-                        .unwrap_or("");
+                // colon is bound; the field label is not a shadow. Classify
+                // each occurrence by its own position.
+                let pattern_bytes = pattern.as_bytes();
+                let mut index = 0;
+                while index < pattern_bytes.len() {
+                    if !is_ident_byte(pattern_bytes[index]) {
+                        index += 1;
+                        continue;
+                    }
+                    let start = index;
+                    while index < pattern_bytes.len() && is_ident_byte(pattern_bytes[index]) {
+                        index += 1;
+                    }
+                    let word = &pattern[start..index];
+                    if matches!(word, "mut" | "ref") {
+                        continue;
+                    }
+                    let after_word = pattern[index..].trim_start();
                     let label = after_word.starts_with(':') && !after_word.starts_with("::");
                     if !label {
                         events.push((word.to_string(), false));
@@ -1802,6 +1814,24 @@ mod tests {
             ),
         ] {
             assert_eq!(bound(body), vec!["amount".to_string()], "{label}: {body}");
+        }
+        // A label never hides a real binding of the same word, or of a word
+        // that merely contains the label.
+        for (label, body) in [
+            (
+                "label and binding share a name",
+                "let amount = tax(100); let Record { amount: amount } = r; assert_eq!(amount, 0);",
+            ),
+            (
+                "later binding of the label name",
+                "let amount = tax(100); let Rec { amount: x, y: amount } = r; assert_eq!(amount, 0);",
+            ),
+            (
+                "shorthand after a longer label",
+                "let amount = tax(100); let Record { total_amount: x, amount } = r; assert_eq!(amount, 0);",
+            ),
+        ] {
+            assert!(bound(body).is_empty(), "{label}: {body}");
         }
         // The shadowed test is not credited as observing the owner.
         assert!(!oracle_binds_sink_identity(
