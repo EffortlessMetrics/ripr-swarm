@@ -9,7 +9,7 @@ use crate::output::python_repair_card::python_repair_card;
 use crate::output::typescript_preview_card::typescript_preview_card;
 use crate::output::workflow_escape::{
     escape_data, escape_property, escape_property_pre_encoded, path_is_unplaceable,
-    unplaced_location_prefix,
+    stable_path_has_non_utf8_marker, unplaced_location_prefix, unplaced_non_utf8_location_prefix,
 };
 
 /// Render findings as GitHub Actions workflow command annotations.
@@ -188,7 +188,20 @@ pub(crate) fn render_with_config(output: &CheckOutput, config: &RiprConfig) -> S
         // `file` arrives via `repository_display_path` (stable text, `%`
         // pre-encoded); `title` is raw text.
         let display_path = repository_display_path(&output.root, &finding.probe.location.file);
-        let (placement, message) = if path_is_unplaceable(&display_path) {
+        let (placement, message) = if stable_path_has_non_utf8_marker(&display_path) {
+            // `%XX` is not decoded by the runner, so `file=` would name a
+            // different file (#13961). Omit placement; name the path.
+            (
+                String::new(),
+                format!(
+                    "{}{message}",
+                    unplaced_non_utf8_location_prefix(
+                        &display_path.replace("%25", "%"),
+                        &finding.probe.location.line.to_string()
+                    )
+                ),
+            )
+        } else if path_is_unplaceable(&display_path) {
             // A property cannot carry a control or bidi character, so omit
             // `file=`/`line=` and name the escaped location in the message.
             (
@@ -1271,6 +1284,41 @@ mod tests {
         assert!(
             rendered.contains("file=src/a%2Cb%3Ac%25dé.rs,line=13"),
             "file property must escape comma/colon/percent, keep unicode literal: {rendered}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn render_omits_file_placement_for_non_utf8_paths() {
+        use std::os::unix::ffi::OsStrExt;
+        let mut output = output_with_unknown_finding();
+        output.findings[0].probe.location.file =
+            PathBuf::from(std::ffi::OsStr::from_bytes(b"src/a_\xFF.rs"));
+
+        let rendered = render(&output);
+
+        assert!(
+            !rendered.contains("file=") && !rendered.contains("line=13"),
+            "a non-UTF-8 path must not claim a placement: {rendered}"
+        );
+        assert!(
+            rendered.contains(
+                "Location (file name is not valid UTF-8, so not placed): src/a_%25FF.rs:13. "
+            ),
+            "the %XX location must lead the message: {rendered}"
+        );
+    }
+
+    #[test]
+    fn render_keeps_placement_for_literal_percent_hex_paths() {
+        let mut output = output_with_unknown_finding();
+        output.findings[0].probe.location.file = PathBuf::from("src/a%FF.rs");
+
+        let rendered = render(&output);
+
+        assert!(
+            rendered.contains("file=src/a%25FF.rs,line=13"),
+            "a literal %FF name stays placeable: {rendered}"
         );
     }
 
