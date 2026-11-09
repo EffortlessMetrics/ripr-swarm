@@ -303,6 +303,11 @@ pub(super) fn to_input(record: &Value) -> Result<Value, String> {
         {
             return Err("counterexample must identify different implementation bytes".to_string());
         }
+        if let (Some(counterexample), Some(restored)) = (counterexample, restored)
+            && counterexample["implementation_sha256"] == restored["implementation_sha256"]
+        {
+            return Err("counterexample must identify different implementation bytes".to_string());
+        }
         if let (Some(original), Some(counterexample), Some(restored)) =
             (original, counterexample, restored)
             && [original, counterexample, restored]

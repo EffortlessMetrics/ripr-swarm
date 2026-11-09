@@ -65,6 +65,8 @@ pub(super) fn validate(record: &Value, observations: &Value) -> Result<(), Strin
         if (outcome == Some("ready") && setup["status"] == "failed")
             || (matches!(outcome, Some("approval_required" | "server_unavailable"))
                 && setup["mcp_available"] == true)
+            || (outcome == Some("not_run")
+                && matches!(setup["status"].as_str(), Some("passed" | "failed")))
             || (matches!(
                 record["environment"]["ripr_binary"].as_str(),
                 Some("missing" | "predates_mcp")

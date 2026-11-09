@@ -264,6 +264,7 @@ fn native_muse_envelope_joins_pins_without_aliasing_namespaces() -> Result<(), S
         ("/environment/ripr_binary", json!("predates_mcp")),
         ("/mcp/setup_outcome", json!("approval_required")),
         ("/mcp/setup_outcome", json!("server_unavailable")),
+        ("/mcp/setup_outcome", json!("not_run")),
         ("/model/model", json!("another-model")),
         ("/model/trial_id", json!("another-trial")),
         ("/model/configuration", json!("changed configuration bytes")),
@@ -726,6 +727,23 @@ fn native_muse_semantics_reject_contradictory_success_and_unbound_evidence() -> 
             .err()
             .ok_or("prose accepted")?
             .contains("repair_manifest")
+    );
+    // Partial legs: a counterexample that shares the restored build is not a
+    // wrong-implementation control, even with no original leg to compare.
+    let mut partial = full_fixture()?;
+    let restored_impl =
+        partial["observations"]["executions"]["restored"]["implementation_sha256"].clone();
+    partial["observations"]["executions"]
+        .as_object_mut()
+        .ok_or("executions")?
+        .remove("original");
+    partial["observations"]["executions"]["counterexample"]["implementation_sha256"] =
+        restored_impl;
+    assert!(
+        to_input(&partial)
+            .err()
+            .ok_or("identical counterexample/restored builds accepted")?
+            .contains("different implementation")
     );
     let mut passing_with_failure = full_fixture()?;
     passing_with_failure["observations"]["executions"]["original"]["failed_test"] =
