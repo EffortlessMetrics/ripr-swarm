@@ -3399,6 +3399,19 @@ pub(crate) fn preview_check_command(root: &Path, input: PreviewCheckInput<'_>) -
     format!("ripr check --root {root_arg}{scope} --format agent")
 }
 
+/// What a preview route's `check` command reports for its input: a
+/// `--files` brief points at the current diff, which need not match the
+/// selected files, so the wording qualifies that instead of presenting
+/// the current diff as equivalent to the selection.
+pub(crate) fn preview_check_findings(input: PreviewCheckInput<'_>) -> &'static str {
+    match input {
+        PreviewCheckInput::CurrentDiffNotFiles => {
+            "for the current diff's findings (that diff need not match the --files selection)"
+        }
+        _ => "for its findings",
+    }
+}
+
 /// The one-line working route for a seam-addressed agent command (`agent
 /// brief`, `agent card`, `agent packet`) whose subject is TypeScript/Python
 /// preview code (#13791). The seam inventory those commands read covers
@@ -3418,12 +3431,7 @@ pub(crate) fn preview_seam_route(
         PreviewCheckInput::Base(base) => shell_arg(base),
         _ => "<base>".to_string(),
     };
-    let findings = match input {
-        PreviewCheckInput::CurrentDiffNotFiles => {
-            "for the current diff's findings (that diff need not match the --files selection)"
-        }
-        _ => "for its findings",
-    };
+    let findings = preview_check_findings(input);
     format!(
         "run `{command}` {findings}, and when that prints a `ripr agent repair --gap-id <gap> --base {base_value} --phase before` start, run that start. The seam inventory behind `agent brief`, `agent card` and `agent packet` covers Rust files only, so no seam exists for {subject} and no config change adds one",
     )

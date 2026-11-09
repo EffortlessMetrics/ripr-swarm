@@ -504,6 +504,25 @@ fn python_disabled_flat_layout_brief_names_the_enable_step() -> TestResult {
             && !scope.contains('\n'),
         "disabled flat Python brief must name the enable step in one line: {scope}"
     );
+
+    // A `--files` brief has no diff/base to replay: the `check` route reads
+    // the current diff, so the warning must qualify that the current diff
+    // need not match the selected file instead of presenting the route as
+    // analyzing `lib/pricing.py` itself.
+    let files = brief_scope_warning(&root, &["--files", "lib/pricing.py"])?;
+    let command = printed_check_command(&files)?;
+    assert!(
+        files.contains("the changed code is Python")
+            && files.contains("add \"python\" to `[languages] enabled` in ripr.toml")
+            && files.contains(&format!(
+                "run `{command}` for the current diff's findings (that diff need not match the --files selection)"
+            ))
+            && !command.contains("--base")
+            && !command.contains("--diff")
+            && command.ends_with(" --format agent")
+            && !files.contains('\n'),
+        "--files disabled Python brief must qualify its route: {files}"
+    );
     ignore_remove_dir_all(&root);
 
     // Negative control: the same flat layout with Python enabled keeps the

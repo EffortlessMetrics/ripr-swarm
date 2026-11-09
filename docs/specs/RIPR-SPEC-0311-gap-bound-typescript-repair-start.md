@@ -195,8 +195,12 @@ existed with no way to begin the attempt.
     `ripr.toml [languages]` and ripr did not analyze the change, gives the
     enabling step (add `"python"` to `[languages] enabled` in `ripr.toml`),
     and only then names the `ripr check --format agent` route for the
-    brief's own input. It never says no config change adds a seam, because
-    here a config change is exactly the fix. A Python-enabled scope keeps
+    brief's own input. For a `--files` brief that route reads the current
+    diff, so the line qualifies it as the current diff's findings (that
+    diff need not match the `--files` selection) rather than presenting
+    it as analyzing the selected files. It never says no config change
+    adds a seam, because here a config change is exactly the fix.
+    A Python-enabled scope keeps
     item 12's preview wording, a Rust-only or mixed-language scope keeps
     the generic wording, and no verdict, exit code, or diff-driven
     auto-enable behavior changes.
@@ -242,7 +246,8 @@ existed with no way to begin the attempt.
 - Disabled-Python disclosure on an empty brief (#13571): a CLI case for a
   flat-layout Python scope (`lib/*.py` plus `t/test_*.py`, no root marker,
   no `ripr.toml`) naming Python, the not-analyzed disclosure and the
-  enabling `[languages]` step before the `check` route, with negative
+  enabling `[languages]` step before the `check` route, plus a `--files`
+  case asserting the current-diff qualifier on that route, with negative
   controls for the same layout with Python enabled (item 12 wording) and
   for a Rust-only scope (generic wording); unit cases for the
   disabled-Python scope predicate (enabled Python, Rust, TypeScript, Perl,

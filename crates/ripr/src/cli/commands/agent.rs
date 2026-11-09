@@ -698,9 +698,10 @@ fn route_preview_only_empty_brief(
         );
     } else {
         *warning = format!(
-            "No seams matched the requested scope (source: {}): the changed code is Python, but Python is not enabled in ripr.toml [languages], so ripr did not analyze it; add \"python\" to `[languages] enabled` in ripr.toml, then run `{}`.",
+            "No seams matched the requested scope (source: {}): the changed code is Python, but Python is not enabled in ripr.toml [languages], so ripr did not analyze it; add \"python\" to `[languages] enabled` in ripr.toml, then run `{}` {}.",
             working_set.source.as_str(),
-            app::task_first::preview_check_command(root, input)
+            app::task_first::preview_check_command(root, input),
+            app::task_first::preview_check_findings(input)
         );
     }
 }
