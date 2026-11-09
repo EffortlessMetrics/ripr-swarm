@@ -2331,9 +2331,57 @@ pub(super) fn own_crate_qualified_entry_path(
             .is_some_and(|root| root == Path::new("src/lib.rs"));
     let module = super::call_identity::root_library_item_module_path(index, caller)
         .filter(|_| composes_under_library_root)?;
-    // Only a test-crate root (`tests/<name>.rs`, `tests/<name>/main.rs`):
-    // a module child (`tests/api/child.rs`, `tests/common/mod.rs`) resolves
-    // paths from a parent file whose bindings this scan does not read.
+    let facts = index.files().get(&test.file)?;
+    // The one identifier the package's library is imported as: `[lib] name`
+    // when set, else the package name (hyphens folded). The package name is
+    // not a second spelling when `[lib] name` differs.
+    let crate_name = index.root_library_name.as_deref()?;
+    let masked_file = mask_comments_and_strings(&facts.source);
+    let code_line = call_line
+        .checked_sub(1)
+        .and_then(|line| masked_file.lines().nth(line))?;
+    let spelled_path: String = std::iter::once(crate_name)
+        .chain(module.iter().map(String::as_str))
+        .chain(std::iter::once(caller.name.as_str()))
+        .collect::<Vec<_>>()
+        .join("::");
+    (is_qualified_owner_call(code_line, &spelled_path)
+        && own_crate_name_unshadowed_in_test(index, test, crate_name))
+    .then_some(spelled_path)
+}
+
+/// Whether `owner` is an item of the root package's library (`src/lib.rs` or a
+/// module composed under it), the only owner a root integration test reaches
+/// through the library's own crate name.
+fn owner_is_root_library_item(index: &RustIndex, owner: &FunctionSummary) -> bool {
+    !path_is_absolute_form(&owner.file)
+        && package_prefix(&owner.file).is_none()
+        && super::owner_pin::target_root(&owner.file, index, &BTreeSet::new())
+            .is_some_and(|root| root == Path::new("src/lib.rs"))
+}
+
+/// Whether `krate` is the root package's library identifier and `test` — an
+/// integration test of the root package — names it unshadowed (#14036).
+fn root_library_name_is_unshadowed(index: &RustIndex, test: &TestSummary, krate: &str) -> bool {
+    super::call_identity::under_tests_dir(&test.file)
+        && !path_is_absolute_form(&test.file)
+        && package_prefix(&test.file).is_none()
+        && index.root_library_name.as_deref() == Some(krate)
+        && own_crate_name_unshadowed_in_test(index, test, krate)
+}
+
+/// Whether `crate_name` — the root package's library identifier — names that
+/// library from `test` unshadowed (#8999, #14036): the test is a test-crate root
+/// (`tests/<name>.rs`, `tests/<name>/main.rs`; a module child resolves paths
+/// from a parent file whose bindings this scan does not read), splices no
+/// items, and neither the file nor the test body declares, imports, renames or
+/// globs the name into something else. The caller has already established the
+/// test sits under the root package's `tests/` directory.
+fn own_crate_name_unshadowed_in_test(
+    index: &RustIndex,
+    test: &TestSummary,
+    crate_name: &str,
+) -> bool {
     let normalized_test = normalize_path(&test.file);
     let test_segments: Vec<&str> = normalized_test.split('/').collect();
     let is_test_crate_root = match test_segments.as_slice() {
@@ -2342,18 +2390,16 @@ pub(super) fn own_crate_qualified_entry_path(
         _ => false,
     };
     if !is_test_crate_root {
-        return None;
+        return false;
     }
-    let facts = index.files().get(&test.file)?;
+    let Some(facts) = index.files().get(&test.file) else {
+        return false;
+    };
     if facts.source.contains("include!")
         || super::call_identity::source_may_splice_items(&facts.source, true)
     {
-        return None;
+        return false;
     }
-    // The one identifier the package's library is imported as: `[lib] name`
-    // when set, else the package name (hyphens folded). The package name is
-    // not a second spelling when `[lib] name` differs.
-    let crate_name = index.root_library_name.as_deref()?;
     let stripped_file = strip_comments_and_strings(&facts.source);
     // Any import that may bind the crate name to something else, in the
     // file or in the test body: a glob, or a path ending in that name
@@ -2369,29 +2415,12 @@ pub(super) fn own_crate_qualified_entry_path(
                     || import.alias.as_deref().map(unraw).as_deref() == Some(crate_name)
             })
     };
-    // The call fact's text is the whole source line: match the own-crate
-    // spelling only in code, never in a string or comment beside a foreign
-    // call of the same name.
-    // The line is read from the comment/string-masked FULL file at the call's
-    // own location: a call path inside a multiline raw string or block
-    // comment that ends on a line holding a real call is masked out.
-    let masked_file = mask_comments_and_strings(&facts.source);
-    let code_line = call_line
-        .checked_sub(1)
-        .and_then(|line| masked_file.lines().nth(line))?;
-    let spelled_path: String = std::iter::once(crate_name)
-        .chain(module.iter().map(String::as_str))
-        .chain(std::iter::once(caller.name.as_str()))
-        .collect::<Vec<_>>()
-        .join("::");
-    (is_qualified_owner_call(code_line, &spelled_path)
-        && !file_may_bind_name(&stripped_file, crate_name)
+    !file_may_bind_name(&stripped_file, crate_name)
         && !body_binds_owner_name(&test.body, crate_name)
         && !super::owner_pin::file_renames_to(&facts.source, crate_name)
         && !super::owner_pin::file_renames_to(&facts.source, &format!("r#{crate_name}"))
         && !may_rebind_crate_name(&facts.source)
-        && !may_rebind_crate_name(&test.body))
-    .then_some(spelled_path)
+        && !may_rebind_crate_name(&test.body)
 }
 
 /// The call's source line as code: the line at `line` of the comment/string-
@@ -4561,6 +4590,12 @@ fn initializer_names_impl_type(
         ([ty], Some(b'(')) => factory("", ty),
         ([ty, name], Some(b'(')) => *ty == impl_type && factory(ty, name),
         ([ty, name], _) => *ty == impl_type && is_variant_name(name),
+        // `krate::Ty::name(..)` (#14036): the factory reads the crate prefix
+        // through the `krate::Ty` spelling and accepts only the root
+        // package's own unshadowed library name.
+        ([krate, ty, name], Some(b'(')) if *ty == impl_type => {
+            factory(&format!("{krate}::{ty}"), name)
+        }
         _ => false,
     }
 }
@@ -5568,6 +5603,14 @@ fn inherent_receiver_call_resolves_with(
                     return false;
                 }
                 head == impl_type
+            } else if let Some((krate, ty)) = ty.split_once("::") {
+                // A crate-qualified constructor head (`krate::Ty::new()`,
+                // #14036): the leading segment must be the root package's
+                // library name, unshadowed in this test, and the owner an
+                // item of that library.
+                owner.is_some_and(|owner| owner_is_root_library_item(index, owner))
+                    && root_library_name_is_unshadowed(index, test, krate)
+                    && associated_constructor_names_own_type(index, ty, name, None)
             } else {
                 if associated_constructor_names_own_type(
                     index,
