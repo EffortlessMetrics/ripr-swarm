@@ -1549,10 +1549,12 @@ mod tests {
         #![proptest_config(path_text_config())]
 
         /// #13949: on Unix the source-identity encoding round-trips native
-        /// bytes exactly, including invalid UTF-8, backslashes and literal
-        /// `%XX` spellings that resemble the encoder's own escapes.
+        /// bytes exactly over a small hazard alphabet (see `hazard_bytes`):
+        /// invalid UTF-8, valid multi-byte sequences, backslashes and literal
+        /// `%XX` spellings that resemble the encoder's own escapes. It does
+        /// not sample the whole byte range.
         #[test]
-        fn proptest_stable_source_path_text_round_trips_arbitrary_bytes(
+        fn proptest_stable_source_path_text_round_trips_hazard_bytes(
             bytes in hazard_bytes()
         ) {
             let path = native_path(bytes);
