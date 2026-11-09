@@ -1706,6 +1706,15 @@ impl PythonAdapter {
                 .iter()
                 .filter(|file| !is_test_file(file)),
         );
+        related_tests::apply_project_module_names(
+            &mut all_owners,
+            reach
+                .as_ref()
+                .map_or(&workspace_files, |admission| &admission.discovered)
+                .iter()
+                .filter(|file| !is_test_file(file)),
+            |path| options.root.join(path).exists(),
+        );
         related_tests::apply_rival_definition_modules(&mut all_owners);
         related_tests::apply_class_facts(&mut all_owners);
 
@@ -2300,6 +2309,7 @@ impl PythonAdapter {
             rust_diagnostic_origins: Default::default(),
             rust_consumed_sources: Default::default(),
             preview_fact_cache: fact_cache_stats,
+            owner_opt_outs: Vec::new(),
         })
     }
 
@@ -2465,6 +2475,9 @@ mod module_field_tests;
 mod helper_assertions_tests;
 
 #[cfg(test)]
+mod helper_module_attribute_tests;
+
+#[cfg(test)]
 mod capability_disposition_tests;
 
 #[cfg(test)]
@@ -2476,6 +2489,8 @@ mod literal_patch_tests;
 mod cli_runner_tests;
 #[cfg(test)]
 mod cli_subcommand_tests;
+#[cfg(test)]
+mod dunder_helper_reach_tests;
 #[cfg(test)]
 mod helper_owner_call_tests;
 #[cfg(test)]
@@ -2499,12 +2514,21 @@ mod imported_call_operator_tests;
 mod may_reach_tests;
 #[cfg(test)]
 mod module_value_tests;
+
+#[cfg(test)]
+pub(crate) use module_value_tests::{
+    python_module_fstring_reader_finding, python_module_reader_assertion_parses,
+    python_module_string_reader_finding, python_module_value_without_import_identity,
+};
+
 #[cfg(test)]
 mod new_declaration_tests;
 
 #[cfg(test)]
 mod python_tests;
 
+#[cfg(test)]
+mod layout_tests;
 #[cfg(test)]
 mod reexport_tests;
 

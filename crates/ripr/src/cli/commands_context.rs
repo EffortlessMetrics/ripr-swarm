@@ -14,7 +14,7 @@ use std::path::Path;
 ///
 /// One owner for card, stub, and packet JSON refusals (#9127): terminal-safe
 /// JSON, a trailing newline, then the chunked stdout writer.
-pub(super) fn write_stdout_refusal_json(document: String) -> Result<(), String> {
+pub(in crate::cli) fn write_stdout_refusal_json(document: String) -> Result<(), String> {
     write_stdout_chunked(&prepared_stdout_refusal_json(document))
 }
 

@@ -13,6 +13,7 @@
 
 use crate::accepted_value::closest;
 use crate::cli::help;
+use crate::cli::usage_refusal;
 
 /// The help route an argument error for `command` points at. `check`'s
 /// default help is a one-screen summary that omits advanced flags, so a
@@ -38,6 +39,13 @@ pub(crate) fn help_pointer(command: &str) -> String {
 /// `check` points at `--help --all` (see [`help_pointer`]).
 pub(crate) fn unknown_argument(command: &str, arg: &str) -> String {
     let pointer = help_pointer(command);
+    let message = unknown_argument_message(command, arg, &pointer);
+    // #11584: the typed code and token travel to the JSON-requested boundary.
+    usage_refusal::note_unknown_argument(arg, &message, &pointer);
+    message
+}
+
+fn unknown_argument_message(command: &str, arg: &str, pointer: &str) -> String {
     // `--version` is a process-level identity query scoped to the top level
     // (`parse.rs`); a subcommand that does not implement its own version
     // contract rejects it. Naming the spelling that works (#4318) beats
@@ -68,7 +76,9 @@ fn implements_local_version(command: &str) -> bool {
 /// Delegates to the shared [`crate::accepted_value`] authority so `output` and
 /// `app` parsers produce identical wording without importing this adapter.
 pub(crate) fn unknown_value(label: &str, value: &str, accepted: &[&str]) -> String {
-    crate::accepted_value::unknown_value(label, value, accepted)
+    let message = crate::accepted_value::unknown_value(label, value, accepted);
+    usage_refusal::note_unknown_value(value, &message, None);
+    message
 }
 
 /// Build the error for an unrecognized `ripr check --format` value.
@@ -79,6 +89,12 @@ pub(crate) fn unknown_value(label: &str, value: &str, accepted: &[&str]) -> Stri
 /// names (#9359). The near-miss suggestion still names the fix when one
 /// format is close enough (#4318).
 pub(in crate::cli) fn unknown_format_value(value: &str, accepted: &[&str]) -> String {
+    let message = unknown_format_message(value, accepted);
+    usage_refusal::note_unknown_value(value, &message, Some("ripr check --help --all"));
+    message
+}
+
+fn unknown_format_message(value: &str, accepted: &[&str]) -> String {
     match closest(value, accepted.iter().copied()) {
         Some(suggestion) => format!(
             "unknown format {value:?}. Did you mean `{suggestion}`? \

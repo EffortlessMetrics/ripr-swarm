@@ -254,7 +254,7 @@ fn durable_currentness_keeps_ordinary_descendant_continuation() -> Result<(), St
     assert_eq!(before["command_routes"].as_array().map(Vec::len), Some(2));
     write(
         &root.join("tests/target.rs"),
-        "#[test]\nfn focused() { assert_eq!(1, 1); }\n",
+        "#[test]\nfn focused() {}\n\n#[test]\nfn added() { assert_eq!(1, 1); }\n",
     )?;
     git(&root, &["add", "tests/target.rs"])?;
     git(&root, &["commit", "--no-gpg-sign", "-m", "focused edit"])?;
@@ -313,7 +313,7 @@ fn finish_and_issue(root: &Path, id: &RepairAttemptId) -> Result<(), String> {
 fn finish_without_receipt(root: &Path, id: &RepairAttemptId) -> Result<PathBuf, String> {
     write(
         &root.join("tests/target.rs"),
-        "#[test]\nfn focused() { assert_eq!(1, 1); }\n",
+        "#[test]\nfn focused() {}\n\n#[test]\nfn added() { assert_eq!(1, 1); }\n",
     )?;
     let manifest = load_repair_attempt_manifest(root, id)?;
     let packet = find_manifest_artifact_by_role(&manifest, "agent_packet")
@@ -707,7 +707,7 @@ fn durable_selected_action_failed_current_restarts_before() -> Result<(), String
     // state or after verdict is authored by the test.
     write(
         &root.join("tests/target.rs"),
-        "#[test]\nfn focused() { assert_eq!(1, 1); }\n",
+        "#[test]\nfn focused() {}\n\n#[test]\nfn added() { assert_eq!(1, 1); }\n",
     )?;
     write(&root.join("outside.rs"), "pub fn forbidden() {}\n")?;
     let manifest = load_repair_attempt_manifest(&root, &id)?;
@@ -755,7 +755,7 @@ fn durable_selected_action_awaiting_and_descendant_keep_after() -> Result<(), St
     let before = selected_action_parity(&root, &id, "awaiting_edit", Some("repair_attempt_after"))?;
     write(
         &root.join("tests/target.rs"),
-        "#[test]\nfn focused() { assert_eq!(1, 1); }\n",
+        "#[test]\nfn focused() {}\n\n#[test]\nfn added() { assert_eq!(1, 1); }\n",
     )?;
     git(&root, &["add", "tests/target.rs"])?;
     git(&root, &["commit", "--no-gpg-sign", "-m", "focused edit"])?;

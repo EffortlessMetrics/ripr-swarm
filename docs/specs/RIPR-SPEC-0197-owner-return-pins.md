@@ -286,7 +286,9 @@ wrong credits.
    for both at once), and its arguments may only pick the runtime:
    `flavor`, `worker_threads` and `start_paused`, each `= literal`;
    `crate = ..` swaps the runtime path and `unhandled_panic = ..` changes what
-   a panic does, so they refuse. An `async` owner's return value is then read
+   a panic does, so they refuse. The same completion rule applies under
+   `#[async_std::test]` when `async_std` is the crate in the test's module and
+   the attribute carries no arguments (#5040). An `async` owner's return value is then read
    through one trailing `.await` on its call (`assert_eq!(total(&[1, 2]).await,
    3)`). Its bare call is a future and refuses; a sync owner's `.await` awaits
    a future it returns and stays refused. A sync `fn` under `#[tokio::test]`
@@ -1672,7 +1674,10 @@ payload with `expected`, so each reads as the unwrapped pin above
    import evidence the macro earns no credit and no grade.
 2. Shape. One plain invocation whose first operand is exactly the owner call
    and whose second operand is a literal (`4`, `-1.5`, `'x'`, `true`,
-   `"text"`, `String::from("text")`). Further arguments are the panic
+   `"text"`, `String::from("text")`), or, for a whole-value field pin
+   (RIPR-SPEC-0225), the struct literal of the owner's type that gate reads
+   (`assert_ok_eq!(config(2), Config { retries: 3 })` beside an
+   `Ok(Config { .. })` tail). Further arguments are the panic
    message and decide nothing. An owner call in the second operand, a
    non-literal expected operand (a binding, a constant, a call, a value
    computed from the owner) and an owner call wrapped in anything refuse.
@@ -1685,8 +1690,9 @@ payload with `expected`, so each reads as the unwrapped pin above
    or `None` as a value refuses, as for the unwrapped pin.
 5. Grade. The oracle extractor stays text-only and reads the line
    `unknown` / none (RIPR-SPEC-0120). Reveal grades it `exact_value` /
-   strong for one probe, and only for the `return_value` family, when this
-   pin admits the assertion (RIPR-SPEC-0231 rule 10). The grade lives in the
+   strong for one probe, and only for the `return_value` family and the
+   whole-value field pin of the `field_construction` family (#12394 item 5),
+   when this pin admits the assertion (RIPR-SPEC-0231 rule 10). The grade lives in the
    finding's related test. Analyses that read the extracted oracle list
    directly (test-grip evidence, the refusal notes) still see no oracle on
    that line.
@@ -1718,7 +1724,19 @@ change.
    another integer, or take an `Err(..)` or `None` exit that the pin names as
    `Ok(..)` or `Some(..)`, the pin does not credit. This applies to `assert_eq!`, `matches!` and the
    claims `assert_ok_eq!` / `assert_some_eq!` alike.
-4. Fail open to today's reading. A call or owner outside the subset, an
+4. Whole-value field pins (#12394 item 5). For a RIPR-SPEC-0225 whole-value
+   field pin the same question is asked of the changed field alone: the text
+   after `field:` on the changed line (the diff's old text for the old
+   version) is read as an integer expression over the owner's parameters, in
+   the field's declared integer type, which must match the parameters' type.
+   Straight-line `let name = expr;` bindings above the field are substituted
+   into it (`let n = n + 1;` above `retries: n + 1` reads as `(n + 1) + 1`); a
+   guard, a mutation, a `mut` or typed binding, or a binding inside the
+   literal leaves the owner unread. When the pinned struct literal gives the field a decimal integer that
+   neither version computes for the call's literal arguments, the pin does not
+   credit; the other fields of the literal are not read. This applies to
+   `assert_eq!` and the claims `assert_ok_eq!` / `assert_some_eq!` alike.
+5. Fail open to today's reading. A call or owner outside the subset, an
    `Err(..)` payload, a wrapper mismatch the compiler would reject and every
    pin either version agrees with keep their current result.
 
@@ -2372,6 +2390,39 @@ shadowing, so a closure parameter `|f| run(1, f)` beside an outer call-making
 `let f` is withheld (a missed advisory). The tracing forwarding shape is a
 limitation, not a credit, until the receiving call is itself resolved.
 
+### Selected tier literals through a returned binding (#13037)
+
+A changed decimal `u32` tier literal can be credited when a bounded source
+witness proves that an admitted exact owner assertion selects that literal,
+passes the early-return guard, and returns the immutable local binding itself.
+The asserted value must be the changed value or its paired previous value; a
+replacement with the same numeric value is not a discriminator. For a wholly
+added owner, every owner line must be present in the addition. The witness
+checks literal primitive arguments and resolves the one optional, same-module
+`u32` constant with a single decimal-literal initializer without guessing at
+macros, conditional declarations, arithmetic or shadowed names. It admits only the supported primitive condition grammar and no
+unresolved call identity or assertion context.
+
+The assertion must also distinguish its whole test outcome. Preceding
+statements are admitted only as direct exact assertions on the same owner that
+hold for both readable versions. Following statements must likewise be bounded
+owner assertions that hold in the version where the selected pin passes. A
+failing or opaque prefix or suffix withholds the witness. For a wholly added
+owner the current value model supplies the readable version. The witness also
+withholds at its bounded source-size, syntax-depth, branch-node, test and
+assertion-count limits.
+
+The selected return path must carry the binding untransformed. A different
+selected tier, an early return, multiplication of the selected value, an opaque
+input, an unrelated or unexecuted assertion, or multiple same-line owner calls
+does not earn this witness. Other return paths may include the bounded
+multiplication shape but cannot borrow its observation. When an independently
+verified assertion is absent from related-test output, it may be added only if
+all previously matched rows are present and there is room under the existing
+render cap; preserve the original rows and count the new row. Otherwise retain
+unknown. Runtime mutation results are evidence for the fixture truth and are
+not themselves a static propagation proof.
+
 ## Required Evidence
 
 - Rule 7 (#6482): in the RIPR-SPEC-0219 verdict corpus, `grid-arith-helper`
@@ -2927,6 +2978,13 @@ assertions. This repair shares the existing callback without that larger migrati
 
 ## Test Mapping
 
+- Selected tier literals (#13037): `crates/ripr/tests/tier_value_flow_13037.rs`
+  covers direct and added-owner paths, the named guard, input/return-path
+  controls, assertion identity and execution order, distinct evidence rows
+  and a full row window.
+  The seven `tier-flow-13037-*` verdict corpus cases independently retain
+  runtime truth for the direct, wrong-input, transformed, masked, discarded,
+  opaque-input and unrelated-test shapes.
 - Claims payload equality pins (#12304):
   `crates/ripr/tests/claims_payload_eq_owner_pin.rs` (the credited twins and
   one negative control per refusal above, the early-`Err` and `None` exit

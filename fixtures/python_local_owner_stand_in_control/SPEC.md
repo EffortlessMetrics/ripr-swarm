@@ -14,6 +14,13 @@ The same `fee` change as `python_local_owner_stand_ins`. The tests assert `fee(1
 
 The finding is `exposed`: the stand-in gate withholds credit only where the asserting scope rebinds the owner, so the real import keeps it.
 
+The expected static class per finding (machine-checked against
+`expected/check.json` by `check-fixture-contracts`, #12928):
+
+```expected-classes
+probe:src_shop.py:python_preview:3e5b25e0 -> exposed
+```
+
 ## Must Not
 
 Withhold credit from the real import or from an outer call beside a helper-local shadow. This control proves the stand-in gate is not a blanket veto.
