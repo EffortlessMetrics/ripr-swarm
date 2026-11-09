@@ -45,6 +45,18 @@ index 1111111..2222222 100644
          return 0;
 ";
 
+const INSERTION_PATCH: &str = "diff --git a/src/lib.rs b/src/lib.rs
+index 1111111..2222222 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -3,2 +3,5 @@ pub const FREE_OVER_CENTS: u32 = 5_000;
+ pub fn shipping_cost(weight_g: u32, order_cents: u32, express: bool) -> u32 {
++    if order_cents >= FREE_OVER_CENTS && !express {
++        return 0;
++    }
+     if express { weight_g * 2 } else { weight_g }
+";
+
 struct TempRepo {
     root: PathBuf,
 }
@@ -307,36 +319,77 @@ fn an_edit_that_adds_the_guard_is_not_credited_from_guard_holding_rows() -> Resu
 }
 
 #[test]
-fn an_inserted_guard_no_row_enters_is_not_credited() -> Result<(), String> {
+fn an_inserted_guard_whose_boundary_row_stays_outside_is_not_credited() -> Result<(), String> {
     // A pure insertion of `if order_cents < FREE_OVER_CENTS && !express`:
-    // the only guard-holding row sits on 5000 and never enters the new
-    // branch, so it returns the same value with or without the insertion.
+    // the boundary row 5000 never enters the new branch, so the pinned call
+    // returns the same value with or without the insertion. An unasserted
+    // entering call beside it must not lend it credit.
     let source = AFTER.replace(">= FREE_OVER_CENTS", "< FREE_OVER_CENTS");
-    let patch = "diff --git a/src/lib.rs b/src/lib.rs
-index 1111111..2222222 100644
---- a/src/lib.rs
-+++ b/src/lib.rs
-@@ -3,2 +3,5 @@ pub const FREE_OVER_CENTS: u32 = 5_000;
- pub fn shipping_cost(weight_g: u32, order_cents: u32, express: bool) -> u32 {
-+    if order_cents < FREE_OVER_CENTS && !express {
-+        return 0;
-+    }
-     if express { weight_g * 2 } else { weight_g }
-";
+    let patch = INSERTION_PATCH.replace(">= FREE_OVER_CENTS", "< FREE_OVER_CENTS");
     let tests = test_fn(
         "pins",
-        "assert_eq!(shipping_cost(100, 5000, false), 100);\n        assert_eq!(shipping_cost(100, 5000, true), 200);",
+        "let _ = shipping_cost(100, 4999, false);\n        assert_eq!(shipping_cost(100, 5000, false), 100);",
     );
-    let finding = TempRepo::create_with(&source, patch, &tests)?.guarded_finding()?;
+    let finding = TempRepo::create_with(&source, &patch, &tests)?.guarded_finding()?;
     assert_ne!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
 
-    // Control: a guard-holding row that enters the inserted branch beside
-    // the boundary row credits it.
+#[test]
+fn an_inserted_guard_whose_boundary_row_enters_is_exposed() -> Result<(), String> {
+    // The A/B shipping shape: the whole guarded branch is new, and the
+    // pinned boundary row 5000 enters it.
     let tests = test_fn(
         "pins",
-        "assert_eq!(shipping_cost(100, 5000, false), 100);\n        assert_eq!(shipping_cost(100, 4999, false), 0);",
+        "assert_eq!(shipping_cost(100, 5000, false), 0);\n        assert_eq!(shipping_cost(100, 4999, false), 100);",
     );
-    let finding = TempRepo::create_with(&source, patch, &tests)?.guarded_finding()?;
+    let finding = TempRepo::create_with(AFTER, INSERTION_PATCH, &tests)?.guarded_finding()?;
     assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
+
+#[test]
+fn a_moved_threshold_is_not_credited_from_the_new_boundary_row() -> Result<(), String> {
+    // `>= FREE_OVER_CENTS - 1` to `>= FREE_OVER_CENTS`: both accept 5000,
+    // so a pin there cannot tell the versions apart (4999 would). A literal
+    // threshold move (`>= 4999` to `>= 5000`) keeps the pre-existing literal
+    // reading, which this rule does not change.
+    let source = AFTER;
+    let patch = PATCH.replace("> FREE_OVER_CENTS &&", ">= FREE_OVER_CENTS - 1 &&");
+    let tests = test_fn(
+        "pins",
+        "assert_eq!(shipping_cost(100, 5000, false), 0);\n        assert_eq!(shipping_cost(100, 4000, false), 100);",
+    );
+    let finding = TempRepo::create_with(source, &patch, &tests)?.guarded_finding()?;
+    assert_ne!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
+
+#[test]
+fn operators_that_agree_at_the_boundary_are_not_credited() -> Result<(), String> {
+    // `<=` to `>=` both hold at 5000.
+    let patch = PATCH.replace(
+        "-    if order_cents > FREE_OVER_CENTS && !express {",
+        "-    if order_cents <= FREE_OVER_CENTS && !express {",
+    );
+    let tests = test_fn(
+        "pins",
+        "assert_eq!(shipping_cost(100, 5000, false), 0);\n        assert_eq!(shipping_cost(100, 4999, false), 100);",
+    );
+    let finding = TempRepo::create_with(AFTER, &patch, &tests)?.guarded_finding()?;
+    assert_ne!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
+
+#[test]
+fn a_bound_result_does_not_borrow_a_same_line_sibling_guard() -> Result<(), String> {
+    let source = AFTER.replace("FREE_OVER_CENTS &&", "5000 &&");
+    let patch = PATCH.replace("FREE_OVER_CENTS &&", "5000 &&");
+    let tests = test_fn(
+        "bound",
+        "let got = shipping_cost(100, 5000, true); let _ = shipping_cost(100, 5000, false);\n        assert_eq!(got, 200);",
+    );
+    let finding = TempRepo::create_with(&source, &patch, &tests)?.guarded_finding()?;
+    assert_ne!(finding.class, ExposureClass::Exposed, "{finding:?}");
     Ok(())
 }

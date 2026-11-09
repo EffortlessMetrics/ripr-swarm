@@ -2682,9 +2682,9 @@ pub(in crate::analysis) struct GuardedComparison {
     comparison: String,
     /// `(parameter, value it must hold)`; `!express` requires `false`.
     guards: Vec<(String, bool)>,
-    /// A pure insertion has no old comparison to tell apart: as for a lone
-    /// inserted guard (#12414), a credited row must also enter it.
-    inserted: bool,
+    /// The old comparison when the edit changed only the comparison; `None`
+    /// for a pure insertion.
+    before: Option<String>,
 }
 
 impl GuardedComparison {
@@ -2742,14 +2742,6 @@ impl GuardedComparison {
             return GuardedReading::Unread;
         }
         let guarded_rows = || rows.iter().filter(|row| self.holds(row));
-        if self.inserted
-            && !guarded_rows().any(|row| {
-                parameter_value(row, &parameter)
-                    .is_some_and(|cell| self.enters(&parameter, &cell.value, &boundary_value.value))
-            })
-        {
-            return GuardedReading::Unread;
-        }
         let facts = guarded_rows()
             .filter_map(|row| parameter_value(row, &parameter))
             .filter(|cell| comparable_value(&cell.value) == comparable_value(&boundary_value.value))
@@ -2783,42 +2775,6 @@ impl GuardedComparison {
         }
     }
 
-    /// Whether the comparison holds for `parameter = value` against the
-    /// boundary, read only for plain decimal integers.
-    fn enters(&self, parameter: &str, value: &str, boundary: &str) -> bool {
-        let integer = |text: &str| -> Option<i128> {
-            let digits = text.trim().replace('_', "");
-            let unsigned = digits.strip_prefix('-').unwrap_or(&digits);
-            (!unsigned.is_empty() && unsigned.chars().all(|ch| ch.is_ascii_digit()))
-                .then(|| digits.parse().ok())
-                .flatten()
-        };
-        let (Some(value), Some(boundary)) = (integer(value), integer(boundary)) else {
-            return false;
-        };
-        let Some(operator) = [">=", "<=", "==", "!=", ">", "<"]
-            .into_iter()
-            .find(|operator| self.comparison.contains(operator))
-        else {
-            return false;
-        };
-        let parameter_left =
-            comparison_operands(&self.comparison).is_some_and(|(left, _)| left == parameter);
-        let (left, right) = if parameter_left {
-            (value, boundary)
-        } else {
-            (boundary, value)
-        };
-        match operator {
-            ">=" => left >= right,
-            "<=" => left <= right,
-            "==" => left == right,
-            "!=" => left != right,
-            ">" => left > right,
-            _ => left < right,
-        }
-    }
-
     /// The compared owner parameter, the boundary operand and its visible
     /// value. `None` unless exactly one side is a plain owner parameter the
     /// owner never rebinds, the other is a literal or a named constant whose
@@ -2842,6 +2798,26 @@ impl GuardedComparison {
             (false, true) => (right, left),
             _ => return None,
         };
+        // A row on the boundary value tells the old comparison from the new
+        // one only when the edit changed just the operator and the two
+        // operators disagree at equality (`>` to `>=`, not `>=` to `<=`); a
+        // moved threshold (`x >= 5` to `x >= 6`) needs a row this reading
+        // does not look for. A pure insertion has no old comparison: the
+        // boundary row must enter the inserted branch (#12414), so a strict
+        // operator, whose boundary row stays outside it, is not read.
+        let new_at_equality = holds_at_equality(&self.comparison)?;
+        match self.before.as_deref() {
+            None if !new_at_equality => return None,
+            None => {}
+            Some(before) => {
+                let (old_left, old_right) = comparison_operands(before)?;
+                let same_operands = (old_left == parameter && old_right == boundary)
+                    || (old_right == parameter && old_left == boundary);
+                if !same_operands || holds_at_equality(before)? == new_at_equality {
+                    return None;
+                }
+            }
+        }
         let constant = boundary_constant(owner, &boundary, index);
         let value = visible_operand(&boundary, constant.as_ref())?;
         // An earlier branch or early return may take a row away from the
@@ -2922,10 +2898,10 @@ pub(in crate::analysis) fn guarded_comparison(
     owner: &FunctionSummary,
 ) -> Option<GuardedComparison> {
     let (comparison, guards) = split_guarded(&probe.expression, owner, probe.location.line)?;
-    let inserted = match probe.before.as_deref() {
-        None => true,
+    let before = match probe.before.as_deref() {
+        None => None,
         Some(before) => {
-            let (_, old_guards) = split_guarded(before, owner, probe.location.line)?;
+            let (old_comparison, old_guards) = split_guarded(before, owner, probe.location.line)?;
             let sorted = |guards: &[(String, bool)]| {
                 let mut guards = guards.to_vec();
                 guards.sort();
@@ -2934,14 +2910,23 @@ pub(in crate::analysis) fn guarded_comparison(
             if sorted(&old_guards) != sorted(&guards) {
                 return None;
             }
-            false
+            Some(old_comparison)
         }
     };
     Some(GuardedComparison {
         comparison,
         guards,
-        inserted,
+        before,
     })
+}
+
+/// Whether a single comparison holds when its two operands are equal, read
+/// from its operator as `comparison_operands` picks it.
+fn holds_at_equality(comparison: &str) -> Option<bool> {
+    [">=", "<=", "==", "!=", ">", "<"]
+        .into_iter()
+        .find(|operator| comparison.contains(operator))
+        .map(|operator| matches!(operator, ">=" | "<=" | "=="))
 }
 
 fn split_guarded(

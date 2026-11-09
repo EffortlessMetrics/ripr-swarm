@@ -1268,7 +1268,12 @@ fn owner_call_activates_boundary(
         if argument_list_activates_boundary(probe, owner, test, arguments, scope) {
             return true;
         }
-        if !owner_call_arguments_admit_activation_fallback(probe, owner, arguments) {
+        // #13037: the guarded argument check above already read this call's
+        // own guards and boundary; a line-level fact may belong to a sibling
+        // call on the same line that holds the guards.
+        if super::activation::guarded_comparison(probe, owner).is_some()
+            || !owner_call_arguments_admit_activation_fallback(probe, owner, arguments)
+        {
             return false;
         }
     }

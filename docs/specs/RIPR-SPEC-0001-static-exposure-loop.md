@@ -613,8 +613,13 @@ as a literal. Then:
   and sits on the boundary value activates the boundary, and same-test
   pairing reads each observed call (and each bound result) on its own, so a
   boundary call that misses a guard never pairs with an exact assertion;
-- a pure insertion also needs a guard-holding row that enters the inserted
-  branch, as for a lone inserted guard (#12414);
+- a boundary row tells the versions apart only when the edit changed just
+  the operator and the old and new operators disagree at equality (`>` to
+  `>=`, not `>=` to `<=`); a moved threshold (`x >= 5` to `x >= 6`) is not
+  read this way;
+- a pure insertion is read only for a non-strict operator (`>=`, `<=`,
+  `==`), whose boundary row enters the inserted branch, as for a lone
+  inserted guard (#12414);
 - when readable rows exist but none holding the guards sits on the
   boundary, the boundary is unresolved (`infection unknown`) with the guard
   and boundary value named. It is never reported as an actionable missing
@@ -629,8 +634,9 @@ Fixture coverage:
 
 - `crates/ripr/tests/guarded_boundary_13037.rs` (guarded boundary rule: a
   guard-holding boundary pin is exposed; guard-missing rows, no boundary
-  row, split tests, a guard-missing bound result, an added guard, an
-  unentered insertion and a rebound guard are not credited)
+  row, split tests, a guard-missing bound result (also beside a same-line
+  sibling), an added guard, a moved threshold, operators that agree at the
+  boundary, a strict insertion and a rebound guard are not credited)
 
 - `unindexed_doc_assertion_prompts_inspection_without_credit_or_gap_claim`
 - `weak_direct_owner_assertion_keeps_exact_value_advice`

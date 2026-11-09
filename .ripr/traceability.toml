@@ -312,7 +312,11 @@ tests = [
   "crates/ripr/tests/guarded_boundary_13037.rs::a_guard_missing_pin_beside_a_guard_holding_row_in_one_test_does_not_pair",
   "crates/ripr/tests/guarded_boundary_13037.rs::a_bound_result_of_a_guard_missing_call_does_not_pair",
   "crates/ripr/tests/guarded_boundary_13037.rs::an_edit_that_adds_the_guard_is_not_credited_from_guard_holding_rows",
-  "crates/ripr/tests/guarded_boundary_13037.rs::an_inserted_guard_no_row_enters_is_not_credited",
+  "crates/ripr/tests/guarded_boundary_13037.rs::an_inserted_guard_whose_boundary_row_stays_outside_is_not_credited",
+  "crates/ripr/tests/guarded_boundary_13037.rs::an_inserted_guard_whose_boundary_row_enters_is_exposed",
+  "crates/ripr/tests/guarded_boundary_13037.rs::a_moved_threshold_is_not_credited_from_the_new_boundary_row",
+  "crates/ripr/tests/guarded_boundary_13037.rs::operators_that_agree_at_the_boundary_are_not_credited",
+  "crates/ripr/tests/guarded_boundary_13037.rs::a_bound_result_does_not_borrow_a_same_line_sibling_guard",
 ]
 fixtures = [
   "crates/ripr/tests/cli_smoke/sample_output.rs",
