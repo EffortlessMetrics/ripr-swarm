@@ -267,3 +267,58 @@ fn requested_exclusion_does_not_hide_an_unanalyzed_kept_file() -> TestResult {
     let _ = fs::remove_dir_all(&dir);
     Ok(())
 }
+
+/// Keep only the sections of `patch` whose path is in `keep`.
+fn keep_sections(patch: &str, keep: &[&str]) -> String {
+    patch
+        .split("diff --git ")
+        .filter(|section| {
+            keep.iter()
+                .any(|path| section.starts_with(&format!("a/{path} ")))
+        })
+        .map(|section| format!("diff --git {section}"))
+        .collect()
+}
+
+/// Regression: a CLI `--exclude` removes files before `changed_file_count`,
+/// so it must not be counted against an in-scope non-source file. The only
+/// in-scope file (docs) was never examined: the warning stays.
+#[test]
+fn cli_exclude_plus_non_source_file_keeps_the_not_examined_warning() -> TestResult {
+    let (dir, diff) = fixture("scope-cli-docs", "docs/notes.md", None)?;
+    let patch = fs::read_to_string(&diff)?;
+    fs::write(
+        &diff,
+        keep_sections(&patch, &["docs/notes.md", "src/lib.rs"]),
+    )?;
+    let text =
+        String::from_utf8_lossy(&check(&dir, &diff, "github", &["--exclude", "src/lib.rs"]).stdout)
+            .into_owned();
+    assert!(text.contains("NOT a clean result"), "{text}");
+    let _ = fs::remove_dir_all(&dir);
+    Ok(())
+}
+
+/// Regression: a configured-excluded Rust file beside an in-scope non-source
+/// file does not cover every changed file, so the warning stays.
+#[test]
+fn configured_exclusion_plus_non_source_file_keeps_the_not_examined_warning() -> TestResult {
+    let (dir, diff) = fixture(
+        "scope-configured-docs",
+        "docs/notes.md",
+        Some("[languages.rust]\ngenerated_file_patterns = [\"src/lib.rs\"]\n"),
+    )?;
+    let patch = fs::read_to_string(&diff)?;
+    fs::write(
+        &diff,
+        keep_sections(&patch, &["docs/notes.md", "src/lib.rs"]),
+    )?;
+    for format in ["github", "agent"] {
+        let output = check(&dir, &diff, format, &[]);
+        assert_success(&output);
+        let text = String::from_utf8_lossy(&output.stdout).to_lowercase();
+        assert!(text.contains("not a clean result"), "{format}: {text}");
+    }
+    let _ = fs::remove_dir_all(&dir);
+    Ok(())
+}
