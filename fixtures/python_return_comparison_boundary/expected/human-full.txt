@@ -49,7 +49,9 @@ Evidence
 
 Weakness
   - A strong Python oracle reaches `is_large`, but static evidence does not place a related test input at the changed predicate boundary `total == 100`. No strong related test call places total equal to 100; observed total values: 500
-  - missing discriminator total == 100: No strong related test call places total equal to 100; observed total values: 500
+
+Next step
+  Python preview: strengthen the existing related test with a focused boundary assertion for the missing check `total == 100`
 
 Python repair card (preview/advisory)
   card version: python_repair_card.v1
@@ -77,9 +79,6 @@ Python repair card (preview/advisory)
     - Syntax-first Python preview evidence only.
     - No source edits, generated tests, mutation execution, provider calls, or gate authority.
     - Verify success alone is not a gap-closure receipt.
-
-Next step
-  Python preview: strengthen the existing related test with a focused boundary assertion for the missing check `total == 100`
 Drill in:
   (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/python_return_comparison_boundary/input --diff <cwd>/fixtures/python_return_comparison_boundary/diff.patch --mode fast probe:src_pricing.py:python_preview:69ed856b

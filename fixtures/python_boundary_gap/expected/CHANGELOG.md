@@ -1,5 +1,12 @@
 # Golden Output Changes
 
+## Pending — cross-surface annotation conformance (#12925)
+
+Add the existing finding projection as `sarif.json` and `github.txt` under
+RIPR-SPEC-0008 cross-surface conformance. Class, canonical identity,
+configured severity and refusal guidance come from the existing producer;
+the check/human goldens and analyzer behavior are unchanged.
+
 ## Pending
 
 Reason:
@@ -786,6 +793,30 @@ Updated:
 
 Reason:
 RIPR-SPEC-0026: Python preview findings carry per-finding confidence_basis (#12419)
+
+Command:
+`cargo xtask goldens bless python_boundary_gap --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — python_boundary_gap (35)
+
+Reason:
+RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; human rendering unchanged
+
+Command:
+`cargo xtask goldens bless python_boundary_gap --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — python_boundary_gap (36)
+
+Reason:
+RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; no test attribution; human rendering unchanged
 
 Command:
 `cargo xtask goldens bless python_boundary_gap --reason "..."`

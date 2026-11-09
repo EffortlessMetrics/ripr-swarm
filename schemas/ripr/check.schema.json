@@ -16,6 +16,11 @@
   "properties": {
     "schema_version": { "const": "0.2" },
     "tool": { "const": "ripr" },
+    "status": {
+      "const": "refused",
+      "description": "Present only on a refusal document (#11584); a completed run, including a bounded partial run (analysis_scope.run_status limited_partial_scope), carries neither `status` nor `error`. The producer guarantees this; the schema keeps both optional so schema 0.2 stays compatible, and the pairing becomes a schema rule at the next schema_version bump."
+    },
+    "error": { "$ref": "#/$defs/refusal_error" },
     "mode": { "enum": ["instant", "draft", "fast", "deep", "ready"] },
     "root": { "type": "string", "minLength": 1 },
     "config_path": { "type": "string", "minLength": 1 },
@@ -39,6 +44,15 @@
       "items": { "$ref": "#/$defs/finding" }
     },
     "suppression_policy": { "type": "object" },
+    "owner_opt_outs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["withheld", "reason"],
+      "properties": {
+        "withheld": { "type": "integer", "minimum": 1 },
+        "reason": { "enum": ["owner_mutants_skip"] }
+      }
+    },
     "language_runs": {
       "type": "array",
       "items": { "$ref": "#/$defs/language_run" }
@@ -101,23 +115,101 @@
     },
     "source_subject": { "$ref": "#/$defs/source_subject" },
     "canonical_next_action": { "$ref": "#/$defs/canonical_next_action" },
+    "finding_routes": {
+      "description": "Per-finding follow-up commands (#11976), one entry per document finding, projected from the same navigation the human and agent formats print. Present only on the public navigation-aware `ripr check --format json` adapter. A missing `repair` or `stub_command` means the check pipeline offered no such route for that finding; it is not a claim that none exists. Static routing only: no runtime, mutation or sufficiency claim.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/finding_route" }
+    },
     "rendering": {
       "description": "Rendering profile of the document. Only `terse` is defined: emitted exclusively by `ripr check --format json-terse`, which codes repeated evidence prose against `evidence_legend` and omits same-value alias fields (listed in `dropped_aliases`). Absent from `json` and `json-compact` output, whose parsed values are the full document.",
       "const": "terse"
     },
     "evidence_legend": {
-      "description": "json-terse only: code -> full prose template, emitted once at the document head in first-appearance order. Codes (E0001, ...) substitute for strings of 24+ bytes in finding `evidence_path`, `evidence`, `missing` and `assertion_texts` values; expanding every code through this legend reconstructs the exact original document strings.",
+      "description": "json-terse only: code -> full prose template, emitted once at the document head in first-appearance order. Codes (E0001, ...) substitute for profitable repeated strings of 24+ UTF-8 bytes in finding `evidence_path`, `evidence`, `missing` and `assertion_texts` values; expanding every code through this legend reconstructs the exact original document strings.",
       "type": "object",
-      "additionalProperties": { "type": "string", "minLength": 24 }
+      "additionalProperties": { "type": "string", "minLength": 1 }
     },
     "dropped_aliases": {
-      "description": "json-terse only: finding field names omitted because their string value was byte-identical to an earlier field in the same finding object. The value survives in the earlier field; identity and verdict fields (id, classification, severity, confidence, probe, ripr, language) are exempt and never listed here.",
+      "description": "json-terse only: each known alias, recorded once when omitted from any finding. suggested_next_action keeps its exact value in that finding's recommended_next_step; observed_values and missing_discriminators keep theirs in that finding's activation block. No other field may be omitted as an alias.",
       "type": "array",
-      "items": { "type": "string", "minLength": 1 }
+      "minItems": 1,
+      "maxItems": 3,
+      "items": { "enum": ["suggested_next_action", "observed_values", "missing_discriminators"] }
+    }
+  },
+  "if": { "required": ["rendering", "dropped_aliases"] },
+  "else": {
+    "properties": {
+      "findings": { "items": { "required": ["suggested_next_action"] } }
     }
   },
   "$defs": {
+    "refusal_error": {
+      "description": "The shared refusal block (#11584): machine-readable code and message, plus the one runnable step the refusal prose already states (null when none is stated unconditionally).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "message", "next"],
+      "properties": {
+        "code": { "type": "string", "minLength": 1 },
+        "message": { "type": "string", "minLength": 1 },
+        "next": {
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "required": ["purpose", "command"],
+          "properties": {
+            "purpose": { "const": "follow_stated_step" },
+            "command": { "type": "string", "minLength": 1 }
+          }
+        }
+      }
+    },
     "nullable_string": { "type": ["string", "null"] },
+    "finding_route": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["finding_id", "explain_command"],
+      "properties": {
+        "finding_id": { "type": "string", "minLength": 1 },
+        "explain_command": { "type": "string", "minLength": 1 },
+        "stub_command": { "type": "string", "minLength": 1 },
+        "repair": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status"],
+          "properties": {
+            "seam_id": { "type": "string", "minLength": 1 },
+            "canonical_gap_id": { "type": "string", "minLength": 1 },
+            "command": { "type": "string", "minLength": 1, "description": "Runnable only when status is ready; absent while the start is blocked." },
+            "status": { "enum": ["ready", "blocked_uncommitted"] },
+            "uncommitted_file": { "type": "string", "minLength": 1 },
+            "uncommitted_files": { "type": "array", "items": { "type": "string" } }
+          },
+          "allOf": [
+            {
+              "description": "A repair names the identity it starts from: a seam or a canonical gap.",
+              "anyOf": [
+                { "required": ["seam_id"] },
+                { "required": ["canonical_gap_id"] }
+              ]
+            },
+            {
+              "if": { "properties": { "status": { "const": "ready" } }, "required": ["status"] },
+              "then": {
+                "required": ["command"],
+                "not": { "anyOf": [{ "required": ["uncommitted_file"] }, { "required": ["uncommitted_files"] }] }
+              },
+              "else": {
+                "not": { "required": ["command"] },
+                "anyOf": [
+                  { "required": ["uncommitted_file"] },
+                  { "required": ["uncommitted_files"], "properties": { "uncommitted_files": { "minItems": 1 } } }
+                ]
+              }
+            }
+          ]
+        }
+      }
+    },
     "canonical_next_action": {
       "description": "Bounded primary next action from the shared selector (canonical_next_action.v1, #7258). Present on the public navigation-aware `ripr check --format json` adapter. Absent from the generic JSON renderer and unbounded pr-evidence path, which lack navigation/provenance context and must not invent a committed-source default or executable route.",
       "type": "object",
@@ -234,6 +326,7 @@
           }
         },
         "suppressed_by_policy": { "type": "integer", "minimum": 0 },
+        "withheld_by_owner_opt_out": { "type": "integer", "minimum": 1 },
         "conflicting_expressions": { "type": "integer", "minimum": 1 },
         "proof_harness_only": { "type": "integer", "minimum": 1 }
       }
@@ -382,21 +475,19 @@
         "missing",
         "assertion_texts",
         "activation",
-        "observed_values",
-        "missing_discriminators",
         "related_tests_total",
         "related_tests",
         "stop_reasons",
         "oracle_kind",
         "oracle_strength",
         "recommended_next_step",
-        "suggested_next_action",
         "source_currentness"
       ],
       "properties": {
         "id": { "type": "string", "minLength": 1 },
         "suppressed": { "type": "boolean" },
         "suppressed_by": { "type": "string", "minLength": 1 },
+        "withheld_by": { "enum": ["owner_mutants_skip"] },
         "analysis_scope": { "const": "repo" },
         "canonical_gap_id": { "type": "string", "minLength": 1 },
         "canonical_gap_group_size": { "type": "integer", "minimum": 1 },
@@ -418,6 +509,13 @@
           }
         },
         "confidence_why_capped": { "type": "string", "minLength": 1 },
+        "evidence_stages": {
+          "description": "Additive (RIPR-SPEC-0423, schema 0.2): the staged-evidence row form — one row per ripr stage in Evidence-block order. `basis` is present only when the finding's confidence_basis names that stage. No row carries test or assertion references (producer-backed stage attribution is #13453).",
+          "type": "array",
+          "minItems": 5,
+          "maxItems": 5,
+          "items": { "$ref": "#/$defs/evidence_stage_row" }
+        },
         "probe": { "$ref": "#/$defs/probe" },
         "ripr": { "$ref": "#/$defs/ripr" },
         "evidence_path": { "type": "array", "items": { "type": "string" } },
@@ -549,6 +647,29 @@
         "state": { "type": "string", "minLength": 1 },
         "confidence": { "type": "string", "minLength": 1 },
         "summary": { "type": "string", "minLength": 1 }
+      }
+    },
+    "evidence_stage_row": {
+      "description": "One staged-evidence row (RIPR-SPEC-0423): `stage` reuses the ripr object's key, `state`/`confidence` repeat that stage's wire tokens.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["stage", "state", "confidence"],
+      "properties": {
+        "stage": { "type": "string", "minLength": 1 },
+        "state": { "type": "string", "minLength": 1 },
+        "confidence": { "type": "string", "minLength": 1 },
+        "basis": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["code", "summary"],
+            "additionalProperties": false,
+            "properties": {
+              "code": { "type": "string", "minLength": 1 },
+              "summary": { "type": "string", "minLength": 1 }
+            }
+          }
+        }
       }
     },
     "activation": {

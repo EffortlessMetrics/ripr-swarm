@@ -42,6 +42,7 @@ mod evidence_promotion;
 mod evidence_quality;
 mod first_run;
 mod fixture_contracts;
+mod fixture_expected_classes;
 mod generation_pins;
 mod kani_lane;
 mod public_proof;
@@ -71,7 +72,9 @@ mod packaged_repair_receipt;
 mod policy;
 #[cfg(test)]
 mod portable_consumer;
+mod precommit_formatting;
 mod product_gate_plan;
+mod product_route_parity;
 mod provider_review_observations;
 mod public_api_surface;
 mod python_judged_panel;
@@ -82,6 +85,7 @@ mod readiness_snapshot;
 mod repo_readiness;
 mod repository_orientation;
 mod ripr_agent_disposition;
+mod schema_compat;
 mod schema_pattern;
 mod size_scaling;
 mod termination_qualification;
@@ -116,6 +120,7 @@ mod verify_test_shards;
 mod version;
 mod windows_advisory;
 mod windows_advisory_acl_evidence;
+mod windows_advisory_file_policy_evidence;
 mod windows_advisory_run;
 
 use command::{
@@ -317,7 +322,8 @@ use policy::{
     check_executable_files, check_file_policy, check_local_context, check_network_policy,
     check_no_panic_family, check_packaged_readme, check_positioning_language, check_process_policy,
     check_product_copy, check_proof_packs, check_release_targets, check_static_language,
-    check_text_encoding, check_user_text, check_workflows, qualify_python_wheelhouse,
+    check_text_encoding, check_user_text, check_workflows, parse_workspace_lints_section,
+    qualify_python_wheelhouse,
 };
 use public_api_surface::public_api_surface;
 #[cfg(test)]
@@ -668,7 +674,9 @@ fn precommit_policy(collect_all: bool) -> Result<(), String> {
     if collect_all && let Some(path) = &preflight_receipt {
         repo_policy::verify_preflight(Path::new(path))?;
     }
-    run("cargo", &["fmt", "--check"])?;
+    precommit_formatting::run(collect_all, || {
+        run("cargo", &["fmt", "--check"]).map(|_| ())
+    })?;
     if collect_all {
         policy::check_policy_all()?;
     } else {
@@ -6213,6 +6221,20 @@ fn collect_rust_conversion_candidates() -> Result<Vec<RustConversionCandidate>, 
 }
 
 fn non_rust_source_conversion_candidate(path: &str) -> Option<RustConversionCandidate> {
+    if matches!(
+        path,
+        "tools/provision-dev.cjs" | "tools/provision-dev.test.cjs"
+    ) {
+        return Some(RustConversionCandidate {
+            path: path.to_string(),
+            line: None,
+            kind: "retained_external_runtime".to_string(),
+            priority: "retained".to_string(),
+            current_surface: "explicit pre-compiler developer provisioning".to_string(),
+            recommendation: "Keep bootstrap installation in the dependency-free Node entrypoint; delegate requirements, activation and verification to their existing owners.".to_string(),
+            reason: "Provisioning must work before Rust or npm packages are installed (#13437).".to_string(),
+        });
+    }
     if path == "editors/vscode/test/developerSetup.cjs" {
         return Some(RustConversionCandidate {
             path: path.to_string(),
@@ -6261,6 +6283,13 @@ fn non_rust_source_conversion_candidate(path: &str) -> Option<RustConversionCand
         });
     }
 
+    // The generic fallback defers to the enforced retention owner instead of
+    // carrying its own list (#13290), so an approved runtime boundary can never
+    // be reported here as unapproved while `check-file-policy` retains it.
+    if let Some(reason) = non_rust_programming_retention_reason(path) {
+        return Some(retained_non_rust_source_candidate(path, reason));
+    }
+
     Some(RustConversionCandidate {
         path: path.to_string(),
         line: None,
@@ -6270,6 +6299,37 @@ fn non_rust_source_conversion_candidate(path: &str) -> Option<RustConversionCand
         recommendation: "Move this behavior into Rust under crates/ripr for product logic or xtask for repository automation.".to_string(),
         reason: "Rust is the default implementation surface, and this file has no approved external-runtime or fixture retention rule.".to_string(),
     })
+}
+
+/// Advisory retained-boundary row derived from the enforced
+/// `non_rust_programming_retention_reason` owner. The conversion inventory
+/// shares this single authority with `check-file-policy` instead of
+/// maintaining a second, incomplete allowlist; the report's reason is the
+/// enforced retention reason verbatim. Fixture inputs keep their own kind so
+/// the retained table keeps distinguishing analyzed inputs from runtime
+/// adapters.
+fn retained_non_rust_source_candidate(path: &str, reason: &str) -> RustConversionCandidate {
+    if path.starts_with("benchmarks/muse-plugin/fixtures/") {
+        return RustConversionCandidate {
+            path: path.to_string(),
+            line: None,
+            kind: "retained_fixture_input".to_string(),
+            priority: "retained".to_string(),
+            current_surface: "muse plugin evaluation fixture input".to_string(),
+            recommendation: "Keep as fixture input; move only reusable evaluation orchestration into Rust/xtask.".to_string(),
+            reason: reason.to_string(),
+        };
+    }
+
+    RustConversionCandidate {
+        path: path.to_string(),
+        line: None,
+        kind: "retained_external_runtime".to_string(),
+        priority: "retained".to_string(),
+        current_surface: "approved non-Rust runtime boundary".to_string(),
+        recommendation: "Keep this file on its approved external runtime; move only adjacent unretained behavior into Rust/xtask.".to_string(),
+        reason: reason.to_string(),
+    }
 }
 
 fn workflow_run_conversion_candidate(
@@ -18060,53 +18120,6 @@ fn is_deletion_only(change: &ChangedPath) -> bool {
             .all(|status| status.chars().all(|character| character == 'D'))
 }
 
-/// Parse a `[workspace.lints.<section>]` block from `Cargo.toml`-shaped TOML.
-///
-/// Returns a map of bare lint name (e.g. `unwrap_used`, `unsafe_code`) to its
-/// level string (e.g. `deny`, `forbid`, `warn`, `allow`). Only direct
-/// `name = "level"` lines are recognized; this matches how the workspace
-/// declares lints today and keeps the parser dependency-free.
-fn parse_workspace_lints_section(text: &str, section: &str) -> BTreeMap<String, String> {
-    let mut out = BTreeMap::new();
-    let header = format!("[workspace.lints.{section}]");
-    let mut in_section = false;
-    for raw in text.lines() {
-        let line = raw.trim();
-        if line.starts_with('#') {
-            continue;
-        }
-        if line == header {
-            in_section = true;
-            continue;
-        }
-        if line.starts_with('[') && line.ends_with(']') {
-            in_section = false;
-            continue;
-        }
-        if !in_section {
-            continue;
-        }
-        let Some((key, raw_value)) = line.split_once('=') else {
-            continue;
-        };
-        let key = key.trim();
-        if key.is_empty() {
-            continue;
-        }
-        let value = raw_value.trim().trim_end_matches('#').trim();
-        // Take the first quoted token as the level. Anything more elaborate
-        // (table-form lint configuration) is intentionally not supported here
-        // — workspace lints today are flat `name = "level"` lines.
-        let level = value
-            .strip_prefix('"')
-            .and_then(|rest| rest.split_once('"').map(|(level, _)| level.to_string()));
-        if let Some(level) = level {
-            out.insert(key.to_string(), level);
-        }
-    }
-    out
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct LedgerLintEntry {
     name: String,
@@ -18392,7 +18405,13 @@ fn collect_clippy_debt_violations(
     today: &str,
 ) -> Vec<String> {
     let (entries, mut violations) = parse_clippy_debt_ledger(debt_text);
-    let cargo_clippy = parse_workspace_lints_section(cargo_text, "clippy");
+    let cargo_clippy = match parse_workspace_lints_section(cargo_text, "clippy") {
+        Ok(lints) => lints,
+        Err(err) => {
+            violations.push(err);
+            return violations;
+        }
+    };
     let (lints, _) = parse_clippy_lints_ledger(lints_text);
 
     let mut seen_ids = BTreeSet::new();
@@ -18633,8 +18652,14 @@ fn planned_blocker_text_is_msrv_only(text: &str) -> bool {
 }
 
 fn collect_lint_policy_violations(cargo_text: &str, ledger_text: &str) -> Vec<String> {
-    let cargo_clippy = parse_workspace_lints_section(cargo_text, "clippy");
-    let cargo_rust = parse_workspace_lints_section(cargo_text, "rust");
+    let cargo_clippy = match parse_workspace_lints_section(cargo_text, "clippy") {
+        Ok(lints) => lints,
+        Err(err) => return vec![err],
+    };
+    let cargo_rust = match parse_workspace_lints_section(cargo_text, "rust") {
+        Ok(lints) => lints,
+        Err(err) => return vec![err],
+    };
     let (entries, mut violations) = parse_clippy_lints_ledger(ledger_text);
     let workspace_msrv = parse_workspace_package_rust_version(cargo_text);
     let workspace_triple = workspace_msrv.as_deref().and_then(parse_msrv_triple);
@@ -19563,6 +19588,7 @@ const PROOF_PACK_RELEASE_REQUIRED_PATHS: &[&str] = &[
     "editors/vscode/package-lock.json",
     ".github/workflows/publish-extension.yml",
     ".github/workflows/release-server-binaries.yml",
+    ".github/workflows/package-family-qualification.yml",
 ];
 
 /// The full release proof the `release-package` pack MUST require: workspace
@@ -23825,6 +23851,19 @@ pub(crate) fn is_non_rust_programming_candidate(path: &str) -> bool {
 }
 
 pub(crate) fn non_rust_programming_retention_reason(path: &str) -> Option<&'static str> {
+    if matches!(
+        path,
+        "tools/provision-dev.cjs" | "tools/provision-dev.test.cjs"
+    ) {
+        return Some(
+            "Explicit Node provisioning must run before Rust or npm dependencies exist; its controlled tests run through the Rust-owned developer_provisioning integration target (#13437).",
+        );
+    }
+    if path.starts_with("benchmarks/agent-discrimination/") && path.ends_with(".sh") {
+        return Some(
+            "Agent A/B discrimination harness scripts must run under the solver's POSIX shell (Git Bash/WSL) beside cargo and git: they drive cargo phases, per-run clone materialization, and record writes that execute outside any cargo process, so an xtask port cannot host them (#13113).",
+        );
+    }
     if path == "tools/activate-rust.sh" {
         return Some(
             "Sourced Bash must update the caller's environment before Cargo is available; a Rust subprocess cannot export into its parent shell (#13123).",
@@ -23860,6 +23899,12 @@ pub(crate) fn non_rust_programming_retention_reason(path: &str) -> Option<&'stat
     if path.starts_with("editors/vscode/") && path.ends_with(".ts") {
         return Some(
             "VS Code extension source and tests must run in the VS Code Extension Host TypeScript API.",
+        );
+    }
+
+    if path.starts_with("benchmarks/agentic/cohort/harness/") && path.ends_with(".py") {
+        return Some(
+            "Opt-in agent cohort harness drives headless `claude -p` sessions and scores hidden mutants with stdlib Python; it is never on the default CI path (#12902).",
         );
     }
 
@@ -23966,6 +24011,10 @@ fn is_process_policy_candidate(path: &str) -> bool {
     path.ends_with(".rs")
         || path.ends_with(".ts")
         || (path.starts_with("tools/python/") && path.ends_with(".py"))
+        || matches!(
+            path,
+            "tools/provision-dev.cjs" | "tools/provision-dev.test.cjs"
+        )
 }
 
 fn is_network_policy_candidate(path: &str) -> bool {
@@ -23979,6 +24028,10 @@ fn is_network_policy_candidate(path: &str) -> bool {
         || path.ends_with(".ps1")
         || path.ends_with(".yml")
         || path.ends_with(".yaml")
+        || matches!(
+            path,
+            "tools/provision-dev.cjs" | "tools/provision-dev.test.cjs"
+        )
 }
 
 fn process_policy_patterns() -> Vec<String> {

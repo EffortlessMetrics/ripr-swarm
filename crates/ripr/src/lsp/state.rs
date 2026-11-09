@@ -1438,6 +1438,11 @@ impl AnalysisSnapshot {
             .into_iter()
             .filter(|(primary, _)| {
                 super::diagnostics::finding_is_visible_in_profile(self.diagnostic_profile, primary)
+                    && !super::diagnostics::file_has_parse_failure(
+                        &self.root,
+                        &primary.probe.location.file,
+                        self.analysis_outcome.as_ref(),
+                    )
             })
             .count();
         !self.root.as_os_str().is_empty()
@@ -1668,6 +1673,13 @@ pub(super) enum DocumentStalenessReason {
     /// longer authoritative for line identity, so diagnostics stay
     /// quarantined until a later full replacement/open re-establishes it.
     InvalidIncrementalChange,
+    /// A `didOpen` (or first full replacement) was refused because the
+    /// store-wide open-document or retained-text limit was reached, so ripr
+    /// never tracked this editor buffer. The URI is held as an
+    /// unknown-authority placeholder; closing other documents and reopening
+    /// this one re-establishes tracking. Not an incremental-change failure
+    /// (#11666).
+    DocumentStoreLimitReached,
     /// No analyzed baseline records this document's saved content, so there
     /// is nothing to serve against. The cause (no attempt, in progress,
     /// failed, or not recorded by a committed snapshot) is not part of the
@@ -1682,6 +1694,7 @@ impl DocumentStalenessReason {
                 "buffer_diverges_from_analyzed_saved_content"
             }
             Self::InvalidIncrementalChange => "invalid_incremental_change",
+            Self::DocumentStoreLimitReached => "document_store_limit_reached",
             Self::NoAnalyzedSavedContent => "no_analyzed_saved_content",
         }
     }
@@ -1694,8 +1707,22 @@ impl DocumentStalenessReason {
             Self::InvalidIncrementalChange => {
                 "an incremental document change could not be applied under the negotiated position encoding"
             }
+            Self::DocumentStoreLimitReached => {
+                "this editor buffer was not tracked because the open-document limit was reached"
+            }
             Self::NoAnalyzedSavedContent => "the document's saved content has no analyzed baseline",
         }
+    }
+
+    /// Whether the retained buffer is not a synchronization authority, so
+    /// only a range-less full replacement (or client save text) may end the
+    /// quarantine. Both variants are pinned fail-closed by
+    /// [`DocumentState::refresh_quarantine`].
+    pub(super) fn is_buffer_authority_loss(self) -> bool {
+        matches!(
+            self,
+            Self::InvalidIncrementalChange | Self::DocumentStoreLimitReached
+        )
     }
 }
 
@@ -1788,7 +1815,8 @@ impl QuarantineLedger {
         uri: &Uri,
     ) -> Option<(PathBuf, DocumentStalenessReason)> {
         let mut documents = self.documents.lock().ok()?;
-        let state = documents.state_for_uri_mut(uri)?;
+        let mut state = documents.state_for_uri_mut(uri)?;
+        let state = &mut *state;
         let quarantine = state.quarantine.as_mut()?;
         if quarantine.withdrawal_disclosed {
             return None;
@@ -1842,6 +1870,12 @@ pub(super) struct DocumentState {
     /// buffer never supplies a save identity; only a range-less full
     /// replacement or client-provided save text re-establishes authority.
     pub(super) buffer_authority_unknown: bool,
+    /// True when `buffer_authority_unknown` is because the store-wide
+    /// document or retained-text limit refused this buffer, not because an
+    /// incremental change failed (#11666). Only meaningful while
+    /// `buffer_authority_unknown` is set; it selects the disclosed reason and
+    /// never relaxes the fail-closed quarantine.
+    pub(super) store_limit_refused: bool,
     pub(super) quarantine: Option<DocumentQuarantine>,
 }
 
@@ -1862,7 +1896,18 @@ impl DocumentState {
             analyzed_saved_digest: None,
             analyzed_input_identity: None,
             buffer_authority_unknown: false,
+            store_limit_refused: false,
             quarantine: None,
+        }
+    }
+
+    /// The reason disclosed while the buffer is not a synchronization
+    /// authority.
+    fn authority_loss_reason(&self) -> DocumentStalenessReason {
+        if self.store_limit_refused {
+            DocumentStalenessReason::DocumentStoreLimitReached
+        } else {
+            DocumentStalenessReason::InvalidIncrementalChange
         }
     }
 
@@ -1896,9 +1941,12 @@ impl DocumentState {
     /// analyzed/saved content identities. A document is quarantined while
     /// its buffer digest differs from the analyzed saved digest. While the
     /// buffer is not a synchronization authority (`buffer_authority_unknown`,
-    /// #1746), the invalid-change quarantine is pinned: the ordinary
-    /// recomputation must not silently lift the fail-closed state that only a
-    /// full replacement or client-provided save text may end.
+    /// #1746), the authority-loss quarantine is pinned under whichever
+    /// reason caused it (`InvalidIncrementalChange`, or
+    /// `DocumentStoreLimitReached` when the store caps refused the buffer,
+    /// #11666): the ordinary recomputation must not silently lift the
+    /// fail-closed state that only a full replacement or client-provided
+    /// save text may end.
     pub(super) fn refresh_quarantine(&mut self) -> QuarantineTransition {
         if self.buffer_authority_unknown {
             let was_quarantined = self.quarantine.is_some();
@@ -1907,7 +1955,7 @@ impl DocumentState {
                 .as_ref()
                 .is_some_and(|quarantine| quarantine.withdrawal_disclosed);
             self.quarantine = Some(DocumentQuarantine {
-                reason: DocumentStalenessReason::InvalidIncrementalChange,
+                reason: self.authority_loss_reason(),
                 withdrawal_disclosed: was_disclosed,
             });
             return if was_quarantined {
@@ -2065,14 +2113,14 @@ const CONTENT_CHANGE_LIMITS: ContentChangeLimits = ContentChangeLimits {
 /// opening many such documents. 4,096 URIs and 512 MiB of retained text are
 /// generous for a real editor workspace and far below 4,096 × 16 MiB.
 #[derive(Clone, Copy)]
-struct DocumentStoreLimits {
+pub(super) struct DocumentStoreLimits {
     /// Most simultaneously retained URIs.
-    max_open_documents: usize,
+    pub(super) max_open_documents: usize,
     /// Most retained buffer bytes across all open documents.
-    max_retained_document_bytes: usize,
+    pub(super) max_retained_document_bytes: usize,
 }
 
-const DOCUMENT_STORE_LIMITS: DocumentStoreLimits = DocumentStoreLimits {
+pub(super) const DOCUMENT_STORE_LIMITS: DocumentStoreLimits = DocumentStoreLimits {
     max_open_documents: 4_096,
     max_retained_document_bytes: 512 * 1024 * 1024,
 };
@@ -2175,13 +2223,132 @@ fn invalidate_incremental_document_state(state: &mut DocumentState) -> Quarantin
     // through the ordinary staleness recomputation.
     state.buffer_authority_unknown = true;
     state.quarantine = Some(DocumentQuarantine {
-        reason: DocumentStalenessReason::InvalidIncrementalChange,
+        reason: state.authority_loss_reason(),
         withdrawal_disclosed: was_disclosed,
     });
     if was_quarantined {
         QuarantineTransition::Unchanged
     } else {
         QuarantineTransition::Entered
+    }
+}
+
+/// Aggregate admission costs, updated with each stored document mutation.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct DocumentUsage {
+    retained_bytes: usize,
+    accepted_documents: usize,
+}
+
+impl DocumentUsage {
+    fn of(state: &DocumentState) -> Self {
+        Self {
+            retained_bytes: state.text.len(),
+            accepted_documents: usize::from(!DocumentStore::is_store_overflow_placeholder(state)),
+        }
+    }
+
+    fn replace(&mut self, before: Self, after: Self) {
+        self.retained_bytes = self.retained_bytes - before.retained_bytes + after.retained_bytes;
+        self.accepted_documents =
+            self.accepted_documents - before.accepted_documents + after.accepted_documents;
+    }
+}
+
+/// Keep budget totals beside the map. Immutable map operations are available
+/// through Deref; all writes update usage, including early returns after a
+/// partially applied edit. There is deliberately no DerefMut to the map.
+#[derive(Default)]
+pub(super) struct BudgetedDocuments {
+    entries: BTreeMap<Uri, DocumentState>,
+    usage: DocumentUsage,
+}
+
+impl Deref for BudgetedDocuments {
+    type Target = BTreeMap<Uri, DocumentState>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.entries
+    }
+}
+
+impl<'a> IntoIterator for &'a BudgetedDocuments {
+    type Item = (&'a Uri, &'a DocumentState);
+    type IntoIter = std::collections::btree_map::Iter<'a, Uri, DocumentState>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.entries.iter()
+    }
+}
+
+impl BudgetedDocuments {
+    fn insert(&mut self, uri: Uri, state: DocumentState) {
+        let after = DocumentUsage::of(&state);
+        let before = self
+            .entries
+            .insert(uri, state)
+            .as_ref()
+            .map(DocumentUsage::of)
+            .unwrap_or_default();
+        self.usage.replace(before, after);
+    }
+
+    fn remove(&mut self, uri: &Uri) {
+        if let Some(state) = self.entries.remove(uri) {
+            self.usage
+                .replace(DocumentUsage::of(&state), DocumentUsage::default());
+        }
+    }
+
+    fn for_each_mut(&mut self, mut visit: impl FnMut(&Uri, &mut DocumentState)) {
+        for (uri, state) in &mut self.entries {
+            let before = DocumentUsage::of(state);
+            let mut document = BudgetedDocumentMut {
+                state,
+                usage: &mut self.usage,
+                before,
+            };
+            visit(uri, &mut document);
+        }
+    }
+
+    fn get_mut(&mut self, uri: &Uri) -> Option<BudgetedDocumentMut<'_>> {
+        let state = self.entries.get_mut(uri)?;
+        let before = DocumentUsage::of(state);
+        Some(BudgetedDocumentMut {
+            state,
+            usage: &mut self.usage,
+            before,
+        })
+    }
+}
+
+/// A document's text and authority bit jointly determine its admission cost.
+/// Reconcile both when the mutable borrow ends, on every return path.
+pub(super) struct BudgetedDocumentMut<'a> {
+    state: &'a mut DocumentState,
+    usage: &'a mut DocumentUsage,
+    before: DocumentUsage,
+}
+
+impl Deref for BudgetedDocumentMut<'_> {
+    type Target = DocumentState;
+
+    fn deref(&self) -> &Self::Target {
+        self.state
+    }
+}
+
+impl DerefMut for BudgetedDocumentMut<'_> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.state
+    }
+}
+
+impl Drop for BudgetedDocumentMut<'_> {
+    fn drop(&mut self) {
+        self.usage
+            .replace(self.before, DocumentUsage::of(self.state));
     }
 }
 
@@ -2192,11 +2359,12 @@ fn invalidate_incremental_document_state(state: &mut DocumentState) -> Quarantin
 /// exceed either bound is still recorded so later `didChange`/`didClose`
 /// find it, but with empty retained text and `buffer_authority_unknown`
 /// so [`DocumentState::refresh_quarantine`] pins the existing
-/// invalid-incremental-change fail-closed path (no diagnostics). Reopening
+/// fail-closed path (no diagnostics), disclosed as
+/// [`DocumentStalenessReason::DocumentStoreLimitReached`]. Reopening
 /// an existing URI replaces its bytes (the delta is counted, not doubled).
 /// Closing a document frees its share of both budgets.
 pub(super) struct DocumentStore {
-    pub(super) documents: BTreeMap<Uri, DocumentState>,
+    pub(super) documents: BudgetedDocuments,
     /// Workspace-relative keys already resolved for open `.rs` candidates,
     /// keyed by URI; each entry is valid only for the root recorded with it (#11763). Each
     /// resolution canonicalizes the root and the candidate, so recomputing
@@ -2211,7 +2379,7 @@ pub(super) struct DocumentStore {
 impl Default for DocumentStore {
     fn default() -> Self {
         Self {
-            documents: BTreeMap::new(),
+            documents: BudgetedDocuments::default(),
             rust_index_keys: BTreeMap::new(),
             limits: DOCUMENT_STORE_LIMITS,
         }
@@ -2220,7 +2388,7 @@ impl Default for DocumentStore {
 
 impl DocumentStore {
     #[cfg(test)]
-    fn with_limits(limits: DocumentStoreLimits) -> Self {
+    pub(super) fn with_limits(limits: DocumentStoreLimits) -> Self {
         Self {
             limits,
             ..Self::default()
@@ -2228,11 +2396,8 @@ impl DocumentStore {
     }
 
     fn retained_bytes_except(&self, uri: &Uri) -> usize {
-        self.documents
-            .iter()
-            .filter(|(stored, _)| *stored != uri)
-            .map(|(_, state)| state.text.len())
-            .sum()
+        self.documents.usage.retained_bytes
+            - self.documents.get(uri).map_or(0, |state| state.text.len())
     }
 
     fn is_store_overflow_placeholder(state: &DocumentState) -> bool {
@@ -2243,10 +2408,12 @@ impl DocumentStore {
     /// Overflow placeholders stay in the map so later `didChange`/`didClose`
     /// find them, but they do not consume an accepted slot.
     fn accepted_document_count_except(&self, uri: &Uri) -> usize {
-        self.documents
-            .iter()
-            .filter(|(stored, state)| *stored != uri && !Self::is_store_overflow_placeholder(state))
-            .count()
+        self.documents.usage.accepted_documents
+            - usize::from(
+                self.documents
+                    .get(uri)
+                    .is_some_and(|state| !Self::is_store_overflow_placeholder(state)),
+            )
     }
 
     fn accepted_slots_are_full(&self, uri: &Uri) -> bool {
@@ -2273,6 +2440,7 @@ impl DocumentStore {
     ) -> QuarantineTransition {
         let mut state = DocumentState::new(uri.clone(), version, String::new());
         state.buffer_authority_unknown = true;
+        state.store_limit_refused = true;
         let transition = state.refresh_quarantine();
         self.rust_index_keys.remove(&uri);
         self.documents.insert(uri, state);
@@ -2413,7 +2581,7 @@ impl DocumentStore {
         committed_digest: &str,
         input_identity: Option<String>,
     ) -> bool {
-        let Some(state) = self.documents.get_mut(uri) else {
+        let Some(mut state) = self.documents.get_mut(uri) else {
             return false;
         };
         // Only `.rs` paths carry producer-captured consumed-input digests (see
@@ -2446,7 +2614,7 @@ impl DocumentStore {
         let accepted_slots_full = self.accepted_slots_are_full(&uri);
         let new_uri_over_count = !self.documents.contains_key(&uri) && accepted_slots_full;
 
-        if let Some(state) = self.documents.get_mut(&uri) {
+        if let Some(mut state) = self.documents.get_mut(&uri) {
             state.version = version;
 
             // Once one incremental range was rejected, the retained buffer is
@@ -2455,9 +2623,11 @@ impl DocumentStore {
             // quarantined until a range-less replacement re-establishes the
             // complete current buffer, then apply only changes after that
             // replacement.
-            if state.quarantine.as_ref().is_some_and(|quarantine| {
-                quarantine.reason == DocumentStalenessReason::InvalidIncrementalChange
-            }) {
+            if state
+                .quarantine
+                .as_ref()
+                .is_some_and(|quarantine| quarantine.reason.is_buffer_authority_loss())
+            {
                 let Some(last_full_replacement) =
                     changes.iter().rposition(|change| change.range.is_none())
                 else {
@@ -2490,9 +2660,17 @@ impl DocumentStore {
                 // authority again and the ordinary staleness recomputation
                 // applies (#1746).
                 state.buffer_authority_unknown = false;
+                state.store_limit_refused = false;
                 return state.refresh_quarantine();
             }
 
+            // When the store-wide byte headroom is tighter than the
+            // per-notification limit, keep the changes so a refusal can be
+            // attributed: if they would have applied under the ordinary
+            // limits, the retained-text cap was the cause (#11666).
+            let retry_changes = (change_limits.max_document_bytes
+                < CONTENT_CHANGE_LIMITS.max_document_bytes)
+                .then(|| changes.clone());
             if apply_document_content_changes_within(
                 &mut state.text,
                 changes,
@@ -2501,7 +2679,20 @@ impl DocumentStore {
             )
             .is_err()
             {
-                return invalidate_incremental_document_state(state);
+                let refused_by_store_cap = retry_changes.is_some_and(|retry| {
+                    let mut candidate = state.text.clone();
+                    apply_document_content_changes_within(
+                        &mut candidate,
+                        retry,
+                        position_encoding,
+                        CONTENT_CHANGE_LIMITS,
+                    )
+                    .is_ok()
+                });
+                if refused_by_store_cap {
+                    state.store_limit_refused = true;
+                }
+                return invalidate_incremental_document_state(&mut state);
             }
             return state.refresh_quarantine();
         }
@@ -2545,11 +2736,11 @@ impl DocumentStore {
     /// applied the change, so line identity is unknown until synchronization
     /// authority is re-established.
     pub(super) fn invalidate_change(&mut self, uri: &Uri, version: i32) -> QuarantineTransition {
-        let Some(state) = self.state_for_uri_mut(uri) else {
+        let Some(mut state) = self.state_for_uri_mut(uri) else {
             return QuarantineTransition::Unchanged;
         };
         state.version = Some(version);
-        invalidate_incremental_document_state(state)
+        invalidate_incremental_document_state(&mut state)
     }
 
     /// Record a save: the didSave digest is the new saved-content identity
@@ -2570,7 +2761,7 @@ impl DocumentStore {
         let other_bytes = self.retained_bytes_except(uri);
         let max_bytes = self.limits.max_retained_document_bytes;
         let accepted_slots_full = self.accepted_slots_are_full(uri);
-        let Some(state) = self.documents.get_mut(uri) else {
+        let Some(mut state) = self.documents.get_mut(uri) else {
             return QuarantineTransition::Unchanged;
         };
         if state.buffer_authority_unknown {
@@ -2588,6 +2779,7 @@ impl DocumentStore {
                 return state.refresh_quarantine();
             }
             state.buffer_authority_unknown = false;
+            state.store_limit_refused = false;
         }
         if let Some(digest) = saved_digest {
             state.saved_digest = Some(digest);
@@ -2652,7 +2844,7 @@ impl DocumentStore {
         pre_disclosed: &[Uri],
     ) -> QuarantineEdges {
         let mut edges = QuarantineEdges::default();
-        for (uri, state) in &mut self.documents {
+        self.documents.for_each_mut(|uri, state| {
             if let Some(digest) = analyzed.get(uri) {
                 state.analyzed_saved_digest = digest.clone();
             }
@@ -2671,7 +2863,7 @@ impl DocumentStore {
                 }
                 QuarantineTransition::Unchanged => {}
             }
-        }
+        });
         edges
     }
 
@@ -2691,7 +2883,7 @@ impl DocumentStore {
         })
     }
 
-    pub(super) fn state_for_uri_mut(&mut self, uri: &Uri) -> Option<&mut DocumentState> {
+    pub(super) fn state_for_uri_mut(&mut self, uri: &Uri) -> Option<BudgetedDocumentMut<'_>> {
         if self.documents.contains_key(uri) {
             return self.documents.get_mut(uri);
         }
@@ -2781,6 +2973,7 @@ mod tests {
             analyzed_saved_digest: Some(digest_of(saved_text)),
             analyzed_input_identity: Some("input:test".to_string()),
             buffer_authority_unknown: false,
+            store_limit_refused: false,
             quarantine: None,
         }
     }
@@ -2979,14 +3172,14 @@ mod tests {
 
         // A buffer that diverges from the saved bytes the snapshot analyzed
         // stays quarantined even when the saved digest matches.
-        if let Some(state) = store.documents.get_mut(&uri) {
+        if let Some(mut state) = store.documents.get_mut(&uri) {
             state.text = "fn edited() {}".to_string();
         }
         let saved = digest_of("fn saved() {}");
         if store.adopt_committed_identity(&uri, &saved, Some("input:42".to_string())) {
             return Err("a diverging buffer must not adopt the committed digest".to_string());
         }
-        if let Some(state) = store.documents.get_mut(&uri) {
+        if let Some(mut state) = store.documents.get_mut(&uri) {
             state.text = "fn saved() {}".to_string();
         }
         if !store.adopt_committed_identity(&uri, &saved, Some("input:42".to_string())) {
@@ -3510,6 +3703,137 @@ mod tests {
         assert!(apply_document_content_changes(&mut big, many, &encoding).is_err());
     }
 
+    /// Run explicitly to compare the real store admission path on the same
+    /// host. Virtual URIs isolate budget work from filesystem and refresh work.
+    #[test]
+    #[ignore = "manual document admission throughput measurement"]
+    fn document_budget_admission_measurement() -> Result<(), String> {
+        for count in [4_000, 8_000, 20_000] {
+            let mut store = DocumentStore::default();
+            let started = std::time::Instant::now();
+            for index in 0..count {
+                let uri = test_uri(&format!("untitled:budget-{index}"))?;
+                store.open(open_params(uri, "fn sample() {}"));
+            }
+            let elapsed = started.elapsed();
+            assert_eq!(store.documents.len(), count);
+            assert_eq!(
+                store
+                    .documents
+                    .values()
+                    .filter(|state| !DocumentStore::is_store_overflow_placeholder(state))
+                    .count(),
+                count.min(DOCUMENT_STORE_LIMITS.max_open_documents)
+            );
+            eprintln!(
+                "document_budget_admission documents={count} wall_ms={}",
+                elapsed.as_millis()
+            );
+        }
+        Ok(())
+    }
+
+    /// The oracle intentionally recomputes from retained states, independent
+    /// of incremental totals and the overflow helper used by production.
+    fn assert_document_budget_matches_scan(store: &DocumentStore, absent: &Uri) {
+        for uri in store.documents.keys().chain(std::iter::once(absent)) {
+            let mut bytes = 0;
+            let mut count = 0;
+            for (stored, state) in &store.documents {
+                if stored != uri {
+                    bytes += state.text.len();
+                    count += usize::from(!state.buffer_authority_unknown || !state.text.is_empty());
+                }
+            }
+            assert_eq!(
+                store.retained_bytes_except(uri),
+                bytes,
+                "bytes excluding {uri:?}"
+            );
+            assert_eq!(
+                store.accepted_document_count_except(uri),
+                count,
+                "slots excluding {uri:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn document_budget_matches_scan_across_mutation_and_recovery() -> Result<(), String> {
+        let mut store = DocumentStore::with_limits(DocumentStoreLimits {
+            max_open_documents: 4,
+            max_retained_document_bytes: 128,
+        });
+        let absent = test_uri("untitled:absent")?;
+        // Deterministic varied interleavings exercise caps, placeholders, reopen,
+        // close, accepted empty buffers, failed edits and both recovery paths.
+        let mut seed = 13_u64;
+        for step in 0..2_000 {
+            seed = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
+            let uri = test_uri(&format!("untitled:budget-{}", (seed >> 32) % 12))?;
+            let text = "x".repeat(((seed >> 40) % 65) as usize);
+            match (seed >> 48) % 7 {
+                0 => {
+                    store.open(open_params(uri, &text));
+                }
+                1 => {
+                    store.close(close_params(uri));
+                }
+                2 => {
+                    store.change(
+                        full_replace_params(uri, step, &text),
+                        &PositionEncodingKind::UTF16,
+                    );
+                }
+                3 => {
+                    store.save(&uri, Some(digest_of(&text)), Some(text));
+                }
+                4 => {
+                    store.save(&uri, None, None);
+                }
+                5 => {
+                    store.invalidate_change(&uri, step);
+                }
+                _ => {
+                    // A valid replacement may change bytes before a subsequent
+                    // invalid range fails. Accounting must cover this return too.
+                    let mut params = full_replace_params(uri, step, &text);
+                    params.content_changes.push(ranged_insert(99, 0, "bad"));
+                    store.change(params, &PositionEncodingKind::UTF16);
+                }
+            }
+            assert_document_budget_matches_scan(&store, &absent);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn document_budget_alias_invalidation_releases_an_empty_slot() -> Result<(), String> {
+        let uri = test_uri("file:///workspace/src/empty.rs")?;
+        let alias = test_uri("file://localhost/workspace/src/empty.rs")?;
+        let other = test_uri("untitled:other")?;
+        let absent = test_uri("untitled:absent")?;
+        let mut store = DocumentStore::with_limits(DocumentStoreLimits {
+            max_open_documents: 1,
+            max_retained_document_bytes: 16,
+        });
+        store.open(open_params(uri.clone(), ""));
+        store.open(open_params(other.clone(), "x"));
+        assert_overflow_quarantined(&store, &other)?;
+        // Exact URI differs; state_for_uri_mut must account for its alias hit.
+        store.invalidate_change(&alias, 2);
+        assert_document_budget_matches_scan(&store, &absent);
+        store.change(
+            full_replace_params(other.clone(), 3, "x"),
+            &PositionEncodingKind::UTF16,
+        );
+        assert_accepted_text(&store, &other, "x")?;
+        store.close(close_params(uri));
+        store.close(close_params(other));
+        assert_document_budget_matches_scan(&store, &absent);
+        Ok(())
+    }
+
     fn tiny_count_limits() -> DocumentStoreLimits {
         DocumentStoreLimits {
             max_open_documents: 2,
@@ -3572,11 +3896,9 @@ mod tests {
             .quarantine
             .as_ref()
             .map(|quarantine| quarantine.reason)
-            != Some(DocumentStalenessReason::InvalidIncrementalChange)
+            != Some(DocumentStalenessReason::DocumentStoreLimitReached)
         {
-            return Err(
-                "overflow document must reuse invalid-incremental-change quarantine".into(),
-            );
+            return Err("overflow document must use the document-store-limit quarantine".into());
         }
         Ok(())
     }
@@ -3594,12 +3916,108 @@ mod tests {
         if state.buffer_authority_unknown {
             return Err("accepted document must not pin buffer_authority_unknown".to_string());
         }
-        if state.quarantine.as_ref().is_some_and(|quarantine| {
-            quarantine.reason == DocumentStalenessReason::InvalidIncrementalChange
-        }) {
-            return Err(
-                "accepted document must not use invalid-incremental-change quarantine".into(),
-            );
+        if state.store_limit_refused
+            || state
+                .quarantine
+                .as_ref()
+                .is_some_and(|quarantine| quarantine.reason.is_buffer_authority_loss())
+        {
+            return Err("accepted document must not use an authority-loss quarantine".into());
+        }
+        Ok(())
+    }
+
+    fn reason_of(store: &DocumentStore, uri: &Uri) -> Option<DocumentStalenessReason> {
+        store.state_for_uri(uri).and_then(|state| {
+            state
+                .quarantine
+                .as_ref()
+                .map(|quarantine| quarantine.reason)
+        })
+    }
+
+    fn reversed_range_change(uri: Uri, version: i32) -> DidChangeTextDocumentParams {
+        let mut params = full_replace_params(uri, version, "x");
+        params.content_changes[0].range = Some(tower_lsp_server::ls_types::Range {
+            start: Position {
+                line: 0,
+                character: 5,
+            },
+            end: Position {
+                line: 0,
+                character: 1,
+            },
+        });
+        params
+    }
+
+    #[test]
+    fn store_limit_flag_clears_on_recovery_so_a_later_bad_edit_is_an_edit_failure()
+    -> Result<(), String> {
+        let first = test_uri("file:///workspace/src/a.rs")?;
+        let second = test_uri("file:///workspace/src/b.rs")?;
+        let overflow = test_uri("file:///workspace/src/c.rs")?;
+        let encoding = PositionEncodingKind::UTF16;
+        let mut store = DocumentStore::with_limits(tiny_count_limits());
+        store.open(open_params(first, "fn a() {}"));
+        store.open(open_params(second.clone(), "fn b() {}"));
+        store.open(open_params(overflow.clone(), "fn overflow() {}"));
+        if reason_of(&store, &overflow) != Some(DocumentStalenessReason::DocumentStoreLimitReached)
+        {
+            return Err("overflow placeholder must name the store limit".to_string());
+        }
+        store.close(close_params(second));
+        store.change(
+            full_replace_params(overflow.clone(), 2, "fn recovered() {}"),
+            &encoding,
+        );
+        assert_accepted_text(&store, &overflow, "fn recovered() {}")?;
+        store.change(reversed_range_change(overflow.clone(), 3), &encoding);
+        if reason_of(&store, &overflow) != Some(DocumentStalenessReason::InvalidIncrementalChange) {
+            return Err("a failed edit after recovery must report the edit failure".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn existing_document_refused_at_the_byte_cap_names_the_store_limit() -> Result<(), String> {
+        let uri = test_uri("file:///workspace/src/a.rs")?;
+        let encoding = PositionEncodingKind::UTF16;
+        let mut store = DocumentStore::with_limits(tiny_byte_limits());
+        store.open(open_params(uri.clone(), "aaaaaaaa"));
+        assert_accepted_text(&store, &uri, "aaaaaaaa")?;
+        store.change(
+            full_replace_params(uri.clone(), 2, "bbbbbbbbbbbbbbbbbbbbbbbb"),
+            &encoding,
+        );
+        if reason_of(&store, &uri) != Some(DocumentStalenessReason::DocumentStoreLimitReached) {
+            return Err("replacement past the retained-text cap must name the store limit".into());
+        }
+        // A genuinely bad edit under the same tight headroom stays an edit failure.
+        let other = test_uri("file:///workspace/src/b.rs")?;
+        store.open(open_params(other.clone(), "cc"));
+        store.change(reversed_range_change(other.clone(), 2), &encoding);
+        if reason_of(&store, &other) != Some(DocumentStalenessReason::InvalidIncrementalChange) {
+            return Err("a rejected range must not be blamed on the store cap".into());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn invalidating_an_overflow_placeholder_keeps_the_store_limit_reason() -> Result<(), String> {
+        let first = test_uri("file:///workspace/src/a.rs")?;
+        let second = test_uri("file:///workspace/src/b.rs")?;
+        let overflow = test_uri("file:///workspace/src/c.rs")?;
+        let mut store = DocumentStore::with_limits(tiny_count_limits());
+        store.open(open_params(first, "fn a() {}"));
+        store.open(open_params(second, "fn b() {}"));
+        store.open(open_params(overflow.clone(), "fn overflow() {}"));
+        store.invalidate_change(&overflow, 2);
+        assert_overflow_quarantined(&store, &overflow)?;
+        if DocumentStalenessReason::DocumentStoreLimitReached.as_str()
+            != "document_store_limit_reached"
+        {
+            return Err("store-limit reason id must stay stable".to_string());
         }
         Ok(())
     }
@@ -4920,6 +5338,7 @@ mod tests {
                 sample_paths: vec!["zpy/pricing_%.py".to_string()],
                 javascript_file_count: 0,
                 enabled: false,
+                nested_packages: Vec::new(),
             }]);
         let outcome = python_unavailable_outcome()?;
         if coverage.not_enabled_language(Path::new("zpy/pricing_%.py"), Some(&outcome))
@@ -4969,6 +5388,7 @@ mod tests {
                 sample_paths: vec!["zpy/pricing.py".to_string()],
                 javascript_file_count: 0,
                 enabled: false,
+                nested_packages: Vec::new(),
             },
             PreviewLanguageAdvisory {
                 language: "typescript".to_string(),
@@ -4976,6 +5396,7 @@ mod tests {
                 sample_paths: vec!["web/discount.ts".to_string()],
                 javascript_file_count: 0,
                 enabled: true,
+                nested_packages: Vec::new(),
             },
         ]);
         assert_eq!(coverage.named_paths, vec!["zpy/pricing.py".to_string()]);
@@ -4987,6 +5408,7 @@ mod tests {
                 sample_paths: vec!["a.py".to_string(), "b.py".to_string(), "c.py".to_string()],
                 javascript_file_count: 0,
                 enabled: false,
+                nested_packages: Vec::new(),
             }]);
         assert_eq!(incomplete.incomplete_languages, vec!["python".to_string()]);
     }

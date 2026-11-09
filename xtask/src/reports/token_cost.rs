@@ -8,11 +8,11 @@
 //!
 //! Definitions (do not change silently):
 //! - `bytes`: exact stdout bytes of `ripr check --mode fast` for the row.
-//! - `findings`: JSON `findings` array length for json/json-compact rows;
+//! - `findings`: JSON `findings` array length for json/json-compact/json-terse rows;
 //!   for sarif rows, results plus their `folded_results` entries (SARIF
-//!   folds same-line/same-class findings into one alert, #11219); `null` for human rows, whose
-//!   denominator is not machine-countable (bytes-per-finding stays null,
-//!   never invented).
+//!   folds same-line/same-class findings into one alert, #11219). Bounded
+//!   sarif-compact may omit results, so its denominator is null, as are the
+//!   human and agent denominators; bytes-per-finding is never invented.
 //! - `bytes_per_finding`: `bytes / findings` when findings > 0, else null.
 
 use serde_json::{Value, json};
@@ -22,10 +22,13 @@ use std::path::Path;
 use super::fixtures::{FixtureCheckFormat, run_fixture_check};
 use crate::normalize_path;
 
-const FORMATS: [(&str, FixtureCheckFormat); 5] = [
+const FORMATS: [(&str, FixtureCheckFormat); 8] = [
     ("json", FixtureCheckFormat::Json),
     ("json-compact", FixtureCheckFormat::JsonCompact),
+    ("json-terse", FixtureCheckFormat::JsonTerse),
     ("sarif", FixtureCheckFormat::Sarif),
+    ("sarif-compact", FixtureCheckFormat::SarifCompact),
+    ("agent", FixtureCheckFormat::Agent),
     ("human", FixtureCheckFormat::Human),
     ("human-full", FixtureCheckFormat::HumanFull),
 ];
@@ -50,7 +53,7 @@ impl TokenCostRow {
 fn findings_count(format: &str, rendered: &str) -> Option<usize> {
     let value: Value = serde_json::from_str(rendered).ok()?;
     match format {
-        "json" | "json-compact" => value
+        "json" | "json-compact" | "json-terse" => value
             .get("findings")
             .and_then(Value::as_array)
             .map(Vec::len),
@@ -118,7 +121,8 @@ fn report_markdown(rows: &[TokenCostRow], errors: &[String]) -> String {
         "# token-cost scoreboard\n\n\
          Advisory measurement of `ripr check` output cost per format on the dogfood fixtures.\n\
          Grain: one row per (fixture, format). `bytes` is exact stdout bytes;\n\
-         bytes-per-finding is null where the denominator is not machine-countable.\n\n",
+         bytes-per-finding is null where the denominator is not machine-countable.\n\
+         Bytes are not tokenizer counts; token savings depend on the tokenizer.\n\n",
     );
     if errors.is_empty() {
         out.push_str("Status: pass\n\n");
@@ -207,6 +211,11 @@ mod tests {
             findings_count("json", r#"{"findings":[{"id":"a"},{"id":"b"}]}"#),
             Some(2)
         );
+        assert_eq!(
+            findings_count("json-terse", r#"{"findings":[{},{}]}"#),
+            Some(2)
+        );
+        assert_eq!(findings_count("sarif-compact", r#"{"runs":[]}"#), None);
         assert_eq!(
             findings_count("sarif", r#"{"runs":[{"results":[{"ruleId":"x"}]}]}"#),
             Some(1)

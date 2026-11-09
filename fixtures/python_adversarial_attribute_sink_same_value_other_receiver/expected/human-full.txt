@@ -50,6 +50,9 @@ Weakness
   - A strong Python oracle reaches `refresh`, but its assertion does not observe the changed owner's output; static evidence cannot confirm the changed behavior is discriminated. Add an assertion on the changed owner's output
   - missing discriminator self.status == "active": changed Python field/object value at line 3 lacks a concrete repair discriminator
 
+Next step
+  Python preview: strengthen the existing related test with a field/object assertion for the missing check `self.status == "active"`
+
 Python repair card (preview/advisory)
   card version: python_repair_card.v1
   canonical gap: gap:python:src/session.py:Session.refresh:field_value:field_construction:self.status=active
@@ -75,9 +78,6 @@ Python repair card (preview/advisory)
     - Syntax-first Python preview evidence only.
     - No source edits, generated tests, mutation execution, provider calls, or gate authority.
     - Verify success alone is not a gap-closure receipt.
-
-Next step
-  Python preview: strengthen the existing related test with a field/object assertion for the missing check `self.status == "active"`
 Drill in:
   (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/python_adversarial_attribute_sink_same_value_other_receiver/input --diff <cwd>/fixtures/python_adversarial_attribute_sink_same_value_other_receiver/diff.patch --mode fast probe:src_session.py:python_preview:a8af27c6

@@ -314,6 +314,7 @@ jobs:
           cargo fetch --locked --manifest-path crates/ripr/tests/fixtures/proptest_singleton/input/Cargo.toml
 
       - name: Prepare independent user-text base
+        id: user_text_base
         # Prepares the exact first-parent base before running its policy matcher.
         # These two short steps preserve the check-workflows per-block line bound.
         if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
@@ -324,6 +325,7 @@ jobs:
           git worktree add --detach "$base_tree" "$base_sha"
 
       - name: Recover pinned base compiler arity if needed
+        id: user_text_recovery
         if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
         run: |
           set -euo pipefail
@@ -354,7 +356,38 @@ jobs:
             echo "::notice::base $base_sha recovered only the exact #12466 compiler-arity blob ($old_stub_blob -> $fixed_stub_blob); original user-text matcher remains authoritative"
           fi
 
+      - name: Recover pinned base missed-txt match if needed
+        # main at 5c223a5e (format.rs blob) does not compile: #13666 and #13720
+        # merged an uncovered OutputFormat::MissedTxt arm (E0004). Patch only that
+        # exact blob in the base worktree so the merge-base matcher can build;
+        # a no-op once main carries the #13848 fix.
+        if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+        run: |
+          set -euo pipefail
+          base_tree="$RUNNER_TEMP/user-text-base"
+          base_sha="$(git -C "$base_tree" rev-parse HEAD)"
+          old_format_blob="$(git -C "$base_tree" rev-parse "HEAD:crates/ripr/src/output/format.rs")"
+          if test "$old_format_blob" = "5c223a5e714540e314600f24f6f07373d136c475"; then
+            python3 - "$base_tree/crates/ripr/src/output/format.rs" <<'PY'
+          from pathlib import Path
+          import sys
+
+          path = Path(sys.argv[1])
+          source = path.read_text(encoding="utf-8")
+          before = "            | Self::RepoSarifCompact => false,\n"
+          after = "            | Self::RepoSarifCompact\n            | Self::MissedTxt => false,\n"
+          if source.count(before) != 1:
+              raise SystemExit("pinned base missed-txt recovery has an unexpected source shape")
+          path.write_text(source.replace(before, after, 1), encoding="utf-8")
+          PY
+            fixed_format_blob="$(git -C "$base_tree" hash-object crates/ripr/src/output/format.rs)"
+            test "$fixed_format_blob" = "cf05a4c4a649b292fe0cae25e43f2ce3d28d79b6"
+            git -C "$base_tree" diff --name-only | grep -vxF -e crates/ripr/src/output/format.rs -e crates/ripr/src/app/test_stub.rs && exit 1
+            echo "::notice::base $base_sha recovered only the exact #13848 missed-txt blob ($old_format_blob -> $fixed_format_blob); original user-text matcher remains authoritative"
+          fi
+
       - name: User-text goldens judged by the merge-base matcher
+        id: user_text_matcher
         # The PR's goldens are judged by the original matcher at the merge base,
         # so the PR cannot qualify a weakened version of its own gate (#11385).
         if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
@@ -392,12 +425,12 @@ jobs:
         id: network_policy
         run: cargo xtask check-network-policy
 
-      # Feature-gated test modules (lang-perl and other previews) compile only
-      # under their features; without this step two green PRs can break main
-      # together (#6854, #6879).
-      - name: All-features ripr target check
+      # Lint optional-feature code as well as type-checking it (#13152).
+      # Keep the default-feature workspace pass below: cfg(not(feature = ...))
+      # branches are absent from this all-features build.
+      - name: Strict all-features ripr Clippy
         id: all_features_check
-        run: cargo check -p ripr --all-targets --all-features
+        run: cargo clippy -p ripr --all-targets --all-features -- -D warnings
 
       - name: Strict workspace Clippy
         id: clippy
@@ -676,6 +709,9 @@ jobs:
           INTEGRATION_TREE: ${{ steps.admitted.outputs.tree }}
           EXECUTION_ROUTE: ${{ inputs.artifact-name }}
           FORMATTING_RESULT: ${{ steps.formatting.outcome }}
+          USER_TEXT_BASE_RESULT: ${{ steps.user_text_base.outcome }}
+          USER_TEXT_RECOVERY_RESULT: ${{ steps.user_text_recovery.outcome }}
+          USER_TEXT_MATCHER_RESULT: ${{ steps.user_text_matcher.outcome }}
           PRECOMMIT_RESULT: ${{ steps.precommit.outcome }}
           PROMOTION_HONESTY_RESULT: ${{ steps.promotion_honesty.outcome }}
           AGENT_SKILLS_RESULT: ${{ steps.agent_skills.outcome }}
@@ -701,9 +737,9 @@ jobs:
             echo ""
             printf -- '- Workflow commit: `%s`\n- Subject head: `%s`\n- Run / attempt: `%s` / `%s`\n- Route: `%s`\n' "$GITHUB_SHA" "$SUBJECT_HEAD" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$EXECUTION_ROUTE"
             echo ""
-            echo '| Gate | Outcome |'
-            echo '| --- | --- |'
+            printf '| Gate | Outcome |\n| --- | --- |\n'
             printf '| formatting | %s |\n' "${FORMATTING_RESULT:-not_reported}"
+            printf '| user_text_base | %s |\n| user_text_recovery | %s |\n| user_text_matcher | %s |\n' "${USER_TEXT_BASE_RESULT:-not_reported}" "${USER_TEXT_RECOVERY_RESULT:-not_reported}" "${USER_TEXT_MATCHER_RESULT:-not_reported}"
             printf '| precommit | %s |\n' "${PRECOMMIT_RESULT:-not_reported}"
             printf '| promotion_honesty | %s |\n' "${PROMOTION_HONESTY_RESULT:-not_reported}"
             printf '| agent_skills | %s |\n' "${AGENT_SKILLS_RESULT:-not_reported}"
