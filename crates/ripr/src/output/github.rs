@@ -196,7 +196,9 @@ pub(crate) fn render_with_config(output: &CheckOutput, config: &RiprConfig) -> S
                 format!(
                     "{}{message}",
                     unplaced_non_utf8_location_prefix(
-                        &display_path.replace("%25", "%"),
+                        // Keep `%25` (a literal `%`) distinct from a `%XX`
+                        // byte marker; `escape_data` encodes each `%` once.
+                        &display_path,
                         &finding.probe.location.line.to_string()
                     )
                 ),
@@ -1306,6 +1308,23 @@ mod tests {
                 "Location (file name is not valid UTF-8, so not placed): src/a_%25FF.rs:13. "
             ),
             "the %XX location must lead the message: {rendered}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn render_keeps_literal_percent_distinct_from_non_utf8_marker() {
+        use std::os::unix::ffi::OsStrExt;
+        let mut output = output_with_unknown_finding();
+        output.findings[0].probe.location.file =
+            PathBuf::from(std::ffi::OsStr::from_bytes(b"a%FF_\xFF.rs"));
+
+        let rendered = render(&output);
+
+        // Wire `%2525FF_%25FF` decodes to `%25FF_%FF`: literal `%` stays `%25`.
+        assert!(
+            rendered.contains("not placed): a%2525FF_%25FF.rs:13. "),
+            "literal percent and byte marker must differ: {rendered}"
         );
     }
 
