@@ -1,3 +1,4 @@
-tools/python/cargo-artifacts/run.py|subprocess.run|2|rust/build|#13965: resolve Cargo metadata and registered worktrees before fail-closed build-pool inventory or deletion.
-xtask/tests/cargo_artifact_lifecycle.rs|Command::new|1|cargo-artifact-lifecycle|#13965: the integration test runs the checked-in stdlib Python safety suite with `python3 -I`; no network or production subprocess.
-xtask/tests/cargo_artifact_lifecycle.rs|use std::process::Command|1|cargo-artifact-lifecycle|#13965: imports Command only for the bounded safety-suite invocation described above.
+tools/cargo-artifacts/metadata.rs|Command::new|1|rust/build|#13965: resolve locked offline Cargo metadata before exact current-checkout target inventory or deletion.
+tools/cargo-artifacts/main.rs|use std::process::{self, Command}|1|rust/build|#13965: import the bounded Cargo metadata process and CLI exit authority.
+xtask/tests/cargo_artifact_lifecycle.rs|Command::new|2|rust/test|#13965: compile and execute the dependency-free standalone artifact lifecycle self-tests with the pinned Rust compiler.
+xtask/tests/cargo_artifact_lifecycle.rs|use std::process::Command|1|rust/test|#13965: import the bounded standalone-tool test process authority.

@@ -45,26 +45,16 @@ jobs:
       # Exact toolchain, same pin as ci.yml and rust-toolchain.toml.
       - uses: dtolnay/rust-toolchain@035fceb3c12fb0c6a9461b52775e16473133e591 # 1.95.0
 
-      - name: Own pilot Cargo target
-        run: |
-          mkdir -p "$RUNNER_TEMP/ripr-target"
-          {
-            echo "CARGO_TARGET_DIR=$RUNNER_TEMP/ripr-target"
-            echo "CARGO_BUILD_BUILD_DIR=$RUNNER_TEMP/ripr-target"
-            echo "CARGO_INCREMENTAL=0"
-          } >> "$GITHUB_ENV"
-
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           cache-on-failure: true
-          cache-targets: false
-          cache-directories: ${{ runner.temp }}/ripr-target
 
       # Build output lives outside the pilot root so the pilot walk never
-      # sees it. Final artifacts and split intermediates share the same
-      # runner-owned and cached target tree.
+      # sees it.
       - name: Build ripr
         run: cargo build --release --locked -p ripr
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/ripr-target
 
       - name: Measure ripr pilot on this repository
         continue-on-error: true

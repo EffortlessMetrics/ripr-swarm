@@ -10,10 +10,10 @@ xtask = "run -p xtask --"
 policy = "run --locked -p repo-policy --"
 
 [build]
-# Keep final binaries and reports at the established target/ paths. This path
-# is relative to the repository config, so nested fixture workspaces still use
-# one same-volume pool; the hash keeps every manifest's mutable state private.
-build-dir = "../.ripr-swarm-build/{workspace-path-hash}"
+# Agent worktrees are short-lived. Retaining a separate incremental object graph
+# in every checkout costs more disk than it usually saves; a long-lived checkout
+# can opt in deliberately with CARGO_INCREMENTAL=1.
+incremental = false
 
 [env]
 TEMP = { value = "target", relative = true, force = true }

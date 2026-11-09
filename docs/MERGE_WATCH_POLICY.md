@@ -132,28 +132,17 @@ not live read-back.
 
 ## Cleanup
 
-After a PR branch is merged or abandoned, clean only the checkout created for
-that task. Stop its Cargo processes first. From inside that checkout, inspect the
-repo-owned cleanup plan and then apply the same bounded command:
+After a PR branch is merged or abandoned, clean only the worktree created for
+that task. If the task used a scoped `CARGO_TARGET_DIR`, remove that exact
+directory after verifying it is under the intended scratch root. If it used a
+task-local default `target/`, `cargo clean` is acceptable.
 
-```bash
-python3 tools/python/cargo-artifacts/run.py clean-current
-python3 tools/python/cargo-artifacts/run.py clean-current --apply
+PowerShell example:
+
+```powershell
+Remove-Item -LiteralPath <task-cargo-target-dir> -Recurse -Force
+git worktree remove <task-worktree>
 ```
 
-On Windows, use `py -3` with the same arguments. `clean-current` removes the
-exact manifest-private Cargo build tree plus direct non-RIPR `target/` entries,
-preserves `target/ripr`, and writes its receipt under that retained tree before
-the checkout is removed. Only after that receipt exists should the owning lane
-run `git worktree remove <task-worktree>`.
-
-A task that explicitly overrode `CARGO_TARGET_DIR` or `CARGO_BUILD_BUILD_DIR`
-remains outside this repo-owned inference. Unset the override before invoking
-the lifecycle tool, and separately remove only the exact task-owned external
-path after verifying it is under the intended scratch root and no process uses
-it. Do not substitute `cargo clean`: it crosses the retained `target/ripr`
-evidence boundary and does not provide the bounded pool receipt.
-
-Do not remove unrelated worktrees, delete remote branches, clean shared build
-directories, or weaken a refusal from the lifecycle tool unless the maintainer
-explicitly authorizes that separate action.
+Do not remove unrelated worktrees, delete remote branches, or clean shared
+build directories unless the maintainer explicitly asks.

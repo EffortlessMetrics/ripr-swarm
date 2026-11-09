@@ -1,5 +1,4 @@
 <!-- section: Internal / CI -->
-- Cargo intermediates now use manifest-keyed trees in a bounded same-volume
-  sibling-checkout pool, with dry-run cleanup receipts that preserve
-  `target/ripr`, protect live worktrees, and refuse ambiguous deletion paths
-  (#13965).
+- Agent checkouts now disable low-reuse Cargo incremental state by default and
+  provide receipted exact-target cleanup that preserves `target/ripr` without
+  sharing or age-collecting another workspace's build tree (#13965).

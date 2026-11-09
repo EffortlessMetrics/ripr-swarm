@@ -1,132 +1,110 @@
 # Cargo build-artifact lifecycle
 
-RIPR separates compiler intermediates, final Cargo outputs, and product evidence because they have different reuse and retention rules.
+RIPR gives every checkout one explicit Cargo ownership boundary: its own `target/` directory. We do not share a mutable target or build directory across worktrees, and we do not use age as a proxy for whether an unknown workspace is live.
 
 | Class | Location | Lifecycle |
 |---|---|---|
-| Cargo intermediates (`deps`, incremental state, build-script output) | `<checkout-parent>/.ripr-swarm-build/{workspace-path-hash}` | Private to one manifest; bounded across sibling checkouts |
-| Final Cargo outputs (`ripr`, `xtask`, docs, timings) | the active workspace's `target/` | Small, familiar output surface; disposable with the checkout |
-| RIPR cache, reports, receipts, and retained evidence | `target/ripr/` | Managed by RIPR's cache/report contracts, not Cargo cleanup |
+| Cargo intermediates and final outputs | the checkout's exact `target/` | Private to that checkout; removed at checkout disposal |
+| RIPR cache, reports, receipts, and retained evidence | `target/ripr/` | Preserved by Cargo-artifact cleanup and managed by RIPR contracts |
+| CI-owned Cargo state | the job's explicit `CARGO_TARGET_DIR` | Owned, cached, and deleted by that job's existing lifecycle |
 
-`.cargo/config.toml` uses Cargo's stable `build.build-dir` split. Its relative path is resolved from the repository config, not from whichever nested manifest Cargo is building. Root builds and fixture workspaces therefore converge on one pool beside the checkout instead of scattering hidden build trees through `fixtures/`. `{workspace-path-hash}` keeps every root, fixture, and sibling-worktree manifest in a private mutable tree.
+`.cargo/config.toml` disables incremental compilation by default. Agent worktrees are normally short-lived, so retaining another object graph in every checkout creates large low-reuse directories. A deliberate long-lived checkout can opt in for one command or session with `CARGO_INCREMENTAL=1`; that does not make the target shareable.
 
-The pool stays on the checkout volume. It does not redirect large builds into `CARGO_HOME` or the Windows system drive. Final binaries remain at established paths such as `target/debug/ripr`.
+The forced `TEMP`, `TMP`, and `TMPDIR` redirect remains intentional. It keeps linker and test scratch off the Windows system drive and inside the checkout's disposal boundary.
 
-The existing forced `TEMP`, `TMP`, and `TMPDIR` redirect remains intentional. It keeps linker and test scratch off the Windows system drive. `clean-current` removes leaked top-level scratch together with the checkout's final Cargo output while preserving `target/ripr`.
+## Why there is no global TTL collector
+
+Cargo can build nested fixture workspaces and caller-selected manifests that are not registered Git worktrees. A pool-wide age rule cannot prove those trees are inactive. The repository therefore does not delete compiler state belonging to another manifest, checkout, or host-level target owner.
+
+Cleanup is an explicit terminal operation for the current checkout. The caller stops Cargo work in that checkout, reviews the exact direct children selected under its resolved `target/`, and then applies deletion. This is an ownership decision, not a liveness guess.
+
+## Build the cleanup utility
+
+The utility is a dependency-free standalone Rust source set. Compile it into the retained `target/ripr` tree so it remains executable while `target/debug`, `target/release`, and leaked scratch are removed.
+
+### Bash
+
+```bash
+mkdir -p target/ripr/tools
+rustc --edition=2024 tools/cargo-artifacts/main.rs \
+  -o target/ripr/tools/cargo-artifacts
+```
+
+### PowerShell
+
+```powershell
+New-Item -ItemType Directory -Force target/ripr/tools | Out-Null
+rustc --edition=2024 tools/cargo-artifacts/main.rs `
+  -o target/ripr/tools/cargo-artifacts.exe
+```
+
+The sources use only the Rust standard library. They can be compiled before the workspace itself is healthy and do not allocate another Cargo target.
 
 ## Commands
 
-Run from any directory inside the repository.
+From any directory inside the repository:
 
 ```bash
-python3 tools/python/cargo-artifacts/run.py report
-python3 tools/python/cargo-artifacts/run.py gc
-python3 tools/python/cargo-artifacts/run.py gc --apply
-python3 tools/python/cargo-artifacts/run.py clean-current
-python3 tools/python/cargo-artifacts/run.py clean-current --apply
+target/ripr/tools/cargo-artifacts report
+target/ripr/tools/cargo-artifacts clean-current
+target/ripr/tools/cargo-artifacts clean-current --apply
 ```
 
-On Windows, use the same arguments with `py -3`:
+On Windows, use `target/ripr/tools/cargo-artifacts.exe`.
 
-```powershell
-py -3 tools/python/cargo-artifacts/run.py report
-py -3 tools/python/cargo-artifacts/run.py clean-current --apply
-```
+Every cleanup is a dry run unless `--apply` is present. The default soft budget is 12 GB of removable current-checkout state; override the reporting threshold with `--max-size-gb <n>`. The budget does not authorize broader deletion.
 
-Every command is a dry run unless `--apply` is present. The command prints Markdown and writes JSON and Markdown receipts to:
+The utility writes:
 
 - `target/ripr/reports/cargo-artifacts.json`
 - `target/ripr/reports/cargo-artifacts.md`
 
-Use `--no-receipt` only for an isolated diagnostic or unit test.
-
-The repo-owned lifecycle refuses active `CARGO_TARGET_DIR`, `CARGO_BUILD_TARGET_DIR`, or `CARGO_BUILD_BUILD_DIR` overrides. An override changes ownership and retention, so the tool will not infer that the resulting path is safe to delete.
+`--no-receipt` is available only for isolated dry-run diagnostics and tests. Destructive cleanup always retains a receipt.
 
 ### `report`
 
-Inventories every recognized Cargo workspace-hash tree under the pool, measures bytes and file counts, resolves the current workspace through `cargo metadata`, and shows what the default GC policy would select. It also reports unexpected files, links, or directory shapes without traversing them.
-
-For stale GC, the tool protects:
-
-- the current workspace build tree;
-- root build trees for registered Git worktrees beside the current checkout; and
-- root build trees for other sibling checkouts whose Cargo config names the same pool.
-
-If a registered sibling is missing or cannot produce trustworthy Cargo metadata, inspection fails closed. Repair or prune that worktree before applying GC.
-
-### `gc`
-
-Selects inactive build trees using both controls:
-
-- **TTL:** 7 days by default.
-- **Pool budget:** 12 GB by default.
-
-Budget eviction considers oldest trees first but will not evict a tree newer than 24 hours. Current/live trees and trees containing a symlink, junction/reparse point, unreadable entry, or special file are ineligible. Apply mode also refuses any unrecognized pool entry and re-resolves live worktrees immediately before deletion.
-
-If protected or young trees keep the pool above budget, the receipt reports the residual pressure instead of widening deletion.
-
-Override the bounds explicitly when a host needs a different policy:
-
-```bash
-python3 tools/python/cargo-artifacts/run.py gc \
-  --ttl-days 3 --max-size-gb 8 --min-age-hours 24
-```
-
-Review the receipt, then repeat the same command with `--apply`.
-
-`--root` exists for read-only recovery and tests. Apply mode refuses an override pool.
+`report` resolves Cargo's current metadata offline and inventories the current checkout's exact `target/`. It reports removable bytes, retained `target/ripr` bytes, file counts, and soft-budget pressure. It does not delete.
 
 ### `clean-current`
 
-Use immediately before disposing of an agent checkout. It selects:
+`clean-current` selects every direct entry of the current checkout's exact `target/` except `target/ripr/`. This includes Cargo profiles, fingerprints, incremental state left by earlier configurations, and top-level test/linker scratch.
 
-1. the exact root-workspace `build_directory` returned by Cargo; and
-2. every direct entry in the current checkout's `target/` except `target/ripr/`.
+Before selecting or deleting, it refuses:
 
-It refuses external target directories, active Cargo path overrides, links/reparse points, unreadable paths, special files, and a build directory outside the configured sibling pool. After deletion, the cleanup receipt is written back under the preserved `target/ripr` tree.
+- non-empty `CARGO_TARGET_DIR`, `CARGO_BUILD_TARGET_DIR`, or `CARGO_BUILD_BUILD_DIR` overrides;
+- a Cargo `workspace_root` other than the current repository;
+- a `target_directory` other than `<repository>/target`;
+- a `build_directory` that is not exactly the same path as that target;
+- symlinks, Windows reparse points, special files, unreadable paths, and non-direct deletion candidates.
 
-Nested fixture build trees are reclaimed by the pool TTL/budget policy. Cargo hashes their manifest paths but does not expose a reversible manifest-to-hash index, so `clean-current` does not guess ownership from a hash.
+The exact-equality rule matters: containment is not ownership. A nested Cargo build path never authorizes deletion of its ancestor hash tree or siblings.
+
+Apply mode writes the initial receipt before mutation, rechecks each direct child immediately before removal, and rewrites the receipt after every successful deletion. A lock, race, or filesystem error stops cleanup, returns nonzero, and records the exact partial result and remaining failing path without a traceback.
 
 ## Agent lifecycle
 
-1. **Before a build-heavy campaign:** run `report` when disk state is unknown or constrained.
-2. **During work:** build normally. Do not point multiple worktrees at one mutable `CARGO_TARGET_DIR` or one unkeyed `CARGO_BUILD_BUILD_DIR`.
-3. **After ordinary work:** run `gc` when the pool exceeds its budget or stale manifests have accumulated.
-4. **Before deleting a checkout:** run `clean-current`, inspect the exact selection, then rerun with `--apply`.
-5. **Retain the receipt:** it states what was selected, deleted, preserved, refused, and left over budget.
+1. **Start work normally.** Each checkout gets its own `target/`; never point sibling worktrees at one mutable `CARGO_TARGET_DIR`.
+2. **Inspect pressure when it matters.** Compile the utility once and run `report` before a build-heavy campaign when disk state is unknown or constrained.
+3. **Keep evidence separate.** `target/ripr` is not disposable compiler state. Use RIPR's own cache/report lifecycle for it.
+4. **Dispose deliberately.** Stop Cargo processes in the checkout, run `clean-current`, inspect the direct-child selection, then rerun with `--apply` immediately before removing or retiring the checkout.
+5. **Retain the receipt.** It records selected, deleted, preserved, failed, and over-budget state.
 
-Do not substitute `cargo clean` for this lifecycle. Cargo owns both the final target and split build directory, while RIPR owns retained evidence under `target/ripr`; undifferentiated cleanup crosses those retention classes.
+Do not substitute wildcard deletion, an unkeyed shared target, or undifferentiated `cargo clean`. `cargo clean` owns Cargo's target as a whole; this repository deliberately retains a different evidence class under `target/ripr`.
 
 ## CI ownership
 
-CI jobs that already allocate and clean a private target or scratch directory should set `CARGO_BUILD_BUILD_DIR` to that same owned path. This keeps compiler intermediates inside the job's existing cache and terminal cleanup boundary rather than using the developer sibling pool. Hosted jobs using `Swatinem/rust-cache` must cache the effective build directory, not only final target artifacts.
+A CI workflow that sets `CARGO_TARGET_DIR` continues to own all Cargo intermediates and final outputs under that path. Because the repository does not set a separate `build-dir`, existing cache and terminal-cleanup boundaries remain complete. The checkout cleanup utility refuses those overrides rather than deleting caller-owned CI or qualification state.
 
-The developer pool is the fallback for ordinary local and agent Cargo commands. CI-specific overrides are valid because the CI job, not this tool, owns their deletion lifecycle.
+## Existing split-pool remnants
 
-## Migration from the old layout
-
-Existing checkouts can still contain the former `target/debug/deps`, `target/debug/incremental`, build-script output, and leaked test scratch. After the configuration change is read by the pinned toolchain:
-
-1. run `clean-current` in each checkout;
-2. confirm that `target/ripr` is the only retained target entry that matters;
-3. apply cleanup before deleting or retiring that checkout; and
-4. run bounded pool GC after old fixture/build hashes age out.
-
-The next build writes large intermediates to the same-volume pool and recreates only final outputs and active scratch inside the checkout.
+An earlier draft of this change used a sibling `.ripr-swarm-build` pool. The final design does not own or delete that path. On a host that exercised the draft, remove such a pool only after independently confirming that no Cargo process or checkout still references it.
 
 ## Verification
 
-The lifecycle tool uses only the Python standard library. Its unit suite is:
+The standalone source set carries its own standard-library unit tests. Repository CI compiles and runs them directly with `rustc --test` through:
 
 ```bash
-python3 -m py_compile tools/python/cargo-artifacts/run.py tools/python/cargo-artifacts/test_run.py
-python3 tools/python/cargo-artifacts/test_run.py -v
+cargo test -p xtask --test cargo_artifact_lifecycle
 ```
 
-The tests cover config-root pool placement, NUL-safe worktree parsing, current/live tree protection, TTL and budget selection, minimum-age refusal, `target/ripr` preservation, override and out-of-root refusal, unexpected pool entries, safe receipt paths, and symlink non-traversal.
-
-A config-bearing candidate also needs hosted Rust qualification showing that:
-
-- `cargo metadata` resolves intermediates below `.ripr-swarm-build/{workspace-path-hash}` outside CI-owned overrides;
-- final binaries remain at `target/debug/...`; and
-- CI-owned target/scratch paths still contain and clean their own intermediates.
+The suite covers Windows JSON paths, exact target/build ownership, direct-child selection, budget reporting, `target/ripr` preservation, destructive receipt requirements, partial-failure receipts, and symlink non-traversal.

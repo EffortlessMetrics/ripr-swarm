@@ -1259,15 +1259,3 @@ surface = "repo"
 classification = "metadata"
 reason = "Pinned Python package list (full SHAs, cosmic-ray version, module paths, test commands) read by .github/workflows/mutation-spot-check-python.yml for the cosmic-ray real-mutant spot check (#12901); declarative data, no logic. The workflow has not run."
 covered_by = ["cargo xtask check-workflows", "cargo xtask check-file-policy"]
-
-[[allow]]
-glob = "tools/python/cargo-artifacts/**/*.py"
-kind = "cargo_artifact_lifecycle"
-owner = "rust/build"
-surface = "repo"
-classification = "tooling"
-reason = "Stdlib Python cross-platform inventory and fail-closed cleanup for the same-volume Cargo build pool (#13965); it must run before compiling the Rust workspace and after checkout-local Cargo binaries may be locked or removed."
-covered_by = [
-    "cargo test -p xtask --test cargo_artifact_lifecycle",
-    "cargo xtask check-process-policy",
-]
