@@ -249,6 +249,7 @@
     "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-eager-literal-callback.json",
     "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-ordinary-value-clone.json",
     "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-same-named-call-kinds.json",
+    "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-local-closure-named-like-owner-map.json",
     "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-field-snapshot-exact.json",
     "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-field-snapshot-inline.json",
     "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-field-snapshot-literal.json",
@@ -19286,6 +19287,34 @@
           "owner": "src/lib.rs::impl Widget::consume",
           "expression": "_ =>",
           "test": "receiver_contract",
+          "file": "src/lib.rs",
+          "oracle_strength": "strong",
+          "relation_reason": "direct_owner_call"
+        }
+      ]
+    },
+    {
+      "id": "rust_repo_exposure_local_closure_named_like_owner_map_not_promoted",
+      "language": "rust",
+      "tier": "pure",
+      "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-local-closure-named-like-owner-map.json",
+      "report_subject": "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/local-closure-named-like-owner-map",
+      "vector": "map_of_a_local_closure_named_like_the_owner_is_not_a_direct_owner_call",
+      "assertions": [
+        {
+          "type": "expected_repo_seam_related_test",
+          "owner": "src/lib.rs::dec",
+          "expression": "value == 0",
+          "test": "local_closure_named_like_the_owner",
+          "file": "src/lib.rs",
+          "oracle_strength": "strong",
+          "relation_reason": "same_test_file"
+        },
+        {
+          "type": "expected_repo_seam_related_test",
+          "owner": "src/lib.rs::inc",
+          "expression": "value > 100",
+          "test": "owner_mapped_by_name",
           "file": "src/lib.rs",
           "oracle_strength": "strong",
           "relation_reason": "direct_owner_call"
