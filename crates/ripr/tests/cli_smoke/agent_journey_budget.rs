@@ -1,15 +1,19 @@
-//! Whole-journey agent byte budget (#13673): the check -> explain ->
-//! context -> verify loop an agent actually pays for, not one surface.
+//! Whole-journey agent byte budget (#13673): a scripted check -> explain ->
+//! context -> verify CLI sequence, not an observed agent or billed-token result.
 //!
-//! `agent_output_budget` pins single outputs. This test pins the journey:
-//! cold (first-run legend) and steady-state check bytes, one explain, one
-//! context packet, and the final verify-bearing check, plus the exact
-//! duplicate lines the agent reads twice. Bytes are UTF-8 stdout bytes
-//! with the root replaced by `<root>`; the `bytes/4` column is a rough
+//! `agent_output_budget` pins single outputs. This test pins the scripted
+//! journey: cold and steady-state check bytes, one explain, one context
+//! packet, and the final verify-bearing check, plus the exact duplicate
+//! lines repeated across distinct steps. No test edit happens between the
+//! initial and final checks, so the final `verify=` record may be
+//! `complete` or `refused`. Bytes are UTF-8 stdout bytes with both project
+//! path spellings replaced by `<root>`; the `bytes/4` column is a rough
 //! reference estimate only — no tokenizer or provider billing is claimed.
 //! Provider input/cached/output/reasoning tokens are host-recorded and
-//! out of scope for this CLI test.
-use super::{run_command, unique_external_workspace};
+//! out of scope for this CLI test. This is a deterministic output-budget
+//! instrument: it must not be cited as an observed agent token saving or
+//! as a completed repair workflow.
+use super::{printed_path, run_command, unique_external_workspace};
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
@@ -55,6 +59,21 @@ fn workspace(label: &str) -> TestResult<std::path::PathBuf> {
     Ok(project)
 }
 
+fn normalize_root(text: &str, project: &Path) -> String {
+    // `unique_external_workspace` canonicalizes, which yields a verbatim
+    // `\\?\` spelling on Windows, while ripr prints the bound root folded
+    // (`root_path_display`: verbatim fold + `/` separators). Replace both
+    // spellings so the budget does not depend on checkout path length.
+    let raw = project.to_string_lossy().into_owned();
+    let printed = printed_path(project);
+    let once = text.replace(&raw, "<root>");
+    if printed == raw {
+        once
+    } else {
+        once.replace(&printed, "<root>")
+    }
+}
+
 fn run(project: &Path, args: &[&str]) -> TestResult<String> {
     let output = run_command(env!("CARGO_BIN_EXE_ripr"), Some(project), args)?;
     assert!(
@@ -62,8 +81,7 @@ fn run(project: &Path, args: &[&str]) -> TestResult<String> {
         "{args:?}: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    let root = project.to_string_lossy().into_owned();
-    Ok(String::from_utf8(output.stdout)?.replace(&root, "<root>"))
+    Ok(normalize_root(&String::from_utf8(output.stdout)?, project))
 }
 
 fn receipt(label: &str, text: &str, ceiling: usize) {
@@ -170,28 +188,41 @@ fn agent_journey_stays_inside_byte_budget_and_keeps_verify_record() -> TestResul
         context.contains(&id),
         "context lost finding {id}:\n{context}"
     );
+    assert!(
+        !verify.is_empty(),
+        "final check produced no stdout; cannot look for the #13516 verify= record"
+    );
     let last = verify.lines().last().unwrap_or_default();
     assert!(
         last.starts_with("verify=complete|") || last.starts_with("verify=refused|"),
         "final check must end with the #13516 verify= record, got: {last}"
     );
 
-    // Ceilings sit just above the 2026-11-08 measured receipts on this
-    // fixture (cold 1169, steady 1169, explain 577, context 4984,
-    // verify 1169); cold equals steady here because the one-time legend
-    // is a human-format surface, not an agent-format one.
-    receipt("check cold (with legend)", &cold, 1_400);
+    // Ceilings sit just above the measured receipts on this fixture
+    // (2026-11-09 normalized: cold 1047, steady 1047, explain 455,
+    // context 4862, verify 1047; pre-normalization 2026-11-08 receipts
+    // were 1169/1169/577/4984/1169, the 122-byte gap per output being
+    // unnormalized checkout-path text). Cold equals steady here because
+    // the one-time legend is a human-format surface, not an agent-format one.
+    receipt("check cold", &cold, 1_400);
     receipt("check steady", &steady, 1_400);
     receipt("explain --format agent", &explained, 800);
     receipt("context packet", &context, 6_000);
     receipt("final verify check", &verify, 1_400);
 
-    // Redundancy the agent pays for twice: exact lines repeated across steps.
+    // Redundancy across distinct steps: exact lines that appear in more
+    // than one step output. Each step is deduped first so repeats inside a
+    // single output do not count as cross-step duplication; every extra
+    // step that repeats a line adds its bytes again.
+    let step_sets: Vec<BTreeSet<&str>> = [&steady, &explained, &context, &verify]
+        .iter()
+        .map(|text| text.lines().filter(|line| line.len() >= 24).collect())
+        .collect();
     let mut seen = BTreeSet::new();
     let mut dup_bytes = 0usize;
-    for text in [&steady, &explained, &context, &verify] {
-        for line in text.lines() {
-            if line.len() >= 24 && !seen.insert(line.to_owned()) {
+    for set in &step_sets {
+        for line in set {
+            if !seen.insert(*line) {
                 dup_bytes += line.len() + 1;
             }
         }
@@ -206,6 +237,43 @@ fn agent_journey_stays_inside_byte_budget_and_keeps_verify_record() -> TestResul
     assert!(
         dup_bytes <= 3_000,
         "journey repeats {dup_bytes} duplicate bytes over its 3000-byte redundancy budget"
+    );
+    Ok(())
+}
+
+#[test]
+fn journey_root_normalization_erases_checkout_path_length() -> TestResult {
+    // The budget must not depend on how long the checkout path is: both the
+    // raw canonical spelling and ripr's printed (folded, `/`-separator)
+    // spelling normalize to the same token, while real output growth still
+    // changes the measured length.
+    for root in [
+        Path::new("/tmp/ripr-a"),
+        Path::new("/tmp/ripr-a-much-longer-checkout-name"),
+    ] {
+        let raw = root.to_string_lossy().into_owned();
+        let printed = printed_path(root);
+        let fake = format!("cmd --root {raw} --diff {printed}/change.diff");
+        let normalized = normalize_root(&fake, root);
+        assert!(
+            !normalized.contains(&raw) || raw == "<root>",
+            "raw root leaked into measured bytes for {root:?}: {normalized}"
+        );
+        assert!(
+            !normalized.contains(&printed) || printed == "<root>",
+            "printed root leaked into measured bytes for {root:?}: {normalized}"
+        );
+        assert_eq!(
+            normalized, "cmd --root <root> --diff <root>/change.diff",
+            "both spellings must fold to the same token for {root:?}"
+        );
+    }
+    let root = Path::new("/tmp/ripr-a");
+    let base = normalize_root("line one\nline two\n", root);
+    let grown = normalize_root("line one\nline two\nline three\n", root);
+    assert!(
+        grown.len() > base.len(),
+        "normalization must retain sensitivity to actual output growth"
     );
     Ok(())
 }
