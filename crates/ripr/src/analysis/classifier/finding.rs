@@ -687,17 +687,22 @@ fn text_calls_owner(text: &str, owner_name: &str) -> bool {
     body_contains_owner_call(text, owner_name)
 }
 
-/// Identifiers bound by `let <ident> = ...` statements in `body` whose
-/// initializer calls `owner_name`. Bounded text scan: each binding's
-/// initializer extends to the next `;`. Uppercase pattern names
-/// (`let Some(x) = ...`) and tuple destructuring are skipped — they cannot
-/// name the bound variable, so the binding fails closed.
+/// Identifiers bound only to owner results in `body`. A `let <ident> = ...`
+/// whose initializer (to the next `;`) calls `owner_name` binds the name; the
+/// name is dropped as soon as the body also rebinds it from anything else:
+/// another `let` of the same name, a destructuring pattern that mentions it,
+/// a `for` loop variable, or a plain `<ident> = ...` reassignment. The scan is
+/// position-blind, so any rebinding fails closed (RIPR-SPEC-0001): an
+/// assertion after `let amount = tax(100); let amount = 0;` is not credited as
+/// observing `tax`. Uppercase single-name patterns (`let Some(x) = ...`) and
+/// tuple destructuring cannot name an owner result, so they only shadow.
 fn bound_identifiers_from_owner_calls(body: &str, owner_name: &str) -> Vec<String> {
     fn is_ident_byte(byte: u8) -> bool {
         byte.is_ascii_alphanumeric() || byte == b'_'
     }
     let bytes = body.as_bytes();
-    let mut bound = Vec::new();
+    // Every binding event: (name, initializer calls the owner).
+    let mut events: Vec<(String, bool)> = Vec::new();
     let mut cursor = 0;
     while let Some(offset) = body[cursor..].find("let ") {
         let start = cursor + offset;
@@ -705,44 +710,100 @@ fn bound_identifiers_from_owner_calls(body: &str, owner_name: &str) -> Vec<Strin
         if start > 0 && is_ident_byte(bytes[start - 1]) {
             continue;
         }
-        let mut name_end = cursor;
-        while name_end < bytes.len() && is_ident_byte(bytes[name_end]) {
-            name_end += 1;
-        }
-        let mut name = &body[cursor..name_end];
-        if matches!(name, "mut" | "ref") {
-            let mut pattern_start = name_end;
-            while pattern_start < bytes.len() && bytes[pattern_start].is_ascii_whitespace() {
-                pattern_start += 1;
-            }
-            name_end = pattern_start;
-            while name_end < bytes.len() && is_ident_byte(bytes[name_end]) {
-                name_end += 1;
-            }
-            name = &body[pattern_start..name_end];
-        }
-        if name.is_empty()
-            || name
-                .chars()
-                .next()
-                .is_some_and(|character| character.is_ascii_uppercase())
-        {
-            continue;
-        }
-        let Some(assign) = body[name_end..].find('=') else {
+        let Some(assign) = body[cursor..].find('=') else {
             continue;
         };
-        let Some(terminator) = body[name_end..].find(';') else {
+        let Some(terminator) = body[cursor..].find(';') else {
             continue;
         };
         if assign >= terminator {
             continue;
         }
-        let initializer = &body[name_end + assign + 1..name_end + terminator];
-        if text_calls_owner(initializer, owner_name) {
-            bound.push(name.to_string());
+        let pattern = &body[cursor..cursor + assign];
+        let initializer = &body[cursor + assign + 1..cursor + terminator];
+        let words: Vec<&str> = pattern
+            .split(|character: char| !character.is_ascii_alphanumeric() && character != '_')
+            .filter(|word| !word.is_empty() && !matches!(*word, "mut" | "ref"))
+            .collect();
+        let simple = words.first().copied().filter(|name| {
+            let head = pattern.trim_start();
+            let head = head
+                .strip_prefix("mut ")
+                .or_else(|| head.strip_prefix("ref "))
+                .unwrap_or(head)
+                .trim_start();
+            head.starts_with(name)
+                && !name
+                    .chars()
+                    .next()
+                    .is_some_and(|character| character.is_ascii_uppercase())
+                && !head[name.len()..].trim_start().starts_with(['(', '{', '@'])
+        });
+        match simple {
+            Some(name) => {
+                events.push((name.to_string(), text_calls_owner(initializer, owner_name)))
+            }
+            None => {
+                for word in words {
+                    events.push((word.to_string(), false));
+                }
+            }
         }
-        cursor = name_end.max(cursor);
+    }
+    // A `for <pattern> in` loop variable and a plain `<ident> = ...`
+    // reassignment rebind a name too.
+    let mut rest = body;
+    while let Some(offset) = rest.find("for ") {
+        let after = &rest[offset + "for ".len()..];
+        let word_start = offset == 0 || !is_ident_byte(rest.as_bytes()[offset - 1]);
+        if word_start && let Some(end) = after.find(" in ") {
+            for word in after[..end]
+                .split(|character: char| !character.is_ascii_alphanumeric() && character != '_')
+                .filter(|word| !word.is_empty())
+            {
+                events.push((word.to_string(), false));
+            }
+        }
+        rest = after;
+    }
+    let candidates: Vec<String> = events
+        .iter()
+        .filter(|(_, from_owner)| *from_owner)
+        .map(|(name, _)| name.clone())
+        .collect();
+    for name in &candidates {
+        let mut from = 0;
+        while let Some(found) = body[from..].find(name.as_str()) {
+            let at = from + found;
+            from = at + name.len();
+            let before_ok = at == 0 || !is_ident_byte(bytes[at - 1]);
+            let after_ok = from >= bytes.len() || !is_ident_byte(bytes[from]);
+            if !(before_ok && after_ok) {
+                continue;
+            }
+            let tail = body[from..].trim_start();
+            if !tail.starts_with('=') || tail.starts_with("==") || tail.starts_with("=>") {
+                continue;
+            }
+            let head = body[..at].trim_end();
+            if head.ends_with("let") || head.ends_with("mut") || head.ends_with("ref") {
+                continue;
+            }
+            let initializer = tail[1..].split(';').next().unwrap_or("");
+            events.push((name.clone(), text_calls_owner(initializer, owner_name)));
+        }
+    }
+    let mut bound: Vec<String> = Vec::new();
+    for name in candidates {
+        if bound.contains(&name) {
+            continue;
+        }
+        if events
+            .iter()
+            .all(|(event, from_owner)| *event != name || *from_owner)
+        {
+            bound.push(name);
+        }
     }
     bound
 }
@@ -1637,6 +1698,61 @@ mod tests {
             "assert_eq!(other, Ok(amount))",
             "let other = recalculate(5);",
             Some("calculate")
+        ));
+    }
+
+    #[test]
+    fn owner_binding_scan_drops_a_name_the_body_rebinds() {
+        // #6973: every rebinding of the name fails closed, whatever its form;
+        // each control keeps the name when nothing rebinds it.
+        let bound = |body: &str| bound_identifiers_from_owner_calls(body, "tax");
+        assert_eq!(
+            bound("let amount = tax(100); assert_eq!(amount, 90);"),
+            vec!["amount".to_string()]
+        );
+        for (label, body) in [
+            (
+                "shadowing let",
+                "let amount = tax(100); let amount = 0; assert_eq!(amount, 0);",
+            ),
+            (
+                "shadowing destructure",
+                "let amount = tax(100); let (amount, _) = pair(); assert_eq!(amount, 0);",
+            ),
+            (
+                "shadowing pattern",
+                "let amount = tax(100); let Some(amount) = lookup() else { return }; assert_eq!(amount, 0);",
+            ),
+            (
+                "reassignment",
+                "let mut amount = tax(100); amount = 0; assert_eq!(amount, 0);",
+            ),
+            (
+                "for variable",
+                "let amount = tax(100); for amount in 0..3 { assert_eq!(amount, 0); }",
+            ),
+        ] {
+            assert!(bound(body).is_empty(), "{label}: {body}");
+        }
+        // Rebinding from the owner again, comparisons and other names keep it.
+        assert_eq!(
+            bound("let mut amount = tax(1); amount = tax(2); assert_eq!(amount, 3);"),
+            vec!["amount".to_string()]
+        );
+        assert_eq!(
+            bound("let amount = tax(1); assert!(amount == 1); let other = 0;"),
+            vec!["amount".to_string()]
+        );
+        // The shadowed test is not credited as observing the owner.
+        assert!(!oracle_binds_sink_identity(
+            "assert_eq!(amount, 0)",
+            "let amount = tax(100); let amount = 0;",
+            Some("tax")
+        ));
+        assert!(oracle_binds_sink_identity(
+            "assert_eq!(amount, 90)",
+            "let amount = tax(100);",
+            Some("tax")
         ));
     }
 
