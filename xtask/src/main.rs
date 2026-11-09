@@ -14791,6 +14791,30 @@ mod architecture_rule_tests {
             "{violations:?}"
         );
     }
+
+    #[test]
+    fn app_cli_back_edge_rule_rejects_a_production_import_and_allows_only_scoped_test_paths() {
+        const APP_CLI: &str = "crates/ripr/src/app/**|crate::cli|app must not import CLI adapters";
+        const SCOPED: &str = "!crates/ripr/src/app/ripr_plus.rs|crate::cli|#5193: test parser";
+        let violations = architecture_rule_violations(
+            &[record(APP_CLI), record(SCOPED)],
+            &[
+                (
+                    "crates/ripr/src/app/repair_card_usability.rs".to_string(),
+                    "use crate::cli::commands::agent_card::agent_card_plain_lines;".to_string(),
+                ),
+                (
+                    "crates/ripr/src/app/ripr_plus.rs".to_string(),
+                    "use crate::cli::commands::ripr_plus_command::parse_options;".to_string(),
+                ),
+            ],
+        );
+        assert_eq!(violations.len(), 1, "{violations:?}");
+        assert!(
+            violations[0].contains("repair_card_usability.rs"),
+            "{violations:?}"
+        );
+    }
 }
 
 /// #3534: Rust source-role authority. Producer modules derive source role
