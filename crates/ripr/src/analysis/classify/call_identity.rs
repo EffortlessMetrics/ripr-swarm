@@ -3515,11 +3515,27 @@ impl LocalModules {
                             stack.iter().map(|(name, _)| name.clone()).collect();
                         found.defining.insert(module.clone());
                         if !module.is_empty() {
-                            let is_pub = (0..index)
-                                .rev()
-                                .map_while(&word_at)
-                                .take(6)
-                                .any(|word| word == "pub");
+                            // Importable by a glob from anywhere only as plain
+                            // `pub` or `pub(crate)`; any other restriction
+                            // (`pub(self)`, `pub(super)`, `pub(in ..)`) is
+                            // treated as private.
+                            let mut words: Vec<&str> =
+                                (0..index).rev().map_while(&word_at).take(8).collect();
+                            words.reverse();
+                            let is_pub =
+                                words
+                                    .iter()
+                                    .rposition(|word| *word == "pub")
+                                    .is_some_and(|at| {
+                                        let tail: Vec<&str> = words[at + 1..]
+                                            .iter()
+                                            .copied()
+                                            .filter(|word| {
+                                                !matches!(*word, "const" | "async" | "unsafe")
+                                            })
+                                            .collect();
+                                        tail.is_empty() || tail == ["crate"]
+                                    });
                             if is_pub {
                                 found.public_rivals.insert(module.clone());
                             }

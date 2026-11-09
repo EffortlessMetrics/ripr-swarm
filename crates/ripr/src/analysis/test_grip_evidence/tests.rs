@@ -22817,8 +22817,6 @@ fn given_integration_test_when_nested_raw_identifier_test_reaches_local_rival_th
 fn given_integration_test_when_unreadable_or_shadowed_glob_import_then_owner_keeps_related_test()
 -> Result<(), String> {
     let rival = format!("mod local {{\n    {LOCAL_RIVAL_FN}\n}}\n");
-    let private =
-        "mod local {\n    fn discounted_total(_amount: i32, _threshold: i32) -> i32 { 777 }\n}\n";
     let test = "#[test]\nfn bare_real() {\n    assert_eq!(discounted_total(100, 100), 90);\n}\n";
     for (label, source) in [
         (
@@ -22830,10 +22828,6 @@ fn given_integration_test_when_unreadable_or_shadowed_glob_import_then_owner_kee
         (
             "rooted production import",
             format!("{rival}use ::lib_proptest::discounted_total;\nuse local::*;\n\n{test}"),
-        ),
-        (
-            "private rival under a glob",
-            format!("{private}use lib_proptest::discounted_total;\nuse local::*;\n\n{test}"),
         ),
         (
             "own definition shadowing a glob",
@@ -22853,20 +22847,61 @@ fn given_integration_test_when_nested_block_use_binds_the_rival_then_owner_keeps
 -> Result<(), String> {
     let rival =
         format!("mod local {{\n    {LOCAL_RIVAL_FN}\n}}\nuse lib_proptest::discounted_total;\n\n");
-    for (label, test) in [
-        (
-            "nested explicit use",
-            "#[test]\nfn nested() {\n    {\n        use local::discounted_total;\n        assert_eq!(discounted_total(100, 100), 777);\n    }\n    assert_eq!(discounted_total(100, 100), 90);\n}\n",
-        ),
-        (
-            "nested glob use",
-            "#[test]\nfn nested() {\n    {\n        use local::*;\n        assert_eq!(discounted_total(100, 100), 777);\n    }\n    assert_eq!(discounted_total(100, 100), 90);\n}\n",
-        ),
-    ] {
+    for (label, test) in [(
+        "nested explicit use",
+        "#[test]\nfn nested() {\n    {\n        use local::discounted_total;\n        assert_eq!(discounted_total(100, 100), 777);\n    }\n    assert_eq!(discounted_total(100, 100), 90);\n}\n",
+    )] {
         let source = format!("{rival}{test}");
         let related = related_test_names_for_boundary_seam(&source)?;
         assert_eq!(related, vec!["nested".to_string()], "{label}: {source}");
     }
+    Ok(())
+}
+
+#[test]
+fn given_integration_test_when_glob_reaches_a_rival_then_only_an_importable_rival_withholds_the_owner()
+-> Result<(), String> {
+    // Both globs are in scope and no explicit import decides, so visibility of
+    // the rival is the only thing that separates the cases.
+    for (label, visibility, withheld) in [
+        ("public rival", "pub ", true),
+        ("crate-visible rival", "pub(crate) ", true),
+        ("private rival", "", false),
+        ("pub(self) rival", "pub(self) ", false),
+        ("pub(super) rival (unsure)", "pub(super) ", false),
+    ] {
+        let source = format!(
+            "mod local {{\n    {visibility}fn discounted_total(_amount: i32, _threshold: i32) -> i32 {{ 777 }}\n}}\nuse lib_proptest::*;\nuse local::*;\n\n#[test]\nfn glob_call() {{\n    assert_eq!(discounted_total(100, 100), 90);\n}}\n"
+        );
+        let related = related_test_names_for_boundary_seam(&source)?;
+        let expected: Vec<String> = if withheld {
+            Vec::new()
+        } else {
+            vec!["glob_call".to_string()]
+        };
+        assert_eq!(related, expected, "{label}: {source}");
+    }
+    Ok(())
+}
+
+#[test]
+fn given_integration_test_when_glob_is_in_a_nested_block_then_owner_keeps_related_test()
+-> Result<(), String> {
+    // The file-level glob is the library's. Only the nested-block rule keeps
+    // the relation when a nested block globs the rival; a glob at the test's
+    // top block withholds it (control).
+    let head = format!(
+        "mod local {{\n    {LOCAL_RIVAL_FN}\n}}\nuse lib_proptest::*;\n\n#[test]\nfn globbed() {{\n"
+    );
+    let nested = format!(
+        "{head}    {{\n        use local::*;\n        assert_eq!(discounted_total(100, 100), 777);\n    }}\n    assert_eq!(discounted_total(100, 100), 90);\n}}\n"
+    );
+    let related = related_test_names_for_boundary_seam(&nested)?;
+    assert_eq!(related, vec!["globbed".to_string()], "{nested}");
+    let top =
+        format!("{head}    use local::*;\n    assert_eq!(discounted_total(100, 100), 777);\n}}\n");
+    let related = related_test_names_for_boundary_seam(&top)?;
+    assert!(related.is_empty(), "{top}: {related:?}");
     Ok(())
 }
 
