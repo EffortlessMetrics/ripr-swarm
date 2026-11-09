@@ -20,6 +20,10 @@ const OWNER: &str = "pub struct Rng(u32);\nimpl Rng {\n    pub fn new() -> Rng {
 
 /// The predicate finding of `digit` with `test` as the only integration test.
 fn finding(test: &str) -> Result<Finding, String> {
+    finding_at("tests/t.rs", test)
+}
+
+fn finding_at(test_path: &str, test: &str) -> Result<Finding, String> {
     static SEQUENCE: AtomicU64 = AtomicU64::new(0);
     let sequence = SEQUENCE.fetch_add(1, Ordering::Relaxed);
     let repo = TempRepo {
@@ -39,7 +43,10 @@ fn finding(test: &str) -> Result<Finding, String> {
         "[package]\nname = \"rg\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[workspace]\n",
     )?;
     write("src/lib.rs", OWNER)?;
-    write("tests/t.rs", test)?;
+    if let Some(parent) = std::path::Path::new(test_path).parent() {
+        std::fs::create_dir_all(root.join(parent)).map_err(|error| format!("test dir: {error}"))?;
+    }
+    write(test_path, test)?;
     let lines: Vec<&str> = OWNER.lines().collect();
     let changed_line = lines
         .iter()
@@ -138,12 +145,42 @@ fn foreign_crate_qualified_receiver_keeps_no_direct_call() -> Result<(), String>
 
 #[test]
 fn local_module_shadowing_the_crate_name_keeps_no_direct_call() -> Result<(), String> {
-    let test = "mod rg {\n    pub struct Rng;\n    impl Rng {\n        pub fn new() -> Rng { Rng }\n        pub fn digit(&mut self, _base: u32) -> u32 { 0 }\n    }\n}\n#[test]\nfn rng_digit() {\n    let mut rng = rg::Rng::new();\n    assert_eq!(rng.digit(10), 0);\n}\n";
+    // The shadow adds no second inherent `Rng::new` (its constructor is a trait
+    // impl), so the owner's `new` stays unique and only the shadow scan refuses.
+    let test = "mod rg {\n    pub struct Rng;\n    pub trait Make {\n        fn new() -> Rng;\n    }\n    impl Make for Rng {\n        fn new() -> Rng { Rng }\n    }\n    impl Rng {\n        pub fn digit(&mut self, _base: u32) -> u32 { 0 }\n    }\n}\nuse rg::Make;\n#[test]\nfn rng_digit() {\n    let mut rng = rg::Rng::new();\n    assert_eq!(rng.digit(10), 0);\n}\n";
     let found = finding(test)?;
     assert_ne!(
         related_reason(&found, "rng_digit")?.0,
         Some(RelationReason::DirectOwnerCall),
         "a local `mod rg` is not the owner's crate: {found:#?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn renamed_import_of_the_crate_name_keeps_no_direct_call() -> Result<(), String> {
+    let test = "use other_crate as rg;\n#[test]\nfn rng_digit() {\n    let mut rng = rg::Rng::new();\n    assert_eq!(rng.digit(10), 2);\n}\n";
+    let found = finding(test)?;
+    assert_ne!(
+        related_reason(&found, "rng_digit")?.0,
+        Some(RelationReason::DirectOwnerCall),
+        "`rg` is another crate here: {found:#?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn test_module_child_file_keeps_no_direct_call() -> Result<(), String> {
+    let test = "#[test]\nfn rng_digit() {\n    let mut rng = rg::Rng::new();\n    assert_eq!(rng.digit(10), 2);\n}\n";
+    let found = finding_at("tests/sub/t.rs", test)?;
+    // A module child of a test crate may not be linked at all; it must never be
+    // a direct owner call.
+    assert!(
+        !found.related_tests.iter().any(|related| {
+            related.name == "rng_digit"
+                && related.relation_reason == Some(RelationReason::DirectOwnerCall)
+        }),
+        "a module child of a test crate is not a test-crate root: {found:#?}"
     );
     Ok(())
 }
