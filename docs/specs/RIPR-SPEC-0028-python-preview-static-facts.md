@@ -407,6 +407,10 @@ definition, an assignment, `del`, a loop or `with` target, or any binding
 inside a conditional block), the re-export is not followed, because the
 reader does not order bindings. An unreadable or unparsable initializer
 re-exports nothing.
+A re-exported package name is shadowed like an src-layout short name: when a plain
+module of the same project (beside `src/` or at the repo root) resolves under the
+package's name, `from core import price` cannot be told apart from it, so the
+re-export identifies no owner and credits no test.
 Methods and module owners are never re-exported. The test must still call the owner's own name through
 the package, so a test that only calls a sibling name from the same package
 stays unrelated, and a test that binds a local named like the package alias

@@ -2448,12 +2448,16 @@ pub(super) fn apply_src_module_ambiguity<'a>(
             };
             let rival_roots =
                 rival_roots_for(&roots_by_module, module, |_, root| *root == owner_root);
-            if !rival_roots.is_empty() {
+            // A plain module of the same project spelled like the re-exporting
+            // package loads instead of it on some `sys.path` orders, exactly as
+            // for the owner's own short name (#13786).
+            let shadowed = plain_module_shadows(&files_by_full_path, module, &owner_root);
+            if !rival_roots.is_empty() || shadowed {
                 ambiguous.push(AmbiguousSrcModule {
                     module: module.clone(),
                     owner_root,
                     rival_roots,
-                    shadowed: false,
+                    shadowed,
                 });
             }
         }
