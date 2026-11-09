@@ -47,7 +47,10 @@ runs:
           printf 'RUSTUP_HOME=%s\n' "$RUSTUP_HOME" >> "$GITHUB_ENV"
         fi
         for path in "$GITHUB_WORKSPACE/target" "$GITHUB_WORKSPACE/target/tmp"; do
-          [[ ! -L "$path" ]] && { [[ ! -e "$path" ]] || [[ -d "$path" ]]; }
+          if [[ -L "$path" || ( -e "$path" && ! -d "$path" ) ]]; then
+            echo "unsafe workspace directory: $path" >&2
+            exit 1
+          fi
           mkdir -p "$path"
         done
         {

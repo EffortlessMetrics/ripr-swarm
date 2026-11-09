@@ -515,6 +515,103 @@ fn rust_step(name: &str) -> TestResult<&'static str> {
     Ok(tail.split("\n      - ").next().ok_or("step body")?)
 }
 
+fn target_directory_setup_refuses_unsafe_paths(source: &str) -> TestResult {
+    let fixture = Fixture::new()?;
+    let marker = "for path in \"$GITHUB_WORKSPACE/target\" \"$GITHUB_WORKSPACE/target/tmp\"; do";
+    let (_, tail) = source.split_once(marker).ok_or("owned target setup")?;
+    // Execute the shipped loop and its subsequent environment publication.
+    // Earlier platform/toolchain checks are outside this path-boundary control.
+    let script = format!(
+        "set -euo pipefail\n{marker}{}\n",
+        tail.lines().map(str::trim).collect::<Vec<_>>().join("\n")
+    );
+    assert!(script.contains("CARGO_TARGET_DIR=$GITHUB_WORKSPACE/target"));
+    for case in [
+        "missing",
+        "existing",
+        "target_directory_link",
+        "tmp_directory_link",
+        "target_dangling_link",
+        "tmp_dangling_link",
+        "target_file",
+        "tmp_file",
+    ] {
+        let root = fixture.root.join(case);
+        let workspace = root.join("work space");
+        let outside = root.join("outside");
+        fs::create_dir_all(&workspace)?;
+        fs::create_dir(&outside)?;
+        fs::write(outside.join("canary"), "unchanged")?;
+        let target = workspace.join("target");
+        let temporary = target.join("tmp");
+        let denied = !matches!(case, "missing" | "existing");
+        if case == "existing" {
+            fs::create_dir_all(&temporary)?;
+        } else if denied {
+            let path = if case.starts_with("tmp_") {
+                fs::create_dir(&target)?;
+                &temporary
+            } else {
+                &target
+            };
+            if case.ends_with("_file") {
+                fs::write(path, "not a directory")?;
+            } else {
+                let destination = if case.ends_with("_dangling_link") {
+                    outside.join("missing")
+                } else {
+                    outside.clone()
+                };
+                std::os::unix::fs::symlink(destination, path)?;
+            }
+        }
+        let environment = root.join("environment");
+        let output = root.join("output");
+        let mut env = fixture.env();
+        for (key, path) in [
+            ("GITHUB_WORKSPACE", &workspace),
+            ("GITHUB_ENV", &environment),
+            ("GITHUB_OUTPUT", &output),
+        ] {
+            env.insert(key.into(), path.to_string_lossy().into_owned());
+        }
+        let result = fixture.command("bash", &["-c", &script], &env)?;
+        if denied {
+            assert!(!result.status.success(), "unsafe path accepted: {case}");
+            assert!(!environment.exists(), "unsafe path published env: {case}");
+            assert!(!output.exists(), "unsafe path published success: {case}");
+        } else {
+            assert!(result.status.success(), "{case}: {result:?}");
+            for path in [&target, &temporary] {
+                assert!(fs::symlink_metadata(path)?.is_dir());
+            }
+            let published = fs::read_to_string(&environment)?;
+            assert!(published.contains(&format!("CARGO_TARGET_DIR={}\n", target.display())));
+            assert!(published.contains(&format!("TMPDIR={}\n", temporary.display())));
+        }
+        assert_eq!(fs::read_to_string(outside.join("canary"))?, "unchanged");
+        assert_eq!(
+            fs::read_dir(&outside)?
+                .collect::<Result<Vec<_>, _>>()?
+                .len(),
+            1
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn owned_gate_target_setup_refuses_unsafe_paths() -> TestResult {
+    target_directory_setup_refuses_unsafe_paths(rust_step("Configure owned JIT environment")?)
+}
+
+#[test]
+fn owned_toolchain_target_setup_refuses_unsafe_paths() -> TestResult {
+    target_directory_setup_refuses_unsafe_paths(include_str!(
+        "../../../.github/actions/select-owned-rust/action.yml"
+    ))
+}
+
 #[test]
 fn owned_profile_requires_exact_native_group_heavy_route_and_private_execution() -> TestResult {
     let fixture = Fixture::new()?;
