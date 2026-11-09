@@ -35,6 +35,11 @@ says those files are not analyzed and points at `ripr doctor` instead of
 promising a loop. `--force` also refreshes the Cursor front matter, but only
 when it is exactly the one ripr wrote; your own front matter is kept.
 
+Every language variant uses the same compact post-edit `check --format agent`
+report for VERIFY and DONE. The final `verify=` record applies the full-count,
+scope and source-currentness checks; preview results remain advisory. No
+variant requires a full JSON report for ordinary completion.
+
 ## What `--agents` does to your files
 
 - It writes a short block (about 700 tokens) between `<!-- ripr:agents:begin ... -->`
