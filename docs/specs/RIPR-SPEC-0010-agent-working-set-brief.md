@@ -572,6 +572,7 @@ but does not write source files or generated tests.
 
 Planned tests:
 
+- `agent_brief_states_workflow_commands_once` (#13673 byte budget and one-copy shape)
 - `brief_empty_and_ordinary_patches_keep_successful_selection`
 - `brief_parser_refusals_cannot_become_empty_or_fallback_successes`
 - `brief_base_uses_the_same_parser_refusal_before_inventory`

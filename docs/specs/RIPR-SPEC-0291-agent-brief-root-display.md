@@ -65,7 +65,8 @@ literal backslash (e.g. `/tmp/team\repo`) got a pasted
 targets a different directory (`/tmp/team/repo`). Two renderers carried the
 pattern: the brief-level `next` block (`inspect_packet`,
 `verify_after_edit`) and each top seam's `verification` block
-(`before_snapshot_command`, `after_snapshot_command`, `verify_command`).
+(`before_snapshot_command`, `after_snapshot_command`, `verify_command`; moved
+to `next` in schema `0.2`, #13673).
 
 The parent brief/working-set contract remains
 [RIPR-SPEC-0010](RIPR-SPEC-0010-agent-working-set-brief.md); this leaf owns only
@@ -112,9 +113,9 @@ Rendered on a Unix host with root `/tmp/team\repo` (excerpt):
 
 ```json
 {
-  "verification": {
+  "next": {
     "before_snapshot_command": "mkdir -p '/tmp/team\\repo/target/ripr/workflow' && ripr check --root '/tmp/team\\repo' --mode draft --format repo-exposure-json > '/tmp/team\\repo/target/ripr/workflow/before.repo-exposure.json'",
-    "verify_command": "ripr agent verify --root '/tmp/team\\repo' --before target/ripr/workflow/before.repo-exposure.json --after target/ripr/workflow/after.repo-exposure.json --json"
+    "verify_after_edit": "ripr agent verify --root '/tmp/team\\repo' --before target/ripr/workflow/before.repo-exposure.json --after target/ripr/workflow/after.repo-exposure.json --json"
   }
 }
 ```
@@ -137,12 +138,13 @@ The same rendering before this spec rewrote the root to
 
 ## Implementation Mapping
 
-- `crates/ripr/src/output/agent_brief.rs` owns both renderers:
-  `render_agent_brief_json` (the brief-level `next` block) and
-  `verification_json` (each top seam's `before_snapshot_command`,
-  `after_snapshot_command`, and `verify_command`). Both now pass
-  `root_path_display(root)` to `bound_root`; the informational
-  `display_path` renderings elsewhere in the file are unchanged.
+- `crates/ripr/src/output/agent_brief.rs` owns the renderer:
+  `render_agent_brief_json` emits the brief-level `next` block
+  (`inspect_packet`, `before_snapshot_command`, `after_snapshot_command`,
+  `verify_after_edit`) from one `bound_root(root_path_display(root))`;
+  `verification_json` now carries only `suggested_test_command` (schema `0.2`).
+  The informational `display_path` renderings elsewhere in the file are
+  unchanged.
 
 ## Metrics
 
