@@ -11788,6 +11788,7 @@ tests = [
   "editors/vscode/test/suite/lsp_compatibility.test.ts",
   "editors/vscode/test/suite/server_resolver_compatibility.test.ts",
   "editors/vscode/test/suite/workspace_trust_runtime.test.ts",
+  "editors/vscode/test/suite/download_hardening.test.ts",
 ]
 fixtures = []
 code = [
@@ -11803,6 +11804,7 @@ code = [
   "crates/ripr/src/lsp/backend.rs",
   "editors/vscode/src/lspCompatibility.ts",
   "editors/vscode/src/serverResolver.ts",
+  "editors/vscode/src/downloader.ts",
   "xtask/src/main.rs",
 ]
 outputs = [

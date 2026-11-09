@@ -1,5 +1,6 @@
 import * as cp from 'child_process';
 import * as crypto from 'crypto';
+import { promises as fsp } from 'fs';
 import * as https from 'https';
 import * as path from 'path';
 import * as vscode from 'vscode';
@@ -539,6 +540,7 @@ async function fetchBuffer(url: string): Promise<Buffer> {
 
 async function extractArchive(archivePath: string, destination: string, platform: RiprPlatform): Promise<void> {
   if (platform.archiveExtension === 'zip') {
+    await inspectZipArchive(archivePath);
     await runProcess('powershell.exe', [
       '-NoProfile',
       '-ExecutionPolicy',
@@ -577,10 +579,7 @@ export function assertSafeTarListing(nameLines: readonly string[], verboseLines:
     throw new Error(`Server archive lists ${names.length} members, over the ${ARCHIVE_MAX_MEMBERS} member limit.`);
   }
   for (const name of names) {
-    const segments = name.split(/[\\/]/);
-    if (/^[\\/]/.test(name) || /^[A-Za-z]:/.test(name) || name.includes('\0') || segments.includes('..')) {
-      throw new Error(`Refusing server archive member with unsafe path ${JSON.stringify(name)}.`);
-    }
+    assertSafeMemberName(name);
   }
   for (const line of verboseLines) {
     if (line.length === 0) {
@@ -594,6 +593,145 @@ export function assertSafeTarListing(nameLines: readonly string[], verboseLines:
     }
     if (/ link to /.test(line)) {
       throw new Error(`Refusing server archive hard link member: ${JSON.stringify(line)}.`);
+    }
+  }
+}
+
+/** Shared member-name policy for tar and zip listings. */
+function assertSafeMemberName(name: string): void {
+  const segments = name.split(/[\\/]/);
+  if (/^[\\/]/.test(name) || /^[A-Za-z]:/.test(name) || name.includes('\0') || segments.includes('..')) {
+    throw new Error(`Refusing server archive member with unsafe path ${JSON.stringify(name)}.`);
+  }
+}
+
+/**
+ * Reads a zip archive's central directory and refuses unsafe entries before
+ * `Expand-Archive` writes anything (#13904), mirroring the tar inspection
+ * (#13640). Parsed in TypeScript so the policy is testable on every platform
+ * and does not depend on the installed PowerShell version.
+ */
+export async function inspectZipArchive(archivePath: string): Promise<void> {
+  assertSafeZipCentralDirectory(await fsp.readFile(archivePath));
+}
+
+const ZIP_EOCD_SIGNATURE = 0x06054b50;
+const ZIP_CENTRAL_SIGNATURE = 0x02014b50;
+const ZIP_EOCD_LENGTH = 22;
+const ZIP_CENTRAL_HEADER_LENGTH = 46;
+const ZIP_HOST_UNIX = 3;
+const UNIX_TYPE_MASK = 0xf000;
+const UNIX_TYPE_FILE = 0x8000;
+const UNIX_TYPE_DIRECTORY = 0x4000;
+const DOS_ATTRIBUTE_REPARSE_POINT = 0x400;
+
+/**
+ * Pure policy over zip bytes: one well-formed single-disk, non-ZIP64 central
+ * directory whose entries are regular files or directories with safe names
+ * (no absolute, drive-qualified, `..`, NUL, `:` stream, trailing dot/space
+ * or reserved device-name paths), no Unix
+ * symlink/special modes, no Windows reparse points, and at most
+ * `ARCHIVE_MAX_MEMBERS` entries. Anything it cannot parse is refused.
+ */
+export function assertSafeZipCentralDirectory(bytes: Buffer): void {
+  const eocd = findZipEndOfCentralDirectory(bytes);
+  const diskNumber = bytes.readUInt16LE(eocd + 4);
+  const centralDisk = bytes.readUInt16LE(eocd + 6);
+  const entriesOnDisk = bytes.readUInt16LE(eocd + 8);
+  const totalEntries = bytes.readUInt16LE(eocd + 10);
+  const centralSize = bytes.readUInt32LE(eocd + 12);
+  const centralOffset = bytes.readUInt32LE(eocd + 16);
+  if (totalEntries === 0xffff || centralSize === 0xffffffff || centralOffset === 0xffffffff) {
+    throw new Error('Refusing ZIP64 server archive; the managed server archive is never that large.');
+  }
+  if (diskNumber !== 0 || centralDisk !== 0 || entriesOnDisk !== totalEntries) {
+    throw new Error('Refusing multi-disk server archive.');
+  }
+  if (totalEntries > ARCHIVE_MAX_MEMBERS) {
+    throw new Error(`Server archive lists ${totalEntries} members, over the ${ARCHIVE_MAX_MEMBERS} member limit.`);
+  }
+  const centralEnd = centralOffset + centralSize;
+  if (centralEnd > eocd) {
+    throw new Error('Refusing server archive with a central directory outside the file.');
+  }
+  let cursor = centralOffset;
+  for (let index = 0; index < totalEntries; index += 1) {
+    if (cursor + ZIP_CENTRAL_HEADER_LENGTH > centralEnd || bytes.readUInt32LE(cursor) !== ZIP_CENTRAL_SIGNATURE) {
+      throw new Error(`Refusing server archive with a malformed central directory entry ${index}.`);
+    }
+    const versionMadeBy = bytes.readUInt16LE(cursor + 4);
+    const flags = bytes.readUInt16LE(cursor + 8);
+    const nameLength = bytes.readUInt16LE(cursor + 28);
+    const extraLength = bytes.readUInt16LE(cursor + 30);
+    const commentLength = bytes.readUInt16LE(cursor + 32);
+    const externalAttributes = bytes.readUInt32LE(cursor + 38);
+    const nameStart = cursor + ZIP_CENTRAL_HEADER_LENGTH;
+    const next = nameStart + nameLength + extraLength + commentLength;
+    if (next > centralEnd) {
+      throw new Error(`Refusing server archive with a truncated central directory entry ${index}.`);
+    }
+    // Bit 11 marks UTF-8 names; otherwise CP437, whose ASCII range (all the
+    // separators and dots this policy inspects) matches latin1.
+    const name = bytes.subarray(nameStart, nameStart + nameLength).toString((flags & 0x800) !== 0 ? 'utf8' : 'latin1');
+    if (name.length === 0) {
+      throw new Error(`Refusing server archive member ${index} with an empty name.`);
+    }
+    assertSafeMemberName(name);
+    if (name.includes(':')) {
+      throw new Error(`Refusing server archive member with unsafe path ${JSON.stringify(name)}.`);
+    }
+    assertSafeWindowsMemberName(name);
+    if ((versionMadeBy >> 8) === ZIP_HOST_UNIX) {
+      const fileType = (externalAttributes >>> 16) & UNIX_TYPE_MASK;
+      if (fileType !== 0 && fileType !== UNIX_TYPE_FILE && fileType !== UNIX_TYPE_DIRECTORY) {
+        throw new Error(`Refusing server archive member of unsupported type: ${JSON.stringify(name)}.`);
+      }
+    }
+    if ((externalAttributes & DOS_ATTRIBUTE_REPARSE_POINT) !== 0) {
+      throw new Error(`Refusing server archive reparse-point member: ${JSON.stringify(name)}.`);
+    }
+    cursor = next;
+  }
+  if (cursor !== centralEnd) {
+    throw new Error('Refusing server archive whose central directory size does not match its entries.');
+  }
+}
+
+/**
+ * Takes the LAST end-of-central-directory signature, as .NET's ZipArchive and
+ * most readers do, and refuses unless its comment ends exactly at end of file.
+ * Falling back to an earlier record would let a fake record hidden in the
+ * comment make this check and the extractor read different directories.
+ */
+function findZipEndOfCentralDirectory(bytes: Buffer): number {
+  const lowest = Math.max(0, bytes.length - ZIP_EOCD_LENGTH - 0xffff);
+  for (let offset = bytes.length - ZIP_EOCD_LENGTH; offset >= lowest; offset -= 1) {
+    if (bytes.readUInt32LE(offset) === ZIP_EOCD_SIGNATURE) {
+      if (offset + ZIP_EOCD_LENGTH + bytes.readUInt16LE(offset + 20) !== bytes.length) {
+        throw new Error('Refusing server archive whose last end-of-central-directory record does not end the file.');
+      }
+      return offset;
+    }
+  }
+  throw new Error('Refusing server archive without a zip end-of-central-directory record.');
+}
+
+// Includes the superscript COM/LPT aliases and CONIN$/CONOUT$; spaces before
+// an extension are trimmed by Win32 device matching, so `CON .txt` is CON.
+const WINDOWS_RESERVED_NAME = /^(con|prn|aux|nul|conin\$|conout\$|com[1-9\u00b9\u00b2\u00b3]|lpt[1-9\u00b9\u00b2\u00b3]) *(\..*)?$/i;
+
+/**
+ * Windows-only name rules for zip members: Win32 trims trailing dots and
+ * spaces (so `.. ` can become `..`) and maps reserved device names anywhere in
+ * a path, so both are refused before Expand-Archive sees them.
+ */
+function assertSafeWindowsMemberName(name: string): void {
+  for (const segment of name.split(/[\\/]/)) {
+    if (segment.length === 0) {
+      continue;
+    }
+    if (/[. ]$/.test(segment) || WINDOWS_RESERVED_NAME.test(segment)) {
+      throw new Error(`Refusing server archive member with unsafe path ${JSON.stringify(name)}.`);
     }
   }
 }
