@@ -369,7 +369,11 @@ impl Band {
         let Expr::Call(call) = call else {
             return None;
         };
-        if !approx_name(&Expr::Call(call.clone())) || call.args.is_empty() || call.args.len() > 4 {
+        if !approx_name(&Expr::Call(call.clone()))
+            || !resolves_to_pytest_approx(&call.func, test)
+            || call.args.is_empty()
+            || call.args.len() > 4
+        {
             return None;
         }
         let expected = band_value(call.args.first()?, test)?;
@@ -433,6 +437,34 @@ fn approx_name(expr: &Expr) -> bool {
         return false;
     };
     expr_full_name(&call.func).is_some_and(|name| name == "approx" || name == "pytest.approx")
+}
+
+/// Whether the `approx` callee is pytest's own: `pytest.approx` through a
+/// plain `import pytest`, or `approx` through `from pytest import approx`,
+/// with the name bound once in the test's module, not shadowed by the test,
+/// not patched through an attribute and the module's bindings enumerable. A
+/// project helper also named `approx` may read its second argument as an
+/// absolute tolerance (or anything else), so its band is not read (#13723).
+fn resolves_to_pytest_approx(func: &Expr, test: &PythonTest) -> bool {
+    let Some(name) = expr_full_name(func) else {
+        return false;
+    };
+    let (alias, source_module, imported) = match name.as_str() {
+        "approx" => ("approx", "pytest", "approx"),
+        "pytest.approx" => ("pytest", "", "pytest"),
+        _ => return false,
+    };
+    let rebinding = &test.constant_rebinding;
+    let imported_from_pytest = test
+        .imports
+        .iter()
+        .rev()
+        .find(|import| import.alias == alias)
+        .is_some_and(|import| import.source_module == source_module && import.imported == imported);
+    imported_from_pytest
+        && !rebinding.rebinds(alias)
+        && !rebinding.module_opaque
+        && !rebinding.assigns_attribute("approx")
 }
 
 fn call_name(func: &Expr) -> Option<&str> {

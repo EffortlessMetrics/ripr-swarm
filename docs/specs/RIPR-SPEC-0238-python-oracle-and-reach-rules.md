@@ -1054,7 +1054,12 @@ mutant calibrates the rule; ripr reports only the static shape.
     approx(<expected>, <rel>, <abs>, <nan_ok>)` in either operand order,
     the band by keyword or positionally in pytest's parameter order (a
     positional `nan_ok` must be `True` or `False`, and a parameter passed
-    twice is not read); the expected value and each band are numeric
+    twice is not read). The `approx` must be pytest's own: `pytest.approx`
+    through a plain `import pytest`, or `approx` through `from pytest import
+    approx`, bound once in the test's module, not shadowed by the test and
+    not attribute-patched; a project helper also named `approx` may read
+    its arguments differently (an absolute tolerance), so its band is not
+    read (#13723). The expected value and each band are numeric
     literals or constants of the test's own module that the test-module
     constant reading of RIPR-SPEC-0028 (#10707) holds at their value
     (#13723). The old and new results are compared with pytest's tolerance (`abs` alone, else the larger of

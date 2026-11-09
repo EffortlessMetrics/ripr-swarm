@@ -99,6 +99,63 @@ fn a_positional_band_is_read_in_pytests_parameter_order() -> Result<(), String> 
 }
 
 #[test]
+fn only_pytests_own_approx_band_is_read() -> Result<(), String> {
+    let edit = |module: String| {
+        classify(
+            &FUNCTION.replace("x * 3", "x * 3 + 0.5"),
+            2,
+            "    return x * 3",
+            &module,
+            true,
+        )
+    };
+    let test = |head: &str, assertion: &str| {
+        format!("{head}\nfrom bands.core import band\n\ndef test_band():\n    assert {assertion}\n")
+    };
+    // `from pytest import approx` is pytest's own.
+    assert_eq!(
+        edit(test(
+            "from pytest import approx\n",
+            "band(10) == approx(30, 0.1)"
+        ))?,
+        GAP
+    );
+    // A project helper named `approx` may read its second argument as an
+    // absolute tolerance: `approx(30, 0.1)` is then a band of 0.1, not 3.
+    for (head, assertion) in [
+        (
+            "import pytest\n\ndef approx(expected, tol):\n    return pytest.approx(expected, abs=tol)\n",
+            "band(10) == approx(30, 0.1)",
+        ),
+        (
+            "import pytest\n\ndef approx(expected, rel):\n    return pytest.approx(expected, abs=rel)\n",
+            "band(10) == approx(30, rel=0.1)",
+        ),
+        (
+            "from tests.helpers import approx\n",
+            "band(10) == approx(30, 0.1)",
+        ),
+        (
+            "from pytest import approx\n\ndef approx(expected, tol):\n    return expected\n",
+            "band(10) == approx(30, 0.1)",
+        ),
+        ("import pytest as pt\n", "band(10) == pt.approx(30, 0.1)"),
+        (
+            "import helpers as pytest\n",
+            "band(10) == pytest.approx(30, 0.1)",
+        ),
+        (
+            "import pytest\npytest.approx = lambda expected, tol: expected\n",
+            "band(10) == pytest.approx(30, 0.1)",
+        ),
+    ] {
+        let (class, _) = edit(test(head, assertion))?;
+        assert_eq!(class, ExposureClass::StaticUnknown, "{head}{assertion}");
+    }
+    Ok(())
+}
+
+#[test]
 fn a_positional_band_outside_the_read_shape_keeps_abstaining() -> Result<(), String> {
     for assertion in [
         // `rel` given twice is a `TypeError`, not a band.
