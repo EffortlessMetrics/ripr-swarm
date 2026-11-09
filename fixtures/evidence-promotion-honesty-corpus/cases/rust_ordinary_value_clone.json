@@ -1,0 +1,27 @@
+{
+  "id": "rust_ordinary_value_clone",
+  "language": "rust",
+  "tier": "pure",
+  "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-ordinary-value-clone.json",
+  "report_subject": "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/ordinary-value-clone",
+  "vector": "cloned_callback_does_not_make_a_noninvoking_helper_observe_the_owner",
+  "assertions": [
+    {
+      "type": "expected_repo_seam_grip",
+      "owner": "src/lib.rs::gate",
+      "expression": "n >= 10",
+      "grip_class": "strongly_gripped",
+      "reach": "yes"
+    },
+    {
+      "type": "expected_repo_seam_related_test",
+      "owner": "src/lib.rs::gate",
+      "expression": "n >= 10",
+      "test": "boundary",
+      "file": "src/lib.rs",
+      "line": 14,
+      "oracle_strength": "strong",
+      "relation_reason": "direct_owner_call"
+    }
+  ]
+}

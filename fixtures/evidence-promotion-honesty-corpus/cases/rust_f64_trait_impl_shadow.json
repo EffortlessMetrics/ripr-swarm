@@ -1,0 +1,33 @@
+{
+  "id": "rust_f64_trait_impl_shadow",
+  "language": "rust",
+  "tier": "pure",
+  "source_fixture": "fixtures/rust_f64_trait_impl_shadow",
+  "vector": "trait_dispatch_identity_f64_impl_shadow",
+  "probe_family": "return_value",
+  "assertions": [
+    {
+      "type": "must_not_report_clean"
+    },
+    {
+      "type": "expected_finding_count",
+      "count": 1
+    },
+    {
+      "type": "must_not_promote"
+    },
+    {
+      "type": "expected_class",
+      "class": "reachable_unrevealed"
+    },
+    {
+      "type": "expected_related_test",
+      "name": "render_is_empty",
+      "file": "src/lib.rs",
+      "line": 24,
+      "kind": "exact_value",
+      "strength": "strong",
+      "relation_reason": "weak_token_substring"
+    }
+  ]
+}

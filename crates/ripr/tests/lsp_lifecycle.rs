@@ -29,12 +29,12 @@
 //! Named limitations (verified against tower-lsp-server 0.23, the transport
 //! stack in `crates/ripr/src/lsp.rs`):
 //!
-//! - `InitializeParams.processId` monitoring is NOT implemented: neither
-//!   tower-lsp-server 0.23 nor `lsp/backend.rs` watches the client process,
-//!   so a crashed editor leaves the server running until stdin closes.
+//! - `InitializeParams.processId` is still not monitored; the Unix parent-death
+//!   watchdog (#12575) observes launcher reparenting via `parent_id()` when
+//!   stdio stays open, not the LSP `processId` field.
 //!   `initialize_accepts_client_process_id_without_monitoring` documents the
-//!   accepted-but-unmonitored behavior; detecting a dead-but-pipe-holding
-//!   parent is out of scope.
+//!   accepted-but-unmonitored `processId` behavior. Windows has no safe
+//!   parent-PID probe yet (#12575).
 //! - LSP §exit says a server that receives `exit` without a prior `shutdown`
 //!   "should exit with an error code". tower-lsp-server treats `exit` as an
 //!   unconditional stop, so `ripr lsp` records the wire order itself and
@@ -2980,4 +2980,176 @@ fn oversized_non_rust_diff_over_changed_line_budget_is_typed_limited() -> Result
         open_save_and_read_terminal_status(&mut control, &root_uri, &file_uri)?;
     assert_not_limited_by_changed_line_budget(&control_status)?;
     shutdown_exit_and_wait(&mut control)
+}
+
+/// #13716: on a real Rust repository with a committed `>= 100` -> `> 100`
+/// change, the real server's own seam diagnostic (no injected
+/// fix-instruction) is offered "Start repair: copy repair command", and the
+/// targeted-test brief is not disabled with a language-boundary reason. The
+/// editor and `ripr agent repair --seam-id` read the same seam repair gate.
+#[test]
+fn real_seam_diagnostic_offers_the_repair_start_on_a_committed_change() -> Result<(), String> {
+    let base = unique_compat_fixture_root("repair-start")?;
+    let root = base.path.join("repo");
+    fs::create_dir_all(root.join("src")).map_err(|err| format!("create src: {err}"))?;
+    fs::create_dir_all(root.join("tests")).map_err(|err| format!("create tests: {err}"))?;
+    let write = |relative: &str, text: &str| {
+        fs::write(root.join(relative), text).map_err(|err| format!("write {relative}: {err}"))
+    };
+    write(
+        "Cargo.toml",
+        "[package]\nname = \"discount-fixture\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )?;
+    write(".gitignore", "/target/\n")?;
+    write(
+        "src/lib.rs",
+        "pub fn discount(total: u32) -> u32 {\n    if total >= 100 {\n        10\n    } else {\n        0\n    }\n}\n",
+    )?;
+    write(
+        "tests/discount.rs",
+        "use discount_fixture::discount;\n\n#[test]\nfn big_order_gets_discount() {\n    assert_eq!(discount(150), 10);\n}\n\n#[test]\nfn small_order_gets_none() {\n    assert_eq!(discount(10), 0);\n}\n",
+    )?;
+    let git = |args: &[&str]| run_compat_git(&root, args);
+    git(&["init", "-q"])?;
+    git(&["config", "user.email", "ripr@example.invalid"])?;
+    git(&["config", "user.name", "RIPR Test"])?;
+    git(&["add", "-A"])?;
+    git(&["commit", "-q", "-m", "base"])?;
+    write(
+        "src/lib.rs",
+        "pub fn discount(total: u32) -> u32 {\n    if total > 100 {\n        10\n    } else {\n        0\n    }\n}\n",
+    )?;
+    git(&["commit", "-q", "-am", "change boundary"])?;
+
+    let mut session = LspSession::spawn()?;
+    let initialize = session.request(
+        "initialize",
+        serde_json::json!({
+            "processId": null,
+            "rootUri": editor_file_uri(&root)?,
+            "initializationOptions": {
+                "baseRef": "HEAD~1",
+                "checkMode": "instant",
+                "diagnosticProfile": "full"
+            },
+            "capabilities": {
+                "textDocument": {"codeAction": {
+                    "disabledSupport": true,
+                    "codeActionLiteralSupport": {"codeActionKind": {"valueSet": ["quickfix"]}}
+                }},
+                "experimental": {"riprEditor": {
+                    "version": "0.10.0",
+                    "commands": [
+                        "ripr.copyAgentRepairCommand",
+                        "ripr.copyTargetedTestBrief"
+                    ],
+                    "guardedTestEdit": false
+                }}
+            },
+        }),
+    )?;
+    expect_result(&initialize, "initialize")?;
+    session.notify("initialized", Some(serde_json::json!({})))?;
+
+    let refresh_id = fire(
+        &mut session,
+        "workspace/executeCommand",
+        serde_json::json!({"command": "ripr.refresh", "arguments": []}),
+    )?;
+    let deadline = Instant::now() + ANALYSIS_TIMEOUT;
+    let mut seam_diagnostic = None;
+    loop {
+        let message = session.await_message(deadline, "ripr.refresh response")?;
+        if message.get("method").and_then(serde_json::Value::as_str)
+            == Some("textDocument/publishDiagnostics")
+            && let Some(diagnostics) = message
+                .pointer("/params/diagnostics")
+                .and_then(serde_json::Value::as_array)
+        {
+            for diagnostic in diagnostics {
+                if diagnostic["code"] == "ripr-seam-weakly-gripped"
+                    && diagnostic.pointer("/data/seam_id").is_some()
+                {
+                    let uri = message.pointer("/params/uri").cloned();
+                    seam_diagnostic = Some((uri, diagnostic.clone()));
+                }
+            }
+        }
+        let is_response = message.get("result").is_some() || message.get("error").is_some();
+        if is_response && message.get("id").and_then(serde_json::Value::as_u64) == Some(refresh_id)
+        {
+            expect_result(&message, "ripr.refresh")?;
+            break;
+        }
+    }
+    let (uri, diagnostic) = seam_diagnostic
+        .ok_or("fixture setup: the committed boundary change must publish a seam diagnostic")?;
+    // Precondition: this is the production payload, not an injected summary.
+    for injected in ["fix_instruction", "witness", "finding_id"] {
+        if diagnostic.pointer(&format!("/data/{injected}")).is_some() {
+            return Err(format!(
+                "seam diagnostic unexpectedly carries {injected}: {diagnostic}"
+            ));
+        }
+    }
+
+    let actions = session.request(
+        "textDocument/codeAction",
+        serde_json::json!({
+            "textDocument": {"uri": uri},
+            "range": diagnostic["range"].clone(),
+            "context": {"diagnostics": [diagnostic.clone()]},
+        }),
+    )?;
+    let actions = expect_result(&actions, "textDocument/codeAction")?
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    let titled = |title: &str| actions.iter().find(|action| action["title"] == title);
+    let start = titled("Start repair: copy repair command")
+        .ok_or_else(|| format!("the repair start must be offered: {actions:?}"))?;
+    if start.get("disabled").is_some() {
+        return Err(format!("the repair start must be enabled: {start}"));
+    }
+    let start_command = start
+        .pointer("/command/arguments/0/command")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default();
+    let seam_id = diagnostic
+        .pointer("/data/seam_id")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default();
+    if !start_command.starts_with("ripr agent repair ")
+        || !start_command.contains(&format!("--seam-id {seam_id}"))
+    {
+        return Err(format!("the start must name this seam: {start}"));
+    }
+    let brief = titled("Write targeted test: copy brief")
+        .ok_or_else(|| format!("the targeted-test brief must be offered: {actions:?}"))?;
+    if brief.get("disabled").is_some() {
+        return Err(format!("the brief must not be disabled: {brief}"));
+    }
+    shutdown_exit_and_wait(&mut session)?;
+
+    // The CLI half of the parity: the before phase the start names accepts
+    // this seam on the same clean, committed fixture and starts an attempt.
+    let before = Command::new(env!("CARGO_BIN_EXE_ripr"))
+        .args(["agent", "repair", "--root"])
+        .arg(&root)
+        .args(["--seam-id", seam_id, "--phase", "before"])
+        .current_dir(&root)
+        .output()
+        .map_err(|err| format!("run agent repair before phase: {err}"))?;
+    let stderr = String::from_utf8_lossy(&before.stderr);
+    let stdout = String::from_utf8_lossy(&before.stdout);
+    // Since #13803 the human start step reports the started attempt once, in
+    // the stdout summary; stderr no longer repeats the attempt manifest line.
+    if !before.status.success() || !stdout.contains(&format!("Repair prepared for seam {seam_id}"))
+    {
+        return Err(format!(
+            "`ripr agent repair --phase before` must accept the offered seam: status {:?}\nstdout:\n{stdout}\nstderr:\n{stderr}",
+            before.status.code()
+        ));
+    }
+    Ok(())
 }

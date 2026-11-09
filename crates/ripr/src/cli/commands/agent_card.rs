@@ -190,6 +190,18 @@ fn refusal_remedy_route(
         &root.to_string_lossy(),
     ));
     match kind {
+        // #13791: a TypeScript/Python preview finding or gap id has no seam
+        // and never will, so re-listing seams cannot find it. Its typed route
+        // is the same `check --format agent` command the refusal prose names
+        // (one owner renders both). Unknown and Rust-shaped ids keep pilot.
+        AgentCardRefusalKind::SeamNotFound
+            if crate::app::task_first::preview_item_language(seam_id).is_some() =>
+        {
+            crate::app::task_first::preview_check_command(
+                root_path,
+                crate::app::task_first::PreviewCheckInput::Default,
+            )
+        }
         AgentCardRefusalKind::SeamNotFound => {
             format!("ripr pilot --root {root}")
         }
@@ -237,7 +249,7 @@ fn render_agent_card(
         })?;
 
     let policy = AgentBriefPolicy::from_config(&config);
-    if let Some(reason) = policy.omission_reason_for_class(entry.class) {
+    if let Some(reason) = policy.omission_reason_for_class(entry.class, Some(entry.seam.file())) {
         // #5007 / #7736: a policy decision has its own recovery guidance;
         // re-listing seams cannot fix it.
         return Err(AgentCardError::refusal(
@@ -521,11 +533,31 @@ pub(crate) fn agent_card_plain_lines(
     // next action; other refusals keep the card's evidence wording and
     // canonical next action, and the gate's reason is only the fallback.
     let refused = hold.is_some();
-    let hold_with_next = hold.filter(|hold| hold.next.is_some());
-    let started = card.attempt.is_some() && card.readiness.repair_ready && !refused;
+    let hold_with_next = hold.filter(|hold| card.attempt.is_none() && hold.next.is_some());
+    let started = card
+        .attempt
+        .as_ref()
+        .is_some_and(|attempt| attempt.state == "awaiting_edit")
+        && card.readiness.repair_ready
+        && !refused;
     let ready = card.readiness.repair_ready && !refused;
     if let Some(hold) = hold_with_next {
         lines.push(format!("  Not ready to repair yet: {}.", hold.reason));
+    } else if let Some(attempt) = card
+        .attempt
+        .as_ref()
+        .filter(|attempt| attempt.state != "awaiting_edit")
+    {
+        lines.push(match attempt.state.as_str() {
+            "ready_to_finish" => {
+                "  The attempt's after phase has finished; inspect its status for the outcome."
+                    .to_string()
+            }
+            "prepared" => {
+                "  The attempt was prepared but has not started; inspect its status.".to_string()
+            }
+            _ => "  The repair attempt has ended; inspect its status for the outcome.".to_string(),
+        });
     } else if started {
         lines.push(
             "  Ready to repair. The repair has started and is waiting for your test.".to_string(),
@@ -607,18 +639,23 @@ pub(crate) fn agent_card_plain_lines(
         // No runnable command of the card's own, a repair not yet started,
         // and the start gate holds nothing: the one next step is the repair
         // start itself (#11397), the command the pilot printed.
-        _ if ready && !started && !own_route => {
+        _ if ready && card.attempt.is_none() && !own_route => {
             let command = start_command();
             lines.push(format!("  Next: {command}"));
             lines.extend(powershell_pair(&command));
         }
-        // A started attempt with no stop of its own: the next step is the
-        // attempt's, not "no ready command" (#11381).
+        // A started attempt awaiting its test: the next step is the attempt's
+        // continue command, not "no ready command" (#11381). The canonical
+        // action for such an attempt is a prerequisite stop (the focused test
+        // edit), which the generic plain renderer has no command line for.
         Some(action)
             if started
                 && !own_route
                 && action.stop().is_none_or(|stop| {
                     matches!(stop, crate::domain::NextActionStop::Unsupported { .. })
+                        || matches!(stop,
+                        crate::domain::NextActionStop::ProvideInput { input, .. }
+                            if input.starts_with("focused test edit for attempt"))
                 }) =>
         {
             if let Some(attempt) = &card.attempt {
@@ -657,7 +694,10 @@ pub(crate) fn agent_card_plain_lines(
     }
     lines.push(plain_done_when_line(&card.done_when));
     if let Some(attempt) = &card.attempt {
-        lines.push(format!("  Repair in progress: {}", attempt.attempt_id));
+        lines.push(format!(
+            "  Repair attempt: {} ({})",
+            attempt.attempt_id, attempt.state
+        ));
     }
     let already_shown: &[String] = card
         .canonical_next_action
@@ -951,6 +991,41 @@ mod tests {
         if !packet.starts_with("ripr agent packet --root ") || !packet.contains("--seam-id seam-a")
         {
             return Err("packet remedy must bind the invocation root and seam id".to_string());
+        }
+        Ok(())
+    }
+
+    /// #13791 review: a preview-shaped id's not-found route is the preview
+    /// `check --format agent` command the prose names, while an unknown seam
+    /// id and a Rust-shaped finding id keep re-listing through pilot.
+    #[test]
+    fn seam_not_found_remedy_route_names_check_for_preview_shaped_ids() -> Result<(), String> {
+        let root = std::path::Path::new(".");
+        let expected = crate::app::task_first::preview_check_command(
+            root,
+            crate::app::task_first::PreviewCheckInput::Default,
+        );
+        for id in [
+            "probe:src_discount.ts:typescript_preview:2396aec1",
+            "gap:python:pricing/core.py:bulk_discount_rate:predicate_boundary:predicate:units>=20",
+        ] {
+            let route = refusal_remedy_route(root, id, AgentCardRefusalKind::SeamNotFound);
+            if route != expected
+                || !route.starts_with("ripr check --root ")
+                || !route.ends_with(" --format agent")
+            {
+                return Err(format!("preview id `{id}` must route to check: {route}"));
+            }
+        }
+        for id in [
+            "seam:definitely-not-real",
+            "probe:src_lib.rs:12:predicate",
+            "gap:rust:src/lib.rs:add:call_deletion:x",
+        ] {
+            let route = refusal_remedy_route(root, id, AgentCardRefusalKind::SeamNotFound);
+            if !route.starts_with("ripr pilot --root ") {
+                return Err(format!("id `{id}` must keep the pilot route: {route}"));
+            }
         }
         Ok(())
     }

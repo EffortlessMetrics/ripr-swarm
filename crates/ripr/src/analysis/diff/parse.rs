@@ -232,13 +232,104 @@ fn parse_hunk_number(raw: &str) -> Option<usize> {
     raw.parse().ok()
 }
 
+/// The kind of one two-way hunk body line, by its prefix column. An empty line
+/// is context (some tools strip the lone space). `None` is anything else,
+/// such as `\ No newline at end of file` or an unprefixed malformed line.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum BodyKind {
+    Added,
+    Removed,
+    Context,
+}
+
+impl BodyKind {
+    fn of(raw: &str) -> Option<Self> {
+        match raw.as_bytes().first() {
+            Some(b'+') => Some(Self::Added),
+            Some(b'-') => Some(Self::Removed),
+            Some(b' ') | None => Some(Self::Context),
+            _ => None,
+        }
+    }
+}
+
+/// What one body line does to an open hunk's coordinates. This is the pure
+/// arithmetic core of `ParserState::consume_hunk_line`, kept separate so the
+/// Kani harnesses in `hunk_kani` can prove it over every `usize` coordinate.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum HunkStep {
+    /// Empty sides may start at zero, but an excess body line cannot turn that
+    /// cursor into a real one-based source coordinate: the line is ignored.
+    Refused,
+    Added {
+        line: usize,
+        next_new: usize,
+    },
+    Removed {
+        line: usize,
+        new_side_line: usize,
+        next_old: usize,
+    },
+    Context {
+        next_old: usize,
+        next_new: usize,
+    },
+    /// A counter would overflow: stop emitting misleading line numbers for
+    /// the rest of this hunk.
+    Exhausted,
+}
+
+fn hunk_step(old_line: usize, new_line: usize, new_side_empty: bool, kind: BodyKind) -> HunkStep {
+    match kind {
+        BodyKind::Added if new_line == 0 => HunkStep::Refused,
+        BodyKind::Removed if old_line == 0 => HunkStep::Refused,
+        BodyKind::Added => match new_line.checked_add(1) {
+            Some(next_new) => HunkStep::Added {
+                line: new_line,
+                next_new,
+            },
+            None => HunkStep::Exhausted,
+        },
+        BodyKind::Removed => match old_line.checked_add(1) {
+            Some(next_old) => HunkStep::Removed {
+                line: old_line,
+                // A hunk that deletes from the top of a file is headed `+0,0`:
+                // git's "after line 0". No file has a line 0, and it would
+                // surface as `file:0` in findings, so anchor at the first line
+                // (#11486). Any other empty new side (`+S,0`) names the line
+                // before the gap, so the removal sits at the next new line, as
+                // in a hunk with context (#13098).
+                new_side_line: new_line.saturating_add(usize::from(new_side_empty)).max(1),
+                next_old,
+            },
+            None => HunkStep::Exhausted,
+        },
+        BodyKind::Context => match (old_line.checked_add(1), new_line.checked_add(1)) {
+            (Some(next_old), Some(next_new)) => HunkStep::Context { next_old, next_new },
+            _ => HunkStep::Exhausted,
+        },
+    }
+}
+
+/// Charge one body line against the header's remaining `(old, new)` counts.
+/// `None` means the body delivered more lines than the header promised.
+fn hunk_account(remaining: (usize, usize), kind: BodyKind) -> Option<(usize, usize)> {
+    let (old, new) = match kind {
+        BodyKind::Added => (0, 1),
+        BodyKind::Removed => (1, 0),
+        BodyKind::Context => (1, 1),
+    };
+    Some((remaining.0.checked_sub(old)?, remaining.1.checked_sub(new)?))
+}
+
 mod parser_state {
     use super::{
         AnalysisLimitation, AnalysisLimitationKind, AnalysisRecovery, AnalysisRecoveryKind,
-        AnalysisStage, ChangedFile, ChangedLine, git_header_matches_rename,
-        is_dev_null_new_path_marker, is_new_path_marker, parse_git_old_path, parse_hunk_header,
-        parse_new_path_marker, parse_old_path_for_confinement, parse_old_path_marker,
-        parse_rename_from_path, parse_rename_to_path, source_line_text,
+        AnalysisStage, BodyKind, ChangedFile, ChangedLine, HunkStep, git_header_matches_rename,
+        hunk_account, hunk_step, is_dev_null_new_path_marker, is_new_path_marker,
+        parse_git_old_path, parse_hunk_header, parse_new_path_marker,
+        parse_old_path_for_confinement, parse_old_path_marker, parse_rename_from_path,
+        parse_rename_to_path, source_line_text,
     };
     use std::collections::BTreeMap;
     use std::path::{Path, PathBuf};
@@ -286,6 +377,11 @@ mod parser_state {
         new_line: usize,
         in_hunk: bool,
         remaining_hunk_lines: Option<(usize, usize)>,
+        /// The open hunk's new side is empty (`+S,0`). Git then writes `S` as
+        /// the line *before* the gap, while every other hunk's start is the
+        /// first new line it covers, so a removal's new-side anchor is `S + 1`
+        /// (#13098).
+        hunk_new_side_empty: bool,
         saw_old_path_marker: bool,
         section_old_path: Option<PathBuf>,
         section_git_header: Option<String>,
@@ -712,15 +808,12 @@ mod parser_state {
             let Some((old, new)) = self.remaining_hunk_lines else {
                 return;
             };
-            let consumed = match raw.as_bytes().first() {
-                Some(b'-') => (1, 0),
-                Some(b'+') => (0, 1),
-                Some(b' ') | None => (1, 1),
-                _ => return,
+            let Some(kind) = BodyKind::of(raw) else {
+                return;
             };
-            match (old.checked_sub(consumed.0), new.checked_sub(consumed.1)) {
-                (Some(old), Some(new)) => self.remaining_hunk_lines = Some((old, new)),
-                _ => {
+            match hunk_account((old, new), kind) {
+                Some(remaining) => self.remaining_hunk_lines = Some(remaining),
+                None => {
                     self.record_malformed_hunk();
                     // One record per malformed hunk; keep its earlier lines as
                     // advisory evidence rather than discarding parsed changes.
@@ -931,6 +1024,7 @@ mod parser_state {
                 }
                 self.old_line = header.old_start;
                 self.new_line = header.new_start;
+                self.hunk_new_side_empty = header.new_count == 0;
                 self.remaining_hunk_lines = Some((header.old_count, header.new_count));
                 self.in_hunk = true;
             } else {
@@ -979,11 +1073,13 @@ mod parser_state {
                 return;
             }
 
-            // Empty sides may start at zero, but an excess body line cannot
-            // turn that cursor into a real one-based source coordinate.
-            if (raw.starts_with('+') && self.new_line == 0)
-                || (raw.starts_with('-') && self.old_line == 0)
-            {
+            // Coordinates do not move between here and the use of `step` below:
+            // every branch that advances them (the conflict quarantine)
+            // returns first.
+            let step = BodyKind::of(raw).map(|kind| {
+                hunk_step(self.old_line, self.new_line, self.hunk_new_side_empty, kind)
+            });
+            if step == Some(HunkStep::Refused) {
                 return;
             }
 
@@ -1049,61 +1145,54 @@ mod parser_state {
                 self.mark_section_body_seen();
             }
 
-            if let Some(text) = raw.strip_prefix('+') {
+            // `Added`/`Removed` steps come only from a `+`/`-` first byte, so
+            // the payload after that one ASCII byte is the line's text.
+            match step {
+                Some(HunkStep::Added { line, next_new }) => {
+                    let (text, raw_line1_bom) = source_line_text(line, &raw[1..]);
+                    if raw_line1_bom && !self.raw_line1_bom_paths.contains(&path) {
+                        self.raw_line1_bom_paths.push(path.clone());
+                    }
+                    file.added_lines.push(ChangedLine {
+                        line,
+                        new_side_line: line,
+                        text,
+                    });
+                    self.changed_line_count = self.changed_line_count.saturating_add(1);
+                    self.new_line = next_new;
+                }
+                Some(HunkStep::Removed {
+                    line,
+                    new_side_line,
+                    next_old,
+                }) => {
+                    // RANK-1 fix: record both the old-side line (`line`) and
+                    // the current new-side position (`new_side_line`). When an
+                    // earlier hunk has a non-zero net line-delta,
+                    // `line != new_side_line`. Callers that build a
+                    // SourceLocation pointing into the NEW file MUST use
+                    // `new_side_line`; using `line` (the old-side counter)
+                    // would target the wrong position in the new file.
+                    let (text, raw_line1_bom) = source_line_text(line, &raw[1..]);
+                    if raw_line1_bom && !self.raw_line1_bom_paths.contains(&path) {
+                        self.raw_line1_bom_paths.push(path.clone());
+                    }
+                    file.removed_lines.push(ChangedLine {
+                        line,
+                        new_side_line,
+                        text,
+                    });
+                    self.changed_line_count = self.changed_line_count.saturating_add(1);
+                    self.old_line = next_old;
+                }
+                Some(HunkStep::Context { next_old, next_new }) => {
+                    self.old_line = next_old;
+                    self.new_line = next_new;
+                }
                 // A malformed excess body can exhaust even a valid header's
                 // counter. Refuse that coordinate before emitting the line.
-                let Some(next) = self.new_line.checked_add(1) else {
-                    self.close_hunk();
-                    return;
-                };
-                let (text, raw_line1_bom) = source_line_text(self.new_line, text);
-                if raw_line1_bom && !self.raw_line1_bom_paths.contains(&path) {
-                    self.raw_line1_bom_paths.push(path.clone());
-                }
-                file.added_lines.push(ChangedLine {
-                    line: self.new_line,
-                    new_side_line: self.new_line,
-                    text,
-                });
-                self.changed_line_count = self.changed_line_count.saturating_add(1);
-                self.new_line = next;
-            } else if let Some(text) = raw.strip_prefix('-') {
-                let Some(next) = self.old_line.checked_add(1) else {
-                    self.close_hunk();
-                    return;
-                };
-                // RANK-1 fix: record both the old-side line (`line`) and the
-                // current new-side position (`new_side_line`).  When an earlier
-                // hunk has a non-zero net line-delta, `line != new_side_line`.
-                // Callers that build a SourceLocation pointing into the NEW file
-                // MUST use `new_side_line`; using `line` (the old-side counter)
-                // would target the wrong position in the new file.
-                let (text, raw_line1_bom) = source_line_text(self.old_line, text);
-                if raw_line1_bom && !self.raw_line1_bom_paths.contains(&path) {
-                    self.raw_line1_bom_paths.push(path.clone());
-                }
-                file.removed_lines.push(ChangedLine {
-                    line: self.old_line,
-                    // A hunk that deletes from the top of a file is headed
-                    // `+0,0`: git's "after line 0". No file has a line 0, and
-                    // it would surface as `file:0` in findings, so anchor
-                    // at the first line (#11486).
-                    new_side_line: self.new_line.max(1),
-                    text,
-                });
-                self.changed_line_count = self.changed_line_count.saturating_add(1);
-                self.old_line = next;
-            } else if raw.starts_with(' ') || raw.is_empty() {
-                if let (Some(o), Some(n)) =
-                    (self.old_line.checked_add(1), self.new_line.checked_add(1))
-                {
-                    self.old_line = o;
-                    self.new_line = n;
-                } else {
-                    // Either counter saturated: stop emitting misleading
-                    // line numbers for the rest of this hunk.
-                    self.close_hunk();
-                }
+                Some(HunkStep::Exhausted) => self.close_hunk(),
+                Some(HunkStep::Refused) | None => {}
             }
         }
     }
@@ -2403,6 +2492,46 @@ deleted file mode 100644
             .wrapping_mul(6364136223846793005)
             .wrapping_add(1442695040888963407);
         *seed
+    }
+
+    fn removal_new_side_lines(diff: &str) -> Result<Vec<(usize, usize)>, String> {
+        let parsed = parse_unified_diff_bounded_with_metadata(diff)
+            .map_err(|e| format!("diff should parse: {e}"))?;
+        Ok(parsed
+            .changed_files
+            .iter()
+            .flat_map(|file| file.removed_lines.iter())
+            .map(|line| (line.line, line.new_side_line))
+            .collect())
+    }
+
+    #[test]
+    fn pure_deletion_hunk_anchors_the_new_side_at_the_line_after_the_gap() -> Result<(), String> {
+        // #13098: `+1,0` names the line *before* the gap, so the removed old
+        // line 2 sits where new line 2 now begins, as in a context hunk.
+        let diff = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -2 +1,0 @@ line_0\n-line_1\n";
+        assert_eq!(removal_new_side_lines(diff)?, [(2, 2)]);
+        // A multi-line deletion keeps every removal at the same gap.
+        let diff = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -3,2 +2,0 @@\n-a\n-b\n";
+        assert_eq!(removal_new_side_lines(diff)?, [(3, 3), (4, 3)]);
+        Ok(())
+    }
+
+    #[test]
+    fn pure_deletion_after_an_earlier_net_delta_uses_the_shifted_gap() -> Result<(), String> {
+        // Hunk 1 adds two lines, so hunk 2 (`-10 +11,0`) sits two lines later
+        // on the new side: the removed old line 10 anchors at new line 12.
+        let diff = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -2,0 +3,2 @@\n+x\n+y\n@@ -10 +11,0 @@\n-gone\n";
+        assert_eq!(removal_new_side_lines(diff)?, [(10, 12)]);
+        Ok(())
+    }
+
+    #[test]
+    fn a_removal_beside_added_lines_keeps_the_next_new_line() -> Result<(), String> {
+        // Control: a non-empty new side starts at its first covered line.
+        let diff = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -2 +2 @@\n-old\n+new\n";
+        assert_eq!(removal_new_side_lines(diff)?, [(2, 2)]);
+        Ok(())
     }
 
     #[test]

@@ -1,0 +1,820 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/EffortlessMetrics/ripr/schemas/config/ripr-toml.schema.json",
+  "title": "ripr.toml",
+  "description": "Repository configuration for ripr. Unknown keys are rejected by ripr itself; this schema lets editors flag them first.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "analysis": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": [
+            "instant",
+            "draft",
+            "fast",
+            "deep",
+            "ready"
+          ],
+          "description": "Default analysis mode when CLI flags or LSP options do not set one."
+        },
+        "include_unchanged_tests": {
+          "type": "boolean",
+          "description": "Also consider tests the diff did not touch."
+        },
+        "production_like_targets": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Cargo targets treated as production-like."
+        },
+        "test_harnesses": {
+          "type": "array",
+          "description": "Exact custom test-harness registrations.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "registration_id": {
+                "type": "string"
+              },
+              "target": {
+                "type": "string",
+                "description": "Repository-relative path."
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "custom_harness",
+                  "registered_attribute"
+                ]
+              },
+              "adapter": {
+                "type": "string",
+                "enum": [
+                  "libtest_mimic_v1",
+                  "exact_attribute_v1"
+                ]
+              },
+              "marker": {
+                "type": "string",
+                "description": "Exact identifier path, no wildcards."
+              }
+            },
+            "required": [
+              "registration_id",
+              "target",
+              "kind",
+              "adapter",
+              "marker"
+            ],
+            "oneOf": [
+              {
+                "properties": {
+                  "kind": {
+                    "const": "custom_harness"
+                  },
+                  "adapter": {
+                    "const": "libtest_mimic_v1"
+                  }
+                }
+              },
+              {
+                "properties": {
+                  "kind": {
+                    "const": "registered_attribute"
+                  },
+                  "adapter": {
+                    "const": "exact_attribute_v1"
+                  }
+                }
+              }
+            ],
+            "description": "One registration; `custom_harness` pairs with `libtest_mimic_v1` and `registered_attribute` with `exact_attribute_v1`."
+          }
+        }
+      },
+      "description": "Analysis defaults."
+    },
+    "oracles": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "snapshot_strength": {
+          "type": "string",
+          "enum": [
+            "strong",
+            "medium",
+            "weak",
+            "smoke",
+            "none",
+            "unknown"
+          ],
+          "description": "Assumed strength of snapshot assertions."
+        },
+        "mock_expectation_strength": {
+          "type": "string",
+          "enum": [
+            "strong",
+            "medium",
+            "weak",
+            "smoke",
+            "none",
+            "unknown"
+          ],
+          "description": "Assumed strength of mock expectations."
+        },
+        "broad_error_strength": {
+          "type": "string",
+          "enum": [
+            "strong",
+            "medium",
+            "weak",
+            "smoke",
+            "none",
+            "unknown"
+          ],
+          "description": "Assumed strength of broad error assertions."
+        }
+      },
+      "description": "Oracle strength policy."
+    },
+    "severity": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "findings": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "exposed": {
+              "type": "string",
+              "enum": [
+                "info",
+                "warning",
+                "note"
+              ],
+              "description": "Severity for `exposed` findings."
+            },
+            "weakly_exposed": {
+              "type": "string",
+              "enum": [
+                "info",
+                "warning",
+                "note"
+              ],
+              "description": "Severity for `weakly_exposed` findings."
+            },
+            "reachable_unrevealed": {
+              "type": "string",
+              "enum": [
+                "info",
+                "warning",
+                "note"
+              ],
+              "description": "Severity for `reachable_unrevealed` findings."
+            },
+            "no_static_path": {
+              "type": "string",
+              "enum": [
+                "info",
+                "warning",
+                "note"
+              ],
+              "description": "Severity for `no_static_path` findings."
+            },
+            "infection_unknown": {
+              "type": "string",
+              "enum": [
+                "info",
+                "warning",
+                "note"
+              ],
+              "description": "Severity for `infection_unknown` findings."
+            },
+            "propagation_unknown": {
+              "type": "string",
+              "enum": [
+                "info",
+                "warning",
+                "note"
+              ],
+              "description": "Severity for `propagation_unknown` findings."
+            },
+            "static_unknown": {
+              "type": "string",
+              "enum": [
+                "info",
+                "warning",
+                "note"
+              ],
+              "description": "Severity for `static_unknown` findings."
+            }
+          },
+          "description": "Severity per static exposure class."
+        },
+        "seams": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "strongly_gripped": {
+              "type": "string",
+              "enum": [
+                "info",
+                "warning",
+                "note",
+                "off"
+              ],
+              "description": "Severity for `strongly_gripped` seams; `off` hides them."
+            },
+            "weakly_gripped": {
+              "type": "string",
+              "enum": [
+                "info",
+                "warning",
+                "note",
+                "off"
+              ],
+              "description": "Severity for `weakly_gripped` seams; `off` hides them."
+            },
+            "ungripped": {
+              "type": "string",
+              "enum": [
+                "info",
+                "warning",
+                "note",
+                "off"
+              ],
+              "description": "Severity for `ungripped` seams; `off` hides them."
+            },
+            "reachable_unrevealed": {
+              "type": "string",
+              "enum": [
+                "info",
+                "warning",
+                "note",
+                "off"
+              ],
+              "description": "Severity for `reachable_unrevealed` seams; `off` hides them."
+            },
+            "activation_unknown": {
+              "type": "string",
+              "enum": [
+                "info",
+                "warning",
+                "note",
+                "off"
+              ],
+              "description": "Severity for `activation_unknown` seams; `off` hides them."
+            },
+            "propagation_unknown": {
+              "type": "string",
+              "enum": [
+                "info",
+                "warning",
+                "note",
+                "off"
+              ],
+              "description": "Severity for `propagation_unknown` seams; `off` hides them."
+            },
+            "observation_unknown": {
+              "type": "string",
+              "enum": [
+                "info",
+                "warning",
+                "note",
+                "off"
+              ],
+              "description": "Severity for `observation_unknown` seams; `off` hides them."
+            },
+            "discrimination_unknown": {
+              "type": "string",
+              "enum": [
+                "info",
+                "warning",
+                "note",
+                "off"
+              ],
+              "description": "Severity for `discrimination_unknown` seams; `off` hides them."
+            },
+            "opaque": {
+              "type": "string",
+              "enum": [
+                "info",
+                "warning",
+                "note",
+                "off"
+              ],
+              "description": "Severity for `opaque` seams; `off` hides them."
+            },
+            "intentional": {
+              "type": "string",
+              "enum": [
+                "info",
+                "warning",
+                "note",
+                "off"
+              ],
+              "description": "Severity for `intentional` seams; `off` hides them."
+            },
+            "suppressed": {
+              "type": "string",
+              "enum": [
+                "info",
+                "warning",
+                "note",
+                "off"
+              ],
+              "description": "Severity for `suppressed` seams; `off` hides them."
+            }
+          },
+          "description": "Severity per seam grip class."
+        }
+      }
+    },
+    "lsp": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "seam_diagnostics": {
+          "type": "boolean",
+          "description": "Publish saved-workspace seam diagnostics."
+        },
+        "diagnostic_profile": {
+          "type": "string",
+          "enum": [
+            "actionable",
+            "full"
+          ],
+          "description": "Editor diagnostic profile."
+        }
+      },
+      "description": "Editor sidecar settings."
+    },
+    "reports": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "max_related_tests": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Default related-test cap for context packets."
+        }
+      },
+      "description": "Report defaults."
+    },
+    "suppressions": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "Repository-relative, slash-separated suppressions file."
+        }
+      },
+      "description": "Suppressions file."
+    },
+    "languages": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "rust",
+              "typescript",
+              "javascript",
+              "python",
+              "perl"
+            ]
+          },
+          "description": "Enabled languages."
+        },
+        "rust": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "generated_file_patterns": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Additive generated-source globs."
+            },
+            "handwritten_files": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Exact paths exempt from generated-name conventions."
+            }
+          }
+        },
+        "python": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "handwritten_files": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Exact handwritten paths."
+            },
+            "excluded_file_patterns": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Globs excluded from preview indexing."
+            }
+          }
+        },
+        "typescript": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "handwritten_files": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Exact handwritten paths."
+            },
+            "excluded_file_patterns": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Globs excluded from preview indexing."
+            }
+          }
+        }
+      },
+      "description": "Language adapters."
+    },
+    "profiles": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "bun_ub": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "test_roots": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Test-root globs."
+            },
+            "bridge_hints": {
+              "type": "string",
+              "description": "Repository-relative bridge hints file."
+            }
+          },
+          "description": "Bun stable-byte UB advisory profile.",
+          "required": [
+            "test_roots",
+            "bridge_hints"
+          ]
+        }
+      }
+    },
+    "typescript": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "resolve_tsconfig_paths": {
+          "type": "boolean",
+          "default": true,
+          "description": "Resolve tsconfig `paths` aliases."
+        }
+      },
+      "description": "TypeScript adapter settings."
+    },
+    "perl": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "producer": {
+          "type": "string",
+          "enum": [
+            "perl-ripr-facts",
+            "perllsp",
+            "perl-lsp"
+          ],
+          "description": "Managed fact-packet exporter."
+        },
+        "executable": {
+          "type": "string",
+          "description": "Exporter path; honored only when RIPR_ALLOW_REPO_PERL_EXECUTABLE=1."
+        },
+        "timeout_ms": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Per-invocation timeout."
+        },
+        "cache_dir": {
+          "type": "string",
+          "description": "Fact cache location."
+        }
+      },
+      "description": "Perl adapter settings."
+    },
+    "overrides": {
+      "type": "array",
+      "description": "Per-crate or per-path severity and oracle overrides. Each row sets exactly one of `crate` or `path`, plus a severity or oracles block.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "crate": {
+            "type": "string",
+            "description": "Cargo package name."
+          },
+          "path": {
+            "type": "string",
+            "description": "Repository-relative glob."
+          },
+          "severity": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "findings": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "exposed": {
+                    "type": "string",
+                    "enum": [
+                      "info",
+                      "warning",
+                      "note"
+                    ],
+                    "description": "Severity for `exposed` findings."
+                  },
+                  "weakly_exposed": {
+                    "type": "string",
+                    "enum": [
+                      "info",
+                      "warning",
+                      "note"
+                    ],
+                    "description": "Severity for `weakly_exposed` findings."
+                  },
+                  "reachable_unrevealed": {
+                    "type": "string",
+                    "enum": [
+                      "info",
+                      "warning",
+                      "note"
+                    ],
+                    "description": "Severity for `reachable_unrevealed` findings."
+                  },
+                  "no_static_path": {
+                    "type": "string",
+                    "enum": [
+                      "info",
+                      "warning",
+                      "note"
+                    ],
+                    "description": "Severity for `no_static_path` findings."
+                  },
+                  "infection_unknown": {
+                    "type": "string",
+                    "enum": [
+                      "info",
+                      "warning",
+                      "note"
+                    ],
+                    "description": "Severity for `infection_unknown` findings."
+                  },
+                  "propagation_unknown": {
+                    "type": "string",
+                    "enum": [
+                      "info",
+                      "warning",
+                      "note"
+                    ],
+                    "description": "Severity for `propagation_unknown` findings."
+                  },
+                  "static_unknown": {
+                    "type": "string",
+                    "enum": [
+                      "info",
+                      "warning",
+                      "note"
+                    ],
+                    "description": "Severity for `static_unknown` findings."
+                  }
+                },
+                "description": "Severity per static exposure class."
+              },
+              "seams": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "strongly_gripped": {
+                    "type": "string",
+                    "enum": [
+                      "info",
+                      "warning",
+                      "note",
+                      "off"
+                    ],
+                    "description": "Severity for `strongly_gripped` seams; `off` hides them."
+                  },
+                  "weakly_gripped": {
+                    "type": "string",
+                    "enum": [
+                      "info",
+                      "warning",
+                      "note",
+                      "off"
+                    ],
+                    "description": "Severity for `weakly_gripped` seams; `off` hides them."
+                  },
+                  "ungripped": {
+                    "type": "string",
+                    "enum": [
+                      "info",
+                      "warning",
+                      "note",
+                      "off"
+                    ],
+                    "description": "Severity for `ungripped` seams; `off` hides them."
+                  },
+                  "reachable_unrevealed": {
+                    "type": "string",
+                    "enum": [
+                      "info",
+                      "warning",
+                      "note",
+                      "off"
+                    ],
+                    "description": "Severity for `reachable_unrevealed` seams; `off` hides them."
+                  },
+                  "activation_unknown": {
+                    "type": "string",
+                    "enum": [
+                      "info",
+                      "warning",
+                      "note",
+                      "off"
+                    ],
+                    "description": "Severity for `activation_unknown` seams; `off` hides them."
+                  },
+                  "propagation_unknown": {
+                    "type": "string",
+                    "enum": [
+                      "info",
+                      "warning",
+                      "note",
+                      "off"
+                    ],
+                    "description": "Severity for `propagation_unknown` seams; `off` hides them."
+                  },
+                  "observation_unknown": {
+                    "type": "string",
+                    "enum": [
+                      "info",
+                      "warning",
+                      "note",
+                      "off"
+                    ],
+                    "description": "Severity for `observation_unknown` seams; `off` hides them."
+                  },
+                  "discrimination_unknown": {
+                    "type": "string",
+                    "enum": [
+                      "info",
+                      "warning",
+                      "note",
+                      "off"
+                    ],
+                    "description": "Severity for `discrimination_unknown` seams; `off` hides them."
+                  },
+                  "opaque": {
+                    "type": "string",
+                    "enum": [
+                      "info",
+                      "warning",
+                      "note",
+                      "off"
+                    ],
+                    "description": "Severity for `opaque` seams; `off` hides them."
+                  },
+                  "intentional": {
+                    "type": "string",
+                    "enum": [
+                      "info",
+                      "warning",
+                      "note",
+                      "off"
+                    ],
+                    "description": "Severity for `intentional` seams; `off` hides them."
+                  },
+                  "suppressed": {
+                    "type": "string",
+                    "enum": [
+                      "info",
+                      "warning",
+                      "note",
+                      "off"
+                    ],
+                    "description": "Severity for `suppressed` seams; `off` hides them."
+                  }
+                },
+                "description": "Severity per seam grip class."
+              }
+            }
+          },
+          "oracles": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "snapshot_strength": {
+                "type": "string",
+                "enum": [
+                  "strong",
+                  "medium",
+                  "weak",
+                  "smoke",
+                  "none",
+                  "unknown"
+                ],
+                "description": "Assumed strength of snapshot assertions."
+              },
+              "mock_expectation_strength": {
+                "type": "string",
+                "enum": [
+                  "strong",
+                  "medium",
+                  "weak",
+                  "smoke",
+                  "none",
+                  "unknown"
+                ],
+                "description": "Assumed strength of mock expectations."
+              },
+              "broad_error_strength": {
+                "type": "string",
+                "enum": [
+                  "strong",
+                  "medium",
+                  "weak",
+                  "smoke",
+                  "none",
+                  "unknown"
+                ],
+                "description": "Assumed strength of broad error assertions."
+              }
+            },
+            "description": "Oracle strength policy."
+          }
+        },
+        "oneOf": [
+          {
+            "required": [
+              "crate"
+            ],
+            "not": {
+              "required": [
+                "path"
+              ]
+            }
+          },
+          {
+            "required": [
+              "path"
+            ],
+            "not": {
+              "required": [
+                "crate"
+              ]
+            }
+          }
+        ],
+        "anyOf": [
+          {
+            "required": [
+              "severity"
+            ]
+          },
+          {
+            "required": [
+              "oracles"
+            ]
+          }
+        ]
+      }
+    }
+  }
+}

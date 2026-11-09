@@ -137,9 +137,9 @@ fn refused_chains_stay_static_unknown() -> Result<(), String> {
             DIFF,
         ),
         (
-            "change_hidden_at_first_input",
+            "change_hidden_at_every_input",
             HIDDEN_FIRST,
-            "assert_eq!(vec![2, 3].into_iter().map(sq).collect::<Vec<_>>(), vec![4, 6]);",
+            "assert_eq!(vec![2, 2].into_iter().map(sq).collect::<Vec<_>>(), vec![4, 4]);",
             hidden_diff,
         ),
     ];
@@ -174,5 +174,41 @@ fn refused_chains_stay_static_unknown() -> Result<(), String> {
         assert_eq!(changed.len(), 1, "{case}: one changed return value");
         assert_eq!(changed[0].class, ExposureClass::StaticUnknown, "{case}");
     }
+    Ok(())
+}
+
+/// #12841: the change is invisible at the first input (`2*2 == 2+2`) but
+/// visible at a later one (`3*3 != 3+3`), so the later input represents the
+/// chain and the pin credits it.
+#[test]
+fn change_visible_at_a_later_input_is_credited() -> Result<(), String> {
+    let scratch = Scratch::create()?;
+    std::fs::create_dir(scratch.0.join("src")).map_err(|error| error.to_string())?;
+    std::fs::write(
+        scratch.0.join("Cargo.toml"),
+        "[package]\nname = \"path-value-owner\"\nversion = \"0.0.0\"\nedition = \"2024\"\n[workspace]\n",
+    )
+    .map_err(|error| error.to_string())?;
+    let source = "pub fn sq(x: u32) -> u32 {\n    x + x\n}\n#[cfg(test)]\nmod tests {\n    use super::*;\n    #[test]\n    fn owner_as_path_value() {\n        assert_eq!(vec![2, 3].into_iter().map(sq).collect::<Vec<_>>(), vec![4, 6]);\n    }\n}\n";
+    std::fs::write(scratch.0.join("src/lib.rs"), source).map_err(|error| error.to_string())?;
+    let diff = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -2,1 +2,1 @@\n-    x * x\n+    x + x\n";
+    std::fs::write(scratch.0.join("change.diff"), diff).map_err(|error| error.to_string())?;
+    let report = check_workspace(CheckInput {
+        root: scratch.0.clone(),
+        diff_file: Some(scratch.0.join("change.diff")),
+        mode: Mode::Fast,
+        format: OutputFormat::Json,
+        include_unchanged_tests: true,
+        ..CheckInput::default()
+    })?;
+    let changed: Vec<_> = report
+        .findings
+        .iter()
+        .filter(|finding| {
+            finding.probe.family == ProbeFamily::ReturnValue && finding.probe.location.line == 2
+        })
+        .collect();
+    assert_eq!(changed.len(), 1, "one changed return value");
+    assert_eq!(changed[0].class, ExposureClass::Exposed, "{:?}", changed[0]);
     Ok(())
 }

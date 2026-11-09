@@ -49,6 +49,12 @@ pub(crate) fn probes_for_file_with_relations(
     index: &RustIndex,
     registrations: &[crate::config::TestHarnessRegistration],
 ) -> Vec<SeededProbe> {
+    // #13736: a file only an out-of-line `#[cfg(kani)] mod` compiles is
+    // verification source; its changed lines are disclosed through
+    // `changed_verification_only_lines`, never probed as production.
+    if super::verification_erased::in_cfg_kani_module(index, &changed.path) {
+        return Vec::new();
+    }
     let mut probes = Vec::<SeededProbe>::new();
     // Use `new_side_line` for all lines: for added lines this equals `line`; for
     // removed lines `new_side_line` is the new-file coordinate, which is what
@@ -1803,6 +1809,10 @@ fn changed_line_is_test_evidence(
     test_module_ranges: &[InlineModuleRange],
 ) -> bool {
     if let Some(function) = find_owner_function(index, path, line) {
+        // Stimulus changes must remain visible as unknown findings (#11545).
+        if function.source_role == crate::analysis::facts::FunctionSourceRole::TestInputGenerator {
+            return false;
+        }
         // Ownership is line-granular: a production fn and a `#[test]` fn
         // opening on one physical line both own it, and the later-listed
         // one wins `find_owner_function`. Without columns the line cannot be
@@ -1828,6 +1838,8 @@ fn changed_line_is_test_evidence(
             && find_file_facts(index, path).is_some_and(|facts| {
                 facts.functions.iter().any(|outer| {
                     outer.source_role.is_evidence_role()
+                        && outer.source_role
+                            != crate::analysis::facts::FunctionSourceRole::TestInputGenerator
                         && function.start_line < outer.end_line
                         && function.end_line <= outer.end_line
                         && (outer.start_line < function.start_line
@@ -2132,6 +2144,18 @@ fn build_probe(
     after: Option<String>,
 ) -> Probe {
     let text = changed_line.text.trim();
+    // Only candidate-side generator subjects have established role identity.
+    // A deleted production body must not borrow its replacement's role.
+    let family = if after.is_some()
+        && crate::analysis::facts::is_generator_subject(
+            context.index,
+            &context.changed.path,
+            changed_line.new_side_line,
+        ) {
+        ProbeFamily::StaticUnknown
+    } else {
+        family
+    };
     // #9080: no value or effect assertion observes a memory-ordering swap, so
     // a call whose only edit is an atomic `Ordering` variant has no honest
     // value/effect family; it stays an explicit unknown.
@@ -2797,14 +2821,14 @@ mod tests {
                         start_line: 1,
                         end_line: 5,
                         body: "fn discounted_total() { if amount >= threshold {} }".into(),
-                        calls: vec![],
+                        calls: crate::analysis::facts::SharedFactSlice::empty(),
                         returns: vec![],
-                        literals: vec![],
+                        literals: crate::analysis::facts::SharedFactSlice::empty(),
                         source_role: FunctionSourceRole::Production,
-                        attrs: vec![],
+                        attrs: crate::analysis::facts::SharedFactSlice::empty(),
                         impl_attrs: Vec::new(),
-                        nested_fn_names: Vec::new(),
-                        let_bindings: Vec::new(),
+                        nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+                        let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
                         item: Default::default(),
                         impl_context: Default::default(),
                     }],
@@ -2994,14 +3018,14 @@ mod tests {
             start_line,
             end_line,
             body: String::new().into(),
-            calls: vec![],
+            calls: crate::analysis::facts::SharedFactSlice::empty(),
             returns: vec![],
-            literals: vec![],
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
             source_role: FunctionSourceRole::Production,
-            attrs: vec![],
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
             impl_attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             item: Default::default(),
             impl_context: Default::default(),
         };
@@ -3199,14 +3223,14 @@ mod tests {
                         start_line: 1,
                         end_line: 5,
                         body: format!("fn format() {{ {added} }}").into(),
-                        calls: vec![],
+                        calls: crate::analysis::facts::SharedFactSlice::empty(),
                         returns: vec![],
-                        literals: vec![],
+                        literals: crate::analysis::facts::SharedFactSlice::empty(),
                         source_role: FunctionSourceRole::Production,
-                        attrs: vec![],
+                        attrs: crate::analysis::facts::SharedFactSlice::empty(),
                         impl_attrs: Vec::new(),
-                        nested_fn_names: Vec::new(),
-                        let_bindings: Vec::new(),
+                        nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+                        let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
                         item: Default::default(),
                         impl_context: Default::default(),
                     }],
@@ -4179,14 +4203,14 @@ mod tests {
             start_line: 1,
             end_line: 7,
             body: String::new().into(),
-            calls: vec![],
+            calls: crate::analysis::facts::SharedFactSlice::empty(),
             returns: vec![],
-            literals: vec![],
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
             source_role: FunctionSourceRole::Production,
-            attrs: vec![],
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
             impl_attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             item: Default::default(),
             impl_context: Default::default(),
         };
@@ -4837,14 +4861,14 @@ mod tests {
                         start_line: 1,
                         end_line: 3,
                         body: source.into(),
-                        calls: vec![],
+                        calls: crate::analysis::facts::SharedFactSlice::empty(),
                         returns: vec![],
-                        literals: vec![],
+                        literals: crate::analysis::facts::SharedFactSlice::empty(),
                         source_role: FunctionSourceRole::Production,
-                        attrs: vec![],
+                        attrs: crate::analysis::facts::SharedFactSlice::empty(),
                         impl_attrs: Vec::new(),
-                        nested_fn_names: Vec::new(),
-                        let_bindings: Vec::new(),
+                        nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+                        let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
                         impl_context: Default::default(),
                         item: Default::default(),
                     }],
@@ -4944,14 +4968,14 @@ mod tests {
                         start_line: 1,
                         end_line: 20,
                         body: expression.into(),
-                        calls: vec![],
+                        calls: crate::analysis::facts::SharedFactSlice::empty(),
                         returns: vec![],
-                        literals: vec![],
+                        literals: crate::analysis::facts::SharedFactSlice::empty(),
                         source_role: FunctionSourceRole::Production,
-                        attrs: vec![],
+                        attrs: crate::analysis::facts::SharedFactSlice::empty(),
                         impl_attrs: Vec::new(),
-                        nested_fn_names: Vec::new(),
-                        let_bindings: Vec::new(),
+                        nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+                        let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
                         item: Default::default(),
                         impl_context: Default::default(),
                     }],
@@ -5161,14 +5185,14 @@ mod tests {
                             start_line: 1,
                             end_line: 5,
                             body: "fn parses() { let config = toml::from_str(text)?; }".into(),
-                            calls: vec![],
+                            calls: crate::analysis::facts::SharedFactSlice::empty(),
                             returns: vec![],
-                            literals: vec![],
+                            literals: crate::analysis::facts::SharedFactSlice::empty(),
                             source_role,
-                            attrs: vec![],
+                            attrs: crate::analysis::facts::SharedFactSlice::empty(),
                             impl_attrs: Vec::new(),
-                            nested_fn_names: Vec::new(),
-                            let_bindings: Vec::new(),
+                            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+                            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
                             item: Default::default(),
                             impl_context: Default::default(),
                         }],
@@ -5908,14 +5932,14 @@ mod tests {
                         start_line: 1,
                         end_line: 6,
                         body: "fn record_invoice() { }".into(),
-                        calls: vec![],
+                        calls: crate::analysis::facts::SharedFactSlice::empty(),
                         returns: vec![],
-                        literals: vec![],
+                        literals: crate::analysis::facts::SharedFactSlice::empty(),
                         source_role: FunctionSourceRole::Production,
-                        attrs: vec![],
+                        attrs: crate::analysis::facts::SharedFactSlice::empty(),
                         impl_attrs: Vec::new(),
-                        nested_fn_names: Vec::new(),
-                        let_bindings: Vec::new(),
+                        nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+                        let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
                         item: Default::default(),
                         impl_context: Default::default(),
                     }],
@@ -6365,14 +6389,14 @@ mod tests {
                         start_line: 1,
                         end_line: 4,
                         body: body.into(),
-                        calls: vec![],
+                        calls: crate::analysis::facts::SharedFactSlice::empty(),
                         returns: vec![],
-                        literals: vec![],
+                        literals: crate::analysis::facts::SharedFactSlice::empty(),
                         source_role: FunctionSourceRole::Production,
-                        attrs: vec![],
+                        attrs: crate::analysis::facts::SharedFactSlice::empty(),
                         impl_attrs: Vec::new(),
-                        nested_fn_names: Vec::new(),
-                        let_bindings: Vec::new(),
+                        nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+                        let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
                         item: Default::default(),
                         impl_context: Default::default(),
                     }],
@@ -6439,14 +6463,14 @@ mod tests {
                         start_line: 1,
                         end_line: 9,
                         body: body.into(),
-                        calls: vec![],
+                        calls: crate::analysis::facts::SharedFactSlice::empty(),
                         returns: vec![],
-                        literals: vec![],
+                        literals: crate::analysis::facts::SharedFactSlice::empty(),
                         source_role: FunctionSourceRole::Production,
-                        attrs: vec![],
+                        attrs: crate::analysis::facts::SharedFactSlice::empty(),
                         impl_attrs: Vec::new(),
-                        nested_fn_names: Vec::new(),
-                        let_bindings: Vec::new(),
+                        nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+                        let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
                         item: Default::default(),
                         impl_context: Default::default(),
                     }],
@@ -6515,14 +6539,14 @@ mod tests {
                         start_line: 1,
                         end_line: 8,
                         body: body.into(),
-                        calls: vec![],
+                        calls: crate::analysis::facts::SharedFactSlice::empty(),
                         returns: vec![],
-                        literals: vec![],
+                        literals: crate::analysis::facts::SharedFactSlice::empty(),
                         source_role: FunctionSourceRole::Production,
-                        attrs: vec![],
+                        attrs: crate::analysis::facts::SharedFactSlice::empty(),
                         impl_attrs: Vec::new(),
-                        nested_fn_names: Vec::new(),
-                        let_bindings: Vec::new(),
+                        nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+                        let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
                         item: Default::default(),
                         impl_context: Default::default(),
                     }],
@@ -6579,14 +6603,14 @@ mod tests {
                         start_line: 1,
                         end_line: 8,
                         body: body.into(),
-                        calls: vec![],
+                        calls: crate::analysis::facts::SharedFactSlice::empty(),
                         returns: vec![],
-                        literals: vec![],
+                        literals: crate::analysis::facts::SharedFactSlice::empty(),
                         source_role: FunctionSourceRole::Production,
-                        attrs: vec![],
+                        attrs: crate::analysis::facts::SharedFactSlice::empty(),
                         impl_attrs: Vec::new(),
-                        nested_fn_names: Vec::new(),
-                        let_bindings: Vec::new(),
+                        nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+                        let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
                         item: Default::default(),
                         impl_context: Default::default(),
                     }],

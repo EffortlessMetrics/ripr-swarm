@@ -113,9 +113,45 @@ impl RustDiagnosticOrigins {
 /// Inputs already consumed by the Rust adapter for one analysis pass.
 pub(crate) struct OriginBuildContext<'a> {
     pub root: &'a Path,
-    pub loaded_files: &'a [(PathBuf, Vec<u8>)],
+    pub loaded_files: &'a [(PathBuf, OriginSource)],
     pub index: &'a RustIndex,
     pub parser_spans: &'a BTreeMap<String, ParserByteSpan>,
+}
+
+/// Text of one loaded file, retained from indexing until origins are built.
+pub(crate) enum OriginSource {
+    /// The index holds exactly this file's decoded text, so origin capture
+    /// borrows it there instead of keeping a second raw copy alive through
+    /// classification.
+    Indexed,
+    /// Raw bytes, kept when the index has no text for the path or its text
+    /// differs from what was read.
+    Bytes(Vec<u8>),
+}
+
+/// Releases each loaded file's raw bytes whose decoded text the index
+/// already holds. A repo or diff run loads every workspace Rust file, and
+/// those bytes otherwise stay resident for the whole classification pass
+/// only so the few files a finding points at can be read back (#13703).
+pub(crate) fn origin_sources(
+    loaded_files: Vec<(PathBuf, Vec<u8>)>,
+    index: &RustIndex,
+) -> Vec<(PathBuf, OriginSource)> {
+    loaded_files
+        .into_iter()
+        .map(|(path, bytes)| {
+            let indexed = index
+                .files()
+                .get(&path)
+                .is_some_and(|facts| facts.source.as_ref() == rust_source_text(&bytes).text);
+            let source = if indexed {
+                OriginSource::Indexed
+            } else {
+                OriginSource::Bytes(bytes)
+            };
+            (path, source)
+        })
+        .collect()
 }
 
 struct CapturedFile<'a> {
@@ -221,17 +257,26 @@ pub(crate) fn origins_for_rust_findings(
 /// Captures only the loaded files some finding points at. A repo or diff run
 /// loads every workspace Rust file, and no other file is ever looked up.
 fn captured_file_index<'a>(
-    loaded_files: &'a [(PathBuf, Vec<u8>)],
-    index: &RustIndex,
+    loaded_files: &'a [(PathBuf, OriginSource)],
+    index: &'a RustIndex,
     wanted: &BTreeSet<&Path>,
 ) -> BTreeMap<PathBuf, CapturedFile<'a>> {
     let mut captured = BTreeMap::new();
-    for (path, bytes) in loaded_files {
+    for (path, loaded) in loaded_files {
         if !wanted.contains(path.as_path()) {
             continue;
         }
-        let source = rust_source_text(bytes).text;
         let facts = index.files().get(path);
+        let source = match loaded {
+            OriginSource::Bytes(bytes) => rust_source_text(bytes).text,
+            OriginSource::Indexed => match facts {
+                Some(facts) => Cow::Borrowed(facts.data().source.as_ref()),
+                // Unreached in production: the index is not mutated between
+                // `origin_sources` and here. If it were, the file reads as
+                // uncaptured and falls back to a coarse origin.
+                None => continue,
+            },
+        };
         let text = source.as_ref();
         captured.insert(
             path.clone(),
@@ -586,6 +631,76 @@ mod tests {
         index
     }
 
+    fn bytes_only(loaded: Vec<(PathBuf, Vec<u8>)>) -> Vec<(PathBuf, OriginSource)> {
+        loaded
+            .into_iter()
+            .map(|(path, bytes)| (path, OriginSource::Bytes(bytes)))
+            .collect()
+    }
+
+    #[test]
+    fn origin_sources_release_only_bytes_the_index_already_holds() -> Result<(), String> {
+        let source = "fn a() { true }\n";
+        let mut index = index_with(source);
+        index.insert_file_only(PathBuf::from("src/stale.rs"), facts_for("fn old() {}\n"));
+        let mut bom = b"\xEF\xBB\xBF".to_vec();
+        bom.extend_from_slice(source.as_bytes());
+        let loaded = origin_sources(
+            vec![
+                (PathBuf::from("src/lib.rs"), bom),
+                (PathBuf::from("src/stale.rs"), b"fn new() {}\n".to_vec()),
+                (PathBuf::from("src/unindexed.rs"), b"fn u() {}\n".to_vec()),
+            ],
+            &index,
+        );
+        let kinds: Vec<(&str, Option<&[u8]>)> = loaded
+            .iter()
+            .map(|(path, loaded)| {
+                let bytes = match loaded {
+                    OriginSource::Indexed => None,
+                    OriginSource::Bytes(bytes) => Some(bytes.as_slice()),
+                };
+                (path.to_str().unwrap_or_default(), bytes)
+            })
+            .collect();
+        assert_eq!(
+            kinds,
+            vec![
+                ("src/lib.rs", None),
+                ("src/stale.rs", Some(&b"fn new() {}\n"[..])),
+                ("src/unindexed.rs", Some(&b"fn u() {}\n"[..])),
+            ]
+        );
+        let wanted = BTreeSet::from([
+            Path::new("src/lib.rs"),
+            Path::new("src/stale.rs"),
+            Path::new("src/unindexed.rs"),
+        ]);
+        let captured = captured_file_index(&loaded, &index, &wanted);
+        let indexed = captured
+            .get(Path::new("src/lib.rs"))
+            .ok_or("indexed file must still be captured")?;
+        let held = index
+            .files()
+            .get(Path::new("src/lib.rs"))
+            .ok_or("indexed facts missing")?;
+        match &indexed.source {
+            Cow::Borrowed(text) => assert!(std::ptr::eq(*text, held.data().source.as_ref())),
+            Cow::Owned(_) => return Err("indexed text must be borrowed from the index".into()),
+        }
+        assert!(indexed.facts_match);
+        let stale = captured
+            .get(Path::new("src/stale.rs"))
+            .ok_or("stale file must be captured from its bytes")?;
+        assert_eq!(stale.source.as_ref(), "fn new() {}\n");
+        assert!(!stale.facts_match);
+        let unindexed = captured
+            .get(Path::new("src/unindexed.rs"))
+            .ok_or("unindexed file must be captured from its bytes")?;
+        assert!(!unindexed.facts_match);
+        Ok(())
+    }
+
     fn origins_for(
         finding: &Finding,
         source: &str,
@@ -602,7 +717,10 @@ mod tests {
         if let Some(span) = span {
             spans.insert(finding.id.clone(), span);
         }
-        let loaded = vec![(PathBuf::from("src/lib.rs"), source.as_bytes().to_vec())];
+        let loaded = origin_sources(
+            vec![(PathBuf::from("src/lib.rs"), source.as_bytes().to_vec())],
+            &index,
+        );
         origins_for_rust_findings(
             std::slice::from_ref(finding),
             &OriginBuildContext {
@@ -816,7 +934,10 @@ mod tests {
             }
             let mut spans = BTreeMap::new();
             spans.insert(finding.id.clone(), ParserByteSpan { start_byte: start });
-            let loaded = vec![(PathBuf::from("src/lib.rs"), source.as_bytes().to_vec())];
+            let loaded = origin_sources(
+                vec![(PathBuf::from("src/lib.rs"), source.as_bytes().to_vec())],
+                &index,
+            );
             let origins = origins_for_rust_findings(
                 std::slice::from_ref(&finding),
                 &OriginBuildContext {
@@ -1133,7 +1254,9 @@ mod tests {
             (PathBuf::from("src/bom.rs"), bom),
         ];
         let wanted = BTreeSet::from([Path::new("src/lib.rs"), Path::new("src/bom.rs")]);
-        let captured = captured_file_index(&loaded, &RustIndex::default(), &wanted);
+        let loaded = bytes_only(loaded);
+        let index = RustIndex::default();
+        let captured = captured_file_index(&loaded, &index, &wanted);
         let ordinary_file = captured
             .get(Path::new("src/lib.rs"))
             .ok_or_else(|| "ordinary file missing".to_string())?;
@@ -1179,12 +1302,14 @@ mod tests {
             (PathBuf::from("src/other.rs"), b"fn other() {}\n".to_vec()),
             (PathBuf::from("src/lib.rs"), source.as_bytes().to_vec()),
         ];
+        let index = index_with(source);
+        let loaded = origin_sources(loaded, &index);
         let origins = origins_for_rust_findings(
             &[finding, outside],
             &OriginBuildContext {
                 root: Path::new("/workspace"),
                 loaded_files: &loaded,
-                index: &index_with(source),
+                index: &index,
                 parser_spans: &spans,
             },
         );
@@ -1206,7 +1331,9 @@ mod tests {
             (PathBuf::from("src/other.rs"), b"fn b() {}\n".to_vec()),
         ];
         let wanted = BTreeSet::from([Path::new("src/lib.rs")]);
-        let captured = captured_file_index(&loaded, &RustIndex::default(), &wanted);
+        let loaded = bytes_only(loaded);
+        let index = RustIndex::default();
+        let captured = captured_file_index(&loaded, &index, &wanted);
         if !captured.contains_key(Path::new("src/lib.rs")) {
             return Err("wanted file must be captured".to_string());
         }
@@ -1219,7 +1346,9 @@ mod tests {
         let source = "fn f() {}\n\t日本🎉e\u{0301} a < b && c > d || 𝔁 == é\n".to_owned();
         let loaded = vec![(PathBuf::from("src/lib.rs"), source.as_bytes().to_vec())];
         let wanted = BTreeSet::from([Path::new("src/lib.rs")]);
-        let captured = captured_file_index(&loaded, &RustIndex::default(), &wanted);
+        let loaded = bytes_only(loaded);
+        let index = RustIndex::default();
+        let captured = captured_file_index(&loaded, &index, &wanted);
         let file = captured
             .get(Path::new("src/lib.rs"))
             .ok_or_else(|| "captured file missing".to_string())?;
@@ -1256,7 +1385,9 @@ mod tests {
     fn captured_index_owns_lossy_non_utf8() -> Result<(), String> {
         let loaded = vec![(PathBuf::from("src/lib.rs"), vec![0xff, 0xfe, b'x'])];
         let wanted = BTreeSet::from([Path::new("src/lib.rs")]);
-        let captured = captured_file_index(&loaded, &RustIndex::default(), &wanted);
+        let loaded = bytes_only(loaded);
+        let index = RustIndex::default();
+        let captured = captured_file_index(&loaded, &index, &wanted);
         let file = captured
             .get(Path::new("src/lib.rs"))
             .ok_or_else(|| "lossy file missing".to_string())?;
@@ -1291,9 +1422,13 @@ mod tests {
                 start_byte: start_b,
             },
         );
-        let loaded = vec![(PathBuf::from("src/lib.rs"), source.as_bytes().to_vec())];
+        let index = index_with(&source);
+        let loaded = origin_sources(
+            vec![(PathBuf::from("src/lib.rs"), source.as_bytes().to_vec())],
+            &index,
+        );
         let wanted = BTreeSet::from([Path::new("src/lib.rs")]);
-        let captured = captured_file_index(&loaded, &index_with(&source), &wanted);
+        let captured = captured_file_index(&loaded, &index, &wanted);
         let file = captured
             .get(Path::new("src/lib.rs"))
             .ok_or_else(|| "captured file missing".to_string())?;
@@ -1305,7 +1440,7 @@ mod tests {
             &OriginBuildContext {
                 root: Path::new("/workspace"),
                 loaded_files: &loaded,
-                index: &index_with(&source),
+                index: &index,
                 parser_spans: &spans,
             },
         );

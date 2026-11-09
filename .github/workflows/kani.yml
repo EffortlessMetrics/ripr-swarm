@@ -55,8 +55,22 @@ jobs:
 
       - name: Install pinned kani-verifier
         run: |
-          cargo install --locked kani-verifier --version 0.68.0
-          cargo kani setup
+          # `cargo kani setup` downloads the release bundle from GitHub; a
+          # transient 5xx there must not skip the harness run. Bounded retry,
+          # same pinned version; a persistent failure still fails the step.
+          delays=(5 15 30)
+          for attempt in 1 2 3 4; do
+            if cargo install --locked kani-verifier --version 0.68.0 && cargo kani setup; then
+              exit 0
+            fi
+            if [ "$attempt" -le "${#delays[@]}" ]; then
+              d="${delays[$((attempt - 1))]}"
+              echo "::warning::kani install/setup attempt $attempt failed; retrying in ${d}s"
+              sleep "$d"
+            fi
+          done
+          echo "::error::kani install/setup failed after 4 attempts"
+          exit 1
 
       - name: Run Kani harnesses
         run: cargo xtask kani

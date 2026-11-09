@@ -35,9 +35,12 @@ use super::super::{
 use super::{LanguageAdapter, LanguageDiffResult, LanguageId, LanguageRepoResult, route};
 use crate::analysis::cancellation;
 use crate::analysis::committed_source::{self, CommittedSourceRead};
-use crate::analysis::diagnostic_origin::{OriginBuildContext, origins_for_rust_findings};
+use crate::analysis::diagnostic_origin::{
+    OriginBuildContext, origin_sources, origins_for_rust_findings,
+};
 use crate::analysis::facts::RustIndex;
 use crate::analysis::path_glob::{path_glob_matches, segment_glob_matches};
+use crate::analysis::resource_cost::trace_latency_phase;
 use crate::analysis::workspace::limitations_for_absent_changed_files;
 use crate::config::OraclePolicy;
 use crate::domain::{ExposureClass, Finding, Probe, StaticLimitKind, StopReason};
@@ -1363,6 +1366,9 @@ fn apply_probe_and_oracle_limits(
     oracles::apply_cross_language_limit(finding, probe, index);
     // Existing FFI limits own their detail and guidance before this narrower annotation.
     probes::apply_rust_field_match_selector_limit(finding, probe, index);
+    // #13702: an async owner whose only reaching tests create its future and
+    // drop it unpolled is not reached; name that before any oracle-side limit.
+    classify::withhold_unpolled_future_gap(finding, index);
     // #7133: a captured log record the test asserts on is a named limit.
     classify::withhold_log_capture_gap(finding, index, owner_name.as_deref());
     // RIPR-SPEC-0240: a `#[should_panic]` test's panic outcome is an oracle
@@ -2172,7 +2178,20 @@ impl RustAdapter {
                 ..LanguageDiffResult::default()
             });
         }
-        let rust_files = workspace::discover_rust_files(&options.root)?;
+        let (rust_files, unreadable_dirs) =
+            workspace::discover_rust_files_tolerating_unreadable(&options.root)?;
+        let mut unreadable_unchanged_paths = unreadable_dirs
+            .into_iter()
+            .map(|(path, _)| path)
+            .collect::<Vec<_>>();
+        let changed_paths = changed_files
+            .iter()
+            .map(|file| file.path.clone())
+            .collect::<BTreeSet<_>>();
+        let (rust_files, unreadable_files) =
+            workspace::split_unreadable_unchanged_files(&options.root, rust_files, &changed_paths);
+        unreadable_unchanged_paths.extend(unreadable_files);
+        unreadable_unchanged_paths.sort();
         let analyzable_rust_files = rust_files
             .into_iter()
             .filter(|path| !generated_sources.contains(path))
@@ -2361,6 +2380,7 @@ impl RustAdapter {
                     return Err(diff_scope_oversized_error(core_files.len(), scope_limit));
                 }
                 if core_files.len() < index_files.len() {
+                    let admission_started = std::time::Instant::now();
                     let (query, core_index) = dependent_scope::admission_query(
                         &options.root,
                         &core_files,
@@ -2368,7 +2388,13 @@ impl RustAdapter {
                         &options.test_harnesses,
                         &mut rust_consumed_sources,
                     )?;
+                    trace_latency_phase(
+                        "diff_admission_query",
+                        &format!("core_files_{}", core_files.len()),
+                        admission_started.elapsed(),
+                    );
                     admission_core = Some(core_index);
+                    let admit_started = std::time::Instant::now();
                     let admission = dependent_scope::admit_dependents(
                         &options.root,
                         &analyzable_rust_files,
@@ -2378,6 +2404,11 @@ impl RustAdapter {
                         &options.test_harnesses,
                         &mut rust_consumed_sources,
                     )?;
+                    trace_latency_phase(
+                        "diff_admit_dependents",
+                        &format!("main_files_{}", admission.main_files.len()),
+                        admit_started.elapsed(),
+                    );
                     index_files = admission.main_files;
                     dependent_scope = admission.narrowed;
                     withheld_macro_bindings = admission.withheld_macro_bindings;
@@ -2426,6 +2457,7 @@ impl RustAdapter {
         // #6965: a file holding tests that no Cargo target's module tree
         // reaches is never compiled, so its tests are not evidence. Only a complete walk proves a file unreached (#4435);
         // anything less keeps the file.
+        let unreached_started = std::time::Instant::now();
         let loaded_files = drop_unreached_test_files(
             &options.root,
             &source_role_context,
@@ -2433,14 +2465,21 @@ impl RustAdapter {
             &options.test_harnesses,
             loaded_files,
         );
+        trace_latency_phase(
+            "diff_drop_unreached_test_files",
+            &format!("loaded_files_{}", loaded_files.len()),
+            unreached_started.elapsed(),
+        );
         // #8547: when the dependent-scope admission probe already built
         // the changed packages' index, reuse it as the main index: only
         // the admitted extras (and any file whose bytes moved since the
         // probe read them) are parsed, through the same fact cache, and
         // post-processing re-runs once over the merged index. Without an
         // admission probe the main build is the only build, as before.
+        let main_index_started = std::time::Instant::now();
+        let admission_reused = admission_core.is_some();
         let cached = match admission_core {
-            Some(core) => rust_index::reuse_cached_index_with_loaded_files(
+            Some(core) => rust_index::reuse_cached_index_in_run(
                 core,
                 &options.root,
                 &loaded_files,
@@ -2452,6 +2491,15 @@ impl RustAdapter {
                 &options.test_harnesses,
             )?,
         };
+        trace_latency_phase(
+            "diff_main_index",
+            if admission_reused {
+                "reused_admission_core"
+            } else {
+                "built"
+            },
+            main_index_started.elapsed(),
+        );
         #[cfg(test)]
         {
             rust_consumed_sources.file_fact_cache = cached.file_fact_cache.clone();
@@ -2464,6 +2512,9 @@ impl RustAdapter {
             eprintln!("{disclosure}");
         }
         rust_index::apply_oracle_policy(&mut index, oracle_policy);
+        // #13703: keep raw bytes only for files whose indexed text differs;
+        // origin capture borrows the rest from the index.
+        let loaded_files = origin_sources(loaded_files, &index);
         let property_macro_mentions =
             oracles::PropertyMacroMentionIndex::new(&index, &options.root);
         // #8387: tests this diff adds or changes lead their relation tier.
@@ -2542,7 +2593,11 @@ impl RustAdapter {
         // to cover every analyzable file, the equality genuinely holds and
         // the index really does span the workspace; when an unrelated crate
         // stays out, the index stays partial and the bypass stays off.
-        let workspace_index_complete = index_files.len() == analyzable_rust_files.len();
+        let workspace_index_complete = workspace_index_spans_workspace(
+            index_files.len(),
+            analyzable_rust_files.len(),
+            !unreadable_unchanged_paths.is_empty(),
+        );
 
         // #2972: one path-dependency edge context per classification pass,
         // consumed by the cross-crate owner-call admit in
@@ -2561,7 +2616,9 @@ impl RustAdapter {
             let manifest_dir_prefixes =
                 crate::analysis::seam_cache::workspace_manifest_dir_prefixes(&options.root);
             let dependency_adjacency = workspace::PathDependencyAdjacency::build(
-                &crate::analysis::seam_cache::workspace_graph_provenance(&options.root),
+                &crate::analysis::seam_cache::path_dependencies::workspace_graph_provenance(
+                    &options.root,
+                ),
             );
             (manifest_dir_prefixes, Some(dependency_adjacency))
         } else {
@@ -2715,7 +2772,7 @@ impl RustAdapter {
             let token = cancellation::current_token();
             let overlay = committed_source::current_overlay();
             let graph_counter = classify::InheritedGraphCounter::capture();
-            let classify_one = |(_, seeded): &(
+            let classify_one = |(changed, seeded): &(
                 &ChangedFile,
                 crate::analysis::probes::SeededProbe,
             )| {
@@ -2746,6 +2803,7 @@ impl RustAdapter {
                                             &transitive_reach,
                                             seeded.propagation_origin.as_ref(),
                                             Some(&value_origins),
+                                            Some(changed),
                                         )
                                     }));
                                 match contained {
@@ -3052,7 +3110,17 @@ impl RustAdapter {
                 // MCP readiness refusal stays `static_limitation`; a finding
                 // without a derivable discriminator keeps the typed refusal
                 // too — no evidence is manufactured here.
-                if finding.static_limit_kind.is_none() {
+                // #11545: verified generator stimulus is visible uncertainty,
+                // not a canonical product-test gap. Preserve the classifier's
+                // refusal through the public pipeline using producer identity.
+                if finding.static_limit_kind.is_none()
+                    && !(probe.after.is_some()
+                        && crate::analysis::facts::is_generator_subject(
+                            &index,
+                            &changed.path,
+                            probe.location.line,
+                        ))
+                {
                     finding.canonical_gap = probe_shape::canonical_rust_gap_for(
                         &changed.path,
                         probe.owner.as_ref(),
@@ -3095,6 +3163,9 @@ impl RustAdapter {
                 parser_spans: &parser_spans,
             },
         );
+        // #13819: the changed owner's own `#[mutants::skip]` is an explicit
+        // opt-out; the app layer withholds and discloses these findings.
+        let owner_opt_outs = crate::analysis::owner_opt_out::rust_owner_opt_outs(&index, &findings);
 
         Ok(LanguageDiffResult {
             value_origins: value_origins.into_inner().unwrap_or_default(),
@@ -3115,6 +3186,9 @@ impl RustAdapter {
             limitations: limitations
                 .into_iter()
                 .chain(limitations_for_absent_changed_files(&absent_changed_files)?)
+                .chain(workspace::limitations_for_unreadable_unchanged_paths(
+                    &unreadable_unchanged_paths,
+                )?)
                 .chain(unreached_module_limitations(
                     changed_rust_paths.iter().filter(|path| {
                         layout_seeded_rust_paths.contains(*path)
@@ -3133,8 +3207,20 @@ impl RustAdapter {
             rust_diagnostic_origins,
             rust_consumed_sources,
             preview_fact_cache: Default::default(),
+            owner_opt_outs,
         })
     }
+}
+
+/// Whether the index spans the whole workspace. A skipped unreadable path may
+/// hold a competing owner or a test, so the inventory is never complete then:
+/// the uniqueness-based related-test admits must stay off (fail closed).
+fn workspace_index_spans_workspace(
+    indexed: usize,
+    analyzable: usize,
+    skipped_unreadable: bool,
+) -> bool {
+    indexed == analyzable && !skipped_unreadable
 }
 
 /// Bounds a path to `max_chars` for a recovery sentence, whose length is
@@ -3401,16 +3487,22 @@ fn lexical_fallback_limitations<'a>(
         let (reason, recovery) = if index.non_utf8_sources.contains(&facts.path) {
             (
                 crate::analysis::facts::RUST_SOURCE_NOT_UTF8_REASON.to_string(),
-                "Save the file as UTF-8, then re-run the analysis.",
+                crate::analysis_outcome::RUST_NOT_UTF8_RECOVERY,
             )
         } else {
-            (
-                crate::analysis::syntax::rust_nesting_refusal(&facts.source).unwrap_or_else(|| {
+            match crate::analysis::syntax::rust_nesting_refusal(&facts.source) {
+                // A typed static-limit decline of valid Rust is not a syntax
+                // error: its recovery names the budget, not a parse fix (#13660).
+                Some(reason) => (
+                    reason,
+                    crate::analysis_outcome::RUST_NESTING_BUDGET_RECOVERY,
+                ),
+                None => (
                     "the Rust parser reported syntax errors, so the file was read lexically"
-                        .to_string()
-                }),
-                "Fix the file so it parses as Rust, then re-run the analysis.",
-            )
+                        .to_string(),
+                    crate::analysis_outcome::RUST_PARSE_FAILURE_RECOVERY,
+                ),
+            }
         };
         let limitation = AnalysisLimitation::new(
             AnalysisLimitationKind::ProducerFailure,
@@ -3546,6 +3638,14 @@ impl LanguageAdapter for RustAdapter {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn skipped_unreadable_path_keeps_the_workspace_index_incomplete() {
+        use super::workspace_index_spans_workspace as spans;
+        assert!(spans(3, 3, false));
+        assert!(!spans(3, 3, true), "an unreadable competitor may exist");
+        assert!(!spans(2, 3, false));
+    }
+
     use super::{
         DIFF_CHANGED_RUST_LINE_LIMIT, DIFF_INDEX_FILE_LIMIT, DIFF_INDEX_FILE_LIMIT_ENV,
         DIFF_NARROW_INDEX_FILES, DIFF_NARROW_INDEX_FILES_ENV, GeneratedRustSources,
@@ -3994,6 +4094,63 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn repo_omits_generator_stimulus_but_keeps_product_gap() -> Result<(), String> {
+        crate::testing::compiler_environment::plain(
+            module_path!(),
+            "repo_omits_generator_stimulus_but_keeps_product_gap",
+            || {
+                let root = temp_root("generator-repo-gap")?;
+                write(
+                    &root.join("Cargo.toml"),
+                    "[package]\nname='generator'\nversion='0.1.0'\nedition='2024'\n[dependencies]\nquickcheck='1'\n",
+                )?;
+                write(
+                    &root.join("src/lib.rs"),
+                    "use quickcheck::Arbitrary;\nstruct Pair(u8);\nimpl quickcheck::Arbitrary for Pair {\n    fn arbitrary(g: &mut quickcheck::Gen) -> Self {\n        Pair(u8::arbitrary(g).wrapping_add(2))\n    }\n}\npub fn product(a: u8) -> u8 {\n    a.wrapping_add(2)\n}\n",
+                )?;
+                let result =
+                    RustAdapter.analyze_repo(&repo_options(&root), &OraclePolicy::default())?;
+                assert!(
+                    result.findings.iter().all(|f| f.probe.location.line != 5),
+                    "generator evidence is not a repo-wide production subject: {:?}",
+                    result.findings
+                );
+                let product: Vec<_> = result
+                    .findings
+                    .iter()
+                    .filter(|f| f.probe.location.line == 9)
+                    .collect();
+                assert!(
+                    !product.is_empty(),
+                    "product subject must be seeded: {:?}",
+                    result.findings
+                );
+                assert!(
+                    product.iter().any(|f| f.canonical_gap.is_some()),
+                    "ordinary product retains a canonical gap: {product:?}"
+                );
+                // The same source must be probeable when provider identity is not verified.
+                write(
+                    &root.join("Cargo.toml"),
+                    "[package]\nname='generator'\nversion='0.1.0'\nedition='2024'\n[dependencies]\nquickcheck={version='1',optional=true}\n",
+                )?;
+                let unverified =
+                    RustAdapter.analyze_repo(&repo_options(&root), &OraclePolicy::default())?;
+                assert!(
+                    unverified
+                        .findings
+                        .iter()
+                        .any(|f| f.probe.location.line == 5),
+                    "unverified generator expression must be probeable: {:?}",
+                    unverified.findings
+                );
+                fs::remove_dir_all(root).map_err(|error| error.to_string())?;
+                Ok(())
+            },
+        )
+    }
+
     fn repo_options(root: &Path) -> AnalysisOptions {
         AnalysisOptions {
             root: root.to_path_buf(),
@@ -4032,16 +4189,16 @@ mod tests {
             &root.join("src/plain.rs"),
             "pub fn plain(x: u32) -> u32 {\n    x + 1\n}\n",
         )?;
+        // An admitted guard fact (#10747) names the region instead of the generic
+        // limitation line; either spelling is the verus disclosure.
+        let names_verus = |line: &String| {
+            line.contains("verus_macro_region_unsupported") || line.contains("verus_guard_fact:")
+        };
         let result = RustAdapter.analyze_repo(&repo_options(&root), &OraclePolicy::default())?;
         let verus: Vec<&Finding> = result
             .findings
             .iter()
-            .filter(|finding| {
-                finding
-                    .evidence
-                    .iter()
-                    .any(|line| line.contains("verus_macro_region_unsupported"))
-            })
+            .filter(|finding| finding.evidence.iter().any(&names_verus))
             .collect();
         assert_eq!(verus.len(), 1, "{:?}", result.findings);
         let finding = verus[0];
@@ -4057,7 +4214,7 @@ mod tests {
             finding
                 .evidence
                 .iter()
-                .any(|line| line.contains("spanning lines 2-9")),
+                .any(|line| line.contains("verus_guard_fact: owner=inc")),
             "{:?}",
             finding.evidence
         );
@@ -4077,10 +4234,7 @@ mod tests {
                 .findings
                 .iter()
                 .filter(|finding| finding.probe.location.file.ends_with("src/plain.rs"))
-                .all(|finding| !finding
-                    .evidence
-                    .iter()
-                    .any(|line| line.contains("verus_macro_region_unsupported")))
+                .all(|finding| !finding.evidence.iter().any(&names_verus))
         );
         fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
         Ok(())
@@ -4767,6 +4921,95 @@ mod tests {
         Ok(())
     }
 
+    /// Same-run reuse of the admission core (`reuse_cached_index_in_run`): a
+    /// core that carries an unresolved property macro is rebuilt by ordinary
+    /// reuse, so when the main files equal the core files the diff pipeline
+    /// must serve the core as built (one index build), while an admitted
+    /// dependent takes the ordinary path (more builds). Removing the same-run
+    /// reuse makes the equal-files case build more than once.
+    #[test]
+    fn diff_pipeline_serves_the_admission_core_when_main_files_equal_core_files()
+    -> Result<(), String> {
+        use crate::analysis::facts::index_build_probe;
+        use dependent_scope::DependentScopeMode;
+        let builds_for = |name: &str, relay_mentions_changed: bool| -> Result<usize, String> {
+            let root = temp_root(name)?;
+            write(
+                &root.join("Cargo.toml"),
+                "[workspace]\nmembers = [\"a\", \"b\", \"d\"]\nresolver = \"2\"\n",
+            )?;
+            write(
+                &root.join("a/Cargo.toml"),
+                "[package]\nname = \"scope_a\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+            )?;
+            write(
+                &root.join("b/Cargo.toml"),
+                "[package]\nname = \"scope_b\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n\
+                 [dependencies]\nscope_a = { path = \"../a\" }\n",
+            )?;
+            write(
+                &root.join("d/Cargo.toml"),
+                "[package]\nname = \"scope_d\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+            )?;
+            write(
+                &root.join("d/src/lib.rs"),
+                "pub fn island() -> u8 {\n    2\n}\n",
+            )?;
+            write(
+                &root.join("a/src/lib.rs"),
+                "pub fn gauge_one(flag: bool) -> bool {\n    if flag { false } else { true }\n}\n",
+            )?;
+            // The unresolved property macro forces ordinary reuse to rebuild.
+            write(
+                &root.join("a/tests/props.rs"),
+                "proptest::proptest! {\n    #[test]\n    fn gauge_holds(flag in proptest::bool::ANY) {\n        assert_eq!(scope_a::gauge_one(flag), !flag);\n    }\n}\n",
+            )?;
+            let relay = if relay_mentions_changed {
+                "pub fn relay(flag: bool) -> bool {\n    scope_a::gauge_one(flag)\n}\n"
+            } else {
+                "pub fn relay(flag: bool) -> bool {\n    flag\n}\n"
+            };
+            write(&root.join("b/src/lib.rs"), relay)?;
+            write(
+                &root.join("b/tests/relay_tests.rs"),
+                "#[test]\nfn relay_holds() {\n    assert!(scope_b::relay(true));\n}\n",
+            )?;
+            let changed = diff::parse_unified_diff(
+                "diff --git a/a/src/lib.rs b/a/src/lib.rs\n\
+                 --- a/a/src/lib.rs\n\
+                 +++ b/a/src/lib.rs\n\
+                 @@ -1,3 +1,3 @@\n\
+                  pub fn gauge_one(flag: bool) -> bool {\n\
+                 -    if flag { true } else { false }\n\
+                 +    if flag { false } else { true }\n\
+                  }\n",
+            );
+            let (result, builds) = index_build_probe::observe(|| {
+                dependent_scope::with_forced_mode(DependentScopeMode::NameAdmitted, || {
+                    RustAdapter.analyze_diff(
+                        &diff_options(root.clone(), AnalysisMode::Draft),
+                        &OraclePolicy::default(),
+                        &changed,
+                    )
+                })
+            });
+            result?;
+            fs::remove_dir_all(&root).map_err(|error| format!("remove fixture: {error}"))?;
+            Ok(builds)
+        };
+        let equal = builds_for("same-run-core-equal", false)?;
+        let widened = builds_for("same-run-core-widened", true)?;
+        assert_eq!(
+            equal, 1,
+            "main files equal to the core files must serve the core as built"
+        );
+        assert!(
+            widened > equal,
+            "an admitted dependent must take the ordinary rebuild path, got {widened} builds"
+        );
+        Ok(())
+    }
+
     /// #5464: two `no_static_path` findings that share one widened file set
     /// must build the reach graph once, not once per finding.
     #[test]
@@ -4975,10 +5218,15 @@ mod tests {
                     assert!(test.oracle.is_none());
                     assert_eq!(test.oracle_kind, OracleKind::Unknown);
                     assert_eq!(test.oracle_strength, OracleStrength::None);
-                    assert_eq!(
-                        test.miss,
-                        Some(crate::domain::RelatedTestMiss::AssertionNotCredited)
-                    );
+                    // The full scope resolves the shadowing macro (inert); the
+                    // name-admitted scope cannot read it, an analyzer limit
+                    // (RIPR-SPEC-0221).
+                    let expected_miss = if std::ptr::eq(finding, &full) {
+                        crate::domain::RelatedTestMiss::AssertionInert
+                    } else {
+                        crate::domain::RelatedTestMiss::AssertionAdmissionUnproven
+                    };
+                    assert_eq!(test.miss, Some(expected_miss));
                 }
             } else {
                 for finding in [&full, &named] {
@@ -7821,12 +8069,13 @@ fn absent_delimiter_boundary_returns_head() {
             start_line: 12,
             end_line: 18,
             body: r#"Command::new(env!("CARGO_BIN_EXE_worker")).output().unwrap();"#.into(),
-            calls: Vec::new(),
+            calls: crate::analysis::facts::SharedFactSlice::empty(),
             assertions: Vec::new(),
-            literals: Vec::new(),
-            attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
+            generated: None,
         });
         assert!(is_binary_source_path(Path::new("src/main.rs")));
         assert!(super::find_subprocess_binary_test(&index, Path::new("src/main.rs")).is_some());
@@ -10219,14 +10468,14 @@ fn absent_delimiter_boundary_returns_head() {
             start_line: 1,
             end_line: 5,
             body: "pub fn exported_fn(raw: &str) -> Result<(), Box<dyn std::error::Error>> { try_parse(raw).map_err(Into::into) }".into(),
-            calls: vec![],
+            calls: crate::analysis::facts::SharedFactSlice::empty(),
             returns: vec![],
-            literals: vec![],
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
             source_role: FunctionSourceRole::Production,
-            attrs: vec![],
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
             impl_attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             impl_context: Default::default(),
             item: Default::default(),
         };
@@ -10246,7 +10495,7 @@ fn absent_delimiter_boundary_returns_head() {
         ffi_finding.static_limit_kind = None;
         ffi_finding.evidence.clear();
         let mut ffi_owner = rust_owner;
-        ffi_owner.attrs = vec!["#[no_mangle]".to_string()];
+        ffi_owner.attrs = vec!["#[no_mangle]".to_string()].into();
         let ffi_index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             functions: vec![ffi_owner],
             ..Default::default()
@@ -10261,6 +10510,8 @@ fn absent_delimiter_boundary_returns_head() {
     }
 }
 
+#[cfg(test)]
+mod cfg_kani_module_tests;
 #[cfg(test)]
 mod classify_panic_tests;
 #[cfg(test)]

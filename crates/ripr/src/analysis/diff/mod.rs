@@ -1,4 +1,6 @@
 #[cfg(test)]
+mod differential_tests;
+#[cfg(test)]
 mod limitations_tests;
 mod load;
 mod model;

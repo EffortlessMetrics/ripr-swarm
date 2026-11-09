@@ -18,6 +18,7 @@ use super::diagnostics::{
     AnalysisPendingRecovery, DiagnosticBatch, DiagnosticRefreshPlan, DiagnosticResultIdCache,
     WorkspaceDiagnostics, analysis_pending_diagnostics, analysis_pending_withdrawal_diagnostics,
     delivered_diagnostics_for_uri, delivery_omission_diagnostic, diagnostic_refresh_plan,
+    empty_scope_marker_payload, is_empty_scope_marker, snapshot_serves_empty_scope_marker,
     take_all_uris, withdrawn_quarantine_diagnostics,
 };
 use super::hover::{
@@ -1000,6 +1001,15 @@ impl Backend {
         // Retain the typed component outcomes for the deduplicated
         // degradation warning emitted after a successful commit (#1997).
         let component_outcomes = snapshot.component_outcomes.clone();
+        // #13441: the empty-scope marker payload of the snapshot being
+        // replaced, compared with the new one after commit. A payload change
+        // (different base or empty-scope cause) is a marker-state change too.
+        let previous_marker = self
+            .latest_pull_snapshot()
+            .and_then(|(previous, _)| empty_scope_marker_payload(&previous));
+        let previous_marked = previous_marker.is_some();
+        let new_marker = empty_scope_marker_payload(&snapshot);
+        let marker_state_changed = previous_marker != new_marker;
         let Some(quarantine_edges) =
             self.commit_refresh_snapshot(snapshot, &plan, &pending_analyzed, &pending_entered)
         else {
@@ -1026,6 +1036,7 @@ impl Backend {
         // baseline — the established empty-clear retraction when the
         // document has no findings, so the pending state never outlives the
         // first real snapshot.
+        let mut retracted = BTreeSet::<Uri>::new();
         if !self.pull_diagnostics_enabled() {
             let published: BTreeSet<&Uri> = plan
                 .publish_batches
@@ -1037,6 +1048,7 @@ impl Backend {
                 if published.contains(&&uri) || cleared.contains(&&uri) {
                     continue;
                 }
+                retracted.insert(uri.clone());
                 // Mirror the transaction publisher's quarantine projection
                 // (#1970, review of #8732): a quarantined document's buffer
                 // moved under the saved-state line identity, so it receives
@@ -1071,6 +1083,80 @@ impl Backend {
                 self.client
                     .publish_diagnostics(uri, diagnostics, version)
                     .await;
+            }
+        }
+        // #13441: the empty-scope marker is served, not stored, so the plan
+        // above never touches an open document that gained or lost it. When
+        // the marker state changed, re-serve every other open document from
+        // the committed snapshot (a cleared URI gets its unversioned clear
+        // first, then the marker): the marker appears on a clean tree and is
+        // withdrawn when real rows appear. An unchanged state publishes
+        // nothing, so refreshes stay de-duplicated.
+        if marker_state_changed
+            && !self.pull_diagnostics_enabled()
+            && let Some(committed) = self.latest_analysis.lock().ok().and_then(|g| g.clone())
+        {
+            let omissions = committed
+                .delivery_selection
+                .as_ref()
+                .map(|selection| selection.document_omissions())
+                .unwrap_or_default();
+            let uris = self
+                .quarantine
+                .documents
+                .lock()
+                .map(|documents| documents.documents.keys().cloned().collect::<Vec<_>>())
+                .unwrap_or_default();
+            for uri in uris {
+                if plan
+                    .publish_batches
+                    .iter()
+                    .any(|batch| file_uris_match(&batch.uri, &uri))
+                    || retracted.contains(&uri)
+                {
+                    continue;
+                }
+                // One projection of the document state, as in the retraction
+                // loop above: the quarantine decision and the bound version
+                // come from the same lock hold.
+                let (quarantined, raw_version) = self
+                    .with_document_state(&uri, |state| {
+                        let version = if state.buffer_authority_unknown {
+                            None
+                        } else {
+                            state.version
+                        };
+                        (quarantine_from_state(state).is_some(), version)
+                    })
+                    .unwrap_or((false, None));
+                if quarantined {
+                    // A quarantined document holds no served rows, but it may
+                    // still show the earlier snapshot's marker: clear it when
+                    // the marker is withdrawn so it is not a stale all-clear,
+                    // and refresh its text when the marker payload changed.
+                    if previous_marked {
+                        let items = delivered_diagnostics_for_uri(&committed, &uri, &omissions);
+                        let version = if items.is_empty() {
+                            Self::clear_version()
+                        } else {
+                            self.negotiated_version(raw_version)
+                        };
+                        self.client
+                            .publish_diagnostics(uri.clone(), items, version)
+                            .await;
+                    }
+                    continue;
+                }
+                let items = delivered_diagnostics_for_uri(&committed, &uri, &omissions);
+                let version = if items.is_empty() {
+                    Self::clear_version()
+                } else {
+                    self.negotiated_version(raw_version)
+                };
+                self.client
+                    .publish_diagnostics(uri.clone(), items.clone(), version)
+                    .await;
+                self.set_last_diagnostics_for_uri(&uri, items);
             }
         }
         // Release the transition guard now that the terminal check, publish,
@@ -1462,6 +1548,16 @@ impl Backend {
         if let Ok(mut last_diagnostics) = self.quarantine.last_diagnostics.lock() {
             last_diagnostics.clear();
         }
+        // #13441: a push client may be showing the served (never tracked)
+        // empty-scope marker on open documents; capture that before the
+        // snapshot is dropped so the root transition or shutdown retracts it.
+        let marker_served = !self.pull_diagnostics_enabled()
+            && self
+                .latest_analysis
+                .lock()
+                .ok()
+                .and_then(|latest| latest.as_deref().map(snapshot_serves_empty_scope_marker))
+                .unwrap_or(false);
         if let Ok(mut latest_analysis) = self.latest_analysis.lock() {
             *latest_analysis = None;
         }
@@ -1469,6 +1565,9 @@ impl Backend {
             *diagnostic_result_ids = None;
         }
         let mut uris = take_all_uris(&mut last_diagnostic_uris);
+        if marker_served && let Ok(documents) = self.quarantine.documents.lock() {
+            uris.extend(documents.documents.keys().cloned());
+        }
         // #8732: a root transition or shutdown must also retract any
         // analysis-pending marker published to a push client while no
         // snapshot existed (or a blocking failure was latched).
@@ -1976,6 +2075,38 @@ impl Backend {
             .unwrap_or_default()
     }
 
+    /// Health for answering "is the retained snapshot current right now?".
+    /// A changed save (or open/close) advances the workspace revision
+    /// immediately, but the attempt is only marked queued after the
+    /// interactive debounce sleep and the awaits around it. Until a refresh
+    /// for the new revision commits, a `Succeeded` snapshot describes an
+    /// older workspace, so it is projected as `Queued` (fail-closed, same
+    /// wording as an in-flight refresh) instead of presented as current.
+    /// The projection keys on the committed snapshot's saved-workspace
+    /// revision, so no scheduling gap can reopen the window; the debounce
+    /// flag is kept as a second signal for snapshots without an identity.
+    fn analysis_health_for_currentness(&self) -> AnalysisHealth {
+        let mut health = self.analysis_health_snapshot();
+        if health.state != AnalysisAttemptState::Succeeded || health.snapshot_id.is_none() {
+            return health;
+        }
+        let analyzed_revision = self.latest_analysis.lock().ok().and_then(|guard| {
+            guard
+                .as_ref()
+                .and_then(|snapshot| snapshot.input_identity.as_ref())
+                .map(|identity| identity.saved_workspace_revision)
+        });
+        let revision_moved =
+            analyzed_revision.is_some_and(|analyzed| analyzed < self.workspace_revision());
+        let debounce_open = self
+            .interactive_debounce_window_open
+            .load(Ordering::Acquire);
+        if revision_moved || debounce_open {
+            health.state = AnalysisAttemptState::Queued;
+        }
+        health
+    }
+
     #[cfg(test)]
     pub(super) fn set_interactive_debounce_open_for_test(&self, open: bool) {
         self.interactive_debounce_window_open
@@ -2452,7 +2583,9 @@ impl Backend {
                 .send_notification::<ShowMessage>(ShowMessageParams {
                     typ: MessageType::WARNING,
                     message: bounded_failure_message(&unavailable_language_notice(
-                        &language, file_count,
+                        self.analysis_config().as_ref(),
+                        &language,
+                        file_count,
                     )),
                 })
                 .await;
@@ -2770,11 +2903,7 @@ impl Backend {
             "unavailable_languages": self
                 .unavailable_language_rows()
                 .into_iter()
-                .map(|(language, file_count)| serde_json::json!({
-                    "language": language,
-                    "file_count": file_count,
-                    "recovery": unavailable_language_recovery(&language),
-                }))
+                .map(|(language, file_count)| self.unavailable_language_status_row(language, file_count))
                 .collect::<Vec<_>>(),
             // Profile-withholding disclosure (#5276): when the actionable
             // profile withholds live `*_unknown` findings from every
@@ -3323,6 +3452,14 @@ impl Backend {
     #[cfg(test)]
     pub(super) fn selected_position_encoding_for_test(&self) -> Option<PositionEncodingKind> {
         self.selected_position_encoding()
+    }
+
+    /// Replace the negotiated client feature profile for a test session.
+    #[cfg(test)]
+    pub(super) fn set_client_features_for_test(&self, profile: ClientFeatureProfile) {
+        if let Ok(mut features) = self.client_features.lock() {
+            *features = profile;
+        }
     }
 
     /// Poison the profile store so tests can exercise the fail-closed
@@ -3907,6 +4044,52 @@ impl Backend {
             .unwrap_or_default()
     }
 
+    /// #13441: the empty-scope marker is served, not stored, and a clean
+    /// open skips the refresh, so a push client opening a document after a
+    /// clean snapshot committed would otherwise receive nothing (silence that
+    /// reads as an all-clear). Publish the committed marker once on open. It
+    /// stands alone: a clean snapshot has no row to withdraw, so no quarantine
+    /// marker is stacked on it. A pull client or a latched configuration
+    /// failure is left to its existing route.
+    async fn serve_empty_scope_marker_on_open(&self, uri: &Uri) {
+        if self.pull_diagnostics_enabled() {
+            return;
+        }
+        // Serialize with refresh commits and root transitions, then read the
+        // snapshot, so a concurrent clear cannot be followed by a stale marker.
+        let _transition = self.workspace_root_transition.lock().await;
+        if self.configuration_failure().is_some() {
+            return;
+        }
+        let marker_snapshot = self
+            .latest_analysis
+            .lock()
+            .ok()
+            .and_then(|value| value.clone())
+            .is_some_and(|snapshot| snapshot_serves_empty_scope_marker(&snapshot));
+        if !marker_snapshot {
+            return;
+        }
+        let items = self.committed_served_diagnostics_for_uri(uri);
+        if items.is_empty() {
+            return;
+        }
+        let version = self.with_document_state(uri, |state| {
+            if state.buffer_authority_unknown {
+                None
+            } else {
+                state.version
+            }
+        });
+        self.client
+            .publish_diagnostics(
+                uri.clone(),
+                items,
+                self.negotiated_version(version.flatten()),
+            )
+            .await;
+    }
+
     fn last_diagnostics_has_any(&self, uri: &Uri) -> bool {
         self.quarantine
             .last_diagnostics
@@ -3917,6 +4100,12 @@ impl Backend {
     }
 
     fn set_last_diagnostics_for_uri(&self, uri: &Uri, diagnostics: Vec<Diagnostic>) {
+        // #13441: the empty-scope marker is served, not stored. Recording it
+        // as the committed baseline would put the URI in the next refresh's
+        // clear set and wipe the marker on a second consecutive clean refresh.
+        if !diagnostics.is_empty() && diagnostics.iter().all(is_empty_scope_marker) {
+            return;
+        }
         if let Ok(mut last) = self.quarantine.last_diagnostics.lock() {
             last.insert(uri.clone(), diagnostics);
         }
@@ -3967,7 +4156,12 @@ impl Backend {
     /// episode. A document with nothing served stays silent — there is no
     /// stale line identity to withdraw.
     async fn withdraw_document_diagnostics(&self, uri: &Uri, decision_version: Option<i32>) {
-        let had_visible = !self.committed_served_diagnostics_for_uri(uri).is_empty()
+        // #13441: the served empty-scope marker is not line-local evidence,
+        // so an unsaved edit on a clean tree has nothing to withdraw.
+        let had_visible = self
+            .committed_served_diagnostics_for_uri(uri)
+            .iter()
+            .any(|diagnostic| !is_empty_scope_marker(diagnostic))
             || self.last_diagnostics_has_any(uri);
         if !had_visible {
             return;
@@ -4150,7 +4344,7 @@ impl Backend {
         // Capture health before any snapshot lock: completion records health
         // while reading the snapshot. Every retained-evidence branch uses
         // this same lifecycle projection without reversing that lock order.
-        let health = self.analysis_health_snapshot();
+        let health = self.analysis_health_for_currentness();
         let with_status = |hover, snapshot: &AnalysisSnapshot| {
             let effective = self.effective_health_for_snapshot(health.clone(), snapshot);
             hover_with_analysis_health(hover, snapshot, &effective)
@@ -4251,6 +4445,7 @@ impl Backend {
                     super::hover::line_findings_hover_response(
                         &findings,
                         snapshot.diagnostic_profile,
+                        &self.client_feature_profile(),
                     ),
                     snapshot,
                 ));
@@ -5579,18 +5774,15 @@ fn config_failure_notice(error: &str) -> String {
 /// On-screen notice for changed files of a language whose adapter is not
 /// enabled (#8585): the count, the fact that they were not analyzed, and the
 /// shared recovery route.
-fn unavailable_language_notice(language: &str, file_count: usize) -> String {
+fn unavailable_language_notice(
+    config: Option<&crate::lsp::config::LspAnalysisConfig>,
+    language: &str,
+    file_count: usize,
+) -> String {
     format!(
         "ripr did not analyze {file_count} changed {language} file(s): the {language} adapter is not enabled; {}",
-        unavailable_language_recovery(language)
+        unavailable_language_recovery(config, language, file_count)
     )
-}
-
-fn unavailable_language_recovery(language: &str) -> String {
-    match crate::domain::LanguageId::from_wire(language) {
-        Some(id) => language_adapter_not_enabled_recovery(id),
-        None => format!("enable the {language} adapter in [languages] enabled in ripr.toml"),
-    }
 }
 
 fn bounded_failure_message(message: &str) -> String {
@@ -6808,6 +7000,9 @@ impl LanguageServer for Backend {
         let session_has_analysis = self.refresh_scheduler_has_analysis_state();
         self.handle_document_quarantine_transition(&uri, transition, decision_version)
             .await;
+        if !matches!(transition, QuarantineTransition::Exited { .. }) {
+            self.serve_empty_scope_marker_on_open(&uri).await;
+        }
         // A latched configuration failure falls through to the refresh path
         // even when the open matches the persisted state: the refresh guard
         // returns before scheduling, but its entry publishes the typed
@@ -6887,7 +7082,19 @@ impl LanguageServer for Backend {
         if let Ok(mut pending) = self.pending_push_marker_uris.lock() {
             pending_marker_was_tracked = pending.remove(&params.text_document.uri).is_some();
         }
-        if pending_marker_was_tracked && !self.pull_diagnostics_enabled() {
+        // #13441: the served empty-scope marker is not tracked as pending, so
+        // retract it on close too; otherwise the closed file keeps showing it
+        // after rows appear elsewhere.
+        // Hold the root-transition guard from the check through removal of
+        // the document so a refresh committing a newly marked snapshot cannot
+        // publish the marker after this clear; released before the refresh.
+        let close_guard = self.workspace_root_transition.lock().await;
+        let marker_was_served = !self.pull_diagnostics_enabled()
+            && self
+                .committed_served_diagnostics_for_uri(&params.text_document.uri)
+                .iter()
+                .any(is_empty_scope_marker);
+        if (pending_marker_was_tracked || marker_was_served) && !self.pull_diagnostics_enabled() {
             self.client
                 .publish_diagnostics(
                     params.text_document.uri.clone(),
@@ -6897,6 +7104,7 @@ impl LanguageServer for Backend {
                 .await;
         }
         self.close_document(params);
+        drop(close_guard);
         self.advance_workspace_revision();
         // Interactive path: defer the seam inventory (RIPR-SPEC-0105).
         self.refresh_diagnostics(RefreshScope::Interactive, RefreshReason::DidClose)
@@ -7043,7 +7251,7 @@ impl LanguageServer for Backend {
             .lock()
             .ok()
             .and_then(|value| value.clone());
-        let health = self.analysis_health_snapshot();
+        let health = self.analysis_health_for_currentness();
         let root_allows_analysis = self.workspace_root_authority().allows_analysis();
         // Negotiated client-command filter (#1776, RIPR-SPEC-0129): a
         // poisoned profile store fails closed to the unsupported profile,
@@ -7130,6 +7338,7 @@ impl LanguageServer for Backend {
             Ok(Some(code_lens_response(
                 uri,
                 snapshot.as_ref().map(|snapshot| snapshot.as_ref()),
+                &self.client_feature_profile(),
             )))
         };
         self.trace_response("textDocument/codeLens", &result).await;
@@ -7594,7 +7803,9 @@ impl Backend {
             // Generic-client related-test navigation: answer with
             // `window/showDocument`, guarded by the negotiated capability
             // and the current snapshot. Navigation only.
-            let snapshot = if self.analysis_health_snapshot().allows_current_repairs()
+            let snapshot = if self
+                .analysis_health_for_currentness()
+                .allows_current_repairs()
                 && self.workspace_root_authority().allows_analysis()
             {
                 self.latest_analysis
@@ -7648,7 +7859,7 @@ impl Backend {
             .lock()
             .ok()
             .and_then(|value| value.clone());
-        let health = self.analysis_health_snapshot();
+        let health = self.analysis_health_for_currentness();
         let root_allows_analysis = self.workspace_root_authority().allows_analysis();
         let action_snapshot = (health.allows_current_repairs() && root_allows_analysis)
             .then_some(snapshot)
@@ -7953,7 +8164,12 @@ impl Backend {
                             })
                             .unwrap_or(serde_json::Value::Null)
                     } else if let (false, Some(language)) = (quarantined, adapter_language) {
-                        serde_json::Value::String(language_adapter_not_enabled_recovery(language))
+                        let config = self.analysis_config();
+                        serde_json::Value::String(language_adapter_not_enabled_recovery(
+                            language,
+                            config.as_ref(),
+                            1,
+                        ))
                     } else {
                         serde_json::Value::Null
                     },
@@ -7971,7 +8187,11 @@ impl Backend {
     }
 
     fn collect_workspace_status(&self) -> Option<LSPAny> {
-        let health = self.analysis_health_snapshot();
+        // Same currentness projection as hover, code actions and the repair
+        // packet (#13680): a snapshot older than the saved revision, or one
+        // inside the interactive debounce window, is not current, so status
+        // must not report it as current or hand out its top packet (#13783).
+        let health = self.analysis_health_for_currentness();
         let authority = self.workspace_root_authority();
         let latest_analysis = self.latest_analysis.lock().ok()?.clone();
         let open_documents = self.open_document_statuses_json(latest_analysis.as_deref());
@@ -9021,6 +9241,140 @@ fn outside_partition_recovery(partial_scope: Option<&crate::analysis::PartialDif
     )
 }
 
+/// #7205 / #2962: project one shared [`LanguageAvailabilityReport`] per
+/// skipped language for LSP status and editor recovery.
+fn unavailable_language_availability_input(
+    language: crate::domain::LanguageId,
+    file_count: usize,
+    config: Option<&crate::lsp::config::LspAnalysisConfig>,
+) -> (
+    crate::domain::language_availability::LanguageAvailabilityInput,
+    Option<bool>,
+) {
+    use crate::domain::language_availability::{
+        AutoDetectionPolicy, ConfiguredIntent, LanguageAvailabilityInput,
+    };
+    let repo = config.map(|value| value.repo_config());
+    let auto_defaulted = repo.is_none_or(|value| value.source_path().is_none());
+    let enabled = repo.map(|value| {
+        value
+            .languages()
+            .enabled()
+            .contains(&unavailable_language_config_entry(language))
+    });
+    let auto_enabled = auto_defaulted
+        && enabled == Some(true)
+        && matches!(
+            unavailable_language_config_entry(language),
+            crate::domain::LanguageId::Python | crate::domain::LanguageId::TypeScript
+        );
+    let input = LanguageAvailabilityInput {
+        project_detected: true,
+        file_count,
+        configured: match enabled {
+            Some(true) if !auto_enabled => ConfiguredIntent::Enabled,
+            Some(false) => ConfiguredIntent::Disabled,
+            _ => ConfiguredIntent::Unspecified,
+        },
+        auto_policy: if auto_enabled {
+            AutoDetectionPolicy::WhenDetected
+        } else {
+            AutoDetectionPolicy::Never
+        },
+        ..LanguageAvailabilityInput::for_language(language)
+    };
+    (input, enabled)
+}
+
+fn unavailable_language_config_entry(id: crate::domain::LanguageId) -> crate::domain::LanguageId {
+    match id {
+        crate::domain::LanguageId::JavaScript => crate::domain::LanguageId::TypeScript,
+        other => other,
+    }
+}
+
+fn resolve_unavailable_language_report(
+    language: crate::domain::LanguageId,
+    file_count: usize,
+    config: Option<&crate::lsp::config::LspAnalysisConfig>,
+) -> (
+    crate::domain::language_availability::LanguageAvailabilityReport,
+    Option<bool>,
+) {
+    use crate::domain::language_availability::resolve_language_availability;
+    let (input, enabled) = unavailable_language_availability_input(language, file_count, config);
+    (resolve_language_availability(&input), enabled)
+}
+
+fn lsp_recovery_from_availability_report(
+    report: &crate::domain::language_availability::LanguageAvailabilityReport,
+) -> String {
+    use crate::domain::language_availability::unavailable_recovery;
+    if let Some(recovery) = unavailable_recovery(report) {
+        return recovery.to_string();
+    }
+    let language = report.language;
+    // An adapter that is not compiled into this binary cannot be enabled by
+    // configuration (config parsing rejects it), whatever the configured
+    // intent resolved to; the only route is the build prerequisite.
+    if !report.compiled_available {
+        return language.unavailable_adapter_recovery();
+    }
+    let mut recovery = format!(
+        "add \"{}\" to [languages] enabled in ripr.toml, then restart the language server \
+         so the enabled adapter is read",
+        language.as_str()
+    );
+    if let Some(prerequisite) = language.enable_prerequisite() {
+        recovery.push_str("; ");
+        recovery.push_str(&prerequisite);
+    }
+    recovery
+}
+
+fn unavailable_language_recovery(
+    config: Option<&crate::lsp::config::LspAnalysisConfig>,
+    language: &str,
+    file_count: usize,
+) -> String {
+    match crate::domain::LanguageId::from_wire(language) {
+        Some(id) => language_adapter_not_enabled_recovery(id, config, file_count),
+        None => format!("enable the {language} adapter in [languages] enabled in ripr.toml"),
+    }
+}
+
+impl Backend {
+    fn unavailable_language_status_row(
+        &self,
+        language: String,
+        file_count: usize,
+    ) -> serde_json::Value {
+        let config = self.analysis_config();
+        let Some(id) = crate::domain::LanguageId::from_wire(&language) else {
+            return serde_json::json!({
+                "language": language,
+                "file_count": file_count,
+                "availability_state": serde_json::Value::Null,
+                "remediation": [],
+                "recovery": unavailable_language_recovery(config.as_ref(), &language, file_count),
+            });
+        };
+        let (report, enabled) =
+            resolve_unavailable_language_report(id, file_count, config.as_ref());
+        serde_json::json!({
+            "language": language,
+            "file_count": file_count,
+            "availability_state": enabled.map(|_| report.state.as_str()),
+            "remediation": if enabled.is_some() {
+                report.remediation.clone()
+            } else {
+                Vec::<String>::new()
+            },
+            "recovery": lsp_recovery_from_availability_report(&report),
+        })
+    }
+}
+
 /// #7205: recovery for a changed document whose adapter was not enabled.
 /// Refreshing the session cannot enable a language the process did not
 /// load. When the adapter is compiled in, the route names `[languages]
@@ -9028,21 +9382,15 @@ fn outside_partition_recovery(partial_scope: Option<&crate::analysis::PartialDif
 /// [`crate::domain::LanguageId::enable_prerequisite`] so compiled-in Perl
 /// does not claim enablement plus restart is sufficient. When it is not
 /// compiled in (Perl on the default build), enablement is not enough —
-/// reuse the shared
-/// [`crate::domain::LanguageId::unavailable_adapter_recovery`] text.
-pub(super) fn language_adapter_not_enabled_recovery(language: crate::domain::LanguageId) -> String {
-    if !language.is_available() {
-        return language.unavailable_adapter_recovery();
-    }
-    let enablement = format!(
-        "add \"{}\" to [languages] enabled in ripr.toml, then restart the language server \
-         so the enabled adapter is read",
-        language.as_str()
-    );
-    match language.enable_prerequisite() {
-        Some(prerequisite) => format!("{enablement}; {prerequisite}"),
-        None => enablement,
-    }
+/// the shared [`LanguageAvailabilityReport`] resolver names the build route
+/// (#2962).
+pub(super) fn language_adapter_not_enabled_recovery(
+    language: crate::domain::LanguageId,
+    config: Option<&crate::lsp::config::LspAnalysisConfig>,
+    file_count: usize,
+) -> String {
+    let (report, _) = resolve_unavailable_language_report(language, file_count, config);
+    lsp_recovery_from_availability_report(&report)
 }
 
 #[cfg(test)]
@@ -9060,7 +9408,7 @@ mod language_adapter_recovery_tests {
         else {
             return Ok(());
         };
-        let recovery = language_adapter_not_enabled_recovery(language);
+        let recovery = language_adapter_not_enabled_recovery(language, None, 1);
         for needle in ["[languages] enabled", "restart", language.as_str()] {
             if !recovery.contains(needle) {
                 return Err(format!(
@@ -9086,7 +9434,7 @@ mod language_adapter_recovery_tests {
         if !LanguageId::Perl.is_available() {
             return Ok(());
         }
-        let recovery = language_adapter_not_enabled_recovery(LanguageId::Perl);
+        let recovery = language_adapter_not_enabled_recovery(LanguageId::Perl, None, 1);
         let Some(prerequisite) = LanguageId::Perl.enable_prerequisite() else {
             return Err(
                 "compiled-in Perl must own enable_prerequisite so LSP recovery can reuse it"
@@ -9109,6 +9457,50 @@ mod language_adapter_recovery_tests {
     }
 
     #[test]
+    fn unavailable_language_report_state_matches_compiled_fact() -> Result<(), String> {
+        use super::resolve_unavailable_language_report;
+        use crate::domain::language_availability::AvailabilityState;
+        let (report, _) = resolve_unavailable_language_report(LanguageId::Python, 2, None);
+        if LanguageId::Python.is_available() {
+            if report.state == AvailabilityState::DetectedNotCompiled {
+                return Err(format!(
+                    "compiled-in python must not read as not_compiled: {:?}",
+                    report.state
+                ));
+            }
+        } else if report.state != AvailabilityState::DetectedNotCompiled {
+            return Err(format!(
+                "uncompiled python must read as detected_not_compiled: {:?}",
+                report.state
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn uncompiled_adapter_recovery_ignores_default_disabled_intent() -> Result<(), String> {
+        // With a loaded default configuration the language is not in
+        // `[languages] enabled`, so the resolver reads the intent as disabled
+        // and returns `NotEnabled` with no remediation. The recovery must
+        // still be the build route, never "add the language to ripr.toml".
+        let Some(language) = LanguageId::ALL
+            .into_iter()
+            .find(|language| *language != LanguageId::Rust && !language.is_available())
+        else {
+            return Ok(());
+        };
+        let config = crate::lsp::config::LspAnalysisConfig::default();
+        let recovery = language_adapter_not_enabled_recovery(language, Some(&config), 1);
+        let expected = language.unavailable_adapter_recovery();
+        if recovery != expected {
+            return Err(format!(
+                "uncompiled {language:?} with default config must name the build route, got {recovery:?} expected {expected:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
     fn uncompiled_adapter_recovery_reuses_language_owner_text() -> Result<(), String> {
         // `--all-features` compiles every adapter, so there is no uncompiled
         // preview language to prove here; the compiled-in sibling covers that
@@ -9119,7 +9511,7 @@ mod language_adapter_recovery_tests {
         else {
             return Ok(());
         };
-        let recovery = language_adapter_not_enabled_recovery(language);
+        let recovery = language_adapter_not_enabled_recovery(language, None, 1);
         let expected = language.unavailable_adapter_recovery();
         if recovery != expected {
             return Err(format!(
@@ -10090,7 +10482,7 @@ impl Backend {
     /// the caller asked for the top packet, never that a malformed id was
     /// dropped.
     fn collect_repair_packet(&self, gap_id: Option<&str>) -> Option<LSPAny> {
-        let health = self.analysis_health_snapshot();
+        let health = self.analysis_health_for_currentness();
         if !health.allows_current_repairs() {
             // The reason stays `analysis_snapshot_stale` and the packet stays
             // withheld; the added fields only tell a client whether to retry
@@ -10134,7 +10526,8 @@ impl Backend {
     }
 
     fn collect_top_limitation(&self) -> Option<LSPAny> {
-        let health = self.analysis_health_snapshot();
+        // Same save-currentness projection as workspace status (#13783).
+        let health = self.analysis_health_for_currentness();
         let snapshot = self.latest_analysis.lock().ok()?.clone();
         let health = snapshot
             .as_ref()
@@ -12849,6 +13242,77 @@ mod list_actionable_items_tests {
         Ok(())
     }
 
+    /// The negotiated client profile reaches the real `codeLens` handler:
+    /// a client advertising `ripr.openRelatedTest` gets a navigating lens, a
+    /// client that advertised nothing keeps the refresh lens.
+    #[test]
+    fn code_lens_handler_uses_the_negotiated_client_profile() -> Result<(), String> {
+        let root = std::env::temp_dir().join(format!("ripr-lens-handler-{}", std::process::id()));
+        std::fs::create_dir_all(root.join("tests")).map_err(|err| err.to_string())?;
+        std::fs::write(root.join("tests/lib.rs"), "fn t() {}\n").map_err(|err| err.to_string())?;
+        let lens_command = |commands: &[&str]| -> Result<String, String> {
+            let harness = handler_harness()?;
+            let params: InitializeParams = serde_json::from_value(serde_json::json!({
+                "capabilities": { "experimental": { "riprEditor": {
+                    "version": "0.10.0", "commands": commands, "guardedTestEdit": false
+                } } }
+            }))
+            .map_err(|err| err.to_string())?;
+            harness
+                .runtime
+                .block_on(harness.service.inner().initialize(params))
+                .map_err(|err| format!("initialize failed: {err}"))?;
+            let mut finding = crate::lsp::tests::sample_finding();
+            finding.probe.location.file = PathBuf::from("src/pricing.rs");
+            finding.related_tests = vec![crate::domain::RelatedTest {
+                name: "discount_applies".to_string(),
+                file: PathBuf::from("tests/lib.rs"),
+                line: 3,
+                oracle: None,
+                oracle_kind: crate::domain::OracleKind::Unknown,
+                oracle_strength: crate::domain::OracleStrength::Weak,
+                relation_reason: None,
+                relation_confidence: None,
+                miss: None,
+                miss_support: None,
+                role: crate::domain::RelatedTestRole::Contributing,
+            }];
+            let mut snapshot = snapshot_with_selection(None);
+            snapshot.root = root.clone();
+            snapshot.findings = vec![finding];
+            install_snapshot(&harness, snapshot)?;
+            let uri = crate::lsp::uri::file_uri_for_path(&root.join("src/pricing.rs"))
+                .map_err(|err| err.to_string())?;
+            let lenses = harness
+                .runtime
+                .block_on(harness.service.inner().code_lens(CodeLensParams {
+                    text_document: tower_lsp_server::ls_types::TextDocumentIdentifier { uri },
+                    work_done_progress_params: Default::default(),
+                    partial_result_params: Default::default(),
+                }))
+                .map_err(|err| format!("codeLens failed: {err}"))?
+                .ok_or("codeLens returned null")?;
+            let [lens] = lenses.as_slice() else {
+                return Err(format!("expected one lens, got {lenses:?}"));
+            };
+            lens.command
+                .as_ref()
+                .map(|command| command.command.clone())
+                .ok_or_else(|| "lens has no command".to_string())
+        };
+        let navigating = lens_command(&["ripr.openRelatedTest"])?;
+        if navigating != "ripr.openRelatedTest" {
+            return Err(format!(
+                "negotiated profile must reach the lens: {navigating}"
+            ));
+        }
+        let generic = lens_command(&[])?;
+        if generic != REFRESH_COMMAND {
+            return Err(format!("a generic client must keep refresh: {generic}"));
+        }
+        Ok(())
+    }
+
     fn call_handler(harness: &HandlerHarness) -> Result<serde_json::Value, String> {
         harness
             .runtime
@@ -13994,6 +14458,10 @@ struct DiskContentStatKey {
     len: u64,
     modified: Option<(u64, u32)>,
     ino: u64,
+    /// Device of the file. A path that moves onto another mount (for example
+    /// a local tree replaced by a network mount) gets a new key even when the
+    /// inode number and timestamps happen to match (#12170).
+    dev: u64,
     /// Inode change time. Unlike mtime, no writer can set or restore it
     /// (#12046): an in-place same-length rewrite that puts the old mtime back
     /// still moves ctime. `None` where std exposes no change time (Windows).
@@ -14001,15 +14469,15 @@ struct DiskContentStatKey {
 }
 
 fn disk_content_stat_key(meta: &fs::Metadata) -> DiskContentStatKey {
-    let ino = {
+    let (ino, dev) = {
         #[cfg(unix)]
         {
             use std::os::unix::fs::MetadataExt;
-            meta.ino()
+            (meta.ino(), meta.dev())
         }
         #[cfg(not(unix))]
         {
-            0
+            (0, 0)
         }
     };
     let modified = meta.modified().ok().map(|instant| {
@@ -14033,6 +14501,7 @@ fn disk_content_stat_key(meta: &fs::Metadata) -> DiskContentStatKey {
         len: meta.len(),
         modified,
         ino,
+        dev,
         changed,
     }
 }
@@ -14091,6 +14560,115 @@ fn disk_change_time_is_racy(_meta: &fs::Metadata) -> bool {
     false
 }
 
+/// Filesystem types whose timestamps come from a server clock that the local
+/// racy-window check cannot compare against (#12170). A file on one of these
+/// is never cached: a lagging server clock can stamp a just-written file as
+/// older than the window and a same-length rewrite in the same server tick
+/// would then match the cached key.
+const REMOTE_FILESYSTEM_TYPES: &[&str] = &[
+    "nfs",
+    "nfs3",
+    "nfs4",
+    "cifs",
+    "smb3",
+    "smbfs",
+    "9p",
+    "afs",
+    "ceph",
+    "glusterfs",
+    "lustre",
+    "ncpfs",
+    "davfs",
+    "fuse.sshfs",
+    "fuse.rclone",
+    "fuse.s3fs",
+    "fuse.gcsfuse",
+];
+
+/// Decodes the `\040`-style octal escapes `/proc/self/mountinfo` uses.
+fn unescape_mountinfo_field(field: &str) -> String {
+    let bytes = field.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        let octal = (bytes[index] == b'\\')
+            .then(|| bytes.get(index + 1..index + 4))
+            .flatten()
+            .and_then(|digits| std::str::from_utf8(digits).ok())
+            .and_then(|digits| u8::from_str_radix(digits, 8).ok());
+        match octal {
+            Some(byte) => {
+                out.push(byte);
+                index += 4;
+            }
+            None => {
+                out.push(bytes[index]);
+                index += 1;
+            }
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// The filesystem type of the longest mount point containing `path`, read from
+/// `mountinfo` text. `None` when no mount line matches.
+fn mountinfo_fstype_for(mountinfo: &str, path: &Path) -> Option<String> {
+    let mut best: Option<(usize, String)> = None;
+    for line in mountinfo.lines() {
+        let Some((before, after)) = line.split_once(" - ") else {
+            continue;
+        };
+        let (Some(raw_mount_point), Some(fstype)) = (
+            before.split_whitespace().nth(4),
+            after.split_whitespace().next(),
+        ) else {
+            continue;
+        };
+        let mount_point = unescape_mountinfo_field(raw_mount_point);
+        let mount_path = Path::new(&mount_point);
+        if path.starts_with(mount_path) {
+            let depth = mount_path.components().count();
+            if best
+                .as_ref()
+                .is_none_or(|(best_depth, _)| depth >= *best_depth)
+            {
+                best = Some((depth, fstype.to_string()));
+            }
+        }
+    }
+    best.map(|(_, fstype)| fstype)
+}
+
+fn fstype_is_remote(fstype: &str) -> bool {
+    // Any FUSE subtype other than the block-device `fuseblk` (ntfs-3g, exfat)
+    // may be network-backed (ftpfs, gvfsd-fuse, ...), so it is treated as
+    // remote: an unneeded reread is only a cost.
+    REMOTE_FILESYSTEM_TYPES.contains(&fstype)
+        || (fstype != "fuseblk" && (fstype == "fuse" || fstype.starts_with("fuse.")))
+}
+
+/// Whether the digest of `path` must not be cached because its timestamps may
+/// come from another machine's clock. Linux reads the mount table; a path or
+/// table that cannot be resolved is treated as remote (a reread is only a
+/// cost). Other platforms keep the local-clock racy window (documented limit).
+fn disk_path_may_be_remote(path: &Path) -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        let Ok(canonical) = fs::canonicalize(path) else {
+            return true;
+        };
+        let Ok(table) = fs::read_to_string("/proc/self/mountinfo") else {
+            return true;
+        };
+        mountinfo_fstype_for(&table, &canonical).is_none_or(|fstype| fstype_is_remote(&fstype))
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = path;
+        false
+    }
+}
+
 type DiskEqualityDigestCache = Mutex<BTreeMap<PathBuf, (DiskContentStatKey, Option<String>)>>;
 
 static DISK_EQUALITY_DIGEST_CACHE: LazyLock<DiskEqualityDigestCache> =
@@ -14101,11 +14679,12 @@ thread_local! {
     static DISK_EQUALITY_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
+/// Resets this thread's read counter. The digest cache itself is process-wide
+/// and the tests run in parallel, so clearing it here would evict another
+/// test's entry between that test's two lookups and make it count a second
+/// read. Each test digests its own per-thread temp path, so no clear is needed.
 #[cfg(test)]
 fn reset_disk_equality_read_cache_for_tests() {
-    if let Ok(mut cache) = DISK_EQUALITY_DIGEST_CACHE.lock() {
-        cache.clear();
-    }
     DISK_EQUALITY_READS.with(|reads| reads.set(0));
 }
 
@@ -14113,6 +14692,15 @@ fn cached_disk_content_digest(
     path: &Path,
     stat_key: &DiskContentStatKey,
     bypass_cache: bool,
+) -> Option<String> {
+    cached_disk_content_digest_with(path, stat_key, bypass_cache, disk_path_may_be_remote)
+}
+
+fn cached_disk_content_digest_with(
+    path: &Path,
+    stat_key: &DiskContentStatKey,
+    bypass_cache: bool,
+    is_remote: impl FnOnce(&Path) -> bool,
 ) -> Option<String> {
     // A bypass lookup never consults the cache, so no earlier entry can answer it.
     if !bypass_cache
@@ -14127,6 +14715,9 @@ fn cached_disk_content_digest(
     DISK_EQUALITY_READS.with(|reads| reads.set(reads.get() + 1));
 
     let digest = super::state::read_saved_bytes(path).map(|disk| content_digest(&disk));
+    // Checked on the miss path only, so a cache hit never reads the mount
+    // table; an entry can only exist for a path that was admitted as local.
+    let bypass_cache = bypass_cache || is_remote(path);
     if let Ok(mut cache) = DISK_EQUALITY_DIGEST_CACHE.lock() {
         if bypass_cache {
             // Drop any older entry too, so an uncacheable read never leaves a
@@ -14150,9 +14741,9 @@ fn cached_disk_content_digest(
 /// any later rewrite happens at or after `now`, so its floored timestamp
 /// differs from the cached one whenever the filesystem's timestamp granularity
 /// is no larger than the window (2 s FAT is covered). That relies on the
-/// filesystem stamping with a clock that agrees with the local clock; a
-/// network mount with a skewed clock can still reuse a digest across a
-/// same-key rewrite. A clock stepping backwards reads as racy, which is safe
+/// filesystem stamping with a clock that agrees with the local clock, so on
+/// Linux a file on a network mount (see [`REMOTE_FILESYSTEM_TYPES`]) is never
+/// cached (#12170); other Unix platforms keep that limit. A clock stepping backwards reads as racy, which is safe
 /// (#12115).
 fn disk_bytes_equal_text(path: &Path, text: &str) -> bool {
     let Ok(text_len) = u64::try_from(text.len()) else {
@@ -14178,8 +14769,8 @@ fn disk_bytes_equal_text(path: &Path, text: &str) -> bool {
 #[cfg(test)]
 mod disk_bytes_equal_text_tests {
     use super::{
-        DISK_EQUALITY_READS, cached_disk_content_digest, disk_bytes_equal_text,
-        disk_content_stat_key, reset_disk_equality_read_cache_for_tests,
+        DISK_EQUALITY_READS, cached_disk_content_digest, cached_disk_content_digest_with,
+        disk_bytes_equal_text, disk_content_stat_key, reset_disk_equality_read_cache_for_tests,
     };
 
     fn temp_disk_path(label: &str) -> std::path::PathBuf {
@@ -14210,6 +14801,70 @@ mod disk_bytes_equal_text_tests {
             .open(path)
             .and_then(|file| file.set_modified(when))
             .map_err(|err| format!("set mtime failed: {err}"))
+    }
+
+    #[test]
+    fn mountinfo_classifies_remote_mounts_by_longest_prefix() {
+        let table = "\
+24 1 8:1 / / rw - ext4 /dev/sda1 rw
+40 24 0:35 / /mnt/share rw - nfs4 srv:/x rw
+41 40 8:2 / /mnt/share/local\\040disk rw - ext4 /dev/sdb rw
+";
+        let fstype = |p: &str| super::mountinfo_fstype_for(table, std::path::Path::new(p));
+        assert_eq!(fstype("/work/u/a.rs").as_deref(), Some("ext4"));
+        assert_eq!(fstype("/mnt/share/a.rs").as_deref(), Some("nfs4"));
+        assert_eq!(
+            fstype("/mnt/share/local disk/a.rs").as_deref(),
+            Some("ext4")
+        );
+        assert!(super::fstype_is_remote("nfs4"));
+        assert!(super::fstype_is_remote("cifs"));
+        assert!(!super::fstype_is_remote("ext4"));
+        assert!(!super::fstype_is_remote("tmpfs"));
+        assert!(super::fstype_is_remote("fuse.ftpfs"));
+        assert!(super::fstype_is_remote("fuse.gvfsd-fuse"));
+        assert!(super::fstype_is_remote("fuse"));
+        assert!(!super::fstype_is_remote("fuseblk"));
+    }
+
+    #[test]
+    fn nfs_mount_table_marks_workspace_paths_remote() {
+        assert!(super::fstype_is_remote("nfs"));
+        let table = "1 0 0:1 / / rw - nfs srv:/ rw\n";
+        let fstype = super::mountinfo_fstype_for(table, std::path::Path::new("/w/f.rs"));
+        assert!(fstype.is_some_and(|t| super::fstype_is_remote(&t)));
+    }
+
+    #[test]
+    fn remote_path_digest_is_never_cached_but_local_is() -> Result<(), String> {
+        reset_disk_equality_read_cache_for_tests();
+        let path = temp_disk_path("remote-admission");
+        std::fs::write(&path, "abc").map_err(|err| format!("write failed: {err}"))?;
+        backdate(&path)?;
+        past_racy_window();
+        let meta = std::fs::metadata(&path).map_err(|err| format!("stat failed: {err}"))?;
+        let key = disk_content_stat_key(&meta);
+        let _ = cached_disk_content_digest_with(&path, &key, false, |_| true);
+        let _ = cached_disk_content_digest_with(&path, &key, false, |_| true);
+        let remote_reads = DISK_EQUALITY_READS.with(std::cell::Cell::get);
+        reset_disk_equality_read_cache_for_tests();
+        let _ = cached_disk_content_digest_with(&path, &key, false, |_| false);
+        let _ = cached_disk_content_digest_with(&path, &key, false, |_| false);
+        let local_reads = DISK_EQUALITY_READS.with(std::cell::Cell::get);
+        let _ = std::fs::remove_file(&path);
+        if remote_reads != 2 || local_reads != 1 {
+            return Err(format!(
+                "remote_reads={remote_reads} local_reads={local_reads}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn malformed_mountinfo_line_does_not_hide_later_mounts() {
+        let table = "garbage\n40 24 0:35 / /mnt/share rw - nfs4 srv:/x rw\n";
+        let fstype = super::mountinfo_fstype_for(table, std::path::Path::new("/mnt/share/a"));
+        assert_eq!(fstype.as_deref(), Some("nfs4"));
     }
 
     #[test]

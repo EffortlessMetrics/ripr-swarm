@@ -538,7 +538,9 @@ fn only_credited_local_macros_supply_an_oracle(finding: &Finding) -> bool {
         let Some(oracle) = related.oracle.as_deref() else {
             // A refused assertion on a directly related test is still an
             // assertion ripr judged (#7089).
-            if related.miss == Some(crate::domain::RelatedTestMiss::AssertionNotCredited)
+            if related
+                .miss
+                .is_some_and(crate::domain::RelatedTestMiss::is_assertion_refusal_miss)
                 && (related.relation_reason.is_none()
                     || is_direct_relation(related.relation_reason))
             {
@@ -1269,14 +1271,14 @@ mod tests {
             start_line: 1,
             end_line: 5,
             body: format!("pub fn {name}(x: i32) -> i32 {{ x }}").into(),
-            calls: vec![],
+            calls: crate::analysis::facts::SharedFactSlice::empty(),
             returns: vec![],
-            literals: vec![],
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
             source_role: FunctionSourceRole::Production,
             attrs: attrs.into_iter().map(|s| s.to_string()).collect(),
             impl_attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             impl_context: Default::default(),
             item: Default::default(),
         }
@@ -1377,7 +1379,8 @@ mod tests {
                 line: start_line,
                 name: "inner".to_string(),
                 text: "inner(10, 3)".to_string().into(),
-            }],
+            }]
+            .into(),
             assertions: Vec::new(),
             literals: vec![
                 LiteralFact {
@@ -1388,10 +1391,12 @@ mod tests {
                     line: start_line + 1,
                     value: "7".to_string(),
                 },
-            ],
-            attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            ]
+            .into(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
+            generated: None,
         }
     }
 
@@ -1668,7 +1673,7 @@ mod tests {
         let with_attribute = |attribute: &str| {
             let (finding, _) = weakly_exposed_beside_a_proximity_oracle();
             let mut test = test_summary("direct_inner", "src/lib.rs", 20, "weight(x)");
-            test.attrs = vec![attribute.to_string()];
+            test.attrs = vec![attribute.to_string()].into();
             let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
                 tests: vec![test],
                 ..Default::default()
