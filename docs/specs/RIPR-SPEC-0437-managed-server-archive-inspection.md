@@ -90,8 +90,8 @@ directory, then `assertSafeZipListing`):
 3. A zip with one entry whose external attributes are \`0o600 << 16\`
    (permission bits, no file type) inspects clean: Windows-packaged servers
    are not rejected.
-4. A zip with a member named \`../../evil\`, \`/etc/passwd\`, \`C:\\evil\`, or
-   \`\\evil\` is refused.
+4. A zip with a traversal, Unix-absolute, drive-qualified absolute, or root-relative
+   member name is refused.
 5. A tar listing containing an \`l\`-row, an \`h\`-row, or a \` link to \` row is
    refused, as is any listing over 1000 members.
 6. A buffer without an end-of-central-directory record, or whose declared
