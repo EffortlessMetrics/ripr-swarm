@@ -1,0 +1,153 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "fast",
+  "root": "fixtures/same_line_call_inputs/input",
+  "summary": {"changed_rust_files":1,"probes":1,"findings":1,"exposed":1,"weakly_exposed":0,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"rust","files":1}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":null,"input_identity":"sha256:e2d69d068cc41a4a2e1675d3fad582cb85ff8fcfb0bd24e2a27b7baf25a5dc95","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":1,"finding_count":1},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:src_lib.rs:predicate:c1fe12b7",
+      "canonical_gap_id": "gap:rust:src/lib.rs:shipping:predicate_boundary:predicate:weight==100",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:shipping:predicate_boundary:predicate:weight==100",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "shipping",
+        "behavior_kind": "predicate_boundary",
+        "probe_kind": "predicate",
+        "normalized_discriminator": "weight==100"
+
+      },
+      "classification": "exposed",
+      "severity": "info",
+      "confidence": 1.00,
+      "probe": {
+        "id": "probe:src_lib.rs:predicate:c1fe12b7",
+        "family": "predicate",
+        "delta": "control",
+        "file": "./src/lib.rs",
+        "line": 2,
+        "expression": "weight > 100"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach shipping: shipping_boundary"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Detected related test input at the changed boundary"},
+        "propagate": {"state":"yes","confidence":"medium","summary":"Changed behavior appears to influence returned value: 60"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact value or pattern assertion"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach shipping: shipping_boundary", "infection yes: Detected related test input at the changed boundary", "propagation yes: Changed behavior appears to influence returned value: 60", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator yes: Strong oracle found: exact value or pattern assertion", "local flow reaches returned value: 60 (line 2)", "related test src/lib.rs:6 shipping_boundary uses strong exact value oracle: assert_eq!(shipping(100), 10);", "related test src/lib.rs:6 shipping_boundary uses strong exact value oracle: assert_eq!(shipping(101), 50);", "source assertion argument value 10 at line 7", "source assertion argument value 50 at line 7", "source function argument value weight = 100 at line 7", "source function argument value weight = 101 at line 7", "source function argument value weight == 100 at line 7"],
+      "flow_sinks": [
+        {"kind":"return_value","text":"60","line":2}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Changed behavior appears to influence returned value: 60", "Detected related test input at the changed boundary", "Related tests appear to reach shipping: shipping_boundary", "Strong oracle found: exact value or pattern assertion"],
+      "missing": [],
+      "assertion_texts": {
+        "7": "assert_eq!(shipping(100), 10);"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 7,
+            "value": "10",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 7,
+            "value": "50",
+            "context": "assertion_argument",
+            "provenance": "assert_eq!(shipping(101), 50);"
+          },
+          {
+            "line": 7,
+            "value": "weight = 100",
+            "context": "function_argument",
+            "provenance": "assert_eq!(shipping(101), 50); assert_eq!(shipping(100), 10);"
+          },
+          {
+            "line": 7,
+            "value": "weight = 101",
+            "context": "function_argument",
+            "provenance": "assert_eq!(shipping(101), 50); assert_eq!(shipping(100), 10);"
+          },
+          {
+            "line": 7,
+            "value": "weight == 100",
+            "context": "function_argument",
+            "provenance": "assert_eq!(shipping(101), 50); assert_eq!(shipping(100), 10); | exact input weight = 100; literal operand 100 = 100"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 7,
+          "value": "10",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 7,
+          "value": "50",
+          "context": "assertion_argument",
+          "provenance": "assert_eq!(shipping(101), 50);"
+        },
+        {
+          "line": 7,
+          "value": "weight = 100",
+          "context": "function_argument",
+          "provenance": "assert_eq!(shipping(101), 50); assert_eq!(shipping(100), 10);"
+        },
+        {
+          "line": 7,
+          "value": "weight = 101",
+          "context": "function_argument",
+          "provenance": "assert_eq!(shipping(101), 50); assert_eq!(shipping(100), 10);"
+        },
+        {
+          "line": 7,
+          "value": "weight == 100",
+          "context": "function_argument",
+          "provenance": "assert_eq!(shipping(101), 50); assert_eq!(shipping(100), 10); | exact input weight = 100; literal operand 100 = 100"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 2,
+      "related_tests": [
+        {
+          "name": "shipping_boundary",
+          "file": "src/lib.rs",
+          "line": 6,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(shipping(100), 10);",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        },
+        {
+          "name": "shipping_boundary",
+          "file": "src/lib.rs",
+          "line": 6,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(shipping(101), 50);",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        }
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "",
+      "suggested_next_action": "",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    }
+  ]
+}

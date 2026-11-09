@@ -196,3 +196,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — returned_closure_arithmetic_masking (17)
+
+Reason:
+RIPR-SPEC-0001: correct same-line input evidence and ambiguous rival facts without changing verdicts for issue 13373
+
+Command:
+`cargo xtask goldens bless returned_closure_arithmetic_masking --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
