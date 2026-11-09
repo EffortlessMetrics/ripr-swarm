@@ -29,6 +29,31 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+#[cfg(test)]
+thread_local! {
+    static ROW_KEY_SERIALIZATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static TEST_CLASSIFIED_REFERENCE_LIMIT: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
+    static TEST_REFERENCE_CLONES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(super) fn with_test_classified_reference_limit<T>(limit: usize, f: impl FnOnce() -> T) -> T {
+    struct Reset(Option<usize>);
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            TEST_CLASSIFIED_REFERENCE_LIMIT.with(|current| current.set(self.0));
+        }
+    }
+    let previous = TEST_CLASSIFIED_REFERENCE_LIMIT.with(|current| current.replace(Some(limit)));
+    let _reset = Reset(previous);
+    f()
+}
+
+#[cfg(test)]
+pub(super) fn take_test_reference_clones() -> usize {
+    TEST_REFERENCE_CLONES.with(std::cell::Cell::take)
+}
+
 #[derive(Serialize)]
 struct TableRef<'a> {
     related_tests: Vec<&'a RelatedTestGrip>,
@@ -215,17 +240,29 @@ pub(super) fn serialize<S: Serializer>(
 ) -> Result<S::Ok, S::Error> {
     let mut related_tests: Vec<&RelatedTestGrip> = Vec::new();
     let mut index_of: HashMap<Vec<u8>, u32> = HashMap::new();
+    // Decoded table references share an Arc. Reuse their index before
+    // serializing a key, so validation work follows distinct rows rather than
+    // references times row size. Distinct Arcs still deduplicate by value.
+    let mut index_by_row: HashMap<*const RelatedTestGrip, u32> = HashMap::new();
     let mut seam_refs = Vec::with_capacity(seams.len());
     for classified in seams {
         let seam_tests = &classified.evidence.related_tests;
         let mut indices = Vec::with_capacity(seam_tests.len());
         for test in seam_tests {
+            let row = Arc::as_ptr(test);
+            if let Some(&index) = index_by_row.get(&row) {
+                indices.push(index);
+                continue;
+            }
+            #[cfg(test)]
+            ROW_KEY_SERIALIZATIONS.with(|count| count.set(count.get() + 1));
             let key = serde_json::to_vec(test).map_err(S::Error::custom)?;
             let next = u32::try_from(related_tests.len()).map_err(S::Error::custom)?;
             let index = *index_of.entry(key).or_insert_with(|| {
                 related_tests.push(test);
                 next
             });
+            index_by_row.insert(row, index);
             indices.push(index);
         }
         seam_refs.push(seam_ref(classified, indices));
@@ -417,10 +454,51 @@ fn pretty_item_bytes<T: Serialize>(value: &T) -> Result<usize, String> {
 pub(super) fn deserialize<'de, D: Deserializer<'de>>(
     deserializer: D,
 ) -> Result<Vec<ClassifiedSeam>, D::Error> {
+    expand_table(TableOwned::deserialize(deserializer)?)
+}
+
+/// Bound reconstructed Arc slots for each classified entry or shard. The
+/// encoded file is read under a byte ceiling; its index vectors are decoded
+/// before this check and are outside the Arc-slot bound.
+pub(super) fn deserialize_classified<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Vec<ClassifiedSeam>, D::Error> {
+    let table = TableOwned::deserialize(deserializer)?;
+    let limit = classified_reference_limit();
+    let mut total = 0usize;
+    for seam in &table.seams {
+        total = total
+            .checked_add(seam.evidence.related_tests.len())
+            .filter(|&count| count <= limit)
+            .ok_or_else(|| {
+                D::Error::custom(format!("related-test reference limit exceeded ({limit})"))
+            })?;
+    }
+    expand_table(table)
+}
+
+fn classified_reference_limit_for_ceiling(byte_ceiling: usize) -> usize {
+    // At least eight encoded bytes are used per index by the pretty-printed
+    // classified-cache writer. This also bounds requested Arc slot bytes by
+    // the configured encoded ceiling on platforms with wider pointers.
+    byte_ceiling / std::mem::size_of::<Arc<RelatedTestGrip>>().max(8)
+}
+
+fn classified_reference_limit() -> usize {
+    #[cfg(test)]
+    if let Some(limit) = TEST_CLASSIFIED_REFERENCE_LIMIT.with(std::cell::Cell::get) {
+        return limit;
+    }
+    let ceiling = super::classified_seam_cache_encoded_shard_ceiling_bytes()
+        .unwrap_or(super::CLASSIFIED_SEAM_CACHE_ENCODED_SHARD_CEILING_BYTES);
+    classified_reference_limit_for_ceiling(ceiling)
+}
+
+fn expand_table<E: serde::de::Error>(table: TableOwned) -> Result<Vec<ClassifiedSeam>, E> {
     let TableOwned {
         related_tests: table,
         seams,
-    } = TableOwned::deserialize(deserializer)?;
+    } = table;
     let mut classified = Vec::with_capacity(seams.len());
     for SeamOwned {
         seam,
@@ -447,11 +525,13 @@ pub(super) fn deserialize<'de, D: Deserializer<'de>>(
                 .ok()
                 .and_then(|index| table.get(index))
                 .ok_or_else(|| {
-                    D::Error::custom(format!(
+                    E::custom(format!(
                         "related test index {index} outside a table of {}",
                         table.len()
                     ))
                 })?;
+            #[cfg(test)]
+            TEST_REFERENCE_CLONES.with(|count| count.set(count.get().saturating_add(1)));
             related_tests.push(Arc::clone(test));
         }
         classified.push(ClassifiedSeam {
@@ -586,6 +666,76 @@ pub(super) mod tests {
         assert!(Arc::ptr_eq(&tests(0)[0], &tests(3)[0]));
         assert!(Arc::ptr_eq(&tests(0)[1], &tests(1)[0]));
         assert!(!Arc::ptr_eq(&tests(0)[0], &tests(1)[2]));
+        Ok(())
+    }
+
+    #[test]
+    fn classified_reference_budget_tracks_byte_ceiling_and_pretty_writer() -> Result<(), String> {
+        let ceiling = super::super::CLASSIFIED_SEAM_CACHE_ENCODED_SHARD_CEILING_BYTES;
+        let slot_bytes = std::mem::size_of::<Arc<RelatedTestGrip>>();
+        let limit = classified_reference_limit_for_ceiling(ceiling);
+        assert_eq!(limit, ceiling / slot_bytes.max(8));
+        assert!(limit.saturating_mul(slot_bytes) <= ceiling);
+        assert_eq!(classified_reference_limit_for_ceiling(0), 0);
+        let configured =
+            super::super::classified_seam_cache_encoded_shard_ceiling_bytes().unwrap_or(ceiling);
+        assert_eq!(
+            classified_reference_limit(),
+            classified_reference_limit_for_ceiling(configured)
+        );
+
+        let row = Arc::new(related("budget", RelationReason::SameModule));
+        for count in [1, 2, 10, 1_024] {
+            let mut classified = seam(1, Vec::new());
+            classified.evidence.related_tests = vec![Arc::clone(&row); count];
+            let encoded = serde_json::to_vec_pretty(&Body {
+                seams: vec![classified],
+            })
+            .map_err(|err| err.to_string())?;
+            assert!(
+                classified_reference_limit_for_ceiling(encoded.len()) >= count,
+                "the pretty writer's {count} references must fit the derived limit"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn shared_rows_are_serialized_once_for_table_keys() -> Result<(), String> {
+        let mut large = related("large", RelationReason::SameModule);
+        large.evidence_summary = "x".repeat(64 * 1024);
+        let row = Arc::new(large);
+        let mut first = seam(1, Vec::new());
+        first.evidence.related_tests = vec![Arc::clone(&row); 1024];
+        let mut second = seam(2, Vec::new());
+        // A separately allocated, equal row must still deduplicate by value.
+        second.evidence.related_tests = vec![Arc::new((*row).clone()), Arc::clone(&row)];
+        ROW_KEY_SERIALIZATIONS.with(|count| count.set(0));
+        let encoded = serde_json::to_value(Body {
+            seams: vec![first, second],
+        })
+        .map_err(|err| err.to_string())?;
+        let count = ROW_KEY_SERIALIZATIONS.with(std::cell::Cell::get);
+        assert_eq!(count, 2, "one key serialization per distinct live row");
+        assert_eq!(
+            encoded["seams"]["related_tests"].as_array().map(Vec::len),
+            Some(1)
+        );
+        let indices = encoded["seams"]["seams"][0]["evidence"]["related_tests"]
+            .as_array()
+            .ok_or("missing indices")?;
+        assert_eq!(indices.len(), 1024);
+        assert!(indices.iter().all(|index| index == 0));
+        assert_eq!(
+            encoded["seams"]["seams"][1]["evidence"]["related_tests"],
+            serde_json::json!([0, 0])
+        );
+        let decoded: Body =
+            serde_json::from_value(encoded.clone()).map_err(|err| err.to_string())?;
+        ROW_KEY_SERIALIZATIONS.with(|count| count.set(0));
+        let reencoded = serde_json::to_value(decoded).map_err(|err| err.to_string())?;
+        assert_eq!(ROW_KEY_SERIALIZATIONS.with(std::cell::Cell::get), 1);
+        assert_eq!(reencoded, encoded);
         Ok(())
     }
 

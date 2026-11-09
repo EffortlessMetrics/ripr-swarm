@@ -1,0 +1,2 @@
+<!-- section: Internal / CI -->
+- `cargo xtask install-receipt` now merges several runs and judges each cell on all its samples: prebuilt channels on the median against 300 s, and `cargo install` (a source build) on the median of at least three samples against 900 s, so one slow runner no longer decides the R0 install row. `first-run-archive.yml` uploads per-platform archive install seconds into the receipt, and `published-install-matrix.yml` gains a `cargo binstall` cell, a documented gap until 0.11.0 ships (#12909).

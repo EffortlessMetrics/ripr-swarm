@@ -165,7 +165,7 @@ pub(crate) fn check_file_policy() -> Result<(), String> {
         }
     }
 
-    finish_policy_report_with_disclosures(
+    let result = finish_policy_report_with_disclosures(
         PolicyReportSpec {
             report_file: "file-policy.md",
             check: "check-file-policy",
@@ -190,7 +190,20 @@ pub(crate) fn check_file_policy() -> Result<(), String> {
             intro: format!("{COMMAND_DIAGNOSTIC_DISCLOSURE} Capture scope: actual covered-by warmup/list calls only. Reused listings, skipped warmups and host-inapplicable selectors add no executed rows."),
             items: diagnostics.iter().map(CommandDiagnostic::render).collect(),
         }],
-    )
+    );
+    if result.is_ok() {
+        // The sidecar only serves the Windows advisory admission step, which
+        // refuses a report without it. A passing policy run must not become a
+        // failure where git HEAD is unavailable (source export, no commits), so
+        // report the write failure and withhold any stale sidecar instead.
+        if let Err(error) = super::file_policy_retained_evidence::write_retained_subject() {
+            eprintln!("warning: {error}");
+            super::file_policy_retained_evidence::remove_retained_subject();
+        }
+    } else {
+        super::file_policy_retained_evidence::remove_retained_subject();
+    }
+    result
 }
 
 fn file_policy_failure_report(
@@ -199,6 +212,7 @@ fn file_policy_failure_report(
     diagnostics: &[CommandDiagnostic],
     mut write: impl FnMut(&str) -> Result<(), String>,
 ) -> Result<(), String> {
+    super::file_policy_retained_evidence::remove_retained_subject();
     // Preserve the original enumerator failure, including instrument failures,
     // without routing it through a renderer that calls it a policy violation.
     let body = format!(
@@ -454,6 +468,10 @@ fn validate_test_covered_by_recorded_with(
 /// between `-p xtask` and `-p ripr -p xtask` (#12245). Keeping `xtask`
 /// selectors out of any build that selects `ripr` leaves them with the same
 /// build that `cargo xtask` made.
+///
+/// A `--lib` selector joins its package's set: the lib unit-test target shares
+/// the package's feature set, so `-p ripr --lib` and `-p ripr --test …` build
+/// in one Cargo invocation instead of two serial ones (#13705).
 fn combined_preparation_builds(
     commands: &[FilePolicyTestCommand],
     host: FilePolicyHost,
@@ -462,6 +480,7 @@ fn combined_preparation_builds(
     struct Group {
         bins: BTreeSet<String>,
         tests: BTreeSet<String>,
+        lib: bool,
         merged: usize,
     }
     let mut groups = BTreeMap::<BTreeSet<String>, Group>::new();
@@ -475,6 +494,7 @@ fn combined_preparation_builds(
         let mut command_packages = BTreeSet::new();
         let mut command_bins = BTreeSet::new();
         let mut command_tests = BTreeSet::new();
+        let mut command_lib = false;
         let mut words = words.peekable();
         let mut mergeable = true;
         while let Some(word) = words.next() {
@@ -496,6 +516,9 @@ fn combined_preparation_builds(
                 // compiles; a selector whose build a positional could change
                 // must not reach this arm.
                 None if matches!(word, "--locked" | "--offline") || !word.starts_with('-') => {}
+                // `--lib` selects ripr's unit-test target within the same
+                // package build; it adds a target, not a feature set (#13705).
+                None if word == "--lib" => command_lib = true,
                 None => mergeable = false,
             }
         }
@@ -503,6 +526,7 @@ fn combined_preparation_builds(
             let group = groups.entry(command_packages).or_default();
             group.bins.extend(command_bins);
             group.tests.extend(command_tests);
+            group.lib |= command_lib;
             group.merged += 1;
         }
     }
@@ -514,6 +538,9 @@ fn combined_preparation_builds(
             for package in packages {
                 args.push("-p".to_string());
                 args.push(package);
+            }
+            if group.lib {
+                args.push("--lib".to_string());
             }
             for (flag, values) in [("--bin", group.bins), ("--test", group.tests)] {
                 for value in values {
@@ -1093,6 +1120,31 @@ mod tests {
                 assert_eq!(super::preparation_args_identity(&argv(&command)), expected);
             }
         }
+    }
+
+    #[test]
+    fn covered_by_combined_preparation_folds_lib_into_its_package_set() {
+        let commands = [
+            common(
+                1,
+                "cargo test -p ripr --lib analysis::scip::admission::tests",
+            ),
+            common(2, "cargo test -p ripr --test mcp_stdio"),
+            common(3, "cargo test -p ripr --test causal_delta_fixture beta"),
+            common(4, "cargo test -p alpha --bin alpha one"),
+            common(5, "cargo test -p alpha --lib two"),
+        ];
+        assert_eq!(
+            super::combined_preparation_builds(&commands, FilePolicyHost::Unix),
+            vec![
+                argv("test --no-run -p alpha --lib --bin alpha"),
+                argv("test --no-run -p ripr --lib --test causal_delta_fixture --test mcp_stdio"),
+            ]
+        );
+        // A lone `--lib` selector still needs no combined build.
+        assert!(
+            super::combined_preparation_builds(&commands[..1], FilePolicyHost::Unix).is_empty()
+        );
     }
 
     #[test]

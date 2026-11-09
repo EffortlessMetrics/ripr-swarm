@@ -342,6 +342,12 @@ pub enum NextActionStop {
         /// constructs the stop without a route.
         #[serde(default)]
         detail_route: String,
+        /// The guided `ripr agent repair` start for the selected finding,
+        /// present only when the check's shared repair-route decision says
+        /// the gap can be started. The class stays non-executable: this
+        /// names the route, it does not run it.
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        repair_route: String,
     },
     DoctorRecovery {
         check_name: String,
@@ -497,6 +503,11 @@ pub(crate) struct NextActionInput<'a> {
     pub(crate) restart_route: String,
     /// The check triage case, bound by the check producer only.
     pub(crate) check_case: Option<NextActionCheckCase>,
+    /// The `ripr agent repair` start command for the check's selected finding,
+    /// bound by the check producer only when the shared repair-route decision
+    /// says the gap can be started. Carried on the non-executable check stop
+    /// so JSON agrees with the human `Next` block; never an execution grant.
+    pub(crate) check_repair_route: Option<String>,
     /// The precise doctor recovery, bound by the doctor producer only.
     pub(crate) doctor_recovery: Option<NextActionDoctorRecovery>,
     /// The delegated check/repair transaction, bound by pilot only.
@@ -690,150 +701,175 @@ pub(crate) fn current_command_platform() -> Option<CommandPlatform> {
 /// manual execution, missing prerequisite, then the producer-specific and
 /// run/inspect tail. Each gate names its typed stop; removing one gate fails
 /// its focused negative (control 10).
+///
+/// The gate is chosen by `walk_gates`, the single gate owner, as a typed
+/// `NextActionDecision` (no label formatting, no candidate collection); this
+/// function renders that decision into the minted action at the gate's own
+/// return site, so each gate renders only its own stop.
 pub(crate) fn select_canonical_next_action(
     input: &NextActionInput<'_>,
 ) -> Result<CanonicalNextActionV1, String> {
+    match walk_gates(input, |decision| render_decision(input, decision)) {
+        Ok(rendered) => rendered,
+        Err(violation) => Err(violation.to_string()),
+    }
+}
+
+/// The selector's typed gate decision for one input: which gate fired, with
+/// borrowed references to the producer facts its stop renders from.
+/// Only [`Self::Run`] is executable; every other variant renders through
+/// `stopped`, which never references a command. Choosing the variant needs no
+/// label formatting or candidate collection, so the refusal side of the
+/// actionability flip can be model-checked apart from its rendering.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum NextActionDecision<'i> {
+    /// Pilot named an action without its delegation handle.
+    PilotInvention,
+    /// Bound heads differ.
+    HeadsDiverge,
+    /// Bound configs differ.
+    ConfigsDiverge,
+    /// Check and card selected different bound items.
+    Disagreement {
+        check_item: &'i str,
+        card_item: &'i str,
+    },
+    /// The producer declared a limitation.
+    Limitation { limitation: &'i str },
+    /// More than one visible attempt.
+    SeveralAttempts,
+    /// The single attempt is terminal and the offer is not a read-only spec.
+    TerminalAttempt { attempt: &'i NextActionAttemptView },
+    /// The single attempt awaits a focused test edit.
+    AwaitingEdit { attempt: &'i NextActionAttemptView },
+    /// The single attempt recommends a restart.
+    RestartRecommended { attempt: &'i NextActionAttemptView },
+    /// More than one unranked item candidate.
+    SeveralItems,
+    /// The route would refuse the offered command's target.
+    RouteRefused { spec: &'i CommandSpec },
+    /// The offered command does not render on the (possibly unknown) platform.
+    PlatformUnavailable { spec: &'i CommandSpec },
+    /// The offered command is a manual step.
+    ManualStep { spec: &'i CommandSpec },
+    /// No offered command and a named missing prerequisite.
+    MissingInput { missing: &'i str },
+    /// An offered command whose heads are not bound and fresh.
+    HeadNotFresh,
+    /// The admitted offered command runs with the producer-named effect.
+    Run {
+        spec: &'i CommandSpec,
+        transition_to: &'i str,
+    },
+    /// The check triage case decides the class.
+    CheckTriage { case: NextActionCheckCase },
+    /// The precise doctor recovery.
+    DoctorRecovery {
+        recovery: &'i NextActionDoctorRecovery,
+    },
+    /// The pilot delegation handle.
+    PilotDelegated {
+        delegation: &'i NextActionPilotDelegation,
+    },
+    /// Nothing more specific: inspect the detail route.
+    InspectTarget,
+}
+
+impl NextActionDecision<'_> {
+    /// Only the run decision references a command.
+    #[cfg(any(test, kani))]
+    fn is_executable(self) -> bool {
+        matches!(self, Self::Run { .. })
+    }
+}
+
+/// The typed gate decision for normalized producer state, without rendering.
+#[cfg(any(test, kani))]
+fn decide_next_action<'i>(
+    input: &'i NextActionInput<'_>,
+) -> Result<NextActionDecision<'i>, &'static str> {
+    walk_gates(input, |decision| decision)
+}
+
+/// Choose the gate for normalized producer state, in the load-bearing order
+/// documented on [`select_canonical_next_action`], and hand the typed
+/// decision to `emit` at that gate's own return site. Producer-input
+/// violations are returned as their exact static refusal text.
+///
+/// `emit` is applied where each gate fires rather than after a shared exit:
+/// every call site passes a decision whose variant is fixed there, so a
+/// bounded model checker following the selector explores only that gate's
+/// rendering instead of every rendering arm under a merged symbolic decision.
+/// `decide_next_action` passes the identity, `select_canonical_next_action`
+/// passes `render_decision`; the gate logic exists only here.
+fn walk_gates<'i, R>(
+    input: &'i NextActionInput<'_>,
+    emit: impl FnOnce(NextActionDecision<'i>) -> R,
+) -> Result<R, &'static str> {
     if input.root.trim().is_empty() {
-        return Err("next-action producer must bind a root; report this as a ripr bug with the command that produced it".to_string());
+        return Err(
+            "next-action producer must bind a root; report this as a ripr bug with the command that produced it",
+        );
     }
     if input.transition_from.trim().is_empty() {
-        return Err("next-action producer must name the current state; report this as a ripr bug with the command that produced it".to_string());
+        return Err(
+            "next-action producer must name the current state; report this as a ripr bug with the command that produced it",
+        );
     }
     match input.producer {
         NextActionProducer::CheckTopResult if input.check_case.is_none() => {
-            return Err("check producer must bind its triage case; report this as a ripr bug with the command that produced it".to_string());
+            return Err(
+                "check producer must bind its triage case; report this as a ripr bug with the command that produced it",
+            );
         }
         NextActionProducer::Doctor
             if input.doctor_recovery.is_none() && input.limitation.is_none() =>
         {
             return Err(
-                "doctor producer must bind a precise recovery or declare its limitation; report this as a ripr bug with the command that produced it"
-                    .to_string(),
+                "doctor producer must bind a precise recovery or declare its limitation; report this as a ripr bug with the command that produced it",
             );
         }
         _ => {}
     }
     if !input.item_id.trim().is_empty() && !input.item_candidates.is_empty() {
         return Err(
-            "next-action producer must bind one item or name candidates, not both; report this as a ripr bug with the command that produced it".to_string(),
+            "next-action producer must bind one item or name candidates, not both; report this as a ripr bug with the command that produced it",
         );
     }
 
     // Pilot without a delegation handle invented a route outside its
     // transaction: a typed limitation, never an action.
     if input.producer == NextActionProducer::PilotDelegation && input.pilot_delegation.is_none() {
-        return stopped(
-            input,
-            NextActionClass::UnsupportedOrLimited,
-            NextActionStop::Unsupported {
-                limitation: PILOT_INVENTION_LIMITATION.to_string(),
-                detail_route: input.detail_route.clone(),
-            },
-            None,
-            Vec::new(),
-        );
+        return Ok(emit(NextActionDecision::PilotInvention));
     }
     // A stale or moved head invalidates the action and names the restart
     // route (control 5). Unbound axes are explicit unknowns, handled at the
     // tail; only bound divergence refuses here.
     if input.currentness.heads_diverge() {
-        let observed = input
-            .currentness
-            .head_observed
-            .clone()
-            .unwrap_or_else(|| "unknown".to_string());
-        let expected = input
-            .currentness
-            .head_expected
-            .clone()
-            .unwrap_or_else(|| "unknown".to_string());
-        return stopped(
-            input,
-            NextActionClass::RetryCurrentSubject,
-            NextActionStop::RefreshCurrentness {
-                observed,
-                expected,
-                restart_route: input.restart_route.clone(),
-            },
-            Some(TRANSITION_EVIDENCE_CURRENT),
-            Vec::new(),
-        );
+        return Ok(emit(NextActionDecision::HeadsDiverge));
     }
     if input.currentness.configs_diverge() {
-        let observed = input
-            .currentness
-            .config_observed
-            .clone()
-            .unwrap_or_else(|| "unknown".to_string());
-        let expected = input
-            .currentness
-            .config_expected
-            .clone()
-            .unwrap_or_else(|| "unknown".to_string());
-        return stopped(
-            input,
-            NextActionClass::RetryCurrentSubject,
-            NextActionStop::RefreshConfig {
-                observed,
-                expected,
-                restart_route: input.restart_route.clone(),
-            },
-            Some(TRANSITION_EVIDENCE_CURRENT),
-            Vec::new(),
-        );
+        return Ok(emit(NextActionDecision::ConfigsDiverge));
     }
     // Check and card disagree on the selected item: refuse rather than
     // choosing one silently (control 1).
     if let (Some(check_item), Some(card_item)) = (&input.check_item, &input.card_item)
         && check_item != card_item
     {
-        return stopped(
-            input,
-            NextActionClass::ChooseItem,
-            NextActionStop::ResolveDisagreement {
-                check_item: check_item.clone(),
-                card_item: card_item.clone(),
-            },
-            None,
-            Vec::new(),
-        );
+        return Ok(emit(NextActionDecision::Disagreement {
+            check_item,
+            card_item,
+        }));
     }
     // A producer-declared limitation is a valid result, never an executable
     // repair.
     if let Some(limitation) = &input.limitation {
-        return stopped(
-            input,
-            NextActionClass::UnsupportedOrLimited,
-            NextActionStop::Unsupported {
-                limitation: limitation.clone(),
-                detail_route: input
-                    .limitation_route
-                    .clone()
-                    .unwrap_or_else(|| input.detail_route.clone()),
-            },
-            None,
-            Vec::new(),
-        );
+        return Ok(emit(NextActionDecision::Limitation { limitation }));
     }
     // Several visible attempts require selection rather than a
     // newest/first/mtime fallback (control 6).
     if input.attempts.len() > 1 {
-        let candidates: Vec<String> = input
-            .attempts
-            .iter()
-            .take(MAX_NEXT_ACTION_STOP_CANDIDATES)
-            .map(|attempt| attempt.id.clone())
-            .collect();
-        return stopped(
-            input,
-            NextActionClass::ChooseAttempt,
-            NextActionStop::SelectAttempt {
-                candidates,
-                total: input.attempts.len(),
-            },
-            None,
-            Vec::new(),
-        );
+        return Ok(emit(NextActionDecision::SeveralAttempts));
     }
     if let Some(attempt) = input.attempts.first() {
         // Read-only specs stay available on terminal results: inspection and
@@ -844,11 +880,195 @@ pub(crate) fn select_canonical_next_action(
             matches!(spec.role, CommandRole::Inspection | CommandRole::Receipt)
         });
         if attempt.terminal && !read_only_offer {
+            return Ok(emit(NextActionDecision::TerminalAttempt { attempt }));
+        }
+        if attempt.awaits_edit {
+            return Ok(emit(NextActionDecision::AwaitingEdit { attempt }));
+        }
+        if attempt.restart_recommended {
+            return Ok(emit(NextActionDecision::RestartRecommended { attempt }));
+        }
+    }
+    // Several unranked items require selection (control 6 covers attempts;
+    // this is the item twin). One candidate normalizes to the bound item.
+    if input.item_candidates.len() > 1 {
+        return Ok(emit(NextActionDecision::SeveralItems));
+    }
+    // A command the route would refuse can never be the primary action,
+    // however plausible its syntax (control 2).
+    if let Some(spec) = input.offered_command
+        && !input.route_admitted
+    {
+        return Ok(emit(NextActionDecision::RouteRefused { spec }));
+    }
+    // Missing platform rendering stays unavailable with an explicit
+    // alternative; it never emits an unqualified string (control 8).
+    if let Some(spec) = input.offered_command
+        && input
+            .platform
+            .is_none_or(|platform| !spec.platforms.contains(&platform))
+    {
+        return Ok(emit(NextActionDecision::PlatformUnavailable { spec }));
+    }
+    if let Some(spec) = input.offered_command
+        && spec.execution_mode == CommandExecutionMode::Manual
+    {
+        return Ok(emit(NextActionDecision::ManualStep { spec }));
+    }
+    // No offered command but a named missing prerequisite: satisfy it
+    // before anything can run.
+    if input.offered_command.is_none()
+        && let Some(missing) = &input.missing_input
+    {
+        return Ok(emit(NextActionDecision::MissingInput { missing }));
+    }
+
+    // Tail: an admitted executable command wins; otherwise the most specific
+    // producer stop explains what to do instead of running.
+    if let Some(spec) = input.offered_command {
+        if !input.currentness.heads_bound_and_fresh() {
+            return Ok(emit(NextActionDecision::HeadNotFresh));
+        }
+        let Some(transition_to) = &input.transition_to else {
+            return Err(
+                "next-action producer must name the offered command's effect; report this as a ripr bug with the command that produced it",
+            );
+        };
+        return Ok(emit(NextActionDecision::Run {
+            spec,
+            transition_to,
+        }));
+    }
+    if let Some(case) = input.check_case {
+        return Ok(emit(NextActionDecision::CheckTriage { case }));
+    }
+    if let Some(recovery) = &input.doctor_recovery {
+        return Ok(emit(NextActionDecision::DoctorRecovery { recovery }));
+    }
+    if let Some(delegation) = &input.pilot_delegation {
+        return Ok(emit(NextActionDecision::PilotDelegated { delegation }));
+    }
+    Ok(emit(NextActionDecision::InspectTarget))
+}
+
+/// The head refresh stop shared by bound divergence and the not-fresh tail.
+fn refresh_head_stop(input: &NextActionInput<'_>) -> NextActionStop {
+    let observed = input
+        .currentness
+        .head_observed
+        .clone()
+        .unwrap_or_else(|| "unknown".to_string());
+    let expected = input
+        .currentness
+        .head_expected
+        .clone()
+        .unwrap_or_else(|| "unknown".to_string());
+    NextActionStop::RefreshCurrentness {
+        observed,
+        expected,
+        restart_route: input.restart_route.clone(),
+    }
+}
+
+/// Render a typed decision into the minted action: stop labels, candidate
+/// lists and selector-added alternatives are built here and only here. Every
+/// variant except `NextActionDecision::Run` goes through `stopped`, so
+/// rendering can never mint an executable refusal.
+fn render_decision(
+    input: &NextActionInput<'_>,
+    decision: NextActionDecision<'_>,
+) -> Result<CanonicalNextActionV1, String> {
+    match decision {
+        NextActionDecision::PilotInvention => stopped(
+            input,
+            NextActionClass::UnsupportedOrLimited,
+            NextActionStop::Unsupported {
+                limitation: PILOT_INVENTION_LIMITATION.to_string(),
+                detail_route: input.detail_route.clone(),
+            },
+            None,
+            Vec::new(),
+        ),
+        NextActionDecision::HeadsDiverge | NextActionDecision::HeadNotFresh => stopped(
+            input,
+            NextActionClass::RetryCurrentSubject,
+            refresh_head_stop(input),
+            Some(TRANSITION_EVIDENCE_CURRENT),
+            Vec::new(),
+        ),
+        NextActionDecision::ConfigsDiverge => {
+            let observed = input
+                .currentness
+                .config_observed
+                .clone()
+                .unwrap_or_else(|| "unknown".to_string());
+            let expected = input
+                .currentness
+                .config_expected
+                .clone()
+                .unwrap_or_else(|| "unknown".to_string());
+            stopped(
+                input,
+                NextActionClass::RetryCurrentSubject,
+                NextActionStop::RefreshConfig {
+                    observed,
+                    expected,
+                    restart_route: input.restart_route.clone(),
+                },
+                Some(TRANSITION_EVIDENCE_CURRENT),
+                Vec::new(),
+            )
+        }
+        NextActionDecision::Disagreement {
+            check_item,
+            card_item,
+        } => stopped(
+            input,
+            NextActionClass::ChooseItem,
+            NextActionStop::ResolveDisagreement {
+                check_item: check_item.to_string(),
+                card_item: card_item.to_string(),
+            },
+            None,
+            Vec::new(),
+        ),
+        NextActionDecision::Limitation { limitation } => stopped(
+            input,
+            NextActionClass::UnsupportedOrLimited,
+            NextActionStop::Unsupported {
+                limitation: limitation.to_string(),
+                detail_route: input
+                    .limitation_route
+                    .clone()
+                    .unwrap_or_else(|| input.detail_route.clone()),
+            },
+            None,
+            Vec::new(),
+        ),
+        NextActionDecision::SeveralAttempts => {
+            let candidates: Vec<String> = input
+                .attempts
+                .iter()
+                .take(MAX_NEXT_ACTION_STOP_CANDIDATES)
+                .map(|attempt| attempt.id.clone())
+                .collect();
+            stopped(
+                input,
+                NextActionClass::ChooseAttempt,
+                NextActionStop::SelectAttempt {
+                    candidates,
+                    total: input.attempts.len(),
+                },
+                None,
+                Vec::new(),
+            )
+        }
+        NextActionDecision::TerminalAttempt { attempt } => {
             let receipt_ref = attempt
                 .receipt_ref
                 .clone()
                 .unwrap_or_else(|| input.detail_route.clone());
-            return stopped(
+            stopped(
                 input,
                 NextActionClass::TerminalNoAction,
                 NextActionStop::TerminalComplete {
@@ -859,69 +1079,57 @@ pub(crate) fn select_canonical_next_action(
                     label: format!("terminal details for attempt {}", attempt.id),
                     route: receipt_ref,
                 }],
-            );
+            )
         }
-        if attempt.awaits_edit {
-            return stopped(
-                input,
-                NextActionClass::SatisfyPrerequisite,
-                NextActionStop::ProvideInput {
-                    input: format!("focused test edit for attempt {}", attempt.id),
-                    detail_route: attempt
-                        .receipt_ref
-                        .clone()
-                        .unwrap_or_else(|| input.detail_route.clone()),
-                },
-                Some(TRANSITION_PREREQUISITE_SATISFIED),
-                Vec::new(),
-            );
-        }
-        if attempt.restart_recommended {
-            return stopped(
-                input,
-                NextActionClass::RetryCurrentSubject,
-                NextActionStop::RestartAttempt {
-                    attempt_id: attempt.id.clone(),
-                    restart_route: attempt.restart_route.clone(),
-                },
-                Some(TRANSITION_ATTEMPT_RESTARTED),
-                Vec::new(),
-            );
-        }
-    }
-    // Several unranked items require selection (control 6 covers attempts;
-    // this is the item twin). One candidate normalizes to the bound item.
-    if input.item_candidates.len() > 1 {
-        let candidates: Vec<String> = input
-            .item_candidates
-            .iter()
-            .take(MAX_NEXT_ACTION_STOP_CANDIDATES)
-            .cloned()
-            .collect();
-        let labels: Vec<String> = input
-            .item_candidate_labels
-            .iter()
-            .take(candidates.len())
-            .cloned()
-            .collect();
-        return stopped(
+        NextActionDecision::AwaitingEdit { attempt } => stopped(
             input,
-            NextActionClass::ChooseItem,
-            NextActionStop::SelectItem {
-                candidates,
-                labels,
-                total: input.item_candidates.len(),
+            NextActionClass::SatisfyPrerequisite,
+            NextActionStop::ProvideInput {
+                input: format!("focused test edit for attempt {}", attempt.id),
+                detail_route: attempt
+                    .receipt_ref
+                    .clone()
+                    .unwrap_or_else(|| input.detail_route.clone()),
             },
-            None,
+            Some(TRANSITION_PREREQUISITE_SATISFIED),
             Vec::new(),
-        );
-    }
-    // A command the route would refuse can never be the primary action,
-    // however plausible its syntax (control 2).
-    if let Some(spec) = input.offered_command
-        && !input.route_admitted
-    {
-        return stopped(
+        ),
+        NextActionDecision::RestartRecommended { attempt } => stopped(
+            input,
+            NextActionClass::RetryCurrentSubject,
+            NextActionStop::RestartAttempt {
+                attempt_id: attempt.id.clone(),
+                restart_route: attempt.restart_route.clone(),
+            },
+            Some(TRANSITION_ATTEMPT_RESTARTED),
+            Vec::new(),
+        ),
+        NextActionDecision::SeveralItems => {
+            let candidates: Vec<String> = input
+                .item_candidates
+                .iter()
+                .take(MAX_NEXT_ACTION_STOP_CANDIDATES)
+                .cloned()
+                .collect();
+            let labels: Vec<String> = input
+                .item_candidate_labels
+                .iter()
+                .take(candidates.len())
+                .cloned()
+                .collect();
+            stopped(
+                input,
+                NextActionClass::ChooseItem,
+                NextActionStop::SelectItem {
+                    candidates,
+                    labels,
+                    total: input.item_candidates.len(),
+                },
+                None,
+                Vec::new(),
+            )
+        }
+        NextActionDecision::RouteRefused { spec } => stopped(
             input,
             NextActionClass::SatisfyPrerequisite,
             NextActionStop::RouteRefused {
@@ -933,16 +1141,8 @@ pub(crate) fn select_canonical_next_action(
             },
             Some(TRANSITION_ROUTE_ADMITTED),
             Vec::new(),
-        );
-    }
-    // Missing platform rendering stays unavailable with an explicit
-    // alternative; it never emits an unqualified string (control 8).
-    if let Some(spec) = input.offered_command
-        && input
-            .platform
-            .is_none_or(|platform| !spec.platforms.contains(&platform))
-    {
-        return stopped(
+        ),
+        NextActionDecision::PlatformUnavailable { spec } => stopped(
             input,
             NextActionClass::UnsupportedOrLimited,
             NextActionStop::PlatformUnavailable {
@@ -955,12 +1155,8 @@ pub(crate) fn select_canonical_next_action(
                 label: format!("alternative to {}", spec.command_id),
                 route: input.detail_route.clone(),
             }],
-        );
-    }
-    if let Some(spec) = input.offered_command
-        && spec.execution_mode == CommandExecutionMode::Manual
-    {
-        return stopped(
+        ),
+        NextActionDecision::ManualStep { spec } => stopped(
             input,
             NextActionClass::SatisfyPrerequisite,
             NextActionStop::ManualStep {
@@ -969,75 +1165,40 @@ pub(crate) fn select_canonical_next_action(
             },
             Some(TRANSITION_MANUAL_STEP_COMPLETE),
             Vec::new(),
-        );
-    }
-    // No offered command but a named missing prerequisite: satisfy it
-    // before anything can run.
-    if input.offered_command.is_none()
-        && let Some(missing) = &input.missing_input
-    {
-        return stopped(
+        ),
+        NextActionDecision::MissingInput { missing } => stopped(
             input,
             NextActionClass::SatisfyPrerequisite,
             NextActionStop::ProvideInput {
-                input: missing.clone(),
+                input: missing.to_string(),
                 detail_route: input.detail_route.clone(),
             },
             Some(TRANSITION_PREREQUISITE_SATISFIED),
             Vec::new(),
-        );
-    }
-
-    // Tail: an admitted executable command wins; otherwise the most specific
-    // producer stop explains what to do instead of running.
-    if let Some(spec) = input.offered_command {
-        if !input.currentness.heads_bound_and_fresh() {
-            let observed = input
-                .currentness
-                .head_observed
-                .clone()
-                .unwrap_or_else(|| "unknown".to_string());
-            let expected = input
-                .currentness
-                .head_expected
-                .clone()
-                .unwrap_or_else(|| "unknown".to_string());
-            return stopped(
+        ),
+        NextActionDecision::Run {
+            spec,
+            transition_to,
+        } => running(input, spec, transition_to.to_string()),
+        NextActionDecision::CheckTriage { case } => {
+            let class = case.action_class();
+            let transition = match class {
+                NextActionClass::SatisfyPrerequisite => Some(TRANSITION_SCOPE_PROVIDED),
+                _ => None,
+            };
+            stopped(
                 input,
-                NextActionClass::RetryCurrentSubject,
-                NextActionStop::RefreshCurrentness {
-                    observed,
-                    expected,
-                    restart_route: input.restart_route.clone(),
+                class,
+                NextActionStop::CheckTriage {
+                    case,
+                    detail_route: input.detail_route.clone(),
+                    repair_route: input.check_repair_route.clone().unwrap_or_default(),
                 },
-                Some(TRANSITION_EVIDENCE_CURRENT),
+                transition,
                 Vec::new(),
-            );
+            )
         }
-        let Some(transition_to) = input.transition_to.clone() else {
-            return Err("next-action producer must name the offered command's effect; report this as a ripr bug with the command that produced it".to_string());
-        };
-        return running(input, spec, transition_to);
-    }
-    if let Some(case) = input.check_case {
-        let class = case.action_class();
-        let transition = match class {
-            NextActionClass::SatisfyPrerequisite => Some(TRANSITION_SCOPE_PROVIDED),
-            _ => None,
-        };
-        return stopped(
-            input,
-            class,
-            NextActionStop::CheckTriage {
-                case,
-                detail_route: input.detail_route.clone(),
-            },
-            transition,
-            Vec::new(),
-        );
-    }
-    if let Some(recovery) = &input.doctor_recovery {
-        return stopped(
+        NextActionDecision::DoctorRecovery { recovery } => stopped(
             input,
             NextActionClass::SatisfyPrerequisite,
             NextActionStop::DoctorRecovery {
@@ -1046,10 +1207,8 @@ pub(crate) fn select_canonical_next_action(
             },
             Some(TRANSITION_RECOVERY_APPLIED),
             Vec::new(),
-        );
-    }
-    if let Some(delegation) = &input.pilot_delegation {
-        return stopped(
+        ),
+        NextActionDecision::PilotDelegated { delegation } => stopped(
             input,
             NextActionClass::InspectDetails,
             NextActionStop::PilotDelegated {
@@ -1058,17 +1217,17 @@ pub(crate) fn select_canonical_next_action(
             },
             None,
             Vec::new(),
-        );
+        ),
+        NextActionDecision::InspectTarget => stopped(
+            input,
+            NextActionClass::InspectDetails,
+            NextActionStop::InspectTarget {
+                detail_route: input.detail_route.clone(),
+            },
+            None,
+            Vec::new(),
+        ),
     }
-    stopped(
-        input,
-        NextActionClass::InspectDetails,
-        NextActionStop::InspectTarget {
-            detail_route: input.detail_route.clone(),
-        },
-        None,
-        Vec::new(),
-    )
 }
 
 /// Mint a non-executable action: the bound subject plus the typed stop.
@@ -1239,6 +1398,7 @@ mod tests {
             transition_to: Some("packet_inspected".to_string()),
             restart_route: "ripr check --root .".to_string(),
             check_case: None,
+            check_repair_route: None,
             doctor_recovery: None,
             pilot_delegation: None,
             alternatives: Vec::new(),
@@ -2135,6 +2295,16 @@ mod tests {
                 .map_err(|error| format!("{} must stay a valid result: {error}", case.name))?;
             assert_eq!(action.action_class(), case.class, "{}", case.name);
             assert_eq!(stop_kind(&action), case.kind, "{}", case.name);
+            // The typed decision the Kani harnesses prove on agrees with the
+            // rendered action on executability for every gate.
+            let decision = decide_next_action(&input)
+                .map_err(|error| format!("{} must decide: {error}", case.name))?;
+            assert_eq!(
+                decision.is_executable(),
+                action.is_executable(),
+                "{}",
+                case.name
+            );
             if case.class.is_executable() {
                 assert!(action.command().is_some(), "{}", case.name);
             } else {
@@ -2224,6 +2394,7 @@ mod tests {
                 Some(NextActionStop::CheckTriage {
                     case: bound,
                     detail_route,
+                    ..
                 }) => {
                     assert_eq!(*bound, case);
                     assert_eq!(
@@ -2592,6 +2763,7 @@ mod tests {
             NextActionStop::CheckTriage {
                 case: NextActionCheckCase::TopGap,
                 detail_route: "ripr explain finding:top".to_string(),
+                repair_route: String::new(),
             },
             NextActionStop::DoctorRecovery {
                 check_name: "c".to_string(),
@@ -2661,6 +2833,7 @@ mod tests {
             transition_to: offered.map(|_| "repair_started".to_string()),
             restart_route: "ripr repair --root .".to_string(),
             check_case: None,
+            check_repair_route: None,
             doctor_recovery: None,
             pilot_delegation: None,
             alternatives: Vec::new(),
