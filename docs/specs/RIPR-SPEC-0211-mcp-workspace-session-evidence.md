@@ -432,8 +432,9 @@ official SDK transport:
 - The tool envelope carries the document once at full fidelity (#6021):
   by default `content[0].text` is the compact JSON serialization of the
   structured document (no pretty-print inflation), and `structuredContent` repeats
-  the same document in every successful response. Every tool advertises an
-  `outputSchema`, so a success whose structured copy is absent is an
+  the same document in every successful response. Every tool has an
+  `outputSchema` (advertised under `RIPR_MCP_TOOLS_LIST=full`; the default
+  listing omits it since #13803), so a success whose structured copy is absent is an
   undeclared contract break: when the complete double-carry envelope does
   not measure under the id-aware response budget, the call fails closed
   with `result_too_large` naming both sizes and the caller's recovery
@@ -481,8 +482,7 @@ official SDK transport:
   `returned`, `has_more`, `next_offset`); walking `next_offset` covers the
   narrowed set exactly once. Pages are sized so the complete double-carry
   envelope measures under the response bound: a paged success always
-  carries `structuredContent`, as the tool's advertised `outputSchema`
-  requires. Empty pages obey the same structured-envelope bound: echoed
+  carries `structuredContent`, as the tool's `outputSchema` requires. Empty pages obey the same structured-envelope bound: echoed
   filters can exceed it even when the raw document fits. Such a page fails
   closed with the existing typed `result_too_large` refusal and current
   snapshot identity instead of a text-only success. The generated `next_page`

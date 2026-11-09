@@ -60,6 +60,8 @@ fn run_mcp_with_input_custody(
     let mut child = worktree_ripr()
         .args(["mcp", "--stdio", "--root"])
         .arg(root)
+        // The default listing must not depend on the caller's environment.
+        .env_remove("RIPR_MCP_TOOLS_LIST")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -1051,6 +1053,70 @@ fn oversized_request_id_is_rejected_with_null_id_and_the_session_survives() -> R
         if reply.get("id") != Some(&json!(id)) || reply.get("result") != Some(&json!({})) {
             return Err(format!("ping {} was not answered: {reply}", id.len()));
         }
+    }
+    Ok(())
+}
+
+/// #13803: the listing every session pays at start is slim by default: no
+/// tool advertises an `outputSchema`, and the whole `tools/list` reply line
+/// stays under the pinned wire budget (45,938 bytes before the cut).
+/// `RIPR_MCP_TOOLS_LIST=full` restores a schema on every tool.
+#[test]
+fn default_tools_list_is_slim_and_full_is_the_opt_in() -> Result<(), String> {
+    const DEFAULT_TOOLS_LIST_WIRE_BUDGET: usize = 12_500;
+    let root = workspace_root()?;
+    let requests = [
+        line(json!({
+            "jsonrpc": "2.0", "id": 1, "method": "initialize",
+            "params": { "protocolVersion": "2025-11-25", "capabilities": {},
+                "clientInfo": { "name": "slim-default-test", "version": "1" } }
+        }))?,
+        line(json!({ "jsonrpc": "2.0", "method": "notifications/initialized" }))?,
+        line(json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {} }))?,
+    ]
+    .concat();
+    let output = run_mcp(&root, &[&requests])?;
+    let stdout = String::from_utf8(output.stdout).map_err(|error| error.to_string())?;
+    let wire = stdout
+        .lines()
+        .find(|line| line.contains("\"id\":2"))
+        .ok_or_else(|| format!("no tools/list reply: {stdout}"))?;
+    let reply: Value = serde_json::from_str(wire).map_err(|error| error.to_string())?;
+    let tools = reply
+        .pointer("/result/tools")
+        .and_then(Value::as_array)
+        .ok_or_else(|| format!("tools/list omitted tools: {reply}"))?;
+    if tools.len() != 10 {
+        return Err(format!("expected ten tools, got {}", tools.len()));
+    }
+    if let Some(tool) = tools.iter().find(|tool| tool.get("outputSchema").is_some()) {
+        return Err(format!(
+            "default listing advertised an outputSchema: {}",
+            tool["name"]
+        ));
+    }
+    if wire.len() > DEFAULT_TOOLS_LIST_WIRE_BUDGET {
+        return Err(format!(
+            "default tools/list line is {} bytes, over {DEFAULT_TOOLS_LIST_WIRE_BUDGET}",
+            wire.len()
+        ));
+    }
+    let mut session = SequentialStdio::spawn_with_env(&root, &[("RIPR_MCP_TOOLS_LIST", "full")])?;
+    let timeout = Duration::from_mins(1);
+    session.call("discover", "server/discover", json!({}), timeout)?;
+    let full = session.call("tools", "tools/list", json!({}), timeout)?;
+    let full_tools = full
+        .pointer("/result/tools")
+        .and_then(Value::as_array)
+        .ok_or_else(|| format!("full tools/list omitted tools: {full}"))?;
+    if full_tools.len() != 10
+        || full_tools
+            .iter()
+            .any(|tool| tool.get("outputSchema").is_none())
+    {
+        return Err(format!(
+            "the full listing must carry every outputSchema: {full}"
+        ));
     }
     Ok(())
 }
@@ -2798,6 +2864,9 @@ impl SequentialStdio {
         // An ambient text-content mode must not leak into a session that
         // does not ask for one (#9360).
         command.env_remove("RIPR_MCP_TEXT_CONTENT");
+        // These sessions check results against the advertised `outputSchema`
+        // contracts, which only the opt-in full listing carries (#13803).
+        command.env("RIPR_MCP_TOOLS_LIST", "full");
         for (key, value) in env {
             command.env(key, value);
         }

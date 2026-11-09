@@ -402,7 +402,8 @@ worktree-source empty-scope snapshot carries them too, while the
 committed-specific `empty_scope_hint` stays committed-only; they appear
 regardless of filter or offset). Strict v1
 readers must rediscover `tools/list`, accept v5 explicitly and validate
-against the advertised `outputSchema`; callers may still omit all filter
+against the `outputSchema` advertised under `RIPR_MCP_TOOLS_LIST=full`
+(see Slim `tools/list`); callers may still omit all filter
 arguments.
 
 All MCP document `schema_version` identifiers, so a client can route and
@@ -512,9 +513,9 @@ schema or default behavior. In every text-content mode, use each route's complet
 with `result_too_large` naming `ripr://snapshot/{snapshot_id}` as the
 identity route. Other tool responses carry the document once at full fidelity:
 by default `content[0].text` is the compact JSON serialization, and
-`structuredContent` repeats it in every successful response. Each tool
-advertises an `outputSchema`, so a success never ships without its
-structured copy: when the complete double-carry envelope does not fit the
+`structuredContent` repeats it in every successful response. Each tool has an
+`outputSchema` (advertised under `RIPR_MCP_TOOLS_LIST=full`), so a success
+never ships without its structured copy, whatever the listing mode: when the complete double-carry envelope does not fit the
 id-aware response budget, the call fails closed with the typed
 `result_too_large` refusal and that tool's recovery route (#7768) instead
 of silently dropping `structuredContent`.
@@ -599,21 +600,25 @@ The field set and meanings are in
 
 ### Slim `tools/list`
 
-`tools/list` is paid at every session start. About two thirds of it is the ten
-`outputSchema` documents, which most coding agents never read. By default they
-stay, because a host that validates results against them would lose its
-contract. `RIPR_MCP_TOOLS_LIST=slim` (ASCII case-insensitive, surrounding whitespace
-ignored; any other value keeps the default) omits every `outputSchema` and
-changes nothing else: results still carry `structuredContent` with a
-`schema_version`, and the document shapes are the ones this page and
-`docs/OUTPUT_SCHEMA.md` describe. Measured over stdio (whole `tools/list`
-response line, before adding the independent-pages input): 45,526 bytes with
-schemas, 16,710 with `slim`. Set it in the
-host's server `env` beside
-`RIPR_MCP_TEXT_CONTENT` — for example
-`"env": {"RIPR_MCP_TOOLS_LIST": "slim"}`. Independent of the mode, the
-repair-card description no longer repeats the failure-code list that the
-failure `code` enum already carries.
+`tools/list` is paid at every session start. Since #13803 the default listing
+is slim. In the full listing, about two thirds of it is the ten
+`outputSchema` documents, which coding agents do not read; slim omits them.
+Nothing else changes:
+results still carry `structuredContent` with a `schema_version`, and the
+document shapes are the ones this page and `docs/OUTPUT_SCHEMA.md` describe.
+MCP makes `outputSchema` optional, so a host that gets none accepts the result
+without validating it. A host that does validate results against the schemas
+sets `RIPR_MCP_TOOLS_LIST=full` (ASCII case-insensitive, surrounding whitespace
+ignored) in the server `env` beside `RIPR_MCP_TEXT_CONTENT`. Any other value,
+including the older explicit `slim`, keeps the slim default. The tool
+descriptions were also cut to purpose, when to call, safety boundary and
+failure codes. Measured over stdio (whole `tools/list` response line):
+45,938 bytes before #13803 with schemas, 11,884 by default now, and
+40,955 with `full`. With the schemas gone by default, each description names
+the failure codes an agent most needs before calling; the complete `code`
+enum stays in the full listing's `outputSchema`. An unrecognized value
+(for example a misspelled `full`) is not diagnosed: it serves the slim
+listing, so a validating host should check that `outputSchema` is present.
 
 Single-item gap overflow uses one captured-input recovery across the raw
 document, tool envelope and resource envelope. Its CLI command retains the
