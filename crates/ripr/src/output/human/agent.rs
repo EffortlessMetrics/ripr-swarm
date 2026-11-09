@@ -137,7 +137,16 @@ fn render_report(
     let startable = repair_start
         .as_ref()
         .is_some_and(|start| start.command.is_some());
-    let mut out = header_line(output, &considered, gaps.len(), startable);
+    let unconfirmed = unconfirmed_gap_count(&triage, &gaps, incomplete);
+    let mut out = header_line(
+        output,
+        &considered,
+        HeaderCounts {
+            gaps: gaps.len(),
+            unconfirmed,
+            repairable: startable,
+        },
+    );
     out.push_str(&incomplete_lines);
     let next = next_line(&triage, output, &gaps, drill_in, provenance);
     if output.findings.is_empty() && !output.no_scope_provided {
@@ -342,14 +351,17 @@ pub(super) fn render_finding(
             "open=preview-language evidence is advisory and offers no guided repair, but a related test asserts too weakly to notice this change; tests may still help; static advisory, not runtime proof",
             weak_row,
         )
-    } else if finding.class == ExposureClass::Exposed
-        && !triage::is_static_limited(finding)
-        && !triage::is_preview_limited(finding)
-    {
-        (
-            "done=a related test appears to notice this change; static advisory, not runtime proof",
-            noticing_test(finding),
-        )
+    } else if finding.class == ExposureClass::Exposed && !triage::is_static_limited(finding) {
+        // An exposed preview finding has no test-side gap either; it keeps
+        // the advisory qualifier instead of falling through to the
+        // "documented route is a co-located test" stop, which told agents to
+        // write another test after theirs closed the gap.
+        let terminal = if triage::is_preview_limited(finding) {
+            "done=preview-language evidence is advisory only; a related test appears to notice this change; verify the assertion independently; static advisory, not runtime proof"
+        } else {
+            "done=a related test appears to notice this change; static advisory, not runtime proof"
+        };
+        (terminal, noticing_test(finding))
     } else {
         (
             // #13238: same vocabulary as the check surface's terminal line —
@@ -573,22 +585,73 @@ fn should_emit_stop(gaps: &[&Finding]) -> bool {
     gaps.is_empty()
 }
 
-fn header_line(
-    output: &CheckOutput,
-    considered: &[&Finding],
+/// A preview-only finding that would otherwise be a test-side gap: candidate
+/// current, `weakly_exposed` or `reachable_unrevealed`, not static-limited.
+/// Preview evidence is advisory, so it is never a counted `gaps=` entry. Like
+/// `gaps=`, membership is by class; explain's `open=` drill-in additionally
+/// needs a missing discriminator and a weak related test, so a preview
+/// finding without those counts here while explain ends in `stop=`.
+fn is_unconfirmed_preview_gap(finding: &Finding) -> bool {
+    finding.is_candidate_actionable()
+        && matches!(
+            finding.class,
+            ExposureClass::WeaklyExposed | ExposureClass::ReachableUnrevealed
+        )
+        && triage::is_preview_limited(finding)
+        && !triage::is_static_limited(finding)
+}
+
+/// How many listed records are gaps the static evidence cannot confirm
+/// (#13803): the open weak-assertion rows behind a reach-only limit, or the
+/// preview-only gap records of a limited-records report. It follows the body
+/// path exactly, so the header never counts a record the body does not list
+/// and never reads `gaps=0` alone beside a listed gap. Zero whenever a
+/// confirmed gap is listed, because those paths print no limited records.
+fn unconfirmed_gap_count(triage: &HumanTriage<'_>, gaps: &[&Finding], incomplete: bool) -> usize {
+    if !should_emit_stop(gaps) {
+        return 0;
+    }
+    let open = open_limited_findings(triage);
+    if !open.is_empty() {
+        return open.len();
+    }
+    if incomplete {
+        return 0;
+    }
+    limited_record_findings(triage)
+        .into_iter()
+        .filter(|finding| is_unconfirmed_preview_gap(finding))
+        .count()
+}
+
+/// The header's gap facts, each owned by the body path that prints it.
+struct HeaderCounts {
+    /// Confirmed test-side gaps (`gaps=`).
     gaps: usize,
+    /// Listed gaps the static evidence cannot confirm (`unconfirmed_gaps=`).
+    unconfirmed: usize,
+    /// A guided repair start the agent can run now (`repairable=1`).
     repairable: bool,
-) -> String {
+}
+
+fn header_line(output: &CheckOutput, considered: &[&Finding], counts: HeaderCounts) -> String {
     let mut by_class: BTreeMap<&'static str, usize> = BTreeMap::new();
     for finding in considered {
         *by_class.entry(finding.class.as_str()).or_default() += 1;
     }
     let mut line = format!(
-        "#ripr agent static-advisory base={} findings={} gaps={gaps}",
+        "#ripr agent static-advisory base={} findings={} gaps={}",
         output.base.as_deref().unwrap_or("-"),
         considered.len(),
+        counts.gaps,
     );
-    if repairable {
+    if counts.unconfirmed > 0 {
+        // #13803: `gaps=` counts confirmed gaps only; a listed preview-only
+        // or reach-limited gap is counted here so the header agrees with
+        // the records and the `open=` line below it.
+        line.push_str(&format!(" unconfirmed_gaps={}", counts.unconfirmed));
+    }
+    if counts.repairable {
         // A preview finding is never a counted gap, but `ripr agent repair`
         // can start its gap; say so beside `gaps=` instead of leaving `gaps=0`
         // to read as "nothing to repair" (#13599).
@@ -655,6 +718,18 @@ fn terminal_line(
                 }
                 Some(_) => {
                     "open=preview-language evidence is advisory only, not a confirmed gap; ripr agent repair can start the repair for this gap once your uncommitted production change is committed; static advisory, not runtime proof\n"
+                        .to_string()
+                }
+                // The selected preview finding already reads exposed: there
+                // is no test-side gap to repair, matching the human `Safe next
+                // action` ("there is no repair to make"). A `stop=` saying an
+                // improvement "may still be possible" sent agents looking for
+                // work after their test closed the gap.
+                None if triage.selected.is_some_and(|finding| {
+                    finding.class == ExposureClass::Exposed && !triage::is_static_limited(finding)
+                }) =>
+                {
+                    "done=preview-language evidence is advisory only; a related test appears to observe this change, so there is no test-side gap to fix; verify the assertion independently; static advisory, not runtime proof\n"
                         .to_string()
                 }
                 None => {
