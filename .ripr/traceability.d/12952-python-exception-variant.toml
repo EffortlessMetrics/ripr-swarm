@@ -40,3 +40,15 @@ fixtures = [
   "fixtures/python_exception_framework_shadow_no_credit",
   "fixtures/python_exception_dotted_module_no_credit",
 ]
+
+# Stale old-type exception assertion stays refused (#13622).
+[[extend]]
+id = "RIPR-SPEC-0238"
+tests = [
+  "crates/ripr/src/analysis/language/python/exception_variant_tests.rs::stale_exception_type_with_match_does_not_close_the_gap",
+  "crates/ripr/src/analysis/language/python/exception_variant_tests.rs::stale_builtin_exception_type_with_match_does_not_close_the_gap",
+  "crates/ripr/src/analysis/language/python/exception_variant_tests.rs::stale_exception_type_keeps_a_credit_from_another_test",
+  "crates/ripr/src/analysis/language/python/exception_variant_tests.rs::stale_exception_type_keeps_subclass_with_captured_type_check",
+]
+code = ["crates/ripr/src/analysis/language/python/exception_variant.rs"]
+fixtures = ["fixtures/python_exception_stale_type_no_credit"]

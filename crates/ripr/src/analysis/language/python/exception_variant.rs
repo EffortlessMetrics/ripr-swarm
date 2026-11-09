@@ -250,9 +250,20 @@ pub(super) fn stale_exception_type_gap(
         return None;
     }
     let mut stale = Vec::new();
-    for assertion in related_candidates
+    let oracle_tests = related_candidates
         .iter()
-        .filter(|candidate| candidate.relation.uses_oracle())
+        .filter(|candidate| candidate.relation.uses_oracle());
+    // A related test that names the new type anywhere in its body may tell the
+    // new raise apart (`exc.type == New`, `isinstance(exc.value, New)` when
+    // `New` subclasses `Old`, or a plain `pytest.raises(New)`). The gate does
+    // not evaluate those forms and fails open.
+    if oracle_tests
+        .clone()
+        .any(|candidate| mentions_identifier(&candidate.test.body_text, &new_type))
+    {
+        return None;
+    }
+    for assertion in oracle_tests
         .flat_map(|candidate| &candidate.test.assertions)
         .filter(|assertion| is_strong_error_variant(assertion) && focus.admits(assertion))
     {

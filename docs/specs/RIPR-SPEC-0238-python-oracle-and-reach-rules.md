@@ -357,6 +357,16 @@ one changed raise only (#12952); the general class-only table row stays weak.
    with the strong-but-orthogonal stage states. The gate no longer reads
    the single `strongest_kind`.
 
+   Stale raised-type assertion (#13622): when the changed line replaces a
+   raised exception type (same constructor arguments) and every strong
+   related error-variant assertion still expects the OLD class, the finding
+   stays `weakly_exposed` and names the new type; `match=` alone does not
+   credit a class the raise no longer uses. The gate stays off, keeping the
+   existing verdict, when the finding-specific credit above exists for the
+   new type, when any assertion names another class, when a comparison joined
+   after the context mentions the new type, or when any assertion is
+   unreadable. Known fail-open shapes are listed in #13753.
+
    Finding-specific class identity (#12952): a sole-line replacement from
    `raise OldError(...)` to `raise NewError(...)`, with identical indentation
    and literal constructor arguments and no cause or keywords, can read

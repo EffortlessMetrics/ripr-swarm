@@ -1008,12 +1008,18 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
             // A raised-type replacement every strong error assertion still
             // pins to the old type is stale, not credit (#13622).
             .or_else(|| {
-                super::exception_variant::stale_exception_type_gap(
-                    line_text,
-                    old_line_text,
-                    &related_candidates,
-                    &focus,
-                )
+                // A finding-specific credit for the new type keeps its verdict.
+                exception_variants
+                    .is_empty()
+                    .then(|| {
+                        super::exception_variant::stale_exception_type_gap(
+                            line_text,
+                            old_line_text,
+                            &related_candidates,
+                            &focus,
+                        )
+                    })
+                    .flatten()
             })
         })
         .flatten();

@@ -577,3 +577,47 @@ fn stale_builtin_exception_type_with_match_does_not_close_the_gap() -> Check {
     );
     Ok(())
 }
+
+fn classify_tests(tests: &str) -> Result<Finding, String> {
+    classify(MSG_SOURCE, tests, MSG_OLD, MSG_NEW)
+}
+
+#[test]
+fn stale_exception_type_keeps_a_credit_from_another_test() -> Check {
+    // A stale `match=` test must not override a plain new-type test that the
+    // finding-specific credit promotes (#13622 review).
+    let tests = format!(
+        "{IMPORTS}\ndef test_stale():\n    with pytest.raises(EmptyError, match=\"too long\"):\n        parse('abcdefghijklmnop')\n\ndef test_current():\n    with pytest.raises(TooLongError):\n        parse('abcdefghijklmnop')\n"
+    );
+    let mixed = classify_tests(&tests)?;
+    assert_eq!(mixed.class, ExposureClass::Exposed, "{mixed:?}");
+    assert!(
+        mixed
+            .missing
+            .iter()
+            .all(|text| !text.contains("old exception type")),
+        "{mixed:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn stale_exception_type_keeps_subclass_with_captured_type_check() -> Check {
+    let source = MSG_SOURCE.replace(
+        "class TooLongError(Exception): pass",
+        "class TooLongError(EmptyError): pass",
+    );
+    let tests = format!(
+        "{IMPORTS}\ndef test_variant():\n    with pytest.raises(EmptyError, match=\"too long\") as exc:\n        parse('abcdefghijklmnop')\n    assert exc.type == TooLongError\n"
+    );
+    let finding = classify(&source, &tests, MSG_OLD, MSG_NEW)?;
+    assert!(
+        finding
+            .missing
+            .iter()
+            .all(|text| !text.contains("old exception type")),
+        "the captured-type comparison must keep the gate off: {finding:?}"
+    );
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
