@@ -776,6 +776,7 @@ fn docs_only_group_cannot_bypass_full_portfolio_or_the_rust_result() -> TestResu
         ("OWNED_RESULT", "success"),
         ("CUT_STATUS", "passed"),
         ("GROUP_PROOF_RESULT", "success"),
+        ("INTAKE_RECHECK", "success"),
     ] {
         env.insert(key.into(), value.into());
     }
@@ -784,13 +785,14 @@ fn docs_only_group_cannot_bypass_full_portfolio_or_the_rust_result() -> TestResu
         fixture.root.join("summary").to_string_lossy().into_owned(),
     );
     let script = caller_shell("Summarize routed result")?;
-    assert!(
-        fixture
-            .command("bash", &["-c", &script], &env)?
-            .status
-            .success()
-    );
-    for name in ["OWNED_RESULT", "GROUP_PROOF_RESULT", "ELIGIBILITY_RESULT"] {
+    let positive = fixture.command("bash", &["-c", &script], &env)?;
+    assert!(positive.status.success(), "{positive:?}");
+    for name in [
+        "OWNED_RESULT",
+        "GROUP_PROOF_RESULT",
+        "ELIGIBILITY_RESULT",
+        "INTAKE_RECHECK",
+    ] {
         for value in ["", "skipped", "failure", "cancelled"] {
             let mut wrong = env.clone();
             wrong.insert(name.into(), value.into());
