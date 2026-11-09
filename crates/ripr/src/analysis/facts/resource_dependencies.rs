@@ -13,6 +13,7 @@ use crate::domain::{
     ResourcePresenceV1, SymbolId,
 };
 use sha2::{Digest, Sha256};
+use std::cell::OnceCell;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -41,6 +42,7 @@ pub(crate) fn collect_resource_dependency_edges(
     let canonical_root = std::fs::canonicalize(root).ok();
     let mut edge_count = 0usize;
     let (scans, package_shadows) = scan_embed_files(index);
+    let spans = ConsumerSpans::new(index);
 
     for (parent, file_facts) in &index.files {
         if file_facts.used_lexical_fallback {
@@ -103,7 +105,7 @@ pub(crate) fn collect_resource_dependency_edges(
             };
             let Some(ref literal) = directive.literal_path else {
                 push_opaque_edge(
-                    index,
+                    &spans,
                     &mut facts,
                     parent,
                     &directive,
@@ -120,7 +122,7 @@ pub(crate) fn collect_resource_dependency_edges(
                     "rust_resource_path_outside_repository",
                 ));
                 push_opaque_edge(
-                    index,
+                    &spans,
                     &mut facts,
                     parent,
                     &directive,
@@ -153,7 +155,7 @@ pub(crate) fn collect_resource_dependency_edges(
                     "rust_resource_symlink_escape",
                 ));
                 push_opaque_edge(
-                    index,
+                    &spans,
                     &mut facts,
                     parent,
                     &directive,
@@ -163,7 +165,7 @@ pub(crate) fn collect_resource_dependency_edges(
                 continue;
             }
             let content_identity = content_identity_for_path(root, index, &candidate);
-            let consumer_id = consumer_for_line(index, parent, directive.line);
+            let consumer_id = spans.consumer_for_line(parent, directive.line);
             let semantic_digest = ResourceDependencyEdgeV1::mint_semantic_digest(
                 resource_kind,
                 &candidate,
@@ -266,26 +268,51 @@ fn source_digest(source: &str) -> String {
     format!("sha256:{:x}", Sha256::digest(source.as_bytes()))
 }
 
-fn consumer_for_line(index: &RustIndex, file: &Path, line: usize) -> SymbolId {
-    let mut best: Option<(usize, SymbolId)> = None;
-    for id in index.live_function_ids() {
-        let function = &index.function_facts[id];
-        if function.file.as_path() != file {
-            continue;
-        }
-        if line >= function.start_line && line <= function.end_line {
-            let depth_key = function.start_line;
-            if best.as_ref().is_none_or(|(start, _)| depth_key >= *start) {
-                best = Some((depth_key, function.id.clone()));
-            }
+/// Function spans grouped by file, built on first use so the live function
+/// list is walked once per pass instead of once per embed directive.
+type FileSpans<'a> = BTreeMap<&'a Path, Vec<(usize, usize, &'a SymbolId)>>;
+
+struct ConsumerSpans<'a> {
+    index: &'a RustIndex,
+    by_file: OnceCell<FileSpans<'a>>,
+}
+
+impl<'a> ConsumerSpans<'a> {
+    fn new(index: &'a RustIndex) -> Self {
+        Self {
+            index,
+            by_file: OnceCell::new(),
         }
     }
-    best.map(|(_, id)| id)
-        .unwrap_or_else(|| SymbolId(format!("{}::file_scope", stable_path_text(file))))
+
+    /// Innermost function containing `line`; among equal starts the later
+    /// live function wins. Falls back to a file-scope symbol.
+    fn consumer_for_line(&self, file: &Path, line: usize) -> SymbolId {
+        let by_file = self.by_file.get_or_init(|| {
+            let mut grouped = FileSpans::new();
+            for id in self.index.live_function_ids() {
+                let function = &self.index.function_facts[id];
+                grouped.entry(function.file.as_path()).or_default().push((
+                    function.start_line,
+                    function.end_line,
+                    &function.id,
+                ));
+            }
+            grouped
+        });
+        let mut best: Option<(usize, &SymbolId)> = None;
+        for &(start, end, id) in by_file.get(file).map(Vec::as_slice).unwrap_or_default() {
+            if line >= start && line <= end && best.is_none_or(|(s, _)| start >= s) {
+                best = Some((start, id));
+            }
+        }
+        best.map(|(_, id)| id.clone())
+            .unwrap_or_else(|| SymbolId(format!("{}::file_scope", stable_path_text(file))))
+    }
 }
 
 fn push_opaque_edge(
-    index: &RustIndex,
+    spans: &ConsumerSpans<'_>,
     facts: &mut ResourceDependencyFacts,
     parent: &Path,
     directive: &RustEmbedResourceDirective,
@@ -297,7 +324,7 @@ fn push_opaque_edge(
         stable_path_text(parent),
         directive.line
     ));
-    let consumer_id = consumer_for_line(index, parent, directive.line);
+    let consumer_id = spans.consumer_for_line(parent, directive.line);
     let semantic_digest = ResourceDependencyEdgeV1::mint_semantic_digest(
         resource_kind,
         &placeholder,
@@ -622,6 +649,46 @@ fn production() {}
                 .any(|item| item.contains("resource_plan_empty_with_opaque_boundary"))
         );
         assert_eq!(projection.widened_packages.len(), 1);
+    }
+
+    #[test]
+    fn several_embeds_in_one_file_each_pick_their_own_consumer()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = std::env::temp_dir().join(format!(
+            "ripr-resource-deps-multi-{}-{}",
+            std::process::id(),
+            NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir_all(root.join("fixtures"))?;
+        fs::create_dir_all(root.join("src"))?;
+        fs::write(root.join("fixtures/a.txt"), "a\n")?;
+        fs::write(root.join("fixtures/b.txt"), "b\n")?;
+        fs::write(root.join("fixtures/c.txt"), "c\n")?;
+        let source = r#"
+const TOP: &str = include_str!("../fixtures/c.txt");
+fn first() -> &'static str {
+    include_str!("../fixtures/a.txt")
+}
+fn second() -> &'static str {
+    include_str!("../fixtures/b.txt")
+}
+"#;
+        fs::write(root.join("src/lib.rs"), source)?;
+        let index = manual_index(&root, &[("src/lib.rs", source)])?;
+        let facts = collect_resource_dependency_edges(&root, &index);
+        let consumer = |name: &str| {
+            facts
+                .edges
+                .iter()
+                .find(|edge| edge.resource_path.ends_with(name))
+                .map(|edge| edge.consumer_id.0.clone())
+        };
+        assert_eq!(facts.edges.len(), 3);
+        assert!(consumer("a.txt").is_some_and(|id| id.contains("first")));
+        assert!(consumer("b.txt").is_some_and(|id| id.contains("second")));
+        assert!(consumer("c.txt").is_some_and(|id| id.ends_with("::file_scope")));
+        fs::remove_dir_all(&root)?;
+        Ok(())
     }
 
     #[test]
