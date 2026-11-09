@@ -5375,20 +5375,23 @@ impl ReceiptBindingError {
     /// The refusal message exactly as the historical `String` errors rendered
     /// it, so consumers that log or persist the text see unchanged bytes.
     pub(crate) fn message(&self) -> String {
-        match self {
-            Self::TrustedSurfaceUntrusted { path } => format!(
-                "repair receipt observed repository path {TRUSTED_SURFACE_REFUSAL_TAIL}: {path}"
-            ),
-            Self::Other(message) => message.clone(),
-        }
+        self.to_string()
     }
 }
 
 impl std::fmt::Display for ReceiptBindingError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str(&self.message())
+        match self {
+            Self::TrustedSurfaceUntrusted { path } => write!(
+                formatter,
+                "repair receipt observed repository path {TRUSTED_SURFACE_REFUSAL_TAIL}: {path}"
+            ),
+            Self::Other(message) => formatter.write_str(message),
+        }
     }
 }
+
+impl std::error::Error for ReceiptBindingError {}
 
 impl From<String> for ReceiptBindingError {
     fn from(message: String) -> Self {
