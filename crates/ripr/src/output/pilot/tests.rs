@@ -768,7 +768,7 @@ fn pilot_summary_md_marks_owner_counts_as_lower_bounds_after_a_seam_limit() {
     let md = render_pilot_summary_md(&entries, context);
 
     assert!(
-        md.contains("- Seam limit reached: analyzed 3 of 7 seams, kept as the inventory's path-order slice plus seams your change touches, then ranked by actionability within that slice — the top gap is the most actionable seam in this slice, not of the whole repository; Rust seam counts below cover those only\n- Actionable seams: at least 3, showing up to 1\n- Pass `--max-seams N` to rank more seams.\n\n"),
+        md.contains("- Seam limit reached: analyzed 3 of 7 seams, kept as the inventory's path-order slice plus the actionable seams your change touches that fit the budget, then ranked by actionability within that slice -- the top gap is the most actionable seam in this slice, not of the whole repository; Rust seam counts below cover those only\n- Actionable seams: at least 3, showing up to 1\n- Pass `--max-seams N` to rank more seams.\n\n"),
         "{md}"
     );
     assert!(
