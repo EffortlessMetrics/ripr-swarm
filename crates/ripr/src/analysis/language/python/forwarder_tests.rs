@@ -207,11 +207,8 @@ fn a_forwarder_credits_only_through_certain_bindings_and_a_flipped_assertion() -
             ],
         ),
         (
-            // Pytest inserts only the repository root here, so the import
-            // is the project's; the test-local shadow rule (#13706) still
-            // withholds because it counts every package level on the path.
             "same-named package inside a tests package",
-            false,
+            true,
             vec![
                 ("tests/__init__.py", Some("")),
                 ("tests/shapes/__init__.py", Some("")),

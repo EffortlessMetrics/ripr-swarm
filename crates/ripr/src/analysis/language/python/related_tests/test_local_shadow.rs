@@ -26,37 +26,33 @@ pub(in crate::analysis::language::python) struct TestLocalShadow {
 }
 
 /// The directories pytest's prepend import mode puts on `sys.path` for a test
-/// in `dir`, deliberately over-approximated so a wrong credit is never the
-/// failure mode:
-/// - the test directory itself and every package level above it, up to and
-///   including the first directory that has no `__init__.py` (the rootdir
-///   insertion directory), even though pytest inserts only the last one;
-/// - the same package walk from every directory at or above the test that
-///   holds a `conftest.py`, since a collected conftest inserts its basedir
-///   into the process-wide `sys.path` too;
+/// in `dir`:
+/// - the basedir of the test directory: the first directory at or above it
+///   without an `__init__.py`; package directories themselves are never
+///   inserted, so they are not included;
+/// - the same basedir for every directory at or above the test that holds a
+///   `conftest.py`, since a collected conftest inserts its basedir into the
+///   process-wide `sys.path` too;
 /// - the repository root (a root conftest, `python -m pytest` or an editable
 ///   install reach it).
 fn prepend_path_dirs(dir: &Path, files: &BTreeSet<&Path>) -> Vec<PathBuf> {
-    let package_walk = |start: &Path, dirs: &mut Vec<PathBuf>| {
+    let basedir = |start: &Path| {
         let mut current = start.to_path_buf();
-        loop {
-            if !dirs.contains(&current) {
-                dirs.push(current.clone());
-            }
-            if current.as_os_str().is_empty()
-                || !files.contains(current.join("__init__.py").as_path())
-            {
-                break;
-            }
+        while !current.as_os_str().is_empty()
+            && files.contains(current.join("__init__.py").as_path())
+        {
             current = current.parent().unwrap_or(Path::new("")).to_path_buf();
         }
+        current
     };
-    let mut dirs = Vec::new();
-    package_walk(dir, &mut dirs);
+    let mut dirs = vec![basedir(dir)];
     let mut ancestor = dir.to_path_buf();
     loop {
         if files.contains(ancestor.join("conftest.py").as_path()) {
-            package_walk(&ancestor, &mut dirs);
+            let base = basedir(&ancestor);
+            if !dirs.contains(&base) {
+                dirs.push(base);
+            }
         }
         if ancestor.as_os_str().is_empty() {
             break;

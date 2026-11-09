@@ -5888,8 +5888,9 @@ fn test_local_module_shadows_a_bare_owner_import_for_tests_it_precedes() {
         "svc/a/tests/unit/test_x.py",
     ];
     assert!(identifies(&nested, "core", "svc/a/tests/unit/test_x.py"));
-    // ... but is once the directories between are packages (rootdir
-    // insertion walks up to the first non-package directory).
+    // ... and stays off it when the directories between are packages: only
+    // the basedir above the package chain (`svc/a`) is inserted, never the
+    // package directories themselves.
     let packaged = [
         "svc/a/src/core.py",
         "svc/a/tests/__init__.py",
@@ -5897,7 +5898,7 @@ fn test_local_module_shadows_a_bare_owner_import_for_tests_it_precedes() {
         "svc/a/tests/unit/__init__.py",
         "svc/a/tests/unit/test_x.py",
     ];
-    assert!(!identifies(&packaged, "core", "svc/a/tests/unit/test_x.py"));
+    assert!(identifies(&packaged, "core", "svc/a/tests/unit/test_x.py"));
 }
 
 /// #13706: the issue's layout (a project with its own `pyproject.toml`, a
@@ -6028,4 +6029,26 @@ fn test_local_module_shadow_covers_project_names_import_forms_and_conftest_dirs(
         "svc/a/tests/unit/test_x.py",
     ];
     assert!(!identifies(&with_conftest, "svc/a/core.py", unit).0);
+    // Package directories are never inserted, only the basedir above them:
+    // a `tests` package holding `core.py` does not shadow the root `core.py` ...
+    let tests_package = [
+        "pyproject.toml",
+        "core.py",
+        "tests/__init__.py",
+        "tests/core.py",
+        "tests/test_x.py",
+    ];
+    let (from_form, _, plain_form) = identifies(&tests_package, "core.py", "tests/test_x.py");
+    assert!(from_form);
+    assert!(plain_form);
+    // ... while the same helper in a non-package `tests` directory does.
+    let tests_plain = [
+        "pyproject.toml",
+        "core.py",
+        "tests/core.py",
+        "tests/test_x.py",
+    ];
+    let (from_form, _, plain_form) = identifies(&tests_plain, "core.py", "tests/test_x.py");
+    assert!(!from_form);
+    assert!(!plain_form);
 }

@@ -376,9 +376,10 @@ identifies neither module from any test (#13745).
 A workspace module of the same top-level name (not necessarily test-named) in a
 directory pytest's prepend import mode puts ahead on `sys.path` for that test
 means a bare import of that name is not the owner's for that test (#13706). The
-directory set is deliberately over-approximated and fails closed: the test's own
-directory, every package level up to the first non-package directory, the same
-walk from each `conftest.py` at or above the test, and the repository root.
+directory set is the basedir of the test's directory (the first ancestor,
+inclusive, without an `__init__.py`), the same basedir for each `conftest.py`
+at or above the test, and the repository root; package directories themselves
+are not on `sys.path` and are not included.
 A test that imports a free-function owner's name from a workspace module that
 defines its own function of that name, when no import reaches the owner's module,
 is not related to the owner even if its call text matches the name (#8759). The
