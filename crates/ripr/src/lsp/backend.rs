@@ -3870,6 +3870,9 @@ impl Backend {
                 DocumentStalenessReason::InvalidIncrementalChange => {
                     "ripr could not apply one incremental edit and stopped trusting the retained text; saving cannot fix this. Undo the edit or revert the file so ripr receives the full document again."
                 }
+                DocumentStalenessReason::DocumentStoreLimitReached => {
+                    "ripr tracks a bounded number of open documents and did not track this one; saving cannot fix this. Close other open files, then reopen this file so ripr can track it."
+                }
                 DocumentStalenessReason::NoAnalyzedSavedContent => {
                     unanalyzed_file_hover_route(self.unanalyzed_file_cause(uri))
                 }
@@ -9027,6 +9030,9 @@ fn quarantine_withdrawal_log_message(path: &Path, reason: DocumentStalenessReaso
         DocumentStalenessReason::BufferDivergesFromAnalyzedSavedContent => {
             "save the file to analyze the new saved state"
         }
+        DocumentStalenessReason::DocumentStoreLimitReached => {
+            "close other open files, then reopen this file so ripr can track it"
+        }
         DocumentStalenessReason::NoAnalyzedSavedContent => {
             "save the file if it is new, then refresh (`ripr.refresh`)"
         }
@@ -13125,6 +13131,20 @@ mod quarantine_message_tests {
         );
         assert!(invalid.contains("close and reopen"));
         assert!(!invalid.contains("save the file"));
+    }
+
+    #[test]
+    fn quarantine_messages_name_the_open_document_limit_not_an_edit_failure() {
+        let reason = DocumentStalenessReason::DocumentStoreLimitReached;
+        let log = quarantine_withdrawal_log_message(Path::new("/workspace/src/lib.rs"), reason);
+        assert!(log.contains("document_store_limit_reached"));
+        assert!(log.contains("open-document limit was reached"));
+        assert!(log.contains("close other open files"));
+        assert!(!log.contains("incremental"));
+        assert!(!log.contains("save the file"));
+        let marker = crate::lsp::diagnostics::quarantine_withdrawal_diagnostic(reason);
+        assert!(marker.message.contains("open-document limit was reached"));
+        assert!(!marker.message.contains("incremental"));
     }
 
     #[test]
