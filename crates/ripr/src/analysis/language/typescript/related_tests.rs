@@ -2653,6 +2653,33 @@ fn module_value_use_relation(
     })
 }
 
+/// `true` when the test imports a binding whose local name is `class_name`
+/// and that binding is not the owner's own class: a namespace import, a
+/// source that does not resolve to the owner's module, or a name imported
+/// from the owner's module under a different exported name.
+fn class_name_bound_to_other_import(
+    test: &TypeScriptTest,
+    owner: &TypeScriptOwner,
+    class_name: &str,
+    alias_map: Option<&TsAliasMap>,
+    workspace_root: Option<&Path>,
+) -> bool {
+    test.imports_in_file.iter().any(|import| {
+        import.local == class_name
+            && !(!import.namespace
+                && import_source_matches_owner(
+                    import,
+                    &test.file,
+                    owner,
+                    alias_map,
+                    workspace_root,
+                )
+                && (import.imported.as_deref() == Some(class_name)
+                    || (owner.class_default_export
+                        && import.imported.as_deref() == Some("default"))))
+    })
+}
+
 pub(crate) fn receiver_owner_call_relation(
     test: &TypeScriptTest,
     owner: &TypeScriptOwner,
@@ -2681,8 +2708,21 @@ pub(crate) fn receiver_owner_call_relation(
                 .any(|candidate| contains_new_expression_call(&test.body_text, candidate));
         }
         let mut constructor_names = Vec::new();
-        if let Some(class_name) = owner.class_name.as_deref() {
+        // The bare class name is a name match inside the owner's package. When
+        // the test imports a binding with that very name, the binding must be
+        // the owner's own class; a same-named class of another module that
+        // the test imports and constructs does not run this constructor
+        // (#13726). Unbound and same-file names keep the bare-name fallback.
+        if let Some(class_name) = owner.class_name.as_deref()
+            && !class_name_bound_to_other_import(test, owner, class_name, alias_map, workspace_root)
+        {
             constructor_names.push(class_name.to_string());
+        }
+        // Named-import aliases (`import { Url as Link }`), namespace members
+        // and resolved default imports, exactly as the cross-package branch
+        // reads them (#13726).
+        for name in constructor_names_for_method_owner(test, owner, alias_map, workspace_root) {
+            push_unique_string(&mut constructor_names, name);
         }
         // Default-import alias (review #4138): `import Bar from './cart'` +
         // `new Bar(...)` runs the constructor of `export default class Cart`
@@ -2744,12 +2784,33 @@ pub(crate) fn receiver_owner_call_relation(
     // needle. Ordinary methods keep the call-only requirement: a bare
     // property read does not execute them.
     if owner.method_kind == TypeScriptMethodKind::Getter {
+        // A spied, mocked or replaced accessor (`vi.spyOn(Url.prototype,
+        // "origin", "get").mockReturnValue(...)`) is not the getter as written,
+        // so reading it cannot notice a mutation of the getter body (#13726).
+        // Fail closed on any file-wide replacement, spy or member assignment
+        // that names the getter.
+        if getter_replaced_in_test(test, owner) {
+            return false;
+        }
         return receiver_names
             .iter()
             .any(|receiver| contains_member_read_name(&test.body_text, receiver, &owner.name))
             || factory_built_getter_read(test, owner, alias_map, workspace_root);
     }
     false
+}
+
+/// `true` when anything in the test file may replace the owner's accessor:
+/// a file-wide member replacement naming it (or any member), a fabricating
+/// spy, a member assignment, or a `spyOn` naming it.
+fn getter_replaced_in_test(test: &TypeScriptTest, owner: &TypeScriptOwner) -> bool {
+    let masked = super::classifier::ts_mask_literals_and_comments(&test.body_text);
+    test.member_replacements_in_file
+        .iter()
+        .any(|n| n == super::tests_extract::MEMBER_REPLACEMENT_ANY || n == &owner.name)
+        || test_spies_owner_with_fabrication_for_owner(test, &owner.name, false)
+        || class_entries::assigns_member_named(&masked, &owner.name)
+        || spies_on_member_named(&test.body_text, &owner.name)
 }
 
 /// Getter owner reached through an exported factory that returns a fresh

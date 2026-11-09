@@ -351,3 +351,9 @@ involves indirection that ripr cannot verify at runtime.
 - `typescript_reexport_class_receiver_same_name_stays_no_path`: fixture
   `typescript_reexport_class_receiver_no_false_credit` produces
   `no_static_path` with 0 related tests.
+
+Class-receiver credit stays fail-closed on direct imports as well (#13726): a
+changed constructor is related by bare class name only when the test has no
+import binding of that name or the binding resolves to the owner's module, a
+named-import alias (`import { Url as Link }`) of the owner's class is credited,
+and a getter the test spies, mocks or reassigns withholds observation credit.
