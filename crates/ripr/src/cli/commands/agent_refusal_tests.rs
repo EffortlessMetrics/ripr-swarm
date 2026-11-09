@@ -717,3 +717,36 @@ fn parent_dir_follows_symlink_flags_only_a_symlink_before_dotdot() -> Result<(),
     );
     Ok(())
 }
+
+#[test]
+fn no_movement_class_travels_with_the_variant_not_the_message() {
+    // #14021: a reworded no-movement message must not be able to flip the
+    // class. The typed variant classifies even when the rendered text is
+    // mutated, and the same rendered text without the type does not.
+    let typed = AgentVerifyRenderError::Movement(
+        crate::agent::artifact::AgentVerifyMovementError::NoMovement {
+            head: "aaaaaaa".to_string(),
+        },
+    );
+    let rendered = typed.to_string();
+    assert!(
+        rendered.starts_with("agent verify no repository movement"),
+        "user-visible message keeps its shape: {rendered}"
+    );
+    let reworded_but_typed = AgentVerifyRenderError::Movement(
+        crate::agent::artifact::AgentVerifyMovementError::NoMovement {
+            head: "aaaaaaa".to_string(),
+        },
+    );
+    assert!(
+        matches!(reworded_but_typed, AgentVerifyRenderError::Movement(_)),
+        "the class rides on the variant, not the prose"
+    );
+    let same_text_untyped = AgentVerifyRenderError::Other(rendered.clone());
+    assert!(
+        !matches!(same_text_untyped, AgentVerifyRenderError::Movement(_)),
+        "message text alone must not mint the typed class"
+    );
+    // Both render identically for the user; only the class differs.
+    assert_eq!(same_text_untyped.to_string(), rendered);
+}
