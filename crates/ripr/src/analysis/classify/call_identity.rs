@@ -3394,6 +3394,9 @@ struct LocalModules {
     public_rivals: BTreeSet<Vec<String>>,
     /// A `use` mentioning the owner's name that the reader could not parse.
     unreadable_owner_use: bool,
+    /// Text of every top-level `use` the reader could not parse. A qualifier
+    /// it mentions may be rebound by it, so that call is not settled.
+    unreadable_uses: Vec<String>,
     /// A nested-block `use` that is a glob or unreadable: it may bind any
     /// name, so no call is settled.
     nested_blocked: bool,
@@ -3465,6 +3468,7 @@ impl LocalModules {
             defining: BTreeSet::new(),
             public_rivals: BTreeSet::new(),
             unreadable_owner_use: false,
+            unreadable_uses: Vec::new(),
             nested_blocked: false,
             scope: Vec::new(),
         };
@@ -3555,8 +3559,12 @@ impl LocalModules {
                     if let Some(item) = text.and_then(UseItem::parse) {
                         let module = stack.iter().map(|(name, _)| name.clone()).collect();
                         found.file_uses.push((module, item));
-                    } else if text.is_none_or(|text| mentions_word(text, owner)) {
+                    } else if let Some(text) = text {
+                        found.unreadable_owner_use |= mentions_word(text, owner);
+                        found.unreadable_uses.push(text.to_string());
+                    } else {
                         found.unreadable_owner_use = true;
+                        found.nested_blocked = true;
                     }
                 }
                 LexToken::Word(_) | LexToken::Semi => {}
@@ -3574,10 +3582,16 @@ impl LocalModules {
                     found.nested_blocked |= item.glob;
                     found.nested_uses.push(item);
                 }
-                (None, true) => {
-                    found.unreadable_owner_use |=
-                        text.is_none_or(|text| mentions_word(text, owner));
-                }
+                (None, true) => match text {
+                    Some(text) => {
+                        found.unreadable_owner_use |= mentions_word(text, owner);
+                        found.unreadable_uses.push(text.to_string());
+                    }
+                    None => {
+                        found.unreadable_owner_use = true;
+                        found.nested_blocked = true;
+                    }
+                },
                 (None, false) => found.nested_blocked = true,
             }
         }
@@ -3708,6 +3722,13 @@ impl LocalModules {
         let Some((first, tail)) = rest.split_first() else {
             return false;
         };
+        if self
+            .unreadable_uses
+            .iter()
+            .any(|text| mentions_word(text, first))
+        {
+            return false;
+        }
         let mut module = base.clone();
         if base == self.scope {
             match self.binding(first, integration_crate) {

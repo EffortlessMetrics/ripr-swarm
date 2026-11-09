@@ -22902,6 +22902,25 @@ fn given_integration_test_when_glob_is_in_a_nested_block_then_owner_keeps_relate
 }
 
 #[test]
+fn given_integration_test_when_grouped_body_use_rebinds_a_file_alias_then_owner_keeps_related_test()
+-> Result<(), String> {
+    // A grouped body `use` is unreadable and may rebind the qualifier the file
+    // alias names, so it keeps the relation. Without it the alias reaches the
+    // rival and the owner is withheld (control).
+    let head = format!(
+        "mod outer {{\n    pub mod local {{\n        {LOCAL_RIVAL_FN}\n    }}\n}}\nuse outer::local as alias;\n\n#[test]\nfn aliased() {{\n"
+    );
+    let call = "    assert_eq!(alias::discounted_total(100, 100), 90);\n}\n";
+    let grouped = format!("{head}    use lib_proptest::{{self as alias}};\n{call}");
+    let related = related_test_names_for_boundary_seam(&grouped)?;
+    assert_eq!(related, vec!["aliased".to_string()], "{grouped}");
+    let plain = format!("{head}{call}");
+    let related = related_test_names_for_boundary_seam(&plain)?;
+    assert!(related.is_empty(), "{plain}: {related:?}");
+    Ok(())
+}
+
+#[test]
 fn given_integration_test_when_nested_raw_identifier_test_calls_the_library_then_owner_keeps_related_test()
 -> Result<(), String> {
     // Control for the raw-identifier test above. The top-level raw-identifier
