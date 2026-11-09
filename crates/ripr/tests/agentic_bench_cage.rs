@@ -804,7 +804,11 @@ fn b6_dirty_production_premise_refuses_the_before_phase_and_a_dirty_test_still_r
             "before",
         ],
     )?;
-    assert_exit_code(&dirty_external_before, 2, "dirty external test before-phase")?;
+    assert_exit_code(
+        &dirty_external_before,
+        2,
+        "dirty external test before-phase",
+    )?;
     let refusal_text = combined_output(&dirty_external_before);
     if !refusal_text.contains("external Rust test file with uncommitted changes") {
         return Err(format!(

@@ -631,7 +631,11 @@ fn existing_edited_attempt(label: &str) -> Result<(Fixture, Attempt), String> {
     let attempt = begin(&fixture.root)?;
     // The external-file cage admits only insertion: keep every existing byte.
     let inserted = NEW_TEST.replacen("use proposal_fixture::discounted_total;\n\n", "\n", 1);
-    write(&fixture.root, PROPOSED_FILE, &format!("{existing}{inserted}"))?;
+    write(
+        &fixture.root,
+        PROPOSED_FILE,
+        &format!("{existing}{inserted}"),
+    )?;
     Ok((fixture, attempt))
 }
 
