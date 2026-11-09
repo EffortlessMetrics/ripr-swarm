@@ -1,6 +1,5 @@
 use super::{ResolvedIncludeParent, RustIncludeLimitation, RustIndex};
 use crate::analysis::syntax::rust_include_directives;
-use rayon::prelude::*;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Component, Path, PathBuf};
 
@@ -23,17 +22,23 @@ pub(super) fn resolve_repository_local_includes(root: &Path, index: &mut RustInd
         })
         .map(|(parent, facts)| (parent, facts.source.as_ref()))
         .collect();
-    // `collect` on a parallel iterator over a slice preserves input order, so
-    // each precomputed entry still matches the BTreeMap file order the serial
-    // loop used (#9214).
+    // `memoize_many` returns one result per source in input order, so each
+    // precomputed entry still matches the BTreeMap file order the serial loop
+    // used (#9214).
+    // The directive read is a pure function of the source text (the parent
+    // path is unused), so the run memo serves files a diff check already
+    // resolved in its admission core when the extended main index resolves
+    // again; misses still parse on the rayon pool.
+    let sources: Vec<&str> = candidates.iter().map(|(_, source)| *source).collect();
+    let directives = crate::analysis::syntax::run_memo::memoize_many(
+        crate::analysis::syntax::run_memo::Product::IncludeDirectives,
+        &sources,
+        |source| rust_include_directives(Path::new(""), source, MAX_INCLUDE_EDGES),
+    );
     let precomputed: Vec<(PathBuf, Result<Vec<_>, String>)> = candidates
-        .par_iter()
-        .map(|(parent, source)| {
-            (
-                (*parent).clone(),
-                rust_include_directives(parent, source, MAX_INCLUDE_EDGES),
-            )
-        })
+        .iter()
+        .map(|(parent, _)| (*parent).clone())
+        .zip(directives)
         .collect();
 
     'files: for (parent, directives) in precomputed {
@@ -223,6 +228,61 @@ pub(super) fn resolve_repository_local_includes(root: &Path, index: &mut RustInd
     sort_limitations(&mut limitations);
     index.include_limitations = limitations;
     rebase_function_identities(index);
+}
+
+/// The include view the retained files of an index were composed against,
+/// captured before the index grows (#12947).
+///
+/// Include resolution is recomputed over the whole index on every extension,
+/// but state derived from the earlier view is not: function identities
+/// already rebased onto a compilation unit (a rebase rewrites a `file::`
+/// prefix once and cannot be undone), and composed roles, provenance and
+/// module-edge claims of retained files that are only withdrawn in part when
+/// the view moves. So an extension stands only when every retained file
+/// keeps exactly its include parent and its include-target membership, when
+/// the first unresolved `include!` does not appear (composition withdraws
+/// module-tree and crate-root claims while any include is unresolved), and
+/// when the edge limit is not hit (it clears every parent and keeps stale
+/// targets). Added files then bring only include edges of their own, and
+/// reach the merged resolution unrebased, as in a fresh build.
+pub(super) struct RetainedIncludeView {
+    parents: BTreeMap<PathBuf, ResolvedIncludeParent>,
+    targets: BTreeSet<PathBuf>,
+    limitations_empty: bool,
+}
+
+impl RetainedIncludeView {
+    pub(super) fn capture(index: &RustIndex) -> Self {
+        Self {
+            parents: index.include_parents.clone(),
+            targets: index.include_targets.clone(),
+            limitations_empty: index.include_limitations.is_empty(),
+        }
+    }
+
+    /// Whether `index`, re-resolved after the `added` files joined it,
+    /// still shows every retained file the captured view.
+    pub(super) fn preserved(&self, index: &RustIndex, added: &BTreeSet<&Path>) -> bool {
+        let edge_limit = index
+            .include_limitations
+            .iter()
+            .any(|limitation| limitation.reason_code == "rust_include_edge_limit_exceeded");
+        let first_limitation = self.limitations_empty && !index.include_limitations.is_empty();
+        // Before the merge every parent edge had a retained child and a
+        // retained parent, so equal retained edges also keep each retained
+        // file's whole parent chain, and its compilation unit, unchanged.
+        let parents_kept = index
+            .include_parents
+            .iter()
+            .filter(|(child, _)| !added.contains(child.as_path()))
+            .eq(self.parents.iter());
+        let targets_kept = index
+            .include_targets
+            .iter()
+            .filter(|target| !added.contains(target.as_path()))
+            .eq(self.targets.iter());
+        !edge_limit && !first_limitation && parents_kept && targets_kept
+    }
 }
 
 fn might_contain_include_macro(source: &str) -> bool {

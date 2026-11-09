@@ -36,6 +36,8 @@ pub(crate) enum Product {
     ModuleScopes,
     ClosureArgumentPositions,
     InvokedCallbackParams,
+    IncludeDirectives,
+    EmbedFileScan,
 }
 
 impl Product {
@@ -51,6 +53,8 @@ impl Product {
             Self::ModuleScopes => "module_scopes",
             Self::ClosureArgumentPositions => "closure_argument_positions",
             Self::InvokedCallbackParams => "invoked_callback_params",
+            Self::IncludeDirectives => "include_directives",
+            Self::EmbedFileScan => "embed_file_scan",
         }
     }
 }
