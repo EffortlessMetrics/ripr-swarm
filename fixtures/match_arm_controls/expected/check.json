@@ -41,6 +41,13 @@
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact value or pattern assertion"}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"yes","confidence":"medium"},
+        {"stage":"propagate","state":"yes","confidence":"medium"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"yes","confidence":"medium"}
+      ],
       "evidence_path": ["reach yes: Related tests appear to reach classify_computed: computed_label_is_word", "infection yes: Detected related test input at the changed boundary", "propagation yes: Changed behavior appears to influence returned value: \"word\"", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator yes: Strong oracle found: exact value or pattern assertion", "local flow reaches returned value: \"word\" (line 15)", "related test tests/classify.rs:4 computed_label_is_word uses strong exact value oracle: assert_eq!(classify_computed(\"word\"), \"word\");", "source assertion argument value \"word\" at line 5", "source function argument value final_label == \"alpha\" at line 5", "source function argument value input = \"word\" at line 5"],
       "flow_sinks": [
         {"kind":"return_value","text":"\"word\"","line":15}
@@ -145,6 +152,13 @@
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact value or pattern assertion"}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"yes","confidence":"medium"},
+        {"stage":"propagate","state":"yes","confidence":"medium"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"yes","confidence":"medium"}
+      ],
       "evidence_path": ["reach yes: Related tests appear to reach classify_guard: guarded_label_is_word", "infection yes: Detected related test input at the changed boundary", "propagation yes: Changed behavior appears to influence returned value: \"word\"", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator yes: Strong oracle found: exact value or pattern assertion", "local flow reaches returned value: \"word\" (line 31)", "related test tests/classify.rs:9 guarded_label_is_word uses strong exact value oracle: assert_eq!(classify_guard(\"word\"), \"word\");", "source assertion argument value \"word\" at line 10", "source function argument value final_label == \"alpha\" at line 10", "source function argument value input = \"word\" at line 10"],
       "flow_sinks": [
         {"kind":"return_value","text":"\"word\"","line":31}
@@ -249,6 +263,13 @@
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact value or pattern assertion"}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"yes","confidence":"medium"},
+        {"stage":"propagate","state":"yes","confidence":"medium"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"yes","confidence":"medium"}
+      ],
       "evidence_path": ["reach yes: Related tests appear to reach classify_bare: bare_label_is_word", "infection yes: Detected related test input at the changed boundary", "propagation yes: Changed behavior appears to influence returned value: \"word\"", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator yes: Strong oracle found: exact value or pattern assertion", "local flow reaches returned value: \"word\" (line 47)", "related test tests/classify.rs:14 bare_label_is_word uses strong exact value oracle: assert_eq!(classify_bare(\"word\"), \"word\");", "source assertion argument value \"word\" at line 15", "source function argument value final_label == \"alpha\" at line 15", "source function argument value input = \"word\" at line 15"],
       "flow_sinks": [
         {"kind":"return_value","text":"\"word\"","line":47}
@@ -353,6 +374,13 @@
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact value or pattern assertion"}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"yes","confidence":"medium"},
+        {"stage":"propagate","state":"yes","confidence":"medium"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"yes","confidence":"medium"}
+      ],
       "evidence_path": ["reach yes: Related tests appear to reach classify_char: char_tag_is_word", "infection yes: Detected related test input at the changed boundary", "propagation yes: Changed behavior appears to influence returned value: \"word\"", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator yes: Strong oracle found: exact value or pattern assertion", "local flow reaches returned value: \"word\" (line 63)", "related test tests/classify.rs:19 char_tag_is_word uses strong exact value oracle: assert_eq!(classify_char('a'), \"word\");", "source assertion argument value \"word\" at line 20", "source function argument value c = 'a' at line 20", "source function argument value final_label == \"alpha\" at line 20"],
       "flow_sinks": [
         {"kind":"return_value","text":"\"word\"","line":63}

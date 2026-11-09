@@ -1,0 +1,180 @@
+# Per-test time budget for the nextest `ci` profile (#12905, slice 1).
+#
+# `cargo xtask slow-test-report` reads target/nextest/ci/junit.xml (the
+# `rust-junit` artifact of test-analytics.yml) and judges every test against
+# `per_test_budget_seconds`. A test id is `<nextest binary-id> <test name>`.
+#
+# Decision (2026-11-04): the budget is ADVISORY. The suite is ~27k tests over 4
+# shards in a ~35 minute required check; the slowest tests are xtask binary
+# tests that run `cargo` themselves. Failing PRs on them before they are fixed
+# would only teach people to ignore the check.
+# Ratchet: the [[baseline]] allowlist below is every test that was over budget
+# in test-analytics run 41867428230 (main, 2026-11-04). Switching `mode` to
+# "enforced" fails only on an over-budget test that is NOT in the baseline, so it
+# can be turned on without a flood of failures. Ratchet by deleting a baseline
+# entry once its test is fixed (the report lists such entries under "Ratchet
+# candidates") and by lowering the budget; never by adding entries to make a new
+# slow test pass. Flip to "enforced" when the baseline holds fewer than 10 tests
+# or one release cycle passes with no new over-budget test, whichever is first.
+#
+# Refresh (2026-11-08, #12916): recorded_seconds below were re-measured in
+# test-analytics run 42511871092 (main 087d4141b62f, 2026-11-08), the first
+# partitioned Test Analytics run. Every test over 60s in that run is listed
+# below as a named #12916 exception with its verified cost driver in the
+# comment above its entry; this records the exceptions, it does not reduce
+# the tests. Entries whose test now measures at or under 30s were deleted
+# (ratchet); entries between 30s and 60s keep their previous standing and are
+# refreshed to the same measurement. Regressed entries past the 2x factor
+# kept their prior recorded reference so the regression stays visible in
+# the report until the test is reduced or the regression is explicitly
+# accepted in a separate reviewed change. The 30s budget, mode, regression
+# factor and enforcement trigger are unchanged.
+
+schema = "ripr_slow_test_budget.v1"
+
+[decision]
+mode = "advisory"
+per_test_budget_seconds = 30.0
+# A baselined test slower than regression_factor x its recorded_seconds is reported as
+# `over_budget_regressed` and fails in enforced mode, so a baselined test cannot silently
+# get much slower. Raise its recorded_seconds only with review, never to hide a regression.
+regression_factor = 2.0
+ratchet = "advisory; baseline allowlist shrinks by deletion; enforce (fail only on tests absent from the baseline) once the baseline holds fewer than 10 tests"
+
+# Native Windows-only exception: retained-evidence admission (#5044/#13012)
+# still requires the real isolated facade. Non-Windows nextest no longer runs
+# this duplicated repository scan (#12916). The historical timing below is
+# retained without claiming a new Windows measurement.
+[[baseline]]
+test = "xtask::bin/xtask tests::policy_checker_facade_runs_current_repo_checks"
+recorded_seconds = 178.694
+
+# Packages ripr and ripr-contract, compiles the extracted help tests with rustc, and runs all 39 portable cases plus a missing-asset recompile. Measured 272.742s on 2026-11-08 in run 42511871092; the prior recorded reference is retained so the regression stays visible in the report until the test is reduced or the regression is explicitly accepted in a separate reviewed change.
+[[baseline]]
+test = "xtask::ripr_public_guide_contract packaged_help_target_runs_every_case_and_rejects_missing_shared_asset"
+recorded_seconds = 111.768
+
+# Builds the candidate ripr binary with cargo and renders its default help five times, checking clean-checkout guidance on each surface. Measured 267.431s on 2026-11-08 in run 42511871092; the prior recorded reference is retained so the regression stays visible in the report until the test is reduced or the regression is explicitly accepted in a separate reviewed change.
+[[baseline]]
+test = "xtask::ripr_public_guide_contract first_run_surfaces_require_clean_checkout_guidance"
+recorded_seconds = 125.866
+
+# Builds the candidate ripr binary with cargo to render calibrate cargo-mutants help against the targeted-test workflow guide.
+[[baseline]]
+test = "xtask::ripr_public_guide_contract targeted_test_workflow_names_the_cargo_mutants_producer"
+recorded_seconds = 264.235
+
+# Rebuilds ripr with cargo and runs the real gate-evaluate dogfood scenario end to end.
+[[baseline]]
+test = "xtask::bin/xtask tests::dogfood_blocking_gate_report_is_self_contained"
+recorded_seconds = 240.614
+
+# Spawns the real MCP server over stdio in three text modes and walks both gap-pagination axes page by page.
+[[baseline]]
+test = "ripr::mcp_stdio independent_gap_pages_walk_both_axes_over_stdio"
+recorded_seconds = 239.844
+
+# Builds the candidate ripr binary with cargo to render calibrate cargo-mutants help against the targeted-test workflow guide.
+[[baseline]]
+test = "xtask::ripr_public_guide_contract targeted_test_workflow_discloses_mutants_json_only_denominator"
+recorded_seconds = 231.187
+
+# Builds the candidate ripr binary with cargo to render ripr doctor help against the exit-code guide.
+[[baseline]]
+test = "xtask::ripr_public_guide_contract doctor_exit_code_guide_distinguishes_analysis_and_source_build"
+recorded_seconds = 230.676
+
+# Builds ripr with cargo and measures pilot, warm-check, and editor-refresh runs of the real binary on a git fixture.
+[[baseline]]
+test = "xtask::bin/xtask reports::dx_scoreboard::tests::consumer_checkout::measured_consumers_use_the_private_pin_and_preserve_the_cached_source"
+recorded_seconds = 228.098
+
+# Builds ripr with cargo and runs the golden-comparing fixture check pipeline against the cleared cache. Measured 218.417s on 2026-11-08 in run 42511871092; the prior recorded reference is retained so the regression stays visible in the report until the test is reduced or the regression is explicitly accepted in a separate reviewed change.
+[[baseline]]
+test = "xtask::bin/xtask tests::golden_comparison_runs_consume_the_cache_the_runner_cleared"
+recorded_seconds = 81.767
+
+# Builds the candidate ripr binary with cargo and renders help for every command the public guides cite. Measured 206.836s on 2026-11-08 in run 42511871092; the prior recorded reference is retained so the regression stays visible in the report until the test is reduced or the regression is explicitly accepted in a separate reviewed change.
+[[baseline]]
+test = "xtask::ripr_public_guide_contract public_docs_only_pass_flags_the_command_help_lists"
+recorded_seconds = 76.654
+
+# Builds the candidate ripr binary with cargo and renders its default help four ways.
+[[baseline]]
+test = "xtask::ripr_public_guide_contract rendered_default_help_routes_share_one_canonical_first_run"
+recorded_seconds = 206.377
+
+# Builds ripr with cargo and runs the full fixture check pipeline in JSON and human formats.
+[[baseline]]
+test = "xtask::bin/xtask tests::dogfood_language_preview_run_checks_static_limit_receipt"
+recorded_seconds = 199.744
+
+# Executes 22 report commands through the real dispatch facades in a single test process.
+[[baseline]]
+test = "xtask::bin/xtask tests::report_commands_dispatch_through_report_facades"
+recorded_seconds = 195.282
+
+# Clones the full repository and runs the real xtask check-fast dispatch repeatedly on committed spec controls.
+[[baseline]]
+test = "xtask::support_tier_fast_route committed_spec_declarations_reach_actual_check_fast_dispatch"
+recorded_seconds = 186.973
+
+# Builds ripr with cargo and runs the packaged pilot end to end twice, for the packet bound and the seam limit.
+[[baseline]]
+test = "xtask::bin/xtask reports::release::tests::packaged_pilot_step_passes_when_the_packet_bound_really_fires_and_fails_on_a_seam_limit"
+recorded_seconds = 174.206
+
+# Spawns real child fixture processes whose cargo builds contend on the artifact lock, with gated startup, abort, and recovery runs.
+[[baseline]]
+test = "xtask::bin/xtask tests::fixture_cache::fixture_cache_aborted_process_is_reaped_before_owned_cleanup_and_recovers"
+recorded_seconds = 163.162
+
+# Builds ripr with cargo and runs the fixture check pipeline repeatedly against the cleared cache.
+[[baseline]]
+test = "xtask::bin/xtask tests::fixture_run_writes_its_facts_into_the_cache_the_runner_cleared"
+recorded_seconds = 154.802
+
+# Spawns real child fixture processes under cargo-lock contention, including a deliberate 20-second late-readiness probe.
+[[baseline]]
+test = "xtask::bin/xtask tests::fixture_cache::fixture_cache_late_readiness_cannot_grant_a_fresh_abort_phase"
+recorded_seconds = 149.705
+
+# Builds ripr with cargo and spawns it to render the report-packet index for every packet scenario.
+[[baseline]]
+test = "xtask::bin/xtask tests::dogfood_report_packet_index_scenarios_have_checked_receipts"
+recorded_seconds = 139.074
+
+# Builds ripr with cargo and runs repeated measured warm checks of the real binary on git checkouts.
+[[baseline]]
+test = "xtask::bin/xtask reports::dx_scoreboard::tests::a_non_draft_checkout_config_still_produces_a_draft_warm_check_sample"
+recorded_seconds = 106.783
+
+# Runs the real admission wrapper shell seven times against a stubbed gh, including a blob read that sleeps 60 seconds.
+[[baseline]]
+test = "xtask::hard_cut_admission_selftest wrapper_keeps_the_residual_counted_when_a_bound_cannot_be_read"
+recorded_seconds = 63.613
+
+# Runs the real ripr check against a git shim that hangs for 60 seconds, cut by the 1-second git timeout.
+[[baseline]]
+test = "ripr::cli_smoke check_json_omitted_base_git_timeout_names_timeout_identity"
+recorded_seconds = 58.119
+
+# Runs warm A/B candidate packets whose stub checks sleep 4 seconds per invocation, including the control-slowdown run.
+[[baseline]]
+test = "xtask::bin/xtask warm_ab::tests::stub::control_slowdown_fails_a_pin_at_1_6x_and_a_clean_run_passes_at_1_0x"
+recorded_seconds = 53.807
+
+# Runs the real ripr check against a hanging git shim and again with an unresolvable base.
+[[baseline]]
+test = "ripr::cli_smoke check_json_timeout_and_bad_base_have_distinct_identities"
+recorded_seconds = 34.136
+
+# Qualifies a stub binary that hangs for 600 seconds so every row must end at its deadline.
+[[baseline]]
+test = "xtask::bin/xtask termination_qualification::tests::unix_stubs::a_hanging_stub_is_a_deadline_row_not_a_pass"
+recorded_seconds = 33.777
+
+# Stores and reloads seam-cache envelopes at the full and compact store limits, comparing every record.
+[[baseline]]
+test = "ripr analysis::seam_cache::tests::integrity_large_full_and_compact_envelopes_preserve_complete_warm_evidence"
+recorded_seconds = 30.055

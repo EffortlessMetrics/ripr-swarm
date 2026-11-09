@@ -102,6 +102,19 @@ a stronger test exists. Open `gate-decision.md` for the exact reason on each
 candidate. The same applies when a test changed in the pull request next to the
 gap: that candidate stays advisory with the reason stated.
 
+## Fork and Dependabot pull requests
+
+The generated workflow runs on `pull_request`, so a pull request from a fork or
+from Dependabot gets a read-only `GITHUB_TOKEN`. The steps that write to the
+pull request (the summary comment and the inline comments) carry a guard and
+are skipped for those heads. The analysis (which also writes the gate
+decision) and the `ripr-reports` artifact upload are not guarded and still
+run, so a contributor and a maintainer can read the same `gate-decision.md`. SARIF upload needs `security-events: write`; it is
+`continue-on-error`, and when it fails the `Explain failed SARIF upload` step
+names the usual causes (a read-only token among them) without failing the job.
+Nothing here makes a fork pull request a trusted run: the workflow does not use
+`pull_request_target`, and it should not be changed to.
+
 ## Misconfiguration: baseline-check without a baseline
 
 `baseline-check` with no baseline, or an invalid one, is a `config_error` and
@@ -124,3 +137,5 @@ Unset `RIPR_GATE_MODE` to return to advisory-only. The job is
 - [Blocking readiness](BLOCKING_READINESS.md): when each gate mode is ready.
 - [Calibrated gate policy](CALIBRATED_GATE_POLICY.md): the mode after
   `baseline-check`.
+- [Coming from cargo-mutants](FROM_CARGO_MUTANTS.md): the `missed.txt` and
+  exit-`2` equivalents, with a two-command `acknowledgeable` gate.

@@ -85,6 +85,12 @@ pub(crate) struct AgentBriefResolvedWorkingSet {
     pub(crate) base: Option<String>,
     pub(crate) diff: Option<PathBuf>,
     pub(crate) seam_id: Option<String>,
+    /// Every path a diff-derived working set changed, including files whose
+    /// hunks only remove lines and pure renames (#13791). `files` keeps only
+    /// added-line files for seam placement; this list feeds the preview-only
+    /// language classification alone. `None` when no diff was read, or when
+    /// the diff deleted a whole file, so that classification stays generic.
+    pub(crate) changed_paths: Option<Vec<PathBuf>>,
 }
 
 impl AgentBriefResolvedWorkingSet {
@@ -100,6 +106,7 @@ impl AgentBriefResolvedWorkingSet {
             base: None,
             diff: Some(diff.into()),
             seam_id: None,
+            changed_paths: None,
         }
     }
 
@@ -115,6 +122,7 @@ impl AgentBriefResolvedWorkingSet {
             base: Some(base.into()),
             diff: None,
             seam_id: None,
+            changed_paths: None,
         }
     }
 
@@ -129,6 +137,7 @@ impl AgentBriefResolvedWorkingSet {
             base: None,
             diff: None,
             seam_id: None,
+            changed_paths: None,
         }
     }
 
@@ -143,6 +152,7 @@ impl AgentBriefResolvedWorkingSet {
             base: None,
             diff: None,
             seam_id: Some(seam_id.into()),
+            changed_paths: None,
         }
     }
 
@@ -158,6 +168,11 @@ impl AgentBriefResolvedWorkingSet {
 
     pub(crate) fn with_enclosing_owners(mut self, owners: Vec<AgentBriefChangedOwner>) -> Self {
         self.enclosing_owners = owners;
+        self
+    }
+
+    pub(crate) fn with_changed_paths(mut self, paths: Option<Vec<PathBuf>>) -> Self {
+        self.changed_paths = paths;
         self
     }
 }
@@ -263,12 +278,20 @@ impl<'a> AgentBriefPolicy<'a> {
         Self { config }
     }
 
-    fn severity_for(self, class: SeamGripClass) -> ConfigSeverity {
-        self.config.severity().for_seam(class)
+    fn severity_for(self, class: SeamGripClass, file: &Path) -> ConfigSeverity {
+        self.config.severity().for_seam_in(class, file)
     }
 
-    pub(crate) fn omission_reason_for_class(self, class: SeamGripClass) -> Option<String> {
-        if matches!(self.severity_for(class), ConfigSeverity::Off) {
+    pub(crate) fn omission_reason_for_class(
+        self,
+        class: SeamGripClass,
+        file: Option<&Path>,
+    ) -> Option<String> {
+        let configured_off = match file {
+            Some(path) => matches!(self.severity_for(class, path), ConfigSeverity::Off),
+            None => matches!(self.config.severity().for_seam(class), ConfigSeverity::Off),
+        };
+        if configured_off {
             return Some(format!(
                 "is configured off for {} seams and is not included in agent results",
                 class.as_str()
@@ -378,6 +401,7 @@ fn direct_candidates<'a>(
     let mut named_omissions = 0;
     let mut omitted_by_policy = 0usize;
     let mut more_omissions: Vec<(AgentBriefOmission, usize)> = Vec::new();
+    let mut named_groups: Vec<(AgentBriefOmission, String)> = Vec::new();
     let normalized_working_set = NormalizedAgentBriefWorkingSet::new(working_set);
     for entry in classified {
         let Some(why_now) = why_now_for(entry, &normalized_working_set) else {
@@ -390,12 +414,14 @@ fn direct_candidates<'a>(
             // the first few and count the rest per reason.
             if named_omissions < AGENT_BRIEF_MAX_NAMED_OMISSIONS {
                 named_omissions += 1;
-                warnings.push(format!(
-                    "seam {} at {}:{} {}",
-                    entry.seam.id().as_str(),
-                    display_path(entry.seam.file()),
-                    entry.seam.display_line(),
-                    omission.reason()
+                named_groups.push((
+                    omission,
+                    format!(
+                        "{} at {}:{}",
+                        entry.seam.id().as_str(),
+                        display_path(entry.seam.file()),
+                        entry.seam.display_line()
+                    ),
                 ));
             } else if let Some((_, count)) = more_omissions
                 .iter_mut()
@@ -409,6 +435,7 @@ fn direct_candidates<'a>(
         }
         candidates.push(selected(entry, why_now));
     }
+    warnings.extend(grouped_omission_warnings(named_groups));
     warnings.extend(
         more_omissions
             .into_iter()
@@ -496,6 +523,43 @@ impl<'a> AgentBriefChangedScope<'a> {
     pub(crate) fn contains(&self, seam: &RepoSeam) -> bool {
         matching_changed_line(seam, &self.working_set).is_some()
             || matching_changed_owner(seam, &self.working_set).is_some()
+    }
+
+    /// True when some test in `test_files` lives in a file the working set
+    /// names, the only files whose tests can raise a related-test why-now.
+    /// When none does, no seam can match through related-test evidence.
+    pub(crate) fn related_tests_possible<'p>(
+        &self,
+        test_files: impl IntoIterator<Item = &'p Path>,
+    ) -> bool {
+        test_files.into_iter().any(|file| {
+            let file = normalized_path(file);
+            self.working_set.files.contains(&file)
+                || self
+                    .working_set
+                    .changed_lines
+                    .iter()
+                    .any(|(line_file, _)| *line_file == file)
+        })
+    }
+
+    /// False only for a seam that cannot match any non-fallback why-now: not
+    /// on a changed line or in a changed owner, not in a working-set file, and
+    /// (`related_tests_possible` false) with no related-test route. Such a
+    /// seam is discarded once any scoped match exists, so its evidence is
+    /// never needed. The two related-test priorities read evidence, so they
+    /// stay unfiltered unless `related_tests_possible` proves them out.
+    pub(crate) fn can_match_non_fallback(
+        &self,
+        seam: &RepoSeam,
+        related_tests_possible: bool,
+    ) -> bool {
+        related_tests_possible
+            || self.contains(seam)
+            || self
+                .working_set
+                .files
+                .contains(&normalized_path(seam.file()))
     }
 
     /// True when `classified` holds at least the requested number of
@@ -744,8 +808,9 @@ fn compare_selected_parts(
     why_now_sort_priority(left_why)
         .cmp(&why_now_sort_priority(right_why))
         .then_with(|| {
-            severity_priority(policy.severity_for(left.class))
-                .cmp(&severity_priority(policy.severity_for(right.class)))
+            severity_priority(policy.severity_for(left.class, left.seam.file())).cmp(
+                &severity_priority(policy.severity_for(right.class, right.seam.file())),
+            )
         })
         .then_with(|| grip_priority(left.class).cmp(&grip_priority(right.class)))
         .then_with(|| {
@@ -818,10 +883,13 @@ fn relation_confidence_priority(confidence: RelationConfidence) -> u8 {
 /// and the four `*_unknown` classes) names evidence the analyzer could not
 /// establish, so selecting it would send the agent to repair a gap that may
 /// not exist; pilot withholds the same classes from its ranking (#5497,
-/// #6775). Omitted seams are named in warnings, never silently dropped
-/// (`AgentBriefOmission`).
-fn is_agent_actionable(class: SeamGripClass) -> bool {
-    class.is_headline_eligible() && !class.is_static_limitation()
+/// #6775). Gap-class seams that [`is_static_limited`] marks as static
+/// limitations are omitted for the same reason. Omitted seams are named in
+/// warnings, never silently dropped (`AgentBriefOmission`).
+fn is_agent_actionable(entry: &ClassifiedSeam) -> bool {
+    entry.class.is_headline_eligible()
+        && !entry.class.is_static_limitation()
+        && !crate::output::evidence_record::is_static_limited(entry)
 }
 
 /// Whether an explicitly named seam renders an agent result (packet,
@@ -838,14 +906,41 @@ fn is_agent_result_visible(class: SeamGripClass) -> bool {
 enum AgentBriefOmission {
     ConfiguredOff(SeamGripClass),
     NotActionable(SeamGripClass),
+    /// A gap-class seam whose evidence stages are opaque or unknown
+    /// ([`is_static_limited`]); the class alone would read as a repairable gap.
+    EvidenceLimited(SeamGripClass),
+    /// A producer-named panic limit can retain concrete stage states.
+    PanicOutcomeUnresolved(SeamGripClass),
+    /// An owner-bound field snapshot may have an unread expectation or setup.
+    FrameworkOracleUnresolved(SeamGripClass),
 }
 
 impl AgentBriefOmission {
     fn for_entry(entry: &ClassifiedSeam, policy: AgentBriefPolicy<'_>) -> Option<Self> {
-        if matches!(policy.severity_for(entry.class), ConfigSeverity::Off) {
+        if matches!(
+            policy.severity_for(entry.class, entry.seam.file()),
+            ConfigSeverity::Off
+        ) {
             return Some(Self::ConfiguredOff(entry.class));
         }
-        if !is_agent_actionable(entry.class) {
+        if !is_agent_actionable(entry) {
+            if entry.class.is_headline_eligible()
+                && !entry.class.is_static_limitation()
+                && crate::output::evidence_record::is_static_limited(entry)
+            {
+                if entry
+                    .evidence
+                    .names_static_limit(crate::domain::StaticLimitKind::RustPanicOutcomeUnresolved)
+                {
+                    return Some(Self::PanicOutcomeUnresolved(entry.class));
+                }
+                if entry.evidence.names_static_limit(
+                    crate::domain::StaticLimitKind::RustFrameworkOracleUnresolved,
+                ) {
+                    return Some(Self::FrameworkOracleUnresolved(entry.class));
+                }
+                return Some(Self::EvidenceLimited(entry.class));
+            }
             return Some(Self::NotActionable(entry.class));
         }
         None
@@ -860,6 +955,44 @@ impl AgentBriefOmission {
             ),
             Self::NotActionable(class) => format!(
                 "is {} and is not included in agent brief results",
+                class.as_str()
+            ),
+            Self::EvidenceLimited(class) => format!(
+                "is {} but its evidence is opaque or unknown at a stage, so it is a static limitation and is not included in agent brief results",
+                class.as_str()
+            ),
+            Self::PanicOutcomeUnresolved(class) => format!(
+                "is {} but ripr cannot tell whether the changed code causes the expected panic, so it is a static limitation and is not included in agent brief results",
+                class.as_str()
+            ),
+            Self::FrameworkOracleUnresolved(class) => format!(
+                "is {} but ripr cannot tell whether the framework oracle notices the changed field, so it is a static limitation and is not included in agent brief results",
+                class.as_str()
+            ),
+        }
+    }
+
+    /// Predicate shared by several named seams: "seams X at f:l, Y at f:l <reason>".
+    fn plural_reason(self) -> String {
+        match self {
+            Self::ConfiguredOff(class) => format!(
+                "are configured off for {} seams and are not included in agent brief results",
+                class.as_str()
+            ),
+            Self::NotActionable(class) => format!(
+                "are {} and are not included in agent brief results",
+                class.as_str()
+            ),
+            Self::EvidenceLimited(class) => format!(
+                "are {} but their evidence is opaque or unknown at a stage, so they are static limitations and are not included in agent brief results",
+                class.as_str()
+            ),
+            Self::PanicOutcomeUnresolved(class) => format!(
+                "are {} but ripr cannot tell whether the changed code causes the expected panic, so they are static limitations and are not included in agent brief results",
+                class.as_str()
+            ),
+            Self::FrameworkOracleUnresolved(class) => format!(
+                "are {} but ripr cannot tell whether the framework oracle notices the changed field, so they are static limitations and are not included in agent brief results",
                 class.as_str()
             ),
         }
@@ -882,8 +1015,43 @@ impl AgentBriefOmission {
                 "{count} more matching {noun} {verb} {} and not included in agent brief results",
                 class.as_str()
             ),
+            Self::EvidenceLimited(class) => format!(
+                "{count} more matching {noun} {verb} {} with opaque or unknown evidence (static limitations) and not included in agent brief results",
+                class.as_str()
+            ),
+            Self::PanicOutcomeUnresolved(class) => format!(
+                "{count} more matching {noun} {verb} {} with unresolved expected panic outcomes (static limitations) and not included in agent brief results",
+                class.as_str()
+            ),
+            Self::FrameworkOracleUnresolved(class) => format!(
+                "{count} more matching {noun} {verb} {} with unresolved framework field oracles (static limitations) and not included in agent brief results",
+                class.as_str()
+            ),
         }
     }
+}
+
+/// Seams sharing one omission reason state its sentence once: a single seam
+/// reads "seam X at f:l is ...", several read "seams X at f:l, Y at f:l are
+/// ..." (#13673: the repeated sentence dominated brief warnings).
+fn grouped_omission_warnings(
+    named: impl IntoIterator<Item = (AgentBriefOmission, String)>,
+) -> Vec<String> {
+    let mut groups: Vec<(AgentBriefOmission, Vec<String>)> = Vec::new();
+    for (omission, name) in named {
+        if let Some((_, names)) = groups.iter_mut().find(|(seen, _)| *seen == omission) {
+            names.push(name);
+        } else {
+            groups.push((omission, vec![name]));
+        }
+    }
+    groups
+        .into_iter()
+        .map(|(omission, names)| match names.as_slice() {
+            [only] => format!("seam {only} {}", omission.reason()),
+            _ => format!("seams {} {}", names.join(", "), omission.plural_reason()),
+        })
+        .collect()
 }
 
 fn agent_brief_omission_reason(
@@ -928,7 +1096,8 @@ mod tests {
     };
     use crate::config::{RiprConfig, tests_only_parse};
     use crate::domain::{
-        Confidence, MissingDiscriminatorFact, OracleKind, OracleStrength, StageEvidence, StageState,
+        Confidence, DiscriminatorShape, MissingDiscriminatorFact, OracleKind, OracleStrength,
+        StageEvidence, StageState,
     };
 
     fn stage(state: StageState) -> StageEvidence {
@@ -987,6 +1156,8 @@ mod tests {
                     value: "boundary value".to_string(),
                     reason: "missing equality boundary".to_string(),
                     flow_sink: None,
+                    shape: DiscriminatorShape::Other,
+                    drafted_boundary: None,
                 }],
                 new_test_target: None,
                 statically_contradicted_related_tests: 0,
@@ -2213,14 +2384,18 @@ weakly_gripped = "off"
         let selection = select_with_config(&seams, &working_set, 3, &config);
 
         assert!(selection.top_seams.is_empty());
-        let named = selection
-            .warnings
-            .iter()
-            .filter(|warning| warning.starts_with("seam "))
-            .count();
-        assert_eq!(named, AGENT_BRIEF_MAX_NAMED_OMISSIONS);
+        // The ten named seams share one reason, so they share one sentence.
+        let named = selection.warnings[0]
+            .strip_prefix("seams ")
+            .and_then(|rest| {
+                rest.strip_suffix(
+                    " are configured off for weakly_gripped seams and are not included in agent brief results",
+                )
+            })
+            .ok_or_else(|| format!("grouped named warning: {:?}", selection.warnings))?;
+        assert_eq!(named.split(", ").count(), AGENT_BRIEF_MAX_NAMED_OMISSIONS);
         assert_eq!(
-            selection.warnings[AGENT_BRIEF_MAX_NAMED_OMISSIONS..],
+            selection.warnings[1..],
             [
                 "2 more matching seams are configured off for weakly_gripped seams and not \
                  included in agent brief results",
@@ -2319,5 +2494,38 @@ weakly_gripped = "off"
                 "{class:?} omission must be named honestly"
             );
         }
+    }
+
+    #[test]
+    fn agent_brief_omits_gap_class_seams_when_is_static_limited_marks_them() {
+        let mut limited = classified(
+            "src/pricing.rs",
+            88,
+            "pricing::discounted_total",
+            "amount >= discount_threshold",
+            SeamGripClass::WeaklyGripped,
+        );
+        limited.evidence.propagate = stage(StageState::Unknown);
+        let gap = classified(
+            "src/pricing.rs",
+            101,
+            "pricing::taxed_total",
+            "amount >= tax_threshold",
+            SeamGripClass::Ungripped,
+        );
+        let seams = vec![limited, gap];
+        let selection = select(
+            &seams,
+            &AgentBriefResolvedWorkingSet::files(vec![PathBuf::from("src/pricing.rs")]),
+            3,
+        );
+        assert_eq!(selection.top_seams.len(), 1);
+        assert_eq!(selection.top_seams[0].seam.class, SeamGripClass::Ungripped);
+        assert!(
+            selection.warnings.iter().any(|warning| warning
+                .contains("is weakly_gripped but its evidence is opaque or unknown at a stage")),
+            "{:?}",
+            selection.warnings
+        );
     }
 }

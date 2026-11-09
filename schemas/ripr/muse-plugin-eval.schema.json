@@ -1,0 +1,614 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.effortlessmetrics.dev/ripr/muse-plugin-eval.schema.json",
+  "title": "RIPR Muse Plugin Evaluation Record V1",
+  "description": "Machine-readable muse-plugin-eval-v1 record for one Muse RIPR plugin scenario run. Static RIPR verdicts and executed-test verdicts are separate properties; a missing measurement is the string not_measured or unknown, never zero. Domain review owns judgment; this schema closes the wire shape.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "identity",
+    "environment",
+    "task",
+    "mcp",
+    "verdicts"
+  ],
+  "properties": {
+    "schema_version": { "const": "muse-plugin-eval-v1" },
+    "identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["scenario_id", "fixture_digest", "ripr_version", "plugin_version", "muse_version"],
+      "properties": {
+        "scenario_id": { "type": "string", "minLength": 1 },
+        "fixture_digest": { "type": "string", "minLength": 1 },
+        "ripr_commit": { "type": ["string", "null"] },
+        "ripr_version": { "type": "string", "minLength": 1 },
+        "plugin_version": { "type": "string", "minLength": 1 },
+        "muse_version": { "type": "string", "minLength": 1 }
+      }
+    },
+    "environment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["os", "git_head", "working_tree"],
+      "properties": {
+        "os": { "type": "string", "minLength": 1 },
+        "runner_class": { "type": "string", "minLength": 1 },
+        "git_head": { "type": "string", "minLength": 1 },
+        "base": { "type": ["string", "null"] },
+        "working_tree": { "enum": ["clean", "dirty", "unknown"] },
+        "ripr_binary": { "enum": ["mcp_capable", "predates_mcp", "missing", "unknown"] }
+      }
+    },
+    "model": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "properties": {
+        "provider": { "type": "string" },
+        "model": { "type": "string" },
+        "configuration": { "type": "string" },
+        "trial_id": { "type": "string" }
+      }
+    },
+    "task": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["initial_request", "expected_oracle"],
+      "properties": {
+        "initial_request": { "type": "string", "minLength": 1 },
+        "expected_oracle": { "type": "string", "minLength": 1 }
+      }
+    },
+    "mcp": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tools_discovered", "setup_outcome"],
+      "properties": {
+        "tools_discovered": { "type": "array", "items": { "type": "string" } },
+        "setup_outcome": {
+          "enum": ["ready", "approval_required", "server_unavailable", "no_scope", "base_required", "limited", "not_run"]
+        },
+        "calls": { "type": "array", "items": { "type": "string" } },
+        "refusals": { "type": "array", "items": { "type": "string" } },
+        "snapshot_ids": { "type": "array", "items": { "type": "string" } },
+        "fresh_for_working_tree": { "type": ["boolean", "null"] }
+      }
+    },
+    "repair": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "properties": {
+        "canonical_id": { "type": ["string", "null"] },
+        "seam_id": { "type": ["string", "null"] },
+        "attempt_id": { "type": ["string", "null"] },
+        "edit_paths": { "type": "array", "items": { "type": "string" } },
+        "before_class": { "type": ["string", "null"] },
+        "after_class": { "type": ["string", "null"] }
+      }
+    },
+    "execution": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "properties": {
+        "commands": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["command", "exit_status"],
+            "properties": {
+              "command": { "type": "string" },
+              "exit_status": { "type": ["integer", "null"] },
+              "role": { "enum": ["positive", "wrong_implementation_control", "restore", "other"] }
+            }
+          }
+        }
+      }
+    },
+    "verdicts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["static_verdict", "executed_verdict", "combined_claim"],
+      "properties": {
+        "static_verdict": { "type": "string", "minLength": 1 },
+        "executed_verdict": { "type": "string", "minLength": 1 },
+        "combined_claim": {
+          "enum": ["completed_repair", "not_completed", "refused", "not_applicable"]
+        },
+        "unsupported_claims": { "type": "array", "items": { "type": "string" } },
+        "unintended_edits": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "efficiency": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "wall_time": { "type": ["string", "number"], "description": "Seconds, or the string not_measured." },
+        "time_to_first_useful_finding": { "type": ["string", "number"] },
+        "model_calls": { "type": ["integer", "null"] },
+        "tool_calls": { "type": ["integer", "null"] },
+        "input_tokens": { "type": ["integer", "null"] },
+        "output_tokens": { "type": ["integer", "null"] },
+        "reported_cost": { "type": ["string", "number"] },
+        "peak_memory": { "type": ["string", "number"] }
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "transcript_path": { "type": ["string", "null"] },
+        "output_digests": { "type": "array", "items": { "type": "string" } },
+        "evaluator_version": { "type": ["string", "null"] },
+        "judgment": { "type": ["string", "null"] }
+      }
+    },
+    "observations": {
+      "$ref": "#/$defs/observations"
+    }
+  },
+  "$defs": {
+    "observations": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "run_id",
+        "trial_id",
+        "recorded_unix_ms",
+        "subject",
+        "scenario",
+        "evidence"
+      ],
+      "properties": {
+        "run_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+        },
+        "trial_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+        },
+        "recorded_unix_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "subject": {
+          "$ref": "#/$defs/subject"
+        },
+        "scenario": {
+          "$ref": "#/$defs/scenario"
+        },
+        "evidence": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "items": {
+            "$ref": "#/$defs/artifact"
+          }
+        },
+        "setup": {
+          "$ref": "#/$defs/setup"
+        },
+        "static": {
+          "$ref": "#/$defs/static"
+        },
+        "durable": {
+          "$ref": "#/$defs/durable"
+        },
+        "executions": {
+          "$ref": "#/$defs/executions"
+        },
+        "usage": {
+          "$ref": "#/$defs/usage"
+        }
+      }
+    },
+    "subject": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "plugin_version",
+        "plugin_package_sha256",
+        "ripr_version",
+        "ripr_commit",
+        "muse_version",
+        "platform",
+        "model",
+        "model_config_sha256"
+      ],
+      "properties": {
+        "plugin_version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "plugin_package_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "ripr_version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "ripr_commit": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "muse_version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "platform": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "model": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "model_config_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
+    },
+    "scenario": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "task_id",
+        "task_sha256",
+        "fixture_id",
+        "fixture_sha256"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+        },
+        "task_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+        },
+        "task_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "fixture_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+        },
+        "fixture_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "kind",
+        "uri",
+        "sha256"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+        },
+        "kind": {
+          "enum": [
+            "tool_transcript",
+            "static_report",
+            "repair_manifest",
+            "test_execution",
+            "usage_report"
+          ]
+        },
+        "uri": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
+    },
+    "setup": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "plugin_loaded",
+        "mcp_available",
+        "evidence"
+      ],
+      "properties": {
+        "status": {
+          "enum": [
+            "passed",
+            "failed",
+            "incomplete"
+          ]
+        },
+        "plugin_loaded": {
+          "type": "boolean"
+        },
+        "mcp_available": {
+          "type": "boolean"
+        },
+        "evidence": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+        }
+      }
+    },
+    "static": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "gap_id",
+        "before",
+        "before_evidence"
+      ],
+      "properties": {
+        "gap_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "before": {
+          "enum": [
+            "exposed",
+            "weakly_exposed",
+            "reachable_unrevealed",
+            "no_static_path",
+            "infection_unknown",
+            "propagation_unknown",
+            "static_unknown"
+          ]
+        },
+        "before_evidence": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+        },
+        "after": {
+          "enum": [
+            "exposed",
+            "weakly_exposed",
+            "reachable_unrevealed",
+            "no_static_path",
+            "infection_unknown",
+            "propagation_unknown",
+            "static_unknown"
+          ]
+        },
+        "after_evidence": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+        }
+      }
+    },
+    "durable": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "attempt_id",
+        "before_state",
+        "before_manifest"
+      ],
+      "properties": {
+        "attempt_id": {
+          "type": "string",
+          "pattern": "^repair-attempt-[0-9a-f]{24}$"
+        },
+        "before_state": {
+          "enum": [
+            "prepared",
+            "awaiting_edit"
+          ]
+        },
+        "before_manifest": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+        },
+        "after_manifest": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+        },
+        "after_state": {
+          "enum": [
+            "ready_to_finish",
+            "stale",
+            "incomparable",
+            "failed"
+          ]
+        },
+        "current": {
+          "type": "boolean"
+        },
+        "edit_cage": {
+          "enum": [
+            "compliant",
+            "violated",
+            "incomparable"
+          ]
+        }
+      }
+    },
+    "executions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "test_selector",
+        "command"
+      ],
+      "properties": {
+        "test_selector": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "command": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2048
+          }
+        },
+        "original": {
+          "$ref": "#/$defs/execution"
+        },
+        "counterexample": {
+          "$ref": "#/$defs/execution"
+        },
+        "restored": {
+          "$ref": "#/$defs/execution"
+        }
+      }
+    },
+    "execution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "evidence",
+        "implementation_sha256",
+        "tests_sha256",
+        "status",
+        "tests_executed"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+        },
+        "evidence": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+        },
+        "implementation_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "tests_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "status": {
+          "enum": [
+            "passed",
+            "failed",
+            "incomplete"
+          ]
+        },
+        "tests_executed": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "exit_code": {
+          "type": "integer",
+          "minimum": -2147483648,
+          "maximum": 2147483647
+        },
+        "failure_kind": {
+          "enum": [
+            "assertion",
+            "compile",
+            "timeout",
+            "infrastructure"
+          ]
+        },
+        "failed_test": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        }
+      }
+    },
+    "usage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "complete",
+        "evidence"
+      ],
+      "properties": {
+        "complete": {
+          "type": "boolean"
+        },
+        "evidence": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+        },
+        "model_calls": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "tool_calls": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "elapsed_ms": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "peak_rss_bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "tokens": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "input",
+            "cached_input",
+            "output",
+            "total"
+          ],
+          "properties": {
+            "input": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "cached_input": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "output": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "total": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            }
+          }
+        }
+      }
+    }
+  }
+}

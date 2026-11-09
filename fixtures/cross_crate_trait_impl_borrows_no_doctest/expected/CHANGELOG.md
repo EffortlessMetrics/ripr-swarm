@@ -177,3 +177,44 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — cross_crate_trait_impl_borrows_no_doctest (14)
+
+Reason:
+RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; human rendering unchanged
+Reach summary of a workspace-unreferenced owner now ends '(unreferenced in workspace)' (RIPR-SPEC-0219, #12766); class unchanged
+
+Command:
+`cargo xtask goldens bless cross_crate_trait_impl_borrows_no_doctest --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — cross_crate_trait_impl_borrows_no_doctest (15)
+
+Reason:
+RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; no test attribution; human rendering unchanged
+Unreferenced-in-workspace marker withheld: the index does not span the workspace (RIPR-SPEC-0219, Devin finding on #13691); class unchanged
+
+Command:
+`cargo xtask goldens bless cross_crate_trait_impl_borrows_no_doctest --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — cross_crate_trait_impl_borrows_no_doctest (16)
+
+Reason:
+RIPR-SPEC-0423: merge of origin/main union re-bless; additive evidence_stages rows combined with main-side bless entries and wording updates
+
+Command:
+`cargo xtask goldens bless cross_crate_trait_impl_borrows_no_doctest --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

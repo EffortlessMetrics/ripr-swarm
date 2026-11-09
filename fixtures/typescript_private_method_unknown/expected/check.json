@@ -38,6 +38,13 @@
         "observe": {"state":"unknown","confidence":"low","summary":"Strongest extracted oracle kind: `unknown` (rank 0)"},
         "discriminate": {"state":"unknown","confidence":"low","summary":"TypeScript preview adapter: the changed owner is a `#private` class member no test can call by name; discriminate unknown (RIPR-SPEC-0243)."}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"unknown","confidence":"low"},
+        {"stage":"infect","state":"unknown","confidence":"low"},
+        {"stage":"propagate","state":"unknown","confidence":"low"},
+        {"stage":"observe","state":"unknown","confidence":"low"},
+        {"stage":"discriminate","state":"unknown","confidence":"low","basis":[{"code":"discriminator_not_established","summary":"whether a test checks this behavior is not established"}]}
+      ],
       "evidence_path": ["reach unknown: 0 related test(s) found for owner `#limit`", "infection unknown: TypeScript preview adapter does not yet model infection.", "propagation unknown: TypeScript preview adapter does not yet model propagation.", "observation unknown: Strongest extracted oracle kind: `unknown` (rank 0)", "discriminator unknown: TypeScript preview adapter: the changed owner is a `#private` class member no test can call by name; discriminate unknown (RIPR-SPEC-0243)."],
       "flow_sinks": [
       ],
@@ -134,5 +141,6 @@
       "category": "preview_language_advisory",
       "why": "preview adapter; advisory; may be incomplete; empty result is not Rust-grade clean"
     }
-  ]
+  ],
+  "source_subject": {"digest_algorithm":"sha256","files":[{"path":"src/counter.ts","digest":"sha256:9c69087ee56c577fc6d504cbb1cb1180a0b024608c6771098782b23178f91ee0"}]}
 }

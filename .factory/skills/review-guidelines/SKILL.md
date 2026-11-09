@@ -6,20 +6,39 @@ Optimize for structured, durable review records. Do not optimize for a low comme
 
 ## Required context
 
-Before reviewing, use the repository's checked-in context:
+Start with `AGENTS.md`, the current review procedure, and
+`docs/agent-context/review-invariants.md`. Inspect the complete candidate diff,
+its governing claim, and the affected semantic owners and consumers. Reuse
+context already read for the same unchanged subject.
 
-- `AGENTS.md`
-- `docs/ENGINEERING.md`
-- `docs/ARCHITECTURE.md`
-- `docs/PR_AUTOMATION.md`
-- `docs/SCOPED_PR_CONTRACT.md`
-- `docs/CI.md`
-- `.factory/rules/droid-review.md`
-- `policy/workflow_allowlist.txt`
-- `docs/agent-context/review-invariants.md`
-- `docs/agent-context/validation.md`
+Select additional checked-in context by the behavior and decision under review:
 
-For product, analyzer, output, fixture, LSP, release, or workflow changes, inspect the relevant docs linked from `README.md`.
+| Changed surface or current decision | Context to inspect |
+| --- | --- |
+| Rust implementation or tests | `.factory/rules/rust.md` and the applicable sections of `docs/ENGINEERING.md` |
+| Ownership, layering, public output, or product claim | `docs/ARCHITECTURE.md`, the relevant spec/schema/help, and the affected docs linked from `README.md` |
+| Scope, evidence package, or completion claim | The applicable sections of `docs/SCOPED_PR_CONTRACT.md` |
+| Local execution, platform, or test-result interpretation | The applicable sections of `docs/agent-context/validation.md` |
+| Workflow, CI routing, permissions, or artifact handling | `.factory/rules/github-actions.md`, `.factory/rules/security.md`, the affected sections of `docs/CI.md`, and matching rows of `policy/workflow_allowlist.txt` |
+| PR publication, qualification request, review inventory, or merge | `docs/MERGE_FLOW.md` and the applicable sections of `docs/PR_AUTOMATION.md` and `docs/CI.md` for that transition |
+| Process, filesystem, network, credentials, or untrusted input | `.factory/rules/security.md` and the relevant process, network, path, and provenance contracts |
+| Release, package, or installed-artifact claim | The affected release/package contracts and their authority, artifact, platform, and verification requirements |
+| Factory review-provider configuration or operation | `.factory/rules/droid-review.md` and the affected provider guidance |
+
+Use headings or a targeted search to locate a large document's relevant section,
+then read that section and its governing qualifications. A link is a route to
+an applicable obligation, not a request to load every linked file in full.
+For example, a CLI renderer review needs its output contract and Rust rules;
+it does not automatically need the complete CI catalog or workflow allowlist.
+Its later qualification step still needs the installed request and proof rules.
+
+Widen the read when a consumer, dependency, finding, or trust boundary makes
+another surface relevant. A narrow file diff does not by itself establish a
+narrow risk boundary. Preserve every applicable invariant and required check;
+there is no token cap that permits skipping necessary context. Record the
+material sections inspected in the existing review record, and refresh them
+when their subject or governing contract changes. File-size estimates describe
+potential reading, not observed model consumption or successful review.
 
 ## Product contract
 

@@ -41,6 +41,13 @@
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"yes","confidence":"medium"},
+        {"stage":"propagate","state":"yes","confidence":"high"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"weak","confidence":"medium"}
+      ],
       "evidence_path": ["reach yes: Related tests appear to reach fmt: exact_display_pin", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: write!(f, r#\"quoted\"marker\"{:?}°C\"#, self.0)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches returned value: write!(f, r#\"quoted\"marker\"{:?}°C\"#, self.0) (line 7)", "related test src/display.rs:16 exact_display_pin uses strong exact value oracle: assert_eq!(Temp(21).to_string(), \"quoted\\\"marker\\\"21°C\");", "source assertion argument value \"quoted\\\"marker\\\"21°C\" at line 17", "source assertion argument value 21 at line 17"],
       "flow_sinks": [
         {"kind":"return_value","text":"write!(f, r#\"quoted\"marker\"{:?}°C\"#, self.0)","line":7}

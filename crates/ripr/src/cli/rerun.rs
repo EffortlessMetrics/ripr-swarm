@@ -11,7 +11,7 @@ use crate::cli::commands_context::{
     config_load_refusal, ensure_command_root, load_root_input_and_config, refuse_json_envelope,
 };
 use crate::cli::help;
-use crate::cli::parse::expect_value;
+use crate::cli::parse::{expect_value, reconcile_root};
 use crate::cli::suggest::unknown_argument;
 use crate::core_error::CoreError;
 use crate::domain::{CommandExecutionMode, CommandSpec, CommandSpecDigest};
@@ -180,10 +180,12 @@ struct TargetedRerunPathDependencyGraph {
     adjacency: BTreeMap<String, TargetedRerunPathDependencyNeighbors>,
 }
 
-impl From<&crate::analysis::seam_cache::WorkspaceGraphProvenance>
+impl From<&crate::analysis::seam_cache::path_dependencies::WorkspaceGraphProvenance>
     for TargetedRerunPathDependencyGraph
 {
-    fn from(provenance: &crate::analysis::seam_cache::WorkspaceGraphProvenance) -> Self {
+    fn from(
+        provenance: &crate::analysis::seam_cache::path_dependencies::WorkspaceGraphProvenance,
+    ) -> Self {
         let adjacency = crate::analysis::PathDependencyAdjacency::build(provenance);
         Self {
             status: adjacency.status().as_str().to_string(),
@@ -234,8 +236,12 @@ impl From<&crate::analysis::seam_cache::RepoSeamCacheKey> for TargetedRerunInput
     }
 }
 
-impl From<&crate::analysis::seam_cache::WorkspaceGraphProvenance> for TargetedRerunGraphProvenance {
-    fn from(provenance: &crate::analysis::seam_cache::WorkspaceGraphProvenance) -> Self {
+impl From<&crate::analysis::seam_cache::path_dependencies::WorkspaceGraphProvenance>
+    for TargetedRerunGraphProvenance
+{
+    fn from(
+        provenance: &crate::analysis::seam_cache::path_dependencies::WorkspaceGraphProvenance,
+    ) -> Self {
         Self {
             package_graph_status: provenance.package_graph_status.clone(),
             package_graph_hash: provenance.package_graph_hash.clone(),
@@ -256,7 +262,7 @@ fn input_fingerprint_for(
 ) -> TargetedRerunInputFingerprint {
     let mut fingerprint: TargetedRerunInputFingerprint = key.into();
     fingerprint.graph_provenance =
-        (&crate::analysis::seam_cache::workspace_graph_provenance(root)).into();
+        (&crate::analysis::seam_cache::path_dependencies::workspace_graph_provenance(root)).into();
     fingerprint
 }
 
@@ -485,7 +491,13 @@ fn parse_options(args: &[String]) -> Result<RerunOptions, String> {
         match args[index].as_str() {
             "--root" => {
                 index += 1;
-                root = PathBuf::from(expect_value(args, index, "--root")?);
+                let reconciled = reconcile_root(
+                    &root,
+                    root_explicit,
+                    expect_value(args, index, "--root")?,
+                    "rerun",
+                )?;
+                root = reconciled;
                 root_explicit = true;
             }
             "--changed-test" => {
@@ -908,6 +920,9 @@ fn rerun_gap(
             shared_rust_preparation = Some(prepared);
             inventory
         };
+        // A failed evidence warm leaves opaque stand-ins for every seam; a gap
+        // must not be selected from them (#13340).
+        inventory.require_complete_evidence("scoped gap rerun")?;
         if !shared_rust_cache_stats_recorded {
             add_cache_stats(&mut cache, &inventory.file_fact_cache);
             shared_rust_cache_stats_recorded = true;
@@ -2143,7 +2158,8 @@ mod tests {
     };
     use crate::config::RiprConfig;
     use crate::domain::{
-        Confidence, MissingDiscriminatorFact, OracleKind, OracleStrength, StageEvidence, StageState,
+        Confidence, DiscriminatorShape, MissingDiscriminatorFact, OracleKind, OracleStrength,
+        StageEvidence, StageState,
     };
     use crate::output::gap_decision_ledger::{GapAnchor, GapRecord};
     #[cfg(feature = "lang-typescript")]
@@ -3359,6 +3375,91 @@ mod tests {
         }
     }
 
+    /// #13340: a failed evidence warm leaves opaque stand-in seams, so the
+    /// scoped gap rerun refuses with the shared `producer_failure` error
+    /// instead of selecting a gap from them. The unarmed control runs on a
+    /// separate root (a cached healthy walk could otherwise answer) and still
+    /// selects the seam.
+    #[test]
+    fn failed_evidence_warm_refuses_scoped_gap_rerun() -> Result<(), String> {
+        use crate::analysis::test_grip_evidence::WarmPanicGuard;
+        let source =
+            "pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }\n";
+        let config = crate::config::RiprConfig::default();
+        let make_root = |name: &str| -> Result<PathBuf, String> {
+            let root = unique_temp_root(name)?;
+            write_file(
+                &root.join("Cargo.toml"),
+                "[package]\nname = \"rerun_warm\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+            )?;
+            write_file(&root.join("src/lib.rs"), source)?;
+            Ok(root)
+        };
+        let ledger_for = |root: &Path, seam_id: &str| -> Result<PathBuf, String> {
+            let ledger = serde_json::json!({
+                "schema_version": "ripr-gap-decision-ledger-v1",
+                "root": root.to_string_lossy(),
+                "records": [{
+                    "canonical_gap_id": "gap:discount",
+                    "language": "rust",
+                    "seam_id": seam_id,
+                    "anchor": { "file": "src/lib.rs", "line": 1 },
+                    "verification_commands": ["cargo test"],
+                    "receipt_command": "ripr outcome --before b.json --after a.json --format json",
+                }],
+            });
+            let path = root.join("ledger.json");
+            let rendered = serde_json::to_string(&ledger).map_err(|err| err.to_string())?;
+            write_file(&path, &rendered)?;
+            Ok(path)
+        };
+
+        let control = make_root("rerun-warm-control")?;
+        let scoped = crate::analysis::inventory_diff_scoped_classified_seams_at_with_config(
+            &control,
+            &config,
+            &[PathBuf::from("src/lib.rs")],
+            &[],
+        )?;
+        let seam_id = scoped
+            .classified
+            .first()
+            .map(|entry| entry.seam.id().as_str().to_string())
+            .ok_or("fixture must classify a seam")?;
+        assert!(scoped.evidence_limitations.is_empty());
+        let healthy = rerun_gap(
+            &control,
+            &config,
+            "gap:discount",
+            &ledger_for(&control, &seam_id)?,
+        )
+        .map_err(|err| err.to_string())?;
+        assert_eq!(healthy.state, "current_state_only", "{:?}", healthy.state);
+        assert!(
+            healthy.seams.iter().any(|seam| seam.seam_id == seam_id),
+            "the control must select the fixture seam"
+        );
+        let _ = std::fs::remove_dir_all(&control);
+
+        for point in [1u8, 2u8] {
+            let root = make_root(&format!("rerun-warm-{point}"))?;
+            let ledger = ledger_for(&root, &seam_id)?;
+            let refused = {
+                let _armed = WarmPanicGuard::arm(point);
+                rerun_gap(&root, &config, "gap:discount", &ledger)
+            };
+            let _ = std::fs::remove_dir_all(&root);
+            let Err(error) = refused else {
+                return Err(format!("point {point}: a failed warm must refuse"));
+            };
+            let message = error.to_string();
+            assert!(message.contains("scoped gap rerun refused"), "{message}");
+            assert!(message.contains("producer_failure"), "{message}");
+            assert!(message.contains("pass-wide"), "{message}");
+        }
+        Ok(())
+    }
+
     #[test]
     fn rerun_parses_gap_selector_with_explicit_ledger() -> Result<(), String> {
         let options = parse_options(&args(&[
@@ -3702,22 +3803,22 @@ mod tests {
     /// section default instead of failing artifact compatibility.
     #[test]
     fn path_dependency_graph_section_is_disclosed_in_the_fingerprint() -> Result<(), String> {
-        let provenance = crate::analysis::seam_cache::WorkspaceGraphProvenance {
+        let provenance = crate::analysis::seam_cache::path_dependencies::WorkspaceGraphProvenance {
             package_graph_status: "complete".to_string(),
             external_dependency_graph_status: "unavailable".to_string(),
             external_dependency_graph_detail: "external dependency metadata is not resolved"
                 .to_string(),
-            path_dependency_edges: vec![crate::analysis::seam_cache::PathDependencyEdge {
+            path_dependency_edges: vec![crate::analysis::seam_cache::path_dependencies::PathDependencyEdge {
                 from_manifest: "a/Cargo.toml".to_string(),
-                section: crate::analysis::seam_cache::PathDependencySection::Dependencies,
+                section: crate::analysis::seam_cache::path_dependencies::PathDependencySection::Dependencies,
                 target: None,
                 dependency_name: "b".to_string(),
                 declared_path: Some("../b".to_string()),
                 resolved_path: Some("b".to_string()),
-                resolution: crate::analysis::seam_cache::PathDependencyResolution::Resolved,
-                source: crate::analysis::seam_cache::PathDependencySource::Package,
+                resolution: crate::analysis::seam_cache::path_dependencies::PathDependencyResolution::Resolved,
+                source: crate::analysis::seam_cache::path_dependencies::PathDependencySource::Package,
             }],
-            ..crate::analysis::seam_cache::WorkspaceGraphProvenance::default()
+            ..crate::analysis::seam_cache::path_dependencies::WorkspaceGraphProvenance::default()
         };
         let mut fingerprint = sample_input_fingerprint();
         fingerprint.graph_provenance = (&provenance).into();
@@ -3859,6 +3960,7 @@ mod tests {
                 file: "tests/example.rs".into(),
                 owner: "pricing::discounted_total".to_string(),
                 provenance: NewTestProposalProvenance::ProducerOwned,
+                workspace_identity: String::new(),
             }),
             test_target: None,
             proposed_oracle: Some(OracleKind::ExactValue),
@@ -3936,6 +4038,8 @@ mod tests {
                 value: "PricingError::Other".to_string(),
                 reason: "the changed error variant is not asserted exactly".to_string(),
                 flow_sink: None,
+                shape: DiscriminatorShape::Other,
+                drafted_boundary: None,
             }],
             new_test_target: None,
             statically_contradicted_related_tests: 0,
