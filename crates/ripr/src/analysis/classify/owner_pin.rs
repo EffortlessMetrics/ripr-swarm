@@ -171,13 +171,22 @@ pub(in crate::analysis) struct OwnerReturnPin {
     skip_current_literal_check: Cell<bool>,
 }
 
-/// A file's `std`/`core`-rooted `assert_eq!` paths and, for each of the four
-/// rooted spellings, whether the file can rebind that root.
+/// A file's `std`/`core`-rooted `assert_eq!` paths and, for the rooted
+/// spellings a caller asks about, whether the file can rebind that root.
 #[derive(Clone, Debug, Default)]
 struct StdRootedCalls {
     calls: BTreeSet<String>,
     matches_calls: BTreeSet<String>,
+    /// The spellings in `proved` whose root the file leaves unrebound.
     unrebound: BTreeSet<String>,
+    /// The rooted spellings whose root proof ran while the tree was in hand:
+    /// the file's own rooted calls and the `assert` twins of its rooted
+    /// `matches!` calls, the spellings the context gate asks about. Each
+    /// proof walks the whole file several times, and most test files spell
+    /// no rooted call at all, so proving all 24 spellings for every file read
+    /// paid for answers nobody asked (#12947). Any other spelling is proved on
+    /// demand by [`Self::is_unrebound`].
+    proved: BTreeSet<&'static str>,
 }
 
 /// The assertion macros whose execution the shared admission can establish
@@ -334,6 +343,7 @@ thread_local! {
     static PROJECTED_WORKSPACE_FILE_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static PROJECTED_WORKSPACE_FILE_PARSES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static STD_ROOTED_FILE_PARSES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static STD_ROOT_PROOFS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 impl StdRootedCalls {
@@ -344,18 +354,54 @@ impl StdRootedCalls {
             return Self::default();
         };
         let root = file.tree().syntax().clone();
+        let calls = std_rooted_assert_eq_calls(&root);
+        let matches_calls = qualified_matches_paths(&root);
+        let asked: BTreeSet<String> = calls
+            .iter()
+            .cloned()
+            .chain(matches_calls.iter().filter_map(|path| {
+                path.strip_suffix("matches")
+                    .map(|root| format!("{root}assert"))
+            }))
+            .collect();
+        let proved: BTreeSet<&'static str> = STD_ROOTED_ASSERT_EQ
+            .iter()
+            .copied()
+            .filter(|path| asked.contains(*path))
+            .collect();
+        let unrebound = proved
+            .iter()
+            .filter(|path| std_root_proof(path, &root))
+            .map(|path| (*path).to_string())
+            .collect();
         Self {
-            calls: std_rooted_assert_eq_calls(&root),
-            matches_calls: qualified_matches_paths(&root),
-            unrebound: STD_ROOTED_ASSERT_EQ
-                .iter()
-                .filter(|path| {
-                    crate::analysis::syntax::ra::std_macro_root_is_unrebound(path, &root)
-                })
-                .map(|path| (*path).to_string())
-                .collect(),
+            calls,
+            matches_calls,
+            unrebound,
+            proved,
         }
     }
+
+    /// Whether `source` (the text this value was read from) leaves the root
+    /// of the rooted spelling `path` unrebound: exactly the answer an eager
+    /// proof of every spelling at read time gives. A spelling outside
+    /// [`STD_ROOTED_ASSERT_EQ`] or a refused parse is never unrebound.
+    fn is_unrebound(&self, path: &str, source: &str) -> bool {
+        if self.proved.contains(path) {
+            return self.unrebound.contains(path);
+        }
+        STD_ROOTED_ASSERT_EQ.contains(&path)
+            && parse_clean_source_file(source)
+                .is_some_and(|file| std_root_proof(path, file.tree().syntax()))
+    }
+}
+
+/// [`crate::analysis::syntax::ra::std_macro_root_is_unrebound`], counted in
+/// test builds so a test can pin which spellings a file read proves.
+fn std_root_proof(path: &str, root: &ra_ap_syntax::SyntaxNode) -> bool {
+    #[cfg(test)]
+    STD_ROOT_PROOFS.with(|count| count.set(count.get() + 1));
+    crate::analysis::syntax::ra::std_macro_root_is_unrebound(path, root)
 }
 
 /// Run-scoped syntax decisions shared by every probe against one index.
@@ -2251,7 +2297,7 @@ impl OwnerPinSyntax {
             }));
         }
         if let Some(path) = qualified.into_iter().find(|path| {
-            !(rooted.unrebound.contains(path)
+            !(rooted.is_unrebound(path, &facts.source)
                 && self.targeted_macro_binding_is_unambiguous(test, assertion.line, path, index))
         }) {
             return Some(AssertionRefusal::Syntax(
@@ -2307,7 +2353,7 @@ impl OwnerPinSyntax {
                                 let path: String = path.split_whitespace().collect();
                                 file == &test.file
                                     && STD_ROOTED_ASSERT_EQ.contains(&path.as_str())
-                                    && rooted.unrebound.contains(&path)
+                                    && rooted.is_unrebound(&path, &facts.source)
                                     && self.targeted_macro_binding_is_unambiguous(
                                         test,
                                         assertion.line,
