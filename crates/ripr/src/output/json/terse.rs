@@ -52,6 +52,19 @@ const KNOWN_ALIASES: [&str; 5] = [
     "canonical_gap_id",
     "evidence_stages",
 ];
+/// Indices into [`KNOWN_ALIASES`]; the const block below pins them to the names.
+const GAP_ID_ALIAS: usize = 3;
+const STAGES_ALIAS: usize = 4;
+const _: () = {
+    assert!(matches!(
+        KNOWN_ALIASES[GAP_ID_ALIAS].as_bytes(),
+        b"canonical_gap_id"
+    ));
+    assert!(matches!(
+        KNOWN_ALIASES[STAGES_ALIAS].as_bytes(),
+        b"evidence_stages"
+    ));
+};
 /// The `ripr` stage keys in the order `evidence_stages` rows are emitted.
 const STAGE_ORDER: [&str; 5] = ["reach", "infect", "propagate", "observe", "discriminate"];
 // Entry costs include a comma each. The outer comma replaces the final one,
@@ -133,7 +146,7 @@ struct LegendCoder {
     order: Vec<String>,
     /// Each known alias (indexed like [`KNOWN_ALIASES`]) is recorded once,
     /// regardless of the finding count.
-    dropped_aliases: [bool; 5],
+    dropped_aliases: [bool; KNOWN_ALIASES.len()],
 }
 
 impl LegendCoder {
@@ -252,7 +265,7 @@ fn drop_same_value_aliases(finding: &mut serde_json::Map<String, Value>, coder: 
         .and_then(Value::as_str);
     if gap_id.is_some() && gap_id == owner_id {
         finding.remove("canonical_gap_id");
-        coder.dropped_aliases[3] = true;
+        coder.dropped_aliases[GAP_ID_ALIAS] = true;
     }
     // #13673: `evidence_stages` rows restate `ripr` (stage, state, confidence).
     // A row carrying `basis` (or any extra key) is not a pure restatement, so
@@ -262,7 +275,7 @@ fn drop_same_value_aliases(finding: &mut serde_json::Map<String, Value>, coder: 
         .is_some_and(|rows| stage_rows_restate_ripr(rows, finding.get("ripr")))
     {
         finding.remove("evidence_stages");
-        coder.dropped_aliases[4] = true;
+        coder.dropped_aliases[STAGES_ALIAS] = true;
     }
 }
 
@@ -275,12 +288,14 @@ fn stage_rows_restate_ripr(rows: &Value, ripr: Option<&Value>) -> bool {
     rows.len() == STAGE_ORDER.len()
         && rows.iter().zip(STAGE_ORDER).all(|(row, stage)| {
             let owner = ripr.get(stage);
-            row.as_object().is_some_and(|row| row.len() == 3)
-                && row.get("stage").and_then(Value::as_str) == Some(stage)
-                && row.get("state").is_some()
-                && row.get("state") == owner.and_then(|o| o.get("state"))
-                && row.get("confidence").is_some()
-                && row.get("confidence") == owner.and_then(|o| o.get("confidence"))
+            row.as_object().is_some_and(|obj| {
+                obj.len() == 3
+                    && obj.get("stage").and_then(Value::as_str) == Some(stage)
+                    && obj.get("state").is_some()
+                    && obj.get("state") == owner.and_then(|o| o.get("state"))
+                    && obj.get("confidence").is_some()
+                    && obj.get("confidence") == owner.and_then(|o| o.get("confidence"))
+            })
         })
 }
 
