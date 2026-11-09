@@ -3539,7 +3539,7 @@ impl AssertionRefusal {
                     "the test is `async`, and ripr does not model its executor".into()
                 }
                 AssertionContextRefusal::TestRebound => {
-                    "an import in this file rebinds `test` (for example `use .. as test`), so `#[test]` may not be the built-in attribute and may change whether or how the test runs".into()
+                    "an import in this file may rebind `test` (for example `use .. as test`), so `#[test]` may not be the built-in attribute and may change whether or how the test runs".into()
                 }
                 AssertionContextRefusal::TestAttribute(attribute) => {
                     format!(

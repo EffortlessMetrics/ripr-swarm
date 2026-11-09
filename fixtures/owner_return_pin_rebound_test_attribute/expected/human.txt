@@ -13,9 +13,9 @@ Start here:
   File: ./src/lib.rs:2
   Static exposure: unknown (severity: note, confidence 0.64)
   Why unknown: the analysis could not determine a static exposure state
-  Not credited: `assert_eq!` in checks_weight at tests/weight_tests.rs:4: an import in this file
-    rebinds `test` (for example `use .. as test`), so `#[test]` may not be the built-in attribute
-    and may change whether or how the test runs
+  Not credited: `assert_eq!` in checks_weight at tests/weight_tests.rs:4: an import in this file may
+    rebind `test` (for example `use .. as test`), so `#[test]` may not be the built-in attribute and
+    may change whether or how the test runs
   Changed behavior: input * 3
   Analyzer limit: A related Rust test has an `assert_eq!`, but ripr could not read whether it runs
     as the standard macro on the path that reaches this change (for example the file did not parse,

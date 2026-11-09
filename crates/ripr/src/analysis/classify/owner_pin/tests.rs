@@ -3588,7 +3588,7 @@ fn a_rebound_test_attribute_is_named_as_the_import_not_the_attribute() {
     assert!(
         refusal.is_some_and(|refusal| refusal.is_analyzer_limit())
             && clause.as_deref().is_some_and(|clause| {
-                clause.contains("rebinds `test`") && !clause.contains("carries `#[test]`")
+                clause.contains("may rebind `test`") && !clause.contains("carries `#[test]`")
             }),
         "{clause:?}"
     );
