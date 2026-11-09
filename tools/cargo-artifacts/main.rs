@@ -127,6 +127,7 @@ struct Failure {
 struct ApplyState {
     status: String,
     deleted: Vec<String>,
+    pending: Option<String>,
     failure: Option<Failure>,
 }
 
@@ -135,6 +136,7 @@ impl ApplyState {
         Self {
             status: "planned".to_string(),
             deleted: Vec::new(),
+            pending: None,
             failure: None,
         }
     }
@@ -255,6 +257,8 @@ fn execute(options: Options) -> Result<()> {
     state.status = "applying".to_string();
     write_receipts(&target_directory, &options, &plan, &state)?;
     for entry in &plan.selected {
+        state.pending = Some(entry.name.clone());
+        write_receipts(&target_directory, &options, &plan, &state)?;
         if let Err(error) = remove_planned_entry(&target_directory, entry) {
             state.status = "partial_failure".to_string();
             state.failure = Some(Failure {
@@ -263,12 +267,13 @@ fn execute(options: Options) -> Result<()> {
             });
             write_receipts(&target_directory, &options, &plan, &state)?;
             return Err(ArtifactError::new(format!(
-                "cleanup stopped at {}: {}; prior deletions and the exact remainder are recorded in target/ripr/reports/{REPORT_JSON}",
+                "cleanup stopped at {}: {}; prior deletions and the pending outcome are recorded in target/ripr/reports/{REPORT_JSON}",
                 entry.path.display(),
                 error
             )));
         }
         state.deleted.push(entry.name.clone());
+        state.pending = None;
         write_receipts(&target_directory, &options, &plan, &state)?;
     }
     state.status = "complete".to_string();

@@ -20,6 +20,8 @@ Cargo can build nested fixture workspaces and caller-selected manifests that are
 
 Cleanup is an explicit terminal operation for the current checkout. The caller stops Cargo and any other target writer in that checkout, reviews the exact direct children selected under its resolved `target/`, and then applies deletion. This is an ownership-and-release decision, not a liveness guess.
 
+The utility identifies the enclosing Git checkout, not merely the nearest `Cargo.toml` and `.cargo/config.toml`. A nested fixture may carry its own Cargo configuration without gaining authority over a separate target owner.
+
 ## Build the cleanup utility
 
 The utility is a dependency-free standalone Rust source set. Compile it into the retained `target/ripr` tree so it remains executable while `target/debug`, `target/release`, and leaked scratch are removed.
@@ -44,7 +46,7 @@ The sources use only the Rust standard library. They can be compiled before the 
 
 ## Commands
 
-From any directory inside the repository:
+From any directory inside the Git checkout:
 
 ```bash
 target/ripr/tools/cargo-artifacts report
@@ -69,10 +71,11 @@ The utility writes:
 
 ### `clean-current`
 
-`clean-current` selects every direct entry of the current checkout's exact `target/` except `target/ripr/`. Case variants of the evidence-directory name are conservatively retained as well. The removable set includes Cargo profiles, fingerprints, incremental state left by earlier configurations, and top-level test/linker scratch.
+`clean-current` selects every direct entry of the current checkout's exact `target/` except `target/ripr/`. Case variants of the evidence-directory name are conservatively retained and counted as evidence as well. The removable set includes Cargo profiles, fingerprints, incremental state left by earlier configurations, and top-level test/linker scratch.
 
 Before selecting or deleting, it refuses:
 
+- a directory that is not inside a plain-file/plain-directory Git checkout marker;
 - non-empty `CARGO_TARGET_DIR`, `CARGO_BUILD_TARGET_DIR`, or `CARGO_BUILD_BUILD_DIR` overrides;
 - a Cargo `workspace_root` other than the current repository;
 - a `target_directory` other than `<repository>/target`;
@@ -81,7 +84,9 @@ Before selecting or deleting, it refuses:
 
 The exact-equality rule matters: containment is not ownership. A nested Cargo build path never authorizes deletion of its ancestor hash tree or siblings.
 
-Apply mode writes the initial receipt before mutation, rechecks each direct child immediately before removal, and rewrites the receipt after every successful deletion. With the required quiescent-checkout precondition, a lock, disappearing path, newly detected link/reparse point, or other filesystem error stops cleanup, returns nonzero, and records the exact partial result and failing path without a traceback. The tool does not claim atomic exclusion against an actor that continues replacing ordinary files or directories after release was asserted.
+Apply mode writes the initial receipt before mutation. Before each deletion it records that entry as `pending`, then rechecks and removes the direct child. A successful deletion is confirmed in the next receipt. If that receipt update itself fails, the last durable record says the entry's outcome is unknown instead of falsely claiming it remains. A lock, disappearing path, newly detected link/reparse point, or other filesystem error stops cleanup, returns nonzero, and retains the prior deletions plus the pending/failing entry without a traceback.
+
+This journal assumes the required quiescent-checkout precondition. The tool does not claim atomic exclusion against an actor that continues replacing ordinary files or directories after release was asserted.
 
 ## Agent lifecycle
 
@@ -89,7 +94,7 @@ Apply mode writes the initial receipt before mutation, rechecks each direct chil
 2. **Inspect pressure when it matters.** Compile the utility once and run `report` before a build-heavy campaign when disk state is unknown or constrained.
 3. **Keep evidence separate.** `target/ripr` is not disposable compiler state. Use RIPR's own cache/report lifecycle for it.
 4. **Dispose deliberately.** Reconcile consumers through the bounded-storage procedure, stop Cargo and other target writers, run `clean-current`, inspect the direct-child selection, then rerun with `--apply` immediately before removing or retiring the checkout.
-5. **Retain the receipt.** It records selected, deleted, preserved, failed, and over-budget state.
+5. **Retain the receipt.** It records selected, deleted, preserved, pending, failed, and over-budget state.
 
 Do not substitute wildcard deletion, an unkeyed shared target, or undifferentiated `cargo clean`. `cargo clean` owns Cargo's target as a whole; this repository deliberately retains a different evidence class under `target/ripr`.
 
@@ -109,4 +114,4 @@ The standalone source set carries its own standard-library unit tests. Repositor
 cargo test -p xtask --test cargo_artifact_lifecycle
 ```
 
-The suite covers Windows JSON paths and verbatim-prefix equality, top-level metadata discrimination, exact target/build ownership, direct-child selection, budget reporting, `target/ripr` case preservation, destructive receipt requirements, partial-failure receipts, and symlink non-traversal.
+The suite covers Git-checkout-root discrimination, Windows JSON paths and verbatim-prefix equality, top-level metadata discrimination, exact target/build ownership, direct-child selection, budget reporting, `target/ripr` case preservation and aggregate measurement, destructive receipt requirements, pending/partial-failure receipts, and symlink non-traversal.

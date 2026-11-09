@@ -41,7 +41,7 @@ pub(super) fn build_plan(target_directory: &Path, max_size_bytes: u64) -> Result
         let name = entry.file_name();
         let path = entry.path();
         if is_preserved_entry(&name) {
-            retained_measurement = measure_path(&path)?;
+            retained_measurement.add(measure_path(&path)?);
             continue;
         }
         let name = name.into_string().map_err(|name| {

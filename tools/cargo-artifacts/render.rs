@@ -22,6 +22,10 @@ pub(super) fn render_json(options: &Options, plan: &CleanupPlan, state: &ApplySt
         .map(|name| format!("\"{}\"", json_escape(name)))
         .collect::<Vec<_>>()
         .join(",");
+    let pending = state.pending.as_ref().map_or_else(
+        || "null".to_string(),
+        |name| format!("\"{}\"", json_escape(name)),
+    );
     let failure = state.failure.as_ref().map_or_else(
         || "null".to_string(),
         |failure| {
@@ -50,6 +54,7 @@ pub(super) fn render_json(options: &Options, plan: &CleanupPlan, state: &ApplySt
             "  \"over_budget_bytes\": {},\n",
             "  \"selected\": [{}],\n",
             "  \"deleted\": [{}],\n",
+            "  \"pending\": {},\n",
             "  \"failure\": {}\n",
             "}\n"
         ),
@@ -66,11 +71,13 @@ pub(super) fn render_json(options: &Options, plan: &CleanupPlan, state: &ApplySt
         plan.over_budget_bytes,
         selected,
         deleted,
+        pending,
         failure
     )
 }
 
 pub(super) fn render_markdown(options: &Options, plan: &CleanupPlan, state: &ApplyState) -> String {
+    let pending = state.pending.as_deref().unwrap_or("none");
     let mut output = format!(
         concat!(
             "# Cargo artifact report\n\n",
@@ -82,18 +89,20 @@ pub(super) fn render_markdown(options: &Options, plan: &CleanupPlan, state: &App
             "- Preserved `target/ripr`: {}\n",
             "- Soft budget: {}\n",
             "- Over budget: {}\n",
-            "- Deleted: {} entries\n\n"
+            "- Deleted: {} entries\n",
+            "- Pending outcome: `{}`\n\n"
         ),
         options.operation.as_str(),
         if options.apply { "apply" } else { "dry run" },
         state.status,
-        plan.target_directory.display(),
+        markdown_escape(&plan.target_directory.display().to_string()),
         plan.selected.len(),
         human_bytes(plan.selected_measurement.bytes),
         human_bytes(plan.retained_measurement.bytes),
         human_bytes(plan.max_size_bytes),
         human_bytes(plan.over_budget_bytes),
-        state.deleted.len()
+        state.deleted.len(),
+        markdown_escape(pending)
     );
     if !plan.selected.is_empty() {
         output.push_str("| Entry | Size | Files | Directories | State |\n");
@@ -101,6 +110,8 @@ pub(super) fn render_markdown(options: &Options, plan: &CleanupPlan, state: &App
         for entry in &plan.selected {
             let state_text = if state.deleted.contains(&entry.name) {
                 "deleted"
+            } else if state.pending.as_deref() == Some(entry.name.as_str()) {
+                "pending outcome"
             } else {
                 "selected"
             };

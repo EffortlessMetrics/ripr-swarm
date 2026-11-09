@@ -35,6 +35,27 @@ fn cargo_paths(repository: &Path, build_directory: PathBuf) -> CargoPaths {
 }
 
 #[test]
+fn repository_root_ignores_nested_cargo_config_without_git_marker() {
+    let root = TempDirectory::new("repository-root");
+    fs::write(root.path.join("Cargo.toml"), b"[workspace]\n").expect("root manifest");
+    fs::create_dir_all(root.path.join(".cargo")).expect("root cargo config directory");
+    fs::write(root.path.join(".cargo/config.toml"), b"[build]\n").expect("root config");
+    fs::write(root.path.join(".git"), b"gitdir: elsewhere\n").expect("git marker");
+
+    let nested = root.path.join("fixtures/nested");
+    fs::create_dir_all(nested.join(".cargo")).expect("nested cargo config directory");
+    fs::create_dir_all(nested.join("src")).expect("nested source directory");
+    fs::write(nested.join("Cargo.toml"), b"[package]\nname='nested'\nversion='0.1.0'\n")
+        .expect("nested manifest");
+    fs::write(nested.join(".cargo/config.toml"), b"[build]\n").expect("nested config");
+
+    assert_eq!(
+        repository_root(&nested.join("src")).expect("checkout root"),
+        root.path.canonicalize().expect("canonical root")
+    );
+}
+
+#[test]
 fn metadata_parser_unescapes_windows_paths() {
     let parsed = parse_cargo_paths(
         r#"{"workspace_root":"C:\\Code\\ripr-swarm","target_directory":"C:\\Code\\ripr-swarm\\target","build_directory":"C:\\Code\\ripr-swarm\\target"}"#,
@@ -121,6 +142,21 @@ fn plan_selects_direct_target_entries_and_preserves_ripr() {
     assert_eq!(plan.over_budget_bytes, 1);
 }
 
+#[cfg(not(windows))]
+#[test]
+fn plan_retains_and_counts_multiple_evidence_case_variants() {
+    let root = TempDirectory::new("evidence-variants");
+    let target = root.path.join("target");
+    fs::create_dir_all(target.join("ripr")).expect("lowercase evidence");
+    fs::create_dir_all(target.join("RIPR")).expect("uppercase evidence");
+    fs::write(target.join("ripr/lower"), b"1234").expect("lowercase receipt");
+    fs::write(target.join("RIPR/upper"), b"123456").expect("uppercase receipt");
+
+    let plan = build_plan(&target, u64::MAX).expect("plan");
+    assert!(plan.selected.is_empty());
+    assert_eq!(plan.retained_measurement.bytes, 10);
+}
+
 #[test]
 fn cleanup_deletes_exact_selection_and_preserves_ripr() {
     let root = TempDirectory::new("delete");
@@ -165,7 +201,7 @@ fn destructive_mode_requires_receipt() {
 }
 
 #[test]
-fn failure_state_is_retained_in_both_receipts() {
+fn pending_failure_state_is_retained_in_both_receipts() {
     let root = TempDirectory::new("failure-receipt");
     let target = root.path.join("target");
     fs::create_dir_all(&target).expect("target");
@@ -179,6 +215,7 @@ fn failure_state_is_retained_in_both_receipts() {
     let state = ApplyState {
         status: "partial_failure".to_string(),
         deleted: vec!["debug".to_string()],
+        pending: Some("release".to_string()),
         failure: Some(Failure {
             path: target.join("release").display().to_string(),
             error: "locked".to_string(),
@@ -190,7 +227,9 @@ fn failure_state_is_retained_in_both_receipts() {
     let markdown = fs::read_to_string(target.join("ripr/reports/cargo-artifacts.md"))
         .expect("markdown receipt");
     assert!(json.contains("partial_failure"));
+    assert!(json.contains("\"pending\": \"release\""));
     assert!(json.contains("locked"));
+    assert!(markdown.contains("Pending outcome: `release`"));
     assert!(markdown.contains("Cleanup stopped"));
 }
 

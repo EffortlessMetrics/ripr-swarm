@@ -7,14 +7,30 @@ pub(super) fn repository_root(start: &Path) -> Result<PathBuf> {
     for candidate in std::iter::once(start.as_path()).chain(start.ancestors().skip(1)) {
         if candidate.join("Cargo.toml").is_file()
             && candidate.join(".cargo/config.toml").is_file()
+            && is_git_checkout(candidate)?
         {
             return Ok(candidate.to_path_buf());
         }
     }
     Err(ArtifactError::new(format!(
-        "run from the RIPR repository; no Cargo.toml plus .cargo/config.toml found above {}",
+        "run from the RIPR Git checkout; no checkout root with Cargo.toml and .cargo/config.toml found above {}",
         start.display()
     )))
+}
+
+pub(super) fn is_git_checkout(candidate: &Path) -> Result<bool> {
+    let marker = candidate.join(".git");
+    match fs::symlink_metadata(&marker) {
+        Ok(metadata) => {
+            require_plain_path(&marker, &metadata)?;
+            Ok(metadata.is_file() || metadata.is_dir())
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(ArtifactError::new(format!(
+            "inspect Git checkout marker {}: {error}",
+            marker.display()
+        ))),
+    }
 }
 
 pub(super) fn cargo_metadata(repository: &Path) -> Result<CargoPaths> {
