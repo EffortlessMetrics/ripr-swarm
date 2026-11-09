@@ -21,6 +21,10 @@ jobs:
     if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      CARGO_BUILD_BUILD_DIR: ${{ github.workspace }}/target/ub-review-build
+      CARGO_INCREMENTAL: "0"
+      CARGO_TARGET_DIR: ${{ github.workspace }}/target/ub-review-build
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
@@ -55,8 +59,6 @@ jobs:
         run: cargo fetch --locked --manifest-path crates/ripr/tests/fixtures/proptest_singleton/input/Cargo.toml
 
       - name: ub-review
-        env:
-          CARGO_TARGET_DIR: target/ub-review-build
         uses: EffortlessMetrics/ub-review@8d45f2cace407b1b0117cffe30e32bf6267d5182
         with:
           # review-mode hides the internal mode/fail-on-gate/review_forward
