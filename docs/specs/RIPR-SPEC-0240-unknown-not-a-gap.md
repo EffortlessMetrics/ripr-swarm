@@ -1079,6 +1079,13 @@ assertions that do not call the owner: they could not have been its oracle,
 or they are real gaps pinned by the runtime controls. A weak assertion alone
 stays `weakly_exposed`.
 
+"Calls the owner" is a callee identity, not a spelling (#6929). For a free-function
+owner `parse`, only a bare or module-qualified `parse(..)` counts, whatever its
+spacing. `Other::parse(..)` and `value.parse(..)` name a different function that shares
+the name, so a refusal on them never fronts for the owner in the disclosed
+"Not credited" note and never ranks ahead of the refusal that does call it. Method and
+associated-function owners keep the name-based reading.
+
 ### A TypeScript workspace walk cut short at its source cap or entry backstop (#11767)
 
 TypeScript discovery counts at most `RIPR_TS_MAX_WORKSPACE_FILES` candidate

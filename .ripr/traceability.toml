@@ -13475,6 +13475,17 @@ tests = [
   "crates/ripr/src/analysis/syntax/name_scope.rs::tests::a_block_local_use_is_block_bound_not_function_wide",
   "crates/ripr/src/analysis/syntax/name_scope.rs::tests::use_paths_are_read_through_the_syntax_tree",
   "crates/ripr/src/analysis/test_grip_evidence/tests.rs::a_qualified_call_to_another_modules_function_does_not_grip_the_owner",
+  "crates/ripr/src/analysis/test_grip_evidence/tests.rs::given_integration_test_when_bare_import_or_glob_reaches_local_rival_then_owner_gets_no_related_test",
+  "crates/ripr/src/analysis/test_grip_evidence/tests.rs::given_integration_test_when_bare_import_names_other_module_then_owner_keeps_related_test",
+  "crates/ripr/src/analysis/test_grip_evidence/tests.rs::given_integration_test_when_rival_nested_in_another_module_then_owner_gets_no_related_test",
+  "crates/ripr/src/analysis/test_grip_evidence/tests.rs::given_integration_test_when_wrapper_module_delegates_to_library_then_owner_is_withheld",
+  "crates/ripr/src/analysis/test_grip_evidence/tests.rs::given_integration_test_when_fn_body_use_shadows_file_alias_then_owner_gets_no_related_test",
+  "crates/ripr/src/analysis/test_grip_evidence/tests.rs::given_integration_test_when_fn_body_use_rebinds_file_alias_to_library_then_owner_keeps_related_test",
+  "crates/ripr/src/analysis/test_grip_evidence/tests.rs::given_integration_test_when_unreadable_or_shadowed_glob_import_then_owner_keeps_related_test",
+  "crates/ripr/src/analysis/test_grip_evidence/tests.rs::given_integration_test_when_nested_block_use_binds_the_rival_then_owner_keeps_related_test",
+  "crates/ripr/src/analysis/test_grip_evidence/tests.rs::given_integration_test_when_glob_reaches_a_rival_then_only_an_importable_rival_withholds_the_owner",
+  "crates/ripr/src/analysis/test_grip_evidence/tests.rs::given_integration_test_when_glob_is_in_a_nested_block_then_owner_keeps_related_test",
+  "crates/ripr/src/analysis/test_grip_evidence/tests.rs::given_integration_test_when_grouped_body_use_rebinds_a_file_alias_then_owner_keeps_related_test",
 ]
 fixtures = [
   "fixtures/same_name_sibling_file_test",
@@ -19935,6 +19946,10 @@ id = "RIPR-SPEC-0240"
 name = "Unknown, not a gap"
 spec = "docs/specs/RIPR-SPEC-0240-unknown-not-a-gap.md"
 tests = [
+  "crates/ripr/tests/refusal_note_owner_identity.rs::a_same_named_associated_function_does_not_front_for_the_owner",
+  "crates/ripr/tests/refusal_note_owner_identity.rs::a_receiver_call_of_the_same_name_does_not_front_for_the_owner",
+  "crates/ripr/tests/refusal_note_owner_identity.rs::a_real_conditional_owner_call_still_outranks_the_limit_refusal",
+  "crates/ripr/tests/refusal_note_owner_identity.rs::a_spaced_or_module_qualified_owner_call_still_counts_as_the_owner",
   "crates/ripr/tests/unpolled_future_limit.rs::a_dropped_unpolled_future_is_a_named_limit_not_reach",
   "crates/ripr/tests/unpolled_future_limit.rs::other_dropped_shapes_are_named_too",
   "crates/ripr/tests/unpolled_future_limit.rs::an_awaited_call_in_a_tokio_test_keeps_its_reading",
