@@ -75,7 +75,10 @@ fn assert_complete_with_scope_note(value: &Value, label: &str) {
     let analysis = &value["analysis_outcome"];
     assert_eq!(analysis["analysis_complete"], true, "{label}: {analysis}");
     let kind = analysis["outcome"]["kind"].as_str().unwrap_or_default();
-    assert!(kind.starts_with("complete_"), "{label}: {kind}");
+    assert!(
+        kind.starts_with("complete_") || kind == "no_behavioral_candidates",
+        "{label}: {kind}"
+    );
     let limitations = analysis["outcome"]["limitations"]
         .as_array()
         .cloned()
@@ -138,6 +141,29 @@ fn configured_generated_pattern_is_requested_scope_and_stays_complete() -> TestR
     let value = outcome(&dir, &diff, &[])?;
     assert_complete_with_scope_note(&value, "configured");
     assert_quiet_missed_txt(&dir, &diff, &[], "configured");
+    let _ = fs::remove_dir_all(&dir);
+    Ok(())
+}
+
+/// Every changed Rust file matches a configured pattern: nothing is left to
+/// analyze and nothing was skipped unasked, so the run is complete with the
+/// note and `missed-txt` is zero bytes (RIPR-SPEC-0309).
+#[test]
+fn every_changed_file_matching_a_configured_pattern_is_complete_and_quiet() -> TestResult {
+    let (dir, diff) = fixture(
+        "scope-all-configured",
+        "src/ffi_bindings.rs",
+        Some(
+            "[languages.rust]\ngenerated_file_patterns = [\"src/lib.rs\", \"src/ffi_bindings.rs\"]\n",
+        ),
+    )?;
+    let value = outcome(&dir, &diff, &[])?;
+    assert_complete_with_scope_note(&value, "all-configured");
+    assert_eq!(
+        value["analysis_outcome"]["outcome"]["kind"], "no_behavioral_candidates",
+        "{value}"
+    );
+    assert_quiet_missed_txt(&dir, &diff, &[], "all-configured");
     let _ = fs::remove_dir_all(&dir);
     Ok(())
 }

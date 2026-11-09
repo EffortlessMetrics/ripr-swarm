@@ -283,10 +283,15 @@ fn render_incomplete_analysis(out: &mut String, output: &CheckOutput) -> bool {
             field(&clip(reason)),
             field(&limitation.recovery.detail)
         ));
-        if outcome.limitations.len() > 1 {
+        let others = outcome
+            .limitations
+            .iter()
+            .filter(|other| !other.kind.is_requested_scope_note())
+            .count();
+        if others > 1 {
             out.push_str(&format!(
                 "+{} more analysis limitations; `--format json` lists all\n",
-                outcome.limitations.len() - 1
+                others - 1
             ));
         }
     }

@@ -1185,8 +1185,7 @@ fn out_of_scope_limitation(
     )
     .with_affected_items(files.count as u64)?
     .with_detail(format!(
-        "{} changed file(s) were left out by the requested scope ({}) and were not analyzed: \
-         {listed}",
+        "{} changed file(s) were outside the requested scope ({}): {listed}",
         files.count,
         diff_scope.flags_bounded()
     ))
@@ -1214,8 +1213,7 @@ fn configured_exclusion_note(
     )
     .with_affected_items(files.len() as u64)?
     .with_detail(format!(
-        "{} changed file(s) were left out by the configured `{setting}` and were not analyzed: \
-         {listed}",
+        "{} changed file(s) were outside the configured `{setting}` scope: {listed}",
         files.len()
     ))
 }
@@ -5497,6 +5495,118 @@ mod tests {
                 .unwrap_or_default()
                 .contains("src/ffi.rs")
         );
+        Ok(())
+    }
+
+    /// #13894 N1: every changed Rust file matches a configured pattern. The
+    /// run read all the scope the operator asked for, so it is complete with
+    /// the note and no limitation; the intended behavior is pinned in
+    /// RIPR-SPEC-0309.
+    #[test]
+    fn diff_whose_every_rust_file_matches_a_configured_pattern_is_complete_with_note()
+    -> Result<(), String> {
+        let root = temp_root("analysis-outcome-all-configured")?;
+        let diff = format!(
+            "{}{}",
+            skip_added_file_diff("src/generated_a.rs"),
+            skip_added_file_diff("src/generated_b.rs")
+        );
+        let result = run_pipeline_for_diff_text(
+            &generated_skip_options(root),
+            &OraclePolicy::default(),
+            &[LanguageId::Rust],
+            &crate::config::RustLanguageConfig {
+                generated_file_patterns: vec!["src/generated_*.rs".to_string()],
+                ..Default::default()
+            },
+            &diff,
+        )?;
+        let outcome = result
+            .analysis_outcome
+            .ok_or_else(|| "outcome must be projected".to_string())?;
+        assert!(outcome.kind.is_complete(), "{:?}", outcome.kind);
+        assert_eq!(
+            outcome.kind,
+            AnalysisOutcomeKind::NoBehavioralCandidates,
+            "no analyzed file and no finding"
+        );
+        assert_eq!(outcome.limitations.len(), 1, "{:?}", outcome.limitations);
+        let note = &outcome.limitations[0];
+        assert_eq!(note.kind, AnalysisLimitationKind::RequestedScopeExcluded);
+        assert_eq!(note.affected_items, Some(2));
+        Ok(())
+    }
+
+    /// #13894 N2: a file matching both a built-in generated rule (`gen/`) and
+    /// a configured pattern is requested scope: a note, no limitation.
+    #[test]
+    fn file_matching_built_in_and_configured_rules_is_a_note_only() -> Result<(), String> {
+        let root = temp_root("analysis-outcome-both-rules")?;
+        let result = run_pipeline_for_diff_text(
+            &generated_skip_options(root),
+            &OraclePolicy::default(),
+            &[LanguageId::Rust],
+            &crate::config::RustLanguageConfig {
+                generated_file_patterns: vec!["src/gen/**".to_string()],
+                ..Default::default()
+            },
+            &skip_added_file_diff("src/gen/x.rs"),
+        )?;
+        let outcome = result
+            .analysis_outcome
+            .ok_or_else(|| "outcome must be projected".to_string())?;
+        assert!(outcome.kind.is_complete(), "{:?}", outcome.kind);
+        assert!(outcome.limitations.iter().all(|limitation| {
+            limitation.kind == AnalysisLimitationKind::RequestedScopeExcluded
+        }));
+        assert_eq!(outcome.limitations.len(), 1, "{:?}", outcome.limitations);
+        Ok(())
+    }
+
+    /// #13894 N3: a preview-language file matching the operator's
+    /// `excluded_file_patterns` is a scope note on a complete outcome.
+    #[test]
+    fn preview_excluded_file_pattern_is_a_scope_note_on_a_complete_outcome() -> Result<(), String> {
+        let root = temp_root("analysis-outcome-preview-excluded")?;
+        let diff = "diff --git a/fixtures/data.py b/fixtures/data.py\n--- /dev/null\n+++ b/fixtures/data.py\n@@ -0,0 +1 @@\n+VALUE = 1\n";
+        let language_config = crate::config::LanguagesConfig {
+            enabled: vec![LanguageId::Rust, LanguageId::Python],
+            python: crate::config::PythonLanguageConfig {
+                excluded_file_patterns: vec!["fixtures/**".to_string()],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let result = run_pipeline_for_diff_text_with_language_config(
+            &generated_skip_options(root),
+            &OraclePolicy::default(),
+            &[LanguageId::Rust, LanguageId::Python],
+            &crate::config::RustLanguageConfig::default(),
+            &language_config,
+            DiffIntake {
+                perl_cache_dir: None,
+                scope: &DiffScopeFilter::default(),
+            },
+            diff,
+        )?;
+        let outcome = result
+            .analysis_outcome
+            .ok_or_else(|| "outcome must be projected".to_string())?;
+        assert!(outcome.kind.is_complete(), "{:?}", outcome.kind);
+        let note = outcome
+            .limitations
+            .iter()
+            .find(|limitation| limitation.kind == AnalysisLimitationKind::RequestedScopeExcluded)
+            .ok_or("the configured preview exclusion must be a scope note")?;
+        assert!(
+            note.bounded_detail
+                .as_deref()
+                .unwrap_or_default()
+                .contains("fixtures/data.py")
+        );
+        assert!(!outcome.limitations.iter().any(|limitation| {
+            limitation.kind == AnalysisLimitationKind::LanguageScopeUnsupported
+        }));
         Ok(())
     }
 

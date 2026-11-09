@@ -5726,6 +5726,17 @@ fn e2e_review_comments_doc(
     omitted_by_cap: usize,
     mutate: impl FnOnce(&mut Value),
 ) -> Result<String, String> {
+    e2e_review_comments_doc_with_outcome(changed, omitted_by_cap, None, mutate)
+}
+
+/// [`e2e_review_comments_doc`] rendered with a typed analysis outcome, so the
+/// document carries the producer's real `analysis_outcome` projection.
+fn e2e_review_comments_doc_with_outcome(
+    changed: &[&str],
+    omitted_by_cap: usize,
+    analysis_outcome: Option<&crate::analysis_outcome::AnalysisOutcome>,
+    mutate: impl FnOnce(&mut Value),
+) -> Result<String, String> {
     use crate::app::Mode;
     use crate::app::agent_brief::{
         AGENT_BRIEF_HARD_MAX_SEAMS, AgentBriefResolvedWorkingSet, AgentBriefSelection,
@@ -5776,8 +5787,13 @@ fn e2e_review_comments_doc(
         mode: &Mode::Draft,
         config: &config,
     };
-    let rendered =
-        render_review_comments_json_with_scope(&context, &working_set, &selection, &scope, None)?;
+    let rendered = render_review_comments_json_with_scope(
+        &context,
+        &working_set,
+        &selection,
+        &scope,
+        analysis_outcome,
+    )?;
     let mut value: Value = serde_json::from_str(&rendered).map_err(|err| err.to_string())?;
     mutate(&mut value);
     serde_json::to_string_pretty(&value).map_err(|err| err.to_string())
@@ -7136,27 +7152,55 @@ fn given_advisory_status_with_benign_warning_when_gate_evaluated_then_not_config
     Ok(())
 }
 
-/// #13894: files the operator left out with `--path`/`--exclude` or a
-/// configured pattern are requested scope. A producer document that reports a
-/// complete outcome with only the `requested_scope_excluded` scope note is a
-/// complete denominator and must not fail the gate closed; the same document
-/// whose outcome is genuinely incomplete (`status: incomplete` with a
-/// `language_scope_unsupported` limitation) still must.
+/// #13894: a complete outcome carrying only the `requested_scope_excluded`
+/// scope note is rendered by the real review-comments renderer and fed to the
+/// gate, so the typed validator (`is_advisory_disclosure`) decides it. The
+/// negative control is a partial outcome with a `language_scope_unsupported`
+/// limitation, which must still fail closed.
 #[test]
-fn given_complete_outcome_with_only_a_requested_scope_note_when_gate_evaluated_then_not_config_error()
+fn given_real_review_comments_with_requested_scope_note_when_gate_evaluated_then_not_config_error()
 -> Result<(), String> {
-    let outcome = |kind: &str, limitation_kind: &str| {
-        format!(
-            r#""analysis_outcome":{{"analysis_complete":{complete},"outcome":{{"schema_version":"0.1","kind":"{kind}","identity":{{}},"counts":{{"changed_file_count":1,"changed_line_count":1,"candidate_line_count":1,"probe_count":1,"finding_count":1}},"limitations":[{{"kind":"{limitation_kind}","producer_stage":"diff_load","path":null,"affected_items":1,"bounded_detail":"1 changed file(s) were left out by the requested scope (--exclude src/gen/**) and were not analyzed: src/gen/a.rs","recovery":{{"kind":"retry","detail":"rerun"}}}}],"claim_boundary":"x"}}}}"#,
-            complete = kind != "partial_with_limitations",
+    use crate::analysis_outcome::{
+        AnalysisIdentity, AnalysisLimitation, AnalysisLimitationKind, AnalysisOutcome,
+        AnalysisOutcomeCounts, AnalysisOutcomeKind, AnalysisRecovery, AnalysisRecoveryKind,
+        AnalysisStage,
+    };
+    let outcome = |kind: AnalysisOutcomeKind, limitation: AnalysisLimitationKind| {
+        AnalysisOutcome::new(
+            kind,
+            AnalysisIdentity::default(),
+            AnalysisOutcomeCounts {
+                changed_file_count: 2,
+                changed_line_count: 2,
+                candidate_line_count: 1,
+                probe_count: 1,
+                finding_count: 0,
+            },
+            vec![
+                AnalysisLimitation::new(
+                    limitation,
+                    AnalysisStage::DiffLoad,
+                    AnalysisRecovery::new(AnalysisRecoveryKind::Retry, "rerun with a wider scope")?,
+                )
+                .with_affected_items(1)?
+                .with_detail("1 changed file(s) were outside the requested scope: src/gen/a.rs")?,
+            ],
         )
     };
     let dir = temp_dir("gate-requested-scope-note")?;
-    let scoped = format!(
-        r#"{{"schema_version":"0.1","tool":"ripr","status":"advisory","comments":[],{}}}"#,
-        outcome("complete_with_findings", "requested_scope_excluded")
+
+    let scoped = outcome(
+        AnalysisOutcomeKind::CompleteNoFindings,
+        AnalysisLimitationKind::RequestedScopeExcluded,
+    )?;
+    let doc = e2e_review_comments_doc_with_outcome(&["src/a.rs"], 0, Some(&scoped), |_| {})?;
+    let value: Value = serde_json::from_str(&doc).map_err(|err| err.to_string())?;
+    assert_eq!(
+        value["analysis_outcome"]["outcome"]["limitations"][0]["kind"], "requested_scope_excluded",
+        "the real renderer must carry the note: {doc}"
     );
-    let input = guidance_only_input(&dir, "scoped.json", &scoped)?;
+    assert_eq!(value["analysis_outcome"]["analysis_complete"], true);
+    let input = guidance_only_input(&dir, "scoped.json", &doc)?;
     let report = build_gate_decision_report(&input)?;
     assert_ne!(report.status, "config_error", "{:?}", report.config_errors);
     assert!(
@@ -7166,11 +7210,12 @@ fn given_complete_outcome_with_only_a_requested_scope_note_when_gate_evaluated_t
     );
     assert!(!gate_decision_should_fail(&report));
 
-    let incomplete = format!(
-        r#"{{"schema_version":"0.1","tool":"ripr","status":"incomplete","comments":[],{}}}"#,
-        outcome("partial_with_limitations", "language_scope_unsupported")
-    );
-    let input = guidance_only_input(&dir, "incomplete.json", &incomplete)?;
+    let incomplete = outcome(
+        AnalysisOutcomeKind::PartialWithLimitations,
+        AnalysisLimitationKind::LanguageScopeUnsupported,
+    )?;
+    let doc = e2e_review_comments_doc_with_outcome(&["src/a.rs"], 0, Some(&incomplete), |_| {})?;
+    let input = guidance_only_input(&dir, "incomplete.json", &doc)?;
     let report = build_gate_decision_report(&input)?;
     assert_eq!(
         report.status, "config_error",

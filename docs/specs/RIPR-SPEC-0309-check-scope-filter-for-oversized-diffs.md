@@ -82,7 +82,11 @@ glob dialect. No `--path` admits every file the excludes do not remove;
    skips (generated-file names, generator headers, `cargo vendor` crates),
    unsupported languages, parse failures, budgets and refused files keep their
    incomplete kinds and stay fail-closed, also when a requested exclusion is
-   present in the same run.
+   present in the same run. A file matching both a built-in rule and a
+   configured pattern is requested scope (note only). When a configured
+   pattern leaves out every changed Rust file, there is nothing left to
+   analyze and nothing the operator did not ask to skip: the run is
+   `no_behavioral_candidates` (complete) with the note, and `missed-txt` is zero bytes.
 3. A filter that leaves no changed file fails closed with
    `scope_filter_matched_nothing`, naming the flags and the files they removed.
    It is not a clean result. Malformed patterns (empty, absolute, containing
@@ -165,9 +169,15 @@ glob dialect. No `--path` admits every file the excludes do not remove;
   `path_flag_is_requested_scope_and_stays_complete`,
   `configured_generated_pattern_is_requested_scope_and_stays_complete`,
   `built_in_generated_skip_stays_incomplete`,
-  `requested_exclusion_does_not_hide_an_unanalyzed_kept_file`.
+  `requested_exclusion_does_not_hide_an_unanalyzed_kept_file`,
+  `every_changed_file_matching_a_configured_pattern_is_complete_and_quiet`.
+- `crates/ripr/src/analysis/pipeline.rs` tests:
+  `diff_whose_every_rust_file_matches_a_configured_pattern_is_complete_with_note`,
+  `file_matching_built_in_and_configured_rules_is_a_note_only`,
+  `preview_excluded_file_pattern_is_a_scope_note_on_a_complete_outcome`.
+- `crates/ripr/src/output/human/agent_tests.rs::agent_scope_note_line_is_single_and_not_counted_as_a_limitation`.
 - `crates/ripr/src/output/review_comments/mod.rs::tests::review_comments_keeps_complete_outcome_with_requested_scope_note_advisory`.
-- `crates/ripr/src/output/gate/tests.rs::given_complete_outcome_with_only_a_requested_scope_note_when_gate_evaluated_then_not_config_error`.
+- `crates/ripr/src/output/gate/tests.rs::given_real_review_comments_with_requested_scope_note_when_gate_evaluated_then_not_config_error`.
 - `crates/ripr/src/app/navigation.rs::tests::finding_navigation_appends_path_and_exclude_from_the_run_scope`.
 - `crates/ripr/src/cli/commands.rs::tests::explain_accepts_path_and_exclude_and_rejects_a_dotdot_pattern`.
 - `crates/ripr/src/cli/commands/context.rs::tests::context_accepts_path_and_exclude_and_rejects_a_dotdot_pattern`.
