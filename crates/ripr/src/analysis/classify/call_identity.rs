@@ -80,6 +80,10 @@ type SoloIdentities = BTreeMap<String, Option<std::sync::Arc<OwnerCallIdentity>>
 type DeriveBindingSites = Arc<Vec<(String, Option<(usize, usize)>)>>;
 type DeriveBindingMemo = BTreeMap<(Arc<str>, Vec<String>), DeriveBindingSites>;
 
+/// Memo key for the item bindings of one test body read for one owner: the
+/// owner's id, the test's file, start line and name, and a hash of the body.
+pub(super) type ItemBindingsKey = (String, std::path::PathBuf, usize, String, u64);
+
 /// Per-index memos for the call-identity family (#7716 residual).
 ///
 /// Every producer that classifies probes rebuilds its [`RustIndex`] per
@@ -90,10 +94,6 @@ type DeriveBindingMemo = BTreeMap<(Arc<str>, Vec<String>), DeriveBindingSites>;
 /// layout scan and each probe re-parsed every candidate test: measured
 /// ~28 ms of related-test work per probe pair on a 20-package corpus where
 /// the work is identical across probes.
-/// Memo key for the item bindings of one test body read for one owner: the
-/// owner's id, the test's file, start line and name, and a hash of the body.
-pub(super) type ItemBindingsKey = (String, std::path::PathBuf, usize, String, u64);
-
 #[derive(Default)]
 pub(crate) struct CallIdentityMemos {
     /// One workspace shape pass per index, shared by every
@@ -169,14 +169,14 @@ pub(crate) struct CallIdentityMemos {
     /// the owner's call identity against that test, never on the seam or
     /// the assertion, so the per-(seam, related test, assertion) shadow check
     /// reads it once instead of re-walking a large test file each time.
+    item_bindings:
+        Mutex<BTreeMap<ItemBindingsKey, std::sync::Arc<super::indirect_owner::ItemBindings>>>,
     /// Per (owner, test), whether the test calls the owner's name only through a
     /// module of its own file that defines a rival (#13868). The answer scans
     /// every indexed function and lexes the test file, and depends on the
     /// index, owner and test alone, so the per-(seam, related test) check
     /// pays it once.
     local_rival_modules: Mutex<BTreeMap<(String, std::path::PathBuf, String, usize), bool>>,
-    item_bindings:
-        Mutex<BTreeMap<ItemBindingsKey, std::sync::Arc<super::indirect_owner::ItemBindings>>>,
     /// Per (trait name, receiver head), whether some indexed source may
     /// implement the trait for a std-headed type. The answer reads every
     /// indexed file's syntax and depends on the index alone, so the
@@ -196,8 +196,6 @@ pub(crate) struct CallIdentityMemos {
 }
 
 impl CallIdentityMemos {
-    /// The memoized answer for (`file`, `name`), computed by `compute` on
-    /// first use (recomputed, not cached, if the lock is poisoned).
     /// The memoized item bindings for `key`, computed by `compute` on first
     /// use (recomputed, not cached, if the lock is poisoned).
     pub(super) fn item_bindings(
@@ -217,6 +215,8 @@ impl CallIdentityMemos {
         bindings
     }
 
+    /// The memoized local-rival answer for `key`, computed by `compute` on
+    /// first use (recomputed, not cached, if the lock is poisoned).
     fn local_rival_module(
         &self,
         key: (String, std::path::PathBuf, String, usize),
@@ -234,6 +234,8 @@ impl CallIdentityMemos {
         answer
     }
 
+    /// The memoized answer for (`file`, `name`), computed by `compute` on
+    /// first use (recomputed, not cached, if the lock is poisoned).
     pub(super) fn external_import(
         &self,
         file: &std::path::Path,
