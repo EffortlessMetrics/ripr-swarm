@@ -223,6 +223,7 @@ async fn did_open_beyond_the_retained_byte_cap_is_refused_and_quarantined() -> R
             *store = DocumentStore::with_limits(DocumentStoreLimits {
                 max_open_documents: 8,
                 max_retained_document_bytes: QUARANTINE_TEXT_A.len() + 16,
+                max_overflow_placeholders: 8,
             });
             store.open(quarantine_open_params(&filler, "fn filler() {}\n\n\n"));
         })
@@ -269,6 +270,296 @@ async fn did_open_beyond_the_retained_byte_cap_is_refused_and_quarantined() -> R
         .ok_or_else(|| "reopened URI missing".to_string())?;
     if reopened.text != QUARANTINE_TEXT_A || reopened.buffer_authority_unknown {
         return Err("freed retained bytes did not admit the reopened document".into());
+    }
+    Ok(())
+}
+
+fn save_params(uri: &tower_lsp_server::ls_types::Uri, text: &str) -> DidSaveTextDocumentParams {
+    DidSaveTextDocumentParams {
+        text_document: TextDocumentIdentifier::new(uri.clone()),
+        text: Some(text.to_string()),
+    }
+}
+
+#[tokio::test]
+async fn did_save_text_beyond_the_retained_byte_cap_is_refused_and_quarantined()
+-> Result<(), String> {
+    let fixture = quarantine_fixture("docstore-save-overflow")?;
+    let (service, socket) = LspService::new(|client| Backend::new(client, fixture.root.clone()));
+    drop(socket);
+    let backend = service.inner();
+    // The production cap is 512 MiB; a tiny store stages the same refusal.
+    backend
+        .with_documents_for_test(|store| {
+            *store = DocumentStore::with_limits(DocumentStoreLimits {
+                max_open_documents: 8,
+                max_retained_document_bytes: QUARANTINE_TEXT_A.len() + 8,
+                max_overflow_placeholders: 8,
+            });
+        })
+        .ok_or_else(|| "SETUP: document store lock failed".to_string())?;
+    backend
+        .did_open(quarantine_open_params(&fixture.uri_a, QUARANTINE_TEXT_A))
+        .await;
+    let healthy = backend
+        .document_state_for_test(&fixture.uri_a)
+        .ok_or_else(|| "SETUP: healthy document missing".to_string())?;
+    if healthy.buffer_authority_unknown || healthy.text != QUARANTINE_TEXT_A {
+        return Err("SETUP: the document must open healthy within the cap".into());
+    }
+    commit_quarantine_snapshot(backend, &fixture, QUARANTINE_TEXT_A)?;
+
+    // Control: save text that fits the cap is adopted as before.
+    backend
+        .did_save(save_params(&fixture.uri_a, QUARANTINE_TEXT_A_DIRTY))
+        .await;
+    let adopted = backend
+        .document_state_for_test(&fixture.uri_a)
+        .ok_or_else(|| "document missing after in-cap save".to_string())?;
+    if adopted.text != QUARANTINE_TEXT_A_DIRTY || adopted.buffer_authority_unknown {
+        return Err("in-cap save text must still be adopted".into());
+    }
+
+    // Save text past the retained-byte cap is refused: the retained text is
+    // not replaced and the document loses authority under the store limit.
+    let oversized = format!("{QUARANTINE_TEXT_A_DIRTY}{}", "// padding\n".repeat(4));
+    backend
+        .did_save(save_params(&fixture.uri_a, &oversized))
+        .await;
+    let refused = backend
+        .document_state_for_test(&fixture.uri_a)
+        .ok_or_else(|| "document missing after over-cap save".to_string())?;
+    if refused.text != QUARANTINE_TEXT_A_DIRTY {
+        return Err("over-cap save text must not be adopted".into());
+    }
+    if !refused.buffer_authority_unknown {
+        return Err("over-cap save must drop buffer authority".into());
+    }
+    if refused
+        .quarantine
+        .as_ref()
+        .map(|quarantine| quarantine.reason)
+        != Some(DocumentStalenessReason::DocumentStoreLimitReached)
+    {
+        return Err("over-cap save must name the document-store limit".into());
+    }
+    require_withdrawn_not_served(backend, &fixture.uri_a, "after over-cap didSave").await?;
+
+    // A save without client text cannot restore authority.
+    backend
+        .did_save(DidSaveTextDocumentParams {
+            text_document: TextDocumentIdentifier::new(fixture.uri_a.clone()),
+            text: None,
+        })
+        .await;
+    require_withdrawn_not_served(backend, &fixture.uri_a, "after text-less didSave").await?;
+
+    // A full-replacement didChange that fits re-establishes authority.
+    backend
+        .did_change(quarantine_change_params(
+            &fixture.uri_a,
+            3,
+            QUARANTINE_TEXT_A,
+        ))
+        .await;
+    let recovered = backend
+        .document_state_for_test(&fixture.uri_a)
+        .ok_or_else(|| "document missing after recovery".to_string())?;
+    if recovered.buffer_authority_unknown || recovered.text != QUARANTINE_TEXT_A {
+        return Err("an in-cap full replacement must restore authority".into());
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn overflow_placeholders_are_capped_and_untracked_uris_stay_withdrawn() -> Result<(), String>
+{
+    let fixture = quarantine_fixture("docstore-placeholder-cap")?;
+    let (service, socket) = LspService::new(|client| Backend::new(client, fixture.root.clone()));
+    drop(socket);
+    let backend = service.inner();
+    let filler = filler_uri(0)?;
+    backend
+        .with_documents_for_test(|store| {
+            *store = DocumentStore::with_limits(DocumentStoreLimits {
+                max_open_documents: 1,
+                max_retained_document_bytes: 1_024,
+                max_overflow_placeholders: 1,
+            });
+            store.open(quarantine_open_params(&filler, "fn filler() {}\n"));
+        })
+        .ok_or_else(|| "SETUP: document store lock failed".to_string())?;
+    commit_quarantine_snapshot(backend, &fixture, QUARANTINE_TEXT_A)?;
+
+    // The first refused open is held as a placeholder.
+    backend
+        .did_open(quarantine_open_params(&fixture.uri_a, QUARANTINE_TEXT_A))
+        .await;
+    require_overflow_placeholder(backend, &fixture.uri_a, "first refused didOpen")?;
+
+    // The second refused open exceeds the placeholder cap: it is not stored,
+    // but the real handlers still withdraw instead of serving it.
+    backend
+        .did_open(quarantine_open_params(&fixture.uri_b, QUARANTINE_TEXT_B))
+        .await;
+    if backend.document_state_for_test(&fixture.uri_b).is_some() {
+        return Err("a URI past the placeholder cap must not be stored".into());
+    }
+    let report = pull_document_json(backend, &fixture.uri_b, None).await?;
+    if !report_is_quarantine_withdrawal(&report)
+        || report
+            .pointer("/items/0/data/reason")
+            .and_then(serde_json::Value::as_str)
+            != Some("document_store_limit_reached")
+    {
+        return Err(format!(
+            "an untracked URI must serve only the store-limit withdrawal: {report}"
+        ));
+    }
+    // A full-replacement didChange cannot store it either.
+    backend
+        .did_change(quarantine_change_params(
+            &fixture.uri_b,
+            2,
+            QUARANTINE_TEXT_B,
+        ))
+        .await;
+    if backend.document_state_for_test(&fixture.uri_b).is_some() {
+        return Err("didChange must not store a URI past the placeholder cap".into());
+    }
+    // The tracked placeholder and accepted document are undisturbed.
+    require_overflow_placeholder(backend, &fixture.uri_a, "after the capped refusal")?;
+
+    // Every reader agrees, not just the document pull: the per-batch push
+    // publication projection and the workspace pull withdraw the URI too.
+    let (pending_withdrawn, bound_version, quarantined) =
+        backend.transaction_publication_projection_for_test(&fixture.uri_b);
+    if !pending_withdrawn || !quarantined || bound_version.is_some() {
+        return Err("push publication must withdraw an untracked URI unversioned".into());
+    }
+    let workspace = backend
+        .workspace_diagnostic(WorkspaceDiagnosticParams {
+            identifier: None,
+            previous_result_ids: Vec::new(),
+            work_done_progress_params: Default::default(),
+            partial_result_params: PartialResultParams::default(),
+        })
+        .await
+        .map_err(|err| format!("workspace pull failed: {err}"))?;
+    let workspace = serde_json::to_value(workspace)
+        .map_err(|err| format!("serialize workspace report failed: {err}"))?;
+    let entry = workspace
+        .get("items")
+        .and_then(serde_json::Value::as_array)
+        .and_then(|items| {
+            items
+                .iter()
+                .find(|item| item["uri"].as_str() == Some(fixture.uri_b.as_str()))
+        })
+        .ok_or_else(|| format!("workspace report must carry the untracked URI: {workspace}"))?;
+    if !report_is_quarantine_withdrawal(entry)
+        || entry
+            .pointer("/items/0/data/reason")
+            .and_then(serde_json::Value::as_str)
+            != Some("document_store_limit_reached")
+    {
+        return Err(format!(
+            "workspace pull must withdraw the untracked URI: {entry}"
+        ));
+    }
+
+    // Closing the placeholder, then every document, does not end saturation:
+    // the untracked buffer may still be open in the client.
+    backend.did_close(close_params(&fixture.uri_a)).await;
+    backend.did_close(close_params(&filler)).await;
+    let emptied = backend
+        .with_documents_for_test(|store| store.documents.is_empty())
+        .ok_or_else(|| "document store lock failed".to_string())?;
+    if !emptied {
+        return Err("SETUP: the store must be empty".into());
+    }
+    let still = pull_document_json(backend, &fixture.uri_b, None).await?;
+    if !report_is_quarantine_withdrawal(&still) {
+        return Err("an untracked URI must stay withdrawn after the store empties".into());
+    }
+    let never_opened = filler_uri(7)?;
+    let never = pull_document_json(backend, &never_opened, None).await?;
+    if !report_is_quarantine_withdrawal(&never) {
+        return Err("a never-opened URI reads withdrawn while saturated".into());
+    }
+
+    // A root transition (which runs `clear_all_diagnostic_uris`) keeps the
+    // documents and the client's untracked buffers, so it must not end it.
+    backend.clear_all_diagnostic_uris();
+    if backend.document_quarantine(&fixture.uri_b).is_none() {
+        return Err("a root transition must not end saturation".into());
+    }
+    // Only shutdown ends it.
+    backend
+        .shutdown()
+        .await
+        .map_err(|err| format!("shutdown failed: {err}"))?;
+    if backend.document_quarantine(&fixture.uri_b).is_some() {
+        return Err("the workspace-level reset must end saturation".into());
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn did_save_over_cap_refreshes_the_marker_of_an_already_quarantined_document()
+-> Result<(), String> {
+    let fixture = quarantine_fixture("docstore-save-reason-change")?;
+    let (service, socket) = LspService::new(|client| Backend::new(client, fixture.root.clone()));
+    drop(socket);
+    let backend = service.inner();
+    backend
+        .with_documents_for_test(|store| {
+            *store = DocumentStore::with_limits(DocumentStoreLimits {
+                max_open_documents: 8,
+                max_retained_document_bytes: QUARANTINE_TEXT_A.len() + 8,
+                max_overflow_placeholders: 8,
+            });
+        })
+        .ok_or_else(|| "SETUP: document store lock failed".to_string())?;
+    backend
+        .did_open(quarantine_open_params(&fixture.uri_a, QUARANTINE_TEXT_A))
+        .await;
+    commit_quarantine_snapshot(backend, &fixture, QUARANTINE_TEXT_A)?;
+    let marker_reason = |label: &str| -> Result<String, String> {
+        backend
+            .last_diagnostics_for_uri_for_test(&fixture.uri_a)
+            .and_then(|items| {
+                items.first().and_then(|item| {
+                    item.data
+                        .as_ref()
+                        .and_then(|data| data.get("reason"))
+                        .and_then(serde_json::Value::as_str)
+                        .map(str::to_string)
+                })
+            })
+            .ok_or_else(|| format!("{label}: no withdrawal marker recorded"))
+    };
+    // A divergent buffer quarantines the document under the divergence reason.
+    backend
+        .did_change(quarantine_change_params(
+            &fixture.uri_a,
+            2,
+            QUARANTINE_TEXT_A_DIRTY,
+        ))
+        .await;
+    let before = marker_reason("after divergent didChange")?;
+    if before != "buffer_diverges_from_analyzed_saved_content" {
+        return Err(format!("SETUP: unexpected first marker reason {before}"));
+    }
+    // An over-cap save changes the reason while it stays quarantined; the
+    // marker must follow instead of staying stale.
+    let oversized = format!("{QUARANTINE_TEXT_A_DIRTY}{}", "// padding\n".repeat(4));
+    backend
+        .did_save(save_params(&fixture.uri_a, &oversized))
+        .await;
+    let after = marker_reason("after over-cap didSave")?;
+    if after != "document_store_limit_reached" {
+        return Err(format!("the marker stayed stale: {after}"));
     }
     Ok(())
 }
