@@ -2690,6 +2690,23 @@ fn classify_scoped_seams_streamed(
             rest.push(ordinal);
         }
     }
+    trace_latency_phase(
+        "review_scope_partition",
+        &format!(
+            "seams_{}_first_{}_rest_{}",
+            seams.len(),
+            first.len(),
+            rest.len()
+        ),
+        Duration::ZERO,
+    );
+    if latency_trace::latency_trace_enabled() {
+        trace_latency_phase(
+            "review_scope_partition_diagnostics",
+            &super::resource_cost::current_rss_trace_fragment(),
+            Duration::ZERO,
+        );
+    }
     let mut evaluated = classify_evidence_windows(seams, &first, &pass, consumer, window_size)?;
     if consumer.first_stage_sufficient() {
         trace_latency_phase(
@@ -2702,7 +2719,13 @@ fn classify_scoped_seams_streamed(
     // Skipped seams are not counted as unevaluated: the consumer proved it
     // would discard them, so no scoped result can depend on them.
     if let Some(keep) = consumer.second_stage_filter(index) {
+        let rest_before_filter = rest.len();
         rest.retain(|ordinal| keep(&seams[*ordinal]));
+        trace_latency_phase(
+            "review_scope_second_stage_filter",
+            &format!("rest_{rest_before_filter}_kept_{}", rest.len()),
+            Duration::ZERO,
+        );
     }
     evaluated = evaluated
         .checked_add(classify_evidence_windows(
@@ -2727,6 +2750,7 @@ fn classify_evidence_windows(
     let mut evaluated = 0usize;
     for window in ordinals.chunks(window_size) {
         cancellation::checkpoint()?;
+        let window_started = Instant::now();
         let window_seams = window
             .iter()
             .map(|ordinal| seams[*ordinal].clone())
@@ -2748,6 +2772,22 @@ fn classify_evidence_windows(
         evaluated = evaluated
             .checked_add(window.len())
             .ok_or("review evidence evaluation count overflow")?;
+        // Memo counts and the current-RSS read are diagnostic sampling:
+        // they run only while the opt-in trace family is enabled, so the
+        // default path pays nothing per window. They ride their own trace
+        // phase so the window status keeps its exact retained-count token
+        // for existing trace consumers.
+        if latency_trace::latency_trace_enabled() {
+            trace_latency_phase(
+                "review_window_memo_diagnostics",
+                &format!(
+                    "evaluated_{evaluated}_{}_{}",
+                    pass.window_memo_lengths(),
+                    super::resource_cost::current_rss_trace_fragment()
+                ),
+                Duration::ZERO,
+            );
+        }
         pass.clear_window_memos();
         trace_latency_phase(
             "review_evidence_window",
@@ -2756,7 +2796,7 @@ fn classify_evidence_windows(
                 window.len(),
                 consumer.retained_payloads()
             ),
-            Duration::ZERO,
+            window_started.elapsed(),
         );
         // No partially completed window can cross the caller's cancellation
         // boundary as a complete aggregate, even after its payloads were moved.
@@ -2911,7 +2951,13 @@ pub(crate) fn evaluate_diff_scoped_classified_seams_from_prepared<'a>(
     let seams = inventory_seams_from_index_checked(&scoped_production_files, &cached.index)?;
     trace_latency_phase(
         "inventory_seams",
-        "review_scope_ok",
+        &format!(
+            "review_scope_ok seams_{}_changed_files_{}_caller_files_{}_scoped_files_{}",
+            seams.len(),
+            changed_file_set.len(),
+            caller_file_set.len(),
+            scoped_file_set.len()
+        ),
         seams_started.elapsed(),
     );
     cancellation::checkpoint()?;
