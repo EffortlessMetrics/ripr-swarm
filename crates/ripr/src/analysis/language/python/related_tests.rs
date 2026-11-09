@@ -48,6 +48,11 @@ pub(super) enum PythonRelationKind {
     /// The test calls a same-module caller of the owner, and no test calls the
     /// owner itself (#4568). Reach evidence only; never an oracle.
     HelperOwnerCall,
+    /// The test calls a function of another module that imports and calls
+    /// the owner, possibly through same-module callers on either side, and no
+    /// test calls the owner itself (#12955). Reach evidence only; the
+    /// classifier reads it as `static_unknown`, never a graded gap.
+    CrossModuleCallerCall,
     /// The test names a pytest fixture whose body calls the owner (#4563).
     /// Reach evidence only; the fixture value is not an oracle.
     FixtureOwnerCall,
@@ -75,6 +80,7 @@ impl PythonRelationKind {
             Self::FixtureName => 1,
             Self::FixtureOwnerCall => 2,
             Self::HelperOwnerCall => 2,
+            Self::CrossModuleCallerCall => 2,
             Self::CliRunnerInvoke => 2,
             Self::ActivationLimited => 0,
         }
@@ -115,6 +121,7 @@ impl PythonRelationKind {
             Self::FixtureName => "fixture_name",
             Self::FixtureOwnerCall => "fixture_owner_call",
             Self::HelperOwnerCall => "helper_owner_call",
+            Self::CrossModuleCallerCall => "cross_module_caller_call",
             Self::CliRunnerInvoke => "cli_runner_invoke",
             Self::ActivationLimited => "test_activation_unestablished",
         }
@@ -149,6 +156,7 @@ pub(super) struct RelatedCandidateMemo<'a> {
     by_owner: HashMap<OwnerKey, Vec<PythonRelatedCandidate<'a>>>,
     helpers: HashMap<OwnerKey, Vec<HelperOwnerCallCandidate<'a>>>,
     dunder_index: Option<Rc<DunderOwnerIndex>>,
+    cross_module_over_cap: HashMap<OwnerKey, bool>,
     alignment_preps: HashMap<OwnerKey, AlignmentPrep<'a>>,
     alignment_lookup: Option<Rc<TestLookup<'a>>>,
 }
@@ -195,6 +203,20 @@ impl<'a> RelatedCandidateMemo<'a> {
                 helper_owner_call_candidates_indexed(owner, owners, all_tests, Some(&by_class))
             })
             .clone()
+    }
+
+    /// [`cross_module_callers_exceed_cap`] for the owner, once per run
+    /// (#12955): it scans every owner's imports, which repeated per changed
+    /// line of an owner no test relates to would cost a workspace scan per line.
+    pub(super) fn cross_module_over_cap(
+        &mut self,
+        owner: &PythonOwner,
+        owners: &[PythonOwner],
+    ) -> bool {
+        *self
+            .cross_module_over_cap
+            .entry(owner_key(owner))
+            .or_insert_with(|| cross_module_callers_exceed_cap(owner, owners))
     }
 
     /// The owner's sink-alignment prep, once per owner (#10914): the owner's
@@ -286,23 +308,40 @@ pub(super) fn sort_related_candidates(candidates: &mut [PythonRelatedCandidate<'
     });
 }
 
-/// Most same-module caller hops followed from a changed helper (#4568).
+/// Most caller hops followed from a changed helper (#4568, #12955).
 const MAX_HELPER_CALLER_DEPTH: usize = 3;
 
-/// A weak `helper_owner_call` candidate and the same-module caller the test
-/// calls (`Version.__init__` for `_validate_epoch`).
+/// Most functions of other modules followed as direct callers of one changed
+/// helper (#12955). Each one costs a scan of every test, so an owner a wide
+/// workspace imports everywhere stops here; [`cross_module_callers_exceed_cap`]
+/// lets the classifier read that owner as unresolved rather than as a gap.
+pub(super) const MAX_CROSS_MODULE_CALLERS: usize = 32;
+
+/// A weak `helper_owner_call` candidate and the caller the test calls
+/// (`Version.__init__` for `_validate_epoch`).
 #[derive(Clone)]
 pub(super) struct HelperOwnerCallCandidate<'a> {
     pub(super) candidate: PythonRelatedCandidate<'a>,
     pub(super) caller: String,
+    /// The path from the test to the owner crosses into the owner's module
+    /// from another module that imports it (#12955). Such reach is never
+    /// graded: the classifier reads it as `static_unknown`.
+    pub(super) cross_module: bool,
 }
 
-/// Tests that call a same-module caller of a changed top-level helper, for an
-/// owner no test calls itself (#4568). The caller list is bounded to
-/// [`MAX_HELPER_CALLER_DEPTH`] hops of bare-name calls in the owner's file;
-/// the helper name must be unique in that file, and a caller that rebinds the
-/// name or takes it as a parameter makes no edge (`module_callees`). Every
-/// candidate is reach-only: the relation never carries an oracle.
+/// Tests that call a caller of a changed top-level helper, for an owner no
+/// test calls itself (#4568). The caller list is bounded to
+/// [`MAX_HELPER_CALLER_DEPTH`] hops of bare-name calls; the helper name must be
+/// unique in its file, and a caller that rebinds the name or takes it as a
+/// parameter makes no edge (`module_callees`). Every candidate is reach-only:
+/// the relation never carries an oracle.
+///
+/// A hop stays in the file of the function it calls, except the first hop may
+/// also enter from a top-level function of another module that binds the
+/// owner through `from <owner module> import <name>` and bare-calls that
+/// binding ([`cross_module_owner_binding`], #12955). A candidate reached that
+/// way is `cross_module_caller_call`, and same-module callers are scanned first
+/// so a test both reach keeps the same-module reading.
 pub(super) fn helper_owner_call_candidates<'a>(
     owner: &PythonOwner,
     owners: &[PythonOwner],
@@ -375,59 +414,83 @@ pub(super) fn helper_owner_call_candidates_indexed<'a>(
     all_tests: &'a [PythonTest],
     by_class: Option<&DunderOwnerIndex>,
 ) -> Vec<HelperOwnerCallCandidate<'a>> {
-    let top_level_function = |candidate: &PythonOwner| {
-        candidate.owner_kind == Some(OwnerKind::Function)
-            && candidate.class_path.is_empty()
-            && candidate.qualified_name == candidate.name
-    };
-    let callers: Vec<&PythonOwner> = if let Some(callers) =
-        dunder_entry_callers(owner, owners, by_class)
-    {
-        callers
-    } else if !top_level_function(owner)
-        || owners
-            .iter()
-            .filter(|other| {
-                other.file == owner.file && other.name == owner.name && top_level_function(other)
-            })
-            .count()
-            != 1
-    {
-        return Vec::new();
-    } else {
-        module_function_callers(owner, owners, top_level_function)
-    };
-    helper_candidates_from_callers(callers, all_tests)
+    let callers: Vec<(&PythonOwner, bool)> =
+        if let Some(callers) = dunder_entry_callers(owner, owners, by_class) {
+            callers.into_iter().map(|caller| (caller, false)).collect()
+        } else if !helper_owner_is_unique_top_level_function(owner, owners) {
+            return Vec::new();
+        } else {
+            module_function_callers(owner, owners)
+        };
+    helper_candidates_from_callers(owner, callers, all_tests)
 }
 
+/// Callers of the owner within [`MAX_HELPER_CALLER_DEPTH`] hops, each with
+/// whether its path crossed into the owner's module from another module
+/// (#12955). Same-module callers come first, at every hop.
 fn module_function_callers<'o>(
     owner: &PythonOwner,
     owners: &'o [PythonOwner],
-    top_level_function: impl Fn(&PythonOwner) -> bool,
-) -> Vec<&'o PythonOwner> {
-    let mut frontier = vec![owner.name.clone()];
-    let mut callers: Vec<&PythonOwner> = Vec::new();
+) -> Vec<(&'o PythonOwner, bool)> {
+    let cross_module_entries: Vec<&PythonOwner> = {
+        let entries = cross_module_callers(owner, owners);
+        if entries.len() > MAX_CROSS_MODULE_CALLERS {
+            Vec::new()
+        } else {
+            entries
+        }
+    };
+    // (file the name is bound in, bare name, path crossed a module boundary)
+    let mut frontier: Vec<(&Path, &str, bool)> = vec![(owner.file.as_path(), &owner.name, false)];
+    let mut callers: Vec<(&'o PythonOwner, bool)> = Vec::new();
     for _ in 0..MAX_HELPER_CALLER_DEPTH {
+        let mut same_module: Vec<(&'o PythonOwner, bool)> = Vec::new();
+        let mut crossing: Vec<(&'o PythonOwner, bool)> = Vec::new();
+        for caller in owners {
+            if caller.is_module_owner()
+                || caller.owner_kind.is_none()
+                || std::ptr::eq(caller, owner)
+                || (caller.file == owner.file && caller.name == owner.name)
+                || callers.iter().any(|(seen, _)| std::ptr::eq(*seen, caller))
+            {
+                continue;
+            }
+            let same_file_edge = frontier
+                .iter()
+                .filter(|(file, name, _)| {
+                    caller.file.as_path() == *file
+                        && caller.name != *name
+                        && caller.module_callees.iter().any(|callee| callee == name)
+                })
+                .map(|(_, _, crossed)| *crossed)
+                .min();
+            if let Some(crossed) = same_file_edge {
+                if crossed {
+                    // Past a module boundary only a top-level function is a
+                    // caller: a test's bare `name(` call is not shown to reach
+                    // a method of another module (Devin review of #13890).
+                    if top_level_function(caller) {
+                        crossing.push((caller, true));
+                    }
+                } else {
+                    same_module.push((caller, false));
+                }
+            } else if frontier
+                .iter()
+                .any(|(file, name, _)| *file == owner.file.as_path() && *name == owner.name)
+                && cross_module_entries
+                    .iter()
+                    .any(|entry| std::ptr::eq(*entry, caller))
+            {
+                crossing.push((caller, true));
+            }
+        }
         let mut next = Vec::new();
-        let fresh: Vec<&PythonOwner> = owners
-            .iter()
-            .filter(|caller| {
-                caller.file == owner.file
-                    && !caller.is_module_owner()
-                    && caller.owner_kind.is_some()
-                    && caller.name != owner.name
-                    && !callers.iter().any(|seen| std::ptr::eq(*seen, *caller))
-                    && caller
-                        .module_callees
-                        .iter()
-                        .any(|callee| frontier.contains(callee))
-            })
-            .collect();
-        for caller in fresh {
-            callers.push(caller);
+        for (caller, crossed) in same_module.into_iter().chain(crossing) {
+            callers.push((caller, crossed));
             // Only a top-level function is callable by bare name again.
             if top_level_function(caller) {
-                next.push(caller.name.clone());
+                next.push((caller.file.as_path(), caller.name.as_str(), crossed));
             }
         }
         if next.is_empty() {
@@ -435,17 +498,22 @@ fn module_function_callers<'o>(
         }
         frontier = next;
     }
+    // Every same-module caller, at any hop, is scanned before any caller on a
+    // path that crossed a module boundary, so a test both reach keeps the
+    // same-module reading (the fold credits the first caller).
+    callers.sort_by_key(|(_, crossed)| *crossed);
     callers
 }
 
 fn helper_candidates_from_callers<'a>(
-    callers: Vec<&PythonOwner>,
+    owner: &PythonOwner,
+    callers: Vec<(&PythonOwner, bool)>,
     all_tests: &'a [PythonTest],
 ) -> Vec<HelperOwnerCallCandidate<'a>> {
     let mut found: Vec<HelperOwnerCallCandidate<'a>> = Vec::new();
     let mut seen: std::collections::HashSet<(&'a Path, &'a str)> = std::collections::HashSet::new();
     let token = crate::analysis::cancellation::current_token();
-    for caller in callers {
+    for (caller, cross_module) in callers {
         // The relation is per-test and pure, so a large workspace scans it
         // on the rayon workers; the first caller to reach a test still wins
         // because the fold below runs in caller and test order (pandas: one
@@ -479,11 +547,22 @@ fn helper_candidates_from_callers<'a>(
                         test,
                         relation: if super::test_activation::activation_control(test).is_some() {
                             PythonRelationKind::ActivationLimited
+                        } else if cross_module {
+                            PythonRelationKind::CrossModuleCallerCall
                         } else {
                             PythonRelationKind::HelperOwnerCall
                         },
                     },
-                    caller: caller.qualified_name.clone(),
+                    caller: if cross_module && caller.file != owner.file {
+                        format!(
+                            "{} ({})",
+                            caller.qualified_name,
+                            normalized_path(&caller.file)
+                        )
+                    } else {
+                        caller.qualified_name.clone()
+                    },
+                    cross_module,
                 });
             }
         }
@@ -496,6 +575,89 @@ fn helper_candidates_from_callers<'a>(
             .then_with(|| left.candidate.test.name.cmp(&right.candidate.test.name))
     });
     found
+}
+
+fn top_level_function(candidate: &PythonOwner) -> bool {
+    candidate.owner_kind == Some(OwnerKind::Function)
+        && candidate.class_path.is_empty()
+        && candidate.qualified_name == candidate.name
+}
+
+/// The owner is a top-level function and the only one of its name in its file.
+fn helper_owner_is_unique_top_level_function(owner: &PythonOwner, owners: &[PythonOwner]) -> bool {
+    top_level_function(owner)
+        && owners
+            .iter()
+            .filter(|other| {
+                other.file == owner.file && other.name == owner.name && top_level_function(other)
+            })
+            .count()
+            == 1
+}
+
+/// The local name a function of another module binds the owner to, when that
+/// binding is exact (#12955): a `from M import <owner>` (aliased or not) whose
+/// `M` is the owner's module by [`import_source_module_matches_owner`], the
+/// only import in scope that binds that local name, and no top-level `def` or
+/// `class` of the caller's file of the same name. Anything else, including a
+/// plain `import M` read as `M.owner(...)` or a star import, makes no edge.
+fn cross_module_owner_binding<'o>(
+    caller: &'o PythonOwner,
+    owner: &PythonOwner,
+    owners: &[PythonOwner],
+) -> Option<&'o str> {
+    if caller.file == owner.file {
+        return None;
+    }
+    let mut bindings = caller.imports.iter().filter(|import| {
+        import.imported == owner.name
+            && import_source_module_matches_owner(import, owner, &caller.file)
+    });
+    let import = bindings.next()?;
+    if bindings.next().is_some() {
+        return None;
+    }
+    let local = import.alias.as_str();
+    let rebound = caller
+        .imports
+        .iter()
+        .filter(|other| other.alias == local)
+        .count()
+        != 1
+        || owners.iter().any(|other| {
+            other.file == caller.file
+                && other.name == local
+                && other.class_path.is_empty()
+                && other.qualified_name == other.name
+        });
+    (!rebound).then_some(local)
+}
+
+/// Top-level functions of other modules that bare-call an exact binding of
+/// the owner (#12955), in workspace order. A method is not an entry: a test's
+/// bare call of its name is not shown to reach it. Empty unless the owner is a unique
+/// top-level function of its file.
+pub(super) fn cross_module_callers<'o>(
+    owner: &PythonOwner,
+    owners: &'o [PythonOwner],
+) -> Vec<&'o PythonOwner> {
+    if !helper_owner_is_unique_top_level_function(owner, owners) {
+        return Vec::new();
+    }
+    owners
+        .iter()
+        .filter(|caller| {
+            top_level_function(caller)
+                && cross_module_owner_binding(caller, owner, owners)
+                    .is_some_and(|local| caller.module_callees.iter().any(|callee| callee == local))
+        })
+        .collect()
+}
+
+/// More functions of other modules call the owner than
+/// [`helper_owner_call_candidates`] follows, so none of them were (#12955).
+pub(super) fn cross_module_callers_exceed_cap(owner: &PythonOwner, owners: &[PythonOwner]) -> bool {
+    cross_module_callers(owner, owners).len() > MAX_CROSS_MODULE_CALLERS
 }
 
 fn strongest_rank(test: &PythonTest) -> u8 {

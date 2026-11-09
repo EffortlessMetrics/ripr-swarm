@@ -2490,6 +2490,8 @@ mod cli_runner_tests;
 #[cfg(test)]
 mod cli_subcommand_tests;
 #[cfg(test)]
+mod cross_module_caller_tests;
+#[cfg(test)]
 mod dunder_helper_reach_tests;
 #[cfg(test)]
 mod helper_owner_call_tests;

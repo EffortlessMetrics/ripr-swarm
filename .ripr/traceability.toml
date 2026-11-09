@@ -4050,6 +4050,17 @@ id = "RIPR-SPEC-0028"
 name = "Python preview static facts"
 spec = "docs/specs/RIPR-SPEC-0028-python-preview-static-facts.md"
 tests = [
+  "crates/ripr/src/analysis/language/python/cross_module_caller_tests.rs::given_a_wrapper_in_another_package_when_its_test_pins_it_then_the_helper_reads_static_unknown",
+  "crates/ripr/src/analysis/language/python/cross_module_caller_tests.rs::given_an_aliased_import_then_the_alias_call_is_the_edge",
+  "crates/ripr/src/analysis/language/python/cross_module_caller_tests.rs::given_a_same_module_hop_behind_the_importer_then_the_chain_is_followed",
+  "crates/ripr/src/analysis/language/python/cross_module_caller_tests.rs::given_no_test_calls_the_wrapper_then_it_stays_no_static_path",
+  "crates/ripr/src/analysis/language/python/cross_module_caller_tests.rs::given_a_binding_that_is_not_the_owner_then_no_edge_is_made",
+  "crates/ripr/src/analysis/language/python/cross_module_caller_tests.rs::given_a_same_module_caller_and_a_cross_module_caller_then_the_same_module_reading_holds",
+  "crates/ripr/src/analysis/language/python/cross_module_caller_tests.rs::given_more_cross_module_callers_than_the_cap_then_the_owner_reads_static_unknown",
+  "crates/ripr/src/analysis/language/python/cross_module_caller_tests.rs::given_a_deeper_same_module_chain_and_a_cross_module_caller_then_the_same_module_reading_holds",
+  "crates/ripr/src/analysis/language/python/cross_module_caller_tests.rs::given_an_ambiguous_local_binding_then_no_edge_is_made",
+  "crates/ripr/src/analysis/language/python/cross_module_caller_tests.rs::given_a_method_caller_in_another_module_then_a_same_named_bare_call_makes_no_edge",
+  "crates/ripr/src/analysis/language/python/cross_module_caller_tests.rs::given_a_method_behind_a_cross_module_hop_then_no_edge_is_made",
   "crates/ripr/src/analysis/language/python/loop_walk_tests.rs",
   "crates/ripr/src/analysis/language/python/truthiness_swap.rs::tests::parse_test_reads_only_one_single_operand_test_of_a_bare_name",
   "crates/ripr/src/analysis/language/python/truthiness_swap.rs::tests::read_input_reads_only_plain_scalar_literals",
