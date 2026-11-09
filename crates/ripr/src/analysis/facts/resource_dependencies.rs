@@ -13,7 +13,7 @@ use crate::domain::{
     ResourcePresenceV1, SymbolId,
 };
 use sha2::{Digest, Sha256};
-use std::cell::OnceCell;
+use std::cell::{Cell, OnceCell};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -275,6 +275,8 @@ type FileSpans<'a> = BTreeMap<&'a Path, Vec<(usize, usize, &'a SymbolId)>>;
 struct ConsumerSpans<'a> {
     index: &'a RustIndex,
     by_file: OnceCell<FileSpans<'a>>,
+    /// Table builds, pinned by a ratchet test (one per pass, not per directive).
+    builds: Cell<usize>,
 }
 
 impl<'a> ConsumerSpans<'a> {
@@ -282,6 +284,7 @@ impl<'a> ConsumerSpans<'a> {
         Self {
             index,
             by_file: OnceCell::new(),
+            builds: Cell::new(0),
         }
     }
 
@@ -289,6 +292,7 @@ impl<'a> ConsumerSpans<'a> {
     /// live function wins. Falls back to a file-scope symbol.
     fn consumer_for_line(&self, file: &Path, line: usize) -> SymbolId {
         let by_file = self.by_file.get_or_init(|| {
+            self.builds.set(self.builds.get() + 1);
             let mut grouped = FileSpans::new();
             for id in self.index.live_function_ids() {
                 let function = &self.index.function_facts[id];
@@ -688,6 +692,30 @@ fn second() -> &'static str {
         assert!(consumer("b.txt").is_some_and(|id| id.contains("second")));
         assert!(consumer("c.txt").is_some_and(|id| id.ends_with("::file_scope")));
         fs::remove_dir_all(&root)?;
+        Ok(())
+    }
+
+    #[test]
+    fn consumer_spans_build_the_function_table_once_across_many_lookups()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let source = "fn a() {\n    let _ = 1;\n}\nfn b() {\n    let _ = 2;\n}\n";
+        let root = std::env::temp_dir();
+        let index = manual_index(&root, &[("src/lib.rs", source)])?;
+        let spans = ConsumerSpans::new(&index);
+        assert_eq!(spans.builds.get(), 0, "table is built lazily");
+        let file = Path::new("src/lib.rs");
+        for line in [2, 5, 1, 4, 99] {
+            let _ = spans.consumer_for_line(file, line);
+        }
+        assert_eq!(spans.builds.get(), 1, "one build for five lookups");
+        assert!(spans.consumer_for_line(file, 2).0.contains('a'));
+        assert!(spans.consumer_for_line(file, 5).0.contains('b'));
+        assert!(
+            spans
+                .consumer_for_line(file, 99)
+                .0
+                .ends_with("::file_scope")
+        );
         Ok(())
     }
 
