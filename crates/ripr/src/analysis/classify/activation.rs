@@ -1252,13 +1252,19 @@ fn resolve_boundary_operand(
         if let Some(call) = resolve_direct_call(&initializer, index, workspace_complete) {
             return Some(call);
         }
+        // A flat prelude may rebind the flag or a constant the initializer
+        // reads (`let si = !si;`, a function-local `const KB`); read exactly,
+        // those rebindings are applied below instead of declining (#12771).
+        let prelude = super::owner_prelude::owner_prelude(owner, operand, &initializer, parameters);
+        let accounted = |name: &str| prelude.as_ref().is_some_and(|found| found.binds(name));
         // A flag-selected initializer reads its flag from the caller's row
         // and its arms from the file's constants, so neither may be rebound
-        // in the owner (`let si = !si;`, a local `KB`).
+        // in the owner (`let si = !si;`, a local `KB`) beyond the prelude.
         if initializer.trim_start().starts_with("if ")
             && free_identifiers(&initializer)
                 .iter()
                 .filter(|name| !matches!(name.as_str(), "if" | "else" | "true" | "false"))
+                .filter(|name| !accounted(name))
                 .any(|name| {
                     name_rebound_in_owner(owner, name)
                         || (!is_constant_like(name) && name_seen_before(owner, name, &initializer))
@@ -1279,11 +1285,24 @@ fn resolve_boundary_operand(
                 .map_or(0, |at| owner.body[..at].matches('\n').count());
         if free_identifiers(&initializer).iter().any(|name| {
             parameters.contains(name)
+                && !accounted(name)
                 && parameter_rebound_before(owner, name, declared_line, &initializer)
         }) {
             return None;
         }
-        let constants = initializer_constants(owner, &initializer, parameters, index);
+        let (initializer, constants) = match &prelude {
+            Some(found) => {
+                let rewritten = found.rewrite_initializer(&initializer)?;
+                let mut constants = initializer_constants(owner, &rewritten, parameters, index);
+                constants.retain(|(name, _)| !found.binds(name));
+                constants.extend(found.constants.iter().cloned());
+                (rewritten, constants)
+            }
+            None => {
+                let constants = initializer_constants(owner, &initializer, parameters, index);
+                (initializer, constants)
+            }
+        };
         let names = free_identifiers(&initializer);
         let mut parameters_read: Vec<&String> = names
             .iter()
