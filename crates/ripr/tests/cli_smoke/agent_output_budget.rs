@@ -135,6 +135,27 @@ Hidden:
     Ok(())
 }
 
+/// #13673: the brief states the before/after snapshot and verify commands once
+/// under `next`; per-seam `verification` carries only the suggested test.
+#[test]
+fn agent_brief_states_workflow_commands_once() -> TestResult {
+    let project = workspace("agent-brief-budget")?;
+    let brief = run(
+        &project,
+        &["agent", "brief", "--diff", "change.diff", "--json"],
+    )?;
+    for command in ["before_snapshot_command", "after_snapshot_command"] {
+        assert_eq!(
+            brief.matches(command).count(),
+            1,
+            "{command} must appear once, not per seam:\n{brief}"
+        );
+    }
+    assert!(!brief.contains("\"verify_command\""), "{brief}");
+    within("agent brief --json", &brief, 8_900);
+    Ok(())
+}
+
 /// #13803: the human `agent repair --phase before` start prints the next
 /// command once (stdout), keeps the fields an agent acts on (target, edit
 /// boundary with its terminality, redirect stop condition), and stays inside

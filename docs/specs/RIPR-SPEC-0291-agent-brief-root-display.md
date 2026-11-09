@@ -29,6 +29,12 @@ Linked PRs:
 
 - None yet
 
+> Update (#13673, brief schema `0.2`): the per-seam `verification.before_snapshot_command`,
+> `verification.after_snapshot_command` and `verification.verify_command` moved
+> to the brief-level `next.before_snapshot_command`, `next.after_snapshot_command`
+> and `next.verify_after_edit`. The root-spelling rule below applies unchanged
+> to those `next` fields.
+
 Support-tier impact:
 
 - No tier change under [SUPPORT_TIERS.md](../status/SUPPORT_TIERS.md). The agent

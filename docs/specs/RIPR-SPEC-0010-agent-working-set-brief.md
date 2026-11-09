@@ -114,8 +114,7 @@ fields. It should not classify seams itself.
 
 The native-root spelling rule for `next.inspect_packet`,
 `next.verify_after_edit`, and each selected seam's
-`verification.before_snapshot_command`, `verification.after_snapshot_command`,
-and `verification.verify_command` is owned by
+`next.before_snapshot_command` and `next.after_snapshot_command` is owned by
 [RIPR-SPEC-0291](RIPR-SPEC-0291-agent-brief-root-display.md).
 `verification.suggested_test_command` remains a rootless advisory Cargo filter
 and is outside that rule.
@@ -158,11 +157,11 @@ case.
 
 ### JSON Shape
 
-The brief should use schema version `0.1`:
+The brief should use schema version `0.2`:
 
 ```json
 {
-  "schema_version": "0.1",
+  "schema_version": "0.2",
   "tool": "ripr",
   "scope": "working_set",
   "root": ".",
@@ -249,15 +248,14 @@ The brief should use schema version `0.1`:
         "seam_id": "f3c9e4d21a0b7c88"
       },
       "verification": {
-        "before_snapshot_command": "mkdir -p target/ripr/workflow && ripr check --root . --mode draft --format repo-exposure-json > target/ripr/workflow/before.repo-exposure.json",
-        "after_snapshot_command": "mkdir -p target/ripr/workflow && ripr check --root . --mode draft --format repo-exposure-json > target/ripr/workflow/after.repo-exposure.json",
-        "verify_command": "ripr agent verify --root . --before target/ripr/workflow/before.repo-exposure.json --after target/ripr/workflow/after.repo-exposure.json --json",
         "suggested_test_command": "cargo test discounted_total_boundary_discriminator"
       }
     }
   ],
   "next": {
     "inspect_packet": "mkdir -p target/ripr/workflow && ripr check --root . --mode draft --format agent-seam-packets-json > target/ripr/workflow/agent-seam-packets.json",
+    "before_snapshot_command": "mkdir -p target/ripr/workflow && ripr check --root . --mode draft --format repo-exposure-json > target/ripr/workflow/before.repo-exposure.json",
+    "after_snapshot_command": "mkdir -p target/ripr/workflow && ripr check --root . --mode draft --format repo-exposure-json > target/ripr/workflow/after.repo-exposure.json",
     "verify_after_edit": "ripr agent verify --root . --before target/ripr/workflow/before.repo-exposure.json --after target/ripr/workflow/after.repo-exposure.json --json > target/ripr/workflow/agent-verify.json",
     "write_receipt": "ripr agent receipt --root . --verify-json target/ripr/workflow/agent-verify.json --seam-id f3c9e4d21a0b7c88 --json --out target/ripr/reports/agent-receipt.json"
   },
@@ -267,7 +265,7 @@ The brief should use schema version `0.1`:
 
 Field contract:
 
-- `schema_version` — currently `"0.1"`.
+- `schema_version` — currently `"0.2"`.
 - `scope` — always `"working_set"`.
 - `mode` — effective analysis mode after CLI flags and repo config.
 - `config.state` — `"loaded"` or `"missing"`.
@@ -292,10 +290,14 @@ Field contract:
 - `top_seams[].why_now.reason` — one of the ranking reasons above.
 - `top_seams[].why_now.confidence` — `high`, `medium`, `low`, or `unknown`.
 - `top_seams[].packet_ref` — stable pointer to the full packet shape.
-- `top_seams[].verification` — commands the agent can run to compare static
-  evidence before and after a focused test. Every command that redirects into
-  `target/ripr/workflow` carries a `mkdir -p` prefix for that directory, so
-  each runs verbatim in a fresh checkout (#4592, #7289).
+- `top_seams[].verification.suggested_test_command` — the proposed Cargo name
+  filter for that seam's focused test, or `null`. The snapshot and verify
+  commands are identical for every seam, so schema `0.2` states them once under
+  `next` instead of repeating them per seam (#13673).
+- `next.before_snapshot_command` and `next.after_snapshot_command` — the
+  commands that capture static evidence before and after a focused test. Each
+  redirects into `target/ripr/workflow` and carries a `mkdir -p` prefix for
+  that directory, so each runs verbatim in a fresh checkout (#4592, #7289).
 - `next.write_receipt` — optional handoff command that narrows the verify JSON
   to the selected seam. It records review metadata but does not run tests.
 - `warnings[]` — advisory warnings, such as hidden seams due to configured
@@ -314,7 +316,7 @@ high-confidence `changed_line_intersects_seam` reason:
 
 ```json
 {
-  "schema_version": "0.1",
+  "schema_version": "0.2",
   "working_set": {
     "source": "diff",
     "files": ["src/pricing.rs"],
@@ -352,7 +354,6 @@ high-confidence `changed_line_intersects_seam` reason:
         "seam_id": "f3c9e4d21a0b7c88"
       },
       "verification": {
-        "after_snapshot_command": "mkdir -p target/ripr/workflow && ripr check --root . --mode draft --format repo-exposure-json > target/ripr/workflow/after.repo-exposure.json",
         "suggested_test_command": "cargo test discounted_total_boundary_discriminator"
       }
     }
@@ -368,7 +369,7 @@ capped at three and reports that cap explicitly:
 
 ```json
 {
-  "schema_version": "0.1",
+  "schema_version": "0.2",
   "working_set": {
     "source": "files",
     "files": ["src/pricing.rs"],
@@ -409,7 +410,7 @@ the entry small by pointing to the full agent seam packet:
 
 ```json
 {
-  "schema_version": "0.1",
+  "schema_version": "0.2",
   "working_set": {
     "source": "seam_id",
     "files": ["src/pricing.rs"],
@@ -447,7 +448,7 @@ counted in one warning per reason, so a large diff cannot flood `warnings`:
 
 ```json
 {
-  "schema_version": "0.1",
+  "schema_version": "0.2",
   "working_set": {
     "source": "files",
     "files": ["src/pricing.rs"],
@@ -722,7 +723,7 @@ Planned file:
 
 Responsibilities:
 
-- render schema version `0.1`;
+- render schema version `0.2`;
 - preserve the field names and reason vocabulary in this spec;
 - render deterministic ordering;
 - keep output smaller than full agent seam packets;
