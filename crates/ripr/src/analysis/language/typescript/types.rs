@@ -59,6 +59,12 @@ pub(crate) struct TypeScriptOwner {
     /// method, getter or duplicate), which keeps the member from being
     /// replaced inside the object. RIPR-SPEC-0243 rule 5.
     pub(crate) default_object_member: bool,
+    /// Other members of the same default object whose declaration could
+    /// replace this owner before the test calls it (uses `this`, `require`,
+    /// `exports`, a relative import, ...). A test that calls any of them as
+    /// `local.sibling(...)` gets no rule-5 credit for this owner.
+    #[serde(default)]
+    pub(crate) default_object_unsafe_siblings: Vec<String>,
     /// `true` when the owner is the whole value of a CommonJS
     /// `module.exports = <function>` assignment (an anonymous or named
     /// function expression, an arrow, or a plain reference to a top-level
@@ -183,7 +189,8 @@ pub(crate) struct TypeScriptTest {
     /// `(local, member)` pairs for default imports of the containing test
     /// file whose local appears nowhere in the whole file (setup hooks and
     /// file-level code included) except as its own import binding and as
-    /// calls `local.member(`, all of one member (RIPR-SPEC-0243 rule 5).
+    /// direct calls `local.member(`; one pair per directly called member, so
+    /// calls of several members credit each of them (RIPR-SPEC-0243 rule 5).
     /// Populated once per file by `extract_tests`.
     pub(crate) default_member_only_locals_in_file: Shared<(String, String)>,
     /// Names the containing test file writes more than once (their

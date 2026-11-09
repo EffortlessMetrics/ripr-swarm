@@ -373,6 +373,18 @@ test-surface file (a `tests/` path or `*_test.rs` name) in the crate that
 owns the seam, then rerun pilot. Until then, inspect the ranked seams by
 hand: they are still worth reading, just not repairable through RIPR.
 
+### Line-ending-only changes
+
+A file whose only change is its line endings is not counted as an edit when
+Git itself normalizes that path (`core.autocrlf`, or a `text` attribute). A
+checkout or `git stash pop` can rewrite CRLF bytes that way while `git status`
+stays clean. The after phase lists such files in
+`after.line_ending_only_paths`, beside the verdict rather than inside it, and
+names them in one line that starts `not counted as edits:`. The list leaves the
+bound delta digest and the receipt binding unchanged. A line-ending flip on a
+path Git does not normalize is still an edit, and so is any real content change
+to the same file.
+
 ### Replacing an issued compatibility receipt
 
 An after phase can replace a previous attempt's issued compatibility receipt

@@ -373,6 +373,36 @@ jobs:
             echo "::notice::base $base_sha recovered only the exact #12466 compiler-arity blob ($old_stub_blob -> $fixed_stub_blob); original user-text matcher remains authoritative"
           fi
 
+      - name: Recover pinned base missed-txt match if needed
+        # main at 5c223a5e (format.rs blob) does not compile: #13666 and #13720
+        # merged an uncovered OutputFormat::MissedTxt arm (E0004). Patch only that
+        # exact blob in the base worktree so the merge-base matcher can build;
+        # a no-op once main carries the #13848 fix.
+        if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+        run: |
+          set -euo pipefail
+          base_tree="$RUNNER_TEMP/user-text-base"
+          base_sha="$(git -C "$base_tree" rev-parse HEAD)"
+          old_format_blob="$(git -C "$base_tree" rev-parse "HEAD:crates/ripr/src/output/format.rs")"
+          if test "$old_format_blob" = "5c223a5e714540e314600f24f6f07373d136c475"; then
+            python3 - "$base_tree/crates/ripr/src/output/format.rs" <<'PY'
+          from pathlib import Path
+          import sys
+
+          path = Path(sys.argv[1])
+          source = path.read_text(encoding="utf-8")
+          before = "            | Self::RepoSarifCompact => false,\n"
+          after = "            | Self::RepoSarifCompact\n            | Self::MissedTxt => false,\n"
+          if source.count(before) != 1:
+              raise SystemExit("pinned base missed-txt recovery has an unexpected source shape")
+          path.write_text(source.replace(before, after, 1), encoding="utf-8")
+          PY
+            fixed_format_blob="$(git -C "$base_tree" hash-object crates/ripr/src/output/format.rs)"
+            test "$fixed_format_blob" = "cf05a4c4a649b292fe0cae25e43f2ce3d28d79b6"
+            git -C "$base_tree" diff --name-only | grep -vxF -e crates/ripr/src/output/format.rs -e crates/ripr/src/app/test_stub.rs && exit 1
+            echo "::notice::base $base_sha recovered only the exact #13848 missed-txt blob ($old_format_blob -> $fixed_format_blob); original user-text matcher remains authoritative"
+          fi
+
       - name: User-text goldens judged by the merge-base matcher
         # The PR's goldens are judged by the original matcher at the merge base,
         # so the PR cannot qualify a weakened version of its own gate (#11385).
