@@ -3572,6 +3572,28 @@ fn a_rebound_test_attribute_refuses_the_pin_and_the_builtin_keeps_it() {
     }
 }
 
+/// #14028: a `#[test]` refused because an import rebinds `test` is explained
+/// by the rebinding, not by the plain built-in attribute it looks like.
+#[test]
+fn a_rebound_test_attribute_is_named_as_the_import_not_the_attribute() {
+    let tests = "use demo::weight;\nuse skipper::serial as test;\n#[test]\nfn weighs() {\n    assert_eq!(weight(4), 12);\n}\n";
+    let refusal = weight_refusal(tests, &[]);
+    assert_eq!(
+        refusal,
+        Some(AssertionRefusal::Syntax(
+            AssertionContextRefusal::TestRebound
+        ))
+    );
+    let clause = refusal.as_ref().map(AssertionRefusal::describe);
+    assert!(
+        refusal.is_some_and(|refusal| refusal.is_analyzer_limit())
+            && clause.as_deref().is_some_and(|clause| {
+                clause.contains("may rebind `test`") && !clause.contains("carries `#[test]`")
+            }),
+        "{clause:?}"
+    );
+}
+
 #[test]
 fn an_async_std_test_runtime_runs_an_async_test_body_and_other_async_tests_refuse() {
     for attributes in [
