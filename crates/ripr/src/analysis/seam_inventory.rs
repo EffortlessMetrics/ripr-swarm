@@ -7749,8 +7749,9 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
     /// which path ran: a fresh build re-parses every file into a new
     /// allocation, so only the extension keeps the core's parsed file. The
     /// refused rows (an added second parent, in any spacing; the first
-    /// unresolved include; a retained file gaining an include parent) must
-    /// fall back and still equal a fresh build.
+    /// unresolved include; a retained file gaining an include parent; an added
+    /// module edge linking a file the core withheld as outside the module
+    /// tree) must fall back and still equal a fresh build.
     #[test]
     fn same_run_reuse_extends_past_stable_includes_and_matches_fresh() -> Result<(), String> {
         let lib = (
@@ -7844,6 +7845,22 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
             dynamic,
         ];
         let root = reuse_fixture_root("reuse-include-extension", &all)?;
+        // A module edge from an added binary root to a file the core withheld
+        // as outside the module tree: no include moves, but composition then
+        // links the file, and its revived tests would come from function
+        // facts, not the parser's test facts. A separate root keeps this
+        // `src/main.rs` apart from the `mod plain;` one above.
+        let linker = ("src/main.rs", "mod orphan;\nfn main() {}\n");
+        let linked_root = match reuse_fixture_root(
+            "reuse-include-extension-linked",
+            &[lib, frag, orphan, linker],
+        ) {
+            Ok(linked_root) => linked_root,
+            Err(err) => {
+                let _ = std::fs::remove_dir_all(&root);
+                return Err(err);
+            }
+        };
         let orphan_outside = |index: &RustIndex| {
             index
                 .files()
@@ -7852,6 +7869,7 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
         };
         type Row<'a> = (
             &'a str,
+            &'a Path,
             Vec<(&'a str, &'a str)>,
             Vec<(&'a str, &'a str)>,
             bool,
@@ -7859,13 +7877,21 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
         let rows: Vec<Row<'_>> = vec![
             (
                 "text mentions only",
+                root.as_path(),
                 vec![lib, frag, orphan],
                 vec![mentions],
                 true,
             ),
-            ("second parent", vec![lib, frag, orphan], vec![real], false),
+            (
+                "second parent",
+                root.as_path(),
+                vec![lib, frag, orphan],
+                vec![real],
+                false,
+            ),
             (
                 "spaced second parent",
+                root.as_path(),
                 vec![lib, frag, orphan],
                 vec![spaced],
                 false,
@@ -7874,6 +7900,7 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
             // whose withheld test cannot be restored in place: fall back.
             (
                 "unindexed target",
+                root.as_path(),
                 vec![lib, frag, orphan],
                 vec![limit],
                 false,
@@ -7882,6 +7909,7 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
             // core may hold: fall back.
             (
                 "first unresolved include",
+                root.as_path(),
                 vec![lib, frag],
                 vec![limit],
                 false,
@@ -7890,18 +7918,21 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
             // ripr-swarm shape) keeps the extension past another one.
             (
                 "unindexed target after an unresolved include",
+                root.as_path(),
                 vec![lib, frag, dynamic],
                 vec![limit],
                 true,
             ),
             (
                 "extras-only include",
+                root.as_path(),
                 vec![lib, frag],
                 vec![pair, pair_frag],
                 true,
             ),
             (
                 "core includes an extra",
+                root.as_path(),
                 vec![lib, frag, other],
                 vec![late],
                 true,
@@ -7910,6 +7941,7 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
             // through two added files is rebased once, as a fresh build does.
             (
                 "core includes an extra that includes an extra",
+                root.as_path(),
                 vec![lib, frag, other_chain],
                 vec![chain, chain_frag],
                 true,
@@ -7917,13 +7949,25 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
             // A retained file gaining an include parent: fall back.
             (
                 "extra includes a module-linked core file",
+                root.as_path(),
                 vec![lib, frag, main_rs, plain],
                 vec![grab],
                 false,
             ),
+            // A retained withheld file linked by an added module edge: the
+            // withheld-tests guard falls back.
+            (
+                "extra links a withheld file",
+                linked_root.as_path(),
+                vec![lib, frag, orphan],
+                vec![linker],
+                false,
+            ),
         ];
         let result = (|| -> Result<(), String> {
-            for (label, core_src, extra_src, extends) in rows {
+            for (label, root, core_src, extra_src, extends) in rows {
+                let withheld_row =
+                    label == "unindexed target" || label == "extra links a withheld file";
                 let core = bytes_of(&core_src);
                 let target_src = core_src
                     .iter()
@@ -7932,11 +7976,11 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
                     .collect::<Vec<_>>();
                 let target = bytes_of(&target_src);
                 let core_index =
-                    rust_index::build_analysis_index_from_loaded_files(&root, &core, &[])?;
+                    rust_index::build_analysis_index_from_loaded_files(root, &core, &[])?;
                 if core_index.index.include_parents.is_empty() {
                     return Err(format!("{label}: the core must resolve an include parent"));
                 }
-                if label == "unindexed target" && !orphan_outside(&core_index.index) {
+                if withheld_row && !orphan_outside(&core_index.index) {
                     return Err(format!(
                         "{label}: the core must start with the orphan outside"
                     ));
@@ -7949,8 +7993,7 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
                         .ok_or(format!("{label}: src/lib.rs must be indexed"))
                 };
                 let core_source = lib_source(&core_index.index)?;
-                let reused =
-                    rust_index::reuse_cached_index_in_run(core_index, &root, &target, &[])?;
+                let reused = rust_index::reuse_cached_index_in_run(core_index, root, &target, &[])?;
                 if std::sync::Arc::ptr_eq(&core_source, &lib_source(&reused.index)?) != extends {
                     return Err(format!("{label}: extension path taken must be {extends}"));
                 }
@@ -7960,8 +8003,7 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
                 {
                     return Err(format!("{label}: every added file must be indexed"));
                 }
-                let fresh =
-                    rust_index::build_analysis_index_from_loaded_files(&root, &target, &[])?;
+                let fresh = rust_index::build_analysis_index_from_loaded_files(root, &target, &[])?;
                 let reused_json =
                     serde_json::to_string(&reused.index).map_err(|err| err.to_string())?;
                 let fresh_json =
@@ -7974,15 +8016,16 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
                 if reused.files_content_hash != fresh.files_content_hash {
                     return Err(format!("{label}: content hash must match a fresh build"));
                 }
-                if label == "unindexed target" && orphan_outside(&reused.index) {
+                if withheld_row && orphan_outside(&reused.index) {
                     return Err(format!(
-                        "{label}: the added limitation must withdraw the claim"
+                        "{label}: the added file must withdraw the outside claim"
                     ));
                 }
             }
             Ok(())
         })();
         let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&linked_root);
         result
     }
 

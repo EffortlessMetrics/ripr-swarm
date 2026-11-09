@@ -22,9 +22,9 @@ pub(super) fn resolve_repository_local_includes(root: &Path, index: &mut RustInd
         })
         .map(|(parent, facts)| (parent, facts.source.as_ref()))
         .collect();
-    // `collect` on a parallel iterator over a slice preserves input order, so
-    // each precomputed entry still matches the BTreeMap file order the serial
-    // loop used (#9214).
+    // `memoize_many` returns one result per source in input order, so each
+    // precomputed entry still matches the BTreeMap file order the serial loop
+    // used (#9214).
     // The directive read is a pure function of the source text (the parent
     // path is unused), so the run memo serves files a diff check already
     // resolved in its admission core when the extended main index resolves
