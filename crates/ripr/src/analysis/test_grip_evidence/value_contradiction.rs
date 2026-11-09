@@ -2566,7 +2566,7 @@ mod tests {
     /// reuses it.
     #[test]
     fn item_binding_walk_is_shared_across_asks_for_one_body() -> Result<(), String> {
-        let source = "pub fn discounted_total(a: u64, b: u64) -> u64 {\n    a + b\n}\n#[cfg(test)]\nmod tests {\n    use super::discounted_total;\n    #[test]\n    fn case() {\n        fn discounted_total(a: u64, b: u64) -> u64 { b }\n        assert_eq!(discounted_total(1, 5), 1);\n        assert_eq!(discounted_total(2, 6), 2);\n        assert!(discounted_total(3, 7) > 0);\n    }\n}\n";
+        let source = "pub fn discounted_total(a: u64, b: u64) -> u64 {\n    a + b\n}\n#[cfg(test)]\nmod tests {\n    use super::discounted_total;\n    #[test]\n    fn case() {\n        {\n            fn discounted_total(a: u64, b: u64) -> u64 { b }\n            assert_eq!(discounted_total(1, 5), 1);\n        }\n        assert_eq!(discounted_total(2, 6), 2);\n        assert!(discounted_total(3, 7) > 0);\n    }\n}\n";
         let facts = RaRustSyntaxAdapter
             .summarize_file(std::path::Path::new("src/lib.rs"), source)
             .map_err(|error| format!("source summarizes: {error}"))?;
@@ -2593,10 +2593,15 @@ mod tests {
             .collect();
         let reads = crate::analysis::classify::item_binding_read_count() - before;
         assert_eq!(reads, 1, "one walk for 12 asks of one body");
-        assert!(
-            answers.iter().flatten().all(|shadowed| *shadowed),
-            "the nested fn shadows its owner calls: {answers:?}"
-        );
+        // The shared walk must still answer each assertion from its own scope:
+        // only the assertion inside the shadowing block is shadowed.
+        for round in &answers {
+            assert_eq!(
+                round,
+                &[true, false, false],
+                "per-assertion answers survive sharing: {answers:?}"
+            );
+        }
         Ok(())
     }
 
