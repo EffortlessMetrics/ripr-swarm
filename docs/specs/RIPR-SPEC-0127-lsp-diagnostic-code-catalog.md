@@ -10,6 +10,7 @@ Linked issues:
 
 - #1662
 - #11253
+- #11666
 
 ## Problem
 
@@ -105,6 +106,20 @@ constructor that is the single source of truth for that family:
   are silent apart from the marker count), are absent in the `full` profile, never use Warning severity, and carry no
   finding id, repair, witness, or `preview_actionability` data.
   These are not analyzer findings or actionable repairs.
+
+The quarantine-withdrawn marker names its cause through `data.reason`, the
+hover and log text, and the workspace-status `staleness_reason`. When a
+`didOpen` is refused because the store-wide open-document or retained-text
+limit was reached (#11666), the document is held as an unknown-authority
+placeholder with empty text and the reason is `document_store_limit_reached`,
+not `invalid_incremental_change`: the text says the editor buffer was not
+tracked because the open-document limit was reached, with the recovery of
+closing other open files and reopening this one (`data.recovery`
+`close_other_documents_then_reopen`). The placeholder stays fail-closed (no
+line-local diagnostics, no restored authority from a save without client text
+or from a replacement past either limit), so the reason changes disclosure
+only and never relaxes withdrawal. This is a static delivery limitation, not
+a finding, repair, or runtime outcome.
 
 Each catalog entry carries the code identity used today: the stable `code` and
 the deprecated `aliases` that still resolve to it. Compatibility aliases are

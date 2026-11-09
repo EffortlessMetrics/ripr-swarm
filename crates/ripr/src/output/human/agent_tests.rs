@@ -1143,6 +1143,7 @@ fn explain_agent_preview_weak_gap_keeps_the_discriminator_and_test_open() {
         "{text}"
     );
     assert!(!text.contains("nothing more is fixable"), "{text}");
+    assert!(!text.contains("offers no guided repair"), "{text}");
     assert!(!text.contains("\nstop="), "{text}");
     assert!(
         text.contains("static advisory, not runtime proof"),

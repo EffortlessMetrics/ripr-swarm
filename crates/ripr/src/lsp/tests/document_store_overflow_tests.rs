@@ -60,7 +60,7 @@ fn require_overflow_placeholder(
         .quarantine
         .as_ref()
         .map(|quarantine| quarantine.reason)
-        != Some(DocumentStalenessReason::InvalidIncrementalChange)
+        != Some(DocumentStalenessReason::DocumentStoreLimitReached)
     {
         return Err(format!(
             "{stage}: overflow must sit in the fail-closed quarantine"
@@ -80,8 +80,35 @@ async fn require_withdrawn_not_served(
             "{stage}: overflow URI must serve only the withdrawal marker: {report}"
         ));
     }
+    if report
+        .pointer("/items/0/data/reason")
+        .and_then(serde_json::Value::as_str)
+        != Some("document_store_limit_reached")
+    {
+        return Err(format!(
+            "{stage}: marker must name the document-store limit: {report}"
+        ));
+    }
+    let message = report
+        .pointer("/items/0/message")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default();
+    if !message.contains("open-document limit was reached") || message.contains("incremental") {
+        return Err(format!(
+            "{stage}: marker text must name the limit, not an edit failure: {message}"
+        ));
+    }
     let status = workspace_status_json(backend).await?;
     let entry = open_document_entry(&status, uri.as_str())?;
+    if entry
+        .get("staleness_reason")
+        .and_then(serde_json::Value::as_str)
+        != Some("document_store_limit_reached")
+    {
+        return Err(format!(
+            "{stage}: workspace status must name the document-store limit: {entry}"
+        ));
+    }
     if entry.get("state").and_then(serde_json::Value::as_str) == Some("clean")
         || entry
             .get("line_local_diagnostics")

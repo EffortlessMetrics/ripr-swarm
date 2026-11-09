@@ -19485,7 +19485,7 @@ fn pilot_snapshot_truncated_by_the_seam_budget_is_not_a_verify_baseline()
     let full_total = count(&full);
     assert!(
         summary.contains(&format!(
-            "- Seam limit reached: ranked 1 of {full_total} seams;"
+            "- Seam limit reached: analyzed 1 of {full_total} seams,"
         )),
         "{summary}"
     );
@@ -19522,7 +19522,7 @@ fn pilot_snapshot_truncated_by_the_seam_budget_is_not_a_verify_baseline()
     let summary = std::fs::read_to_string(root.join("target/ripr/pilot/pilot-summary.md"))?;
     assert!(
         summary.contains(&format!(
-            "- Seam limit reached: ranked 1 of {full_total} seams;"
+            "- Seam limit reached: analyzed 1 of {full_total} seams,"
         )),
         "{summary}"
     );
@@ -22831,9 +22831,9 @@ fn pilot_ranks_the_current_change_past_the_inventory_seam_limit() -> Result<(), 
     // Precondition: the inventory limit fired and kept one seam, which is
     // not on the change; the changed seams it cut were classified on their
     // own and count as analyzed.
-    assert!(md.contains("- Seam limit reached: ranked "), "{md}");
+    assert!(md.contains("- Seam limit reached: analyzed "), "{md}");
     assert!(!md.contains("ranked 1 of "), "{md}");
-    assert!(md.contains("ranked 4 of 6 seams"), "{md}");
+    assert!(md.contains("analyzed 4 of 6 seams"), "{md}");
     // `ripr check` never classifies the added seams, so the snapshot is not
     // its population and carries no comparable identity.
     let snapshot: serde_json::Value = serde_json::from_str(
@@ -23113,7 +23113,7 @@ fn pilot_ranks_multiline_match_head_edits_with_warm_caches_and_caps() -> Result<
                     "{summary}"
                 );
             }
-            assert!(md.contains("ranked 1 of "), "{md}");
+            assert!(md.contains("analyzed 1 of "), "{md}");
         }
         ignore_remove_dir_all(&root);
         ignore_remove_dir_all(&out);
@@ -23522,7 +23522,7 @@ fn python_preview_weak_gap_agent_surfaces_keep_the_discriminator_open() -> Resul
         "missing=amount == threshold|",
         "test=t1|",
         "t1=tests/test_pricing.py:4 test_calculate_discount_smoke smoke_only",
-        "open=preview-language evidence is advisory and offers no guided repair",
+        "open=preview-language evidence is advisory, but a related test asserts too weakly to notice this change",
         "tests may still help",
         "static advisory, not runtime proof",
         "next=ripr context ",
