@@ -705,8 +705,18 @@ fn apply_init_plan(plan: &[InitTarget], root: &Path) -> Result<(), String> {
                 .is_some_and(|name| name == MCP_CONFIG_FILE_NAME)
         }) {
             println!();
+            // Offer the Cursor route only when this run does not already
+            // plan `.cursor/mcp.json` (for example `--agents all`).
+            let cursor_planned = plan
+                .iter()
+                .any(|target| target.path.ends_with(".cursor/mcp.json"));
+            let cursor_hint = if cursor_planned {
+                ""
+            } else {
+                " For Cursor add `--agents cursor --mcp`, which also writes `.cursor/mcp.json`."
+            };
             println!(
-                "Claude Code reads `{MCP_CONFIG_FILE_NAME}` and asks you to approve the project server before its tools appear. For Codex run `codex mcp add {MCP_SERVER_NAME} -- ripr mcp --stdio`. For Cursor add `--agents cursor`, which also writes `.cursor/mcp.json`."
+                "Claude Code reads `{MCP_CONFIG_FILE_NAME}` and asks you to approve the project server before its tools appear. For Codex run `codex mcp add {MCP_SERVER_NAME} -- ripr mcp --stdio`.{cursor_hint}"
             );
         }
         if plan.iter().any(|target| {
@@ -714,7 +724,21 @@ fn apply_init_plan(plan: &[InitTarget], root: &Path) -> Result<(), String> {
                 && target.action != InitAction::LeaveUnchanged
         }) {
             println!();
-            println!("{}", init_agents::FOLLOW_UP);
+            let mcp_planned = plan.iter().any(|target| {
+                target
+                    .path
+                    .file_name()
+                    .is_some_and(|name| name == MCP_CONFIG_FILE_NAME)
+                    && target.action != InitAction::LeaveUnchanged
+            });
+            println!(
+                "{}",
+                if mcp_planned {
+                    init_agents::FOLLOW_UP_WITH_MCP
+                } else {
+                    init_agents::FOLLOW_UP
+                }
+            );
         }
         if let Some((workflow, ci)) = plan.iter().find_map(|target| {
             [InitCi::Github, InitCi::Gitlab]

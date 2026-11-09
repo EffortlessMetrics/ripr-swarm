@@ -199,7 +199,7 @@ machine-readable `check` formats carry their own refusal documents:
 - `ripr diff --json`, `ripr rerun --json`, `ripr context` (JSON only), `ripr
   agent brief --json`, and `ripr agent packet --json` write the same envelope
   as `check --json` for every post-argv-parse operational failure, keyed with
-  the refusing command's own `schema_version` (`"0.1"` for diff and agent brief,
+  the refusing command's own `schema_version` (`"0.1"` for diff, `"0.2"` for agent brief,
   `"ripr-targeted-rerun-v1"` for rerun, `"1.1"` for context, `"0.5"` for agent
   packet). `mode` appears only on commands that accept `--mode` (check, diff,
   context); `scope` is `"diff"` for diff-scoped commands and `"repo"` for

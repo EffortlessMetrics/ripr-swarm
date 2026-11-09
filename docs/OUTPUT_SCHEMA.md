@@ -118,7 +118,7 @@ map is:
 | `ripr check --format repo-exposure-json` | `schema_version` | `0.5` |
 | `ripr rerun --json` | `schema_version` | `ripr-targeted-rerun-v1` |
 | `ripr agent packet` and `ripr check --format agent-seam-packets-json` | `schema_version` | `0.5` |
-| `ripr agent brief` | `schema_version` | `0.1` |
+| `ripr agent brief` | `schema_version` | `0.2` |
 | `ripr agent receipt` | `schema_version` | `0.5` |
 | `ripr agent verify` | `schema_version` | `0.3` |
 | `ripr agent repair --phase before --json` and `ripr repair --json` (#11584) start stdout | `schema_version` | `0.5` |
@@ -170,6 +170,7 @@ records that distinction.
 | `schemas/ripr/cli-refusal.schema.json` | `0.1` | `crates/ripr/src/app.rs` and `crates/ripr/src/output/refusal.rs`; minimal usage-error / selector-miss refusal under an explicit JSON request (#11584) |
 | `schemas/ripr/doctor.schema.json` | `0.4` | `crates/ripr/src/output/doctor.rs`; doctor environment report (#5214) |
 | `schemas/ripr/executed-control.schema.json` | `1` | `crates/ripr-contract/src/domain/executed_control.rs` and `crates/ripr/src/output/executed_control.rs`; executed-control obligation/result/packet vocabulary (#4641) |
+| `schemas/ripr/muse-plugin-eval.schema.json` | `muse-plugin-eval-v1` | `xtask/src/reports/dx_scoreboard/muse_plugin.rs`; canonical Muse evaluation record with optional structured observations; [contract](verification/muse-plugin-eval.md) |
 | `schemas/ripr/gate-decision.schema.json` | `0.1` | `crates/ripr/src/output/gate.rs`; gate decision envelope |
 | `schemas/ripr/pr-evidence.schema.json` | `0.1` | `crates/ripr/src/app/pr_evidence.rs` (installed `ripr pr-evidence`) and `xtask/src/reports/pr_evidence.rs` (xtask compatibility); PR evidence envelope |
 | `schemas/ripr/repair-assurance.schema.json` | `1` | `crates/ripr/src/domain/verification_result.rs`; reserved assurance vocabulary and execution result |
@@ -280,6 +281,7 @@ terse document rewrites repeated content. Exactly what differs:
 | `assertion_texts` values | assertion source lines | long values coded the same way |
 | `evidence_legend` | absent | code → full template, emitted only when useful, in first-appearance order; codes avoid literal values on coded surfaces |
 | Next-action alias | both keys emitted | `suggested_next_action` is omitted only when its value equals `recommended_next_step` and is at least 24 UTF-8 bytes; the alias is listed once in `dropped_aliases` |
+| Activation aliases (#13673) | finding-level `observed_values` and `missing_discriminators` repeat `activation` | each is omitted only when it is non-empty and equal to the same-named array in that finding's `activation`; each dropped alias is listed once in `dropped_aliases` |
 
 Guarantees and limits, stated precisely:
 
@@ -290,10 +292,17 @@ Guarantees and limits, stated precisely:
 - Expanding every code through `evidence_legend` reconstructs the exact
   original strings in the original order, so the prose is recoverable from
   the terse document alone. Restore an omitted `suggested_next_action` from
-  that finding's `recommended_next_step`. All other fields remain verbatim
-  even when their strings coincide. The schema permits the omission only
-  when both `rendering: "terse"` and the known alias declaration are present;
-  full JSON continues to require both action fields.
+  that finding's `recommended_next_step`, and an omitted `observed_values` or
+  `missing_discriminators` from that finding's `activation`. All other fields remain verbatim
+  even when their strings coincide. The schema permits omitting
+  `suggested_next_action` only when both `rendering: "terse"` and the known
+  alias declaration are present; full JSON continues to require it. The
+  finding-level `observed_values` and `missing_discriminators` are listed as
+  optional for every document (an additive widening, so no version bump):
+  full `json` and `json-compact` still always emit both, and the output
+  property tests, not the schema, hold that guarantee. Tying their omission
+  to the alias declaration in the schema needs a narrowing change and a
+  schema version bump, which is deferred.
 - What terse does *not* code: `ripr` stage summaries, related-test oracle
   lines, flow-sink text and repair cards stay inline. Those are the
   remaining cross-finding duplication; coding them is follow-up work if
@@ -1678,7 +1687,7 @@ The same envelope covers the other `--json` commands (#7331): `ripr diff
 --json`, `ripr rerun --json`, `ripr context` (which emits JSON only), `ripr
 agent brief --json`, and `ripr agent packet --json` write this document for
 every post-argv-parse failure, keyed with the refusing command's own
-`schema_version` (`"0.1"` for diff and agent brief, `"ripr-targeted-rerun-v1"`
+`schema_version` (`"0.1"` for diff, `"0.2"` for agent brief, `"ripr-targeted-rerun-v1"`
 for rerun, `"1.1"` for context, `"0.5"` for agent packet). `mode` appears only
 on commands that accept `--mode` (check, diff, context); `scope` is `"diff"`
 for diff-scoped commands and `"repo"` for agent brief and agent packet; agent
@@ -20252,7 +20261,7 @@ top-level `source_subject`:
 
 - `digest_algorithm`: always `"sha256"`.
 - `corpus` (additive, full Rust inventory only): the analysis-owned
-  `{ "scope": "rust_workspace", "cache_schema_version": "1.177",
+  `{ "scope": "rust_workspace", "cache_schema_version": "1.178",
   "files_content_hash": "<16 lowercase hex digits>" }` from the actual
   classified inventory cache key, including both production and test Rust
   files after the existing generated-file exclusions. Repo-exposure producers
@@ -21037,7 +21046,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.177",
+      "schema_version": "1.178",
       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567+languages:rust=1,typescript=1,python=1,perl=0",
       "workspace_root_hash": "…",
       "files_content_hash": "…",

@@ -437,8 +437,10 @@ or `libraries/*` has one. JavaScript-led repositories can also qualify through a
 root `package.json` with eligible JavaScript or TypeScript source; see
 [language configuration](CONFIGURATION.md#languages) for the full detection
 rules, including mixed Rust repositories and compiled-adapter requirements.
-Work from a TypeScript repository on a branch with a change to inspect, with
-`/target/ripr/` in `.gitignore` as above, and run:
+Work from a TypeScript repository on a branch with a change to inspect.
+First add `/target/ripr/` (or `/target/`) to `.gitignore`: `check`, `pilot` and
+`agent repair` write reports under `target/ripr`, and ignoring it keeps
+`git add -A` from committing them. Then run:
 
 ```bash
 ripr check

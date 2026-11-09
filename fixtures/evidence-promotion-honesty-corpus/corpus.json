@@ -263,6 +263,87 @@
   ],
   "cases": [
     {
+      "id": "python_coarse_sign",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_coarse_sign",
+      "vector": "coarse_projection_does_not_pin_owner_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "expected_finding_owner",
+          "owner": "python:coarse/fees.py::sign_fee"
+        }
+      ]
+    },
+    {
+      "id": "python_coarse_residue",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_coarse_residue",
+      "vector": "coarse_projection_does_not_pin_owner_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "expected_finding_owner",
+          "owner": "python:coarse/fees.py::residue_fee"
+        }
+      ]
+    },
+    {
+      "id": "python_coarse_text_length",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_coarse_text_length",
+      "vector": "coarse_projection_does_not_pin_owner_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "expected_finding_owner",
+          "owner": "python:coarse/fees.py::length_fee"
+        }
+      ]
+    },
+    {
       "id": "typescript_jest_only_literal_timeout_push_argument_length",
       "language": "typescript",
       "tier": "pure",
