@@ -694,11 +694,13 @@ fn undecided_example_test(
     synthetic_test(file, example, &synthetic)
 }
 
-/// `text` as a Python string literal, for printable ASCII without a backslash
-/// (the doctest reader admits no backslash); anything else is not written.
+/// `text` as a one-line Python string literal: any character but a
+/// backslash (the doctest reader admits none), a control character or
+/// whitespace other than a plain space, so no escape or line break is
+/// written. Anything else is not written.
 fn python_string_literal(text: &str) -> Option<String> {
     text.chars()
-        .all(|ch| (' '..='~').contains(&ch) && ch != '\\')
+        .all(|ch| ch == ' ' || !(ch.is_control() || ch.is_whitespace() || ch == '\\'))
         .then(|| format!("\"{}\"", text.replace('"', "\\\"")))
 }
 

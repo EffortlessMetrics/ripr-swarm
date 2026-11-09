@@ -360,8 +360,9 @@ one changed raise only (#12952); the general class-only table row stays weak.
    Finding-specific class identity (#12952): a sole-line replacement from
    `raise OldError(...)` to `raise NewError(...)`, with identical indentation
    and literal constructor arguments and no cause or keywords, can read
-   `with pytest.raises(NewError): owner(<literal arguments>)` as
-   `exact_error_variant` / strong for that finding. `OldError` and `NewError`
+   `with pytest.raises(NewError): owner(<literal arguments>)` (or
+   `raises(OldError)`, see below) as `exact_error_variant` / strong for that
+   finding. `OldError` and `NewError`
    must be distinct, single-bound top-level classes in the owner's module,
    each directly extending the unshadowed builtin `Exception` with only
    `pass` or literal-string body statements. Bases, decorators, metaclasses,
@@ -373,7 +374,8 @@ one changed raise only (#12952); the general class-only table row stays weak.
    bindings; this reading does not promise to resolve those wider scopes.
 
    The plain argument-free pytest test imports `pytest` canonically and the
-   owner and new class directly, without aliases, from the exact owner module.
+   owner and the local class its context names directly, without aliases,
+   from the exact owner module.
    Both symbols must use the same module spelling: `src.fx.core` and
    `fx.core` can load separate class objects from the same source file.
    Its selected context has one item, no `raises` keywords, and exactly one

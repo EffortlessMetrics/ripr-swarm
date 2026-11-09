@@ -127,7 +127,12 @@ fn a_function_the_evaluator_cannot_run_is_an_opaque_comparison() -> Result<(), S
         old.replace("    return ", "    text = text.strip()\n    return "),
         new.replace("    return ", "    text = text.strip()\n    return "),
     );
-    sole_opaque_test("statements", &old, &new)
+    sole_opaque_test("statements", &old, &new)?;
+    // Unicode expected output is written into the synthetic comparison too,
+    // so a collected example the evaluator cannot run still abstains.
+    let unicode = "    >>> clip('abcdef', 3)\n    'café'\n";
+    let (old, new) = pair("text[:n]", "other(text)[:n]", unicode);
+    sole_opaque_test("unicode", &old, &new)
 }
 
 #[test]
