@@ -409,3 +409,30 @@ fn cheap_failure_refuses_allocation_before_any_product_producer() -> Result<(), 
     }
     Ok(())
 }
+
+#[test]
+fn native_controller_refuses_recovery_helper_change() -> Result<(), String> {
+    let mut fixture = Fixture::new()?;
+    let path = fixture
+        .root
+        .join(".github/scripts/check-base-recovery-state.py");
+    fs::create_dir_all(path.parent().ok_or("missing helper parent")?).map_err(|e| e.to_string())?;
+    fs::write(path, "raise SystemExit(0)\n").map_err(|e| e.to_string())?;
+    fixture.git(&["add", ".github/scripts/check-base-recovery-state.py"])?;
+    fixture.git(&[
+        "-c",
+        "commit.gpgsign=false",
+        "commit",
+        "--amend",
+        "--no-edit",
+    ])?;
+    fixture.subject["merge"] = fixture.git(&["rev-parse", "HEAD"])?.into();
+    fixture.subject["tree"] = fixture.git(&["rev-parse", "HEAD^{tree}"])?.into();
+    let output = fixture.call(&["plan", "refused.json"], &[])?;
+    assert!(
+        !output.status.success(),
+        "changed recovery authority must refuse"
+    );
+    assert!(!fixture.root.join("refused.json").exists());
+    Ok(())
+}

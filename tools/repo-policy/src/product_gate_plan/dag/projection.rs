@@ -170,11 +170,13 @@ pub(super) fn render(source: &str) -> Result<String, String> {
 fn verify_commands(gate: &ProductGateDefinition, block: &str) -> Result<(), String> {
     let required: Vec<&str> = match gate.id {
         ProductGateId::BaseCompilerRecovery => vec![
+            "python3 \"$GITHUB_WORKSPACE/.github/scripts/check-base-recovery-state.py\" \"$base_tree\"",
             "if test \"$old_stub_blob\" = \"41ce81981802365b31e5182b7a7a51540ff8d7be\"; then",
             "test \"$fixed_stub_blob\" = \"e934320980555de2d431b2aa8482a6059e9cf7f7\"",
             "test \"$(git -C \"$base_tree\" diff --name-only)\" = \"crates/ripr/src/app/test_stub.rs\"",
         ],
         ProductGateId::BaseFormatRecovery => vec![
+            "python3 \"$GITHUB_WORKSPACE/.github/scripts/check-base-recovery-state.py\" \"$base_tree\" --allow-compiler-repair",
             "if test \"$old_format_blob\" = \"5c223a5e714540e314600f24f6f07373d136c475\"; then",
             "test \"$fixed_format_blob\" = \"cf05a4c4a649b292fe0cae25e43f2ce3d28d79b6\"",
             "git -C \"$base_tree\" diff --name-only | grep -vxF -e crates/ripr/src/output/format.rs -e crates/ripr/src/app/test_stub.rs && exit 1",
@@ -519,6 +521,8 @@ mod tests {
             );
         }
         for pinned in [
+            ".github/scripts/check-base-recovery-state.py",
+            "--allow-compiler-repair",
             "41ce81981802365b31e5182b7a7a51540ff8d7be",
             "e934320980555de2d431b2aa8482a6059e9cf7f7",
             "5c223a5e714540e314600f24f6f07373d136c475",

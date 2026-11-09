@@ -1110,3 +1110,24 @@ fn lightweight_product_route_parity_preserves_cli_and_provenance() -> Result<(),
 
     Ok(())
 }
+
+// These are the Bash/Python commands of the Linux workflow, not a portable Rust substitute.
+#[cfg(unix)]
+#[test]
+fn base_recovery_rejects_unrelated_git_state() -> Result<(), String> {
+    let root = test_support::workspace_root()?;
+    let scratch = test_support::scratch("base-recovery-native")?.join("controls");
+    let output = Command::new("python3")
+        .arg(root.join("tools/repo-policy/tests/base_recovery.py"))
+        .arg(scratch)
+        .output()
+        .map_err(|e| e.to_string())?;
+    if !output.status.success() {
+        return Err(format!(
+            "native recovery controls failed: {} {}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    Ok(())
+}
