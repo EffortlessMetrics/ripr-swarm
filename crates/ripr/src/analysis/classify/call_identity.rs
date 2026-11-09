@@ -80,6 +80,10 @@ type SoloIdentities = BTreeMap<String, Option<std::sync::Arc<OwnerCallIdentity>>
 type DeriveBindingSites = Arc<Vec<(String, Option<(usize, usize)>)>>;
 type DeriveBindingMemo = BTreeMap<(Arc<str>, Vec<String>), DeriveBindingSites>;
 
+/// Memo key for the local-rival answer: owner id, test file, name and start
+/// line, and a hash of the test body.
+type LocalRivalKey = (String, std::path::PathBuf, String, usize, u64);
+
 /// Memo key for the item bindings of one test body read for one owner: the
 /// owner's id, the test's file, start line and name, and a hash of the body.
 pub(super) type ItemBindingsKey = (String, std::path::PathBuf, usize, String, u64);
@@ -176,7 +180,7 @@ pub(crate) struct CallIdentityMemos {
     /// every indexed function and lexes the test file, and depends on the
     /// index, owner and test alone, so the per-(seam, related test) check
     /// pays it once.
-    local_rival_modules: Mutex<BTreeMap<(String, std::path::PathBuf, String, usize, u64), bool>>,
+    local_rival_modules: Mutex<BTreeMap<LocalRivalKey, bool>>,
     /// Per (trait name, receiver head), whether some indexed source may
     /// implement the trait for a std-headed type. The answer reads every
     /// indexed file's syntax and depends on the index alone, so the
@@ -217,11 +221,7 @@ impl CallIdentityMemos {
 
     /// The memoized local-rival answer for `key`, computed by `compute` on
     /// first use (recomputed, not cached, if the lock is poisoned).
-    fn local_rival_module(
-        &self,
-        key: (String, std::path::PathBuf, String, usize, u64),
-        compute: impl FnOnce() -> bool,
-    ) -> bool {
+    fn local_rival_module(&self, key: LocalRivalKey, compute: impl FnOnce() -> bool) -> bool {
         if let Ok(cache) = self.local_rival_modules.lock()
             && let Some(found) = cache.get(&key)
         {
