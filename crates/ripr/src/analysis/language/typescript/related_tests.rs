@@ -6522,6 +6522,10 @@ fn has_unclosed_quote_or_template(prefix: &str) -> bool {
                 '\'' => stack.push(Mode::Single),
                 '"' => stack.push(Mode::Double),
                 '`' => stack.push(Mode::Template),
+                // A `//` in code starts a trailing comment: the rest of the
+                // line is text (`x = 1; // see render(x)`). A regex holding
+                // `//` reads the same way, which only hides.
+                '/' if chars.peek() == Some(&'/') => return true,
                 // A `/` inside a substitution that is not a division may
                 // open a regex whose braces or quotes this scan cannot
                 // follow; fail closed and read the rest as text.

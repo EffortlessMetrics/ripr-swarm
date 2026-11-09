@@ -618,7 +618,7 @@ TypeScript/JavaScript families and their charter coverage:
 | decorator wrapper obscuring the owner | `ts_decorator_indirection_limit` | `must_emit_limitation: decorator_indirection`, not promoted |
 | higher-order wrapper obscuring the owner | `ts_hoc_wrapped_owner` | `weakly_exposed` (wrapper boundary stays opaque) |
 | token substring collision | `ts_token_substring` | `weakly_exposed` (call-boundary match, heuristic-only link) |
-| component/render test reaches but does not observe the changed sink | `ts_render_reaches_unobserved_sink` | `weakly_exposed` (heuristic link cannot borrow the strong assertion) |
+| component/render test reaches but does not observe the changed sink | `ts_render_reaches_unobserved_sink` | `static_unknown`, `maximum_class=weakly_exposed` (reach through a same-module caller cannot borrow the strong assertion) |
 | stale line/owner identity after an insertion | `ts_owner_identity_after_insertion` | `maximum_class=weakly_exposed` (post-insertion owner identity; sibling oracle not borrowed) |
 | dynamic dispatch / unresolved import | `ts_dynamic_dispatch_limit`, `ts_missing_import_graph_limit` | named limitations, not promoted |
 

@@ -139,3 +139,18 @@ fn a_block_comment_opener_after_code_on_its_line_fails_closed() {
         "render"
     ));
 }
+
+#[test]
+fn a_call_in_a_trailing_line_comment_is_not_a_call() {
+    assert!(!contains_call_name("const x = 1; // render(x)", "render"));
+    assert!(!contains_call_name(
+        "const x = 1; // `${render(x)}`",
+        "render"
+    ));
+    assert!(!contains_call_name("`${a // render(x)", "render"));
+    // A URL in a string is not a comment.
+    assert!(contains_call_name(
+        "const u = \"https://x\"; render(u);",
+        "render"
+    ));
+}
