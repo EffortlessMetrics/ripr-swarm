@@ -14253,3 +14253,78 @@ fn rename_memo_keys_that_collide_still_answer_per_file() {
         assert!(!file_renames_to(&renames, "Fxo"));
     }
 }
+
+/// #12947: a file read proves the roots of only the rooted spellings the
+/// file itself calls, and answers every other spelling on demand. Each answer
+/// equals the eager pre-#12947 reading, which proved all 24 spellings.
+#[test]
+fn std_rooted_root_proofs_run_on_demand_and_match_the_eager_reading() {
+    let sources = [
+        "#[test]\nfn t() { std::assert_eq!(1, 1); }\n",
+        "extern crate other as std;\n#[test]\nfn t() { std::assert_eq!(1, 1); }\n",
+        "use other as core;\n#[test]\nfn t() { core::assert!(true); ::std::assert_ne!(1, 2); }\n",
+        "#[test]\nfn t() { assert!(std::matches!(Some(1), Some(_))); }\n",
+        "#[test]\nfn t() { assert_eq!(1, 1); }\n",
+        "mod std {}\n#[test]\nfn t() { assert_eq!(1, 1); }\n",
+        "fn t( {\n",
+    ];
+    let eager = |source: &str| -> BTreeSet<String> {
+        parse_clean_source_file(source).map_or_else(BTreeSet::new, |file| {
+            let root = file.tree().syntax().clone();
+            STD_ROOTED_ASSERT_EQ
+                .iter()
+                .filter(|path| {
+                    crate::analysis::syntax::ra::std_macro_root_is_unrebound(path, &root)
+                })
+                .map(|path| (*path).to_string())
+                .collect()
+        })
+    };
+    let readings: Vec<BTreeSet<String>> = sources.iter().map(|source| eager(source)).collect();
+    assert!(
+        readings.iter().any(|set| set.contains("std::assert_eq"))
+            && readings.iter().any(|set| !set.contains("std::assert_eq")),
+        "premise: the eager reading tells the sources apart: {readings:?}"
+    );
+    assert!(
+        readings
+            .iter()
+            .any(|set| !set.is_empty() && set.len() < STD_ROOTED_ASSERT_EQ.len()),
+        "premise: the spelling, not only the source, decides: {readings:?}"
+    );
+    let spellings: Vec<&str> = STD_ROOTED_ASSERT_EQ
+        .iter()
+        .copied()
+        .chain([
+            "assert_eq",
+            "std::fmt::assert_eq",
+            "other::assert_eq",
+            "std::matches",
+        ])
+        .collect();
+    for (source, eager) in sources.iter().zip(&readings) {
+        let rooted = StdRootedCalls::of(source);
+        for path in &spellings {
+            assert_eq!(
+                rooted.is_unrebound(path, source),
+                eager.contains(*path),
+                "{path} in {source}"
+            );
+        }
+    }
+
+    let proofs = || STD_ROOT_PROOFS.with(std::cell::Cell::get);
+    // A file that spells no rooted call proves nothing when it is read.
+    let before = proofs();
+    let plain = StdRootedCalls::of(sources[4]);
+    assert_eq!(proofs(), before, "no rooted call, no root proof");
+    assert!(plain.calls.is_empty() && plain.proved.is_empty());
+    // One rooted call proves that one spelling; the matches! call proves its
+    // `assert` twin.
+    let before = proofs();
+    let one = StdRootedCalls::of(sources[0]);
+    assert_eq!(proofs(), before + 1);
+    assert_eq!(one.proved, BTreeSet::from(["std::assert_eq"]));
+    let matches = StdRootedCalls::of(sources[3]);
+    assert_eq!(matches.proved, BTreeSet::from(["std::assert"]));
+}
