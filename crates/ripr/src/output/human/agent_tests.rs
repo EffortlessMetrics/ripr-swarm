@@ -497,6 +497,25 @@ fn exposed_only_run_is_done_with_no_gap_lines_or_next() {
 }
 
 #[test]
+fn exposed_only_run_with_unanalyzed_files_stops_instead_of_done() {
+    let mut blocked = output(vec![finding("probe:ok", ExposureClass::Exposed, 4)]);
+    blocked.unanalyzed_working_tree = true;
+    let text = rendered(&blocked);
+    assert!(text.contains("\nunanalyzed=uncommitted_edits|"), "{text}");
+    assert!(text.contains("\nstop=changes were not analyzed"), "{text}");
+    assert!(!text.contains("done="), "{text}");
+
+    let mut ignored = output(vec![finding("probe:ok", ExposureClass::Exposed, 4)]);
+    ignored.ignored_working_tree_source_paths = vec!["gen/a.rs".to_string()];
+    let text = rendered(&ignored);
+    assert!(text.contains("\nunanalyzed=gitignored|"), "{text}");
+    assert!(
+        text.contains("\ndone=no weak or unobserved gap left"),
+        "{text}"
+    );
+}
+
+#[test]
 fn static_limited_run_stops_and_names_the_limit_instead_of_a_gap() {
     let text = rendered(&output(vec![finding(
         "probe:np",
@@ -907,7 +926,10 @@ fn empty_report_over_unanalyzed_files_stops_instead_of_done() {
         text.contains("\nunanalyzed=gitignored|files=gen/a.rs|fix=git add -f -N PATH"),
         "{text}"
     );
-    assert!(!text.contains("done="), "{text}");
+    // Gitignored source is disclosed but the shared verification owner never
+    // refuses on it, so the clean claim stands (negative control).
+    assert!(text.contains("\ndone=no changed behavior"), "{text}");
+    assert!(!text.contains("stop=changes were not analyzed"), "{text}");
 
     // Negative: untracked paths without an unanalyzed or working-tree read
     // are not this run's concern, so a clean report stays `done=`.
