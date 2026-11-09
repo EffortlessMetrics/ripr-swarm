@@ -1,5 +1,4 @@
 use crate::agent::loop_commands::{bound_root, shell_arg};
-use crate::cli::unknown_argument;
 use std::path::PathBuf;
 
 use super::{
@@ -9,26 +8,26 @@ use super::{
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) struct FirstPrOptions {
-    pub(super) root: String,
-    pub(super) base: String,
+pub(crate) struct FirstPrOptions {
+    pub(crate) root: String,
+    pub(crate) base: String,
     /// `false` when `--base` was omitted: `base` then holds a placeholder
     /// until the CLI entry resolves the repository's default branch.
-    pub(super) base_explicit: bool,
-    pub(super) head: String,
-    pub(super) check_output: Option<String>,
-    pub(super) gap_ledger: String,
-    pub(super) gap_ledger_explicit: bool,
-    pub(super) first_action: String,
-    pub(super) review_comments: String,
-    pub(super) agent_packet: String,
-    pub(super) gate_decision: String,
-    pub(super) receipts_dir: String,
-    pub(super) out_dir: String,
-    pub(super) check: bool,
-    pub(super) preflight: bool,
+    pub(crate) base_explicit: bool,
+    pub(crate) head: String,
+    pub(crate) check_output: Option<String>,
+    pub(crate) gap_ledger: String,
+    pub(crate) gap_ledger_explicit: bool,
+    pub(crate) first_action: String,
+    pub(crate) review_comments: String,
+    pub(crate) agent_packet: String,
+    pub(crate) gate_decision: String,
+    pub(crate) receipts_dir: String,
+    pub(crate) out_dir: String,
+    pub(crate) check: bool,
+    pub(crate) preflight: bool,
     /// `--run-chain` (#11720): run the missing-artifact chain before composing.
-    pub(super) run_chain: bool,
+    pub(crate) run_chain: bool,
     /// Test-only ceiling for `GIT_CEILING_DIRECTORIES`; `None` in production.
     pub(crate) git_ceiling: Option<PathBuf>,
 }
@@ -89,103 +88,18 @@ impl Default for FirstPrOptions {
     }
 }
 
-pub(super) fn parse_options(args: &[String]) -> Result<FirstPrOptions, String> {
-    let mut options = FirstPrOptions {
-        preflight: true,
-        ..FirstPrOptions::default()
-    };
-    let mut i = 0usize;
-    while i < args.len() {
-        match args[i].as_str() {
-            "--root" => {
-                i += 1;
-                options.root = non_empty_arg(args, i, "--root")?.to_string();
-            }
-            "--base" => {
-                i += 1;
-                options.base = non_empty_arg(args, i, "--base")?.to_string();
-                options.base_explicit = true;
-            }
-            "--head" => {
-                i += 1;
-                options.head = non_empty_arg(args, i, "--head")?.to_string();
-            }
-            "--check-output" => {
-                i += 1;
-                options.check_output = Some(non_empty_arg(args, i, "--check-output")?.to_string());
-            }
-            "--gap-ledger" => {
-                i += 1;
-                options.gap_ledger = non_empty_arg(args, i, "--gap-ledger")?.to_string();
-                options.gap_ledger_explicit = true;
-            }
-            "--first-action" => {
-                i += 1;
-                options.first_action = non_empty_arg(args, i, "--first-action")?.to_string();
-            }
-            "--review-comments" => {
-                i += 1;
-                options.review_comments = non_empty_arg(args, i, "--review-comments")?.to_string();
-            }
-            "--agent-packet" => {
-                i += 1;
-                options.agent_packet = non_empty_arg(args, i, "--agent-packet")?.to_string();
-            }
-            "--gate-decision" => {
-                i += 1;
-                options.gate_decision = non_empty_arg(args, i, "--gate-decision")?.to_string();
-            }
-            "--receipts-dir" => {
-                i += 1;
-                options.receipts_dir = non_empty_arg(args, i, "--receipts-dir")?.to_string();
-            }
-            "--out-dir" => {
-                i += 1;
-                options.out_dir = non_empty_arg(args, i, "--out-dir")?.to_string();
-            }
-            "--check" => options.check = true,
-            "--run-chain" => options.run_chain = true,
-            other => return Err(unknown_argument("first-pr", other)),
-        }
-        i += 1;
-    }
-    if options.run_chain && options.check {
-        return Err("first-pr --run-chain cannot be combined with --check: --check only validates an existing packet and never runs analysis; run first-pr with only one of the two".to_string());
-    }
-    if options.run_chain && options.check_output.is_some() {
-        return Err("first-pr --run-chain cannot be combined with --check-output: a supplied check output already provides the gap ledger input, so there is no chain to run; run first-pr with only one of the two".to_string());
-    }
-    Ok(options)
-}
-
-fn non_empty_arg<'a>(args: &'a [String], index: usize, flag: &str) -> Result<&'a str, String> {
-    let Some(value) = args.get(index) else {
-        return Err(format!(
-            "missing value for {flag}; pass a value right after it"
-        ));
-    };
-    if value.trim().is_empty() {
-        return Err(format!(
-            "first-pr {flag} requires a non-empty value; pass a value right after {flag}"
-        ));
-    }
-    Ok(value)
-}
-
-pub(super) fn print_help() {
-    println!(
-        "{}",
-        crate::cli::help::render_command_help(FIRST_PR_HELP, &[])
-    );
-}
-
 /// Help body for `ripr first-pr` / `ripr start-here`. Also the flag source for
 /// unknown-argument suggestions, so accepted flags have to appear as
 /// option-list lines, not only inside the usage brackets.
 pub(crate) const FIRST_PR_HELP: &str = "\
-Create the start-here packet for one PR from existing RIPR artifacts.
-By default first-pr runs no analysis: it prints the next command for a missing
-artifact. Pass --run-chain to have it run the missing-artifact chain itself.
+Summarize what to fix in one PR from existing ripr reports.
+
+Answers \"what should I do first on this PR?\" first-pr reads reports that
+earlier ripr commands wrote (check output, the gap list, review comments,
+receipts) and writes one start-here page (the start-here packet:
+start-here.md and start-here.json), naming a single next step. A gap is
+changed behavior that no current test appears to check. By default first-pr runs no analysis: for a missing report
+it prints the command that creates it. Pass --run-chain to run those commands.
 
 Usage: ripr first-pr|start-here [--root <path>] [--base <rev>] [--head <rev>] [--check-output <path>] [--gap-ledger <path>] [--first-action <path>] [--review-comments <path>] [--agent-packet <path>] [--gate-decision <path>] [--receipts-dir <path>] [--out-dir <path>] [--check] [--run-chain]
 
@@ -195,40 +109,42 @@ Options:
                              `ripr check`: origin/HEAD, then origin/main,
                              origin/master, main, and master.
   --head <rev>               PR head revision. Defaults to HEAD.
-  --check-output <path>      Existing `ripr check --json` output to derive the gap ledger from.
+  --check-output <path>      Existing `ripr check --json` output to build the gap list from.
                              Without --run-chain, first-pr never runs analysis itself.
-  --gap-ledger <path>        Gap-decision ledger JSON. Defaults to target/ripr/reports/gap-decision-ledger.json.
+  --gap-ledger <path>        Gap list (gap-decision ledger) JSON. Defaults to target/ripr/reports/gap-decision-ledger.json.
   --first-action <path>      First-useful-action JSON. Defaults to target/ripr/reports/first-useful-action.json.
   --review-comments <path>   Review-comments JSON. Defaults to target/ripr/review/comments.json.
-  --agent-packet <path>      Agent packet JSON. Defaults to target/ripr/workflow/agent-packet.json.
+  --agent-packet <path>      Agent handoff JSON. Defaults to target/ripr/workflow/agent-packet.json.
   --gate-decision <path>     Gate-decision JSON. Defaults to target/ripr/reports/gate-decision.json.
-  --receipts-dir <path>      Receipt directory. Defaults to target/ripr/receipts.
+  --receipts-dir <path>      Directory of repair receipts (before/after records). Defaults to target/ripr/receipts.
   --out-dir <path>           Output directory. Defaults to target/ripr/reports.
-  --check                    Verify the existing start-here packet is up to date.
-  --run-chain                Opt in to running the missing-artifact chain first: the repo-exposure
-                             report (a `ripr check` run on a Python or TypeScript root without a
-                             Cargo manifest), the gap ledger, then the review cards, each only when missing
-                             and each exactly the command first-pr prints, with the resolved
-                             --base and --head. This runs analysis (cost scales with the repository),
-                             writes the missing artifacts (by default under target/ripr/) and
-                             uses no network. The first failing step stops the chain with exit 2 and
-                             no start-here packet is written from partial artifacts. Cannot be
-                             combined with --check or --check-output.
+  --check                    Verify the existing start-here page is up to date; write nothing.
+  --run-chain                Run the commands for missing reports first, each only when its
+                             report is missing and each exactly the command first-pr prints,
+                             with the resolved --base and --head: the repo-exposure report (a
+                             `ripr check` run on a Python or TypeScript root without a Cargo
+                             manifest), the gap list, then the review cards. This runs analysis
+                             (cost scales with the repository), writes the missing reports (by
+                             default under target/ripr/) and uses no network. The first failing
+                             step stops with exit 2 and no start-here page is written from
+                             partial reports. Cannot be combined with --check or --check-output.
 
 Exit status:
-  0  the start-here packet was written, or --check found a current, unblocked packet
-  2  usage error, unresolvable input, or --check found a missing, stale or malformed packet,
-     or a current packet that records a blocked state (wrong root, missing or malformed artifacts)
-  Write mode exits 0 after composing a packet, including a recovery packet; read its
+  0  the start-here page was written, or --check found a current, unblocked page
+  2  usage error, unresolvable input, or --check found a missing, stale or malformed page,
+     or a current page that records a blocked state (wrong root, missing or malformed reports)
+  Write mode exits 0 after composing a page, including a recovery page; read its
   State line (or the JSON `selected.output_state`), or run --check, to gate on
-  the packet state.
+  the page state.
 
 Start-here language:
   - start here: open target/ripr/reports/start-here.md first when it exists
-  - safe next action: repair one named gap, regenerate missing evidence, or stop on no-action
-  - missing artifact / stale evidence / wrong root / malformed artifact: fail closed before repair work
-  - no actionable gap: advisory no-action, not runtime adequacy or mutation proof
-  - preview-limited evidence: syntax-first and advisory, with static limits before repair language
+  - safe next action: fix one named gap, regenerate a missing report, or stop because nothing needs doing
+  - missing artifact / stale evidence / wrong root / malformed artifact: a report is absent, out of date,
+    from another directory or unreadable; first-pr stops before suggesting any fix
+  - no actionable gap: nothing to fix was found; advisory, not a promise that the tests catch every bug
+  - preview-limited evidence: from a syntax-only preview analysis; advisory, with its limits stated before any fix
   - receipt lifecycle: receipt_missing, receipt_found, receipt_stale, receipt_gap_mismatch, receipt_movement_improved, receipt_movement_unchanged, receipt_not_applicable
-  - verify command / receipt command / receipt path: static movement proof rail
+  - verify command / receipt command / receipt path: the commands that recheck a fix and record its
+    before/after result, and where that record is written
 ";

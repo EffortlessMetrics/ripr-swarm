@@ -78,6 +78,8 @@ pub(in crate::analysis) struct ActivationWithBoundaryInput {
     pub(in crate::analysis) unresolved_boundary: Option<String>,
     pub(in crate::analysis) literal_length_boundary:
         Option<super::literal_length_boundary::LiteralLengthBoundary>,
+    pub(in crate::analysis) slice_counter_boundary:
+        Option<super::slice_counter_boundary::SliceCounterBoundary>,
 }
 
 /// `activation_evidence_with_value_facts` that also returns the
@@ -104,6 +106,7 @@ pub(in crate::analysis) fn activation_and_boundary_input(
                 test,
                 owner_fn,
                 super::argument_fold::FoldScope::of_test(test, index),
+                Some(index),
             ),
         })
         .collect::<Vec<_>>();
@@ -150,6 +153,7 @@ pub(in crate::analysis) fn activation_and_boundary_input(
         },
         unresolved_boundary,
         literal_length_boundary: None,
+        slice_counter_boundary: None,
     }
 }
 
@@ -195,12 +199,12 @@ impl TestValueFacts {
     ) -> Vec<ValueFact> {
         let scope = super::argument_fold::FoldScope::of_test(test, index);
         let Some(key) = self.slot_key(index, test, owner_fn) else {
-            return value_facts_for_test(test, owner_fn, scope);
+            return value_facts_for_test(test, owner_fn, scope, Some(index));
         };
         if let Some(facts) = self.by_slot.borrow().get(&key) {
             return facts.clone();
         }
-        let facts = value_facts_for_test(test, owner_fn, scope);
+        let facts = value_facts_for_test(test, owner_fn, scope, Some(index));
         self.by_slot.borrow_mut().insert(key, facts.clone());
         facts
     }
@@ -248,6 +252,39 @@ fn owner_name_call_text<'text>(
     }
 }
 
+/// Read each direct free-owner occurrence in a captured line (#13373).
+/// Facts intentionally share the full line. Mask before locating occurrences
+/// so quoted or commented calls cannot contribute arguments; retain raw bytes
+/// for the existing argument reader. Nested calls are separate rows, not an
+/// evaluation of the outer argument. Identity remains the caller's authority.
+/// Associated owners keep their existing single-site reading: a repeated name
+/// alone does not establish that two receivers have the same type.
+fn owner_call_argument_rows(text: &str, name: &str, free_owner: bool) -> Vec<Vec<String>> {
+    if !free_owner {
+        return call_arguments(text, name).into_iter().collect();
+    }
+    if name.is_empty() {
+        return Vec::new();
+    }
+    let masked = crate::analysis::extract::mask_comments_and_strings(text);
+    masked
+        .match_indices(name)
+        .filter(|(at, _)| super::related_tests::is_free_function_call_at(&masked, *at, name))
+        .filter_map(|(at, _)| {
+            // Whitespace or a comment may separate the name from `(`; the
+            // mask turns a comment into blanks, so the paren is the first
+            // non-blank byte after the name. Rebuild an adjacent spelling
+            // for the argument reader.
+            let after = at + name.len();
+            let open = after + (masked[after..].len() - masked[after..].trim_start().len());
+            if !masked[open..].starts_with('(') {
+                return None;
+            }
+            call_arguments(&format!("{name}{}", &text[open..]), name)
+        })
+        .collect()
+}
+
 /// The value context of a qualified path token found in a test (#5357):
 /// `Constant` when the path's spelling establishes a constant, otherwise the
 /// historical `EnumVariant`.
@@ -263,6 +300,7 @@ fn value_facts_for_test(
     test: &TestSummary,
     owner_fn: Option<&FunctionSummary>,
     scope: super::argument_fold::FoldScope<'_>,
+    index: Option<&crate::analysis::rust_index::RustIndex>,
 ) -> Vec<ValueFact> {
     let owner_name = owner_fn.map(|owner| owner.name.as_str()).unwrap_or("");
     let parameters = owner_fn.map(function_parameters).unwrap_or_default();
@@ -273,33 +311,41 @@ fn value_facts_for_test(
         if !owner_name.is_empty() && call.name != owner_name {
             continue;
         }
-        let Some(arguments) = owner_name_call_text(&call.text, owner_name, free_owner)
-            .and_then(|text| call_arguments(text, &call.name))
-        else {
+        let argument_rows = owner_call_argument_rows(&call.text, &call.name, free_owner);
+        // The expansion must not newly label a rival or shadowed call's
+        // arguments as owner inputs. Preserve the existing whole-line refusal.
+        if argument_rows.len() > 1
+            && let (Some(index), Some(owner)) = (index, owner_fn)
+            && !super::call_identity::qualified_owner_calls_resolve(
+                index, owner, test, &call.text, call.line,
+            )
+        {
             continue;
-        };
-        for (idx, argument) in arguments.iter().enumerate() {
-            for value in owner_row_argument_values(test, argument, false, scope) {
-                let value = parameters
-                    .get(idx)
-                    .map(|parameter| format!("{parameter} = {value}"))
-                    .unwrap_or(value);
-                facts.push(ValueFact {
-                    file: None,
-                    line: call.line,
-                    text: call.text.to_string(),
-                    value,
-                    context: ValueContext::FunctionArgument,
-                });
-            }
-            for value in enum_variant_values(argument) {
-                facts.push(ValueFact {
-                    file: None,
-                    line: call.line,
-                    text: call.text.to_string(),
-                    context: path_value_context(&value),
-                    value,
-                });
+        }
+        for arguments in argument_rows {
+            for (idx, argument) in arguments.iter().enumerate() {
+                for value in owner_row_argument_values(test, argument, false, scope) {
+                    let value = parameters
+                        .get(idx)
+                        .map(|parameter| format!("{parameter} = {value}"))
+                        .unwrap_or(value);
+                    facts.push(ValueFact {
+                        file: None,
+                        line: call.line,
+                        text: call.text.to_string(),
+                        value,
+                        context: ValueContext::FunctionArgument,
+                    });
+                }
+                for value in enum_variant_values(argument) {
+                    facts.push(ValueFact {
+                        file: None,
+                        line: call.line,
+                        text: call.text.to_string(),
+                        context: path_value_context(&value),
+                        value,
+                    });
+                }
             }
         }
     }
@@ -480,6 +526,9 @@ fn observed_discriminator_values(
     let right_constant = (right_resolved.is_none() && right_parameter.is_none())
         .then(|| boundary_constant(owner, &right, index))
         .flatten();
+    let left_constant = (left_resolved.is_none() && left_parameter.is_none())
+        .then(|| boundary_constant(owner, &left, index))
+        .flatten();
     let mut facts = Vec::new();
     let replaced = replaced_equality_constant(probe, owner, owner_source);
 
@@ -567,10 +616,9 @@ fn observed_discriminator_values(
             .or_else(|| {
                 visible_operand(&right, right_constant.as_ref()).map(|operand| operand.value)
             });
-        if right_value
-            .as_deref()
-            .is_some_and(|value| comparable_value(value) == comparable_value(&left_value.value))
-        {
+        if right_value.as_deref().is_some_and(|value| {
+            boundary_side_values_equal(&left_value.value, value, right_constant.as_ref())
+        }) {
             facts.push(ValueFact {
                 file: left_value.file.clone(),
                 line: left_value.line,
@@ -591,6 +639,72 @@ fn observed_discriminator_values(
                 context: ValueContext::FunctionArgument,
             });
         }
+    }
+    if let Some(constant) = &right_constant
+        && constant.lookup.is_declared_once()
+        && boundary_parameter_field_projection(&parameters, &left).is_some()
+        && let Some(boundary_value) =
+            visible_operand(&right, Some(constant)).map(|operand| operand.value)
+    {
+        collect_boundary_field_values_at_owner_calls(
+            owner,
+            &parameters,
+            &left,
+            probe.location.line,
+            related_tests,
+            index,
+            Some(constant),
+            |test, call_line, _call_text, value, identity_permitted| {
+                if !field_boundary_values_equal(
+                    value,
+                    &boundary_value,
+                    constant,
+                    identity_permitted,
+                ) {
+                    return;
+                }
+                facts.push(ValueFact {
+                    file: Some(test.file.clone()),
+                    line: call_line,
+                    text: String::new(),
+                    value: format!("{left} == {right}"),
+                    context: ValueContext::FunctionArgument,
+                });
+            },
+        );
+    }
+    if let Some(constant) = &left_constant
+        && constant.lookup.is_declared_once()
+        && boundary_parameter_field_projection(&parameters, &right).is_some()
+        && let Some(boundary_value) =
+            visible_operand(&left, Some(constant)).map(|operand| operand.value)
+    {
+        collect_boundary_field_values_at_owner_calls(
+            owner,
+            &parameters,
+            &right,
+            probe.location.line,
+            related_tests,
+            index,
+            Some(constant),
+            |test, call_line, _call_text, value, identity_permitted| {
+                if !field_boundary_values_equal(
+                    value,
+                    &boundary_value,
+                    constant,
+                    identity_permitted,
+                ) {
+                    return;
+                }
+                facts.push(ValueFact {
+                    file: Some(test.file.clone()),
+                    line: call_line,
+                    text: String::new(),
+                    value: format!("{left} == {right}"),
+                    context: ValueContext::FunctionArgument,
+                });
+            },
+        );
     }
     if let (Some(constant), Some(left_credit)) = (&right_constant, left_credit.as_deref()) {
         for (file, line, text) in owner_calls_passing_constant(
@@ -1075,6 +1189,11 @@ fn credited_parameter(
     found.clone().filter(|_| {
         !(parameters.iter().any(|parameter| parameter == operand)
             && owner_rebinds_operand(owner, operand, predicate_line))
+            && boundary_parameter_field_projection(parameters, operand).is_none_or(
+                |(parameter, field)| {
+                    !owner_rebinds_boundary_field(owner, &parameter, &field, predicate_line)
+                },
+            )
     })
 }
 
@@ -2090,9 +2209,16 @@ fn missing_discriminator_facts(
         probe.family,
         ProbeFamily::SideEffect | ProbeFamily::CallDeletion | ProbeFamily::ErrorPath
     ) || (matches!(probe.family, ProbeFamily::ReturnValue)
-        && flow_sinks
+        // RIPR-SPEC-0263 (#11147): an error-variant return under an
+        // unentered `if` reads the guard on any diff shape.
+        && (flow_sinks
             .iter()
-            .any(|sink| sink.kind == FlowSinkKind::ErrorVariant)))
+            .any(|sink| sink.kind == FlowSinkKind::ErrorVariant)
+            // #12414: an inserted return value reads the same guard. Its
+            // line is new, so the #8659 baseline fold has no before-text to
+            // substitute and cannot refuse it; the SPEC-0263 refusals below
+            // still hold.
+            || probe.before.is_none())))
         && let Some(fact) = missing_guard_entry_discriminator(
             probe,
             owner_fn,
@@ -2573,6 +2699,27 @@ fn missing_boundary_discriminator(
     unresolved: &mut Option<String>,
 ) -> Option<MissingDiscriminatorFact> {
     let owner = owner_fn?;
+    // #12414: a pure insertion whose changed line is itself a predicate
+    // names the inserted guard's activating domain, not the changed
+    // comparison's equality boundary: the equality point passes on both
+    // sides of the insertion (`amount == 0` under `if amount < 0` returns
+    // the same value before and after), so it discriminates nothing. Only
+    // the narrow readable shape speaks: one comparison between an immutable
+    // integer owner parameter and an integer bound, with every related
+    // test's input provably leaving the guard false. A readable test input
+    // that enters the guard already activates the change. Every other shape
+    // keeps the boundary reading below (fail-closed).
+    if probe.before.is_none() && matches!(probe.family, ProbeFamily::Predicate) {
+        match inserted_guard_reading(probe, owner, related_tests, index) {
+            InsertedGuardReading::Unentered(guard, inputs) => {
+                return Some(guard_unentered_fact(&guard, inputs, flow_sinks));
+            }
+            InsertedGuardReading::Entered => {
+                return None;
+            }
+            InsertedGuardReading::Unread => {}
+        }
+    }
     let parameters = function_parameters(owner);
     let owner_source = index
         .files()
@@ -2606,7 +2753,18 @@ fn missing_boundary_discriminator(
         index,
         text_cells,
     );
-    if call_values.is_empty() {
+    if call_values.is_empty()
+        && boundary_parameter_field_projection(&parameters, &left).is_none_or(|_| {
+            boundary_operand_values_at_owner_calls(
+                owner,
+                &left,
+                probe.location.line,
+                related_tests,
+                index,
+            )
+            .is_empty()
+        })
+    {
         // Every related call passes only computed arguments (#6672): the
         // inputs exist but none is readable, so the boundary is
         // unresolved rather than silently unmeasured.
@@ -2759,6 +2917,9 @@ fn missing_boundary_discriminator(
     let right_constant = (right_resolved.is_none() && right_parameter.is_none())
         .then(|| boundary_constant(owner, &right, index))
         .flatten();
+    let left_constant = (left_resolved.is_none() && left_parameter.is_none())
+        .then(|| boundary_constant(owner, &left, index))
+        .flatten();
     let exact_rows: Vec<(Vec<ExactOperand>, Vec<ExactOperand>)> = call_values
         .iter()
         .map(|row| {
@@ -2850,9 +3011,37 @@ fn missing_boundary_discriminator(
             })
         })
     });
+    let field_boundary_equality_observed = right_constant.as_ref().is_some_and(|constant| {
+        boundary_parameter_field_projection(&parameters, &left).is_some()
+            && visible_operand(&right, Some(constant)).is_some_and(|operand| {
+                field_boundary_value_observed_at_owner_calls(
+                    owner,
+                    &left,
+                    probe.location.line,
+                    related_tests,
+                    index,
+                    &operand.value,
+                    constant,
+                )
+            })
+    }) || left_constant.as_ref().is_some_and(|constant| {
+        boundary_parameter_field_projection(&parameters, &right).is_some()
+            && visible_operand(&left, Some(constant)).is_some_and(|operand| {
+                field_boundary_value_observed_at_owner_calls(
+                    owner,
+                    &right,
+                    probe.location.line,
+                    related_tests,
+                    index,
+                    &operand.value,
+                    constant,
+                )
+            })
+    });
     let equality_observed = exact_equality_observed
         || replaced_row_observed
-        || parameter_equality(left_credit.as_deref(), right_credit.as_deref());
+        || parameter_equality(left_credit.as_deref(), right_credit.as_deref())
+        || field_boundary_equality_observed;
     let constant_named = constant_passed(left_credit.as_deref());
     if (equality_observed || constant_named)
         && equality_line_may_be_diverted(probe, owner, owner_source)
@@ -2938,6 +3127,16 @@ fn missing_boundary_discriminator(
             && literal_operand_value(operand).is_none()
             && crate::analysis::value_resolution::constant_operand_name(operand).is_none()
             && crate::analysis::value_resolution::constant_offset_operand(operand).is_none()
+            && boundary_parameter_field_projection(&parameters, operand).is_none_or(|_| {
+                boundary_operand_values_at_owner_calls(
+                    owner,
+                    operand,
+                    probe.location.line,
+                    related_tests,
+                    index,
+                )
+                .is_empty()
+            })
     };
     // When neither side has a value (`out.len() != data.len() / 2`) no
     // row says which side of the boundary a test reaches either, so both
@@ -3053,6 +3252,15 @@ fn missing_boundary_discriminator(
         .as_deref()
         .map(|parameter| observed_parameter_values(&call_values, parameter))
         .unwrap_or_default();
+    if boundary_parameter_field_projection(&parameters, &left).is_some() {
+        left_values.extend(boundary_operand_values_at_owner_calls(
+            owner,
+            &left,
+            probe.location.line,
+            related_tests,
+            index,
+        ));
+    }
     // Exact evaluated lefts join the observed listing so the reason
     // names real values instead of `unknown` (#3295).
     let exact_lefts: Vec<String> = exact_rows
@@ -3101,7 +3309,90 @@ fn missing_boundary_discriminator(
         value: format!("{left} == {right}"),
         reason,
         flow_sink: first_visible_flow_sink(flow_sinks).cloned(),
+        shape: DiscriminatorShape::Boundary,
+        drafted_boundary: None,
     })
+}
+
+/// What the related tests prove about a pure insertion whose changed line
+/// is itself a predicate (#12414).
+enum InsertedGuardReading {
+    /// Every related test's input provably leaves the inserted guard false,
+    /// with the shown input values that stay outside it.
+    Unentered(super::arm_selection::GuardEntry, Vec<String>),
+    /// A readable related test input enters the guard: it activates the
+    /// changed line, so this seam has no missing input.
+    Entered,
+    /// The inserted line is not a readable parameter-vs-integer-bound
+    /// guard, or some test's owner calls cannot be read: the boundary
+    /// reading keeps its previous path.
+    Unread,
+}
+
+/// The inserted-guard reading of a predicate probe on a pure insertion
+/// (#12414): the probe's own expression is the inserted condition, read by
+/// the RIPR-SPEC-0263 machinery, and every related test's input must
+/// provably leave the guard false for the domain to be named.
+fn inserted_guard_reading(
+    probe: &Probe,
+    owner: &FunctionSummary,
+    related_tests: &[&TestSummary],
+    index: &crate::analysis::rust_index::RustIndex,
+) -> InsertedGuardReading {
+    if related_tests.is_empty() {
+        return InsertedGuardReading::Unread;
+    }
+    let Some(guard) =
+        super::arm_selection::GuardEntry::establish_inserted_predicate(probe, owner, |name| {
+            super::arm_selection::named_integer_bound(index, owner, name)
+        })
+    else {
+        return InsertedGuardReading::Unread;
+    };
+    let mut inputs = Vec::new();
+    for test in related_tests {
+        match guard.evidence_for(test) {
+            super::arm_selection::GuardEntryEvidence::Unentered(test_inputs) => {
+                inputs.extend(test_inputs);
+            }
+            super::arm_selection::GuardEntryEvidence::Enters => {
+                return InsertedGuardReading::Entered;
+            }
+            super::arm_selection::GuardEntryEvidence::Unreadable => {
+                return InsertedGuardReading::Unread;
+            }
+        }
+    }
+    InsertedGuardReading::Unentered(guard, inputs)
+}
+
+/// The RIPR-SPEC-0263 fact: the guard no related test's input enters, with
+/// the observed values that stay outside it. Shared by
+/// [`missing_guard_entry_discriminator`] and the inserted-guard predicate
+/// reading (#12414) so both name the same value, reason and shape.
+fn guard_unentered_fact(
+    guard: &super::arm_selection::GuardEntry,
+    mut inputs: Vec<String>,
+    flow_sinks: &[FlowSinkFact],
+) -> MissingDiscriminatorFact {
+    inputs.sort();
+    inputs.dedup();
+    let condition = format!("if {}", guard.condition());
+    MissingDiscriminatorFact {
+        reason: format!(
+            "{GUARD_UNENTERED_REASON_PREFIX} `{condition}`; observed `{}` values: {}",
+            guard.parameter(),
+            inputs
+                .iter()
+                .map(|input| format!("`{input}`"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        value: condition,
+        flow_sink: first_visible_flow_sink(flow_sinks).cloned(),
+        shape: DiscriminatorShape::GuardDomain,
+        drafted_boundary: None,
+    }
 }
 
 /// RIPR-SPEC-0265 rule 1: a changed comparison that is the whole closure
@@ -3345,6 +3636,8 @@ fn element_boundary_discriminator(
             "No related test call passes `{parameter}` an element {element} equal to {boundary}{short_circuit}; observed {element} values: {observed}; target {boundary} value: {target}"
         ),
         flow_sink: first_visible_flow_sink(flow_sinks).cloned(),
+        shape: DiscriminatorShape::Boundary,
+        drafted_boundary: None,
     })
 }
 
@@ -3577,6 +3870,8 @@ fn missing_error_variant_discriminator(
             .find(|sink| sink.kind == FlowSinkKind::ErrorVariant)
             .or_else(|| first_visible_flow_sink(flow_sinks))
             .cloned(),
+        shape: DiscriminatorShape::Other,
+        drafted_boundary: None,
     })
 }
 
@@ -3649,6 +3944,8 @@ fn missing_match_arm_discriminator(
             .find(|sink| sink.kind == FlowSinkKind::MatchArm)
             .or_else(|| first_visible_flow_sink(flow_sinks))
             .cloned(),
+        shape: DiscriminatorShape::Other,
+        drafted_boundary: None,
     })
 }
 
@@ -3719,22 +4016,7 @@ fn missing_guard_entry_discriminator(
         }
         inputs.extend(guard.unentered_inputs(test)?);
     }
-    inputs.sort();
-    inputs.dedup();
-    let condition = format!("if {}", guard.condition());
-    Some(MissingDiscriminatorFact {
-        reason: format!(
-            "{GUARD_UNENTERED_REASON_PREFIX} `{condition}`; observed `{}` values: {}",
-            guard.parameter(),
-            inputs
-                .iter()
-                .map(|input| format!("`{input}`"))
-                .collect::<Vec<_>>()
-                .join(", ")
-        ),
-        value: condition,
-        flow_sink: first_visible_flow_sink(flow_sinks).cloned(),
-    })
+    Some(guard_unentered_fact(&guard, inputs, flow_sinks))
 }
 
 /// Whether a function the owner reaches through its calls names the owner
@@ -4212,6 +4494,8 @@ fn missing_field_value_discriminator(
             .iter()
             .find(|sink| sink.kind == FlowSinkKind::StructField)
             .cloned(),
+        shape: DiscriminatorShape::Other,
+        drafted_boundary: None,
     })
 }
 
@@ -4263,6 +4547,327 @@ pub(in crate::analysis) fn assigned_field_read_confirms(
     owner_borrows_receiver(&owner.body)
         && !super::propagation_witness::assertion_expects_default_like(&assertion.text)
         && pushed_collection_compared_whole(owner, path, test, assertion, index)
+}
+
+/// #11870: the one start policy for a changed field write that a related test
+/// reads but does not check exactly. True only when, over `tests` (the
+/// owner's related tests):
+/// - the owner borrows its receiver (a by-value `self` writes a moved copy,
+///   so no read of the test's binding can see the write);
+/// - the owner and the changed `expression` name no type with a non-plain
+///   `Drop` impl (a failed assertion may exit while unwinding, so an exact
+///   assertion would not be a repair);
+/// - no test is `#[ignore]`d or `#[should_panic]` (a strengthened one would
+///   not run, or would pass by panicking before its read);
+/// - no assertion confirms the write ([`assigned_field_read_confirms`]); a
+///   confirmed write is already checked and has nothing to repair;
+/// - a test that calls the owner directly has an assertion that reads the
+///   written field from the binding it ran the owner on, as one side of a
+///   relational check (`>`, `<`, `>=`, `<=`, `!=`) or `assert_ne!`, under
+///   the confirming rule's binding guards ([`weak_assigned_field_read`]); and
+/// - nothing else in any related test body can be the exact check these rules
+///   do not place ([`test_body_may_check_field_elsewhere`]): any statement,
+///   not only an assertion, that names the field or uses a weakly read
+///   binding other than as the owner call or its declaration (a `let` alias,
+///   a destructure, a helper call, a move, an `if`/`panic!` check).
+///
+/// `check` (the finding's class) and the seam's missing-discriminator fact
+/// both ask this, so `ripr check` and `ripr repair` start the same gap. A
+/// read the policy cannot place (a sibling field, another binding, a later
+/// write, a getter, an equality or a bare boolean) starts nothing.
+pub(in crate::analysis) fn assigned_field_weak_read_start(
+    owner: &FunctionSummary,
+    expression: &str,
+    path: &str,
+    tests: &[&TestSummary],
+    index: &crate::analysis::rust_index::RustIndex,
+) -> bool {
+    if !owner_borrows_receiver(&owner.body)
+        || path.is_empty()
+        || tests.iter().any(|test| {
+            super::gap_admission::is_ignored(test)
+                || test.attrs.iter().any(|attr| attr.contains("should_panic"))
+        })
+        || macro_names_rebound(index, &["assert", "assert_ne"])
+    {
+        return false;
+    }
+    let Some(call) = super::builder_override::OwnerCall::from_symbol(&owner.id.0) else {
+        return false;
+    };
+    // #11870: a non-public field is read only by a test that can name it.
+    let mut reach = None;
+    let mut weak = false;
+    for test in tests {
+        // Every test that runs the owner must itself be a placed weak read:
+        // a test that reaches the owner another way (a helper, a loop, an
+        // alias), or that reads the write through a getter, `Display`, a
+        // helper-held assertion or an `if`/`panic!` check, may be the exact
+        // check these rules do not place.
+        if !super::related_tests::owner_call_is_direct(test, owner, index) {
+            return false;
+        }
+        // Pass one: the weak reads, as (assertion index, binding).
+        let mut weak_reads: Vec<(usize, String)> = Vec::new();
+        for (at, assertion) in test.assertions.iter().enumerate() {
+            if assigned_field_read_confirms(owner, path, test, assertion, index) {
+                return false;
+            }
+            if let Some(binding) = weak_assigned_field_read(owner, path, test, assertion) {
+                weak_reads.push((at, binding));
+            }
+        }
+        if weak_reads.is_empty() {
+            return false;
+        }
+        if reach
+            .get_or_insert_with(|| super::field_reach::declared_field_reach(owner, path, index))
+            .is_some_and(|reach| {
+                !super::field_reach::test_can_name_field(
+                    reach,
+                    owner.file.as_path(),
+                    test.file.as_path(),
+                )
+            })
+        {
+            return false;
+        }
+        // Pass two: any other assertion that reads the written field or names
+        // a binding it was weakly read from may be the exact check the rules
+        // above do not place (`assert_eq!(c.count, 2)` after a relational
+        // read, a getter, a compound condition), so it withholds the start.
+        for (at, assertion) in test.assertions.iter().enumerate() {
+            if weak_reads.iter().any(|(weak_at, _)| *weak_at == at) {
+                continue;
+            }
+            let masked = crate::analysis::extract::mask_comments_and_strings(&assertion.text);
+            if names_field_access(&masked, path)
+                || weak_reads.iter().any(|(_, binding)| {
+                    names_whole_ident(&masked, binding)
+                        || names_format_capture(&assertion.text, binding)
+                })
+            {
+                return false;
+            }
+        }
+        // Pass three: the rest of the body, assertions or not.
+        if test_body_may_check_field_elsewhere(test, &weak_reads, call.name(), path) {
+            return false;
+        }
+        weak = true;
+    }
+    // No other mention of the owner's name anywhere in the index (another
+    // test, a helper, a `macro_rules!` body, a doctest, production code, an
+    // alias path, a method value, a turbofish call) than in the placed weak
+    // reads: such a mention may be a runner that observes the write exactly,
+    // which no relation or per-test rule places. A name shared with another
+    // type only over-withholds.
+    let mut placed: Vec<(&std::path::Path, usize)> = Vec::new();
+    let mut in_placed = 0;
+    for test in tests {
+        if !placed.contains(&(test.file.as_path(), test.start_line)) {
+            placed.push((test.file.as_path(), test.start_line));
+            in_placed += super::field_reach::mentions_in(test.body.as_ref(), &owner.name);
+        }
+    }
+    if weak && super::field_reach::owner_name_mentions(index, &owner.name) != in_placed {
+        return false;
+    }
+    // The type walk is the costly check, so it runs last, only for a start
+    // every cheaper rule allowed. The test's binding is the impl's `Self`
+    // type, which a `&mut self` signature never names: ask about it
+    // explicitly (an owner with no established impl type withholds).
+    weak && !crate::analysis::test_grip_evidence::names_non_plain_drop_type(
+        owner,
+        &format!("{expression} Self"),
+        index,
+    )
+}
+
+/// Whether `test`'s body, with the weak-read assertions (`weak_reads`) cut
+/// out, still names the written field `path` or uses a weakly read binding
+/// anywhere but as the owner call `<binding>.<owner>(` or its declaration
+/// `let [mut] <binding>`. Such a statement may check the field exactly
+/// without being an assertion fact (`let n = c.count; assert_eq!(n, 2)`,
+/// `verify(&c)`, `let Counter { count, .. } = c`, `let r = &c.count`,
+/// `if c.count != 2 { panic!() }`). A weak assertion whose text cannot be
+/// found in the body withholds (fail closed).
+fn test_body_may_check_field_elsewhere(
+    test: &TestSummary,
+    weak_reads: &[(usize, String)],
+    owner_name: &str,
+    path: &str,
+) -> bool {
+    let mut rest = crate::analysis::extract::mask_comments_and_strings(test.body.as_ref());
+    for (at, _) in weak_reads {
+        let Some(assertion) = test.assertions.get(*at) else {
+            return true;
+        };
+        let masked = crate::analysis::extract::mask_comments_and_strings(&assertion.text);
+        let text = masked.trim();
+        let text = text.strip_suffix(';').unwrap_or(text).trim_end();
+        if text.is_empty() || !rest.contains(text) {
+            return true;
+        }
+        rest = rest.replacen(text, " ", 1);
+    }
+    if names_field_access(&rest, path) {
+        return true;
+    }
+    let mut bindings: Vec<&str> = weak_reads.iter().map(|(_, b)| b.as_str()).collect();
+    bindings.sort_unstable();
+    bindings.dedup();
+    bindings.into_iter().any(|binding| {
+        let mut rest = rest.replace(&format!("{binding}.{owner_name}("), " (");
+        for head in [format!("let mut {binding}"), format!("let {binding}")] {
+            while let Some(at) = rest.find(&head) {
+                let end = at + head.len();
+                let boundary = rest[end..]
+                    .chars()
+                    .next()
+                    .is_none_or(|ch| !(ch.is_alphanumeric() || ch == '_'));
+                if boundary {
+                    rest.replace_range(at..end, " ");
+                } else {
+                    break;
+                }
+            }
+        }
+        names_whole_ident(&rest, binding) || names_format_capture(test.body.as_ref(), binding)
+    })
+}
+
+/// Whether `masked` names `ident` as a whole identifier.
+fn names_whole_ident(masked: &str, ident: &str) -> bool {
+    let is_ident = |ch: char| ch.is_alphanumeric() || ch == '_';
+    masked.match_indices(ident).any(|(at, name)| {
+        !masked[..at].chars().next_back().is_some_and(is_ident)
+            && !masked[at + name.len()..]
+                .chars()
+                .next()
+                .is_some_and(is_ident)
+    })
+}
+
+/// Whether `masked` accesses a field named `path` (`<expr>.path`, not a
+/// longer name); whitespace after the dot (`c. count`, a line break) counts.
+fn names_field_access(masked: &str, path: &str) -> bool {
+    let is_ident = |ch: char| ch.is_alphanumeric() || ch == '_';
+    masked.match_indices('.').any(|(at, _)| {
+        let after = masked[at + 1..].trim_start();
+        after
+            .strip_prefix(path)
+            .is_some_and(|tail| !tail.chars().next().is_some_and(is_ident))
+    })
+}
+
+/// Whether the unmasked `raw` text may capture `ident` inline in a format
+/// string (`{c}`, `{c:?}`, `{c :?}`, `{c }`, `{c:>10}`, `{c.field}`, or a
+/// `\`-newline continuation inside the string), which masking removes. Fails
+/// closed: `{` + `ident` followed by anything but an identifier character
+/// counts, comments included.
+fn names_format_capture(raw: &str, ident: &str) -> bool {
+    let needle = format!("{{{ident}");
+    raw.match_indices(&needle).any(|(at, name)| {
+        raw[at + name.len()..]
+            .chars()
+            .next()
+            .is_none_or(|ch| !(ch.is_alphanumeric() || ch == '_'))
+    })
+}
+
+/// The binding `assertion` reads `<binding>.<path>` from as one whole side of a
+/// relational check or an `assert_ne!`, against a side that does not name the
+/// binding, after the test ran the owner on that binding and under the same
+/// binding guards the confirming read uses.
+fn weak_assigned_field_read(
+    owner: &FunctionSummary,
+    path: &str,
+    test: &TestSummary,
+    assertion: &OracleFact,
+) -> Option<String> {
+    let call = super::builder_override::OwnerCall::from_symbol(&owner.id.0)?;
+    let masked = crate::analysis::extract::mask_comments_and_strings(&assertion.text);
+    let (binding, other) = weak_read_sides(masked.trim(), path)?;
+    (!names_whole_ident(other, &binding)
+        && !super::reveal::owner_called_on_other_receiver(&test.body, &binding, call.name())
+        && super::reveal::owner_call_precedes_read(
+            &test.body,
+            test.start_line,
+            &binding,
+            call.name(),
+            assertion.line,
+            call.impl_type(),
+        )
+        && super::reveal::binding_untouched_after_owner_call(
+            &test.body,
+            test.start_line,
+            &binding,
+            call.name(),
+            assertion.line,
+        ))
+    .then_some(binding)
+}
+
+/// The binding whose field `path` the masked assertion reads as one whole
+/// side of a relational check, and the other side's text.
+fn weak_read_sides<'a>(masked: &'a str, path: &str) -> Option<(String, &'a str)> {
+    let side_binding = |side: &str| -> Option<String> {
+        let (binding, field) = side.trim().split_once('.')?;
+        let bare = !binding.is_empty()
+            && binding
+                .chars()
+                .all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
+            && !binding.starts_with(|ch: char| ch.is_ascii_digit());
+        (bare && field == path).then(|| binding.to_string())
+    };
+    let (name, rest) = masked.split_once('!')?;
+    let call = rest.trim();
+    let call = call.strip_suffix(';').unwrap_or(call);
+    let args = super::reveal::macro_arguments(call);
+    match name.trim() {
+        "assert_ne" => {
+            let [left, right, ..] = args.as_slice() else {
+                return None;
+            };
+            side_binding(left)
+                .map(|binding| (binding, *right))
+                .or_else(|| side_binding(right).map(|binding| (binding, *left)))
+        }
+        "assert" => {
+            let subject = *args.first()?;
+            if ["&&", "||", "==", "=>", "->", "::<", "|", "?", "{", "["]
+                .iter()
+                .any(|token| subject.contains(token))
+            {
+                return None;
+            }
+            let mut operator = None;
+            let bytes = subject.as_bytes();
+            let mut at = 0;
+            while at < bytes.len() {
+                let two = subject.get(at..at + 2);
+                let (len, found) = match (two, bytes[at]) {
+                    (Some(">=" | "<=" | "!="), _) => (2, true),
+                    (_, b'>' | b'<') => (1, true),
+                    _ => (1, false),
+                };
+                if found {
+                    if operator.is_some() {
+                        return None;
+                    }
+                    operator = Some((at, len));
+                }
+                at += len;
+            }
+            let (at, len) = operator?;
+            let (left, right) = (&subject[..at], &subject[at + len..]);
+            side_binding(left)
+                .map(|binding| (binding, right))
+                .or_else(|| side_binding(right).map(|binding| (binding, left)))
+        }
+        _ => None,
+    }
 }
 
 /// Whether the method whose source starts `body` takes its receiver by
@@ -4394,6 +4999,7 @@ pub(in crate::analysis) fn pushed_collection_compared_whole(
                     &read.binding,
                     call.name(),
                     assertion.line,
+                    call.impl_type(),
                 )
                 && super::reveal::binding_untouched_after_owner_call(
                     &test.body,
@@ -5001,15 +5607,15 @@ fn owner_call_parameter_values_where(
         return rows;
     }
     for test in related_tests {
-        for call in test.body_calls() {
-            if call.name != owner_name || !keep(test, call) {
-                continue;
-            }
-            let Some(arguments) = owner_name_call_text(&call.text, owner_name, free_owner)
-                .and_then(|text| call_arguments(text, &call.name))
-            else {
-                continue;
-            };
+        for (call, arguments) in test
+            .body_calls()
+            .filter(|call| call.name == owner_name && keep(test, call))
+            .flat_map(|call| {
+                owner_call_argument_rows(&call.text, owner_name, free_owner)
+                    .into_iter()
+                    .map(move |arguments| (call, arguments))
+            })
+        {
             // A constant-row `for` table (#5328) yields one value per row,
             // and cells of the same row belong together: the call runs once
             // per row, so it contributes one input row per table row. A
@@ -5429,20 +6035,17 @@ pub(in crate::analysis) fn computed_input_parameters(
                 {
                     continue;
                 }
-                let Some(arguments) =
-                    owner_name_call_text(&call.text, &target.name, is_free(target))
-                        .and_then(|text| call_arguments(text, &call.name))
-                else {
-                    continue;
-                };
-                called = true;
-                for (idx, argument) in arguments.iter().enumerate() {
-                    if deterministic_computed_argument(argument, |name| {
-                        !owner_argument_values(test, name).is_empty()
-                    }) && let Some(parameter) = names.get(idx)
-                        && !computed.contains(parameter)
-                    {
-                        computed.push(parameter.clone());
+                for arguments in owner_call_argument_rows(&call.text, &target.name, is_free(target))
+                {
+                    called = true;
+                    for (idx, argument) in arguments.iter().enumerate() {
+                        if deterministic_computed_argument(argument, |name| {
+                            !owner_argument_values(test, name).is_empty()
+                        }) && let Some(parameter) = names.get(idx)
+                            && !computed.contains(parameter)
+                        {
+                            computed.push(parameter.clone());
+                        }
                     }
                 }
             }
@@ -5616,7 +6219,10 @@ fn bind_hop_step(
         // The owner (step 0) has no lower hop to read it, so no `self`
         // cell ever lands in an owner row.
         if include_receiver
-            && let Some(receiver) = &hop.receiver
+            && let Some(receiver) = hop
+                .receiver
+                .as_ref()
+                .and_then(super::helper_transfer::HopReceiver::parameter)
             && let Some(cell) = row.iter().find(|cell| cell.parameter == *receiver)
             && super::helper_transfer::is_receiver_cell(&cell.value)
         {
@@ -5760,7 +6366,13 @@ fn chain_entry_rows(
         })
     };
     let receivers = ReceiverParameters {
-        names: entry.receiver.iter().cloned().collect(),
+        names: entry
+            .receiver
+            .as_ref()
+            .and_then(super::helper_transfer::HopReceiver::parameter)
+            .map(str::to_string)
+            .into_iter()
+            .collect(),
         value: Some(&receiver_reader),
         text_cells: false,
         index: Some(index),
@@ -6127,8 +6739,249 @@ fn boundary_operand_parameter(
         .iter()
         .find(|parameter| parameter.as_str() == operand)
         .cloned()
+        .or_else(|| {
+            boundary_parameter_field_projection(parameters, operand).map(|(parameter, _)| parameter)
+        })
         .or_else(|| mut_boundary_parameter(function, parameters, operand, at_line))
         .or_else(|| boundary_local_operand_parameter(function, owner_source, parameters, operand))
+}
+
+pub(in crate::analysis) fn boundary_parameter_field_projection(
+    parameters: &[String],
+    operand: &str,
+) -> Option<(String, String)> {
+    let operand = operand.trim().trim_start_matches('&').trim();
+    for parameter in parameters {
+        let Some(rest) = operand.strip_prefix(parameter) else {
+            continue;
+        };
+        let Some(field) = rest.strip_prefix('.') else {
+            continue;
+        };
+        if is_plain_identifier(field) {
+            return Some((parameter.clone(), field.to_string()));
+        }
+    }
+    None
+}
+
+fn projected_boundary_field_expression(argument: &str, field: &str) -> Option<String> {
+    if !is_plain_identifier(field) {
+        return None;
+    }
+    let argument = argument.trim();
+    if is_plain_identifier(argument) {
+        return Some(format!("{argument}.{field}"));
+    }
+    let base = argument
+        .strip_prefix('&')
+        .map(str::trim)
+        .and_then(|borrowed| {
+            borrowed
+                .strip_prefix("mut ")
+                .map(str::trim)
+                .or(Some(borrowed))
+        })
+        .filter(|borrowed| is_plain_identifier(borrowed))?;
+    Some(format!("{base}.{field}"))
+}
+
+fn owner_rebinds_boundary_field(
+    owner: &FunctionSummary,
+    parameter: &str,
+    field: &str,
+    predicate_line: usize,
+) -> bool {
+    let operand = format!("{parameter}.{field}");
+    // A shadowing `let` or a reassignment of the base parameter changes which
+    // object the comparison reads, so the caller's field value no longer
+    // reaches it. `owner_rebinds_operand` fails closed on such a binding.
+    if owner_rebinds_operand(owner, parameter, predicate_line)
+        || owner_rebinds_operand(owner, &operand, predicate_line)
+    {
+        return true;
+    }
+    let masked = crate::analysis::language::mask_rust_comments_and_strings(&owner.body);
+    masked.lines().enumerate().any(|(offset, line)| {
+        owner.start_line.saturating_add(offset) <= predicate_line
+            && owner_line_assigns_field(line, &operand)
+    })
+}
+
+fn owner_line_assigns_field(line: &str, operand: &str) -> bool {
+    let line = code_line_before_comment(line);
+    let trimmed = line.trim_start();
+    trimmed.strip_prefix(operand).is_some_and(|rest| {
+        let rest = rest.trim_start();
+        (rest.starts_with('=') && !rest.starts_with("=="))
+            || ["+=", "-=", "*=", "/=", "%=", "^=", "&=", "|=", "<<=", ">>="]
+                .iter()
+                .any(|assignment| rest.starts_with(assignment))
+    })
+}
+
+/// Whether a field value that merely *names* the boundary constant (`CURRENT`)
+/// is that owner constant for this test: declared once, and not shadowed by a
+/// declaration in the test file. A spelled value (`7`) never needs this.
+fn boundary_field_identity_permitted(
+    owner: &FunctionSummary,
+    constant: &BoundaryConstant,
+    test: &TestSummary,
+    index: &crate::analysis::rust_index::RustIndex,
+) -> bool {
+    constant.lookup.is_declared_once()
+        && !crate::analysis::value_resolution::test_file_may_shadow_constant(
+            &owner.file,
+            &test.file,
+            index
+                .files()
+                .get(&test.file)
+                .map(|facts| facts.data().source.as_ref()),
+            &constant.name,
+        )
+}
+
+fn field_boundary_values_equal(
+    input: &str,
+    boundary: &str,
+    constant: &BoundaryConstant,
+    identity_permitted: bool,
+) -> bool {
+    if comparable_value(input) == comparable_value(boundary) {
+        return true;
+    }
+    identity_permitted && constant.offset == 0 && input.trim() == constant.name
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "policy:6671-field-boundary-scan: one scan authority over owner tests and call sites"
+)]
+fn collect_boundary_field_values_at_owner_calls<F>(
+    owner: &FunctionSummary,
+    parameters: &[String],
+    operand: &str,
+    predicate_line: usize,
+    related_tests: &[&TestSummary],
+    index: &crate::analysis::rust_index::RustIndex,
+    constant: Option<&BoundaryConstant>,
+    mut emit: F,
+) where
+    F: FnMut(&TestSummary, usize, &str, &str, bool),
+{
+    let Some((parameter, field)) = boundary_parameter_field_projection(parameters, operand) else {
+        return;
+    };
+    if owner_rebinds_boundary_field(owner, &parameter, &field, predicate_line) {
+        return;
+    }
+    let Some(position) = parameters.iter().position(|name| name == &parameter) else {
+        return;
+    };
+    for test in related_tests {
+        // Only a value that names the constant depends on which declaration
+        // the test file means; a spelled literal is judged on its own value.
+        let identity_permitted = constant.is_some_and(|constant| {
+            boundary_field_identity_permitted(owner, constant, test, index)
+        });
+        let file_scan = crate::analysis::value_resolution::FileValueScan::build(test, index);
+        let env_facts =
+            crate::analysis::value_resolution::ValueEnvFacts::build(test, &file_scan, index);
+        for call in test.body_calls() {
+            if call.name != owner.name {
+                continue;
+            }
+            if !super::call_identity::qualified_owner_calls_resolve(
+                index, owner, test, &call.text, call.line,
+            ) {
+                continue;
+            }
+            let Some(text) = owner_name_call_text(&call.text, &owner.name, is_free(owner)) else {
+                continue;
+            };
+            let Some(arguments) = call_arguments(text, &call.name) else {
+                continue;
+            };
+            let Some(argument) = arguments.get(position) else {
+                continue;
+            };
+            let Some(projected) = projected_boundary_field_expression(argument, &field) else {
+                continue;
+            };
+            for (value, _) in
+                env_facts.resolve_at_call(&projected, call.line, &call.name, &call.text)
+            {
+                emit(test, call.line, &call.text, &value, identity_permitted);
+            }
+        }
+    }
+}
+
+fn boundary_operand_values_at_owner_calls(
+    owner: &FunctionSummary,
+    operand: &str,
+    predicate_line: usize,
+    related_tests: &[&TestSummary],
+    index: &crate::analysis::rust_index::RustIndex,
+) -> Vec<String> {
+    let parameters = function_parameters(owner);
+    let mut values = Vec::new();
+    collect_boundary_field_values_at_owner_calls(
+        owner,
+        &parameters,
+        operand,
+        predicate_line,
+        related_tests,
+        index,
+        None,
+        |_test, _line, _text, value, _identity_permitted| {
+            if !values.iter().any(|existing| existing == value) {
+                values.push(value.to_string());
+            }
+        },
+    );
+    values
+}
+
+/// Whether some related test's owner call passes the boundary value in the
+/// compared field. A value that only names the constant counts for a test
+/// only when that test file does not shadow the constant (#6671).
+fn field_boundary_value_observed_at_owner_calls(
+    owner: &FunctionSummary,
+    operand: &str,
+    predicate_line: usize,
+    related_tests: &[&TestSummary],
+    index: &crate::analysis::rust_index::RustIndex,
+    boundary_value: &str,
+    constant: &BoundaryConstant,
+) -> bool {
+    let parameters = function_parameters(owner);
+    let mut observed = false;
+    collect_boundary_field_values_at_owner_calls(
+        owner,
+        &parameters,
+        operand,
+        predicate_line,
+        related_tests,
+        index,
+        Some(constant),
+        |_test, _line, _text, value, identity_permitted| {
+            observed |=
+                field_boundary_values_equal(value, boundary_value, constant, identity_permitted);
+        },
+    );
+    observed
+}
+
+fn boundary_side_values_equal(
+    input: &str,
+    boundary: &str,
+    constant: Option<&BoundaryConstant>,
+) -> bool {
+    if comparable_value(input) == comparable_value(boundary) {
+        return true;
+    }
+    constant.is_some_and(|constant| constant.offset == 0 && input == constant.name)
 }
 
 /// A `mut n` parameter as the operand `n` (#10306): the signature keeps the
@@ -6371,15 +7224,20 @@ pub(in crate::analysis) fn returned_comparison_view(probe: &Probe) -> Option<Pro
     if !matches!(probe.family, ProbeFamily::ReturnValue) {
         return None;
     }
-    let (expression, explicit) = strip_explicit_return(&probe.expression);
-    if explicit && !is_top_level_comparison(&expression) {
+    let (expression, _) = strip_explicit_return(&probe.expression);
+    // A genuine returned comparison only: the operator must sit at the top
+    // level of both texts, explicit `return` or implicit tail alike. A
+    // turbofish `sum::<u64>() + 25 * 2`, a call/index-nested comparison or
+    // any other arithmetic rewrite contains comparison-shaped tokens
+    // without being one, and keeps the return-value reading.
+    if !is_top_level_comparison(&expression) {
         return None;
     }
     let before = probe.before.as_deref().map(|before| {
         let (before, before_explicit) = strip_explicit_return(before);
         (before, before_explicit)
     });
-    if let Some((before, true)) = &before
+    if let Some((before, _)) = &before
         && !is_top_level_comparison(before)
     {
         return None;
@@ -8679,14 +9537,14 @@ mod tests {
             start_line: 1,
             end_line: 9,
             body: "pub fn split_after(input: &str, delim: char) -> &str {\n    let end = input.rfind(delim).map_or(1, |idx| idx);\n    let start = delim.len_utf8();\n    if end == start {\n        &input[..end]\n    } else {\n        input\n    }\n}".into(),
-            calls: Vec::new(),
+            calls: crate::analysis::facts::SharedFactSlice::empty(),
             returns: Vec::new(),
-            literals: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
             source_role: FunctionSourceRole::Production,
-            attrs: Vec::new(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
             impl_attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             item: Default::default(),
             impl_context: Default::default(),
         };
@@ -8700,12 +9558,13 @@ mod tests {
                 name: "split_after".to_string(),
                 line: 5,
                 text: "split_after(\"ab\", 'x');".to_string().into(),
-            }],
+            }]
+            .into(),
             assertions: Vec::new(),
-            literals: Vec::new(),
-            attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             generated: None,
         };
         let probe = Probe {
@@ -9078,12 +9937,13 @@ mod tests {
                 name: "score".to_string(),
                 line: call_line,
                 text: call.to_string().into(),
-            }],
+            }]
+            .into(),
             assertions: Vec::new(),
-            literals: Vec::new(),
-            attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             generated: None,
         }
     }
@@ -9147,7 +10007,8 @@ mod tests {
             "#[rstest]".to_string(),
             "#[case(10, false)]".to_string(),
             "#[case(11, true)]".to_string(),
-        ];
+        ]
+        .into();
         let activation = boundary_activation(&test);
 
         assert_eq!(owner_input_values(&activation), vec!["10", "11"]);
@@ -9166,9 +10027,9 @@ mod tests {
             "fn score_boundary(#[case] amount: i32) {\n    fn far(amount: i32) -> bool { score(amount) }\n    assert!(far(amount + 100));\n}",
         ] {
             let mut test = test_with_body_call(body, 12, "assert!(score(amount));");
-            test.attrs = vec!["#[rstest]".to_string(), "#[case(10)]".to_string()];
+            test.attrs = vec!["#[rstest]".to_string(), "#[case(10)]".to_string()].into();
             if body.contains("fn far") {
-                test.nested_fn_names = vec!["far".to_string()];
+                test.nested_fn_names = vec!["far".to_string()].into();
             }
             let activation = boundary_activation(&test);
 
@@ -9413,6 +10274,323 @@ mod tests {
     }
 
     #[test]
+    fn given_field_assignment_to_named_constant_then_reversed_predicate_credits_boundary() {
+        // #6671: `CURRENT > manifest.version` with field assignments to
+        // `CURRENT - 1` and `CURRENT` observes the named-constant boundary.
+        let mut owner = function(
+            "pub fn is_stale(manifest: &Manifest) -> bool {\n    CURRENT > manifest.version\n}",
+        );
+        owner.name = "is_stale".to_string();
+        let mut test = test_with_body_calls(
+            "{\n\
+             let mut manifest = Manifest::default();\n\
+             manifest.version = 6;\n\
+             is_stale(&manifest);\n\
+             manifest.version = 7;\n\
+             is_stale(&manifest);\n\
+             }\n",
+            &[(13, "is_stale(&manifest);"), (15, "is_stale(&manifest);")],
+        );
+        for call in &mut test.calls {
+            call.name = "is_stale".into();
+        }
+        let mut index = crate::analysis::rust_index::RustIndex::default();
+        index.insert_file_only(
+            PathBuf::from("src/lib.rs"),
+            crate::analysis::facts::FileFacts {
+                path: PathBuf::from("src/lib.rs"),
+                source: format!(
+                    "pub struct Manifest {{ pub version: u32, }}\n\
+                     impl Default for Manifest {{\n\
+                         fn default() -> Self {{ Self {{ version: 0 }} }}\n\
+                     }}\n\
+                     pub const CURRENT: u32 = 7;\n{}",
+                    owner.body
+                )
+                .into(),
+                ..Default::default()
+            },
+        );
+        index.insert_file_only(
+            PathBuf::from("tests/score.rs"),
+            crate::analysis::facts::FileFacts {
+                path: PathBuf::from("tests/score.rs"),
+                source: std::sync::Arc::from(test.body.as_ref()),
+                ..Default::default()
+            },
+        );
+        let gathered = activation_and_boundary_input(
+            &probe(ProbeFamily::Predicate, "CURRENT > manifest.version"),
+            Some(&owner),
+            &[&test],
+            &[],
+            None,
+            &index,
+            false,
+            None,
+        );
+        assert!(
+            has_observed_boundary_equality(&gathered.activation),
+            "{:?}",
+            gathered.activation.observed_values
+        );
+        assert!(
+            gathered.activation.missing_discriminators.is_empty(),
+            "{:?}",
+            gathered.activation.missing_discriminators
+        );
+        assert_eq!(gathered.unresolved_boundary, None);
+    }
+
+    fn field_named_constant_boundary_gathered(
+        owner_body: &str,
+        test_body: &str,
+        calls: &[(usize, &str)],
+        test_file_prefix: &str,
+    ) -> super::ActivationWithBoundaryInput {
+        let mut owner = function(owner_body);
+        owner.name = "is_stale".to_string();
+        owner.end_line = owner.start_line + owner.body.lines().count().saturating_sub(1);
+        let probe_line = owner
+            .body
+            .lines()
+            .enumerate()
+            .find_map(|(offset, line)| {
+                line.contains("CURRENT > manifest.version")
+                    .then_some(owner.start_line + offset)
+            })
+            .unwrap_or(owner.end_line);
+        let mut test = test_with_body_calls(test_body, calls);
+        for call in &mut test.calls {
+            call.name = "is_stale".into();
+        }
+        let mut index = crate::analysis::rust_index::RustIndex::default();
+        index.insert_file_only(
+            PathBuf::from("src/lib.rs"),
+            crate::analysis::facts::FileFacts {
+                path: PathBuf::from("src/lib.rs"),
+                source: format!(
+                    "pub struct Manifest {{ pub version: u32, }}\n\
+                     impl Default for Manifest {{\n\
+                         fn default() -> Self {{ Self {{ version: 0 }} }}\n\
+                     }}\n\
+                     pub const CURRENT: u32 = 7;\n{}",
+                    owner.body
+                )
+                .into(),
+                ..Default::default()
+            },
+        );
+        index.insert_file_only(
+            PathBuf::from("tests/score.rs"),
+            crate::analysis::facts::FileFacts {
+                path: PathBuf::from("tests/score.rs"),
+                source: format!("{test_file_prefix}{}", test.body.as_ref()).into(),
+                ..Default::default()
+            },
+        );
+        activation_and_boundary_input(
+            &Probe {
+                id: ProbeId("probe:src/lib.rs:field-boundary".to_string()),
+                location: SourceLocation::new("src/lib.rs", probe_line, 5),
+                owner: None,
+                family: ProbeFamily::Predicate,
+                delta: DeltaKind::Control,
+                before: None,
+                after: Some("CURRENT > manifest.version".to_string()),
+                expression: "CURRENT > manifest.version".to_string(),
+                expected_sinks: Vec::new(),
+                required_oracles: Vec::new(),
+            },
+            Some(&owner),
+            &[&test],
+            &[],
+            None,
+            &index,
+            false,
+            None,
+        )
+    }
+
+    #[test]
+    fn owner_rebinds_field_assignment_before_comparison() {
+        let owner = function(
+            "pub fn is_stale(manifest: &Manifest) -> bool {\n    manifest.version = 6;\n    CURRENT > manifest.version\n}",
+        );
+        let probe_line = owner.start_line + 2;
+        assert!(owner_rebinds_boundary_field(
+            &owner, "manifest", "version", probe_line
+        ));
+    }
+
+    #[test]
+    fn given_field_assignment_boundary_then_wrong_object_owner_write_or_shadow_do_not_credit() {
+        let positive = field_named_constant_boundary_gathered(
+            "pub fn is_stale(manifest: &Manifest) -> bool {\n    CURRENT > manifest.version\n}",
+            "{\n\
+             let mut manifest = Manifest::default();\n\
+             manifest.version = 7;\n\
+             is_stale(&manifest);\n\
+             }\n",
+            &[(13, "is_stale(&manifest);")],
+            "",
+        );
+        assert!(has_observed_boundary_equality(&positive.activation));
+
+        let wrong_object = field_named_constant_boundary_gathered(
+            "pub fn is_stale(manifest: &Manifest) -> bool {\n    CURRENT > manifest.version\n}",
+            "{\n\
+             let mut manifest = Manifest::default();\n\
+             let mut other = Manifest::default();\n\
+             manifest.version = 7;\n\
+             other.version = 6;\n\
+             is_stale(&other);\n\
+             }\n",
+            &[(15, "is_stale(&other);")],
+            "",
+        );
+        assert!(!has_observed_boundary_equality(&wrong_object.activation));
+
+        let owner_write = field_named_constant_boundary_gathered(
+            "pub fn is_stale(manifest: &Manifest) -> bool {\n\
+                 manifest.version = 6;\n\
+                 CURRENT > manifest.version\n\
+             }",
+            "{\n\
+             let mut manifest = Manifest::default();\n\
+             manifest.version = 7;\n\
+             is_stale(&manifest);\n\
+             }\n",
+            &[(13, "is_stale(&manifest);")],
+            "",
+        );
+        assert!(!has_observed_boundary_equality(&owner_write.activation));
+
+        let shadowed = field_named_constant_boundary_gathered(
+            "pub fn is_stale(manifest: &Manifest) -> bool {\n    CURRENT > manifest.version\n}",
+            "{\n\
+             let mut manifest = Manifest::default();\n\
+             manifest.version = CURRENT;\n\
+             is_stale(&manifest);\n\
+             }\n",
+            &[(13, "is_stale(&manifest);")],
+            "const CURRENT: u32 = 8;\n",
+        );
+        assert!(!has_observed_boundary_equality(&shadowed.activation));
+    }
+
+    #[test]
+    fn given_owner_rebinds_the_base_parameter_then_field_boundary_is_not_credited() {
+        // The comparison reads the owner's own `manifest`, not the caller's:
+        // a shadowing `let` or a plain reassignment before it must refuse the
+        // caller's field value, the same as a direct field write does.
+        for (label, body) in [
+            (
+                "let shadow",
+                "pub fn is_stale(manifest: &Manifest) -> bool {\n    let manifest = &Manifest { version: 6 };\n    CURRENT > manifest.version\n}",
+            ),
+            (
+                "reassignment",
+                "pub fn is_stale(manifest: &Manifest) -> bool {\n    manifest = &Manifest { version: 6 };\n    CURRENT > manifest.version\n}",
+            ),
+        ] {
+            let owner = function(body);
+            assert!(
+                owner_rebinds_boundary_field(&owner, "manifest", "version", owner.start_line + 2),
+                "{label}"
+            );
+            let gathered = field_named_constant_boundary_gathered(
+                body,
+                "{\n\
+                 let mut manifest = Manifest::default();\n\
+                 manifest.version = 7;\n\
+                 is_stale(&manifest);\n\
+                 }\n",
+                &[(13, "is_stale(&manifest);")],
+                "",
+            );
+            assert!(
+                !has_observed_boundary_equality(&gathered.activation),
+                "{label}: {:?}",
+                gathered.activation.observed_values
+            );
+            // The owner's own `manifest` is read: the caller's row credits
+            // nothing, the same as a direct owner write (no claim either way).
+            assert!(
+                gathered.activation.observed_values.is_empty(),
+                "{label}: {:?}",
+                gathered.activation.observed_values
+            );
+        }
+    }
+
+    #[test]
+    fn given_test_shadows_the_constant_then_a_literal_field_assignment_still_credits() {
+        // The owner constant is 7. The shadowing `CURRENT = 8` in the test
+        // file matters only to a credit that rests on the name `CURRENT`; an
+        // explicit `manifest.version = 7` is the boundary value on its own.
+        let gathered = field_named_constant_boundary_gathered(
+            "pub fn is_stale(manifest: &Manifest) -> bool {\n    CURRENT > manifest.version\n}",
+            "{\n\
+             let mut manifest = Manifest::default();\n\
+             manifest.version = 7;\n\
+             is_stale(&manifest);\n\
+             }\n",
+            &[(13, "is_stale(&manifest);")],
+            "const CURRENT: u32 = 8;\n",
+        );
+        assert!(
+            has_observed_boundary_equality(&gathered.activation),
+            "{:?}",
+            gathered.activation.observed_values
+        );
+        assert!(gathered.activation.missing_discriminators.is_empty());
+    }
+
+    #[test]
+    fn given_test_shadows_the_constant_then_a_named_field_assignment_keeps_the_missing_boundary() {
+        // `manifest.version = CURRENT` names the test file's own `CURRENT`
+        // (8), so it neither credits the boundary nor erases the gap.
+        let gathered = field_named_constant_boundary_gathered(
+            "pub fn is_stale(manifest: &Manifest) -> bool {\n    CURRENT > manifest.version\n}",
+            "{\n\
+             let mut manifest = Manifest::default();\n\
+             manifest.version = CURRENT;\n\
+             is_stale(&manifest);\n\
+             }\n",
+            &[(13, "is_stale(&manifest);")],
+            "const CURRENT: u32 = 8;\n",
+        );
+        assert!(!has_observed_boundary_equality(&gathered.activation));
+        assert_eq!(
+            gathered.activation.missing_discriminators.len(),
+            1,
+            "{:?}",
+            gathered.activation.missing_discriminators
+        );
+    }
+
+    #[test]
+    fn given_field_assignment_off_boundary_then_missing_boundary_is_reported() {
+        let gathered = field_named_constant_boundary_gathered(
+            "pub fn is_stale(manifest: &Manifest) -> bool {\n    CURRENT > manifest.version\n}",
+            "{\n\
+             let mut manifest = Manifest::default();\n\
+             manifest.version = 6;\n\
+             is_stale(&manifest);\n\
+             }\n",
+            &[(13, "is_stale(&manifest);")],
+            "",
+        );
+        assert!(!has_observed_boundary_equality(&gathered.activation));
+        assert_eq!(gathered.activation.missing_discriminators.len(), 1);
+        assert_eq!(
+            gathered.activation.missing_discriminators[0].value,
+            "manifest.version == CURRENT"
+        );
+    }
+
+    #[test]
     fn given_constant_minus_offset_boundary_then_boundary_is_the_offset_value_not_the_offset() {
         // #6671: `LIMIT - 2` with `const LIMIT: i32 = 10;` compares against
         // 8, never the literal 2, and naming LIMIT itself is not the
@@ -9589,7 +10767,10 @@ mod tests {
     fn activation_evidence_reports_missing_boundary_discriminator() {
         let owner = function("pub fn score(amount: i32) -> bool {\n    amount > 10\n}");
         let test = test_with_call("score_uses_adjacent_value", "score(9);");
-        let probe = probe(ProbeFamily::Predicate, "amount > 10");
+        // A changed comparison (`>= 10` to `> 10`), not a pure insertion:
+        // an inserted guard names its domain instead (#12414).
+        let mut probe = probe(ProbeFamily::Predicate, "amount > 10");
+        probe.before = Some("amount >= 10".to_string());
         let flow_sinks = vec![FlowSinkFact {
             kind: FlowSinkKind::ReturnValue,
             text: "amount > 10".to_string(),
@@ -9621,6 +10802,190 @@ mod tests {
                 .map(|sink| &sink.kind),
             Some(&FlowSinkKind::ReturnValue)
         );
+    }
+
+    /// #12414: a pure insertion whose changed line is itself a predicate
+    /// names the inserted guard's activating domain, not the equality point
+    /// that passes on both sides of the insertion.
+    #[test]
+    fn inserted_guard_predicate_names_the_guard_domain() {
+        let owner = function(
+            "pub fn score(amount: i32, discount_threshold: i32) -> i32 {
+    if amount < 0 {
+        return 0;
+    }
+    if amount >= discount_threshold {
+        amount - 10
+    } else {
+        amount
+    }
+}",
+        );
+        let below = test_with_call("below_threshold", "score(50, 100);");
+        let above = test_with_call("far_above", "score(10_000, 100);");
+        let probe = probe(ProbeFamily::Predicate, "amount < 0");
+
+        let activation = activation_evidence(
+            &probe,
+            Some(&owner),
+            &[&below, &above],
+            &[],
+            None,
+            &crate::analysis::rust_index::RustIndex::default(),
+            false,
+        );
+
+        assert_eq!(activation.missing_discriminators.len(), 1);
+        let fact = &activation.missing_discriminators[0];
+        assert_eq!(fact.value, "if amount < 0");
+        assert_eq!(fact.shape, DiscriminatorShape::GuardDomain);
+        assert!(
+            fact.reason
+                .starts_with(crate::domain::GUARD_UNENTERED_REASON_PREFIX)
+        );
+        assert!(
+            fact.reason
+                .contains("observed `amount` values: `10_000`, `50`")
+        );
+        assert!(!fact.reason.contains("amount == 0"));
+    }
+
+    /// #12414: the non-strict insertion is read the same way; the equality
+    /// point alone never names the region that runs the changed line.
+    #[test]
+    fn inserted_non_strict_guard_predicate_names_the_guard_domain() {
+        let owner = function(
+            "pub fn score(amount: i32, discount_threshold: i32) -> i32 {
+    if amount <= 0 {
+        return 0;
+    }
+    if amount >= discount_threshold {
+        amount - 10
+    } else {
+        amount
+    }
+}",
+        );
+        let below = test_with_call("below_threshold", "score(50, 100);");
+        let probe = probe(ProbeFamily::Predicate, "amount <= 0");
+
+        let activation = activation_evidence(
+            &probe,
+            Some(&owner),
+            &[&below],
+            &[],
+            None,
+            &crate::analysis::rust_index::RustIndex::default(),
+            false,
+        );
+
+        assert_eq!(activation.missing_discriminators.len(), 1);
+        let fact = &activation.missing_discriminators[0];
+        assert_eq!(fact.value, "if amount <= 0");
+        assert_eq!(fact.shape, DiscriminatorShape::GuardDomain);
+    }
+
+    /// #12414: a flipped-operator diff (`before` present) is not an
+    /// insertion, so the flipped-comparison equality convention and its
+    /// goldens stay.
+    #[test]
+    fn a_flipped_operator_diff_keeps_the_equality_boundary() {
+        let owner = function(
+            "pub fn score(amount: i32, threshold: i32) -> i32 {
+    if amount >= threshold {
+        amount - 10
+    } else {
+        amount
+    }
+}",
+        );
+        let below = test_with_call("below_threshold", "score(50, 100);");
+        let above = test_with_call("far_above", "score(10_000, 100);");
+        let mut probe = probe(ProbeFamily::Predicate, "amount > threshold");
+        probe.before = Some("amount < threshold".to_string());
+
+        let activation = activation_evidence(
+            &probe,
+            Some(&owner),
+            &[&below, &above],
+            &[],
+            None,
+            &crate::analysis::rust_index::RustIndex::default(),
+            false,
+        );
+
+        assert_eq!(activation.missing_discriminators.len(), 1);
+        let fact = &activation.missing_discriminators[0];
+        assert_eq!(fact.value, "amount == threshold");
+        assert_eq!(fact.shape, DiscriminatorShape::Boundary);
+    }
+
+    /// #12414: a bound outside the parsed shape (a parameter bound, a call)
+    /// declines the guard reading and keeps the boundary reading below.
+    #[test]
+    fn an_inserted_predicate_with_an_unread_bound_keeps_the_boundary_reading() {
+        let owner = function(
+            "pub fn score(amount: i32, discount_threshold: i32) -> i32 {
+    if amount < discount_threshold {
+        return 0;
+    }
+    if amount >= discount_threshold {
+        amount - 10
+    } else {
+        amount
+    }
+}",
+        );
+        let below = test_with_call("below_threshold", "score(50, 100);");
+        let above = test_with_call("far_above", "score(10_000, 100);");
+        let probe = probe(ProbeFamily::Predicate, "amount < discount_threshold");
+
+        let activation = activation_evidence(
+            &probe,
+            Some(&owner),
+            &[&below, &above],
+            &[],
+            None,
+            &crate::analysis::rust_index::RustIndex::default(),
+            false,
+        );
+
+        assert_eq!(activation.missing_discriminators.len(), 1);
+        let fact = &activation.missing_discriminators[0];
+        assert_eq!(fact.value, "amount == discount_threshold");
+        assert_eq!(fact.shape, DiscriminatorShape::Boundary);
+    }
+
+    /// #12414: a readable test input that enters the inserted guard already
+    /// activates the change, so no missing input is named for the seam.
+    #[test]
+    fn a_test_input_entering_the_inserted_guard_suppresses_the_fact() {
+        let owner = function(
+            "pub fn score(amount: i32, discount_threshold: i32) -> i32 {
+    if amount < 0 {
+        return 0;
+    }
+    if amount >= discount_threshold {
+        amount - 10
+    } else {
+        amount
+    }
+}",
+        );
+        let negative = test_with_call("enters_the_guard", "score(-1, 100);");
+        let probe = probe(ProbeFamily::Predicate, "amount < 0");
+
+        let activation = activation_evidence(
+            &probe,
+            Some(&owner),
+            &[&negative],
+            &[],
+            None,
+            &crate::analysis::rust_index::RustIndex::default(),
+            false,
+        );
+
+        assert!(activation.missing_discriminators.is_empty());
     }
 
     #[test]
@@ -9660,7 +11025,10 @@ mod tests {
             "pub fn score(amount: i32) -> Result<bool, AuthError> {\n    if amount > 10 { return Err(AuthError::Bad); }\n    Ok(true)\n}",
         );
         let test = test_with_call("score_uses_adjacent_value", "score(9);");
-        let probe = probe(ProbeFamily::Predicate, "amount > 10");
+        // A changed comparison (`>= 10` to `> 10`), not a pure insertion:
+        // an inserted guard names its domain instead (#12414).
+        let mut probe = probe(ProbeFamily::Predicate, "amount > 10");
+        probe.before = Some("amount >= 10".to_string());
         let flow_sinks = vec![FlowSinkFact {
             kind: FlowSinkKind::ErrorVariant,
             text: "Result::Err(AuthError::Bad)".to_string(),
@@ -9697,15 +11065,15 @@ mod tests {
 let input = Request::builder().amount(100).token("abc").build();
 assert_eq!(input.amount, 100);"#
                 .into(),
-            calls: Vec::new(),
+            calls: crate::analysis::facts::SharedFactSlice::empty(),
             assertions: vec![oracle_fact(
                 "assert_eq!(input.amount, 100);",
                 OracleKind::ExactValue,
             )],
-            literals: Vec::new(),
-            attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             generated: None,
         };
 
@@ -9713,6 +11081,7 @@ assert_eq!(input.amount, 100);"#
             &test,
             None,
             crate::analysis::classify::argument_fold::FoldScope::default(),
+            None,
         );
 
         assert!(
@@ -9749,12 +11118,12 @@ assert_eq!(input.amount, 100);"#
             start_line: 10,
             end_line: 12,
             body: assertion.to_string().into(),
-            calls: Vec::new(),
+            calls: crate::analysis::facts::SharedFactSlice::empty(),
             assertions: vec![oracle_fact(assertion, OracleKind::ExactValue)],
-            literals: Vec::new(),
-            attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             generated: None,
         };
 
@@ -9762,6 +11131,7 @@ assert_eq!(input.amount, 100);"#
             &test,
             None,
             crate::analysis::classify::argument_fold::FoldScope::default(),
+            None,
         );
         let context_of = |value: &str| {
             facts
@@ -9787,12 +11157,12 @@ assert_eq!(input.amount, 100);"#
             start_line: 1,
             end_line: 3,
             body: body.into(),
-            calls: crate::analysis::extract::extract_call_facts(body, 1),
+            calls: crate::analysis::extract::extract_call_facts(body, 1).into(),
             assertions: Vec::new(),
-            literals: Vec::new(),
-            attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             generated: None,
         };
 
@@ -9800,6 +11170,7 @@ assert_eq!(input.amount, 100);"#
             &test,
             Some(&owner),
             crate::analysis::classify::argument_fold::FoldScope::default(),
+            None,
         );
         let values: Vec<&str> = facts.iter().map(|fact| fact.value.as_str()).collect();
 
@@ -9840,12 +11211,13 @@ assert_eq!(input.amount, 100);"#
                     name: "score".to_string(),
                     text: "score;".to_string().into(),
                 },
-            ],
+            ]
+            .into(),
             assertions: Vec::new(),
-            literals: Vec::new(),
-            attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             generated: None,
         };
 
@@ -9853,6 +11225,7 @@ assert_eq!(input.amount, 100);"#
             &test,
             Some(&owner),
             crate::analysis::classify::argument_fold::FoldScope::default(),
+            None,
         );
 
         assert!(
@@ -9881,15 +11254,15 @@ assert_eq!(input.amount, 100);"#
             start_line: 10,
             end_line: 14,
             body: body.into(),
-            calls,
+            calls: calls.into(),
             assertions: vec![oracle_fact(
                 "assert_eq!(total, 100);",
                 OracleKind::ExactValue,
             )],
-            literals: Vec::new(),
-            attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             generated: None,
         };
         let index = crate::analysis::rust_index::RustIndex::from_owned(
@@ -9927,7 +11300,8 @@ assert_eq!(input.amount, 100);"#
                         value_facts_for_test(
                             test,
                             owner,
-                            crate::analysis::classify::argument_fold::FoldScope::default()
+                            crate::analysis::classify::argument_fold::FoldScope::default(),
+                            Some(&index)
                         ),
                         "round {round}: {} / {:?}",
                         test.name,
@@ -9950,7 +11324,8 @@ assert_eq!(input.amount, 100);"#
             value_facts_for_test(
                 &detached,
                 owners[1],
-                crate::analysis::classify::argument_fold::FoldScope::default()
+                crate::analysis::classify::argument_fold::FoldScope::default(),
+                Some(&index)
             )
         );
         let other_index = index.clone();
@@ -9959,7 +11334,8 @@ assert_eq!(input.amount, 100);"#
             value_facts_for_test(
                 other_index.tests().at(0),
                 None,
-                crate::analysis::classify::argument_fold::FoldScope::default()
+                crate::analysis::classify::argument_fold::FoldScope::default(),
+                Some(&other_index)
             )
         );
         assert_eq!(memo.by_slot.borrow().len(), cached);
@@ -9980,7 +11356,8 @@ assert_eq!(input.amount, 100);"#
                     value_facts_for_test(
                         test,
                         Some(owner),
-                        crate::analysis::classify::argument_fold::FoldScope::default()
+                        crate::analysis::classify::argument_fold::FoldScope::default(),
+                        Some(&reordered)
                     )
                 );
             }
@@ -10304,12 +11681,13 @@ assert_eq!(input.amount, 100);"#
                     name: "score".to_string(),
                     text: "score;".to_string().into(),
                 },
-            ],
+            ]
+            .into(),
             assertions: Vec::new(),
-            literals: Vec::new(),
-            attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             generated: None,
         };
 
@@ -10663,6 +12041,19 @@ assert_eq!(input.amount, 100);"#
         );
         assert_eq!(view("return x > 1 && y", "return x > 2 && y"), None);
         assert_eq!(view("return x == 100", "return x > 101"), None);
+        // Implicit tails need the same top-level operator: a turbofish
+        // arithmetic rewrite (`sum::<u64>() + 50` -> `.. + 25 * 2`) or a
+        // nested comparison is not a returned bare comparison.
+        assert_eq!(
+            view(
+                "lines.iter().map(|l| l.cents).sum::<u64>() + 50",
+                "lines.iter().map(|l| l.cents).sum::<u64>() + 25 * 2"
+            ),
+            None
+        );
+        assert_eq!(view("f(x > 100)", "f(x > 101)"), None);
+        assert_eq!(view("v[x > 1]", "v[x > 2]"), None);
+        assert_eq!(view("x.parse::<i32>() > 5", "x.parse::<i32>() > 6"), None);
     }
 
     /// #9145 keyword boundary: `return` is stripped before any whitespace, never
@@ -10767,14 +12158,14 @@ assert_eq!(input.amount, 100);"#
             start_line: 1,
             end_line: 3,
             body: body.into(),
-            calls: Vec::new(),
+            calls: crate::analysis::facts::SharedFactSlice::empty(),
             returns: Vec::new(),
-            literals: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
             source_role: FunctionSourceRole::Production,
-            attrs: Vec::new(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
             impl_attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             item: Default::default(),
             impl_context: Default::default(),
         }
@@ -10886,12 +12277,13 @@ assert_eq!(input.amount, 100);"#
                 name: "score".to_string(),
                 line: 11,
                 text: call.to_string().into(),
-            }],
+            }]
+            .into(),
             assertions: Vec::new(),
-            literals: Vec::new(),
-            attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             generated: None,
         }
     }
@@ -10903,12 +12295,12 @@ assert_eq!(input.amount, 100);"#
             start_line: 10,
             end_line: 12,
             body: assertion.into(),
-            calls: Vec::new(),
+            calls: crate::analysis::facts::SharedFactSlice::empty(),
             assertions: vec![oracle_fact(assertion, kind)],
-            literals: Vec::new(),
-            attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             generated: None,
         }
     }
@@ -10967,10 +12359,10 @@ assert_eq!(input.amount, 100);"#
                 })
                 .collect(),
             assertions: Vec::new(),
-            literals: Vec::new(),
-            attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             generated: None,
         }
     }
@@ -11045,7 +12437,8 @@ assert_eq!(input.amount, 100);"#
             "#[rstest]".to_string(),
             "#[case(100, 7, true)]".to_string(),
             "#[case(LOW, 100, false)]".to_string(),
-        ];
+        ]
+        .into();
         assert_eq!(owner_argument_values(&cases, "amount"), vec!["100"]);
         assert_eq!(owner_argument_values(&cases, "limit"), vec!["7", "100"]);
         let rows = owner_call_parameter_values(
@@ -11080,7 +12473,8 @@ assert_eq!(input.amount, 100);"#
             "#[rstest]".to_string(),
             "#[case(100)]".to_string(),
             "#[case(99)]".to_string(),
-        ];
+        ]
+        .into();
         let rows = owner_call_parameter_values(
             &[&test],
             "eq",
@@ -11120,7 +12514,8 @@ assert_eq!(input.amount, 100);"#
             "#[rstest]".to_string(),
             "#[case(1, 2, true)]".to_string(),
             "#[case(2, 1, false)]".to_string(),
-        ];
+        ]
+        .into();
         let rows = owner_call_parameter_values(
             &[&test],
             "less",
@@ -11158,7 +12553,8 @@ assert_eq!(input.amount, 100);"#
             "#[case(UNKNOWN, 4)]".to_string(),
             "#[case(4, UNKNOWN)]".to_string(),
             "#[case(5, 6)]".to_string(),
-        ];
+        ]
+        .into();
         let rows = owner_call_parameter_values(
             &[&test],
             "eq",
@@ -11470,7 +12866,10 @@ assert_eq!(input.amount, 100);"#
         let owner = function(
             "pub fn score(amount: u64) -> u64 {\n    if amount > 999 { 25 } else { 0 }\n}",
         );
-        let predicate = probe(ProbeFamily::Predicate, "amount > 999");
+        // A changed comparison (`>= 999` to `> 999`), not a pure insertion:
+        // an inserted guard names its domain instead (#12414).
+        let mut predicate = probe(ProbeFamily::Predicate, "amount > 999");
+        predicate.before = Some("amount >= 999".to_string());
         let gap = |body: &str, lines: &[(usize, &str)]| {
             let test = test_with_body_calls(body, lines);
             let gathered = boundary_input(&owner, &predicate, &[&test]);
@@ -11779,7 +13178,8 @@ assert_eq!(input.amount, 100);"#
         test.literals = vec![LiteralFact {
             line: 11,
             value: "10".to_string(),
-        }];
+        }]
+        .into();
         let probe = probe(ProbeFamily::Predicate, "amount > 10");
         let gathered = boundary_input(&owner, &probe, &[&test]);
         assert!(owner_input_values(&gathered.activation).is_empty());
@@ -12816,7 +14216,8 @@ assert_eq!(input.amount, 100);"#
         test.literals = vec![LiteralFact {
             line: 10,
             value: "16".to_string(),
-        }];
+        }]
+        .into();
         let gathered = boundary_input(&owner, &predicate, &[&test]);
         assert!(gathered.activation.missing_discriminators.is_empty());
         assert!(
@@ -12862,7 +14263,8 @@ assert_eq!(input.amount, 100);"#
         test.literals = vec![LiteralFact {
             line: 11,
             value: "10".to_string(),
-        }];
+        }]
+        .into();
         let probe = probe(ProbeFamily::Predicate, "amount > 10");
         let gathered = boundary_input(&owner, &probe, &[&test]);
         assert!(owner_input_values(&gathered.activation).is_empty());

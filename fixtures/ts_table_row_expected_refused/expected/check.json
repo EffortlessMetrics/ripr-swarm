@@ -38,6 +38,13 @@
         "observe": {"state":"weak","confidence":"low","summary":"Strongest extracted oracle kind: `exact_value` (rank 5)"},
         "discriminate": {"state":"weak","confidence":"low","summary":"TypeScript preview adapter: strong oracle found but no strong assertion observes an owner call at the changed predicate boundary; missing proof: `point.points == 1000`."}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"low"},
+        {"stage":"infect","state":"unknown","confidence":"low"},
+        {"stage":"propagate","state":"unknown","confidence":"low"},
+        {"stage":"observe","state":"weak","confidence":"low"},
+        {"stage":"discriminate","state":"weak","confidence":"low"}
+      ],
       "evidence_path": ["reach yes: 1 related test(s) found for owner `aliasedKeys`", "infection unknown: TypeScript preview adapter does not yet model infection.", "propagation unknown: TypeScript preview adapter does not yet model propagation.", "observation weak: Strongest extracted oracle kind: `exact_value` (rank 5)", "discriminator weak: TypeScript preview adapter: strong oracle found but no strong assertion observes an owner call at the changed predicate boundary; missing proof: `point.points == 1000`.", "related test tests/aliasedKeys.test.ts:5 aliasedKeys tier by points uses strong exact value oracle: expect(...).toBe(...)", "missing discriminator point.points == 1000: changed TypeScript equality-boundary at line 2 lacks a concrete preview discriminator"],
       "flow_sinks": [
       ],
@@ -185,6 +192,13 @@
         "observe": {"state":"unknown","confidence":"low","summary":"Strongest extracted oracle kind: `unknown` (rank 0)"},
         "discriminate": {"state":"unknown","confidence":"low","summary":"TypeScript preview adapter: every related test is registered under a condition or loop static analysis cannot evaluate; discriminate unknown (RIPR-SPEC-0243)."}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"low"},
+        {"stage":"infect","state":"unknown","confidence":"low"},
+        {"stage":"propagate","state":"unknown","confidence":"low"},
+        {"stage":"observe","state":"unknown","confidence":"low"},
+        {"stage":"discriminate","state":"unknown","confidence":"low","basis":[{"code":"discriminator_not_established","summary":"whether a test checks this behavior is not established"}]}
+      ],
       "evidence_path": ["reach yes: 1 related test(s) found for owner `derivedTable`", "infection unknown: TypeScript preview adapter does not yet model infection.", "propagation unknown: TypeScript preview adapter does not yet model propagation.", "observation unknown: Strongest extracted oracle kind: `unknown` (rank 0)", "discriminator unknown: TypeScript preview adapter: every related test is registered under a condition or loop static analysis cannot evaluate; discriminate unknown (RIPR-SPEC-0243).", "related test tests/derivedTable.test.ts:11 derivedTable tier by points uses no oracle"],
       "flow_sinks": [
       ],
@@ -318,6 +332,13 @@
         "observe": {"state":"unknown","confidence":"low","summary":"Strongest extracted oracle kind: `unknown` (rank 0)"},
         "discriminate": {"state":"unknown","confidence":"low","summary":"TypeScript preview adapter: every related test is registered under a condition or loop static analysis cannot evaluate; discriminate unknown (RIPR-SPEC-0243)."}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"low"},
+        {"stage":"infect","state":"unknown","confidence":"low"},
+        {"stage":"propagate","state":"unknown","confidence":"low"},
+        {"stage":"observe","state":"unknown","confidence":"low"},
+        {"stage":"discriminate","state":"unknown","confidence":"low","basis":[{"code":"discriminator_not_established","summary":"whether a test checks this behavior is not established"}]}
+      ],
       "evidence_path": ["reach yes: 1 related test(s) found for owner `exportedTable`", "infection unknown: TypeScript preview adapter does not yet model infection.", "propagation unknown: TypeScript preview adapter does not yet model propagation.", "observation unknown: Strongest extracted oracle kind: `unknown` (rank 0)", "discriminator unknown: TypeScript preview adapter: every related test is registered under a condition or loop static analysis cannot evaluate; discriminate unknown (RIPR-SPEC-0243).", "related test tests/exportedTable.test.ts:11 exportedTable tier by points uses no oracle"],
       "flow_sinks": [
       ],
@@ -451,6 +472,13 @@
         "observe": {"state":"weak","confidence":"low","summary":"Strongest extracted oracle kind: `exact_value` (rank 5)"},
         "discriminate": {"state":"weak","confidence":"low","summary":"TypeScript preview adapter: strong oracle found but no strong assertion observes an owner call at the changed predicate boundary; missing proof: `points == 1000`."}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"low"},
+        {"stage":"infect","state":"unknown","confidence":"low"},
+        {"stage":"propagate","state":"unknown","confidence":"low"},
+        {"stage":"observe","state":"weak","confidence":"low"},
+        {"stage":"discriminate","state":"weak","confidence":"low"}
+      ],
       "evidence_path": ["reach yes: 1 related test(s) found for owner `identifierCell`", "infection unknown: TypeScript preview adapter does not yet model infection.", "propagation unknown: TypeScript preview adapter does not yet model propagation.", "observation weak: Strongest extracted oracle kind: `exact_value` (rank 5)", "discriminator weak: TypeScript preview adapter: strong oracle found but no strong assertion observes an owner call at the changed predicate boundary; missing proof: `points == 1000`.", "related test tests/identifierCell.test.ts:12 identifierCell tier by points uses strong exact value oracle: expect(...).toBe(...)", "missing discriminator points == 1000: changed TypeScript equality-boundary at line 2 lacks a concrete preview discriminator"],
       "flow_sinks": [
       ],
@@ -598,6 +626,13 @@
         "observe": {"state":"unknown","confidence":"low","summary":"Strongest extracted oracle kind: `unknown` (rank 0)"},
         "discriminate": {"state":"unknown","confidence":"low","summary":"TypeScript preview adapter: every related test is registered under a condition or loop static analysis cannot evaluate; discriminate unknown (RIPR-SPEC-0243)."}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"low"},
+        {"stage":"infect","state":"unknown","confidence":"low"},
+        {"stage":"propagate","state":"unknown","confidence":"low"},
+        {"stage":"observe","state":"unknown","confidence":"low"},
+        {"stage":"discriminate","state":"unknown","confidence":"low","basis":[{"code":"discriminator_not_established","summary":"whether a test checks this behavior is not established"}]}
+      ],
       "evidence_path": ["reach yes: 1 related test(s) found for owner `letTable`", "infection unknown: TypeScript preview adapter does not yet model infection.", "propagation unknown: TypeScript preview adapter does not yet model propagation.", "observation unknown: Strongest extracted oracle kind: `unknown` (rank 0)", "discriminator unknown: TypeScript preview adapter: every related test is registered under a condition or loop static analysis cannot evaluate; discriminate unknown (RIPR-SPEC-0243).", "related test tests/letTable.test.ts:11 letTable tier by points uses no oracle"],
       "flow_sinks": [
       ],
@@ -731,6 +766,13 @@
         "observe": {"state":"weak","confidence":"low","summary":"Strongest extracted oracle kind: `exact_value` (rank 5)"},
         "discriminate": {"state":"weak","confidence":"low","summary":"TypeScript preview adapter: strong oracle found but no strong assertion observes an owner call at the changed predicate boundary; missing proof: `points == 1000`."}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"low"},
+        {"stage":"infect","state":"unknown","confidence":"low"},
+        {"stage":"propagate","state":"unknown","confidence":"low"},
+        {"stage":"observe","state":"weak","confidence":"low"},
+        {"stage":"discriminate","state":"weak","confidence":"low"}
+      ],
       "evidence_path": ["reach yes: 1 related test(s) found for owner `missingKey`", "infection unknown: TypeScript preview adapter does not yet model infection.", "propagation unknown: TypeScript preview adapter does not yet model propagation.", "observation weak: Strongest extracted oracle kind: `exact_value` (rank 5)", "discriminator weak: TypeScript preview adapter: strong oracle found but no strong assertion observes an owner call at the changed predicate boundary; missing proof: `points == 1000`.", "related test tests/missingKey.test.ts:11 missingKey tier by points uses strong exact value oracle: expect(...).toBe(...)", "missing discriminator points == 1000: changed TypeScript equality-boundary at line 2 lacks a concrete preview discriminator"],
       "flow_sinks": [
       ],
@@ -878,6 +920,13 @@
         "observe": {"state":"weak","confidence":"low","summary":"Strongest extracted oracle kind: `exact_value` (rank 5)"},
         "discriminate": {"state":"weak","confidence":"low","summary":"TypeScript preview adapter: strong oracle found but no strong assertion observes an owner call at the changed predicate boundary; missing proof: `point.points == 1000`."}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"low"},
+        {"stage":"infect","state":"unknown","confidence":"low"},
+        {"stage":"propagate","state":"unknown","confidence":"low"},
+        {"stage":"observe","state":"weak","confidence":"low"},
+        {"stage":"discriminate","state":"weak","confidence":"low"}
+      ],
       "evidence_path": ["reach yes: 1 related test(s) found for owner `mutatedContainer`", "infection unknown: TypeScript preview adapter does not yet model infection.", "propagation unknown: TypeScript preview adapter does not yet model propagation.", "observation weak: Strongest extracted oracle kind: `exact_value` (rank 5)", "discriminator weak: TypeScript preview adapter: strong oracle found but no strong assertion observes an owner call at the changed predicate boundary; missing proof: `point.points == 1000`.", "related test tests/mutatedContainer.test.ts:11 mutatedContainer tier by points uses strong exact value oracle: expect(...).toBe(...)", "missing discriminator point.points == 1000: changed TypeScript equality-boundary at line 2 lacks a concrete preview discriminator"],
       "flow_sinks": [
       ],
@@ -1025,6 +1074,13 @@
         "observe": {"state":"weak","confidence":"low","summary":"Strongest extracted oracle kind: `exact_value` (rank 5)"},
         "discriminate": {"state":"weak","confidence":"low","summary":"TypeScript preview adapter: strong oracle found but no strong assertion observes an owner call at the changed predicate boundary; missing proof: `points == 1000`."}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"low"},
+        {"stage":"infect","state":"unknown","confidence":"low"},
+        {"stage":"propagate","state":"unknown","confidence":"low"},
+        {"stage":"observe","state":"weak","confidence":"low"},
+        {"stage":"discriminate","state":"weak","confidence":"low"}
+      ],
       "evidence_path": ["reach yes: 1 related test(s) found for owner `offBoundary`", "infection unknown: TypeScript preview adapter does not yet model infection.", "propagation unknown: TypeScript preview adapter does not yet model propagation.", "observation weak: Strongest extracted oracle kind: `exact_value` (rank 5)", "discriminator weak: TypeScript preview adapter: strong oracle found but no strong assertion observes an owner call at the changed predicate boundary; missing proof: `points == 1000`.", "related test tests/offBoundary.test.ts:11 offBoundary tier by points uses strong exact value oracle: expect(...).toBe(...)", "missing discriminator points == 1000: changed TypeScript equality-boundary at line 2 lacks a concrete preview discriminator"],
       "flow_sinks": [
       ],
@@ -1172,6 +1228,13 @@
         "observe": {"state":"weak","confidence":"low","summary":"Strongest extracted oracle kind: `exact_value` (rank 5)"},
         "discriminate": {"state":"weak","confidence":"low","summary":"TypeScript preview adapter: strong oracle found but no strong assertion observes an owner call at the changed predicate boundary; missing proof: `points == 1000`."}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"low"},
+        {"stage":"infect","state":"unknown","confidence":"low"},
+        {"stage":"propagate","state":"unknown","confidence":"low"},
+        {"stage":"observe","state":"weak","confidence":"low"},
+        {"stage":"discriminate","state":"weak","confidence":"low"}
+      ],
       "evidence_path": ["reach yes: 1 related test(s) found for owner `pushedTable`", "infection unknown: TypeScript preview adapter does not yet model infection.", "propagation unknown: TypeScript preview adapter does not yet model propagation.", "observation weak: Strongest extracted oracle kind: `exact_value` (rank 5)", "discriminator weak: TypeScript preview adapter: strong oracle found but no strong assertion observes an owner call at the changed predicate boundary; missing proof: `points == 1000`.", "related test tests/pushedTable.test.ts:12 pushedTable tier by points uses strong exact value oracle: expect(...).toBe(...)", "missing discriminator points == 1000: changed TypeScript equality-boundary at line 2 lacks a concrete preview discriminator"],
       "flow_sinks": [
       ],
@@ -1319,6 +1382,13 @@
         "observe": {"state":"weak","confidence":"low","summary":"Strongest extracted oracle kind: `exact_value` (rank 5)"},
         "discriminate": {"state":"weak","confidence":"low","summary":"TypeScript preview adapter: strong oracle found but no strong assertion observes an owner call at the changed predicate boundary; missing proof: `point.points == 1000`."}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"low"},
+        {"stage":"infect","state":"unknown","confidence":"low"},
+        {"stage":"propagate","state":"unknown","confidence":"low"},
+        {"stage":"observe","state":"weak","confidence":"low"},
+        {"stage":"discriminate","state":"weak","confidence":"low"}
+      ],
       "evidence_path": ["reach yes: 1 related test(s) found for owner `titleMutation`", "infection unknown: TypeScript preview adapter does not yet model infection.", "propagation unknown: TypeScript preview adapter does not yet model propagation.", "observation weak: Strongest extracted oracle kind: `exact_value` (rank 5)", "discriminator weak: TypeScript preview adapter: strong oracle found but no strong assertion observes an owner call at the changed predicate boundary; missing proof: `point.points == 1000`.", "related test tests/titleMutation.test.ts:11 titleMutation <computed title, line 11> uses strong exact value oracle: expect(...).toBe(...)", "missing discriminator point.points == 1000: changed TypeScript equality-boundary at line 2 lacks a concrete preview discriminator"],
       "flow_sinks": [
       ],
@@ -1450,5 +1520,5 @@
       "why": "preview adapter; advisory; may be incomplete; empty result is not Rust-grade clean"
     }
   ],
-  "source_subject": {"digest_algorithm":"sha256","files":[{"path":"src/aliasedKeys.ts","digest":"sha256:352fd52ae89afb553e4ac94fb5e8c81f4736671e2c80cd7870d52d3f6fdb8b65"},{"path":"src/identifierCell.ts","digest":"sha256:c122ea38b4a01b4bf39ffc8fb7fac5ce5ef48101c73950c2fc2164b30fb107ad"},{"path":"src/missingKey.ts","digest":"sha256:536ce14a349123b5c1cc256f0d682bd1edd8c647ebed7c0518ca60aff61fb313"},{"path":"src/mutatedContainer.ts","digest":"sha256:d7fc5d2b23be451a27262e696717daac1d24e82be91a50d20ba4833ac736eec7"},{"path":"src/offBoundary.ts","digest":"sha256:b5123b732c7ef4ed3de140806f9a6ca6874eadc00a7e063182f7ee00dae38998"},{"path":"src/pushedTable.ts","digest":"sha256:038e13ff435152b097b4f9e8d648a9069aab6cb6a51a1f86352feda2b6c04988"},{"path":"src/titleMutation.ts","digest":"sha256:bcb622289b2ae91b850c3800893b508d12fe24475c730724aa99ead94ace1895"}]}
+  "source_subject": {"digest_algorithm":"sha256","files":[{"path":"src/aliasedKeys.ts","digest":"sha256:352fd52ae89afb553e4ac94fb5e8c81f4736671e2c80cd7870d52d3f6fdb8b65"},{"path":"src/derivedTable.ts","digest":"sha256:8e20eccde9b0bd16b876ee3c25d9a8d54f80f772e3046654a79ed5bcd2e67d40"},{"path":"src/exportedTable.ts","digest":"sha256:7c2492b028cbb17da0b79e57d77a60197ba77f521b45b957bef66aeed2e36cf1"},{"path":"src/identifierCell.ts","digest":"sha256:c122ea38b4a01b4bf39ffc8fb7fac5ce5ef48101c73950c2fc2164b30fb107ad"},{"path":"src/letTable.ts","digest":"sha256:c745d64a754850378e93310852170209e15c4cb11624affda1a4655d90ba205a"},{"path":"src/missingKey.ts","digest":"sha256:536ce14a349123b5c1cc256f0d682bd1edd8c647ebed7c0518ca60aff61fb313"},{"path":"src/mutatedContainer.ts","digest":"sha256:d7fc5d2b23be451a27262e696717daac1d24e82be91a50d20ba4833ac736eec7"},{"path":"src/offBoundary.ts","digest":"sha256:b5123b732c7ef4ed3de140806f9a6ca6874eadc00a7e063182f7ee00dae38998"},{"path":"src/pushedTable.ts","digest":"sha256:038e13ff435152b097b4f9e8d648a9069aab6cb6a51a1f86352feda2b6c04988"},{"path":"src/titleMutation.ts","digest":"sha256:bcb622289b2ae91b850c3800893b508d12fe24475c730724aa99ead94ace1895"}]}
 }

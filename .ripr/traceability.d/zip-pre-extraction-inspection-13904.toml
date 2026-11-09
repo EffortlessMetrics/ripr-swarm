@@ -1,0 +1,21 @@
+[[behavior]]
+id = "RIPR-SPEC-0437"
+name = "managed server archive pre-extraction inspection"
+spec = "docs/specs/RIPR-SPEC-0437-managed-server-archive-inspection.md"
+tests = [
+  "editors/vscode/test/suite/download_hardening.test.ts::assertSafeZipListing rejects traversal, symlinks, reparse points, and member floods",
+  "editors/vscode/test/suite/download_hardening.test.ts::assertSafeZipListing accepts permission-only modes Windows tools write",
+  "editors/vscode/test/suite/download_hardening.test.ts::listZipCentralDirectoryEntries reads names and attributes from a fabricated zip",
+  "editors/vscode/test/suite/download_hardening.test.ts::listZipCentralDirectoryEntries refuses truncated or malformed archives",
+  "editors/vscode/test/suite/download_hardening.test.ts::listZipCentralDirectoryEntries refuses entries spilling past the directory end",
+  "editors/vscode/test/suite/download_hardening.test.ts::inspectZipArchive accepts a safe fabricated zip and refuses a symlink member",
+  "editors/vscode/test/suite/download_hardening.test.ts::assertSafeTarListing rejects traversal, links, and special members before extraction",
+]
+code = [
+  "editors/vscode/src/downloader.ts::listZipCentralDirectoryEntries",
+  "editors/vscode/src/downloader.ts::assertSafeZipListing",
+  "editors/vscode/src/downloader.ts::inspectZipArchive",
+  "editors/vscode/src/downloader.ts::assertSafeTarListing",
+  "editors/vscode/src/downloader.ts::extractArchive",
+]
+metrics = ["unit_test_pass_rate"]

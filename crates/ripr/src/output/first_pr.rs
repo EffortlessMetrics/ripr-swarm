@@ -8,7 +8,9 @@ use crate::domain::{CommandSpec, LanguageId};
 use crate::output::gap_decision_ledger::projection_eligible_from_value;
 use crate::output::receipt_lifecycle::receipt_lifecycle_state;
 use crate::output::receipt_write::receipt_write_command;
-use crate::output::review_comments::SUMMARY_REASON_NO_SAFE_PLACEMENT;
+use crate::output::review_comments::{
+    SUMMARY_REASON_NAVIGATION_ONLY_CROSS_LANGUAGE, SUMMARY_REASON_NO_SAFE_PLACEMENT,
+};
 use crate::output::start_here_state::{
     START_HERE_PREVIEW_LIMITED, normalize_start_here_output_state, start_here_output_state_is_known,
 };
@@ -144,8 +146,7 @@ mod validation;
 
 use freshness::{producing_ripr_version, start_here_packet_version_freshness};
 pub(crate) use freshness::{start_here_json_version_freshness, start_here_version_stale_detail};
-pub(crate) use options::FIRST_PR_HELP;
-use options::{FirstPrOptions, parse_options, print_help};
+pub(crate) use options::{FIRST_PR_HELP, FirstPrOptions};
 use preflight::{FirstPrPreflight, first_pr_preflight};
 #[cfg(test)]
 use rendering::markdown_code_or_text;
@@ -163,13 +164,9 @@ use crate::agent::loop_commands::anchored_redirect_target;
 use validation::validate_selected_state;
 use validation::{validate_selected_command_root, validate_start_here_packet};
 
-pub(crate) fn first_pr(args: &[String]) -> Result<(), String> {
-    if args.iter().any(|arg| arg == "--help" || arg == "-h") {
-        print_help();
-        return Ok(());
-    }
-
-    let mut options = parse_options(args)?;
+/// Run `first-pr` for already-parsed options. Argv parsing and `--help` live in
+/// the CLI adapter (`cli::commands::first_pr`), so this layer never imports it.
+pub(crate) fn first_pr_with_options(mut options: FirstPrOptions) -> Result<(), String> {
     let repo = repo_root()?;
     // A root that is not a directory cannot be analyzed: refuse (exit 2) before
     // the disclosure and before writing a recovery packet, so a mistyped path
@@ -936,7 +933,7 @@ fn root_preflight_recovery(root: &Path, options: &FirstPrOptions) -> Option<Sele
         // to `doctor` (#10713). A root `doctor` also detects as Python keeps
         // `wrong_root` (its `package.json` is likely tooling), and Rust below
         // the root still means a wrong root.
-        let doctor_languages = crate::cli::commands::detect_languages(root);
+        let doctor_languages = crate::config::language_detection::detect_languages(root);
         let doctor_javascript = doctor_languages.contains(&LanguageId::JavaScript);
         if LanguageId::TypeScript.is_available()
             && (doctor_javascript || doctor_languages.contains(&LanguageId::TypeScript))
@@ -1869,6 +1866,9 @@ fn review_card_repair_start(
         .filter_map(|bucket| report.get(bucket).and_then(Value::as_array))
         .flatten();
     let mut outside_diff_starts = 0usize;
+    let mut changed_line_gaps_without_start: Vec<String> = Vec::new();
+    let cards_from_gap_ledger = string_path(&report, &["analysis_scope", "scope"]).as_deref()
+        == Some("gap_ledger_artifact");
     for card in cards {
         // A card with no safe changed-line placement is a seam whose line and
         // owner sit outside every hunk. It is a repository repair, not this
@@ -1884,6 +1884,50 @@ fn review_card_repair_start(
         if let Some(top_gap) = top_gap_from_review_card(card, options) {
             return Ok(top_gap);
         }
+        // Only a card with a real changed-line placement counts. A
+        // navigation-only cross-language card names a test target, not a
+        // changed line; a placed card past the inline cap still counts.
+        if !cards_from_gap_ledger
+            && string_path(card, &["summary_reason"]).as_deref()
+                != Some(SUMMARY_REASON_NAVIGATION_ONLY_CROSS_LANGUAGE)
+            && card_is_unrepaired_changed_line_gap(card)
+        {
+            let placement = card.get("placement");
+            if let (Some(file), Some(line)) = (
+                placement
+                    .and_then(|placement| placement.get("path"))
+                    .and_then(Value::as_str)
+                    .filter(|file| !file.trim().is_empty()),
+                placement
+                    .and_then(|placement| placement.get("line"))
+                    .and_then(Value::as_u64),
+            ) {
+                let place = format!("`{file}:{line}`");
+                if !changed_line_gaps_without_start.contains(&place) {
+                    changed_line_gaps_without_start.push(place);
+                }
+            }
+        }
+    }
+    if !changed_line_gaps_without_start.is_empty() && selected_head_is_live(root, options) {
+        // A weak or unrevealed changed-line finding with no machine repair
+        // start is not "no actionable gap": the diff-aware `check` names the
+        // missing check and its by-hand route, so stopping here would be a
+        // false all-clear. Hand over that one command instead.
+        let places = changed_line_gaps_without_start.join(", ");
+        return Err(CardFallback::Recover(Selection::blocked_with_reason(
+            "blocked_artifact",
+            "changed_gaps_without_repair_start",
+            format!(
+                "The review cards in `{path}` report {} weak or unrevealed changed-line finding(s) at {places}, but none carries a machine repair start, so first-pr cannot say `no actionable gap`. Read them with the one command below: it names the missing check and the by-hand route for each.",
+                changed_line_gaps_without_start.len()
+            ),
+            Some(format!(
+                "ripr check --root {} --base {} --format human-full",
+                shell_arg(&options.command_root()),
+                shell_arg(&options.base)
+            )),
+        )));
     }
     if outside_diff_starts > 0 {
         return Err(CardFallback::NoCard(Some(format!(
@@ -2070,6 +2114,43 @@ fn top_gap_from_review_card(card: &Value, options: &FirstPrOptions) -> Option<To
         static_recheck_command: None,
         recommended_repair_command: None,
     })
+}
+
+/// A card placed on a changed line whose grip class says a test would not
+/// notice the change (weak, ungripped or reached-but-unrevealed). Static
+/// limitations and unknown states still carry these grip classes; only the
+/// repair start is missing.
+fn card_is_unrepaired_changed_line_gap(card: &Value) -> bool {
+    matches!(
+        string_path(card, &["grip_class"]).as_deref(),
+        Some("weakly_gripped" | "ungripped" | "reachable_unrevealed")
+    ) && matches!(
+        string_path(card, &["gap_state"]).as_deref(),
+        Some("static_limitation" | "unknown")
+    )
+}
+
+/// Whether the selected head is the live `HEAD`, the only case where a bare
+/// `ripr check --base <base>` (which analyzes the worktree) reads the same
+/// change first-pr was asked about.
+fn selected_head_is_live(root: &Path, options: &FirstPrOptions) -> bool {
+    let resolve = |revision: &str| {
+        let commit = format!("{revision}^{{commit}}");
+        run_git(
+            root,
+            &git_args(&[
+                "rev-parse",
+                "--verify",
+                "--quiet",
+                "--end-of-options",
+                &commit,
+            ]),
+        )
+        .ok()
+        .filter(CommandOutput::success)
+        .map(|output| output.stdout)
+    };
+    matches!((resolve(&options.head), resolve("HEAD")), (Some(a), Some(b)) if a == b)
 }
 
 fn current_evidence_strength_for_card(card: &Value) -> String {
@@ -3406,6 +3487,13 @@ fn repo_root() -> Result<PathBuf, String> {
 
 #[cfg(test)]
 mod tests {
+    // Argv entry points live in the CLI adapter; these tests drive the same
+    // end-to-end path through it. The only output -> cli edge left is this
+    // cfg(test) wrapper plus `detect_languages` (tracked in #5193).
+    fn first_pr(args: &[String]) -> Result<(), String> {
+        crate::cli::commands::first_pr::first_pr(args)
+    }
+
     #[test]
     fn a_verbatim_prefixed_root_is_the_same_root_as_its_plain_form() {
         use std::path::Path;
@@ -3569,51 +3657,6 @@ mod tests {
         let rendered = first_pr_write_command(&options, Path::new("/Repo/out/Reports"), false);
         assert!(rendered.contains("--out-dir /Repo/out/Reports"));
         assert!(!rendered.contains("--out-dir target/ripr/reports"));
-    }
-
-    #[test]
-    fn parse_accepts_artifact_paths_and_check() -> Result<(), String> {
-        let parsed = parse_options(&[
-            "--root".to_string(),
-            "repo".to_string(),
-            "--base".to_string(),
-            "origin/main".to_string(),
-            "--head".to_string(),
-            "HEAD".to_string(),
-            "--check-output".to_string(),
-            "check.json".to_string(),
-            "--gap-ledger".to_string(),
-            "gap.json".to_string(),
-            "--out-dir".to_string(),
-            "out".to_string(),
-            "--check".to_string(),
-        ])?;
-        assert_eq!(parsed.root, "repo");
-        assert_eq!(parsed.base, "origin/main");
-        assert!(parsed.base_explicit);
-        assert!(!FirstPrOptions::default().base_explicit);
-        assert_eq!(parsed.head, "HEAD");
-        assert_eq!(parsed.check_output.as_deref(), Some("check.json"));
-        assert_eq!(parsed.gap_ledger, "gap.json");
-        assert_eq!(parsed.out_dir, "out");
-        assert!(parsed.check);
-        assert!(parsed.preflight);
-        assert!(!FirstPrOptions::default().preflight);
-        assert_eq!(
-            parse_options(&["--gap-ledger".to_string(), "".to_string()]),
-            Err("first-pr --gap-ledger requires a non-empty value; pass a value right after --gap-ledger".to_string())
-        );
-        match parse_options(&["--gap-ledgr".to_string()]) {
-            Err(unknown)
-                if unknown.contains("Did you mean `--gap-ledger`?")
-                    && unknown.contains("Run `ripr first-pr --help`.") => {}
-            other => {
-                return Err(format!(
-                    "first-pr typo must suggest --gap-ledger from its help body, got {other:?}"
-                ));
-            }
-        }
-        Ok(())
     }
 
     #[test]
@@ -4679,6 +4722,42 @@ mod tests {
         cleanup(&repo)
     }
 
+    /// #13618: a nested Python package under a TypeScript root must not turn
+    /// the missing-marker refusal into `wrong_root`.
+    #[cfg(feature = "lang-typescript")]
+    #[test]
+    fn typescript_root_with_nested_python_package_still_names_the_missing_marker()
+    -> Result<(), String> {
+        let repo = write_temp_root(&env::temp_dir(), "first-pr-ts-nested-python")?;
+        fs::write(repo.join("package.json"), r#"{"devDependencies":{}}"#)
+            .map_err(|err| format!("write package.json: {err}"))?;
+        fs::create_dir_all(repo.join("lib")).map_err(|err| format!("create lib: {err}"))?;
+        fs::write(repo.join("lib/pricing.ts"), "export const p = 1;\n")
+            .map_err(|err| format!("write pricing.ts: {err}"))?;
+        fs::create_dir_all(repo.join("tools/py")).map_err(|err| format!("create py: {err}"))?;
+        fs::write(
+            repo.join("tools/py/pyproject.toml"),
+            "[project]\nname='t'\n",
+        )
+        .map_err(|err| format!("write pyproject: {err}"))?;
+        init_git_repo_with_initial_files(
+            &repo,
+            &["package.json", "lib/pricing.ts", "tools/py/pyproject.toml"],
+        )?;
+        let doctor_languages = crate::config::language_detection::detect_languages(&repo);
+        assert!(
+            !doctor_languages.contains(&LanguageId::Python),
+            "nested package under a TS root is not Python: {doctor_languages:?}"
+        );
+        write_first_pr(&repo, &FirstPrOptions::default())?;
+        let packet = read_packet(&repo.join(DEFAULT_OUT_DIR).join(START_HERE_JSON))?;
+        assert_eq!(
+            packet["selected"]["reason_code"], "typescript_project_marker_missing",
+            "{packet}"
+        );
+        cleanup(&repo)
+    }
+
     /// #10713: `doctor` detects a `package.json` + `.ts` repository as
     /// TypeScript, so first-pr must not call it a wrong root or send the
     /// reader back to `doctor`; it names the marker the config rules need.
@@ -4707,7 +4786,7 @@ mod tests {
             &repo,
             &["package.json", "lib/pricing.ts", "lib/pricing.test.ts"],
         )?;
-        let doctor_languages = crate::cli::commands::detect_languages(&repo);
+        let doctor_languages = crate::config::language_detection::detect_languages(&repo);
         assert!(
             doctor_languages.contains(&LanguageId::TypeScript),
             "fixture must be TypeScript to doctor: {doctor_languages:?}"
@@ -4771,7 +4850,7 @@ mod tests {
         fs::write(repo.join("index.js"), "module.exports = (x) => x;\n")
             .map_err(|err| format!("write index.js: {err}"))?;
         init_git_repo_with_initial_files(&repo, &["index.js"])?;
-        let doctor_languages = crate::cli::commands::detect_languages(&repo);
+        let doctor_languages = crate::config::language_detection::detect_languages(&repo);
         assert!(
             doctor_languages.contains(&LanguageId::JavaScript),
             "fixture must be JavaScript to doctor: {doctor_languages:?}"
@@ -4799,7 +4878,7 @@ mod tests {
         fs::write(repo.join("app.py"), "def f():\n    return 1\n")
             .map_err(|err| format!("write app.py: {err}"))?;
         init_git_repo_with_initial_files(&repo, &["package.json", "app.py"])?;
-        let doctor_languages = crate::cli::commands::detect_languages(&repo);
+        let doctor_languages = crate::config::language_detection::detect_languages(&repo);
         assert!(
             doctor_languages.contains(&LanguageId::Python),
             "fixture must be Python to doctor: {doctor_languages:?}"
@@ -6673,6 +6752,113 @@ mod tests {
         let text = packet.to_string();
         assert!(!text.contains("agent repair"), "{text}");
         assert!(!markdown.contains("Start repair"), "{markdown}");
+        Ok(())
+    }
+
+    /// A weak changed-line finding that is a static limitation (no machine
+    /// repair start) must not read as an all-clear: first-pr hands over the
+    /// one diff-aware `ripr check` command that names the by-hand route. The
+    /// same card in gap-ledger-scoped cards, or an ordinary actionable card
+    /// with no start, keeps the established no-action behavior.
+    #[test]
+    fn limited_changed_line_card_hands_over_the_check_command() -> Result<(), String> {
+        let limited_card = || {
+            let mut card = review_card("seam-a", None);
+            card["gap_state"] = json!("static_limitation");
+            card["placement"] =
+                json!({"path": "src/pricing.rs", "line": 88, "mode": "exact_seam_line"});
+            card
+        };
+        let repo = temp_repo("first-pr-limited-card")?;
+        write_no_top_gap_ledger(&repo)?;
+        let mut second = limited_card();
+        second["placement"]["line"] = json!(90);
+        write_json(
+            &repo.join(DEFAULT_REVIEW_COMMENTS),
+            review_comments_report(vec![limited_card(), second]),
+        )?;
+        let packet = render_start_here_packet(&repo, &FirstPrOptions::default());
+        let mut ledger_scoped = review_comments_report(vec![limited_card()]);
+        ledger_scoped["analysis_scope"] = json!({"scope": "gap_ledger_artifact"});
+        write_json(&repo.join(DEFAULT_REVIEW_COMMENTS), ledger_scoped)?;
+        let scoped_packet = render_start_here_packet(&repo, &FirstPrOptions::default());
+        cleanup(&repo)?;
+
+        assert_eq!(packet["status"], "blocked", "{packet}");
+        assert_eq!(
+            packet["selected"]["reason_code"], "changed_gaps_without_repair_start",
+            "{packet}"
+        );
+        let message = packet["selected"]["message"].as_str().unwrap_or_default();
+        assert!(
+            message.contains("2 weak or unrevealed changed-line finding(s) at `src/pricing.rs:88`, `src/pricing.rs:90`"),
+            "{message}"
+        );
+        let next = packet["selected"]["next_command"]
+            .as_str()
+            .unwrap_or_default();
+        assert!(
+            next.starts_with("ripr check --root ")
+                && next.ends_with("--base origin/main --format human-full"),
+            "{next}"
+        );
+        assert_eq!(scoped_packet["status"], "no_action", "{scoped_packet}");
+
+        // Discriminating negative controls: each must keep the established
+        // no-action result, so dropping any one condition turns this red.
+        let no_action_for =
+            |name: &str, card: Value, options: &FirstPrOptions| -> Result<Value, String> {
+                let repo = temp_repo(name)?;
+                write_no_top_gap_ledger(&repo)?;
+                write_json(
+                    &repo.join(DEFAULT_REVIEW_COMMENTS),
+                    review_comments_report(vec![card]),
+                )?;
+                let packet = render_start_here_packet(&repo, options);
+                cleanup(&repo)?;
+                Ok(packet)
+            };
+        let mut strong = limited_card();
+        strong["grip_class"] = json!("strongly_gripped");
+        let mut settled = limited_card();
+        settled["gap_state"] = json!("already_observed");
+        let mut unplaced = limited_card();
+        unplaced["placement"] = Value::Null;
+        // Placement kept, so only the navigation-only guard can hold this.
+        let mut navigation_only = limited_card();
+        navigation_only["summary_reason"] = json!(SUMMARY_REASON_NAVIGATION_ONLY_CROSS_LANGUAGE);
+        for (name, card, options) in [
+            (
+                "first-pr-limited-unplaced",
+                unplaced,
+                FirstPrOptions::default(),
+            ),
+            (
+                "first-pr-limited-navigation",
+                navigation_only,
+                FirstPrOptions::default(),
+            ),
+            ("first-pr-limited-strong", strong, FirstPrOptions::default()),
+            (
+                "first-pr-limited-settled",
+                settled,
+                FirstPrOptions::default(),
+            ),
+            (
+                "first-pr-limited-offhead",
+                limited_card(),
+                FirstPrOptions {
+                    head: "feature-tip".to_string(),
+                    ..FirstPrOptions::default()
+                },
+            ),
+        ] {
+            let control = no_action_for(name, card, &options)?;
+            assert_ne!(
+                control["selected"]["reason_code"], "changed_gaps_without_repair_start",
+                "{name}: {control}"
+            );
+        }
         Ok(())
     }
 

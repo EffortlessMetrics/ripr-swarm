@@ -364,3 +364,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — owner_return_pin_cfg_attr_module (29)
+
+Reason:
+RIPR-SPEC-0221: inert miss wording says shape that can keep the assertion from running
+
+Command:
+`cargo xtask goldens bless owner_return_pin_cfg_attr_module --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

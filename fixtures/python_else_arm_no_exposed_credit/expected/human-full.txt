@@ -51,6 +51,9 @@ Weakness
   - A strong Python oracle reaches `sign`, but static evidence does not place a related test input inside the guarding arm `not (x > 0)`; every observed input leaves the changed line unexecuted. Add a test input that satisfies the guarding condition
   - missing discriminator not (x > 0): the changed line sits in the `else` arm of an `if`/`elif` chain (`x > 0`) that is entered only when none of them hold, and each strong related test input is kept off it by this chain or an enclosing guard; observed x = 5; the changed line never executes under an observed input
 
+Next step
+  Python preview: strengthen the existing related test with an exact return-value assertion for the missing check `not (x > 0)`
+
 Python repair card (preview/advisory)
   card version: python_repair_card.v1
   canonical gap: gap:python:src/sign.py:sign:return_value:return_value:-2
@@ -76,9 +79,6 @@ Python repair card (preview/advisory)
     - Syntax-first Python preview evidence only.
     - No source edits, generated tests, mutation execution, provider calls, or gate authority.
     - Verify success alone is not a gap-closure receipt.
-
-Next step
-  Python preview: strengthen the existing related test with an exact return-value assertion for the missing check `not (x > 0)`
 Drill in:
   (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/python_else_arm_no_exposed_credit/input --diff <cwd>/fixtures/python_else_arm_no_exposed_credit/diff.patch --mode fast probe:src_sign.py:python_preview:6169374f

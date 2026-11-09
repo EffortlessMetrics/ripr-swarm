@@ -54,8 +54,8 @@ use super::super::classify::{PythonNoBehaviorContext, classify_change_with_value
 use super::super::probe_shape::{canonical_python_gap_for, classify_probe_shape};
 use super::super::reexports::apply_package_reexports_from;
 use super::super::related_tests::{
-    PythonRelatedCandidate, find_related_tests, owner_module_paths, related_test_candidates,
-    related_tests_for_candidates,
+    PythonRelatedCandidate, apply_class_facts, find_related_tests, owner_module_paths,
+    related_test_candidates, related_tests_for_candidates,
 };
 use super::super::sink_alignment::classify_sink_alignment_with_old;
 use super::super::source_facts::{
@@ -467,6 +467,11 @@ pub(in crate::analysis::language::python) fn build_repo_evidence(
                             .map(|(_, init_source)| init_source.as_str())
                     },
                 );
+                // Class facts are file-local, so the single shared owner of
+                // them runs here, before the owner inventory and finding
+                // projection read them, exactly as diff mode orders it
+                // (#13880).
+                apply_class_facts(&mut facts.owners);
                 analyzed += 1;
                 let owner_evidence = build_production_file_evidence(
                     relative,

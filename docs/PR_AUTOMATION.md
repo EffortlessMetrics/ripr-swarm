@@ -390,6 +390,7 @@ cargo xtask specs next
 cargo xtask suggested-fixes
 cargo xtask targeted-rerun-benchmark --root <path> --changed-test <path> [--samples <n>] [--timeout-ms <n>]
 cargo xtask targeted-test-outcome --before <path> --after <path>
+cargo xtask slow-test-report [--junit <path>] [--policy <path>] [--limit <n>]
 cargo xtask test-efficiency-report
 cargo xtask test-oracle-report
 cargo xtask update-badge-endpoints
@@ -456,11 +457,14 @@ before compilation-bearing file-policy enumeration. It writes
 `target/ripr/reports/ci-policy.{json,md}` through the precommit report owner,
 identifies its composition, and leaves legacy `precommit.md` and structured
 local `precommit-v2` receipts untouched.
-Its pass excludes selected Clippy; the required producer retains explicit
-`cargo clippy --workspace --all-targets -- -D warnings`. The source/toolchain/input
-policy-preflight receipt is still verified. Formatting and the later dependency,
-process and network steps are retained; no duplicate-policy removal or measured
-savings is claimed. Ordinary local `precommit` keeps selected Clippy.
+Its pass excludes formatting and selected Clippy; the required producer retains
+explicit `cargo fmt --check` and
+`cargo clippy --workspace --all-targets -- -D warnings` obligations. The
+source/toolchain/input policy-preflight receipt is still verified and does not
+stand in for formatting proof. Formatting runs once in the hosted early step,
+instead of again inside `ci-policy` (#8198). The later dependency, process and
+network steps are retained. No measured duration saving or complete 20-minute
+route is claimed. Ordinary local `precommit` keeps formatting and selected Clippy.
 
 `precommit` is the cheap non-mutating guardrail. It checks formatting, spec
 format and numbering, and the policy surfaces that should fail quickly before
@@ -805,6 +809,17 @@ alias that produces the same non-blocking report.
 oracle kind and strength, observed literal values, static limitations, and
 advisory reason counts for low-discriminator signals. The report is a review
 aid and does not block CI.
+
+`slow-test-report` reads the nextest `ci` JUnit XML (default
+`target/nextest/ci/junit.xml`) and writes the slowest tests (default 50) to
+`target/ripr/reports/slow-tests.md` and `target/ripr/reports/slow-tests.json`.
+Each test is judged against `policy/test-time-budget.toml`: a per-test budget, a
+baseline allowlist of tests already over budget, and a regression cap (a
+baselined test slower than `regression_factor` times its recorded time is
+reported as regressed). The report is advisory; it fails only when the policy
+`mode` is `enforced` and a test is over budget without a baseline entry or has
+regressed past the cap. Duplicate testcase rows from several shards are merged,
+keeping the slowest. It never runs tests (#12905).
 
 `dogfood` runs `ripr check --mode fast` against stable in-repo fixture diffs,
 writes actual outputs under `target/ripr/dogfood/`, and writes advisory

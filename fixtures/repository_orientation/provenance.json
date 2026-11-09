@@ -1,0 +1,12 @@
+{
+  "schema_version": "repository_orientation_provenance.v1",
+  "repository": "EffortlessMetrics/ripr-swarm",
+  "captured_at": "2026-11-02T03:15:00Z",
+  "capture_method": "authored repository-orientation corpus for the #2331 cold-start integration proof",
+  "files": [
+    {
+      "path": "corpus.json",
+      "sha256": "969b6f3e019998b087bb0487710fe5fd47d0ebad818fea26206ab7364ae3f8bf"
+    }
+  ]
+}

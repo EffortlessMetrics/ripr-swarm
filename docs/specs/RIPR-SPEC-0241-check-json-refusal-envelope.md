@@ -66,9 +66,15 @@ and parse location, no TOML source excerpt) per RIPR-SPEC-0007. No other
 caller-unsupplied value enters the document.
 
 Argv usage errors (an unknown flag, a missing value, two disagreeing
-output selections) stay prose-only: exit `2`, empty stdout, the cause on
-stderr. There is no successfully parsed invocation to echo, so no envelope
-exists.
+output selections) keep exit `2` and the cause on stderr. There is no
+successfully parsed invocation to echo, so no analysis envelope exists.
+Under an explicit JSON request (#6834 decision, 2026-11-08; #11584) the
+covered classes write only the minimal `cli_refusal` document to stdout: an
+unknown command, an unknown flag or stray positional, an unrecognized value
+from the CLI's shared unknown-value builder, and `explain --format json`.
+Other argv errors, such as a missing value, a malformed value or two
+disagreeing output selections, keep empty stdout even under a JSON request.
+Without a JSON request stdout stays empty.
 
 ## Required Evidence
 
@@ -93,8 +99,13 @@ exists.
 
 - `ripr check --json --base definitely-not-a-real-ref` emits
   `base_unresolvable` with route `analysis/base-resolution`, exit 2.
-- `ripr check --json --bogus-flag` emits nothing on stdout (argv
-  carve-out), exit 2, cause on stderr.
+- `ripr check --json --bogus-flag` emits no analysis envelope: stdout
+  carries only the minimal `cli_refusal` document (`unknown_argument`,
+  token `--bogus-flag`, `next` the `ripr check --help --all` route), exit 2,
+  cause on stderr (#11584). The same holds for any JSON `--format`, such as
+  `json-terse`. Without a JSON request stdout stays empty.
+- `ripr check --json --base` (a flag missing its value) keeps empty stdout
+  even under the JSON request, exit 2, cause on stderr.
 - A malformed `ripr.toml` emits `config_invalid` with the redacted summary;
   a directory with no config entry at all falls back to `analysis_failed`.
 
@@ -116,15 +127,17 @@ exists.
 - `crates/ripr/tests/cli_smoke.rs::check_json_unmigrated_analysis_failure_emits_analysis_failed`
 - `crates/ripr/tests/cli_smoke.rs::check_json_timeout_and_bad_base_have_distinct_identities`
 - `crates/ripr/tests/cli_smoke.rs::check_json_success_carries_no_refusal_shape`
-- `crates/ripr/tests/cli_smoke.rs::check_json_argv_usage_errors_stay_prose_only`
+- `crates/ripr/tests/cli_smoke.rs::check_json_argv_usage_errors_emit_cli_refusal`
+- `crates/ripr/tests/cli_smoke.rs::check_unknown_flag_under_json_terse_format_emits_cli_refusal`
+- `crates/ripr/tests/cli_smoke.rs::argv_usage_errors_without_json_request_keep_stdout_empty`
 - `crates/ripr/tests/cli_smoke/check_artifact_stdin.rs::python_stdin_artifact_refusal_preserves_named_recovery`
 - `crates/ripr/tests/cli_smoke/check_artifact_stdin.rs::javascript_stdin_artifact_refusal_preserves_named_recovery`
 - `crates/ripr/src/cli/commands/check.rs::config_load_refusal_without_any_config_entry_falls_back`
 
 ## Implementation Mapping
 
-- `crates/ripr/src/core_error.rs::CheckFailureKind`
-- `crates/ripr/src/core_error.rs::check_refusal`
+- `crates/ripr-contract/src/core_error.rs::CheckFailureKind`
+- `crates/ripr-contract/src/core_error.rs::check_refusal`
 - `crates/ripr/src/cli/commands/check.rs::refuse_check`
 - `crates/ripr/src/cli/commands/check.rs::config_load_refusal`
 - `crates/ripr/src/output/limited_check.rs::render_check_failure_json`
@@ -186,13 +199,15 @@ machine-readable `check` formats carry their own refusal documents:
 - `ripr diff --json`, `ripr rerun --json`, `ripr context` (JSON only), `ripr
   agent brief --json`, and `ripr agent packet --json` write the same envelope
   as `check --json` for every post-argv-parse operational failure, keyed with
-  the refusing command's own `schema_version` (`"0.1"` for diff and agent brief,
+  the refusing command's own `schema_version` (`"0.1"` for diff, `"0.2"` for agent brief,
   `"ripr-targeted-rerun-v1"` for rerun, `"1.1"` for context, `"0.5"` for agent
   packet). `mode` appears only on commands that accept `--mode` (check, diff,
   context); `scope` is `"diff"` for diff-scoped commands and `"repo"` for
   agent brief and agent packet; agent brief echoes the caller-supplied
   `--base` when its working set selected one. Exit stays `2`, prose stays on
-  stderr, and argv usage errors stay prose-only with empty stdout.
+  stderr, and argv usage errors keep empty stdout except the covered classes,
+  which write the minimal `cli_refusal` document under an explicit JSON
+  request (#11584).
 - The closed identity vocabulary includes eight members. All but
   `analysis_timeout` and `analysis_worker_stopped` make no claim that analysis
   ran; `analysis_timeout` (#5369) means the wall-clock budget expired before
@@ -257,11 +272,11 @@ all renderers.
 
 ## Implementation Mapping (Amendment #7331, #7332)
 
-- `crates/ripr/src/core_error.rs::CheckFailureKind::{CheckArtifactUnusable, GapLedgerUnusable, SeamIdUnknown, SeamPolicyOmitted, SeamNotActionable, DiffInputUnsupported, AnalysisTimeout, AnalysisWorkerStopped}`
+- `crates/ripr-contract/src/core_error.rs::CheckFailureKind::{CheckArtifactUnusable, GapLedgerUnusable, SeamIdUnknown, SeamPolicyOmitted, SeamNotActionable, DiffInputUnsupported, AnalysisTimeout, AnalysisWorkerStopped}`
 - `crates/ripr/src/cli/commands/check_budget.rs::run_with_budget`
 - `crates/ripr/src/cli/commands_agent_support.rs::agent_brief_checked_lines_from_diff`
-- `crates/ripr/src/core_error.rs::RefusalNotice`
-- `crates/ripr/src/core_error.rs::refusal_notice`
+- `crates/ripr-contract/src/core_error.rs::RefusalNotice`
+- `crates/ripr-contract/src/core_error.rs::refusal_notice`
 - `crates/ripr/src/output/limited_check.rs::RefusalEnvelopeContext`
 - `crates/ripr/src/output/limited_check.rs::render_refusal_envelope`
 - `crates/ripr/src/cli/commands_context.rs::refuse_json_envelope`
@@ -288,7 +303,8 @@ parsing or new failure family is introduced. The context envelope uses version
 `1.1`, as established by RIPR-SPEC-0284.
 
 Selector misses and ambiguity remain usage-class under RIPR-SPEC-0003: exit 2,
-empty stdout, and recovery guidance on stderr. Supplied-artifact refusals retain
+recovery guidance on stderr, and stdout empty unless JSON was explicitly
+requested (minimal `cli_refusal` document, #11584). Supplied-artifact refusals retain
 `check_artifact_unusable`. Public String-returning library compatibility wrappers
 keep their existing error text.
 

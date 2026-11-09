@@ -1,5 +1,8 @@
+mod assertion_call_kind;
 mod boolean_owner_pin;
+mod framework_snapshot;
 mod module_extraction;
+pub(super) mod panic_marker;
 mod shared_execution_context;
 mod warm_entrypoint;
 
@@ -11,7 +14,7 @@ use crate::analysis::repair_route::{
     RepairRouteState, RepairTargetSelection, is_safe_for_repair_packet, repair_packet_eligibility,
 };
 use crate::analysis::rust_index::{RaRustSyntaxAdapter, RustSyntaxAdapter};
-use crate::analysis::seam_classification::ClassifiedSeam;
+use crate::analysis::seam_classification::{ClassifiedSeam, classify_seam};
 use crate::analysis::seam_inventory::inventory_seams_from_index;
 use crate::analysis::seams::{ExpectedSink, RequiredDiscriminator, SeamGripClass};
 use std::fs;
@@ -2757,6 +2760,66 @@ fn below_case() {
 }
 
 #[test]
+fn evidence_pass_scans_each_test_body_once_not_once_per_oracle_ask() -> Result<(), String> {
+    // The seam pass asks the shadow check about the same test bodies again and
+    // again (per seam, stage and oracle). A worker's run memo must absorb the
+    // repeats: the item-syntax prefilter runs once per distinct body (#13577).
+    let prod = PathBuf::from("src/pricing.rs");
+    let prod_src = r#"
+pub fn discounted_total(amount: i32, threshold: i32) -> i32 {
+    if amount >= threshold { amount - 10 } else { amount }
+}
+"#;
+    let tests = PathBuf::from("tests/pricing_tests.rs");
+    let tests_src = r#"
+#[test]
+fn boundary_case() {
+    assert_eq!(discounted_total(100, 100), 90);
+    assert_eq!(discounted_total(101, 100), 91);
+}
+#[test]
+fn below_case() {
+    assert_eq!(discounted_total(50, 100), 50);
+}
+"#;
+    let index = index_from_files(&[(prod, prod_src), (tests, tests_src)])?;
+    let seams = inventory_seams_from_index(&[PathBuf::from("src/pricing.rs")], &index);
+    // Independent reference: the distinct test bodies the pass can ask about.
+    let distinct: std::collections::HashSet<&str> = index
+        .tests()
+        .iter()
+        .filter(|test| !test.assertions.is_empty())
+        .map(|test| test.body.as_str())
+        .collect();
+    assert_eq!(distinct.len(), 2, "fixture holds two asserting tests");
+    // One worker, so the thread-local counters see every ask.
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(1)
+        .build()
+        .map_err(|error| format!("pool builds: {error}"))?;
+    let (asks, scans) = pool.install(|| {
+        let asks = crate::analysis::classify::owner_item_ask_count();
+        let scans = crate::analysis::classify::owner_item_scan_count();
+        let _ = evidence_for_seams(&seams, &index);
+        (
+            crate::analysis::classify::owner_item_ask_count() - asks,
+            crate::analysis::classify::owner_item_scan_count() - scans,
+        )
+    });
+    assert!(
+        asks > distinct.len(),
+        "the pass must ask more often than there are bodies ({asks} asks)"
+    );
+    assert!(scans >= 1, "the prefilter ran");
+    assert!(
+        scans <= distinct.len(),
+        "{scans} prefilter runs for {} distinct bodies over {asks} asks",
+        distinct.len()
+    );
+    Ok(())
+}
+
+#[test]
 fn evidence_for_seams_matches_single_seam_evidence_while_reusing_context() -> Result<(), String> {
     let prod = PathBuf::from("src/pricing.rs");
     let prod_src = r#"
@@ -4626,14 +4689,14 @@ fn producer_rejects_same_file_production_helper_as_test_target() -> Result<(), S
         start_line: 10,
         end_line: 12,
         body: "fn discounted_total_helper() {}".into(),
-        calls: Vec::new(),
+        calls: crate::analysis::facts::SharedFactSlice::empty(),
         returns: Vec::new(),
-        literals: Vec::new(),
+        literals: crate::analysis::facts::SharedFactSlice::empty(),
         source_role: FunctionSourceRole::Production,
-        attrs: Vec::new(),
+        attrs: crate::analysis::facts::SharedFactSlice::empty(),
         impl_attrs: Vec::new(),
-        nested_fn_names: Vec::new(),
-        let_bindings: Vec::new(),
+        nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+        let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
         item: Default::default(),
         impl_context: Default::default(),
     };
@@ -4643,12 +4706,12 @@ fn producer_rejects_same_file_production_helper_as_test_target() -> Result<(), S
         start_line: 10,
         end_line: 12,
         body: function.body.clone(),
-        calls: Vec::new(),
+        calls: crate::analysis::facts::SharedFactSlice::empty(),
         assertions: Vec::new(),
-        literals: Vec::new(),
-        attrs: Vec::new(),
-        nested_fn_names: Vec::new(),
-        let_bindings: Vec::new(),
+        literals: crate::analysis::facts::SharedFactSlice::empty(),
+        attrs: crate::analysis::facts::SharedFactSlice::empty(),
+        nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+        let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
         generated: None,
     };
     let mut index = RustIndex::default();
@@ -4664,6 +4727,7 @@ fn producer_rejects_same_file_production_helper_as_test_target() -> Result<(), S
             used_lexical_fallback: false,
             module_declarations: Vec::new(),
             unresolved_property_macros: Vec::new(),
+            verus_guard_facts: Vec::new(),
             role_provenance: Default::default(),
             source: "fn discounted_total_helper() {}".into(),
             item_scopes: None,
@@ -11392,6 +11456,7 @@ enum FlowSinkKind {
 
 struct MissingDiscriminatorFact {
     flow_sink: Option<FlowSinkFact>,
+drafted_boundary: None
 }
 
 fn activation_evidence(flow_sinks: &[FlowSinkFact]) -> Option<MissingDiscriminatorFact> {
@@ -11401,6 +11466,7 @@ fn activation_evidence(flow_sinks: &[FlowSinkFact]) -> Option<MissingDiscriminat
 fn missing_boundary_discriminator(flow_sinks: &[FlowSinkFact]) -> Option<MissingDiscriminatorFact> {
     Some(MissingDiscriminatorFact {
         flow_sink: first_visible_flow_sink(flow_sinks).cloned(),
+    drafted_boundary: None
     })
 }
 
@@ -13064,12 +13130,12 @@ fn assertion_targets_seam_returns_false_for_empty_token_list() {
         start_line: 1,
         end_line: 5,
         body: "assert_eq!(1, 1);".into(),
-        calls: Vec::new(),
+        calls: crate::analysis::facts::SharedFactSlice::empty(),
         assertions: Vec::new(),
-        literals: Vec::new(),
-        attrs: Vec::new(),
-        nested_fn_names: Vec::new(),
-        let_bindings: Vec::new(),
+        literals: crate::analysis::facts::SharedFactSlice::empty(),
+        attrs: crate::analysis::facts::SharedFactSlice::empty(),
+        nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+        let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
         generated: None,
     };
     assert!(!assertion_targets_seam(&test, &[]));
@@ -13890,6 +13956,69 @@ fn proximity_test_pinning_another_function_lends_a_predicate_boundary_no_oracle(
     Ok(())
 }
 
+/// #12264: an assertion that reads a local bound to another function pins that
+/// function, the same attribution `ripr check` makes. The repo-seam gate reads
+/// the local's initializer, so `let r = reduce(3); assert_eq!(r, ..)` lends the
+/// owner's predicate boundary no oracle, while a local bound to the owner's own
+/// call keeps its credit.
+#[test]
+fn proximity_assertion_on_a_local_bound_to_another_function_lends_no_oracle() -> Result<(), String>
+{
+    let published_for = |extra_tests: &str| -> Result<Vec<OracleStrength>, String> {
+        let prod = format!(
+            "#[derive(Debug, PartialEq)]\npub enum Reduction {{ Failure, Over(u64) }}\n\
+             pub fn reduce(tokens: u64) -> Reduction {{\n    if tokens > 9 {{ Reduction::Failure }} else {{ Reduction::Over(tokens) }}\n}}\n\
+             pub fn consume(tokens: u64) -> bool {{\n    match reduce(tokens) {{\n        Reduction::Failure => false,\n        Reduction::Over(wait) => wait < 5,\n    }}\n}}\n\
+             #[cfg(test)]\nmod tests {{\n    use super::*;\n    {extra_tests}\n}}\n"
+        );
+        let files: Vec<(PathBuf, &str)> = vec![(PathBuf::from("src/lib.rs"), prod.as_str())];
+        let index = index_from_files(&files)?;
+        let seams = inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &index);
+        let boundary = seams
+            .iter()
+            .find(|s| {
+                s.kind() == SeamKind::PredicateBoundary && s.expression().contains("wait < 5")
+            })
+            .ok_or_else(|| "wait < 5 boundary seam present".to_string())?;
+        let context = CompactGripContext::new(&index);
+        let full = evidence_for_seam(boundary, &index);
+        let compact = compact_evidence_for_seam(boundary, &context);
+        assert_eq!(
+            full.observe.state, compact.observe.state,
+            "full and compact agree on observe"
+        );
+        assert_eq!(
+            full.discriminate.state, compact.discriminate.state,
+            "full and compact agree on discriminate"
+        );
+        Ok(full
+            .related_tests
+            .iter()
+            .map(|grip| grip.oracle_strength.clone())
+            .collect())
+    };
+    let runner = "#[test] fn consume_runs() { let _ = consume(3); }";
+    let direct = "#[test] fn reduce_over() { assert_eq!(reduce(3), Reduction::Over(3)); }";
+    let bound =
+        "#[test] fn reduce_over() { let r = reduce(3); assert_eq!(r, Reduction::Over(3)); }";
+    let owner_bound = "#[test] fn consume_pinned() { let c = consume(3); assert_eq!(c, true); }";
+    assert_eq!(
+        published_for(&format!("{direct} {runner}"))?,
+        vec![OracleStrength::None, OracleStrength::None],
+        "direct spelling: the other function lends none"
+    );
+    assert_eq!(
+        published_for(&format!("{bound} {runner}"))?,
+        vec![OracleStrength::None, OracleStrength::None],
+        "a local bound to the other function lends none"
+    );
+    assert!(
+        published_for(&format!("{owner_bound} {runner}"))?.contains(&OracleStrength::Strong),
+        "a local bound to the owner's own call keeps the oracle"
+    );
+    Ok(())
+}
+
 /// #12600/#12671: the same refusal for a returned value. `Ok(n)` in
 /// `parse_masked` is a value `parse_pinned` also returns, so a same-file test
 /// that pins `parse_pinned` lends it no oracle once a test that runs
@@ -13982,6 +14111,125 @@ fn exact_error_pin_is_not_published_as_an_oracle_on_the_ok_value_seam() -> Resul
     Ok(())
 }
 
+/// #12836: on an `error_variant` seam, an exact error-variant pin that names a
+/// sibling variant is not a discriminator for this seam. The classify stage
+/// already grades it weak (`kind-match false`); the related-test record must
+/// not publish the same assertion at strong, so both views agree. The seam the
+/// pin does name keeps its strong credit.
+#[test]
+fn sibling_variant_pin_reads_weak_in_the_stage_and_the_related_test_record() -> Result<(), String> {
+    let prod = "#[derive(Debug, PartialEq)]\npub enum Fault {\n    Zero,\n    One,\n}\n\
+         pub fn classify(n: u8) -> Result<u8, Fault> {\n    \
+         if n == 0 { return Err(Fault::Zero); }\n    \
+         if n == 1 { return Err(Fault::One); }\n    Ok(n)\n}\n\
+         #[cfg(test)]\nmod tests {\n    use super::*;\n    \
+         #[test] fn zero_is_fault_zero() { assert_eq!(classify(0).unwrap_err(), Fault::Zero); }\n}\n";
+    let files: Vec<(PathBuf, &str)> = vec![(PathBuf::from("src/lib.rs"), prod)];
+    let index = index_from_files(&files)?;
+    let seams = inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &index);
+    let evidence = |expression: &str| -> Result<TestGripEvidence, String> {
+        let seam = seams
+            .iter()
+            .find(|s| s.kind() == SeamKind::ErrorVariant && s.expression() == expression)
+            .ok_or_else(|| format!("error_variant seam {expression} present"))?;
+        Ok(evidence_for_seam(seam, &index))
+    };
+
+    let one = evidence("Err(Fault::One)")?;
+    let [grip] = one.related_tests.as_slice() else {
+        return Err(format!(
+            "one related test expected: {:?}",
+            one.related_tests
+        ));
+    };
+    assert_eq!(grip.oracle_kind, OracleKind::ExactErrorVariant);
+    assert_eq!(
+        grip.oracle_strength,
+        OracleStrength::Weak,
+        "a sibling-variant pin must not read strong on this seam"
+    );
+    assert_eq!(
+        one.discriminate.state,
+        StageState::Weak,
+        "stage and record agree: {}",
+        one.discriminate.summary
+    );
+
+    let zero = evidence("Err(Fault::Zero)")?;
+    assert_eq!(
+        zero.related_tests[0].oracle_strength,
+        OracleStrength::Strong,
+        "the pin still credits the variant it names"
+    );
+    assert_eq!(zero.discriminate.state, StageState::Yes);
+    Ok(())
+}
+
+/// #12897: a guarded `Result` match that names a sibling variant is the same
+/// shape as the exact pin above, so the related-test record grades it weak as
+/// the classify stage does, and the seam it does name keeps its grade.
+#[test]
+fn sibling_variant_guarded_match_reads_weak_in_the_stage_and_the_related_test_record()
+-> Result<(), String> {
+    let prod = "#[derive(Debug, PartialEq)]\npub enum Fault {\n    Zero,\n    One,\n}\n\
+         pub fn classify(n: u8) -> Result<u8, Fault> {\n    \
+         if n == 0 { return Err(Fault::Zero); }\n    \
+         if n == 1 { return Err(Fault::One); }\n    Ok(n)\n}\n\
+         #[cfg(test)]\nmod tests {\n    use super::*;\n    \
+         #[test] fn zero_is_fault_zero() {\n        \
+         match classify(0) { Err(Fault::Zero) => {} other => panic!(\"unexpected {other:?}\") }\n    }\n}\n";
+    let files: Vec<(PathBuf, &str)> = vec![(PathBuf::from("src/lib.rs"), prod)];
+    let index = index_from_files(&files)?;
+    let seams = inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &index);
+    let evidence = |expression: &str| -> Result<TestGripEvidence, String> {
+        let seam = seams
+            .iter()
+            .find(|s| s.kind() == SeamKind::ErrorVariant && s.expression() == expression)
+            .ok_or_else(|| format!("error_variant seam {expression} present"))?;
+        Ok(evidence_for_seam(seam, &index))
+    };
+
+    let zero = evidence("Err(Fault::Zero)")?;
+    let [zero_grip] = zero.related_tests.as_slice() else {
+        return Err(format!(
+            "one related test expected: {:?}",
+            zero.related_tests
+        ));
+    };
+    assert_eq!(
+        zero_grip.oracle_kind,
+        OracleKind::GuardedResultMatch,
+        "fixture shape: the test must extract a guarded Result match"
+    );
+    assert_eq!(
+        zero_grip.oracle_strength,
+        OracleStrength::Strong,
+        "the match still credits the variant it names"
+    );
+    assert_eq!(zero.discriminate.state, StageState::Yes);
+
+    let one = evidence("Err(Fault::One)")?;
+    let [grip] = one.related_tests.as_slice() else {
+        return Err(format!(
+            "one related test expected: {:?}",
+            one.related_tests
+        ));
+    };
+    assert_eq!(grip.oracle_kind, OracleKind::GuardedResultMatch);
+    assert_eq!(
+        grip.oracle_strength,
+        OracleStrength::Weak,
+        "a sibling-variant guarded match must not read strong on this seam"
+    );
+    assert_eq!(
+        one.discriminate.state,
+        StageState::Weak,
+        "stage and record agree: {}",
+        one.discriminate.summary
+    );
+    Ok(())
+}
+
 /// #12733 / #12734: the skipped error-variant pin must read the same in every
 /// view of the `Ok(n)` seam. The classify stage's discriminate evidence agrees
 /// with the related-test record (no oracle credited), and the record says the
@@ -14050,6 +14298,65 @@ fn skipped_error_pin_reads_the_same_in_the_stage_and_the_related_test_record() -
         "a pin that names the seam's own Err is not a different-arm pin"
     );
     assert_eq!(err_seam.discriminate.state, StageState::Yes);
+    Ok(())
+}
+
+/// #14011: whether an assertion pins another function is decided once per
+/// (owner, test, oracle) for the whole context, not once per ranking. The
+/// owner (`consume`) has proximity-only related tests whose assertions read a
+/// local, so the decision runs, and a second sweep over the same seam reads
+/// the memo instead of rebuilding the assertion text for every oracle.
+#[test]
+fn other_function_pin_decisions_are_computed_once_per_context() -> Result<(), String> {
+    const SWEEPS: usize = 25;
+    let mut extras = String::new();
+    let mut tests = String::from(
+        "#[test] fn consume_and_reduce() { let _ = consume(3); let r = reduce(3); assert_eq!(r, Reduction::Over(3)); }\n",
+    );
+    for i in 0..6 {
+        extras.push_str(&format!("pub fn extra_{i}() -> u64 {{ {i} }}\n"));
+        tests.push_str(&format!(
+            "#[test] fn extra_{i}_pin() {{ let v = extra_{i}(); assert_eq!(v, {i}); }}\n"
+        ));
+    }
+    let prod = format!(
+        "#[derive(Debug, PartialEq)]\npub enum Reduction {{ Failure, Over(u64) }}\n\
+         pub fn reduce(tokens: u64) -> Reduction {{\n    if tokens > 9 {{ Reduction::Failure }} else {{ Reduction::Over(tokens) }}\n}}\n\
+         pub fn consume(tokens: u64) -> bool {{\n    match reduce(tokens) {{\n        Reduction::Failure => false,\n        Reduction::Over(wait) => wait < 5,\n    }}\n}}\n\
+         {extras}\
+         #[cfg(test)]\nmod tests {{\n    use super::*;\n    {tests}\n}}\n"
+    );
+    let files: Vec<(PathBuf, &str)> = vec![(PathBuf::from("src/lib.rs"), prod.as_str())];
+    let index = index_from_files(&files)?;
+    let seams = inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &index);
+    let arm = seams
+        .iter()
+        .find(|s| s.kind() == SeamKind::MatchArm && s.expression().contains("Over"))
+        .ok_or_else(|| "Over arm seam present".to_string())?;
+    let context = CompactGripContext::new(&index);
+    let owner_fn = context.owner_function(arm.file(), arm.display_line());
+    let related = find_related_tests_with_context(arm, &context);
+
+    PIN_DECISIONS_COMPUTED.with(|count| count.set(0));
+    let mut first = related.clone();
+    let first_oracles = sort_related_tests_for_seam(arm, &context, owner_fn, &mut first);
+    let computed = PIN_DECISIONS_COMPUTED.with(|count| count.get());
+    if computed == 0 {
+        return Err("fixture must reach the other-function pin decision".to_string());
+    }
+    for _ in 0..SWEEPS {
+        let mut again = related.clone();
+        let again_oracles = sort_related_tests_for_seam(arm, &context, owner_fn, &mut again);
+        if again_oracles != first_oracles {
+            return Err("a memoized sweep changed the ranked oracles".to_string());
+        }
+    }
+    let after = PIN_DECISIONS_COMPUTED.with(|count| count.get());
+    if after != computed {
+        return Err(format!(
+            "expected {computed} decisions across {SWEEPS} more sweeps, saw {after}"
+        ));
+    }
     Ok(())
 }
 
@@ -14247,6 +14554,42 @@ fn identical_inline_arm_predicate_seam_does_not_propagate_but_differing_arms_do(
     Ok(())
 }
 
+/// #5384: a predicate whose arms only run unit-returning calls must not read
+/// `strongly_gripped` from unrelated return-value assertions.
+#[test]
+fn side_effect_only_branch_predicate_seam_is_not_strongly_gripped() -> Result<(), String> {
+    let prod_src = "pub fn configure(exrescode: bool) -> i32 {\n    if !exrescode {\n        side_only(1);\n    }\n    42\n}\n";
+    let test_src = "#[test] fn pins_result() { assert_eq!(configure(true), 42); }\n";
+    let files: Vec<(PathBuf, &str)> = vec![
+        (PathBuf::from("src/lib.rs"), prod_src),
+        (PathBuf::from("tests/configure_tests.rs"), test_src),
+    ];
+    let index = index_from_files(&files)?;
+    let seams = inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &index);
+    let predicate = seams
+        .iter()
+        .find(|s| s.kind() == SeamKind::PredicateBoundary)
+        .ok_or_else(|| "predicate seam present".to_string())?;
+    assert_eq!(
+        predicate.expected_sink(),
+        ExpectedSink::SideEffect,
+        "side-effect-only branch must bind to the side-effect sink"
+    );
+    let evidence = evidence_for_seam(predicate, &index);
+    assert_eq!(
+        evidence.propagate.state,
+        StageState::Unknown,
+        "return-value propagation must not be credited"
+    );
+    let class = classify_seam(predicate, &evidence);
+    assert_ne!(
+        class,
+        SeamGripClass::StronglyGripped,
+        "unobserved branch side effect must not read strongly_gripped"
+    );
+    Ok(())
+}
+
 #[test]
 fn closure_boundary_operand_route_ignores_comment_only_closure_pattern() {
     let owner = FunctionSummary {
@@ -14256,14 +14599,14 @@ fn closure_boundary_operand_route_ignores_comment_only_closure_pattern() {
             start_line: 1,
             end_line: 5,
             body: "pub fn score(raw_amount: i32, threshold: i32) -> bool {\n    // values.iter().any(|amount| amount >= threshold)\n    let amount = raw_amount + 1;\n    amount >= threshold\n}".into(),
-            calls: Vec::new(),
+            calls: crate::analysis::facts::SharedFactSlice::empty(),
             returns: Vec::new(),
-            literals: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
             source_role: FunctionSourceRole::Production,
-            attrs: Vec::new(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
             impl_attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             item: Default::default(),
             impl_context: Default::default(),
         };
@@ -15311,14 +15654,14 @@ fn same_file_test_helper_call_counts_as_owner_call_evidence() {
                 start_line: 1,
                 end_line: 5,
                 body: "pub fn discounted_total(amount: i32, threshold: i32) -> i32 { if amount >= threshold { amount - 10 } else { amount } }".into(),
-                calls: Vec::new(),
+                calls: crate::analysis::facts::SharedFactSlice::empty(),
                 returns: Vec::new(),
-                literals: Vec::new(),
+                literals: crate::analysis::facts::SharedFactSlice::empty(),
                 source_role: FunctionSourceRole::Production,
-                attrs: Vec::new(),
+                attrs: crate::analysis::facts::SharedFactSlice::empty(),
                 impl_attrs: Vec::new(),
-                nested_fn_names: Vec::new(),
-                let_bindings: Vec::new(),
+                nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+                let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
                 item: Default::default(),
                 impl_context: Default::default(),
             }, FunctionSummary {
@@ -15332,14 +15675,14 @@ fn same_file_test_helper_call_counts_as_owner_call_evidence() {
                     line: 11,
                     name: "discounted_total".to_string(),
                     text: "discounted_total(100, 100)".to_string().into(),
-                }],
+                }].into(),
                 returns: Vec::new(),
-                literals: Vec::new(),
+                literals: crate::analysis::facts::SharedFactSlice::empty(),
                 source_role: FunctionSourceRole::Production,
-                attrs: Vec::new(),
+                attrs: crate::analysis::facts::SharedFactSlice::empty(),
                 impl_attrs: Vec::new(),
-                nested_fn_names: Vec::new(),
-                let_bindings: Vec::new(),
+                nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+                let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
                 item: Default::default(),
                 impl_context: Default::default(),
             }],
@@ -15353,7 +15696,7 @@ fn same_file_test_helper_call_counts_as_owner_call_evidence() {
                     line: 21,
                     name: "case_at_threshold".to_string(),
                     text: "case_at_threshold()".to_string().into(),
-                }],
+                }].into(),
                 assertions: vec![OracleFact {
                     line: 21,
                     kind: OracleKind::ExactValue,
@@ -15362,10 +15705,10 @@ fn same_file_test_helper_call_counts_as_owner_call_evidence() {
                     observed_tokens: Vec::new(),
                     ok_value_observed: None,
                 }],
-                literals: Vec::new(),
-                attrs: Vec::new(),
-                nested_fn_names: Vec::new(),
-                let_bindings: Vec::new(),
+                literals: crate::analysis::facts::SharedFactSlice::empty(),
+                attrs: crate::analysis::facts::SharedFactSlice::empty(),
+                nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+                let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
                 generated: None,
             }],
             ..Default::default()
@@ -22392,6 +22735,263 @@ fn given_integration_test_when_single_line_nested_module_reaches_rival_through_s
     Ok(())
 }
 
+const LOCAL_RIVAL_FN: &str =
+    "pub fn discounted_total(_amount: i32, _threshold: i32) -> i32 { 777 }";
+
+/// #10855 remaining fail-open shapes, each paired with a library-call control
+/// so the emptiness assertions are not vacuous.
+#[test]
+fn given_integration_test_when_bare_import_or_glob_reaches_local_rival_then_owner_gets_no_related_test()
+-> Result<(), String> {
+    let mut failures = Vec::new();
+    for (label, import) in [
+        ("bare use", "use local::discounted_total;"),
+        ("glob use", "use local::*;"),
+    ] {
+        let rival = format!(
+            "mod local {{\n    {LOCAL_RIVAL_FN}\n}}\n{import}\n\n#[test]\nfn bare_rival() {{\n    assert_eq!(discounted_total(100, 100), 777);\n}}\n"
+        );
+        let related = related_test_names_for_boundary_seam(&rival)?;
+        if !related.is_empty() {
+            failures.push(format!("{label}: {related:?}"));
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "#10855: a bare import of a local rival must not relate the owner: {failures:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn given_integration_test_when_bare_import_names_other_module_then_owner_keeps_related_test()
+-> Result<(), String> {
+    // Control: the same imports without a same-named local definition.
+    for import in ["use local::other;", "use local::*;"] {
+        let source = format!(
+            "mod local {{\n    pub fn other() -> i32 {{ 1 }}\n}}\n{import}\n\n#[test]\nfn bare_real() {{\n    assert_eq!(discounted_total(100, 100), 90);\n}}\n"
+        );
+        let related = related_test_names_for_boundary_seam(&source)?;
+        assert_eq!(related, vec!["bare_real".to_string()], "{source}");
+    }
+    Ok(())
+}
+
+#[test]
+fn given_integration_test_when_rival_nested_in_another_module_then_owner_gets_no_related_test()
+-> Result<(), String> {
+    for call in [
+        "outer::local::discounted_total(100, 100)",
+        "local::discounted_total(100, 100)",
+    ] {
+        let import = if call.starts_with("local") {
+            "use outer::local;\n"
+        } else {
+            ""
+        };
+        let source = format!(
+            "mod outer {{\n    pub mod local {{\n        {LOCAL_RIVAL_FN}\n    }}\n}}\n{import}\n#[test]\nfn nested_rival() {{\n    assert_eq!({call}, 777);\n}}\n"
+        );
+        let related = related_test_names_for_boundary_seam(&source)?;
+        assert!(
+            related.is_empty(),
+            "#10855: `{call}` to a nested local rival must not relate the owner: {related:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn given_integration_test_when_wrapper_module_delegates_to_library_then_owner_is_withheld()
+-> Result<(), String> {
+    // Pinned (#10855): the local module wraps the library call, so the test
+    // does reach the owner through it; but the call names the wrapper, and
+    // the local-rival rule abstains from relating the owner. Abstaining is
+    // the safe direction, so this stays as it is.
+    let wrapper = "mod local {\n    pub fn discounted_total(amount: i32, threshold: i32) -> i32 { lib_proptest::discounted_total(amount, threshold) }\n}\n\n#[test]\nfn wrapped() {\n    assert_eq!(local::discounted_total(100, 100), 90);\n}\n";
+    let related = related_test_names_for_boundary_seam(wrapper)?;
+    assert!(related.is_empty(), "{related:?}");
+    Ok(())
+}
+
+#[test]
+fn given_integration_test_when_fn_body_use_shadows_file_alias_then_owner_gets_no_related_test()
+-> Result<(), String> {
+    let source = format!(
+        "mod local {{\n    {LOCAL_RIVAL_FN}\n}}\nmod real {{\n    pub fn other() {{}}\n}}\nuse real as alias;\n\n#[test]\nfn shadowed() {{\n    use local as alias;\n    assert_eq!(alias::discounted_total(100, 100), 777);\n}}\n"
+    );
+    let related = related_test_names_for_boundary_seam(&source)?;
+    assert!(
+        related.is_empty(),
+        "#10855: a fn-body `use` to a local rival must not relate the owner: {related:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn given_integration_test_when_fn_body_use_rebinds_file_alias_to_library_then_owner_keeps_related_test()
+-> Result<(), String> {
+    // Control: the file-level alias names the local rival, but the test's own
+    // `use` rebinds it to the library, so the call names the owner.
+    let source = format!(
+        "mod local {{\n    {LOCAL_RIVAL_FN}\n}}\nuse local as alias;\n\n#[test]\nfn rebound() {{\n    use lib_proptest as alias;\n    assert_eq!(alias::discounted_total(100, 100), 90);\n}}\n"
+    );
+    let related = related_test_names_for_boundary_seam(&source)?;
+    assert_eq!(related, vec!["rebound".to_string()]);
+    Ok(())
+}
+
+#[test]
+fn given_integration_test_when_raw_identifier_test_calls_local_rival_then_owner_gets_no_related_test()
+-> Result<(), String> {
+    let source = format!(
+        "mod local {{\n    {LOCAL_RIVAL_FN}\n}}\n\n#[test]\nfn r#match() {{\n    assert_eq!(local::discounted_total(100, 100), 777);\n}}\n"
+    );
+    let related = related_test_names_for_boundary_seam(&source)?;
+    assert!(
+        related.is_empty(),
+        "#10855: a raw-identifier test calling a local rival must not relate the owner: {related:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn given_integration_test_when_nested_raw_identifier_test_reaches_local_rival_then_owner_gets_no_related_test()
+-> Result<(), String> {
+    let source = format!(
+        "mod local {{\n    {LOCAL_RIVAL_FN}\n}}\n\nmod inner {{\n    #[test]\n    fn r#match() {{\n        assert_eq!(super::local::discounted_total(100, 100), 777);\n    }}\n}}\n"
+    );
+    let related = related_test_names_for_boundary_seam(&source)?;
+    assert!(
+        related.is_empty(),
+        "#10855: a nested raw-identifier test reaching a local rival must not relate the owner: {related:?}"
+    );
+    Ok(())
+}
+
+/// Review findings on the bare-call reading (#10855): each shape keeps the
+/// production relation because the call may name the owner. The controls with
+/// a rival the call really reaches are the bare/glob test above.
+#[test]
+fn given_integration_test_when_unreadable_or_shadowed_glob_import_then_owner_keeps_related_test()
+-> Result<(), String> {
+    let rival = format!("mod local {{\n    {LOCAL_RIVAL_FN}\n}}\n");
+    let test = "#[test]\nfn bare_real() {\n    assert_eq!(discounted_total(100, 100), 90);\n}\n";
+    for (label, source) in [
+        (
+            "grouped production import",
+            format!(
+                "{rival}use lib_proptest::{{discounted_total, other}};\nuse local::*;\n\n{test}"
+            ),
+        ),
+        (
+            "rooted production import",
+            format!("{rival}use ::lib_proptest::discounted_total;\nuse local::*;\n\n{test}"),
+        ),
+        (
+            "own definition shadowing a glob",
+            format!(
+                "{rival}use local::*;\nfn discounted_total(_amount: i32, _threshold: i32) -> i32 {{ 1 }}\n\n{test}"
+            ),
+        ),
+    ] {
+        let related = related_test_names_for_boundary_seam(&source)?;
+        assert_eq!(related, vec!["bare_real".to_string()], "{label}: {source}");
+    }
+    Ok(())
+}
+
+#[test]
+fn given_integration_test_when_nested_block_use_binds_the_rival_then_owner_keeps_related_test()
+-> Result<(), String> {
+    let rival =
+        format!("mod local {{\n    {LOCAL_RIVAL_FN}\n}}\nuse lib_proptest::discounted_total;\n\n");
+    let test = "#[test]\nfn nested() {\n    {\n        use local::discounted_total;\n        assert_eq!(discounted_total(100, 100), 777);\n    }\n    assert_eq!(discounted_total(100, 100), 90);\n}\n";
+    let source = format!("{rival}{test}");
+    let related = related_test_names_for_boundary_seam(&source)?;
+    assert_eq!(related, vec!["nested".to_string()], "{source}");
+    Ok(())
+}
+
+#[test]
+fn given_integration_test_when_glob_reaches_a_rival_then_only_an_importable_rival_withholds_the_owner()
+-> Result<(), String> {
+    // Both globs are in scope and no explicit import decides, so visibility of
+    // the rival is the only thing that separates the cases.
+    for (label, visibility, withheld) in [
+        ("public rival", "pub ", true),
+        ("crate-visible rival", "pub(crate) ", true),
+        ("private rival", "", false),
+        ("pub(self) rival", "pub(self) ", false),
+        ("pub(super) rival (unsure)", "pub(super) ", false),
+    ] {
+        let source = format!(
+            "mod local {{\n    {visibility}fn discounted_total(_amount: i32, _threshold: i32) -> i32 {{ 777 }}\n}}\nuse lib_proptest::*;\nuse local::*;\n\n#[test]\nfn glob_call() {{\n    assert_eq!(discounted_total(100, 100), 90);\n}}\n"
+        );
+        let related = related_test_names_for_boundary_seam(&source)?;
+        let expected: Vec<String> = if withheld {
+            Vec::new()
+        } else {
+            vec!["glob_call".to_string()]
+        };
+        assert_eq!(related, expected, "{label}: {source}");
+    }
+    Ok(())
+}
+
+#[test]
+fn given_integration_test_when_glob_is_in_a_nested_block_then_owner_keeps_related_test()
+-> Result<(), String> {
+    // The file-level glob is the library's. Only the nested-block rule keeps
+    // the relation when a nested block globs the rival; a glob at the test's
+    // top block withholds it (control).
+    let head = format!(
+        "mod local {{\n    {LOCAL_RIVAL_FN}\n}}\nuse lib_proptest::*;\n\n#[test]\nfn globbed() {{\n"
+    );
+    let nested = format!(
+        "{head}    {{\n        use local::*;\n        assert_eq!(discounted_total(100, 100), 777);\n    }}\n    assert_eq!(discounted_total(100, 100), 90);\n}}\n"
+    );
+    let related = related_test_names_for_boundary_seam(&nested)?;
+    assert_eq!(related, vec!["globbed".to_string()], "{nested}");
+    let top =
+        format!("{head}    use local::*;\n    assert_eq!(discounted_total(100, 100), 777);\n}}\n");
+    let related = related_test_names_for_boundary_seam(&top)?;
+    assert!(related.is_empty(), "{top}: {related:?}");
+    Ok(())
+}
+
+#[test]
+fn given_integration_test_when_grouped_body_use_rebinds_a_file_alias_then_owner_keeps_related_test()
+-> Result<(), String> {
+    // A grouped body `use` is unreadable and may rebind the qualifier the file
+    // alias names, so it keeps the relation. Without it the alias reaches the
+    // rival and the owner is withheld (control).
+    let head = format!(
+        "mod outer {{\n    pub mod local {{\n        {LOCAL_RIVAL_FN}\n    }}\n}}\nuse outer::local as alias;\n\n#[test]\nfn aliased() {{\n"
+    );
+    let call = "    assert_eq!(alias::discounted_total(100, 100), 90);\n}\n";
+    let grouped = format!("{head}    use lib_proptest::{{self as alias}};\n{call}");
+    let related = related_test_names_for_boundary_seam(&grouped)?;
+    assert_eq!(related, vec!["aliased".to_string()], "{grouped}");
+    let plain = format!("{head}{call}");
+    let related = related_test_names_for_boundary_seam(&plain)?;
+    assert!(related.is_empty(), "{plain}: {related:?}");
+    Ok(())
+}
+
+#[test]
+fn given_integration_test_when_nested_raw_identifier_test_calls_the_library_then_owner_keeps_related_test()
+-> Result<(), String> {
+    // Control for the raw-identifier test above. The top-level raw-identifier
+    // test does not discriminate (its scope is the file root either way).
+    let source = format!(
+        "mod local {{\n    {LOCAL_RIVAL_FN}\n}}\n\nmod inner {{\n    #[test]\n    fn r#match() {{\n        assert_eq!(lib_proptest::discounted_total(100, 100), 90);\n    }}\n}}\n"
+    );
+    let related = related_test_names_for_boundary_seam(&source)?;
+    assert_eq!(related, vec!["r#match".to_string()], "{source}");
+    Ok(())
+}
+
 /// #12266: a direct owner test that compares the inline `.unwrap_err()` result
 /// with the seam's own variant discriminates an `ErrorVariant` seam, as the
 /// bound-variable spelling already did. A different variant, or an opaque
@@ -22402,6 +23002,7 @@ fn inline_unwrap_err_equality_discriminates_an_error_variant_seam() -> Result<()
         let prod = format!(
             "#[derive(Debug, PartialEq)]\npub enum Fault {{ Odd, Bad }}\n\
              pub fn parse(text: &str) -> Result<u8, Fault> {{\n    if text.len() % 2 != 0 {{\n        return Err(Fault::Odd);\n    }}\n    Ok(1)\n}}\n\
+             fn id<T>(v: T) -> T {{ v }}\n\
              #[cfg(test)]\nmod tests {{\n    use super::*;\n    {test}\n}}\n"
         );
         let files: Vec<(PathBuf, &str)> = vec![(PathBuf::from("src/lib.rs"), prod.as_str())];
@@ -22481,6 +23082,36 @@ fn inline_unwrap_err_equality_discriminates_an_error_variant_seam() -> Result<()
             "an Err constructor spelled with spacing or a comment is still the test's own error: {spelled}"
         );
     }
+    for wrapper in [
+        "assert_eq!(parse(\"1\").or(Some(Err(Fault::Odd))).unwrap_err(), Fault::Odd);",
+        "assert_eq!(Result::or(parse(\"1\"), id(Err(Fault::Odd))).unwrap_err(), Fault::Odd);",
+        "assert_eq!(Err(Fault::Odd).unwrap_err(), Fault::Odd);",
+        "assert_eq!(Some(Err(Fault::Odd)).unwrap().unwrap_err(), Fault::Odd);",
+        "assert_eq!(std::mem::replace(&mut parse(\"1\"), Err(Fault::Odd)), Err(Fault::Odd));",
+    ] {
+        let wrapped = read(&format!("#[test] fn odd() {{ {wrapper} }}"))?;
+        assert_ne!(
+            wrapped.0,
+            StageState::Yes,
+            "a test-written Err wrapper must not discriminate the seam (#12474): {wrapper}"
+        );
+    }
+    // Positive controls for the allowlist (#12474): a direct `Err(..)` compare or
+    // match against the owner's own result still discriminates, including when a
+    // call wraps the whole assertion rather than the `Err(..)`.
+    for direct in [
+        "assert_eq!(parse(\"1\"), Err(Fault::Odd));",
+        "assert_eq!(Err(Fault::Odd), parse(\"1\"));",
+        "assert!(matches!(parse(\"1\"), Err(Fault::Odd)));",
+        "[1].iter().for_each(|_| assert_eq!(parse(\"1\"), Err(Fault::Odd)));",
+    ] {
+        let direct_pin = read(&format!("#[test] fn odd() {{ {direct} }}"))?;
+        assert_eq!(
+            direct_pin.0,
+            StageState::Yes,
+            "a direct Err(..) compare keeps its credit: {direct}"
+        );
+    }
     let grouped =
         read("#[test] fn odd() { assert_eq!((parse(\"1\").unwrap_err()), Fault::Odd); }")?;
     assert_eq!(grouped.0, StageState::Yes, "grouped error read");
@@ -22502,6 +23133,98 @@ fn inline_unwrap_err_equality_discriminates_an_error_variant_seam() -> Result<()
         opaque.0,
         StageState::Yes,
         "an opaque expected value is not a variant pin"
+    );
+    Ok(())
+}
+
+/// #12610: neither the predicate-boundary seam nor the `Ok(n)` return-value
+/// seam may treat an error read taken through a replacing adapter
+/// (`map_err(|_| Fault::Odd)`) as a discriminator: the test writes the compared
+/// `Fault::Odd`, so the assertion passes whatever error the owner returns.
+/// Without the refusal in the oracle classifier both seams read
+/// `discriminate: yes` (exact-value strong oracle).
+#[test]
+fn map_err_replaced_error_does_not_discriminate_predicate_boundary_seam() -> Result<(), String> {
+    let source = r#"
+#[derive(Debug, PartialEq)]
+pub enum Fault { Odd, Even }
+
+pub fn parse_masked(n: u8) -> Result<u8, Fault> {
+    if n % 2 == 1 { Err(Fault::Odd) } else { Ok(n) }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn masked_odd() {
+        assert_eq!(parse_masked(1).map_err(|_| Fault::Odd).unwrap_err(), Fault::Odd);
+    }
+}
+"#;
+    let files = [(PathBuf::from("src/lib.rs"), source)];
+    let index = index_from_files(&files)?;
+    let seams = inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &index);
+    let boundary = seams
+        .iter()
+        .find(|s| s.kind() == SeamKind::PredicateBoundary && s.expression().contains("n % 2 == 1"))
+        .ok_or_else(|| "predicate boundary seam".to_string())?;
+    let evidence = evidence_for_seam(boundary, &index);
+    assert_ne!(
+        evidence.discriminate.state,
+        StageState::Yes,
+        "map_err-replaced masked_odd must not discriminate the boundary: {}",
+        evidence.discriminate.summary
+    );
+    let ok_value = seams
+        .iter()
+        .find(|s| s.kind() == SeamKind::ReturnValue && s.expression() == "Ok(n)")
+        .ok_or_else(|| "Ok(n) return-value seam".to_string())?;
+    let evidence = evidence_for_seam(ok_value, &index);
+    assert_ne!(
+        evidence.discriminate.state,
+        StageState::Yes,
+        "map_err-replaced masked_odd must not discriminate Ok(n): {}",
+        evidence.discriminate.summary
+    );
+    Ok(())
+}
+
+/// #12610 / #12359, ported from the #12691 candidate: an `Err(..)` the test
+/// hands to `or` is the test's own value, so it does not discriminate the
+/// predicate boundary either.
+#[test]
+fn adapter_fed_or_does_not_discriminate_predicate_boundary_seam() -> Result<(), String> {
+    let source = r#"
+#[derive(Debug, PartialEq)]
+pub enum Fault { Odd, Even }
+
+pub fn parse_masked(n: u8) -> Result<u8, Fault> {
+    if n % 2 == 1 { Err(Fault::Odd) } else { Ok(n) }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn masked_odd() {
+        assert_eq!(parse_masked(1).or(Err(Fault::Odd)).unwrap_err(), Fault::Odd);
+    }
+}
+"#;
+    let files = [(PathBuf::from("src/lib.rs"), source)];
+    let index = index_from_files(&files)?;
+    let seams = inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &index);
+    let boundary = seams
+        .iter()
+        .find(|s| s.kind() == SeamKind::PredicateBoundary && s.expression().contains("n % 2 == 1"))
+        .ok_or_else(|| "predicate boundary seam".to_string())?;
+    let evidence = evidence_for_seam(boundary, &index);
+    assert_ne!(
+        evidence.discriminate.state,
+        StageState::Yes,
+        "adapter-fed masked_odd must not discriminate the boundary: {}",
+        evidence.discriminate.summary
     );
     Ok(())
 }
@@ -22598,4 +23321,273 @@ fn inherent_receiver_name_only_residual_gaps_issue_8917() -> Result<(), String> 
         );
     }
     Ok(())
+}
+
+/// #13080: tests and doctests that only call the same-named associated
+/// function `ByteSize::kb(..)` are no path to the free helper `kb`, so the
+/// helper reads `reach: no` (ungripped), not the weak reach a bare-name scan
+/// gave. A bare call of the helper keeps reach undecided.
+#[test]
+fn given_free_helper_when_only_the_same_named_associated_fn_is_called_then_reach_is_no()
+-> Result<(), String> {
+    let prod = |extra: &str| {
+        format!(
+            "pub fn kb(size: u64) -> u64 {{ size * 1000 }}\n\
+             pub struct ByteSize(pub u64);\n\
+             impl ByteSize {{ pub fn kb(size: u64) -> ByteSize {{ ByteSize(size * 1000) }} }}\n\
+             // assert_eq!(\"4.1 kb\", \"x\");\n{extra}"
+        )
+    };
+    let test = "#[test] fn kb_scales() {{ assert_eq!(ByteSize::kb(4).0, 4000); }}\n";
+    let reach_of = |production: &str, test_src: &str| -> Result<StageState, String> {
+        let files: Vec<(PathBuf, &str)> = vec![
+            (PathBuf::from("src/lib.rs"), production),
+            (PathBuf::from("tests/kb.rs"), test_src),
+        ];
+        let index = index_from_files(&files)?;
+        let seams = inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &index);
+        let seam = seams
+            .iter()
+            .find(|s| s.owner().ends_with("::kb") && !s.owner().contains("impl"))
+            .ok_or_else(|| "free helper seam present".to_string())?;
+        Ok(evidence_for_seam(seam, &index).reach.state)
+    };
+    let negative = reach_of(&prod(""), test)?;
+    assert_eq!(negative, StageState::No);
+    // Controls: one spelling that can name the free helper keeps reach undecided.
+    let bare_call = "#[test] fn kb_bare() { assert_eq!(kb(4), 4000); }\n";
+    assert_ne!(reach_of(&prod(""), bare_call)?, StageState::No);
+    assert_ne!(
+        reach_of(&prod("fn caller() -> u64 { crate::kb(4) }\n"), test)?,
+        StageState::No
+    );
+    Ok(())
+}
+
+/// #11870: the missing-discriminator facts of the `self.count = 2` write seam
+/// in `bump`, given the owner signature and the test body.
+fn field_write_facts(signature: &str, test_body: &str) -> Result<Vec<String>, String> {
+    field_write_facts_with_attr(signature, test_body, "")
+}
+
+/// #11870: a weak relational read of the written field, from the binding the
+/// test ran the owner on, makes the exact field value the missing check.
+/// Every other shape (a strong read, a sibling or other binding, a later
+/// write, a by-value owner, an equality, a bare boolean, a skipped test)
+/// emits nothing.
+#[test]
+fn a_weak_read_of_a_written_field_is_the_missing_discriminator_only_when_placed()
+-> Result<(), String> {
+    let by_ref = "pub fn bump(&mut self)";
+    let run = "    let mut c = Counter::new();\n    c.bump();\n";
+    let weak = |read: &str| format!("{run}    {read}");
+    for read in [
+        "assert!(c.count > 0);",
+        "assert!(0 < c.count);",
+        "assert!(c.count != 0);",
+        "assert_ne!(c.count, 0);",
+    ] {
+        assert_eq!(
+            field_write_facts(by_ref, &weak(read))?,
+            vec!["count".to_string()],
+            "{read}"
+        );
+    }
+    for (label, signature, body) in [
+        ("a strong read", by_ref, weak("assert_eq!(c.count, 2);")),
+        ("a sibling field", by_ref, weak("assert!(c.other > 0);")),
+        (
+            "a read before the call",
+            by_ref,
+            "    let mut c = Counter::new();\n    assert!(c.count < 5);\n    c.bump();".to_string(),
+        ),
+        (
+            "another binding",
+            by_ref,
+            "    let mut c = Counter::new();\n    let d = Counter::new();\n    c.bump();\n    assert!(d.count > 0);"
+                .to_string(),
+        ),
+        (
+            "a later write",
+            by_ref,
+            format!("{run}    c.count = 9;\n    assert!(c.count > 0);"),
+        ),
+        (
+            "an equality spelled as a bare assert",
+            by_ref,
+            weak("assert!(c.count == 2);"),
+        ),
+        (
+            "a default-like equality",
+            by_ref,
+            weak("assert_eq!(c.count, 0);"),
+        ),
+        (
+            "a compared side naming the binding",
+            by_ref,
+            weak("assert!(c.count > c.other);"),
+        ),
+        (
+            "a strong read beside the weak one",
+            by_ref,
+            weak("assert!(c.count > 0);\n    assert_eq!(c.count, 2);"),
+        ),
+        (
+            "another check on the binding beside the weak one",
+            by_ref,
+            weak("assert!(c.count > 0);\n    assert_eq!(c.snapshot(), 2);"),
+        ),
+        (
+            "a by-value owner",
+            "pub fn bump(mut self) -> Self",
+            weak("assert!(c.count > 0);"),
+        ),
+    ] {
+        let facts = field_write_facts(signature, &body)?;
+        assert!(facts.is_empty(), "{label} must start nothing: {facts:?}");
+    }
+    // A check that reaches the field without being an assertion fact.
+    for (label, body, tail) in [
+        (
+            "a let alias of the field then an exact check",
+            weak("assert!(c.count > 0);\n    let n = c.count;\n    assert_eq!(n, 2);"),
+            "",
+        ),
+        (
+            "a helper that checks the binding",
+            weak("assert!(c.count > 0);\n    verify(&c);"),
+            "fn verify(c: &Counter) {\n    assert_eq!(c.count, 2);\n}\n",
+        ),
+        (
+            "a helper on the same line as the weak assertion",
+            weak("assert!(c.count > 0); verify(&c);"),
+            "fn verify(c: &Counter) {\n    assert_eq!(c.count, 2);\n}\n",
+        ),
+        (
+            "a destructure of the binding",
+            weak(
+                "assert!(c.count > 0);\n    let Counter { count, .. } = c;\n    assert_eq!(count, 2);",
+            ),
+            "",
+        ),
+        (
+            "a reference alias of the field",
+            weak("assert!(c.count > 0);\n    let r = &c.count;\n    assert_eq!(*r, 2);"),
+            "",
+        ),
+        (
+            "an if-panic check of the field",
+            weak("assert!(c.count > 0);\n    if c.count != 2 {\n        panic!(\"bad\");\n    }"),
+            "",
+        ),
+        (
+            "an inline format capture {c}",
+            weak("assert!(c.count > 0);\n    assert_eq!(format!(\"{c}\"), \"2\");"),
+            "",
+        ),
+        (
+            "an inline format capture {c:?}",
+            weak(
+                "assert!(c.count > 0);\n    assert_eq!(format!(\"{c:?}\"), \"Counter { count: 2, other: 0 }\");",
+            ),
+            "",
+        ),
+        (
+            "an inline format capture {c:#?}",
+            weak("assert!(c.count > 0);\n    assert_eq!(format!(\"{c:#?}\"), \"x\");"),
+            "",
+        ),
+        (
+            "an inline format capture {c :?}",
+            weak("assert!(c.count > 0);\n    assert_eq!(format!(\"{c :?}\"), \"x\");"),
+            "",
+        ),
+        (
+            "an inline format capture {c }",
+            weak("assert!(c.count > 0);\n    assert_eq!(format!(\"{c }\"), \"x\");"),
+            "",
+        ),
+        (
+            "an inline format capture {c:>10}",
+            weak("assert!(c.count > 0);\n    assert_eq!(format!(\"{c:>10}\"), \"x\");"),
+            "",
+        ),
+        (
+            "a capture in a let then an exact check of the string",
+            weak(
+                "assert!(c.count > 0);\n    let s = format!(\"{c:?}\");\n    assert_eq!(s, \"Counter { count: 2, other: 0 }\");",
+            ),
+            "",
+        ),
+        (
+            "a reference alias of the binding",
+            weak("assert!(c.count > 0);\n    let r = &c;\n    assert_eq!(r.count, 2);"),
+            "",
+        ),
+        (
+            "a spaced field access",
+            weak("assert!(c.count > 0);\n    let n = c\n        . count;\n    assert_eq!(n, 2);"),
+            "",
+        ),
+        (
+            "a move of the binding",
+            weak("assert!(c.count > 0);\n    let moved = c;\n    drop(moved);"),
+            "",
+        ),
+    ] {
+        let facts = field_write_facts_with_tail(by_ref, &body, "", tail)?;
+        assert!(facts.is_empty(), "{label} must start nothing: {facts:?}");
+    }
+    // The same shapes without the extra statement still start, so the
+    // negatives above are the statement's doing and not the harness'.
+    assert_eq!(
+        field_write_facts_with_tail(
+            by_ref,
+            &weak("assert!(c.count > 0);"),
+            "",
+            "fn verify(c: &Counter) {\n    assert_eq!(c.count, 2);\n}\n",
+        )?,
+        vec!["count".to_string()],
+        "an unrelated helper item does not withhold"
+    );
+    for attr in ["#[ignore]", "#[should_panic]"] {
+        let facts = field_write_facts_with_attr(by_ref, &weak("assert!(c.count > 0);"), attr)?;
+        assert!(facts.is_empty(), "{attr} must start nothing: {facts:?}");
+    }
+    Ok(())
+}
+
+fn field_write_facts_with_attr(
+    signature: &str,
+    test_body: &str,
+    attr: &str,
+) -> Result<Vec<String>, String> {
+    field_write_facts_with_tail(signature, test_body, attr, "")
+}
+
+/// As [`field_write_facts`], with `tail` (helper items) after the test fn.
+fn field_write_facts_with_tail(
+    signature: &str,
+    test_body: &str,
+    attr: &str,
+    tail: &str,
+) -> Result<Vec<String>, String> {
+    let prod = PathBuf::from("src/counter.rs");
+    let prod_src = format!(
+        "pub struct Counter {{\n    pub count: u32,\n    pub other: u32,\n}}\n\nimpl Counter {{\n    pub fn new() -> Self {{\n        Counter {{ count: 0, other: 0 }}\n    }}\n\n    {signature} {{\n        self.count = 2;\n    }}\n}}\n"
+    );
+    let tests = PathBuf::from("tests/counter_tests.rs");
+    let tests_src =
+        format!("use crate::Counter;\n\n#[test]\n{attr}\nfn t() {{\n{test_body}\n}}\n{tail}\n");
+    let index = index_from_files(&[(prod, prod_src.as_str()), (tests, tests_src.as_str())])?;
+    let seams = inventory_seams_from_index(&[PathBuf::from("src/counter.rs")], &index);
+    let seam = seams
+        .iter()
+        .find(|s| s.kind() == SeamKind::FieldConstruction && s.expression().contains("self.count"))
+        .ok_or_else(|| "expected the self.count write seam".to_string())?;
+    Ok(evidence_for_seam(seam, &index)
+        .missing_discriminators
+        .iter()
+        .map(|fact| fact.value.clone())
+        .collect())
 }

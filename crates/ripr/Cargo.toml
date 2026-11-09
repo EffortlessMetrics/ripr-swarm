@@ -20,6 +20,7 @@ categories = ["development-tools", "development-tools::testing"]
 # uncommitted-files check.
 include = [
   "src/**",
+  "vendor/**",
   "tests/**",
   "examples/*/example.diff",
   "examples/*/src/**",
@@ -82,7 +83,7 @@ oxc_parser = { version = "0.130", optional = true }
 oxc_span = { version = "0.130", optional = true }
 ra_ap_syntax = { version = "0.0.349", optional = true }
 rayon = "1"
-rmcp = { version = "=3.7.0", default-features = false, features = ["server", "transport-async-rw"] }
+rmcp = { version = "=3.9.0", default-features = false, features = ["server", "transport-async-rw"] }
 # Default features pull `malachite-bigint` (LGPL-3.0-only), which is
 # incompatible with our MIT/Apache-2.0 license posture. Disable the
 # default and select `num-bigint` (MIT/Apache-2.0) for arbitrary-precision
@@ -92,6 +93,12 @@ rustpython-parser = { version = "0.4", optional = true, default-features = false
 serde = { version = "1", features = ["derive", "rc"] }
 serde_json = "1"
 sha2 = "0.10"
+# SCIP index admission (#8115): decode user-supplied indexes only; no indexer
+# or network is invoked at runtime. Deliberately unconditional: the admission
+# tests must run in the default suite, and the module is not yet reachable from
+# the CLI. Revisit a feature gate when the CLI slice wires it in.
+prost = "0.13"
+bytes = "1"
 toml = "1"
 unicode-segmentation = "=1.13.3"
 unicode-width = "=0.2.2"
@@ -112,7 +119,8 @@ tower = { version = "0.5", default-features = false }
 # `--locked`, which resolves fresh, so both pins live in the manifest.
 # Remove when a matching pair is released, or when the selected ra_ap_syntax
 # drops the assert.
-unicode-ident = { version = "=1.0.24", optional = true }
+# Shared read-only Cargo package-name admission also needs Unicode XID facts.
+unicode-ident = "=1.0.24"
 unicode-properties = { version = "=0.1.4", optional = true }
 
 [target.'cfg(unix)'.dependencies]
@@ -163,9 +171,9 @@ win32job = "2.0.3"
 
 [features]
 default = ["lang-rust", "lang-typescript", "lang-python"]
-lang-rust = ["dep:ra_ap_syntax", "dep:unicode-ident", "dep:unicode-properties", "ripr-contract/lang-rust"]
+lang-rust = ["dep:ra_ap_syntax", "dep:unicode-properties", "ripr-contract/lang-rust"]
 lang-typescript = ["dep:oxc_allocator", "dep:oxc_ast", "dep:oxc_ast_visit", "dep:oxc_parser", "dep:oxc_span", "ripr-contract/lang-typescript"]
-lang-python = ["dep:rustpython-parser", "dep:unicode-ident", "ripr-contract/lang-python"]
+lang-python = ["dep:rustpython-parser", "ripr-contract/lang-python"]
 lang-perl = ["ripr-contract/lang-perl"]
 
 [dev-dependencies]
@@ -174,7 +182,7 @@ lang-perl = ["ripr-contract/lang-perl"]
 # from this crate's own features, and the contract's defaults would unify on.
 ripr-contract = { version = "=0.11.0", path = "../ripr-contract", default-features = false, features = ["test-fixtures"] }
 proptest = "1"
-rmcp = { version = "=3.7.0", default-features = false, features = ["client", "transport-async-rw"] }
+rmcp = { version = "=3.9.0", default-features = false, features = ["client", "transport-async-rw"] }
 serial_test = "4"
 # Dev-only: deterministic initialize-delivery witnesses (#3802) pause tokio
 # time and drive the service layers (tower Service) directly.
