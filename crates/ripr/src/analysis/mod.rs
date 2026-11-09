@@ -1350,7 +1350,11 @@ const MAX_ATTRIBUTE_RUN_LINES: usize = 16;
 /// existing function edits that test without touching its span (#12940
 /// review). Every line from `line` up to the `fn` line must be an attribute,
 /// a comment, or blank; a multi-line attribute argument is not followed.
-fn attribute_edited_headers(index: &RustIndex, file: &Path, line: usize) -> Vec<(PathBuf, usize)> {
+fn attribute_edited_headers(
+    index: &rust_index::RustIndex,
+    file: &Path,
+    line: usize,
+) -> Vec<(PathBuf, usize)> {
     let Some(facts) = rust_index::find_file_facts(index, file) else {
         return Vec::new();
     };
