@@ -2480,6 +2480,8 @@ mod helper_module_attribute_tests;
 mod capability_disposition_tests;
 
 #[cfg(test)]
+mod approx_band_tests;
+#[cfg(test)]
 mod helper_inline_tests;
 #[cfg(test)]
 mod literal_patch_tests;

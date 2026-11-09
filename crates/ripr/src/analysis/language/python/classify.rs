@@ -1,4 +1,6 @@
-use super::approx_band::{PythonBandReading, PythonBandVerdict, python_band_reading};
+use super::approx_band::{
+    PythonBandReading, PythonBandSource, PythonBandVerdict, python_band_reading,
+};
 use super::arm_activation;
 use super::assertion_selection::{
     PythonAssertionFocus, PythonAssertionSelection, select_relevant_assertion,
@@ -742,7 +744,10 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
         log_evidence.as_ref(),
         &focus,
         owner,
-        owner_source.unwrap_or(""),
+        PythonBandSource {
+            text: owner_source.unwrap_or(""),
+            sole_line_replacement: no_behavior.sole_line_replacement,
+        },
         &related_candidates,
     )
     // A pinned lambda body edit or dataclass default edit is read by the
@@ -1050,16 +1055,29 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
     let mut table_downgraded = false;
     // An `approx` band that provably admits both the old and the new result
     // lets a strong assertion pass either way (#9546, RIPR-SPEC-0238 rule 21).
+    // The reading succeeds only on a `return` line or a straight-line body
+    // assignment (#13723), whatever its probe family, and the static-limit
+    // pass lifts the band limit on the same reading, so the gap applies to
+    // every family: gating it on `ReturnValue` credited an absorbed edit to
+    // an assignment as exposed.
     let band_gap = (static_limit.is_none()
-        && matches!(family, ProbeFamily::ReturnValue)
         && boundary_gap.is_none()
         && inactive_term.is_none()
         && guarded_arm_gap.is_none()
         && unvaried_table.is_none()
         && !no_behavior.multi_line_def_header_line)
         .then(|| {
-            match python_band_reading(old_line_text, line_text, owner, &related_candidates, &focus)
-            {
+            match python_band_reading(
+                old_line_text,
+                line_text,
+                owner,
+                PythonBandSource {
+                    text: owner_source.unwrap_or(""),
+                    sole_line_replacement: no_behavior.sole_line_replacement,
+                },
+                &related_candidates,
+                &focus,
+            ) {
                 PythonBandReading::Read(evidence)
                     if evidence.verdict == PythonBandVerdict::Absorbs =>
                 {

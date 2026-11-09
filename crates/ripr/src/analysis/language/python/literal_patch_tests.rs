@@ -41,7 +41,10 @@ fn limit(body: &str, old: &str, test_source: &str) -> Option<StaticLimitKind> {
         None,
         &focus,
         owner,
-        &owner_source,
+        super::approx_band::PythonBandSource {
+            text: &owner_source,
+            sole_line_replacement: false,
+        },
         &candidates,
     )
     .map(|limit| limit.kind)

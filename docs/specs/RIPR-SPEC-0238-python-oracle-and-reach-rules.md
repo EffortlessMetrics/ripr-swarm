@@ -1033,29 +1033,52 @@ mutant calibrates the rule; ripr reports only the static shape.
     row selects passes an explicit band, `approx(expected, rel=...)`,
     `abs=...`, a positional second or third argument, or a `*` or `**`
     spread that may carry one (a literal `None` counts as absent), the
-    band may admit the pre-change value. One shape is evaluated: the owner
-    is an undecorated one-statement function whose changed line is
-    `return <expr>` over numeric literals, its own parameters and
-    `+ - * /`, and the assertion is `<owner>(<numeric literals>) ==
-    approx(<number>, rel=<number>, abs=<number>)` in either operand order
-    (only `rel`, `abs` and `nan_ok` keywords). The old and new results are
-    compared with pytest's tolerance (`abs` alone, else the larger of
+    band may admit the pre-change value. These shapes are evaluated. The
+    owner's result is `+ - * /` arithmetic over numeric literals and its
+    own parameters, read from: an undecorated one-statement function whose
+    changed line is `return <expr>`; the same function decorated only by
+    `functools.lru_cache` (bare, or called with a literal `maxsize` and
+    `typed` and nothing else) or `functools.cache`, the name resolving to
+    `functools` and bound once in the module, which returns the function's
+    own result (#13723); a function whose body is single-line `name =
+    <expr>` assignments then `return <expr>`, when the file's whole diff is
+    the changed line and exactly one body statement spells it, so the old
+    body is the new body with the old line put back (#13723); or a
+    one-statement method of a module-level class bound once, with no
+    decorator, base or class keyword, whose body holds only undecorated
+    non-dunder `def`s, a docstring or `pass`, whose method name no
+    attribute write in the module names, called as `Class().<method>(...)`
+    with no constructor arguments, `Class` imported under its own name from
+    the owner's module and never rebound or attribute-written by the test
+    module (#13723). The assertion is `<call>(<numeric literals>) ==
+    approx(<expected>, <rel>, <abs>, <nan_ok>)` in either operand order,
+    the band by keyword or positionally in pytest's parameter order (a
+    positional `nan_ok` must be `True` or `False`, and a parameter passed
+    twice is not read); the expected value and each band are numeric
+    literals or constants of the test's own module that the test-module
+    constant reading of RIPR-SPEC-0028 (#10707) holds at their value
+    (#13723). The old and new results are compared with pytest's tolerance (`abs` alone, else the larger of
     `rel * |expected|` and `abs`, default `1e-12`). An old result inside
     the band and a new result outside it is `exposed`
-    (`py-idioms-approx-constant-outside-tolerance`); both inside, for
+    (`py-idioms-approx-constant-outside-tolerance`,
+    `py-bands-positional-band-outside`); both inside, for
     every selected strong assertion and with no unbanded strong
-    assertion, is `weakly_exposed` naming the band
+    assertion, is `weakly_exposed` naming the band, whatever the changed
+    line's probe family
     (`py-idioms-approx-constant-within-tolerance`, whose old reading as
-    `exposed` was a false exposed). Everything else stays
+    `exposed` was a false exposed, and `py-bands-positional-band-within`,
+    `py-bands-non-literal-band`, `py-bands-decorated-owner`,
+    `py-bands-longer-body`, `py-bands-method-owner`). Everything else stays
     `static_unknown` with the static limit `unsupported_syntax` naming the
     band: an old result already outside the band, a result within `1e-9`
-    (relative) of the band edge, a non-literal argument, a positional
-    band, `**`, a longer body, a method or decorated owner, and a run
-    without the old line (repo mode). The `py-bands-*` cases pin the
-    abstentions: a positional band (an edit the band absorbs and one it
-    rejects, the latter a documented missed credit), a `**` spread,
-    named constants for the expected value and band, a two-statement
-    owner, a method owner and a decorated owner.
+    (relative) of the band edge, a non-literal argument, a `*` or `**`
+    spread, a constant the test or its module may rebind, any other
+    decorator, a body with any other statement or more than one changed
+    line, a method on a class with an initializer, dunder, base or
+    decorator, a receiver built with arguments or held in a name, and a
+    run without the old line (repo mode). `py-bands-spread-band` pins the
+    `**` spread abstention: a dict constant is mutable and its keys are
+    not read.
 22. **A `caplog.text` membership check on a changed log call is
     evaluated where it is decidable, else abstains.** When the changed
     line is a logging call (`<receiver>.debug`, `.info`, `.warning`,
