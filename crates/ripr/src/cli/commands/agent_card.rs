@@ -56,22 +56,24 @@ pub(super) fn run_agent_card(options: AgentCardOptions) -> Result<(), CommandErr
 /// post-publication card refusal keeps stdout empty (#7032). Byte-identical
 /// to what [`run_agent_card`] writes on success.
 pub(super) fn agent_card_stdout(options: AgentCardOptions) -> Result<String, CommandError> {
-    agent_card_stdout_with(options, false)
+    agent_card_stdout_with(options, None)
 }
 
 /// The card printed right after the `ripr repair` start summary: that summary
 /// already carries the changed behavior, assertion shape, continue command,
 /// packet route and attempt id, so the brief leaves those lines out instead of
-/// repeating them in the same stdout.
+/// repeating them in the same stdout. The changed-behavior and assertion
+/// lines are left out only when `start_summary` printed the same text.
 pub(super) fn agent_card_stdout_after_start(
     options: AgentCardOptions,
+    start_summary: &str,
 ) -> Result<String, CommandError> {
-    agent_card_stdout_with(options, true)
+    agent_card_stdout_with(options, Some(start_summary))
 }
 
 fn agent_card_stdout_with(
     options: AgentCardOptions,
-    after_start: bool,
+    start_summary: Option<&str>,
 ) -> Result<String, CommandError> {
     ensure_command_root(&options.root, "agent card")?;
     // Any id `ripr check` or `ripr pilot` prints works here: a finding id, a
@@ -136,7 +138,7 @@ fn agent_card_stdout_with(
             &packet_command,
             Some(&options.root),
             hold.as_ref(),
-            after_start,
+            start_summary,
         )
     };
     for line in lines {
@@ -544,21 +546,24 @@ pub(crate) fn agent_card_plain_lines(
     packet_command: &str,
     paste_root: Option<&std::path::Path>,
     hold: Option<&CardStartHold>,
-    after_start: bool,
+    start_summary: Option<&str>,
 ) -> Vec<String> {
     let mut lines = vec!["Repair brief for this gap".to_string()];
-    // `after_start` is only meaningful for a started, ready attempt: every
+    // `start_summary` is only meaningful for a started, ready attempt: every
     // other state keeps the full brief, since the start summary then did not
     // carry these lines.
-    let repeats_start_summary = |started: bool| after_start && started;
     let started_for_dedupe = card
         .attempt
         .as_ref()
         .is_some_and(|attempt| attempt.state == "awaiting_edit")
         && card.readiness.repair_ready
         && hold.is_none();
-    let skip_repeats = repeats_start_summary(started_for_dedupe);
-    if !skip_repeats {
+    let skip_repeats = start_summary.is_some() && started_for_dedupe;
+    // A line is only left out when the summary printed that exact text: the
+    // card prefers a matched finding's expression and a route-specific
+    // assertion, which the packet-derived summary may not carry.
+    let summary_has = |needle: &str| start_summary.is_some_and(|text| text.contains(needle));
+    if !(skip_repeats && summary_has(&format!("changed behavior: {}", card.changed_behavior))) {
         lines.push(format!("  Changed behavior: {}", card.changed_behavior));
     }
     // One verdict: the shared start gate (`hold`) outranks the card's own
@@ -627,8 +632,11 @@ pub(crate) fn agent_card_plain_lines(
     // The start summary prints the same `assertion shape:` for a suggested
     // assertion, so only the "none" wording (which it does not print) stays.
     let suggested_assertion_is_shown_above = skip_repeats
-        && card.assertion_goal_detail.is_some()
-        && card.instruction.has_suggested_assertion;
+        && card.instruction.has_suggested_assertion
+        && card
+            .assertion_goal_detail
+            .as_deref()
+            .is_some_and(|detail| summary_has(&format!("assertion shape: {detail}")));
     if !suggested_assertion_is_shown_above {
         lines.push(format!(
             "  Suggested assertion: {}",
@@ -703,7 +711,7 @@ pub(crate) fn agent_card_plain_lines(
                 }) =>
         {
             // The start summary already ends with the same continue command.
-            if let (false, Some(attempt)) = (skip_repeats, &card.attempt) {
+            if let Some(attempt) = card.attempt.as_ref().filter(|_| !skip_repeats) {
                 let command = format!(
                     "ripr continue --root {} --attempt {}",
                     root_arg(),
@@ -738,7 +746,7 @@ pub(crate) fn agent_card_plain_lines(
         ));
     }
     lines.push(plain_done_when_line(&card.done_when));
-    if let (false, Some(attempt)) = (skip_repeats, &card.attempt) {
+    if let Some(attempt) = card.attempt.as_ref().filter(|_| !skip_repeats) {
         lines.push(format!(
             "  Repair attempt: {} ({})",
             attempt.attempt_id, attempt.state
@@ -1390,7 +1398,7 @@ mod tests {
             "ripr agent packet --root 'a b' --json",
             None,
             None,
-            false,
+            None,
         );
         let text = lines.join("\n");
         if !text.contains("Not ready to repair yet: a test assertion that pins the changed boundary value exactly") {
@@ -1401,6 +1409,44 @@ mod tests {
         }
         if !text.contains("and 4 more") || lines.len() > 18 {
             return Err(format!("limits/cap wrong ({} lines):\n{text}", lines.len()));
+        }
+        Ok(())
+    }
+
+    /// After a fresh start the card leaves out a fact only when the start
+    /// summary printed that exact text; a differing changed behavior or a
+    /// card-only assertion stays on the card.
+    #[test]
+    fn post_start_brief_drops_a_line_only_when_the_summary_printed_it() -> Result<(), String> {
+        let mut card = prose_test_card();
+        card.readiness.repair_ready = true;
+        card.attempt = Some(crate::domain::RepairCardAttempt {
+            attempt_id: "repair-attempt-1".to_string(),
+            state: "awaiting_edit".to_string(),
+        });
+        card.assertion_goal_detail = Some("assert_eq!(f(1), 2)".to_string());
+        card.instruction.has_suggested_assertion = true;
+        let render = |summary: Option<&str>| {
+            agent_card_plain_lines(&card, "ripr agent packet --json", None, None, summary)
+                .join("\n")
+        };
+        let same = render(Some(
+            "  changed behavior: expr\n  assertion shape: assert_eq!(f(1), 2)\n",
+        ));
+        if same.contains("Changed behavior") || same.contains("Suggested assertion") {
+            return Err(format!("printed facts repeated:\n{same}"));
+        }
+        let differing = render(Some(
+            "  changed behavior: other\n  assertion shape: other\n",
+        ));
+        if !differing.contains("Changed behavior: expr")
+            || !differing.contains("Suggested assertion: assert_eq!(f(1), 2)")
+        {
+            return Err(format!("card-only facts dropped:\n{differing}"));
+        }
+        let full = render(None);
+        if !full.contains("Changed behavior") || !full.contains("Suggested assertion") {
+            return Err(format!("full brief lost lines:\n{full}"));
         }
         Ok(())
     }
@@ -1426,7 +1472,7 @@ mod tests {
             "ripr agent packet --json",
             None,
             Some(&route_not_ready),
-            false,
+            None,
         )
         .join("\n");
         if !text.contains("Not ready to repair yet: a test assertion that pins the changed boundary value exactly")
@@ -1449,7 +1495,7 @@ mod tests {
             "ripr agent packet --json",
             None,
             Some(&refused),
-            false,
+            None,
         );
         let text = lines.join("\n");
         if text.contains("Ready to repair.") || text.contains("Next: ripr repair") {
@@ -1468,7 +1514,7 @@ mod tests {
             command: Some("ripr repair s".to_string()),
         };
         let text =
-            agent_card_plain_lines(&ready, "ripr agent packet --json", None, Some(&held), false)
+            agent_card_plain_lines(&ready, "ripr agent packet --json", None, Some(&held), None)
                 .join("\n");
         if !text.contains("Not ready to repair yet: the inline test target")
             || !text.contains("Next: commit or stash `src/lib.rs`")
@@ -1492,7 +1538,7 @@ mod tests {
         let mut card = prose_test_card();
         card.instruction.state = FixInstructionState::Unavailable;
         let lines =
-            agent_card_plain_lines(&card, "ripr agent packet --json", Some(root), None, false);
+            agent_card_plain_lines(&card, "ripr agent packet --json", Some(root), None, None);
         let at = lines
             .iter()
             .position(|line| line.starts_with("  Next: ripr repair "))
@@ -1516,7 +1562,7 @@ mod tests {
             "ripr agent packet --json",
             Some(root),
             Some(&held),
-            false,
+            None,
         );
         let at = lines
             .iter()
@@ -1544,7 +1590,7 @@ mod tests {
             "ripr agent packet --seam-id seam:demo --json",
             None,
             None,
-            false,
+            None,
         );
         let text = lines.join("\n");
         for needle in [

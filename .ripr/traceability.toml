@@ -14743,6 +14743,8 @@ tests = [
   "crates/ripr/tests/cli_smoke.rs::agent_card_readiness_agrees_with_repair_target_admission",
   "crates/ripr/src/cli/agent.rs::tests::agent_card_parses_seam_id_request",
   "crates/ripr/src/cli/agent.rs::tests::agent_card_requires_seam_id_and_rejects_unknown_arguments",
+  "crates/ripr/src/cli/commands/agent_card.rs::tests::post_start_brief_drops_a_line_only_when_the_summary_printed_it",
+  "crates/ripr/tests/cli_smoke.rs::ripr_repair_start_does_not_repeat_the_summary_in_the_card",
 ]
 fixtures = []
 code = [
