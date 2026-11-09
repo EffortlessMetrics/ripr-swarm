@@ -538,6 +538,35 @@ pub(in crate::analysis::language::python) fn publish_production_finding(
     findings.push(finding);
 }
 
+/// Record which related rows live in a test file the diff changed (#14027) so
+/// the one shared headline pick can prefer them. Nothing is stamped when the
+/// first row already is one (the default pick already names it) or no row is.
+/// Display evidence only: row order, class and oracle strength are untouched.
+fn stamp_related_tests_changed_in_diff(finding: &mut Finding, changed_files: &BTreeSet<PathBuf>) {
+    if changed_files.is_empty()
+        || finding
+            .related_tests
+            .first()
+            .is_none_or(|first| changed_files.contains(&first.file))
+    {
+        return;
+    }
+    let lines: Vec<String> = finding
+        .related_tests
+        .iter()
+        .filter(|row| changed_files.contains(&row.file))
+        .map(|row| {
+            format!(
+                "{}{}:{}",
+                crate::domain::RELATED_TEST_CHANGED_IN_DIFF_PREFIX,
+                normalized_path(&row.file),
+                row.line
+            )
+        })
+        .collect();
+    finding.evidence.extend(lines);
+}
+
 /// Whether `text` holds `name` as a whole Python identifier.
 fn mentions_python_name(text: &str, name: &str) -> bool {
     let is_ident = |byte: u8| byte.is_ascii_alphanumeric() || byte == b'_';
@@ -2019,6 +2048,11 @@ impl PythonAdapter {
             }
         }
 
+        let changed_test_files: BTreeSet<PathBuf> = python_changed_files
+            .iter()
+            .filter(|changed| !changed.added_lines.is_empty() || !changed.removed_lines.is_empty())
+            .map(|changed| changed.path.clone())
+            .collect();
         let mut findings: Vec<Finding> = Vec::new();
         let mut value_origins = crate::value_origins::ValueOrigins::default();
         let mut related_memo = related_tests::RelatedCandidateMemo::default();
@@ -2244,6 +2278,7 @@ impl PythonAdapter {
                         reidentify_python_finding(&mut finding, &normalized);
                         value_origins.rebind_probe(&original, &finding.probe);
                     }
+                    stamp_related_tests_changed_in_diff(&mut finding, &changed_test_files);
                     publish_production_finding(&mut findings, finding);
                 }
             }
