@@ -3617,6 +3617,9 @@ impl RepoFileFactCache {
     /// best-effort remove sibling schema directories this build can never
     /// serve (#7047). A process-wide latch avoids a new struct field.
     fn prune_stale_schema_siblings_once(&self) {
+        if crate::atomic_file::cache_mutation_suppressed(&self.dir) {
+            return;
+        }
         let Some(layer_dir) = self.file_fact_schema_layer_dir() else {
             return;
         };
@@ -3646,6 +3649,9 @@ impl RepoFileFactCache {
     /// (non-symlink) marker directory only; the write is atomic and failures
     /// are ignored.
     pub(crate) fn note_build_use(&self) {
+        if crate::atomic_file::cache_mutation_suppressed(&self.dir) {
+            return;
+        }
         let Some(layer_dir) = self.file_fact_schema_layer_dir() else {
             return;
         };

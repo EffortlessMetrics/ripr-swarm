@@ -124,7 +124,7 @@ fn after_with_receipt_surface_transition(
         &shim,
         r##"#!/bin/sh
 case "$*" in
-  *"diff --no-renames --no-ext-diff --name-only -z "*)
+  *"diff --no-renames --no-ext-diff --no-relative --name-only -z "*)
     if [ ! -e "$RIPR_TEST_MARKER" ]; then
       printf '\n// receipt surface transition\n' >> "$RIPR_TEST_TARGET" || exit 90
       : > "$RIPR_TEST_MARKER"
