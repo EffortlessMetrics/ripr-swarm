@@ -1456,11 +1456,27 @@ per-fire audit trail, and the `main-red` tracking issue
 (`main-red: scheduled main-health sentinel found a broken main`) is the
 durable findable record — opened once, appended per confirming probe, and
 closed by the first green probe with the recovering run link. Worst-case
-detection latency is roughly forty minutes (interval plus probe). The
+detection latency is roughly forty minutes (interval plus probe).
+The probe alone misses test-level breaks: a stale generated CLI reference
+(#13793), a Perl unit test (#13639) and the editor smoke (#13783) all sat on
+main under a green sentinel. Main's push gates do finish, because their
+concurrency supersedes only queued runs, so about one run per gate completes
+each hour. Each fire therefore also reads the latest completed, non-cancelled
+main-push run of `Routed Rust Small` (`routed-rust.yml`) and `CI` (`ci.yml`)
+with `actions: read`. It lists their failed jobs in the summary and the tracker
+and turns the verdict red when either failed. It rebuilds, re-runs and
+dispatches nothing, so it adds no runner time beyond a few API reads. An
+unreadable or absent gate run shows as `unknown` and claims neither red nor
+green, so it never closes an open tracker. Each read is bounded and the read
+step cannot block the judge. The probe stays the fail-closed half. A red tracker gets one comment
+per new piece of evidence (a fingerprint of the probe result and the failing
+gate run ids), not one per fire. Gate-level detection latency is the gate
+cadence plus up to thirty minutes. The
 `xtask/tests/main_health_sentinel_contract.rs` contract pins the advisory-only
 shape: scheduled-plus-dispatch triggers, serialization, timeout, repository
 guard, `issues: write` as the only write authority, the exact probe selector,
-zero-executed-test refusal, and the tracker lifecycle.
+zero-executed-test refusal, the read-only push-gate judgement, and the
+tracker lifecycle.
 
 ### Golden Re-bless
 
