@@ -429,7 +429,9 @@ ripr agent repair --root . --attempt <repair-attempt-id> --phase after
   Verify executes only the retained packet's producer-owned typed
   verification route through bounded execution controls and records
   execution and static movement as independent observations; optional
-  `--verify-rollback` requests restoration of the applied edit. See
+  `--verify-rollback` requests restoration of the applied edit. The `agent repair`
+  after phase also accepts `--test-result FILE`, a caller-run libtest result
+  that ripr validates and records but never executes. See
   [Repair attempt identity](REPAIR_ATTEMPT.md).
 
 The lower-level `agent start`, `brief`, `packet`, `verify`,

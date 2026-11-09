@@ -49,6 +49,9 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::WindowsAdvisoryAclEvidence(args) => {
             super::windows_advisory_acl_evidence::run(&args)
         }
+        XtaskCommand::WindowsAdvisoryFilePolicyEvidence(args) => {
+            super::windows_advisory_file_policy_evidence::run(&args)
+        }
         XtaskCommand::VerifyTestShards(args) => super::verify_test_shards::run(&args),
         XtaskCommand::WindowsAdvisoryIsolatedSummary(args) => {
             super::windows_advisory::run_isolated(&args)
@@ -111,6 +114,7 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
             super::reports::targeted_rerun_benchmark(&args)
         }
         XtaskCommand::AgenticBench(args) => super::reports::agentic_bench(&args),
+        XtaskCommand::MusePluginSetup(args) => super::reports::muse_plugin_setup(&args),
         XtaskCommand::SeamInventoryScalingBenchmark(args) => {
             super::reports::seam_inventory_scaling_benchmark(&args)
         }
@@ -122,6 +126,7 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::RustCorpus(args) => super::reports::rust_corpus(&args),
         XtaskCommand::BenchAgentSurfaces(args) => super::reports::bench_agent_surfaces(&args),
         XtaskCommand::TokenCost => super::reports::token_cost(),
+        XtaskCommand::FvScoreboard => super::reports::fv_scoreboard(),
         XtaskCommand::RepoContractReport => super::repo_contract_report(),
         XtaskCommand::CurrentState(args) => super::current_state::current_state_command(&args),
         XtaskCommand::EvidenceHealth => super::reports::evidence_health_report(),
@@ -185,7 +190,7 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
             let repo_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
                 .parent()
                 .ok_or_else(|| "xtask manifest must have a repository parent".to_string())?;
-            ripr::app::run_impacted_evidence_at(repo_root, &args)
+            ripr::cli::run_impacted_evidence_at(repo_root, &args)
         }
         XtaskCommand::RiprPr(args) => super::reports::ripr_pr(&args),
         XtaskCommand::FirstPr(args) => super::reports::first_pr(&args),
@@ -280,6 +285,9 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::CheckDependencies => super::check_dependencies(),
         XtaskCommand::CheckSupplyChain => super::check_supply_chain(),
         XtaskCommand::CheckProcessPolicy => super::check_process_policy(),
+        XtaskCommand::CheckProductRouteParity(rest) => {
+            super::product_route_parity::check_product_route_parity(&rest)
+        }
         XtaskCommand::CheckCliExitContract => super::check_cli_exit_contract(),
         XtaskCommand::CheckNetworkPolicy => super::check_network_policy(),
         XtaskCommand::CheckLintPolicy => super::check_lint_policy(),

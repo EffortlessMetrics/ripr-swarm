@@ -287,10 +287,16 @@ pub(super) fn measure_corpus_entry(
             let status = diagnostics::pilot_status(summary.as_ref());
             let complete = exited_zero(&measured) && status == "complete";
             let ms = duration_ms(&measured);
+            // Only the bounded vocabulary reaches the retained detail; an
+            // arbitrary producer string is never copied into the report.
+            let reason = match diagnostics::pilot_reason(summary.as_ref()) {
+                "not_reported" => None,
+                reason => Some(reason),
+            };
             let detail = format!(
-                "exit {}, pilot status `{status}`; reason `{}`{}",
+                "exit {}, pilot status `{status}`{}{}",
                 exit_label(&measured),
-                diagnostics::pilot_reason(summary.as_ref()),
+                pilot_reason_suffix(reason),
                 if measured.output.timed_out {
                     ", harness deadline reached"
                 } else {
@@ -542,12 +548,20 @@ pub(super) fn measure_corpus_entry(
 
     let (outcome, detail) = contradiction_outcome(contradictions, &missing_sources);
     samples.push(sample("trust.self_contradictions", outcome, detail));
+    measured_corpus_entry(entry, &editor_base)
+}
+
+/// Retain the workload actually selected by the corpus producer. The effective
+/// base is shared with the check/editor argv, not recovered from a later config.
+pub(super) fn measured_corpus_entry(entry: &CorpusEntry, base: &str) -> Value {
     json!({
         "id": entry.id,
         "sha": entry.sha,
         "url": entry.url,
         "language": entry.language(),
-                "size_tier": entry.size_tier,
+        "base": base,
+        "expected_partial": entry.expected_partial,
+        "size_tier": entry.size_tier,
         "status": "measured",
         "terminal_evidence": {
             "schema_version": "1",
@@ -2011,4 +2025,14 @@ pub(crate) fn cpu_model_slug(cpuinfo: &str) -> Option<String> {
         .collect::<Vec<_>>()
         .join("-");
     (!slug.is_empty()).then_some(slug)
+}
+
+/// A partial pilot summary names why it stopped (`reason`, for example
+/// `timeout`); carrying it in the sample detail keeps a budget cut apart from
+/// a failure in the row.
+pub(super) fn pilot_reason_suffix(reason: Option<&str>) -> String {
+    match reason {
+        Some(reason) if !reason.is_empty() => format!(" (reason `{reason}`)"),
+        _ => String::new(),
+    }
 }

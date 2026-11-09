@@ -94,6 +94,8 @@ never raised:
 | `ripr-swarm-2026-10` | `medium` | 1,536 MB | 1,024 MB | 2026-11-04 |
 | `vscode-typescript` | `python_ts` | 1,024 MB | 512 MB | 2026-11-04 |
 
+`bevy`, `deno` and `polars` (heavy, `large` tier) came from the 2026-11-08 robustness sweep (shallow clones, 15-file edits, peak RSS at most 525 MB; warm check 18 s, 32 s and 26 s; cold pilot 275 s, 73 s and 275 s). Their memory ceilings (700 MB) sit under the 1,024 MB large-tier bar, so none carries a `memory_ratchet` note, and the latency ceilings are ratchets about 30% above those measurements. The sweep's edits were synthetic; the rows pin a real upstream commit that edits several Rust files instead. The pilot stopping at exactly 275 s on bevy and polars is a suspected pilot-analysis-budget cut with a partial summary, **not verified**. A partial pilot is recorded as an incomplete sample, never a value, so a ceilinged pilot metric on those rows fails the gate until the pilot completes; the cold-pilot sample detail names the summary's `reason` (for example `timeout`) beside its `status`, so the first measured run shows whether the cut was a budget.
+
 Latency is not tiered: the ladder's 1 s p50 and 3 s p95 apply up to about
 1,000 Rust files and are the targets of `speed.warm_check_p50_ms` and
 `speed.warm_check_p95_ms`; rows above that size are held by their per-row
@@ -385,6 +387,27 @@ baseline" instead of failing the gate; one that does not complete still fails.
 A repository that completes again after an incomplete baseline sample has no
 value to compare, so it is listed as "completed again" and left out of the
 compared worst.
+
+Built-in measured per-repository metrics pair numeric samples only when the
+retained `corpus` entries agree on URL, full head SHA, effective base,
+language and `expected_partial` (#13177). The producer records `HEAD~1`
+explicitly when no base SHA is configured; that recipe is bound to the exact
+head. It also records an explicit `null` when only complete analysis is admitted.
+A changed pin or scope under the same display ID is not a speed trend.
+Missing, malformed or duplicate identity is excluded from the common subset,
+including legacy reports that lack these fields. JSON and Markdown name each
+excluded repository and reason, even when another unchanged repository still
+compares. The current measurements and target status remain visible.
+
+Incomplete measurements still fail independently when a repository stopped
+completing. An incomplete baseline sample only excuses an already incomplete
+row when its workload identity matches; unknown or changed identity cannot
+hide a current failure. Absolute ceilings remain independent of baseline
+comparability. Ingested per-repository sources keep their own population
+contracts. These fields establish workload and scope, not sampling-method
+equivalence; the repeated-warm measurement work in #13076 owns that separate
+contract. No baseline is rewritten or accepted by this check.
+
 A passing gate is named honestly. When the missing-evidence counts the
 headline prints — `not_measured` plus the not-compared list — exceed half
 of the selected metrics, the gate status is `pass_with_gaps` instead of

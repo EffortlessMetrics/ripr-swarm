@@ -16,8 +16,17 @@ fn script() -> Result<PathBuf, String> {
 }
 
 fn check_reviews(reviews: &serde_json::Value, head: &str) -> Result<Output, String> {
-    let mut child = Command::new("python3")
-        .arg("-I")
+    check_review_bytes(reviews.to_string().as_bytes(), head, false)
+}
+
+fn check_review_bytes(bytes: &[u8], head: &str, legacy_stdin: bool) -> Result<Output, String> {
+    let mut command = Command::new("python3");
+    command.arg("-I");
+    if legacy_stdin {
+        // Force the Windows legacy decoding boundary even on UTF-8 hosts.
+        command.args(["-c", "import runpy,sys; sys.stdin.reconfigure(encoding='cp1252'); path=sys.argv.pop(1); runpy.run_path(path, run_name='__main__')"]);
+    }
+    let mut child = command
         .arg(script()?)
         .args(["--check-reviews", "-", "--head", head])
         .stdin(Stdio::piped())
@@ -29,11 +38,33 @@ fn check_reviews(reviews: &serde_json::Value, head: &str) -> Result<Output, Stri
         .stdin
         .take()
         .ok_or("stdin not piped")?
-        .write_all(reviews.to_string().as_bytes())
+        .write_all(bytes)
         .map_err(|e| format!("write reviews: {e}"))?;
     child
         .wait_with_output()
         .map_err(|e| format!("wait for verifier: {e}"))
+}
+
+#[test]
+fn utf8_review_input_ignores_legacy_stdin_encoding() -> Result<(), String> {
+    let head = "a".repeat(40);
+    let reviews = serde_json::json!([review(
+        "author",
+        "COMMENTED",
+        &head,
+        "2026-10-15T01:00:01Z",
+        "REVIEW_READY \u{2014} head 7c50f64fa93c3e40533240fbe4fd0e9ac7398eab"
+    )]);
+    expect_outcome(
+        &check_review_bytes(reviews.to_string().as_bytes(), &head, true)?,
+        true,
+        "UTF-8 review through legacy text stdin",
+    )?;
+    expect_outcome(
+        &check_review_bytes(b"[\"\xff\"]", &head, true)?,
+        false,
+        "malformed UTF-8 review",
+    )
 }
 
 /// Admit means exit 0; refuse means exit 1 with the refusal line and no crash.

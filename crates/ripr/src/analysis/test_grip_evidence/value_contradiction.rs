@@ -2432,6 +2432,136 @@ mod tests {
     }
 
     #[test]
+    fn an_assertion_that_does_not_name_the_owner_pays_no_body_work() -> Result<(), String> {
+        // Most oracles of a naming test never spell the owner; they answer `None`
+        // from the short anchor alone, with no prefilter ask (#13577).
+        let source = "pub fn discounted_total(a: u64, b: u64) -> u64 {\n    a + b\n}\n#[cfg(test)]\nmod tests {\n    use super::discounted_total;\n    #[test]\n    fn case() {\n        assert_eq!(discounted_total(1, 2), 3);\n        assert_eq!(other_total(1, 2), 3);\n        assert_eq!(discounted_total_extra(1, 2), 3);\n    }\n}\n";
+        let facts = RaRustSyntaxAdapter
+            .summarize_file(std::path::Path::new("src/lib.rs"), source)
+            .map_err(|error| format!("source summarizes: {error}"))?;
+        let owner = facts
+            .functions
+            .iter()
+            .find(|function| function.name == "discounted_total")
+            .ok_or("owner function is indexed")?;
+        let test = facts
+            .tests
+            .iter()
+            .find(|test| test.name == "case")
+            .ok_or("test is indexed")?;
+        let index = RustIndex::default();
+        let asks = crate::analysis::classify::owner_item_ask_count();
+        for oracle in [
+            "assert_eq!(other_total(1, 2), 3);",
+            "assert_eq!(discounted_total_extra(1, 2), 3);",
+        ] {
+            assert!(
+                test.body.contains(oracle),
+                "fixture body holds the assertion"
+            );
+            assert_eq!(
+                crate::analysis::classify::oracle_owner_call_is_shadowed(
+                    test.body.as_str(),
+                    oracle,
+                    owner,
+                    test,
+                    &index
+                ),
+                None
+            );
+        }
+        assert_eq!(
+            crate::analysis::classify::owner_item_ask_count(),
+            asks,
+            "an assertion without an owner mention never reaches the body prefilter"
+        );
+        // Discriminating control: the naming assertion does ask, and a plain call
+        // is not shadowed.
+        assert_eq!(
+            crate::analysis::classify::oracle_owner_call_is_shadowed(
+                test.body.as_str(),
+                "assert_eq!(discounted_total(1, 2), 3);",
+                owner,
+                test,
+                &index
+            ),
+            Some(false)
+        );
+        assert_eq!(crate::analysis::classify::owner_item_ask_count(), asks + 1);
+        Ok(())
+    }
+
+    #[test]
+    fn the_shadow_check_scans_each_distinct_body_once_per_run() -> Result<(), String> {
+        // The shadow check is asked once per (seam, naming test, oracle) and the
+        // body does not change between asks; the item-syntax prefilter must run
+        // once per distinct body in a run scope, not once per ask (#13577).
+        let mut tests = String::new();
+        for number in 0..5 {
+            let nested = if number == 4 {
+                "        fn discounted_total(a: u64, b: u64) -> u64 { b }\n"
+            } else {
+                ""
+            };
+            tests.push_str(&format!(
+                "    #[test]\n    fn case_{number}() {{\n{nested}        assert_eq!(discounted_total({number}, 5), 1);\n        assert_eq!(discounted_total({number}, 6), 2);\n        assert!(discounted_total({number}, 7) > 0);\n    }}\n"
+            ));
+        }
+        let source = format!(
+            "pub fn discounted_total(a: u64, b: u64) -> u64 {{\n    a + b\n}}\n#[cfg(test)]\nmod tests {{\n    use super::discounted_total;\n{tests}}}\n"
+        );
+        let facts = RaRustSyntaxAdapter
+            .summarize_file(std::path::Path::new("src/lib.rs"), &source)
+            .map_err(|error| format!("source summarizes: {error}"))?;
+        let owner = facts
+            .functions
+            .iter()
+            .find(|function| function.name == "discounted_total")
+            .ok_or("owner function is indexed")?;
+        let index = RustIndex::default();
+        let mut asks = Vec::new();
+        for test in facts.tests.iter().filter(|t| t.name.starts_with("case_")) {
+            for oracle in &test.assertions {
+                asks.push((test, oracle.text.as_str()));
+            }
+        }
+        assert_eq!(asks.len(), 15, "five tests with three assertions each");
+        let repeats = 4;
+        let answer = |(test, oracle): &(&TestSummary, &str)| {
+            bare_owner_call_is_shadowed(test, owner, oracle, &index)
+        };
+        // Independent reference: the scan runs on the distinct bodies only.
+        let distinct: std::collections::HashSet<&str> =
+            asks.iter().map(|(test, _)| test.body.as_str()).collect();
+        assert_eq!(distinct.len(), 5);
+        // `use super::...` is not in a test body, so only case_4's nested fn
+        // reads the tree; every other body is answered by the prefilter alone.
+        let unscoped: Vec<bool> = asks.iter().map(answer).collect();
+        let before = crate::analysis::classify::owner_item_scan_count();
+        let scoped: Vec<Vec<bool>> = {
+            let _scope = crate::analysis::syntax::run_memo::enter();
+            (0..repeats)
+                .map(|_| asks.iter().map(answer).collect())
+                .collect()
+        };
+        for round in &scoped {
+            assert_eq!(round, &unscoped, "the memo never changes an answer");
+        }
+        let scans = crate::analysis::classify::owner_item_scan_count() - before;
+        assert_eq!(
+            scans,
+            distinct.len(),
+            "one prefilter run per distinct body, not {} asks",
+            asks.len() * repeats
+        );
+        assert!(
+            unscoped.iter().skip(12).all(|shadowed| *shadowed),
+            "the nested fn body shadows its owner calls"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn non_equality_assertions_are_not_evaluable() -> Result<(), String> {
         for assertion in [
             "assert!(discounted_total(5_000, 5_000) > 0);",
