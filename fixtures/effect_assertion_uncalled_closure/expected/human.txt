@@ -34,7 +34,7 @@ Start here:
       base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
     - reach yes: Related tests appear to reach process_order: process_order_sends_exact_order_id
     - infection yes: Reachable tests can plausibly activate this changed behavior
-    - 7 more detail line(s) in --format human-full
+    - 8 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
   (finding id, for explain/context)

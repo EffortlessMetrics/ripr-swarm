@@ -41,6 +41,7 @@ Evidence
   - source assertion argument value 12 at tests/support/dormant.rs:2
   - source function argument value input = 4 at tests/support/dormant.rs:2
   - source function argument value input = 4 at tests/weight_tests.rs:4
+  - assertion not credited: `assert_eq!` in dormant at tests/support/dormant.rs:2: `mod dormant;` at tests/weight_tests.rs:3 is gated by a `cfg` ripr cannot evaluate, or nested
 
 Weakness
   - No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)
