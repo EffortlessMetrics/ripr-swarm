@@ -22847,14 +22847,10 @@ fn given_integration_test_when_nested_block_use_binds_the_rival_then_owner_keeps
 -> Result<(), String> {
     let rival =
         format!("mod local {{\n    {LOCAL_RIVAL_FN}\n}}\nuse lib_proptest::discounted_total;\n\n");
-    for (label, test) in [(
-        "nested explicit use",
-        "#[test]\nfn nested() {\n    {\n        use local::discounted_total;\n        assert_eq!(discounted_total(100, 100), 777);\n    }\n    assert_eq!(discounted_total(100, 100), 90);\n}\n",
-    )] {
-        let source = format!("{rival}{test}");
-        let related = related_test_names_for_boundary_seam(&source)?;
-        assert_eq!(related, vec!["nested".to_string()], "{label}: {source}");
-    }
+    let test = "#[test]\nfn nested() {\n    {\n        use local::discounted_total;\n        assert_eq!(discounted_total(100, 100), 777);\n    }\n    assert_eq!(discounted_total(100, 100), 90);\n}\n";
+    let source = format!("{rival}{test}");
+    let related = related_test_names_for_boundary_seam(&source)?;
+    assert_eq!(related, vec!["nested".to_string()], "{source}");
     Ok(())
 }
 
