@@ -29,6 +29,13 @@
         "observe": {"state":"unknown","confidence":"low","summary":"Not established: whether a test inside the property macro observes this change"},
         "discriminate": {"state":"unknown","confidence":"low","summary":"Not established: whether a test inside the property macro discriminates this change"}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"unknown","confidence":"low"},
+        {"stage":"infect","state":"unknown","confidence":"low"},
+        {"stage":"propagate","state":"unknown","confidence":"low"},
+        {"stage":"observe","state":"unknown","confidence":"low"},
+        {"stage":"discriminate","state":"unknown","confidence":"low"}
+      ],
       "evidence_path": ["reach unknown: Property macro expansion and owner execution are unresolved", "infection unknown: Property macro expansion and owner execution are unresolved", "propagation unknown: Property macro expansion and owner execution are unresolved", "observation unknown: Not established: whether a test inside the property macro observes this change", "discriminator unknown: Not established: whether a test inside the property macro discriminates this change"],
       "flow_sinks": [
       ],

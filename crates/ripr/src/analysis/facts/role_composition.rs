@@ -31,6 +31,7 @@
 //!   conservative in the meantime.
 
 use super::FunctionSourceRole;
+use super::invisible_owners::InvisibleOwners;
 use super::model::{
     ModuleDeclarationFact, ModulePathTarget, ResolvedIncludeParent, RustIndex, SourceRoleProvenance,
 };
@@ -63,6 +64,9 @@ struct ModuleEdge {
     declaration: String,
     line: usize,
     requires_test: bool,
+    /// The declaration's only cfg guard is exactly `#[cfg(kani)]` (#13736):
+    /// the child exists only in a Kani verification build.
+    cfg_kani: bool,
 }
 
 /// The effective test requirement of a file's composition context.
@@ -106,13 +110,16 @@ pub(super) fn compose_index_source_roles(index: &mut RustIndex, workspace_root: 
     // Phase 1 (immutable): resolve every file's context and provenance.
     // The resolver borrows `include_parents`, so all mutations wait for it
     // to go out of scope.
+    let cfg_kani_files: BTreeSet<PathBuf>;
     let resolutions: Vec<(PathBuf, Context, SourceRoleProvenance)> = {
         let mut resolver = ContextResolver {
             module_edges,
             include_parents: &index.include_parents,
             memo: BTreeMap::new(),
+            kani_memo: BTreeMap::new(),
+            invisible_owners: InvisibleOwners::new(index, workspace_root),
         };
-        index
+        let resolutions = index
             .files
             .keys()
             .cloned()
@@ -120,8 +127,16 @@ pub(super) fn compose_index_source_roles(index: &mut RustIndex, workspace_root: 
                 let (context, provenance) = resolver.context_with_provenance(&file);
                 (file, context, provenance)
             })
-            .collect()
+            .collect::<Vec<_>>();
+        cfg_kani_files = index
+            .files
+            .keys()
+            .filter(|file| resolver.cfg_kani_only(file, 0))
+            .cloned()
+            .collect::<BTreeSet<_>>();
+        resolutions
     };
+    index.cfg_kani_module_files = cfg_kani_files;
 
     let outside_module_tree = files_outside_module_tree(index, workspace_root, &resolutions);
 
@@ -364,9 +379,13 @@ fn resolved_module_edges(
     let mut candidates: BTreeMap<PathBuf, BTreeSet<(PathBuf, usize, String, bool)>> =
         BTreeMap::new();
     let mut ambiguous: BTreeSet<PathBuf> = BTreeSet::new();
-    // (declaring file, line) -> simple cfg guard, for exclusive-alternative
-    // detection below.
-    let mut guards: BTreeMap<(PathBuf, usize), (String, bool)> = BTreeMap::new();
+    // (declaring file, `mod` line, declaration text) -> simple cfg guard, for
+    // exclusive-alternative and Kani-only detection below. The declaration
+    // text is part of the key because two declarations can share a line
+    // (`#[cfg(kani)] mod proofs; mod helpers;`, #13736 review): a guard must
+    // never be read for a sibling declaration. A key reached by declarations
+    // that disagree holds `None`, which grants nothing.
+    let mut guards: GuardMap = BTreeMap::new();
     let containing_directory_files = index
         .files
         .iter()
@@ -415,13 +434,19 @@ fn resolved_module_edges(
                     ambiguous.extend(children);
                 }
                 DeclarationTargets::Exact(child) => {
-                    if let Some(guard) = &declaration.cfg_guard {
-                        guards.insert((file.clone(), declaration.line), guard.clone());
-                    }
+                    let text = format!("mod {};", declaration.name);
+                    guards
+                        .entry((file.clone(), declaration.line, text.clone()))
+                        .and_modify(|existing| {
+                            if *existing != declaration.cfg_guard {
+                                *existing = None;
+                            }
+                        })
+                        .or_insert_with(|| declaration.cfg_guard.clone());
                     candidates.entry(child).or_default().insert((
                         file.clone(),
                         declaration.line,
-                        format!("mod {};", declaration.name),
+                        text,
                         declaration.requires_test,
                     ));
                 }
@@ -483,6 +508,15 @@ fn resolved_module_edges(
                 )
                 .collect(),
         );
+        // Only the exact positive `#[cfg(kani)]` guard: `not(kani)`,
+        // `any(kani, ..)`, several cfgs and `cfg_attr` carry no simple guard
+        // or a negated one, and keep the child in production. Every admitted
+        // owner must carry it: exclusive `cfg(kani)` / `cfg(not(kani))`
+        // alternatives compile the child in ordinary builds too.
+        let cfg_kani = owners.iter().all(|(parent, line, declaration, _)| {
+            guard_of(&guards, parent, *line, declaration)
+                .is_some_and(|(predicate, negated)| predicate == "kani" && !negated)
+        });
         if let Some((parent, line, declaration, requires_test)) = owners.into_iter().next() {
             edges.insert(
                 child,
@@ -491,11 +525,35 @@ fn resolved_module_edges(
                     declaration,
                     line,
                     requires_test,
+                    cfg_kani,
                 }),
             );
         }
     }
     edges
+}
+
+/// The module name of a `mod <name>;` declaration text.
+fn declared_name(declaration: &str) -> &str {
+    declaration
+        .strip_prefix("mod ")
+        .and_then(|rest| rest.strip_suffix(';'))
+        .unwrap_or(declaration)
+}
+
+/// Simple cfg guards keyed by (declaring file, `mod` line, declaration text).
+type GuardMap = BTreeMap<(PathBuf, usize, String), Option<(String, bool)>>;
+
+/// The simple cfg guard of exactly one declaration, if it has one.
+fn guard_of<'a>(
+    guards: &'a GuardMap,
+    file: &Path,
+    line: usize,
+    declaration: &str,
+) -> Option<&'a (String, bool)> {
+    guards
+        .get(&(file.to_path_buf(), line, declaration.to_string()))
+        .and_then(Option::as_ref)
 }
 
 /// True when the owners are exactly two declarations in one file, guarded by
@@ -506,7 +564,7 @@ fn resolved_module_edges(
 /// including non-complementary or compound cfgs, stays ambiguous.
 fn are_exclusive_cfg_alternatives(
     owners: &BTreeSet<(PathBuf, usize, String, bool)>,
-    guards: &BTreeMap<(PathBuf, usize), (String, bool)>,
+    guards: &GuardMap,
 ) -> bool {
     let mut iter = owners.iter();
     let (Some(first), Some(second), None) = (iter.next(), iter.next(), iter.next()) else {
@@ -516,8 +574,8 @@ fn are_exclusive_cfg_alternatives(
         return false;
     }
     match (
-        guards.get(&(first.0.clone(), first.1)),
-        guards.get(&(second.0.clone(), second.1)),
+        guard_of(guards, &first.0, first.1, &first.2),
+        guard_of(guards, &second.0, second.1, &second.2),
     ) {
         (Some((left, left_negated)), Some((right, right_negated))) => {
             left == right && left_negated != right_negated
@@ -937,9 +995,59 @@ struct ContextResolver<'index> {
     module_edges: BTreeMap<PathBuf, Result<ModuleEdge, &'static str>>,
     include_parents: &'index BTreeMap<PathBuf, ResolvedIncludeParent>,
     memo: BTreeMap<PathBuf, (Context, SourceRoleProvenance)>,
+    kani_memo: BTreeMap<PathBuf, bool>,
+    invisible_owners: InvisibleOwners<'index>,
 }
 
 impl ContextResolver<'_> {
+    /// True when `file` is compiled only under Kani (#13736): its resolved
+    /// module edge is an exact `#[cfg(kani)]` declaration, or its module or
+    /// include parent is itself Kani-only. A file both declared and included
+    /// is Kani-only only when both contexts are. Unresolved, cyclic or
+    /// over-deep chains, and module edges whose child could have an owner
+    /// the producer does not capture (`InvisibleOwners`), answer `false`,
+    /// which keeps production probing.
+    fn cfg_kani_only(&mut self, file: &Path, depth: usize) -> bool {
+        if let Some(&cached) = self.kani_memo.get(file) {
+            return cached;
+        }
+        if depth > MAX_CONTEXT_CHAIN_DEPTH {
+            return false;
+        }
+        // Seed `false` so a cycle through this file answers fail-closed.
+        self.kani_memo.insert(file.to_path_buf(), false);
+        let module_edge = match self.module_edges.get(file) {
+            Some(Ok(edge)) => Some((
+                edge.cfg_kani,
+                edge.parent.clone(),
+                declared_name(&edge.declaration).to_string(),
+            )),
+            Some(Err(_)) => {
+                return false;
+            }
+            None => None,
+        };
+        let include_parent = self
+            .include_parents
+            .get(file)
+            .map(|include| include.parent.clone());
+        // Every module edge on the way must have no owner the producer could
+        // not see: an inline, macro-generated or unindexed `mod name;` could
+        // compile the file in an ordinary build.
+        let module_kani = module_edge.map(|(gated, parent, name)| {
+            (gated || self.cfg_kani_only(&parent, depth + 1))
+                && self.invisible_owners.all_owners_visible(file, &name)
+        });
+        let include_kani = include_parent.map(|parent| self.cfg_kani_only(&parent, depth + 1));
+        let kani = match (module_kani, include_kani) {
+            (Some(module), Some(include)) => module && include,
+            (Some(only), None) | (None, Some(only)) => only,
+            (None, None) => false,
+        };
+        self.kani_memo.insert(file.to_path_buf(), kani);
+        kani
+    }
+
     fn context_with_provenance(&mut self, file: &Path) -> (Context, SourceRoleProvenance) {
         let mut visiting = BTreeSet::new();
         self.resolve(file, &mut visiting, 0)
