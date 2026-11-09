@@ -3517,7 +3517,7 @@ impl LocalModules {
                         if !module.is_empty() {
                             let is_pub = (0..index)
                                 .rev()
-                                .map_while(|back| word_at(back))
+                                .map_while(&word_at)
                                 .take(6)
                                 .any(|word| word == "pub");
                             if is_pub {
