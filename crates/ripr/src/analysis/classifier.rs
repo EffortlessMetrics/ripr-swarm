@@ -607,9 +607,9 @@ pub(in crate::analysis) fn withhold_proc_macro_no_path_as_unknown(
     finding.recommended_next_step = Some(
         "This is proc-macro code, which tests normally reach through `#[derive]` or an attribute in another crate; ripr does not expand macros, so it does not claim that no test reaches this change. Inspect the tests that apply the macro, and add one only if none already does.".to_string(),
     );
-    finding
-        .evidence
-        .retain(|line| !line.contains("No static test path"));
+    finding.evidence.retain(|line| {
+        !line.contains("No static test path") && !line.contains(evidence::UNREFERENCED_IN_WORKSPACE)
+    });
     finding.evidence.push(
         "proc_macro_expansion: changed code is in a proc-macro crate; tests reach it through derive or attribute expansion".to_string(),
     );
@@ -667,9 +667,11 @@ pub(in crate::analysis) fn withhold_property_macro_no_path_as_unknown(finding: &
             *stage = unknown(summary);
         }
     }
-    finding
-        .evidence
-        .retain(|line| !stale.contains(line) && !line.contains("No static test path"));
+    finding.evidence.retain(|line| {
+        !stale.contains(line)
+            && !line.contains("No static test path")
+            && !line.contains(evidence::UNREFERENCED_IN_WORKSPACE)
+    });
     let ripr = &finding.ripr;
     finding.confidence = finding.confidence.min(confidence_score(
         &ripr.reach,
@@ -762,9 +764,9 @@ fn withhold_helper_uniqueness_as_unknown(
     finding.recommended_next_step = Some(format!(
         "ripr cannot tell which `{entry}` a test calls because that name is not unique in the workspace, so it does not claim that no test reaches this change. Disambiguate the function, or add a test that calls a unique owner, only if none already does."
     ));
-    finding
-        .evidence
-        .retain(|line| !line.contains("No static test path"));
+    finding.evidence.retain(|line| {
+        !line.contains("No static test path") && !line.contains(evidence::UNREFERENCED_IN_WORKSPACE)
+    });
     finding.evidence.push(format!(
         "helper_chain_uniqueness: `{entry}` is not a unique function in the workspace; tests call that name"
     ));

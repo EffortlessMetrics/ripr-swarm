@@ -43,7 +43,7 @@ result. See [Why ripr](WHY_RIPR.md).
 | `exclude_globs` / `examine_globs` | `--exclude` / `--path` flags ([Configuration](CONFIGURATION.md)); the files they leave out count as requested scope, not as an incomplete run |
 | `exclude_re` / `examine_re` | none |
 | `additional_cargo_test_args`, `test_tool` | not applicable |
-| `#[mutants::skip]` | `.ripr/suppressions.toml` ([example](suppressions.example.toml)); applied to findings with `--suppression-policy` |
+| `#[mutants::skip]` | honored as-is on a changed function or method, including `#[cfg_attr(<predicate>, mutants::skip)]`: `ripr check` withholds that owner's findings and discloses them (count and `owner_mutants_skip`; see [Output schema](OUTPUT_SCHEMA.md#owner_opt_outs-and-withheld-findings-top-level-additive-13819)). A skip on an `impl` block or module is not read; use `.ripr/suppressions.toml` ([example](suppressions.example.toml)) with `--suppression-policy` for those |
 
 `ripr init` writes a `ripr.toml` with the built-in defaults. It is optional.
 
@@ -51,10 +51,10 @@ result. See [Why ripr](WHY_RIPR.md).
 
 | cargo-mutants CI habit | ripr equivalent |
 | --- | --- |
-| `cargo mutants --in-diff pr.diff` on each PR, fail on exit 2 (missed) | `ripr review-comments` then `ripr gate evaluate --mode acknowledgeable` (exit `3` when blocked; see [CI gate](#ci-gate-the-exit-2-equivalent)), or `ripr init --ci github` and [Adopting in CI](ADOPTING_IN_CI.md) for the full workflow |
+| `cargo mutants --in-diff pr.diff` on each PR, fail on exit 2 (missed) | `ripr gate check --base origin/main` (exit `3` when blocked; see [CI gate](#ci-gate-the-exit-2-equivalent)), or `ripr init --ci github` and [Adopting in CI](ADOPTING_IN_CI.md) for the full workflow |
 | Upload `mutants.out` as an artifact | the generated workflow uploads the reports under `target/ripr/reports` and can render SARIF |
 | Nightly full run | `ripr pilot` for a whole-repo ranked list |
-| Exit code | `ripr check` always exits `0` when it completes; the pass/fail decision is `ripr gate evaluate` (exit `3` when blocked). See [Exit codes](EXIT_CODES.md). |
+| Exit code | `ripr check` always exits `0` when it completes; the pass/fail decision is `ripr gate check` or `ripr gate evaluate` (exit `3` when blocked). See [Exit codes](EXIT_CODES.md). |
 
 Do not build a gate on `ripr check`'s exit code.
 
@@ -112,15 +112,24 @@ Full field and selection rules: [output schema, `missed-txt`](OUTPUT_SCHEMA.md#m
 
 ## CI gate: the exit `2` equivalent
 
-Two commands. The first writes PR guidance for the changed lines; the second
-applies the blocking policy to it:
+One command:
+
+```bash
+ripr gate check --base origin/main
+```
+
+It runs the two steps below in one process, defaults to `--mode
+acknowledgeable` and exits like `gate evaluate`. If the first step fails,
+gate check does not reuse an older `comments.json`; it exits `2`. Run the
+steps yourself when you want to keep the guidance from one run and
+evaluate it later:
 
 ```bash
 ripr review-comments --base origin/main --head HEAD
 ripr gate evaluate --pr-guidance target/ripr/review/comments.json --mode acknowledgeable
 ```
 
-| `gate evaluate` exit | Meaning |
+| `gate check` / `gate evaluate` exit | Meaning |
 | --- | --- |
 | `0` | pass, advisory only, or every blocking gap acknowledged |
 | `3` | blocked: at least one policy-eligible gap and no acknowledgement |
@@ -183,10 +192,7 @@ jobs:
         run: |
           mkdir -p target/ci
           printf '%s' "$LABELS" > target/ci/labels.json
-          ripr review-comments --base "origin/$BASE_REF" --head HEAD
-          ripr gate evaluate \
-            --pr-guidance target/ripr/review/comments.json \
-            --mode acknowledgeable \
+          ripr gate check --base "origin/$BASE_REF" \
             --labels-json target/ci/labels.json
 ```
 
@@ -223,7 +229,7 @@ costs more than a plain `ripr check`. The import is advisory and does not change
 ## Where you will get stuck
 
 - **No fail-on-missed flag.** `ripr check` never fails on findings. Use the
-  two-command gate above.
+  one-command gate above, `ripr gate check`.
 - **Gaps, not mutants.** `--format missed-txt` lists one line per gap (a probe
   on a changed line), not per mutant, and there is no mutant-level regex
   selection.

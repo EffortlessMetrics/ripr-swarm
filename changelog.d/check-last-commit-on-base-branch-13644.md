@@ -1,0 +1,2 @@
+<!-- section: Changed -->
+- A bare human `ripr check` on a clean checkout of the comparison base branch (HEAD has a parent, nothing uncommitted) now analyzes the last commit (`--base HEAD~1`) and says so on stderr, instead of reporting "nothing in scope" and leaving a caller to rerun with `--base`. `human-full`, JSON, SARIF and GitHub formats, explicit `--base`/`--diff`/`--worktree` runs, and dirty trees are unchanged (#13644).
