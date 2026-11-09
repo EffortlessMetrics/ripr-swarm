@@ -26,6 +26,9 @@ use std::time::{Duration, Instant};
 )]
 pub(crate) mod inline_test_region;
 
+/// Pure-insertion content cage for external Rust test-surface files (#8710).
+pub(crate) mod external_test_file_region;
+
 #[cfg(test)]
 mod binding_omission_tests;
 
@@ -197,6 +200,10 @@ pub(crate) struct AttemptDelta {
     /// for every other attempt, which keeps their serialized deltas unchanged.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) inline_test_region: Option<inline_test_region::InlineTestRegionObservation>,
+    /// Pure-insertion observation for an external Rust test file (#8710).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) external_test_file_region:
+        Option<external_test_file_region::ExternalTestFileObservation>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -210,6 +217,8 @@ pub(crate) struct AttemptBaseline {
     /// test module, captured only when the policy confines the target to it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     inline_test_region: Option<inline_test_region::InlineTestRegionBaseline>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    external_test_file_region: Option<external_test_file_region::ExternalTestFileBaseline>,
     #[cfg(windows)]
     #[serde(skip, default)]
     _unknown_ignored_write_guards: Vec<fs::File>,
@@ -342,7 +351,20 @@ pub(crate) fn capture_attempt_baseline(
     } else {
         None
     };
-    let mut baseline = capture_repository_state(root, policy.clone(), CaptureTraceLabel::Baseline)?;
+    let mut baseline =
+        capture_repository_state(root.clone(), policy.clone(), CaptureTraceLabel::Baseline)?;
+    let external_target_absent = policy.external_test_file_target
+        && !baseline.ambiguous
+        && external_target_is_absent(&baseline, &policy.selected_target.path)?;
+    let external_test_file_region = if policy.external_test_file_target && !baseline.ambiguous {
+        Some(external_test_file_region::capture_attempt_external_region(
+            &root,
+            &policy.selected_target.path,
+            external_target_absent,
+        )?)
+    } else {
+        None
+    };
     // The proposal is stale at the moment it is bound when its premise is
     // already false: an integration proposal names a file that must not
     // exist yet, an inline proposal an existing production file.
@@ -373,10 +395,23 @@ pub(crate) fn capture_attempt_baseline(
         // capture; the retained before text would not be the baseline's.
         baseline.ambiguous = true;
     }
+    if let Some(region) = &external_test_file_region
+        && !external_target_absent
+        && baseline.worktree_digest(&region.path)
+            != Some(inline_test_region::digest_bytes(region.source.as_bytes()).as_str())
+    {
+        baseline.ambiguous = true;
+    }
     if let Some(region) = &inline_test_region {
         require_inline_target_at_head(&baseline, &region.path)?;
     }
+    if let Some(region) = &external_test_file_region
+        && !external_target_absent
+    {
+        require_inline_target_at_head(&baseline, &region.path)?;
+    }
     baseline.inline_test_region = inline_test_region;
+    baseline.external_test_file_region = external_test_file_region;
     Ok(baseline)
 }
 
@@ -443,6 +478,13 @@ pub(crate) fn evaluate_repository_edit_cage_with_captured_digest(
         })
     {
         delta.inline_test_region = Some(observe_inline_target(baseline, &after, region)?);
+    }
+    if let Some(region) = &baseline.external_test_file_region
+        && delta.changes.iter().any(|change| {
+            normalize_repo_relative_path(&change.path).is_ok_and(|path| path == region.path)
+        })
+    {
+        delta.external_test_file_region = Some(observe_external_target(baseline, &after, region)?);
     }
     let verdict = evaluate_edit_cage(&baseline.policy, &delta);
     Ok((delta, verdict, selected_digest, line_ending_only_paths))
@@ -565,6 +607,14 @@ pub(crate) fn visit_reconstructed_workflow_deltas(
             })
         {
             delta.inline_test_region = Some(observe_inline_target(baseline, &after, region)?);
+        }
+        if let Some(region) = &baseline.external_test_file_region
+            && delta.changes.iter().any(|change| {
+                normalize_repo_relative_path(&change.path).is_ok_and(|path| path == region.path)
+            })
+        {
+            delta.external_test_file_region =
+                Some(observe_external_target(baseline, &after, region)?);
         }
         visit(delta)?;
     }
@@ -694,9 +744,44 @@ fn require_inline_target_at_head(baseline: &AttemptBaseline, path: &str) -> Resu
         .map(str::to_string);
     if inline_target_copies_at_head(committed.as_deref(), worktree.as_deref(), index.as_deref()) {
         Ok(())
+    } else if baseline.policy().external_test_file_target
+        && baseline.policy().selected_target.matches(path)
+    {
+        Err(external_test_file_region::uncommitted_target_refusal(path))
     } else {
         Err(inline_test_region::uncommitted_target_refusal(path))
     }
+}
+
+/// A new external test has no protected before text only when the trusted
+/// repository snapshot, recorded commit and current safe filesystem path all
+/// establish absence. A deleted tracked file or failed Git read is not absence.
+fn external_target_is_absent(baseline: &AttemptBaseline, path: &str) -> Result<bool, String> {
+    if !baseline.paths.get(path).is_some_and(|state| {
+        state.index_entry.is_none() && matches!(state.worktree_identity, WorktreeIdentity::Missing)
+    }) {
+        return Ok(false);
+    }
+    let committed = git_text(
+        &baseline.root,
+        &["--literal-pathspecs", "ls-tree", &baseline.head, "--", path],
+    )?;
+    if !committed.is_empty() || !writable_path_components_are_safe(&baseline.root, path)? {
+        return Ok(false);
+    }
+    let mut remaining_file_bytes = MAX_CAPTURE_FILE_BYTES;
+    let mut remaining_work_bytes = MAX_CAPTURE_FILE_BYTES;
+    Ok(matches!(
+        worktree_identity(
+            &baseline.root,
+            path,
+            &mut remaining_file_bytes,
+            &mut remaining_work_bytes,
+            false,
+            true,
+        )?,
+        WorktreeIdentity::Missing
+    ))
 }
 
 /// The one law for "the inline target is at HEAD": a committed object exists
@@ -853,6 +938,69 @@ fn observe_inline_target(
     ))
 }
 
+fn observe_external_target(
+    baseline: &AttemptBaseline,
+    after: &AttemptBaseline,
+    region: &external_test_file_region::ExternalTestFileBaseline,
+) -> Result<external_test_file_region::ExternalTestFileObservation, String> {
+    let root = &baseline.root;
+    let worktree =
+        inline_test_region::read_attempt_inline_target(root, &region.path).and_then(|bytes| {
+            let digest = inline_test_region::digest_bytes(bytes.as_bytes());
+            if after.worktree_digest(&region.path) == Some(digest.as_str()) {
+                Ok(bytes)
+            } else {
+                Err("the file changed while the after phase observed it".to_string())
+            }
+        });
+    let (worktree_object, object_unreadable) = if worktree.is_ok() {
+        match git_text(root, &["hash-object", "--no-filters", "--", &region.path]) {
+            Ok(object) => (Some(object), None),
+            Err(error) => (None, Some(error)),
+        }
+    } else {
+        (None, None)
+    };
+    let index_object = |state: &AttemptBaseline| {
+        state
+            .index_entry(&region.path)
+            .and_then(|entry| entry.split_ascii_whitespace().nth(1))
+            .map(str::to_string)
+    };
+    let before_index = index_object(baseline);
+    let after_index = index_object(after);
+    let index_matches =
+        after_index == before_index || (after_index.is_some() && after_index == worktree_object);
+    let head_matches = if after.head == baseline.head {
+        true
+    } else {
+        let committed = |head: &str| {
+            git_text(
+                root,
+                &[
+                    "rev-parse",
+                    "--verify",
+                    "--quiet",
+                    &format!("{head}:{}", region.path),
+                ],
+            )
+            .ok()
+        };
+        let before_commit = committed(&baseline.head);
+        let after_commit = committed(&after.head);
+        after_commit == before_commit || (after_commit.is_some() && after_commit == worktree_object)
+    };
+    Ok(external_test_file_region::observe_attempt_external_region(
+        external_test_file_region::ExternalTargetCopies {
+            worktree,
+            index_matches,
+            head_matches,
+            object_unreadable,
+            baseline: region,
+        },
+    ))
+}
+
 /// The path changes committed between the baseline head and the current
 /// head, or `None` when the current head does not descend from the baseline
 /// head or HEAD moved while the range was read. Equal heads commit nothing.
@@ -934,7 +1082,7 @@ fn capture_repository_state(
     let ignored = ignored_inventory(&root, &policy)?;
 
     let python_tool_caches = policy.expects_python_tool_caches();
-    let (inventory, mut ambiguous) =
+    let (mut inventory, mut ambiguous) =
         inventory_paths(&tracked, &untracked, &ignored, MAX_CAPTURE_PATHS, |path| {
             python_tool_caches && is_python_tool_cache(path)
         })?;
@@ -945,6 +1093,22 @@ fn capture_repository_state(
         );
     }
 
+    // Git inventories omit a genuinely new target. Retain its Missing identity
+    // through the same bounded capture and stability check as existing paths.
+    if policy.external_test_file_target && !inventory.contains_key(&policy.selected_target.path) {
+        let selected = &policy.selected_target.path;
+        let key = crate::output::path::path_identity_key_on(Path::new(selected), false, true);
+        if inventory.len() >= MAX_CAPTURE_PATHS
+            || inventory.keys().any(|path| {
+                crate::output::path::path_identity_key_on(Path::new(path), false, true) == key
+            })
+        {
+            ambiguous = true;
+        } else {
+            inventory.insert(selected.clone(), false);
+        }
+    }
+
     let mut paths = BTreeMap::new();
     let mut remaining_file_bytes = MAX_CAPTURE_TOTAL_FILE_BYTES;
     let mut remaining_work_bytes = MAX_CAPTURE_TOTAL_WORK_BYTES;
@@ -952,6 +1116,7 @@ fn capture_repository_state(
     let mut unknown_ignored_write_guards = Vec::new();
     #[cfg(windows)]
     let mut expected_write_authorities = Vec::new();
+    let explicit_store_scopes = explicit_store_pair_scopes(&policy);
     let identity_started = Instant::now();
     for (path, ignored_path) in inventory {
         // The before-phase serialization lock is an authority artifact, not
@@ -980,7 +1145,9 @@ fn capture_repository_state(
                 .forbidden_paths
                 .iter()
                 .any(|rule| rule.matches(&path));
-        if writable_surface && !writable_path_components_are_safe(&root, &path)? {
+        if writable_surface
+            && !writable_path_components_are_safe_in(&root, &path, &explicit_store_scopes)?
+        {
             ambiguous = true;
         }
         #[cfg(windows)]
@@ -1117,6 +1284,7 @@ fn capture_repository_state(
         paths,
         ambiguous,
         inline_test_region: None,
+        external_test_file_region: None,
         #[cfg(windows)]
         _unknown_ignored_write_guards: unknown_ignored_write_guards,
         #[cfg(windows)]
@@ -1564,8 +1732,18 @@ fn delta_and_line_ending_only_paths(
         .collect::<BTreeSet<_>>();
     let mut changed_symlink = false;
     for path in paths {
-        let old = before.paths.get(&path);
-        let new = overrides.get(&path).or_else(|| after.paths.get(&path));
+        // A retained `Missing` identity with no index entry (an absent external
+        // test target kept in the capture) is absence, so a file created there
+        // reads as Added, not Modified.
+        let is_present = |state: &&RepositoryPathState| {
+            state.index_entry.is_some()
+                || !matches!(state.worktree_identity, WorktreeIdentity::Missing)
+        };
+        let old = before.paths.get(&path).filter(is_present);
+        let new = overrides
+            .get(&path)
+            .or_else(|| after.paths.get(&path))
+            .filter(is_present);
         if old == new {
             continue;
         }
@@ -1653,6 +1831,7 @@ fn delta_and_line_ending_only_paths(
             && !changed_symlink,
         changes,
         inline_test_region: None,
+        external_test_file_region: None,
     };
     // A committed change to the same path (admitted descendant commits) is
     // still in the delta, so it is not reported as a line-ending-only skip.
@@ -1886,6 +2065,7 @@ pub(crate) fn without_later_operational_writes_protecting(
     AttemptDelta {
         comparable: delta.comparable,
         inline_test_region: delta.inline_test_region.clone(),
+        external_test_file_region: delta.external_test_file_region.clone(),
         changes: delta
             .changes
             .iter()
@@ -1926,6 +2106,32 @@ fn canonical_repository_root(root: &Path) -> Result<PathBuf, String> {
 const ATTEMPT_STORE_PREFIX: &str = "target/ripr/repair-attempts/";
 
 fn writable_path_components_are_safe(root: &Path, relative: &str) -> Result<bool, String> {
+    writable_path_components_are_safe_in(root, relative, &[])
+}
+
+/// The explicit attempt store's retained subtree, when the policy carries one.
+/// The only operational write the product declares besides the `target/ripr`
+/// subtree is an explicit `--store` outside `target/ripr`
+/// (`include_explicit_store_operational_write`), so a subtree operational rule
+/// outside `target/ripr` is that store's `<store>/<attempt>` directory. Exact
+/// rules and anything under `target/ripr` never qualify (#13553).
+fn explicit_store_pair_scopes(policy: &EditCagePolicy) -> Vec<&CagePathRule> {
+    policy
+        .expected_operational_writes
+        .iter()
+        .filter(|rule| {
+            rule.scope == CagePathScope::Subtree
+                && rule.path != "target/ripr"
+                && !rule.path.starts_with("target/ripr/")
+        })
+        .collect()
+}
+
+fn writable_path_components_are_safe_in(
+    root: &Path,
+    relative: &str,
+    explicit_store_scopes: &[&CagePathRule],
+) -> Result<bool, String> {
     let mut current = root.to_path_buf();
     for component in relative.split('/') {
         current.push(component);
@@ -1950,7 +2156,10 @@ fn writable_path_components_are_safe(root: &Path, relative: &str) -> Result<bool
             // `<stem>.tmp-<digits>-<digits>` twin is an unaccounted second name
             // and stays refused (#12847).
             if metadata.nlink() != 1
-                && !(relative.starts_with(ATTEMPT_STORE_PREFIX)
+                && !((relative.starts_with(ATTEMPT_STORE_PREFIX)
+                    || explicit_store_scopes
+                        .iter()
+                        .any(|rule| rule.matches(relative)))
                     && links_are_staged_publication_pair(&current, &metadata)?)
             {
                 return Ok(false);
@@ -2617,6 +2826,10 @@ pub(crate) struct EditCagePolicy {
     /// other policy, which keeps their serialized form unchanged.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub(crate) inline_test_module_target: bool,
+    /// The selected target is an external Rust test-surface file whose authored
+    /// edit must be a pure insertion of new test functions (#8710).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub(crate) external_test_file_target: bool,
     /// The producer-owned new-test proposal this attempt follows (#13203),
     /// recorded in the retained baseline policy. Absent for an existing-test
     /// repair, which keeps every other policy's serialized form unchanged.
@@ -2800,6 +3013,33 @@ pub(crate) fn evaluate_edit_cage(policy: &EditCagePolicy, delta: &AttemptDelta) 
                 path: policy.selected_target.path.clone(),
                 reason: format!(
                     "the edit is not a pure insertion of test functions into the selected file's inline test module ({detail}); production code, the module declaration, and existing tests must stay byte-identical"
+                ),
+            });
+        }
+    } else if policy.external_test_file_target {
+        let admitted = delta
+            .external_test_file_region
+            .as_ref()
+            .is_some_and(|observation| {
+                observation.admitted && observation.path == policy.selected_target.path
+            });
+        if !admitted {
+            let detail = delta
+                .external_test_file_region
+                .as_ref()
+                .map(|observation| {
+                    observation
+                        .reason
+                        .as_deref()
+                        .unwrap_or("not admitted")
+                        .to_string()
+                })
+                .unwrap_or_else(|| "the external test file was not observed".to_string());
+            violations.push(EditCageViolation {
+                kind: EditCageViolationKind::OutsideInlineTestRegion,
+                path: policy.selected_target.path.clone(),
+                reason: format!(
+                    "the edit is not a pure insertion of test functions into the selected external test file ({detail}); existing tests must stay byte-identical"
                 ),
             });
         }
@@ -3060,6 +3300,26 @@ fn validate_policy(policy: &EditCagePolicy) -> Vec<EditCageViolation> {
             &selected_path,
             "an inline test-module target must be a Rust source file",
         ));
+    }
+    if policy.external_test_file_target {
+        if !crate::analysis::is_test_surface_path(&selected_path) {
+            violations.push(invalid_policy_violation(
+                &selected_path,
+                "an external test-file target must be a test-surface path",
+            ));
+        }
+        if Path::new(&selected_path).extension() != Some(std::ffi::OsStr::new("rs")) {
+            violations.push(invalid_policy_violation(
+                &selected_path,
+                "an external test-file target must be a Rust source file",
+            ));
+        }
+        if policy.inline_test_module_target {
+            violations.push(invalid_policy_violation(
+                &selected_path,
+                "a target cannot be both an inline test-module file and an external test file",
+            ));
+        }
     }
     if let Some(build_output) = &policy.ignored_build_output {
         if build_output.scope != CagePathScope::Subtree {
@@ -3657,8 +3917,29 @@ mod tests {
             ignored_build_output: None,
             untracked_build_lockfile: None,
             inline_test_module_target: false,
+            external_test_file_target: true,
             new_test_proposal: None,
         })
+    }
+
+    const SELECTED_TEST_COMPLIANT_EDIT: &str = "fn boundary() {}\n\n#[test]\nfn added() {}\n";
+
+    fn admitted_external_test_observation() -> external_test_file_region::ExternalTestFileObservation
+    {
+        external_test_file_region::ExternalTestFileObservation {
+            path: "tests/pricing.rs".to_string(),
+            admitted: true,
+            reason: None,
+        }
+    }
+
+    fn delta_with_admitted_external_test(changes: Vec<AttemptPathChange>) -> AttemptDelta {
+        AttemptDelta {
+            comparable: true,
+            inline_test_region: None,
+            external_test_file_region: Some(admitted_external_test_observation()),
+            changes,
+        }
     }
 
     fn integration_proposal_policy() -> Result<EditCagePolicy, String> {
@@ -3728,6 +4009,7 @@ mod tests {
             comparable: true,
             changes: vec![AttemptPathChange::modified("tests/price.rs")],
             inline_test_region: None,
+            external_test_file_region: None,
         };
         let verdict = evaluate_edit_cage(&policy, &delta);
         if verdict.status != EditCageVerdictStatus::Violated
@@ -3749,6 +4031,7 @@ mod tests {
         policy.allowed_edit_surface = vec![CagePathRule::exact(file)?];
         policy.forbidden_paths = vec![CagePathRule::exact("Cargo.toml")?];
         policy.inline_test_module_target = confined;
+        policy.external_test_file_target = false;
         policy.new_test_proposal = Some(FollowedNewTestProposal {
             kind: crate::analysis::new_test_target::NewTestKind::InlineUnit,
             file: file.to_string(),
@@ -3782,6 +4065,7 @@ mod tests {
             comparable: true,
             changes: vec![AttemptPathChange::added("src/pricing.rs")],
             inline_test_region: None,
+            external_test_file_region: None,
         };
         let verdict = evaluate_edit_cage(&policy, &delta);
         if verdict.status != EditCageVerdictStatus::Violated
@@ -3828,6 +4112,7 @@ mod tests {
             comparable: true,
             changes: vec![AttemptPathChange::added("tests/price.rs")],
             inline_test_region: None,
+            external_test_file_region: None,
         };
         for policy in [inline_without_confinement, other_file] {
             let verdict = evaluate_edit_cage(&policy, &delta);
@@ -3918,6 +4203,7 @@ mod tests {
         policy.allowed_edit_surface = vec![CagePathRule::exact("src/pricing.rs")?];
         policy.forbidden_paths = vec![CagePathRule::exact("Cargo.toml")?];
         policy.inline_test_module_target = true;
+        policy.external_test_file_target = false;
         let verdict_for = |after: &str| {
             let observation = inline_test_region::observe_attempt_inline_region(
                 inline_test_region::InlineTargetCopies {
@@ -3933,6 +4219,7 @@ mod tests {
                 &AttemptDelta {
                     comparable: true,
                     inline_test_region: Some(observation),
+                    external_test_file_region: None,
                     changes: vec![AttemptPathChange::modified("src/pricing.rs")],
                 },
             )
@@ -3977,6 +4264,7 @@ mod tests {
         policy.allowed_edit_surface = vec![CagePathRule::exact("src/pricing.rs")?];
         policy.forbidden_paths = vec![CagePathRule::exact("Cargo.toml")?];
         policy.inline_test_module_target = true;
+        policy.external_test_file_target = false;
 
         // Clean: the predicate and the attempt both admit.
         assert!(!inline_target_is_uncommitted(
@@ -4114,10 +4402,12 @@ mod tests {
                 "fn boundary() { /* pre-existing selected-test edit */ }\n",
             )
             .map_err(|err| format!("write pre-existing dirty selected test: {err}"))?;
+            git_ok(&fixture.root, &["add", "tests/pricing.rs"])?;
+            git_ok(&fixture.root, &["commit", "-qm", "pre-existing test edit"])?;
             let baseline = capture_attempt_baseline(&fixture.root, &policy()?)?;
             fs::write(
                 fixture.root.join("tests/pricing.rs"),
-                "fn boundary() { assert_eq!(2 + 2, 4); }\n",
+                "fn boundary() { /* pre-existing selected-test edit */ }\n\n#[test]\nfn focused() {}\n",
             )
             .map_err(|err| format!("write selected test edit: {err}"))?;
             if staged {
@@ -4147,8 +4437,11 @@ mod tests {
         )
         .map_err(|err| format!("write baseline ignored output: {err}"))?;
         let baseline = capture_attempt_baseline(&fixture.root, &policy()?)?;
-        fs::write(fixture.root.join("tests/pricing.rs"), "fn repaired() {}\n")
-            .map_err(|err| format!("write selected test: {err}"))?;
+        fs::write(
+            fixture.root.join("tests/pricing.rs"),
+            SELECTED_TEST_COMPLIANT_EDIT,
+        )
+        .map_err(|err| format!("write selected test: {err}"))?;
         fs::write(
             fixture.root.join("target/ripr/reports/agent-receipt.json"),
             "after\n",
@@ -4175,8 +4468,11 @@ mod tests {
         create_oversized_ignored_file(&fixture, "target/cache/preexisting.bin")?;
 
         let baseline = capture_attempt_baseline(&fixture.root, &policy()?)?;
-        fs::write(fixture.root.join("tests/pricing.rs"), "fn repaired() {}\n")
-            .map_err(|err| format!("write selected test: {err}"))?;
+        fs::write(
+            fixture.root.join("tests/pricing.rs"),
+            SELECTED_TEST_COMPLIANT_EDIT,
+        )
+        .map_err(|err| format!("write selected test: {err}"))?;
 
         let verdict = evaluate_repository_edit_cage(&baseline)?;
         assert_eq!(verdict.status, EditCageVerdictStatus::Compliant);
@@ -4191,8 +4487,11 @@ mod tests {
         create_oversized_ignored_file(&fixture, "target/cache/preexisting.bin")?;
 
         let baseline = capture_attempt_baseline(&fixture.root, &policy()?)?;
-        fs::write(fixture.root.join("tests/pricing.rs"), "fn repaired() {}\n")
-            .map_err(|err| format!("write selected test: {err}"))?;
+        fs::write(
+            fixture.root.join("tests/pricing.rs"),
+            SELECTED_TEST_COMPLIANT_EDIT,
+        )
+        .map_err(|err| format!("write selected test: {err}"))?;
         fs::write(fixture.root.join("src/pricing.rs"), "pub fn changed() {}\n")
             .map_err(|err| format!("write forbidden source: {err}"))?;
         fs::write(fixture.root.join("Cargo.toml"), "[workspace]\nmembers=[]\n")
@@ -4226,8 +4525,11 @@ mod tests {
         create_oversized_ignored_file(&fixture, "target/cache/unknown.bin")?;
 
         let baseline = capture_attempt_baseline(&fixture.root, &policy()?)?;
-        fs::write(fixture.root.join("tests/pricing.rs"), "fn repaired() {}\n")
-            .map_err(|err| format!("write selected test: {err}"))?;
+        fs::write(
+            fixture.root.join("tests/pricing.rs"),
+            SELECTED_TEST_COMPLIANT_EDIT,
+        )
+        .map_err(|err| format!("write selected test: {err}"))?;
 
         #[cfg(windows)]
         {
@@ -4462,6 +4764,7 @@ mod tests {
             ignored_build_output: None,
             untracked_build_lockfile: None,
             inline_test_module_target: false,
+            external_test_file_target: false,
             new_test_proposal: None,
         };
         Ok((fixture, policy))
@@ -4526,6 +4829,7 @@ mod tests {
                 &AttemptDelta {
                     comparable: true,
                     inline_test_region: None,
+                    external_test_file_region: None,
                     changes,
                 },
                 bound_paths,
@@ -4934,8 +5238,11 @@ mod tests {
         write_cargo_build_output(&fixture, "baseline build")?;
 
         let declared = capture_attempt_baseline(&fixture.root, &build_output_policy()?)?;
-        fs::write(fixture.root.join("tests/pricing.rs"), "fn repaired() {}\n")
-            .map_err(|err| format!("write selected test: {err}"))?;
+        fs::write(
+            fixture.root.join("tests/pricing.rs"),
+            SELECTED_TEST_COMPLIANT_EDIT,
+        )
+        .map_err(|err| format!("write selected test: {err}"))?;
         write_cargo_build_output(&fixture, "rebuilt by cargo test")?;
         write_fixture_file(&fixture, "target/debug/deps/pricing-2", "new test binary")?;
         write_fixture_file(&fixture, "target/ripr/reports/agent-receipt.json", "{}")?;
@@ -4962,6 +5269,9 @@ mod tests {
         // undeclared baseline refuses the rebuild's writes while it is held.
         drop(declared);
         write_cargo_build_output(&fixture, "baseline build")?;
+        fs::write(fixture.root.join("tests/pricing.rs"), "fn boundary() {}\n")
+            .map_err(|err| format!("reset selected test before undeclared capture: {err}"))?;
+        git_ok(&fixture.root, &["checkout", "--", "tests/pricing.rs"])?;
         let undeclared = capture_attempt_baseline(&fixture.root, &policy()?)?;
         #[cfg(windows)]
         for relative in CARGO_BUILD_OUTPUT {
@@ -5015,8 +5325,11 @@ mod tests {
             .push(CagePathRule::subtree("target/debug/forbidden")?);
 
         let baseline = capture_attempt_baseline(&fixture.root, &policy)?;
-        fs::write(fixture.root.join("tests/pricing.rs"), "fn repaired() {}\n")
-            .map_err(|err| format!("write selected test: {err}"))?;
+        fs::write(
+            fixture.root.join("tests/pricing.rs"),
+            SELECTED_TEST_COMPLIANT_EDIT,
+        )
+        .map_err(|err| format!("write selected test: {err}"))?;
         write_cargo_build_output(&fixture, "rebuilt by cargo test")?;
         write_fixture_file(&fixture, "notes.log", "ignored but not build output")?;
         write_fixture_file(&fixture, "target/notes.rs", "untracked, not ignored")?;
@@ -5107,6 +5420,7 @@ mod tests {
                 &AttemptDelta {
                     comparable: true,
                     inline_test_region: None,
+                    external_test_file_region: None,
                     changes: vec![AttemptPathChange::modified("tests/pricing.rs")],
                 },
             );
@@ -5154,8 +5468,11 @@ mod tests {
         // Cargo creates the lockfile between the phases; Git never tracks it.
         let fixture = git_fixture("untracked-lockfile-created")?;
         let baseline = capture_attempt_baseline(&fixture.root, &lockfile_policy()?)?;
-        fs::write(fixture.root.join("tests/pricing.rs"), "fn repaired() {}\n")
-            .map_err(|err| format!("write selected edit: {err}"))?;
+        fs::write(
+            fixture.root.join("tests/pricing.rs"),
+            SELECTED_TEST_COMPLIANT_EDIT,
+        )
+        .map_err(|err| format!("write selected edit: {err}"))?;
         fs::write(fixture.root.join("Cargo.lock"), "version = 4\n")
             .map_err(|err| format!("write generated lockfile: {err}"))?;
         let verdict = evaluate_repository_edit_cage(&baseline)?;
@@ -5176,8 +5493,11 @@ mod tests {
         let mut undeclared = lockfile_policy()?;
         undeclared.untracked_build_lockfile = None;
         let baseline = capture_attempt_baseline(&fixture.root, &undeclared)?;
-        fs::write(fixture.root.join("tests/pricing.rs"), "fn repaired() {}\n")
-            .map_err(|err| format!("write selected edit: {err}"))?;
+        fs::write(
+            fixture.root.join("tests/pricing.rs"),
+            SELECTED_TEST_COMPLIANT_EDIT,
+        )
+        .map_err(|err| format!("write selected edit: {err}"))?;
         fs::write(fixture.root.join("Cargo.lock"), "version = 4\n")
             .map_err(|err| format!("write generated lockfile: {err}"))?;
         let verdict = evaluate_repository_edit_cage(&baseline)?;
@@ -5191,8 +5511,11 @@ mod tests {
         // Staging the generated lockfile makes it tracked: an edit again.
         let fixture = git_fixture("untracked-lockfile-staged")?;
         let baseline = capture_attempt_baseline(&fixture.root, &lockfile_policy()?)?;
-        fs::write(fixture.root.join("tests/pricing.rs"), "fn repaired() {}\n")
-            .map_err(|err| format!("write selected edit: {err}"))?;
+        fs::write(
+            fixture.root.join("tests/pricing.rs"),
+            SELECTED_TEST_COMPLIANT_EDIT,
+        )
+        .map_err(|err| format!("write selected edit: {err}"))?;
         fs::write(fixture.root.join("Cargo.lock"), "version = 4\n")
             .map_err(|err| format!("write generated lockfile: {err}"))?;
         git_ok(&fixture.root, &["add", "Cargo.lock"])?;
@@ -5211,8 +5534,11 @@ mod tests {
         git_ok(&fixture.root, &["add", "Cargo.lock"])?;
         git_ok(&fixture.root, &["commit", "-qm", "track lockfile"])?;
         let baseline = capture_attempt_baseline(&fixture.root, &lockfile_policy()?)?;
-        fs::write(fixture.root.join("tests/pricing.rs"), "fn repaired() {}\n")
-            .map_err(|err| format!("write selected edit: {err}"))?;
+        fs::write(
+            fixture.root.join("tests/pricing.rs"),
+            SELECTED_TEST_COMPLIANT_EDIT,
+        )
+        .map_err(|err| format!("write selected edit: {err}"))?;
         fs::write(fixture.root.join("Cargo.lock"), "version = 4\n# updated\n")
             .map_err(|err| format!("modify tracked lockfile: {err}"))?;
         let verdict = evaluate_repository_edit_cage(&baseline)?;
@@ -5234,14 +5560,10 @@ mod tests {
         policy
             .allowed_edit_surface
             .push(CagePathRule::exact("target/ripr/authored.json")?);
-        let bound = AttemptDelta {
-            comparable: true,
-            inline_test_region: None,
-            changes: vec![
-                AttemptPathChange::modified("tests/pricing.rs"),
-                AttemptPathChange::added("target/ripr/workflow/agent-verify.json"),
-            ],
-        };
+        let bound = delta_with_admitted_external_test(vec![
+            AttemptPathChange::modified("tests/pricing.rs"),
+            AttemptPathChange::added("target/ripr/workflow/agent-verify.json"),
+        ]);
         let bound_verdict = evaluate_edit_cage(&policy, &bound);
         assert_eq!(bound_verdict.status, EditCageVerdictStatus::Compliant);
         assert_eq!(
@@ -5254,6 +5576,7 @@ mod tests {
                 &AttemptDelta {
                     comparable: true,
                     inline_test_region: None,
+                    external_test_file_region: bound.external_test_file_region.clone(),
                     changes,
                 },
                 &bound_verdict.changed_paths,
@@ -5303,6 +5626,7 @@ mod tests {
             &AttemptDelta {
                 comparable: false,
                 inline_test_region: None,
+                external_test_file_region: None,
                 changes: bound.changes.clone(),
             },
             &bound_verdict.changed_paths,
@@ -5323,6 +5647,7 @@ mod tests {
                 &AttemptDelta {
                     comparable: true,
                     inline_test_region: None,
+                    external_test_file_region: None,
                     changes: vec![AttemptPathChange::modified("tests/pricing.rs")],
                 },
             );
@@ -5351,8 +5676,11 @@ mod tests {
         // compliant (with the committed path observed) when admitted.
         let fixture = git_fixture("committed-test")?;
         let baseline = capture_attempt_baseline(&fixture.root, &lockfile_policy()?)?;
-        fs::write(fixture.root.join("tests/pricing.rs"), "fn repaired() {}\n")
-            .map_err(|err| format!("write selected edit: {err}"))?;
+        fs::write(
+            fixture.root.join("tests/pricing.rs"),
+            SELECTED_TEST_COMPLIANT_EDIT,
+        )
+        .map_err(|err| format!("write selected edit: {err}"))?;
         git_ok(&fixture.root, &["commit", "-qam", "focused test"])?;
         let (exact, _) = evaluate_repository_edit_cage_with_head_movement(
             &baseline,
@@ -5377,8 +5705,11 @@ mod tests {
         let fixture = git_fixture("committed-production")?;
         let baseline = capture_attempt_baseline(&fixture.root, &lockfile_policy()?)?;
         let base_head = git_text(&fixture.root, &["rev-parse", "HEAD"])?;
-        fs::write(fixture.root.join("tests/pricing.rs"), "fn repaired() {}\n")
-            .map_err(|err| format!("write selected edit: {err}"))?;
+        fs::write(
+            fixture.root.join("tests/pricing.rs"),
+            SELECTED_TEST_COMPLIANT_EDIT,
+        )
+        .map_err(|err| format!("write selected edit: {err}"))?;
         fs::write(
             fixture.root.join("src/pricing.rs"),
             "pub fn price() { todo() }\n",
@@ -5405,8 +5736,11 @@ mod tests {
         // descends from the baseline head.
         let fixture = git_fixture("amended-baseline")?;
         let baseline = capture_attempt_baseline(&fixture.root, &lockfile_policy()?)?;
-        fs::write(fixture.root.join("tests/pricing.rs"), "fn repaired() {}\n")
-            .map_err(|err| format!("write selected edit: {err}"))?;
+        fs::write(
+            fixture.root.join("tests/pricing.rs"),
+            SELECTED_TEST_COMPLIANT_EDIT,
+        )
+        .map_err(|err| format!("write selected edit: {err}"))?;
         git_ok(&fixture.root, &["commit", "-qa", "--amend", "--no-edit"])?;
         let (delta, verdict) = evaluate_repository_edit_cage_with_head_movement(
             &baseline,
@@ -5442,8 +5776,11 @@ mod tests {
             .map_err(|err| format!("read expected cache timestamp: {err}"))?;
 
         let baseline = capture_attempt_baseline(&fixture.root, &policy()?)?;
-        fs::write(fixture.root.join("tests/pricing.rs"), "fn repaired() {}\n")
-            .map_err(|err| format!("write selected test: {err}"))?;
+        fs::write(
+            fixture.root.join("tests/pricing.rs"),
+            SELECTED_TEST_COMPLIANT_EDIT,
+        )
+        .map_err(|err| format!("write selected test: {err}"))?;
         mutate_oversized_file(&fixture, "target/ripr/cache.bin")?;
         let file = fs::OpenOptions::new()
             .write(true)
@@ -5470,8 +5807,11 @@ mod tests {
         commit_target_ignore(&fixture)?;
         create_oversized_ignored_file(&fixture, "target/ripr/cache.bin")?;
         let baseline = capture_attempt_baseline(&fixture.root, &policy()?)?;
-        fs::write(fixture.root.join("tests/pricing.rs"), "fn repaired() {}\n")
-            .map_err(|err| format!("write selected test: {err}"))?;
+        fs::write(
+            fixture.root.join("tests/pricing.rs"),
+            SELECTED_TEST_COMPLIANT_EDIT,
+        )
+        .map_err(|err| format!("write selected test: {err}"))?;
         assert_eq!(
             evaluate_repository_edit_cage(&baseline)?.status,
             EditCageVerdictStatus::Incomparable
@@ -5497,8 +5837,11 @@ mod tests {
             .map_err(|err| format!("create escaping hardlink: {err}"))?;
 
         let baseline = capture_attempt_baseline(&fixture.root, &policy()?)?;
-        fs::write(fixture.root.join("tests/pricing.rs"), "fn repaired() {}\n")
-            .map_err(|err| format!("write selected test: {err}"))?;
+        fs::write(
+            fixture.root.join("tests/pricing.rs"),
+            SELECTED_TEST_COMPLIANT_EDIT,
+        )
+        .map_err(|err| format!("write selected test: {err}"))?;
         fs::write(&link, "outside-after\n")
             .map_err(|err| format!("write through escaping hardlink: {err}"))?;
         assert_eq!(
@@ -5536,8 +5879,11 @@ mod tests {
             !baseline.is_ambiguous(),
             "retained attempt artifacts beyond the exact-capture budget must not make the baseline ambiguous"
         );
-        fs::write(fixture.root.join("tests/pricing.rs"), "fn repaired() {}\n")
-            .map_err(|err| format!("write selected test: {err}"))?;
+        fs::write(
+            fixture.root.join("tests/pricing.rs"),
+            SELECTED_TEST_COMPLIANT_EDIT,
+        )
+        .map_err(|err| format!("write selected test: {err}"))?;
         assert_eq!(
             evaluate_repository_edit_cage(&baseline)?.status,
             EditCageVerdictStatus::Compliant
@@ -5616,6 +5962,127 @@ mod tests {
             &fixture.root,
             "target/ripr/repair-attempts/attempt-1/artifacts/lib.rs"
         )?);
+        Ok(())
+    }
+
+    /// A plain file spelled exactly like the store directory is not the store
+    /// (#13553): the prefix carries its trailing separator, so a staging-shaped
+    /// twin of that file stays refused.
+    #[cfg(unix)]
+    #[test]
+    fn staged_pair_on_a_file_named_like_the_attempt_store_stays_unsafe() -> Result<(), String> {
+        let fixture = git_fixture("staged-pair-store-named-file")?;
+        commit_target_ignore(&fixture)?;
+        let parent = fixture.root.join("target/ripr");
+        fs::create_dir_all(&parent).map_err(|err| format!("create target/ripr: {err}"))?;
+        let file = parent.join("repair-attempts");
+        fs::write(&file, "{}\n").map_err(|err| format!("write store-named file: {err}"))?;
+        fs::hard_link(&file, parent.join("repair-attempts.tmp-1-1"))
+            .map_err(|err| format!("link staging name: {err}"))?;
+        assert!(
+            !writable_path_components_are_safe(&fixture.root, "target/ripr/repair-attempts")?,
+            "a file named like the store must not borrow the store's pair exemption"
+        );
+        Ok(())
+    }
+
+    /// An explicit store outside `target/ripr` accepts the same interrupted
+    /// pair, bound to its own `<store>/<attempt>` subtree and nothing else
+    /// (#13553).
+    #[cfg(unix)]
+    #[test]
+    fn explicit_store_staged_pair_is_scoped_to_its_attempt_subtree() -> Result<(), String> {
+        let fixture = git_fixture("staged-pair-explicit-store")?;
+        commit_target_ignore(&fixture)?;
+        let mut policy = policy()?;
+        policy.expected_operational_writes = vec![
+            CagePathRule::subtree("target/ripr")?,
+            CagePathRule::subtree("stores/one/attempt-1")?,
+            CagePathRule::exact("notes/exact.rs")?,
+        ];
+        let scopes = explicit_store_pair_scopes(&policy);
+        assert_eq!(
+            scopes.iter().map(|rule| rule.path()).collect::<Vec<_>>(),
+            vec!["stores/one/attempt-1"],
+            "only the subtree outside target/ripr is the explicit store"
+        );
+        for (dir_relative, safe) in [
+            ("stores/one/attempt-1/artifacts", true),
+            ("stores/one/attempt-10/artifacts", false),
+            ("stores/one/attempt-1-old", false),
+            ("stores/two/attempt-1/artifacts", false),
+            ("notes", false),
+        ] {
+            let dir = fixture.root.join(dir_relative);
+            fs::create_dir_all(&dir).map_err(|err| format!("create {dir_relative}: {err}"))?;
+            let file_name = if dir_relative == "notes" {
+                "exact.rs"
+            } else {
+                "lib.rs"
+            };
+            let destination = dir.join(file_name);
+            fs::write(&destination, "{}\n")
+                .map_err(|err| format!("write {dir_relative}: {err}"))?;
+            let staging = dir.join(format!("{}.tmp-1-1", file_name.trim_end_matches(".rs")));
+            fs::hard_link(&destination, &staging)
+                .map_err(|err| format!("link staging name in {dir_relative}: {err}"))?;
+            assert_eq!(
+                writable_path_components_are_safe_in(
+                    &fixture.root,
+                    &format!("{dir_relative}/{file_name}"),
+                    &scopes
+                )?,
+                safe,
+                "{dir_relative}: staged pair acceptance"
+            );
+            // Without the explicit-store scope no spelling outside the default
+            // store is accepted.
+            assert!(
+                !writable_path_components_are_safe(
+                    &fixture.root,
+                    &format!("{dir_relative}/{file_name}")
+                )?,
+                "{dir_relative}: default policy must keep refusing"
+            );
+        }
+        Ok(())
+    }
+
+    /// The capture path carries the explicit store's scope into the pair rule
+    /// (#13553): an interrupted pair in the store leaves the baseline
+    /// comparable, while the same pair elsewhere under an operational write
+    /// still marks it ambiguous.
+    #[cfg(unix)]
+    #[test]
+    fn capture_accepts_an_explicit_store_pair_and_still_flags_other_pairs() -> Result<(), String> {
+        let mut outcomes = Vec::new();
+        for dir_relative in ["stores/one/attempt-1/artifacts", "target/ripr/artifacts"] {
+            let fixture = git_fixture("capture-explicit-store-pair")?;
+            commit_target_ignore(&fixture)?;
+            let dir = fixture.root.join(dir_relative);
+            fs::create_dir_all(&dir).map_err(|err| format!("create {dir_relative}: {err}"))?;
+            let destination = dir.join("lib.rs");
+            fs::write(&destination, "{}\n")
+                .map_err(|err| format!("write {dir_relative}: {err}"))?;
+            fs::hard_link(&destination, dir.join("lib.tmp-1-1"))
+                .map_err(|err| format!("link staging name in {dir_relative}: {err}"))?;
+            let mut policy = policy()?;
+            policy
+                .expected_operational_writes
+                .push(CagePathRule::subtree("stores/one/attempt-1")?);
+            let baseline = capture_attempt_baseline(&fixture.root, &policy)?;
+            // The after phase re-captures through the same inventory path.
+            let after = reevaluation_capture(&baseline)?;
+            outcomes.push((dir_relative, baseline.is_ambiguous(), after.is_ambiguous()));
+        }
+        assert_eq!(
+            outcomes,
+            vec![
+                ("stores/one/attempt-1/artifacts", false, false),
+                ("target/ripr/artifacts", true, true)
+            ],
+            "the explicit store's pair is comparable; a pair outside any store is ambiguous"
+        );
         Ok(())
     }
 
@@ -5747,8 +6214,11 @@ mod tests {
             .map_err(|err| format!("create escaping expected symlink: {err}"))?;
 
         let baseline = capture_attempt_baseline(&fixture.root, &policy()?)?;
-        fs::write(fixture.root.join("tests/pricing.rs"), "fn repaired() {}\n")
-            .map_err(|err| format!("write selected test: {err}"))?;
+        fs::write(
+            fixture.root.join("tests/pricing.rs"),
+            SELECTED_TEST_COMPLIANT_EDIT,
+        )
+        .map_err(|err| format!("write selected test: {err}"))?;
         fs::write(link.join("outside.bin"), "outside-after\n")
             .map_err(|err| format!("write through escaping symlink: {err}"))?;
         assert_eq!(
@@ -5772,8 +6242,11 @@ mod tests {
         file.set_len(MAX_CAPTURE_FILE_BYTES + 1)
             .map_err(|err| format!("size oversized fixture: {err}"))?;
         let baseline = capture_attempt_baseline(&fixture.root, &policy()?)?;
-        fs::write(fixture.root.join("tests/pricing.rs"), "fn repaired() {}\n")
-            .map_err(|err| format!("write selected test: {err}"))?;
+        fs::write(
+            fixture.root.join("tests/pricing.rs"),
+            SELECTED_TEST_COMPLIANT_EDIT,
+        )
+        .map_err(|err| format!("write selected test: {err}"))?;
 
         assert_eq!(
             evaluate_repository_edit_cage(&baseline)?.status,
@@ -5825,8 +6298,11 @@ mod tests {
         )?;
 
         let baseline = capture_attempt_baseline(&fixture.root, &policy()?)?;
-        fs::write(fixture.root.join("tests/pricing.rs"), "fn repaired() {}\n")
-            .map_err(|err| format!("write selected test: {err}"))?;
+        fs::write(
+            fixture.root.join("tests/pricing.rs"),
+            SELECTED_TEST_COMPLIANT_EDIT,
+        )
+        .map_err(|err| format!("write selected test: {err}"))?;
 
         let verdict = evaluate_repository_edit_cage(&baseline)?;
         assert_eq!(verdict.status, EditCageVerdictStatus::Compliant);
@@ -5838,8 +6314,11 @@ mod tests {
     fn repository_delta_retains_every_forbidden_attempt_edit() -> Result<(), String> {
         let fixture = git_fixture("forbidden")?;
         let baseline = capture_attempt_baseline(&fixture.root, &policy()?)?;
-        fs::write(fixture.root.join("tests/pricing.rs"), "fn repaired() {}\n")
-            .map_err(|err| format!("write selected test: {err}"))?;
+        fs::write(
+            fixture.root.join("tests/pricing.rs"),
+            SELECTED_TEST_COMPLIANT_EDIT,
+        )
+        .map_err(|err| format!("write selected test: {err}"))?;
         fs::write(fixture.root.join("src/pricing.rs"), "pub fn changed() {}\n")
             .map_err(|err| format!("write production edit: {err}"))?;
         fs::write(fixture.root.join("Cargo.toml"), "[workspace]\nmembers=[]\n")
@@ -6111,10 +6590,13 @@ mod tests {
         fs::remove_file(&link).map_err(|err| format!("remove baseline symlink: {err}"))?;
         symlink("../Cargo.toml", &link)
             .map_err(|err| format!("retarget tracked symlink: {err}"))?;
-        fs::write(fixture.root.join("tests/pricing.rs"), "fn repaired() {}\n")
-            .map_err(|err| format!("write simultaneous selected edit: {err}"))?;
+        fs::write(
+            fixture.root.join("tests/pricing.rs"),
+            SELECTED_TEST_COMPLIANT_EDIT,
+        )
+        .map_err(|err| format!("write simultaneous selected edit: {err}"))?;
 
-        let after = capture_attempt_baseline(&fixture.root, &policy()?)?;
+        let after = super::reevaluation_capture(&baseline)?;
         let before_link = baseline
             .paths
             .get("tests/tracked-link")
@@ -6153,8 +6635,11 @@ mod tests {
         permissions.set_mode(0o755);
         fs::set_permissions(&production, permissions)
             .map_err(|err| format!("chmod production fixture: {err}"))?;
-        fs::write(fixture.root.join("tests/pricing.rs"), "fn repaired() {}\n")
-            .map_err(|err| format!("write simultaneous selected edit: {err}"))?;
+        fs::write(
+            fixture.root.join("tests/pricing.rs"),
+            SELECTED_TEST_COMPLIANT_EDIT,
+        )
+        .map_err(|err| format!("write simultaneous selected edit: {err}"))?;
         let verdict = evaluate_repository_edit_cage(&baseline)?;
         if verdict.status != EditCageVerdictStatus::Violated {
             return Err(format!(
@@ -6181,8 +6666,11 @@ mod tests {
         fs::remove_file(&link).map_err(|err| format!("remove first symlink: {err}"))?;
         symlink(std::ffi::OsString::from_vec(vec![b'a', 0x81]), &link)
             .map_err(|err| format!("create second non-UTF8 symlink: {err}"))?;
-        fs::write(fixture.root.join("tests/pricing.rs"), "fn repaired() {}\n")
-            .map_err(|err| format!("write simultaneous selected edit: {err}"))?;
+        fs::write(
+            fixture.root.join("tests/pricing.rs"),
+            SELECTED_TEST_COMPLIANT_EDIT,
+        )
+        .map_err(|err| format!("write simultaneous selected edit: {err}"))?;
         let verdict = evaluate_repository_edit_cage(&baseline)?;
         if verdict.status != EditCageVerdictStatus::Incomparable {
             return Err(format!(
@@ -6197,14 +6685,10 @@ mod tests {
     fn selected_test_plus_expected_receipt_write_is_compliant() -> Result<(), String> {
         let verdict = evaluate_edit_cage(
             &policy()?,
-            &AttemptDelta {
-                comparable: true,
-                inline_test_region: None,
-                changes: vec![
-                    AttemptPathChange::modified("tests\\pricing.rs"),
-                    AttemptPathChange::added("target/ripr/reports/agent-receipt.json"),
-                ],
-            },
+            &delta_with_admitted_external_test(vec![
+                AttemptPathChange::modified("tests\\pricing.rs"),
+                AttemptPathChange::added("target/ripr/reports/agent-receipt.json"),
+            ]),
         );
         assert_eq!(verdict.status, EditCageVerdictStatus::Compliant);
         assert!(verdict.violations.is_empty());
@@ -6225,6 +6709,7 @@ mod tests {
             &AttemptDelta {
                 comparable: true,
                 inline_test_region: None,
+                external_test_file_region: None,
                 changes: vec![
                     AttemptPathChange::modified("tests/pricing.rs"),
                     AttemptPathChange::modified("src/pricing.rs"),
@@ -6246,6 +6731,7 @@ mod tests {
             &AttemptDelta {
                 comparable: true,
                 inline_test_region: None,
+                external_test_file_region: None,
                 changes: vec![AttemptPathChange::added(
                     "target/ripr/reports/agent-receipt.json",
                 )],
@@ -6269,6 +6755,7 @@ mod tests {
                 &AttemptDelta {
                     comparable: true,
                     inline_test_region: None,
+                    external_test_file_region: None,
                     changes: vec![change],
                 },
             );
@@ -6290,6 +6777,7 @@ mod tests {
             &AttemptDelta {
                 comparable: true,
                 inline_test_region: None,
+                external_test_file_region: None,
                 changes: vec![AttemptPathChange::renamed(
                     "tests/other.rs",
                     "tests/pricing.rs",
@@ -6322,6 +6810,7 @@ mod tests {
             ignored_build_output: None,
             untracked_build_lockfile: None,
             inline_test_module_target: false,
+            external_test_file_target: false,
             new_test_proposal: None,
         };
         let verdict = evaluate_edit_cage(
@@ -6329,6 +6818,7 @@ mod tests {
             &AttemptDelta {
                 comparable: true,
                 inline_test_region: None,
+                external_test_file_region: None,
                 changes: vec![AttemptPathChange::modified("tests/pricing/boundary.rs")],
             },
         );
@@ -6370,6 +6860,7 @@ mod tests {
                 &AttemptDelta {
                     comparable: true,
                     inline_test_region: None,
+                    external_test_file_region: None,
                     changes: vec![AttemptPathChange::modified("tests/pricing.rs")],
                 },
             );
@@ -6442,6 +6933,7 @@ mod tests {
             &AttemptDelta {
                 comparable: true,
                 inline_test_region: None,
+                external_test_file_region: None,
                 changes: vec![malformed_change],
             },
         );
@@ -6468,6 +6960,7 @@ mod tests {
                 &AttemptDelta {
                     comparable: true,
                     inline_test_region: None,
+                    external_test_file_region: None,
                     changes: vec![AttemptPathChange::modified(path)],
                 },
             );
@@ -6486,6 +6979,7 @@ mod tests {
             &AttemptDelta {
                 comparable: false,
                 inline_test_region: None,
+                external_test_file_region: None,
                 changes: vec![AttemptPathChange::modified("tests/pricing.rs")],
             },
         );

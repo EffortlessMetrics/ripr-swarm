@@ -462,7 +462,9 @@ annotations`, `ripr reports ci-packet`, the check renderer, and `cargo xtask
 ripr-annotations`) omits `file=` and `line=` for such a path and leads the
 message with `Location (file name has control characters, so not placed):
 <escaped path>:<line>.` The escaped form prints each character as `\u{XX}`
-(#6309).
+(#6309). A path with non-UTF-8 bytes (stable `%XX` text, which GitHub does
+not decode) is treated the same way and leads with `Location (file name is not
+valid UTF-8, so not placed): <stable path>:<line>.` (#13961).
 
 The `ripr annotations` comments loader determines file presence with one
 direct read (#1958): a `NotFound` outcome is the intended optional-comments

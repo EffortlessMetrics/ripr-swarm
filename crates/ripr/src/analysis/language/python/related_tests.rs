@@ -43,8 +43,12 @@ pub(super) enum PythonRelationKind {
     ProtocolEntryCall,
     /// The test's assertion statically depends on an edited module-level
     /// constant, directly or through a module function it calls with literal
-    /// arguments, and fails under the new value (`module_value.rs`, #9423).
+    /// arguments, and distinguishes the old and new values
+    /// (`module_value.rs`, #9423, #12950).
     ModuleValueCall,
+    /// A resolved module string reader returns different values, but the
+    /// selected membership assertion accepts both (#12950).
+    ModuleValueRead,
     SameStem,
     TestNameSimilarity,
     FixtureName,
@@ -73,6 +77,7 @@ impl PythonRelationKind {
             Self::DunderProtocol => 3,
             Self::ProtocolEntryCall => 4,
             Self::ModuleValueCall => 4,
+            Self::ModuleValueRead => 4,
             Self::SameStem => 3,
             Self::TestNameSimilarity => 2,
             Self::FixtureName => 1,
@@ -94,6 +99,7 @@ impl PythonRelationKind {
                 | Self::LocalBinding
                 | Self::ProtocolEntryCall
                 | Self::ModuleValueCall
+                | Self::ModuleValueRead
         )
     }
 
@@ -113,6 +119,7 @@ impl PythonRelationKind {
             Self::DunderProtocol => "dunder_protocol",
             Self::ProtocolEntryCall => "protocol_entry_call",
             Self::ModuleValueCall => "module_value_call",
+            Self::ModuleValueRead => "module_value_reader_call",
             Self::SameStem => "same_stem",
             Self::TestNameSimilarity => "test_name_similarity",
             Self::FixtureName => "fixture_name",
@@ -1027,7 +1034,6 @@ fn is_case_capture(body: &str, idx: usize, after: &str) -> bool {
 /// `r: list = ...`). Any `var,` / `, var` / `var:` occurrence counts, which
 /// also demotes some reads (`f(r, 1)`); that only fails closed.
 pub(super) fn binds_in_target_list(body: &str, var: &str) -> bool {
-    let mut parsed_target_line = None;
     body.match_indices(var).any(|(idx, _)| {
         let end = idx + var.len();
         python_callee_start_has_boundary(body, idx)
@@ -1047,70 +1053,17 @@ pub(super) fn binds_in_target_list(body: &str, var: &str) -> bool {
                     || (continued && (plain_assign(after) || augmented_assign_op(after)))
                     || is_case_capture(body, idx, after)
                     || chained_or_bracketed_target(body, idx, before, after)
-                    || enclosing_bracketed_target_binds(body, idx, var, &mut parsed_target_line)
             }
-    })
+    }) || parsed_receiver_rebound(body, var)
 }
 
-/// A complete single-line target can enclose the name without every bracket
-/// touching it (`(x, (r)) = ...`, `[a, [r]] = ...`). Read the target tree rather
-/// than treating every surrounding bracket as a binding: `values[(r)]` still
-/// reads `r`, including when it occurs inside a tuple assignment target.
-fn enclosing_bracketed_target_binds(
-    body: &str,
-    idx: usize,
-    var: &str,
-    parsed_target_line: &mut Option<usize>,
-) -> bool {
-    use rustpython_parser::ast::{Expr, Mod, Stmt};
-
-    // Only a bracketed occurrence needs this fallback. In particular the
-    // original `r = Owner(...)` initializer must not count as a rebind.
-    if !body[..idx]
-        .trim_end_matches([' ', '\t'])
-        .ends_with(['(', '['])
-        || !body[idx + var.len()..]
-            .trim_start_matches([' ', '\t'])
-            .starts_with([')', ']'])
-    {
-        return false;
-    }
-    let line_start = body[..idx].rfind('\n').map_or(0, |at| at + 1);
-    // A failed lookup applies to every occurrence of this name on the line.
-    // Do not repeatedly parse wide tuple expressions containing many reads.
-    if *parsed_target_line == Some(line_start) {
-        return false;
-    }
-    *parsed_target_line = Some(line_start);
-    let line = body[line_start..].lines().next().unwrap_or_default().trim();
-    let path = Path::new("<protocol-entry-target>");
-    // Preserve inline suites by parsing the actual line first. Only an
-    // incomplete header needs a synthetic suite. Both attempts keep the
-    // common parser's nesting/tree budget and never execute user code.
-    let parsed = super::source_facts::parse_module_result(path, line).or_else(|_| {
-        super::source_facts::parse_module_result(path, &format!("{line}\n    pass\n"))
-    });
-    let Ok(Mod::Module(module)) = parsed else {
-        return false;
-    };
-    let binds = |target: &Expr| {
-        matches!(target, Expr::Tuple(_) | Expr::List(_) | Expr::Starred(_))
-            && super::sink_alignment::target_binds_name(target, var)
-    };
-    module.body.iter().any(|stmt| match stmt {
-        Stmt::Assign(assign) => assign.targets.iter().any(binds),
-        Stmt::For(loop_) => binds(&loop_.target),
-        Stmt::AsyncFor(loop_) => binds(&loop_.target),
-        Stmt::With(with) => with
-            .items
-            .iter()
-            .any(|item| item.optional_vars.as_deref().is_some_and(binds)),
-        Stmt::AsyncWith(with) => with
-            .items
-            .iter()
-            .any(|item| item.optional_vars.as_deref().is_some_and(binds)),
-        _ => false,
-    })
+/// The shared scope collector reads complete targets across physical lines and
+/// through compound suites. Count bindings beyond the one constructor binding;
+/// a tuple RHS, subscript index or call argument never binds the name. Keep the
+/// textual guards above for their existing conservative unsupported boundaries.
+fn parsed_receiver_rebound(body: &str, var: &str) -> bool {
+    super::sink_alignment::parse_test_function_scope(body)
+        .is_some_and(|(_, statements)| super::module_constants::body_rebinds_name(&statements, var))
 }
 
 /// Whether the `var` occurrence just after `before` and just before `after`
@@ -2505,12 +2458,16 @@ pub(super) fn apply_src_module_ambiguity<'a>(
             };
             let rival_roots =
                 rival_roots_for(&roots_by_module, module, |_, root| *root == owner_root);
-            if !rival_roots.is_empty() {
+            // A plain module of the same project spelled like the re-exporting
+            // package loads instead of it on some `sys.path` orders, exactly as
+            // for the owner's own short name (#13786).
+            let shadowed = plain_module_shadows(&files_by_full_path, module, &owner_root);
+            if !rival_roots.is_empty() || shadowed {
                 ambiguous.push(AmbiguousSrcModule {
                     module: module.clone(),
                     owner_root,
                     rival_roots,
-                    shadowed: false,
+                    shadowed,
                 });
             }
         }

@@ -1863,7 +1863,7 @@ pub(super) fn function_scope_stand_in(test: &PythonTest, name: &str, owner: &Pyt
     if name.is_empty() {
         return false;
     }
-    let Some((parameter_names, body)) = parse_test_function_scope(test) else {
+    let Some((parameter_names, body)) = parse_test_function_scope(&test.body_text) else {
         return false;
     };
     parameter_names.iter().any(|parameter| parameter == name)
@@ -1915,8 +1915,8 @@ pub(super) fn pattern_binds_name(pattern: &ast::Pattern, name: &str) -> bool {
     }
 }
 
-fn parse_test_function_scope(test: &PythonTest) -> Option<(Vec<String>, Vec<Stmt>)> {
-    let source = dedent_python(&test.body_text);
+pub(super) fn parse_test_function_scope(body_text: &str) -> Option<(Vec<String>, Vec<Stmt>)> {
+    let source = dedent_python(body_text);
     let Ok(Mod::Module(module)) = parse_module_result(Path::new("<python-test-body>"), &source)
     else {
         return None;

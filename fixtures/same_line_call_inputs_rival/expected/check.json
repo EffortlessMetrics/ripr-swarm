@@ -41,6 +41,13 @@
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact value or pattern assertion"}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"unknown","confidence":"low"},
+        {"stage":"propagate","state":"yes","confidence":"medium"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"yes","confidence":"medium"}
+      ],
       "evidence_path": ["reach yes: Related tests appear to reach gate: same_test_separate_owners", "infection unknown: Changed boundary input is unresolved: call identity does not resolve to the owner, so ripr cannot establish the boundary inputs; activation/infection is unknown", "propagation yes: Changed behavior appears to influence returned value: input >= 10", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator not established (infection_unknown); related oracle: Strong oracle found: exact value or pattern assertion", "local flow reaches returned value: input >= 10 (line 3)", "related test src/lib.rs:12 same_test_separate_owners uses strong exact value oracle: assert_eq!(a::gate(11), true);", "related test src/lib.rs:12 same_test_separate_owners uses strong exact value oracle: assert_eq!(b::gate(10), true);", "source assertion argument value true at line 13", "source assertion argument value true at line 13"],
       "flow_sinks": [
         {"kind":"return_value","text":"input >= 10","line":3}
@@ -145,6 +152,13 @@
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"unknown","confidence":"low"},
+        {"stage":"propagate","state":"yes","confidence":"high"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"weak","confidence":"medium"}
+      ],
       "evidence_path": ["reach yes: Related tests appear to reach gate: same_test_separate_owners", "infection unknown: Changed boundary input is unresolved: call identity does not resolve to the owner, so ripr cannot establish the boundary inputs; activation/infection is unknown", "propagation yes: Complete propagation witness reaches returned value: input >= 10", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches returned value: input >= 10 (line 3)", "related test src/lib.rs:12 same_test_separate_owners uses strong exact value oracle: assert_eq!(a::gate(11), true);", "related test src/lib.rs:12 same_test_separate_owners uses strong exact value oracle: assert_eq!(b::gate(10), true);", "source assertion argument value true at line 13", "source assertion argument value true at line 13"],
       "flow_sinks": [
         {"kind":"return_value","text":"input >= 10","line":3}
