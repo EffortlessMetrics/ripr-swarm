@@ -1031,8 +1031,8 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             "non_mutating_check",
             "target/ripr/reports/precommit.md",
             false,
-            true,
-            "Local formatting, repository policy, complete change-set/whitespace checks and impact-selected strict Clippy. The docs lane retains this route; Rust CI uses ci-policy plus explicit workspace Clippy.",
+            false,
+            "Local formatting, repository policy, complete change-set/whitespace checks and impact-selected strict Clippy. Queue qualification uses ci-policy plus explicit formatting and workspace Clippy; it does not invoke this local composition.",
         ),
         command_entry(
             "check-fast",

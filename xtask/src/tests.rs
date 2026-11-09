@@ -31184,10 +31184,10 @@ fn command_catalog_pins_ci_enforced_classification() -> Result<(), String> {
     assert!(ci_enforced("check-doc-index")?);
     assert!(!ci_enforced("release-upload-assets --version <version>")?);
     assert!(ci_enforced("release-readiness --version <version>")?);
-    // Issue #2258: the routed-rust lanes invoke `cargo xtask precommit` as the
-    // shared required gate table, so precommit and every gate it runs are
-    // CI-enforced.
-    assert!(ci_enforced("precommit")?);
+    // Queue-only qualification retires the docs lane's direct precommit
+    // invocation. ci-policy still enforces the shared required gate table.
+    assert!(!ci_enforced("precommit")?);
+    assert!(ci_enforced("ci-policy")?);
     assert!(ci_enforced("check-architecture")?);
     assert!(ci_enforced("check-doc-artifacts")?);
     assert!(!ci_enforced(
@@ -54227,7 +54227,7 @@ jobs:
 
 /// Every gate the drift-check expansion credits must be cataloged as
 /// CI-enforced, so the expansion set and the catalog flags can never disagree
-/// (precommit itself is enforced, so its whole table is enforced).
+/// (the enforced ci-policy composition retains the shared gate table).
 #[test]
 fn precommit_gate_commands_are_catalog_ci_enforced() -> Result<(), String> {
     let catalog = command_catalog();
