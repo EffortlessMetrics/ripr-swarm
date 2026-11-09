@@ -5,7 +5,7 @@
 use super::{assert_success, run_ripr_with_env, unique_temp_workspace, workspace_root};
 use serde_json::Value;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
@@ -51,7 +51,7 @@ fn fixture(
     Ok((dir, diff_path))
 }
 
-fn check(dir: &PathBuf, diff: &PathBuf, format: &str, extra: &[&str]) -> std::process::Output {
+fn check(dir: &Path, diff: &Path, format: &str, extra: &[&str]) -> std::process::Output {
     let root = dir.display().to_string();
     let diff = diff.display().to_string();
     let mut args = vec![
@@ -61,11 +61,7 @@ fn check(dir: &PathBuf, diff: &PathBuf, format: &str, extra: &[&str]) -> std::pr
     run_ripr_with_env(&args, &[])
 }
 
-fn outcome(
-    dir: &PathBuf,
-    diff: &PathBuf,
-    extra: &[&str],
-) -> Result<Value, Box<dyn std::error::Error>> {
+fn outcome(dir: &Path, diff: &Path, extra: &[&str]) -> Result<Value, Box<dyn std::error::Error>> {
     let output = check(dir, diff, "json", extra);
     assert_success(&output);
     Ok(serde_json::from_slice(&output.stdout)?)
@@ -95,7 +91,7 @@ fn assert_complete_with_scope_note(value: &Value, label: &str) {
     }
 }
 
-fn assert_quiet_missed_txt(dir: &PathBuf, diff: &PathBuf, extra: &[&str], label: &str) {
+fn assert_quiet_missed_txt(dir: &Path, diff: &Path, extra: &[&str], label: &str) {
     let output = check(dir, diff, "missed-txt", extra);
     assert_success(&output);
     let stdout = String::from_utf8_lossy(&output.stdout);
