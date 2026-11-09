@@ -6,6 +6,8 @@ tests = [
   "crates/ripr/src/output/related_test_miss.rs::python_headline_prefers_a_row_in_a_changed_test_file",
   "crates/ripr/src/output/related_test_miss.rs::python_headline_keeps_the_first_row_without_a_changed_row",
   "crates/ripr/src/output/related_test_miss.rs::python_headline_ties_and_strength_tiers_stay_deterministic",
+  "crates/ripr/src/analysis/language/python/deleted_lines_tests.rs::deleted_line_finding_stamps_the_changed_related_test_and_leads_the_headline",
+  "crates/ripr/src/analysis/language/python/deleted_lines_tests.rs::stamping_changed_related_rows_is_exact_and_skips_a_changed_first_row",
 ]
 code = [
   "crates/ripr-contract/src/domain/python_changed_headline_row.rs::python_headline_related_test",

@@ -37,7 +37,7 @@ pub(crate) fn headline_related_test_for_finding(finding: &Finding) -> Option<&Re
     }
     // #14027: a Python finding prefers a same-strength row in a test file the
     // diff changed over a later-sorting untouched file; otherwise first row.
-    crate::domain::python_headline_related_test(finding).or_else(|| finding.related_tests.first())
+    crate::domain::python_headline_related_test(finding)
 }
 
 /// Legacy entry point for table tests that only hold related-test rows.

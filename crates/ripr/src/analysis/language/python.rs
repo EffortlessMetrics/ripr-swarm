@@ -551,20 +551,20 @@ fn stamp_related_tests_changed_in_diff(finding: &mut Finding, changed_files: &BT
     {
         return;
     }
-    let lines: Vec<String> = finding
-        .related_tests
-        .iter()
-        .filter(|row| changed_files.contains(&row.file))
-        .map(|row| {
-            format!(
-                "{}{}:{}",
-                crate::domain::RELATED_TEST_CHANGED_IN_DIFF_PREFIX,
-                normalized_path(&row.file),
-                row.line
-            )
-        })
-        .collect();
-    finding.evidence.extend(lines);
+    finding.evidence.extend(
+        finding
+            .related_tests
+            .iter()
+            .filter(|row| changed_files.contains(&row.file))
+            .map(|row| {
+                format!(
+                    "{}{}:{}",
+                    crate::domain::RELATED_TEST_CHANGED_IN_DIFF_PREFIX,
+                    normalized_path(&row.file),
+                    row.line
+                )
+            }),
+    );
 }
 
 /// Whether `text` holds `name` as a whole Python identifier.
@@ -2308,7 +2308,8 @@ impl PythonAdapter {
                 &mut value_origins,
                 &mut related_memo,
             );
-            for finding in deleted {
+            for mut finding in deleted {
+                stamp_related_tests_changed_in_diff(&mut finding, &changed_test_files);
                 publish_production_finding(&mut findings, finding);
             }
         }

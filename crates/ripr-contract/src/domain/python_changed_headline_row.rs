@@ -13,7 +13,9 @@ use super::{Finding, LanguageId, RelatedTest};
 /// Evidence line prefix: `related_test_changed_in_diff: <file>:<line>`.
 pub const RELATED_TEST_CHANGED_IN_DIFF_PREFIX: &str = "related_test_changed_in_diff: ";
 
-/// The one related-test row every single-row Python projection names.
+/// The related-test row the human `Related test` headline names for a Python
+/// finding. Only that headline routes through this selector; other Python
+/// projections keep their own row picks.
 ///
 /// Among the rows with the same oracle strength as the first row, the first
 /// row whose test file the diff changed leads; otherwise the first row.
@@ -41,10 +43,11 @@ pub fn python_headline_related_test(finding: &Finding) -> Option<&RelatedTest> {
         .related_tests
         .iter()
         .find(|test| {
+            let file = test.file.to_string_lossy().replace('\\', "/");
             test.oracle_strength.rank() == tier
-                && changed.iter().any(|(file, line)| {
-                    *line == test.line && *file == test.file.to_string_lossy().replace('\\', "/")
-                })
+                && changed
+                    .iter()
+                    .any(|(changed_file, line)| *line == test.line && *changed_file == file)
         })
         .or(Some(first))
 }
