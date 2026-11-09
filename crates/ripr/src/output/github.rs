@@ -770,7 +770,7 @@ fn unannotated_denominator_notice(output: &CheckOutput, unannotated: Unannotated
             .map(|opt_out| opt_out.reason.as_str())
             .unwrap_or_default();
         parts.push(format!(
-            "{withheld} withheld by owner opt-out ({reason}: the changed function carries #[mutants::skip])"
+            "{withheld} withheld by owner opt-out ({reason}: the changed function or an enclosing scope carries #[mutants::skip])"
         ));
     }
     if not_current > 0 {

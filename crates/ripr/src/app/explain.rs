@@ -143,20 +143,35 @@ pub(crate) fn explain_finding_with_config_navigation_mode_and_progress(
         config,
         selector,
     ) {
-        FindingSelection::Unique(finding) => Ok(render_selected(
-            format,
-            finding,
-            config,
-            &navigation.context_command(selector),
-            &output.root,
-            output.source_value_files(finding),
-            output.suppression.as_ref().is_some_and(|outcome| {
-                outcome
-                    .suppressed
-                    .iter()
-                    .any(|entry| entry.finding_id == finding.id)
-            }),
-        )),
+        FindingSelection::Unique(finding) => {
+            let rendered = render_selected(
+                format,
+                finding,
+                config,
+                &navigation.context_command(selector),
+                &output.root,
+                output.source_value_files(finding),
+                output.suppression.as_ref().is_some_and(|outcome| {
+                    outcome
+                        .suppressed
+                        .iter()
+                        .any(|entry| entry.finding_id == finding.id)
+                }),
+            );
+            // #13910: the check run's own withholding decision, read from the
+            // `owner_opt_outs` it kept (policy-suppressed findings are already
+            // excluded there), so explain never re-derives the opt-out.
+            let withheld = output
+                .owner_opt_outs
+                .iter()
+                .find(|opt_out| opt_out.finding_id == finding.id);
+            Ok(match (format, withheld) {
+                (ExplainFormat::Human, Some(opt_out)) => {
+                    output::human::render_owner_opt_out_explain_line(opt_out) + &rendered
+                }
+                _ => rendered,
+            })
+        }
         FindingSelection::Ambiguous(candidates) => Err(refuse_selector_miss(
             sink,
             ambiguous_finding_match(

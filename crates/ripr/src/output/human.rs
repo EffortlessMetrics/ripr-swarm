@@ -952,7 +952,7 @@ fn owner_opt_out_summary_note(output: &CheckOutput, plain: bool) -> String {
     };
     if plain {
         return format!(
-            ", {} skipped because the changed function carries #[mutants::skip]",
+            ", {} skipped because the changed function or an enclosing scope carries #[mutants::skip]",
             output.owner_opt_outs.len()
         );
     }
@@ -974,7 +974,7 @@ fn render_owner_opt_out_block(out: &mut String, output: &CheckOutput) {
         return;
     };
     out.push_str(&format!(
-        "Withheld by owner opt-out ({}): {} finding(s); the changed owner carries `#[mutants::skip]`, so ripr does not list it as a gap. Remove the attribute to see these findings.\n",
+        "Withheld by owner opt-out ({}): {} finding(s); the changed owner or a scope enclosing it carries `#[mutants::skip]`, so ripr does not list it as a gap. Remove the attribute to see these findings.\n",
         first.reason.as_str(),
         output.owner_opt_outs.len()
     ));
@@ -985,16 +985,27 @@ fn render_owner_opt_out_block(out: &mut String, output: &CheckOutput) {
             .find(|finding| finding.id == opt_out.finding_id)
         {
             out.push_str(&format!(
-                "  - {}:{} {} (owner: {}, reason: {})\n",
+                "  - {}:{} {} (owner: {}, scope: {}, reason: {})\n",
                 crate::analysis::finding_location_text(&output.root, &finding.probe.location.file),
                 finding.probe.location.line,
                 finding.class.as_str(),
                 opt_out.owner,
+                opt_out.scope_phrase(),
                 opt_out.reason.as_str()
             ));
         }
     }
     out.push('\n');
+}
+
+/// The `ripr explain` statement for a finding the check run withheld by an
+/// owner opt-out (#13910), followed by a blank line. The caller passes the
+/// run's own [`CheckOutput::owner_opt_outs`] entry, so explain states the
+/// same decision `check` made rather than deriving its own.
+pub(crate) fn render_owner_opt_out_explain_line(
+    opt_out: &crate::analysis::owner_opt_out::OwnerOptOut,
+) -> String {
+    terminal_safe(format!("{}\n\n", opt_out.explain_line()))
 }
 
 /// Emit the `--suppression-policy` application block (#1441): which policy

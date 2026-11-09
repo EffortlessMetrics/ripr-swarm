@@ -79,10 +79,11 @@ pub(crate) use ra::parser_oracles_for_function;
 pub(crate) use ra::production_owner_module_path;
 pub(crate) use ra::rust_include_directives;
 pub(crate) use ra::{
-    GovernedCfgTestModule, InvokedCallbackParam, ModuleItemScopes, closure_argument_positions,
-    fn_name_binding_count, governed_cfg_test_modules, has_test_attribute,
-    inline_unit_module_layout, invoked_callback_params, macro_call_columns, module_item_scopes,
-    module_path_targets, passes_call_making_closure, unconditionally_invoked_param_positions,
+    EnclosingScopeKind, GovernedCfgTestModule, InvokedCallbackParam, ModuleItemScopes,
+    closure_argument_positions, enclosing_scopes, fn_name_binding_count, governed_cfg_test_modules,
+    has_test_attribute, inline_unit_module_layout, invoked_callback_params, macro_call_columns,
+    module_item_scopes, module_path_targets, passes_call_making_closure,
+    unconditionally_invoked_param_positions,
 };
 pub(crate) use source_snapshot::{
     ItemNesting, RootShadow, SourceSnapshot, SourceSyntaxMemos, has_cfg_attr,

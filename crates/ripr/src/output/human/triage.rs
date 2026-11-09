@@ -386,7 +386,7 @@ pub(crate) fn render_human_triage(
             // that block, not a policy it never loaded.
             out.push_str(match (output.suppression.is_some(), output.owner_opt_outs.is_empty()) {
                 (false, false) => {
-                    "  Safe next action: all findings are withheld because the changed function carries #[mutants::skip]; review the owner opt-out block before treating this run as actionable\n"
+                    "  Safe next action: all findings are withheld because the changed function or an enclosing scope carries #[mutants::skip]; review the owner opt-out block before treating this run as actionable\n"
                 }
                 (true, false) => {
                     "  Safe next action: all findings are suppressed by policy or withheld by #[mutants::skip]; review the suppression and owner opt-out blocks before treating this run as actionable\n"
