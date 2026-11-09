@@ -231,6 +231,27 @@ official SDK transport:
     failed worktree request never relabels a retained committed snapshot,
     and a failed committed request never relabels a retained worktree one.
     Source-less callers see the unchanged v1 shapes.
+  - A committed zero-item empty-scope snapshot (`no_scope`,
+    `no_changed_lines`, `no_behavioral_candidates`) examined no behavior, so
+    its `last_completed_snapshot` summary adds `analysis_status:
+    "not_analyzed"` and `clean: false` beside `finding_count: 0`, using the
+    same predicate as `ripr_refresh` and `ripr_list_gaps`. Complete runs omit
+    both fields.
+  - `empty_scope_hint.pass_base_last_commit` (#13096) names the concrete
+    last-commit retry (`{"base": "HEAD~1"}`) beside `pass_base` and
+    `pass_source`. It is present only when the committed zero-item snapshot
+    was captured with no explicit base (`snapshot.base` is absent) and its
+    kind is `no_scope` or `no_changed_lines`, where the default base most
+    often resolved to the analyzed commit. It is omitted for
+    `no_behavioral_candidates` (the diff was non-empty, so a different base is
+    not the likely cause), for a snapshot analyzed against an explicit base
+    (including a retained one after a later failed request), and for a
+    worktree-source snapshot, which carries no `empty_scope_hint` at all. The
+    field is a named suggestion, not an inference: the server does not detect
+    whether the change under review is the last commit, does not run or
+    resolve `HEAD~1`, and never widens the base on its own. A `HEAD~1` that
+    does not exist fails closed with the typed base failure. It changes no
+    outcome kind, verdict or identity.
   - The source kind is part of a worktree snapshot's identity (the committed
     identity payload is unchanged, so existing committed identities do not
     move). Equal findings captured under a committed and a worktree source
@@ -313,7 +334,8 @@ official SDK transport:
     otherwise says an uncommitted Rust source or test file is read by the
     inventory. Findings, list and gap evidence are still served; the remedy is
     to commit the uncommitted Rust source or test files (untracked ones
-    included) and refresh again, or refresh with source `worktree`. No
+    included; a gitignored Rust file needs `git add -f` or removal) and refresh
+    again, or refresh with source `worktree`. No
     commitment is bound into a committed identity.
   - Card currentness at request time (#7357). The refresh-time git-status
     probe and custody are not re-run per read, and the server does not watch
@@ -338,11 +360,17 @@ official SDK transport:
     cannot contradict the findings; an untracked (not intent-to-add) Rust file
     is not analyzed as a finding but is read by the inventory, so editing it
     changes the commitment and snapshot identity. In committed mode those same
-    tracked-dirty and untracked files withhold instead (see above). Both
-    modes: gitignored Rust files can be read by the inventory (workspace
-    discovery does not apply `.gitignore`) but are not claimed; committed mode
-    does not list them because their enumeration is capped and would
-    over-withhold clean checkouts. Unsupported, generated,
+    tracked-dirty and untracked files withhold instead (see above). Committed
+    mode: workspace discovery does not apply `.gitignore`, so the inventory
+    reads a gitignored non-generated Rust file that the findings carrier
+    records as an uncaptured observation; `establish_agreement` refuses with
+    that path named (`the findings producer has no captured observation of
+    <path>`) and the card is withheld. A gitignored vendored Rust tree is
+    therefore already withheld, which over-withholds a clean checkout with
+    ignored vendored Rust; a gitignored non-Rust file keeps the card. The
+    remedy is `git add -f` plus a commit, or removing or moving the file out
+    of the workspace. This pin covers committed refresh only; worktree mode
+    is not separately pinned for gitignored Rust files. Unsupported, generated,
     `include!` and mixed-language dependencies are not claimed; a deleted or
     renamed tracked Rust file in the findings scope has no captured bytes and
     may refuse custody (fail-closed, cards withheld with the cause). A
@@ -381,12 +409,17 @@ official SDK transport:
   ready; otherwise the typed first failing gate), matching `ripr_get_gap`.
   `continuation.next_page.arguments` pins the snapshot, filters, and explicit
   limit; replay cannot cross a completed refresh that replaced the snapshot.
-- Gap-list success and refusal documents use `ripr-mcp-gap-list-v4`.
+- Gap-list success and refusal documents use `ripr-mcp-gap-list-v5`.
   v4 adds `omitted_page` and the `omitted_offset` argument (#9360): the
   omission disclosure pages on its own axis, at most 200 identities and 16 KiB per response, so
   a large truncated selection no longer fails the listing with
   `result_too_large`. `continuation.next_omitted_page` replays the snapshot pin, filters, item
   window and limit, and `next_page` keeps `omitted_offset`; walking `omitted_page.next_offset` covers every omission once.
+  Optional `independent_pages: true` instead makes `next_page` set the
+  omission offset to the total omissions and `next_omitted_page` set the item
+  offset to the filtered count. Each keeps snapshot, filters, limit and opt-in.
+  The caller saves and walks both starting routes; each resulting empty
+  other-axis page is truthfully echoed. Default continuations remain unchanged.
   The former v1 success schema closed its top level with
   `additionalProperties: false`, so adding `filtered` and `filters` cannot
   retain strict v1 compatibility. Clients must rediscover `tools/list`, accept
@@ -396,8 +429,9 @@ official SDK transport:
 - The tool envelope carries the document once at full fidelity (#6021):
   by default `content[0].text` is the compact JSON serialization of the
   structured document (no pretty-print inflation), and `structuredContent` repeats
-  the same document in every successful response. Every tool advertises an
-  `outputSchema`, so a success whose structured copy is absent is an
+  the same document in every successful response. Every tool has an
+  `outputSchema` (advertised under `RIPR_MCP_TOOLS_LIST=full`; the default
+  listing omits it since #13803), so a success whose structured copy is absent is an
   undeclared contract break: when the complete double-carry envelope does
   not measure under the id-aware response budget, the call fails closed
   with `result_too_large` naming both sizes and the caller's recovery
@@ -420,8 +454,16 @@ official SDK transport:
   `structuredContent` and `RIPR_MCP_TEXT_CONTENT=full`, then lists one line per
   top-level field: scalars verbatim (strings over 200 characters clipped with
   a marker pointing back to `structuredContent`), arrays as entry counts plus
-  at most five leading `canonical_id` values, objects as field names. The
-  digest is a projection of the document and adds no fact. The size guard,
+  at most five leading `canonical_id` values, objects as field names except
+  the gap-list `outcome`, which projects its kind, analysis status, clean value, and
+  limitation count and up to five names. Missing values are marked absent.
+  The opt-in `brief` gap list additionally carries its snapshot identity,
+  filtered count, page offset, and any next omission offset. These projections
+  do not replace the full continuation arguments or evidence. The
+  digest is a projection of the document and adds no fact. If a compact
+  companion would make the admitted envelope exceed its cap, retain that JSON
+  copy.
+  The size guard,
   paging and `result_too_large` measure the complete double-carry envelope in
   both modes, so refusal boundaries do not depend on the mode; typed failures
   (`isError: true`) and the status tool's recovery sentence are unchanged. The
@@ -437,8 +479,7 @@ official SDK transport:
   `returned`, `has_more`, `next_offset`); walking `next_offset` covers the
   narrowed set exactly once. Pages are sized so the complete double-carry
   envelope measures under the response bound: a paged success always
-  carries `structuredContent`, as the tool's advertised `outputSchema`
-  requires. Empty pages obey the same structured-envelope bound: echoed
+  carries `structuredContent`, as the tool's `outputSchema` requires. Empty pages obey the same structured-envelope bound: echoed
   filters can exceed it even when the raw document fits. Such a page fails
   closed with the existing typed `result_too_large` refusal and current
   snapshot identity instead of a text-only success. The generated `next_page`
@@ -615,8 +656,8 @@ strings and are not URI-decoded. RIPR-SPEC-0283 owns the decoding contract.
   and complete a valid pinned read after the refusals. It also pins the
   #9895 trailing-slash tolerance: one appended slash on
   the snapshot, gap, and repair-card URIs returns the identical document,
-  while a second slash fails closed. Resource payloads are pretty-printed
-  while tool payloads are compact by design, so the control compares
+  while a second slash fails closed. Resource payloads and tool payloads
+  both serialize compact for LLM-facing text, and the control compares
   parsed documents, not serialized bytes.
 - `cargo test -p ripr --lib mcp::transport` — bounded framing, typed-shape
   recovery, and the #5267 control: repeated pre-initialize violations each
@@ -684,6 +725,12 @@ strings and are not URI-decoded. RIPR-SPEC-0283 owns the decoding contract.
    and the same connection can subsequently read the valid status resource.
 
 ## Test Mapping
+
+- `crates/ripr/src/mcp/workspace.rs::tests::independent_continuations_cover_both_axes_without_replay` — pinned filtered walks cover the stored selected and omitted identities once, avoid other-axis replay, and reject a stale snapshot.
+- `crates/ripr/src/mcp/workspace.rs::tests::independent_omission_route_uses_filtered_end_and_respects_envelope` — a strict filtered subset binds the opposite-axis end and checks the envelope boundary.
+- `crates/ripr/tests/mcp_stdio.rs::independent_gap_pages_walk_both_axes_over_stdio` — a refreshed real workspace follows both opt-in routes in full, summary and brief modes, preserves structured output, and checks default and explicit-false compatibility.
+- `crates/ripr/src/mcp/protocol.rs::tests::compact_text_distinguishes_empty_outcomes_and_paging` — complete and no-scope empty results remain distinct in both compact modes, and brief reports snapshot and independent omission paging.
+
 
 - `crates/ripr/src/mcp/workspace.rs::tests::omission_disclosure_pages_independently_of_items`
   — with more omitted identities than one window, each response carries at

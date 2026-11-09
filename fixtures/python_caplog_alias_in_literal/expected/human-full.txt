@@ -50,6 +50,9 @@ Weakness
   - Related Python test reaches `check_balance` but the strongest extracted oracle is `relational_check`; add or strengthen a focused assertion for the changed output/log/call effect
   - missing discriminator call includes "msgs: 5": changed Python output/log/call effect at line 8 lacks a concrete repair discriminator
 
+Next step
+  Python preview: strengthen the existing related test with an output/log/call-effect assertion for the missing check `call includes "msgs: 5"`
+
 Python repair card (preview/advisory)
   card version: python_repair_card.v1
   canonical gap: gap:python:audit.py:check_balance:call_or_output_effect:side_effect:log.warning_msgs_5
@@ -75,9 +78,6 @@ Python repair card (preview/advisory)
     - Syntax-first Python preview evidence only.
     - No source edits, generated tests, mutation execution, provider calls, or gate authority.
     - Verify success alone is not a gap-closure receipt.
-
-Next step
-  Python preview: strengthen the existing related test with an output/log/call-effect assertion for the missing check `call includes "msgs: 5"`
 Drill in:
   (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/python_caplog_alias_in_literal/input --diff <cwd>/fixtures/python_caplog_alias_in_literal/diff.patch --mode fast probe:audit.py:python_preview:v1-f8599422

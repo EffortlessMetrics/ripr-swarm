@@ -291,7 +291,19 @@ mock expectations, and custom `assert_*` helpers.
   elements are not evaluated by this bounded path. An unproved list-equality
   change retains the finding and limitation without inventing a missing exact
   assertion, typed repair placement or repair card.
-- `self.assertTrue(...)` / `assertFalse(...)` â†’ smoke oracle
+- `self.assertTrue(...)` / `assertFalse(...)` → smoke oracle, except the bounded bool-owner exception below
+  Bool-owner exception (#13620): `assert f(lit, ..) is True` / `is False`
+  (either operand order), `self.assertTrue(f(lit, ..))`,
+  `self.assertFalse(f(lit, ..))` and `self.assertIs(f(lit, ..), True|False)`
+  are re-read as `f(lit, ..) == True|False` exact pins only when `f` is a
+  unique function owner that provably returns a `bool` (annotated `-> bool`,
+  or a single `return <comparison>`), every argument is a literal, the test
+  file does not patch or rebind `f`, and, for the unittest forms, the file
+  defines none of `assertTrue`/`assertFalse`/`assertIs`/`assertEqual` and every
+  class base is `unittest.TestCase` or `TestCase` imported from `unittest`.
+  `is not`, `is None`, `isinstance`, `assertIsNot`, `assertIsNotNone`, bare
+  truthiness on a non-bool owner and non-literal arguments stay uncredited.
+  `assertIs(x, True|False)` is recorded as a weak assertion otherwise.
 - `mock.assert_called*` family (`assert_called_once_with`,
   `assert_called_with`, `assert_called`, `assert_not_called`) â†’
   side-effect/call oracle
@@ -348,8 +360,19 @@ with the owner's dotted module path by exact equality. An owner below a
 directory named `src` (the PyPA src layout, including monorepo
 `packages/<pkg>/src/`) also matches the dotted path below that `src` import
 root, so `from pricing.discounts import f` identifies `src/pricing/discounts.py`
-while the repository-relative `src.pricing.discounts` form still matches. Bare
-file stems and arbitrary path suffixes never count as module identity.
+while the repository-relative `src.pricing.discounts` form still matches. An
+owner inside a nested project (the nearest non-root ancestor holding
+`pyproject.toml`, `setup.py`, `setup.cfg`, `pytest.ini` or `tox.ini`) also
+matches its project-relative dotted path, so `from core import f` in
+`svc/b/tests` identifies `svc/b/core.py` (#13675). That name identifies the
+owner only for a test under the same project root; the repository-root `lib/`
+import root is not applied inside a project, and a name another file of the
+same project also yields (`pkg.py` beside `pkg/__init__.py`) identifies
+neither. Bare file stems and arbitrary path suffixes never count as module
+identity.
+A src-layout short name that a plain module of the same project also produces
+(a repository-root `core.py`, or `<project>/core.py` beside `<project>/src/`)
+identifies neither module from any test (#13745).
 A test that imports a free-function owner's name from a workspace module that
 defines its own function of that name, when no import reaches the owner's module,
 is not related to the owner even if its call text matches the name (#8759). The
@@ -545,7 +568,20 @@ comments, strings, and docstrings:
   `module.Class(...)`) relates `__init__`, `__new__`, and `__post_init__` as
   `constructor_call`, an oracle-eligible relation; for any other dunder it
   relates as `dunder_protocol`, which stays uncertain because syntax cannot
-  bind `obj[key] = value` or `a == b` to the constructed instance. The one
+  bind `obj[key] = value` or `a == b` to the constructed instance. A
+  non-dunder helper that only a same-class dunder reaches through `self.` /
+  `cls.` (at most five hops, keyed by file and class so name-mangled helpers
+  never cross classes) reads `static_unknown` (`dynamic_dispatch`) only when a
+  test both references the helper's class through an import of its module and
+  uses the protocol syntax of one of the reaching dunders somewhere in its body
+  (subscript, `in`, `len(`, `iter(`, `for ... in`, `next(`, `with`, `==` /
+  `!=`, `hash(`, `str(`). The syntax is not tied to an instance of the class
+  (accepted: the limit only withdraws a confident claim). Constructor and
+  finalizer dunders (`__init__`, `__new__`, `__post_init__`,
+  `__init_subclass__`, `__del__`) never start the reach; a test that only
+  constructs the class, or a dunder without a syntactic protocol, keeps
+  `no_static_path`, and the reach never earns an oracle or `exposed`
+  (RIPR-SPEC-0201, #13776). The one
   exception is a builtin protocol entry applied to a sole argument bound to the
   owner class (`reversed(Class(0))` for `__reversed__`, likewise `len`, `bool`,
   `iter`, `next`, `hash`, `str`, `repr`): it relates as `protocol_entry_call`,
@@ -555,7 +591,7 @@ comments, strings, and docstrings:
   bindings: a builtin shadowed by an import, a module or test-local binding
   (including tuple and annotated targets), or a receiver rebound by a chained,
   bracketed (spaced or nested too: `( r), x = ...`, `((r), x) = ...`,
-  `for ((r), x) in ...`; #9178; non-adjacent single-line targets
+  `for ((r), x) in ...`; #9178; non-adjacent targets
   `(x, (r)) = ...`, `[a, [r]] = ...`, outer/chained targets and inline
   loop/with header targets too; #9531), loop, `with`, walrus or augmented target
   (`(r) += ...` and `(r): list = ...` included), or not the whole bound value,
@@ -571,22 +607,22 @@ comments, strings, and docstrings:
   `assert "for" and ((r)) in [r]` stays a credited read. Loop-keyword masking
   retains earlier lines for multiline literals while searching only the current
   line; an unterminated literal supplies no parsed test or protocol-entry credit.
-  Known limits, none of
-  them closed by this: a non-adjacent assignment inside an inline compound
-  body (`if c: (x, (r)) = ...`) is outside the complete-target fallback;
-  a multi-line tuple target whose earlier elements sit on
-  other lines (`(x,\n r) = ...`) is not seen, so the receiver stays credited
-  (the credit-keeping direction); and a dict key at the start of a continuation
-  line (`{\n (r): 1\n}`) reads as an annotated target and withholds credit
-  (a miss). A `:` ends a target
-  position only when it closes a compound-statement header whose brackets
-  balance outside string literals (single, double and tripled quotes, escaped
-  quotes) and comments (`if ")": ( r), x = ...` and
-  `if x == '''it's''': ( r), x = ...` rebind, a dict value `{"k": (r), 1}` does
-  not). A header whose brackets do not balance, or that is split across
-  lines, is not read as a header, so a one-line-suite rebind after it is not
-  seen and the receiver stays credited (the credit-keeping direction, a known
-  limit). Extra, keyword, starred or trailing-comma
+  The shared budgeted parser and scope-binding collector also read complete
+  multiline tuple/list targets, split compound headers and assignments in their
+  inline suites, multiline loop/with targets, and multiline case captures
+  (#9992). The constructor assignment counts once; another target binding the
+  same local withholds credit. Tuple RHS values, call arguments, subscript
+  indices and dotted/class pattern reads do not bind the local. The parsed collector
+  does not enter nested function or class suites for outer-scope case captures.
+  Existing textual guards retain their conservative boundaries: a dict key at
+  the start of a continuation line (`{\n (r): 1\n}`) can read as an annotated
+  target and withhold credit (a miss), and a same-line case guard read can
+  withhold credit too. A `:` ends a textual target position only when it closes
+  a compound-statement header whose brackets balance outside string literals
+  (single, double and tripled quotes, escaped quotes) and comments. Malformed
+  or unsupported source cannot obtain parsed test credit; the fallback does
+  not invent a suite to repair an incomplete header. Extra, keyword, starred
+  or trailing-comma
   arguments are not the entry and fall back to `dunder_protocol`. A dunder
   owner with no related test, in a workspace whose tests import its class,
   its module, or anything from a package above it, reads `static_unknown`

@@ -148,7 +148,7 @@ complete canonical packet stays behind the card's explicit packet route
 path. It remains advisory and static; it does not run mutation testing,
 generate tests, edit files, change cache behavior, or touch LSP/MCP surfaces.
 
-Refusal contract (#5007): a deliberate named refusal — seam id not found,
+Refusal contract: a deliberate named refusal — seam id not found,
 policy-omitted seam, witness analysis unavailable, unnameable portable
 workspace identity, or builder/budget refusal — exits `3`. Under `--json`
 stdout carries one versioned `agent_card_refusal` envelope (`schema_version`
@@ -252,7 +252,7 @@ artifacts — names the cause on stderr, exits `3`, and leaves stdout empty
 . Other rejections (unreadable or invalid artifacts, lineage
 or metadata mismatches) exit `2`.
 
-Movement vocabulary (#2648): the JSON output uses two related fields:
+Movement vocabulary: the JSON output uses two related fields:
   - `change` (per-item): improved | changed | regressed | unchanged | new | resolved
   - `gap_movement` (per-item): closed | persisted | new
 Precedence: `change: improved` means the grip class moved up; `gap_movement: closed`
@@ -360,6 +360,11 @@ Options:
                    (target/ripr/workflow); any other path fails closed
                    because agent status reads only that directory.
 
+Shell quoting: human Markdown states the host shell boundary in one line
+before the emitted command; add the global `-v`/`--verbose` flag to restore
+the full shell-quoting disclosure. Repeat polls in an agent loop therefore
+stay small, and `--json` is unchanged (typed states, no prose).
+
 The status command reads existing agent-loop artifacts under target/ripr only
 and reports which before snapshot, after snapshot, brief, packet, verify, and
 receipt files are present or missing. It may recover a seam_id from those
@@ -389,6 +394,7 @@ pub(super) const AGENT_REPAIR_HELP: &str = r#"Run the before/edit/after repair t
 Usage: ripr agent repair [--root PATH] [--store PATH] --seam-id ID --phase before [--json]
        ripr agent repair [--root PATH] [--store PATH] --gap-id ID --base REF --phase before [--json]
        ripr agent repair [--root PATH] [--store PATH] (--attempt ID|--seam-id ID) --phase after [--json]
+           [--test-result FILE]
        ripr agent repair [--root PATH] [--store PATH] --attempt ID --phase verify [--json]
            [--verify-authorized --verify-authority ID] [--verify-rollback]
 
@@ -456,6 +462,22 @@ Options:
   --verify-rollback    After the observation, restore the applied edit and
                        record the rollback proof; `verify` only; requires the
                        verification authorization.
+  --test-result FILE   A focused `cargo test` result you ran yourself, as a JSON
+                       file with schema_version "0.1", kind
+                       "focused_test_result", attempt_id, head, test_file and
+                       libtest_events. `after` only. ripr does not run tests: it
+                       checks that the result is bound to this attempt and the
+                       current HEAD, names the selected test file, and has at
+                       least one test that ran in that file or module, and that
+                       no failure falls outside it and that the events it reports
+                       close (every started test ends, every announced suite
+                       finishes), then records the normalized result with the
+                       attempt as a caller-reported claim.
+                       Optional; it does not gate finish yet. Anything else is
+                       refused and the attempt keeps waiting. Rust test files
+                       only; save the file outside the checkout. A finish that
+                       stops after the receipt evaluation began shows as
+                       limited in status; start a new attempt.
 
 The ordinary repair path is:
 
@@ -507,7 +529,7 @@ TypeScript test-file conventions), and the cage authorizes it whole-file.
 One exception: when a seam's only tests live in one inline `#[cfg(test)]`
 module of the production file, the before phase can bind that module's
 body as the edit cage instead — production code outside the module stays
-untouched, and the file must be committed before the start (#5210, #9033).
+untouched, and the file must be committed before the start.
 Seams with no test-surface file and no such single inline module are out
 of repair scope; the before phase refuses them before creating anything.
 

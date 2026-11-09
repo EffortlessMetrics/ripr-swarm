@@ -784,6 +784,49 @@ fn imported_enum_variant_value_admits_only_the_single_unambiguous_import() {
     ));
 }
 
+/// The sole declaring file of the enum is decided once per index: repeated
+/// admissions on one index keep answering from the memo (including the
+/// ambiguous and absent answers) instead of masking every file that mentions
+/// the enum name again. Pilot on bevy re-masked those files per seam and test
+/// and timed out at 275 s.
+#[test]
+fn imported_enum_variant_value_reuses_the_declarer_decision_per_index() {
+    const ENUM: &str = "pub enum Rule {\n    Upper,\n}\n";
+    let glob = "use crate::Rule::*;\n#[test]\nfn t() { assert_eq!(Upper.apply(1), 1); }\n";
+    let one = index(&[(HELPERS, ENUM), (LIB, glob)]);
+    for _ in 0..3 {
+        assert!(imported_enum_variant_value(
+            "Upper",
+            "Rule",
+            Path::new(LIB),
+            &one
+        ));
+    }
+    let two = index(&[(HELPERS, ENUM), (LIB, glob), ("src/other.rs", ENUM)]);
+    for _ in 0..3 {
+        assert!(!imported_enum_variant_value(
+            "Upper",
+            "Rule",
+            Path::new(LIB),
+            &two
+        ));
+        assert!(!imported_enum_variant_value(
+            "Upper",
+            "Missing",
+            Path::new(LIB),
+            &two
+        ));
+    }
+    let stored = two
+        .call_identity_memos
+        .sole_type_declarer("Rule", || Some(PathBuf::from("recomputed")));
+    assert_eq!(stored, None, "the ambiguous answer must come from the memo");
+    let stored = one
+        .call_identity_memos
+        .sole_type_declarer("Rule", || Some(PathBuf::from("recomputed")));
+    assert_eq!(stored.as_deref(), Some(Path::new(HELPERS)));
+}
+
 /// #7172: per-assertion unit-struct pin admission must not rescan the
 /// workspace. `ASSERTIONS` admissions over one `FILLER_FILES`-file index
 /// share one run-scoped [`OwnerPinSyntax`], exactly as production shares
@@ -2230,6 +2273,115 @@ fn an_early_some_or_ok_return_is_pinned_beside_opposite_exits() {
 }
 
 #[test]
+fn a_scalar_early_return_beside_distinct_literal_exits_is_pinned() {
+    // #13037 Defect A: `return 100;` beside a distinct literal tail is the
+    // owner's only source of `100`, so an exact pin on `100` observes the
+    // changed exit; the sibling exits would return their own literals and
+    // fail the pin.
+    assert!(matches!(
+        gate(
+            "fn fee(x: u64) -> u64 {\n    if x == 0 {\n        return 100;\n    }\n    5\n}",
+            "return 100;"
+        ),
+        Some(ReturnPathGate::EarlyScalar { literal }) if literal == "100"
+    ));
+    // The mirror holds for the tail: `5` beside distinct literal returns.
+    assert!(matches!(
+        gate(
+            "fn fee(x: u64) -> u64 {\n    if x == 0 {\n        return 100;\n    }\n    5\n}",
+            "5"
+        ),
+        Some(ReturnPathGate::EarlyScalar { literal }) if literal == "5"
+    ));
+    // Several distinct literal siblings still admit each exit.
+    assert!(matches!(
+        gate(
+            "fn fee(x: u64) -> u64 {\n    if x == 0 {\n        return 100;\n    }\n    if x > 3 {\n        return 7;\n    }\n    5\n}",
+            "return 100;"
+        ),
+        Some(ReturnPathGate::EarlyScalar { literal }) if literal == "100"
+    ));
+    // A single-digit early return (`return 0;` zero-fee shape) credits too.
+    assert!(matches!(
+        gate(
+            "fn fee(x: u64) -> u64 {\n    if x == 0 {\n        return 0;\n    }\n    5\n}",
+            "return 0;"
+        ),
+        Some(ReturnPathGate::EarlyScalar { literal }) if literal == "0"
+    ));
+    for (body, changed) in [
+        // A second `return 100;` is a second source of `100`.
+        (
+            "fn fee(x: u64) -> u64 {\n    if x == 0 {\n        return 100;\n    }\n    if x > 3 {\n        return 100;\n    }\n    5\n}",
+            "return 100;",
+        ),
+        // A computed sibling exit may alias `100` for an unread input.
+        (
+            "fn fee(x: u64) -> u64 {\n    if x == 0 {\n        return 100;\n    }\n    if x > 3 {\n        return x * 2;\n    }\n    5\n}",
+            "return 100;",
+        ),
+        // A parameter sibling exit may alias `100`.
+        (
+            "fn fee(x: u64) -> u64 {\n    if x == 0 {\n        return 100;\n    }\n    passthrough(100)\n}",
+            "return 100;",
+        ),
+        // A tail of the same literal is a second source of `100`.
+        (
+            "fn fee(x: u64) -> u64 {\n    if x == 0 {\n        return 100;\n    }\n    100\n}",
+            "return 100;",
+        ),
+        // A parameter tail may alias `100`.
+        (
+            "fn fee(x: u64) -> u64 {\n    if x == 0 {\n        return 100;\n    }\n    x\n}",
+            "return 100;",
+        ),
+        // A `?` builds an opaque early exit the spelling read cannot bound.
+        (
+            "fn fee(x: u64) -> u64 {\n    let y = g(x)?;\n    if y == 0 {\n        return 100;\n    }\n    5\n}",
+            "return 100;",
+        ),
+        // A `return` inside a nested closure does not leave this function.
+        (
+            "fn fee(x: u64) -> u64 {\n    if x == 0 {\n        return 100;\n    }\n    let f = || {\n        return 7;\n    };\n    5\n}",
+            "return 100;",
+        ),
+        // Non-literal changed exits keep their existing gates or none.
+        (
+            "fn fee(x: u64) -> u64 {\n    if x == 0 {\n        return x * 2;\n    }\n    5\n}",
+            "return x * 2;",
+        ),
+    ] {
+        let at = body.find(changed).unwrap_or(0);
+        assert!(
+            return_path_gate(body, changed, body[..at].matches('\n').count()).is_none(),
+            "{body}"
+        );
+    }
+    // The tail direction stays fail-closed on the same shapes: a sibling
+    // return of the tail's own literal, a computed sibling, or a `?`.
+    for (body, changed) in [
+        (
+            "fn fee(x: u64) -> u64 {\n    if x == 0 {\n        return 5;\n    }\n    5\n}",
+            "5",
+        ),
+        (
+            "fn fee(x: u64) -> u64 {\n    if x == 0 {\n        return x * 2;\n    }\n    5\n}",
+            "5",
+        ),
+        (
+            "fn fee(x: u64) -> u64 {\n    let y = g(x)?;\n    if y == 0 {\n        return 100;\n    }\n    5\n}",
+            "5",
+        ),
+    ] {
+        let at = body.rfind(changed).unwrap_or(0);
+        assert!(
+            return_path_gate(body, changed, body[..at].matches('\n').count()).is_none(),
+            "{body}"
+        );
+    }
+}
+
+#[test]
 fn return_path_gate_needs_the_changed_tail_on_the_pinned_path() {
     // No early exit: any pinned value came through the changed tail.
     assert!(matches!(
@@ -3385,6 +3537,45 @@ fn a_rebound_test_attribute_refuses_the_pin_and_the_builtin_keeps_it() {
 }
 
 #[test]
+fn an_async_std_test_runtime_runs_an_async_test_body_and_other_async_tests_refuse() {
+    for attributes in [
+        "#[async_std::test]",
+        "#[::async_std::test]",
+        "#[async_std::test()]",
+    ] {
+        let tests = format!(
+            "use demo::weight;\n{attributes}\nasync fn weighs() {{\n    assert_eq!(weight(4), 12);\n}}\n"
+        );
+        assert_eq!(weight_admitted(&tests).len(), 1, "{tests}");
+    }
+    for attributes in [
+        "#[async_std::test(flavor = \"multi_thread\")]",
+        "mod async_std { pub use other::test; }\n#[async_std::test]",
+        "use other as async_std;\n#[async_std::test]",
+    ] {
+        let tests = format!(
+            "use demo::weight;\n{attributes}\nasync fn weighs() {{\n    assert_eq!(weight(4), 12);\n}}\n"
+        );
+        assert!(weight_admitted(&tests).is_empty(), "{tests}");
+    }
+    let lib = "pub async fn weight(x: u32) -> u32 {\n    x * 3\n}\n";
+    let tests = "use demo::weight;\n#[async_std::test]\nasync fn weighs() {\n    assert_eq!(weight(4).await, 12);\n}\n";
+    let index = index(&[(LIB, lib), (TESTS, tests)]);
+    let pin = establish(&index, "weight", "x * 3");
+    assert!(
+        pin.is_some(),
+        "async_std must run the async body for an async owner"
+    );
+    let Some(pin) = pin else {
+        return;
+    };
+    assert_eq!(
+        admitted_texts(&index, &pin),
+        vec!["assert_eq!(weight(4).await, 12);".to_string()]
+    );
+}
+
+#[test]
 fn a_tokio_test_runtime_runs_an_async_test_body_and_other_async_tests_refuse() {
     for attributes in [
         "#[tokio::test]",
@@ -3401,7 +3592,6 @@ fn a_tokio_test_runtime_runs_an_async_test_body_and_other_async_tests_refuse() {
     for attributes in [
         // Another crate's runtime path, and arguments that change what runs.
         "#[test]",
-        "#[async_std::test]",
         "#[tokio::test(crate = \"other\")]",
         "#[tokio::test(flavor = \"current_thread\", unhandled_panic = \"shutdown_runtime\")]",
         "#[tokio::test(flavor = some_flavor())]",
@@ -13759,7 +13949,7 @@ fn the_workspace_macro_scan_runs_in_line_on_a_pool_worker_and_fans_out_elsewhere
     let roots = TargetRoots::new(&index);
     let decision_of_scan = || {
         LAST_SCAN_FAN_OUT.with(|last| last.set(None));
-        scan_macro_sites(&files, &index, &roots, &resolved);
+        scan_macro_sites(&files, &index, &roots, &resolved, false);
         LAST_SCAN_FAN_OUT.with(std::cell::Cell::get)
     };
 

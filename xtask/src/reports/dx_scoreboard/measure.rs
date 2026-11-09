@@ -276,9 +276,13 @@ pub(super) fn measure_corpus_entry(
                 .unwrap_or_else(|| "missing".to_string());
             let complete = exited_zero(&measured) && status == "complete";
             let ms = duration_ms(&measured);
+            let reason = summary
+                .as_ref()
+                .and_then(|summary| summary["reason"].as_str().map(str::to_string));
             let detail = format!(
-                "exit {}, pilot status `{status}`{}",
+                "exit {}, pilot status `{status}`{}{}",
                 exit_label(&measured),
+                pilot_reason_suffix(reason.as_deref()),
                 if measured.output.timed_out {
                     ", harness deadline reached"
                 } else {
@@ -933,6 +937,26 @@ fn verify_objects(dir: &Path, sha: &str, base: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Path text safe to pass as a `git` argument. Windows `fs::canonicalize`
+/// yields verbatim paths (`\\?\H:\...`, `\\?\UNC\server\...`); git parses
+/// those as a remote host and refuses the clone, so strip the verbatim
+/// prefix for argument use. Non-verbatim text passes through unchanged.
+pub(crate) fn git_path_text(path: &Path) -> String {
+    // Strict conversion first: the verbatim prefix is ASCII, so stripping
+    // it from a UTF-8 path is exact. A non-UTF-8 path cannot be passed to
+    // git as a text argument either way; keep the display text unchanged.
+    let Some(text) = path.to_str().map(str::to_string) else {
+        return path.display().to_string();
+    };
+    if let Some(rest) = text.strip_prefix(r"\\?\UNC\") {
+        format!(r"\\{rest}")
+    } else if let Some(rest) = text.strip_prefix(r"\\?\") {
+        rest.to_string()
+    } else {
+        text
+    }
+}
+
 /// Copy Git objects and materialize only the pinned tree in run-owned scratch.
 /// No worktree registration or shared checkout mutation survives this run.
 fn isolated_checkout(
@@ -949,8 +973,8 @@ fn isolated_checkout(
             "--no-checkout",
             "--dissociate",
             "--",
-            &source.display().to_string(),
-            &destination.display().to_string(),
+            &git_path_text(source),
+            &git_path_text(destination),
         ],
     )?;
     if destination.join(".git/objects/info/alternates").exists() {
@@ -1946,4 +1970,14 @@ pub(crate) fn cpu_model_slug(cpuinfo: &str) -> Option<String> {
         .collect::<Vec<_>>()
         .join("-");
     (!slug.is_empty()).then_some(slug)
+}
+
+/// A partial pilot summary names why it stopped (`reason`, for example
+/// `timeout`); carrying it in the sample detail keeps a budget cut apart from
+/// a failure in the row.
+pub(super) fn pilot_reason_suffix(reason: Option<&str>) -> String {
+    match reason {
+        Some(reason) if !reason.is_empty() => format!(" (reason `{reason}`)"),
+        _ => String::new(),
+    }
 }

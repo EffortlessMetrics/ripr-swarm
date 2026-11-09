@@ -82,6 +82,10 @@ pub(crate) enum BindingValueResolution {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ChangedBindingPredicateUse {
     pub(crate) binding: String,
+    /// Absolute (new-file) line of the changed `let` declaration, so a
+    /// finding retargeted onto an unchanged predicate line can name the
+    /// changed binding's own line (#12118).
+    pub(crate) binding_line: usize,
     /// The changed initializer text (the `…` of `let ident = …;`).
     pub(crate) initializer: String,
     /// The exact predicate line text at the use site.
@@ -257,6 +261,7 @@ pub(crate) fn resolve_changed_binding_uses(
                     } else {
                         uses.push(ChangedBindingPredicateUse {
                             binding: binding.to_string(),
+                            binding_line: changed_line,
                             initializer: initializer.to_string(),
                             predicate_expression: raw_line.trim().to_string(),
                             predicate_line: absolute,

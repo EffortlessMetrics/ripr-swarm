@@ -49,6 +49,12 @@ pub(super) enum ActionDisabledReason {
     /// The action addresses a preview/static limitation (a cross-language
     /// unresolved test target suppressed the repair-packet surface).
     PreviewOrStaticLimitation,
+    /// The finding has no bounded repair route yet: its seam fails the
+    /// producer-owned repair-packet flip (or no fix site is known): ripr
+    /// lacks a selected test target or the exact discriminator it must
+    /// check (#13716). Distinct from a static
+    /// limitation, which names something ripr cannot trace.
+    RepairRouteNotReady,
     // Reserved below: closed-vocabulary members with named future producers.
     // The emit guard (`disabled_reason_emittable`) keeps every reserved
     // reason unemitted until its producer lands — real producers only.
@@ -84,6 +90,7 @@ impl ActionDisabledReason {
             Self::VerificationRouteUnavailable => "verification_route_unavailable",
             Self::ReceiptRouteUnavailable => "receipt_route_unavailable",
             Self::PreviewOrStaticLimitation => "preview_or_static_limitation",
+            Self::RepairRouteNotReady => "repair_route_not_ready",
             Self::WorkspaceRootBlocked => "workspace_root_blocked",
             Self::FixSiteUnavailable => "fix_site_unavailable",
             Self::ExactReplacementUnavailable => "exact_replacement_unavailable",
@@ -115,6 +122,9 @@ impl ActionDisabledReason {
             Self::PreviewOrStaticLimitation => {
                 "Static preview limitation: this finding crosses a language boundary ripr cannot trace; inspect the test target by hand"
             }
+            Self::RepairRouteNotReady => {
+                "ripr does not have a complete repair route for this finding yet (a test to extend and the exact value it must check); copy the context packet and inspect it by hand"
+            }
             Self::StaleDocument => "The document changed after this analysis snapshot",
             Self::WorkspaceRootBlocked => "The workspace root is blocked for analysis",
             Self::FixSiteUnavailable => "No fix site is available for this finding",
@@ -134,6 +144,7 @@ pub(super) const EMITTED_DISABLED_REASONS: &[ActionDisabledReason] = &[
     ActionDisabledReason::VerificationRouteUnavailable,
     ActionDisabledReason::ReceiptRouteUnavailable,
     ActionDisabledReason::PreviewOrStaticLimitation,
+    ActionDisabledReason::RepairRouteNotReady,
 ];
 
 /// Reserved reasons with named future producers. Never emitted until the
@@ -503,6 +514,7 @@ mod tests {
             ActionDisabledReason::VerificationRouteUnavailable,
             ActionDisabledReason::ReceiptRouteUnavailable,
             ActionDisabledReason::PreviewOrStaticLimitation,
+            ActionDisabledReason::RepairRouteNotReady,
             ActionDisabledReason::WorkspaceRootBlocked,
             ActionDisabledReason::FixSiteUnavailable,
             ActionDisabledReason::ExactReplacementUnavailable,

@@ -69,6 +69,16 @@ const VERSION_AUTHORITIES: &[(&str, &[VersionProducer])] = &[
         )],
     ),
     (
+        // The minimal `cli_refusal` document written for argv usage errors and
+        // context selector misses under an explicit JSON request (#11584).
+        "cli-refusal",
+        &[producer(
+            "crates/ripr/src/app.rs",
+            "pub(crate) const CLI_REFUSAL_SCHEMA_VERSION: &str = \"",
+            1,
+        )],
+    ),
+    (
         "doctor",
         &[producer(
             "crates/ripr/src/output/doctor.rs",
@@ -384,6 +394,17 @@ const CONTRACTS: &[VerificationContract] = &[
         doc_path: "docs/OUTPUT_SCHEMA.md",
         doc_markers: &[],
     },
+    // A completed bounded partial-scope run (RIPR-PROP-0019) writes an
+    // analysis_scope object with run_status `limited_partial_scope` and no
+    // refusal block; it must validate and stay free of the #11584 block.
+    VerificationContract {
+        schema_path: "schemas/ripr/check.schema.json",
+        schema_pointer: None,
+        fixture_path: "tests/fixtures/verification/ripr/check-partial-scope.valid.json",
+        subject: ContractSubject::Document,
+        doc_path: "docs/OUTPUT_SCHEMA.md",
+        doc_markers: &["limited_partial_scope"],
+    },
     // The analysis_timeout refusal of `ripr check` renders at refusal
     // generation 0.3 with `input_context` (RIPR-SPEC-0241 amendment
     // #10796). Before this row the product emitted 0.3 documents no
@@ -392,6 +413,16 @@ const CONTRACTS: &[VerificationContract] = &[
     // `limited_check.rs::timeout_refusal_with_stashed_context_renders_input_context_at_generation_0_3`
     // and the forced-deadline e2e in `cli_smoke.rs`; this row pins the
     // document shape against the published 0.3 schema.
+    // The `cli_refusal` document for argv usage errors and selector misses
+    // under an explicit JSON request (#11584, #6834 decision).
+    VerificationContract {
+        schema_path: "schemas/ripr/cli-refusal.schema.json",
+        schema_pointer: None,
+        fixture_path: "tests/fixtures/verification/ripr/cli-refusal.valid.json",
+        subject: ContractSubject::Document,
+        doc_path: "docs/OUTPUT_SCHEMA.md",
+        doc_markers: &["cli_refusal", "unknown_argument", "selector_miss"],
+    },
     VerificationContract {
         schema_path: "schemas/ripr/check-timeout-refusal.schema.json",
         schema_pointer: None,
@@ -742,6 +773,13 @@ pub(crate) fn check_verification_contracts_with_hooks(
             ));
         }
     }
+
+    // Stability (#1720): a breaking edit to a published schema needs a
+    // version bump relative to the merge base.
+    let (compat_violations, compat_summary) =
+        crate::schema_compat::check(&root, &published_schemas);
+    violations.extend(compat_violations);
+    println!("verification contracts: {compat_summary}");
 
     if violations.is_empty() {
         // The audited count is reported beside the contract count so a run
@@ -1236,7 +1274,7 @@ fn supported_numeric_bounds(
                     supported_numeric_bounds(entry, root, active_refs, depth + 1, remaining)
                 })
             }),
-            "not" | "if" | "then" | "else" | "items" => {
+            "not" | "if" | "then" | "else" | "items" | "additionalProperties" => {
                 supported_numeric_bounds(value, root, active_refs, depth + 1, remaining)
             }
             _ => true,
@@ -1417,7 +1455,20 @@ fn validate_value_against_schema_inner(
         return;
     }
     budget.depth += 1;
-    validate_value_against_schema_impl(value, schema, root_schema, location, violations, budget);
+    match schema.as_bool() {
+        Some(false) => violations.push(format!("{location}: false schema rejects value")),
+        Some(true) => {}
+        None => {
+            validate_value_against_schema_impl(
+                value,
+                schema,
+                root_schema,
+                location,
+                violations,
+                budget,
+            );
+        }
+    }
     budget.depth -= 1;
 }
 
@@ -1716,28 +1767,42 @@ fn validate_object(
         }
     }
 
-    let Some(properties) = schema.get("properties").and_then(ExactValue::as_object) else {
-        return;
-    };
+    let properties = schema.get("properties").and_then(ExactValue::as_object);
 
-    if schema
-        .get("additionalProperties")
-        .and_then(ExactValue::as_bool)
-        == Some(false)
+    if let Some(additional) = schema.get("additionalProperties")
+        && (additional.as_bool() == Some(false) || additional.is_object())
     {
-        for field in object.keys() {
+        for (field, field_value) in object {
             if !charge_validation_work(budget, 1 + field.len() / 1024) {
                 return;
             }
-            if !properties.contains_key(field) {
+            if properties.is_some_and(|declared| declared.contains_key(field)) {
+                continue;
+            }
+            if additional.as_bool() == Some(false) {
                 if !charge_validation_work(budget, 1 + location.len() / 1024 + field.len() / 1024) {
                     return;
                 }
                 violations.push(format!("{location}: unexpected field `{field}`"));
+            } else {
+                if !charge_validation_work(budget, 1 + location.len() / 1024) {
+                    return;
+                }
+                validate_value_against_schema_inner(
+                    field_value,
+                    additional,
+                    root_schema,
+                    format!("{location}.{field}"),
+                    violations,
+                    budget,
+                );
             }
         }
     }
 
+    let Some(properties) = properties else {
+        return;
+    };
     for (field, field_schema) in properties {
         if !charge_validation_work(budget, 1 + field.len() / 1024) {
             return;
@@ -2108,6 +2173,173 @@ mod tests {
 
     fn parse_exact_text(text: &str) -> Result<ExactValue, String> {
         crate::exact_schema_json::parse(text.as_bytes())
+    }
+
+    #[test]
+    fn boolean_schemas_validate_direct_and_composed_values() -> Result<(), String> {
+        let value = parse_exact_text(r#"{"extra":9}"#)?;
+        for (schema, expected_valid) in [
+            ("true", true),
+            ("false", false),
+            (r#"{"allOf":[true]}"#, true),
+            (r#"{"allOf":[false]}"#, false),
+            (r#"{"allOf":[true,false]}"#, false),
+            (r#"{"anyOf":[false]}"#, false),
+            (r#"{"anyOf":[false,true]}"#, true),
+            (r#"{"oneOf":[false]}"#, false),
+            (r#"{"oneOf":[true,false]}"#, true),
+            (r#"{"oneOf":[true,true]}"#, false),
+            (r##"{"$defs":{"deny":false},"$ref":"#/$defs/deny"}"##, false),
+            (r##"{"$defs":{"allow":true},"$ref":"#/$defs/allow"}"##, true),
+            (r#"{"not":false}"#, true),
+            (r#"{"not":true}"#, false),
+            (r#"{"if":true,"then":false,"else":true}"#, false),
+            (r#"{"if":false,"then":false,"else":true}"#, true),
+            (r#"{"additionalProperties":true}"#, true),
+            (r#"{"additionalProperties":false}"#, false),
+            (r#"{"additionalProperties":{"allOf":[true]}}"#, true),
+            (r#"{"additionalProperties":{"allOf":[false]}}"#, false),
+            (
+                r##"{"$defs":{"deny":false},"additionalProperties":{"$ref":"#/$defs/deny"}}"##,
+                false,
+            ),
+            (
+                r##"{"$defs":{"allow":true},"additionalProperties":{"$ref":"#/$defs/allow"}}"##,
+                true,
+            ),
+            (r#"{"additionalProperties":{"not":false}}"#, true),
+            (r#"{"additionalProperties":{"not":true}}"#, false),
+            (r#"{"properties":{"extra":false}}"#, false),
+            (r#"{"properties":{"extra":{"not":false}}}"#, true),
+        ] {
+            let parsed = parse_exact_text(schema)?;
+            let mut violations = Vec::new();
+            validate_exact_value_against_schema(
+                &value,
+                &parsed,
+                &parsed,
+                "$".to_string(),
+                &mut violations,
+            );
+            assert_eq!(
+                violations.is_empty(),
+                expected_valid,
+                "{schema}: {violations:?}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn boolean_schema_entry_keeps_work_and_depth_charging() -> Result<(), String> {
+        let value = parse_exact_text("9")?;
+        for allowed in [false, true] {
+            let schema = ExactValue::Bool(allowed);
+            for (remaining, depth, expected_exhausted) in
+                [(1, 0, false), (0, 0, true), (1, MAX_SCHEMA_DEPTH, true)]
+            {
+                let mut budget = ValidationBudget {
+                    remaining,
+                    depth,
+                    exhausted: false,
+                };
+                let mut violations = Vec::new();
+                validate_value_against_schema_inner(
+                    &value,
+                    &schema,
+                    &schema,
+                    "$".to_string(),
+                    &mut violations,
+                    &mut budget,
+                );
+                assert_eq!(budget.exhausted, expected_exhausted);
+                assert_eq!(budget.depth, depth);
+                if expected_exhausted {
+                    assert!(violations.is_empty());
+                    assert_eq!(budget.remaining, remaining);
+                } else {
+                    assert_eq!(budget.remaining, 0);
+                    assert_eq!(violations.is_empty(), allowed);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn schema_valued_additional_properties_validate_undeclared_fields() -> Result<(), String> {
+        for (schema, document, expected) in [
+            (
+                r#"{"type":"object","additionalProperties":{"type":"string","minLength":2}}"#,
+                r#"{"E0001":"雪雪"}"#,
+                None,
+            ),
+            (
+                r#"{"type":"object","additionalProperties":{"type":"string","minLength":2}}"#,
+                r#"{"E0001":"雪"}"#,
+                Some("$.E0001: string shorter than minLength 2"),
+            ),
+            (
+                r#"{"properties":{"known":{"type":"integer"}},"additionalProperties":{"type":"string"}}"#,
+                r#"{"known":7,"extra":"kept"}"#,
+                None,
+            ),
+            (
+                r#"{"properties":{"known":{"type":"integer"}},"additionalProperties":{"type":"string"}}"#,
+                r#"{"known":7,"extra":9}"#,
+                Some("$.extra: expected type string, got number"),
+            ),
+            (
+                r#"{"additionalProperties":false}"#,
+                r#"{"extra":9}"#,
+                Some("$: unexpected field `extra`"),
+            ),
+            (r#"{"additionalProperties":true}"#, r#"{"extra":9}"#, None),
+        ] {
+            let schema = parse_exact_text(schema)?;
+            let value = parse_exact_text(document)?;
+            let mut violations = Vec::new();
+            validate_exact_value_against_schema(
+                &value,
+                &schema,
+                &schema,
+                "$".to_string(),
+                &mut violations,
+            );
+            if let Some(expected) = expected {
+                assert!(
+                    violations.iter().any(|actual| actual == expected),
+                    "expected {expected:?}, got {violations:?}"
+                );
+            } else {
+                assert!(violations.is_empty(), "{violations:?}");
+            }
+        }
+        // Admission must walk the additional-value schema before boolean
+        // evaluation: otherwise `not` turns a nested numeric refusal into a
+        // successful match. The refusal must come from the root preflight.
+        for schema in [
+            r#"{"additionalProperties":{"minimum":1e300}}"#,
+            r#"{"additionalProperties":{"not":{"minimum":1e300}}}"#,
+        ] {
+            let schema = parse_exact_text(schema)?;
+            let value = parse_exact_text(r#"{"extra":0}"#)?;
+            let mut violations = Vec::new();
+            validate_exact_value_against_schema(
+                &value,
+                &schema,
+                &schema,
+                "$".to_string(),
+                &mut violations,
+            );
+            assert!(
+                violations
+                    .iter()
+                    .any(|text| text.starts_with("$: unsupported numeric")),
+                "{violations:?}"
+            );
+        }
+        Ok(())
     }
 
     #[test]
@@ -3641,6 +3873,82 @@ mod tests {
         assert_eq!(
             fixture["run_limitations"][0]["downstream_consumable"],
             false
+        );
+        Ok(())
+    }
+
+    /// #11584: the refusal block appears exactly on refusal documents. The
+    /// published schemas keep `status`/`error` optional (adding the pairing as
+    /// a schema rule is a breaking change that needs a schema_version bump), so
+    /// this pins the producer-captured fixtures instead: each validates, the
+    /// refusal carries the block, and completed runs, including a bounded
+    /// partial-scope run, do not. The schema still rejects a malformed block.
+    #[test]
+    fn check_refusal_block_tracks_refusal_not_partial_scope() -> Result<(), String> {
+        let root = repo_root()?;
+        let schema = read_json(root.join("schemas/ripr/check.schema.json"))?;
+        let fixture = |name: &str| {
+            read_json(root.join(format!(
+                "tests/fixtures/verification/ripr/{name}.valid.json"
+            )))
+        };
+        let violations_of = |value: &Value| {
+            let mut violations = Vec::new();
+            validate_value_against_schema(
+                value,
+                &schema,
+                &schema,
+                "check fixture".to_string(),
+                &mut violations,
+            );
+            violations
+        };
+        let has_block =
+            |value: &Value| value.get("status").is_some() || value.get("error").is_some();
+
+        let partial = fixture("check-partial-scope")?;
+        assert_eq!(
+            partial["analysis_scope"]["run_status"], "limited_partial_scope",
+            "partial-scope fixture must carry the partial run_status"
+        );
+        assert!(
+            partial["findings"]
+                .as_array()
+                .is_some_and(|findings| !findings.is_empty()),
+            "partial-scope fixture must be a completed run with findings"
+        );
+        let found = violations_of(&partial);
+        assert!(found.is_empty(), "{found:#?}");
+        assert!(
+            !has_block(&partial),
+            "a completed partial-scope run must not carry the refusal block"
+        );
+
+        let limited = fixture("check-limited")?;
+        let found = violations_of(&limited);
+        assert!(found.is_empty(), "{found:#?}");
+        assert_eq!(
+            limited["status"], "refused",
+            "a refusal document must carry `status`"
+        );
+        assert!(
+            limited["error"]["code"].is_string(),
+            "a refusal document must carry `error`"
+        );
+
+        let complete = fixture("check-complete")?;
+        let found = violations_of(&complete);
+        assert!(found.is_empty(), "{found:#?}");
+        assert!(
+            !has_block(&complete),
+            "a completed run must not carry the refusal block"
+        );
+
+        let mut malformed = limited.clone();
+        malformed["error"] = serde_json::json!({"code": "x"});
+        assert!(
+            !violations_of(&malformed).is_empty(),
+            "the schema must reject a refusal block missing `message`/`next`"
         );
         Ok(())
     }

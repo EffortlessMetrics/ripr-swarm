@@ -219,6 +219,7 @@ impl McpServer {
                 "snapshot_id",
                 "offset",
                 "omitted_offset",
+                "independent_pages",
                 "limit",
                 "file",
                 "class",
@@ -229,6 +230,7 @@ impl McpServer {
         let requested = optional_string_argument(&arguments, "snapshot_id")?;
         let offset = optional_nonnegative_argument(&arguments, "offset")?;
         let omitted_offset = optional_nonnegative_argument(&arguments, "omitted_offset")?;
+        let independent_pages = optional_bool_argument(&arguments, "independent_pages")?;
         let limit = optional_capped_page_limit(
             &arguments,
             "limit",
@@ -286,6 +288,7 @@ impl McpServer {
                 offset: offset.unwrap_or(0),
                 limit,
                 omitted_offset: omitted_offset.unwrap_or(0),
+                independent_pages: independent_pages.unwrap_or(false),
             },
             &workspace::GapListFilter {
                 file,
@@ -882,7 +885,7 @@ fn optional_nonempty_string_argument(
     }
 }
 
-/// A `repair_ready` selector (#7464): a JSON boolean. Strings, integers and
+/// An optional JSON boolean. Strings, integers and
 /// nulls stay invalid params instead of silently coercing.
 fn optional_bool_argument(
     arguments: &Option<serde_json::Map<String, Value>>,
@@ -1555,12 +1558,12 @@ impl McpServer {
         recovery: &str,
         max_envelope_bytes: usize,
     ) -> Result<ReadResourceResponse, ErrorData> {
-        // Resources pretty-print their document text while tool payloads
-        // serialize compact (`bounded_tool_envelope`): the encodings differ
-        // by design, and tool/resource equivalence (#7145) is pinned over the
-        // parsed document, never over the wire bytes. Do not reformat either
-        // side to match the other.
-        let text = serde_json::to_string_pretty(&document)
+        // Resource payloads serialize compact, the same encoding tool
+        // payloads use (`bounded_tool_envelope`): a resource is LLM-facing
+        // text, and pretty-print inflation spends tokens on whitespace a
+        // JSON parser discards. Tool/resource equivalence (#7145) stays
+        // pinned over the parsed document, never over the wire bytes.
+        let text = serde_json::to_string(&document)
             .map_err(|_error| ErrorData::internal_error("serialize resource", None))?;
         let envelope = json_envelope(uri, text);
         let bytes = serde_json::to_vec(&envelope)

@@ -84,7 +84,7 @@ id = "rust"
 posture = "required"
 workflow = ".github/workflows/rust-gates.yml"
 jobs = ["rust-gates"]
-commands = ["cargo fmt --check", "cargo xtask ci-policy", "cargo check -p ripr --all-targets --all-features", "cargo clippy --workspace --all-targets -- -D warnings", "cargo nextest run --workspace --profile ci", "cargo test --workspace --doc"]
+commands = ["cargo fmt --check", "cargo xtask ci-policy", "cargo clippy -p ripr --all-targets --all-features -- -D warnings", "cargo clippy --workspace --all-targets -- -D warnings", "cargo nextest run --workspace --profile ci", "cargo test --workspace --doc"]
 estimated_lem = 12
 artifact_families = []
 description = "Reusable required Rust compile, lint, nextest, and doctest contract invoked by the routed lane."
@@ -94,7 +94,7 @@ id = "routed-rust-small"
 posture = "required"
 workflow = ".github/workflows/routed-rust.yml"
 jobs = ["Ripr Rust Small Result"]
-commands = ["cargo fmt --check", "cargo check -p ripr --all-targets --all-features", "cargo clippy --workspace --all-targets -- -D warnings", "cargo nextest run --workspace --profile ci", "cargo test --workspace --doc", "cargo xtask precommit", "cargo xtask ci-policy", "cargo xtask check-evidence-promotion-honesty", "cargo xtask check-agent-skills", "cargo xtask check-dependencies", "cargo xtask check-process-policy", "cargo xtask check-network-policy", "cargo xtask goldens check", "cargo xtask fixtures"]
+commands = ["cargo fmt --check", "cargo clippy -p ripr --all-targets --all-features -- -D warnings", "cargo clippy --workspace --all-targets -- -D warnings", "cargo nextest run --workspace --profile ci", "cargo test --workspace --doc", "cargo xtask precommit", "cargo xtask ci-policy", "cargo xtask check-evidence-promotion-honesty", "cargo xtask check-agent-skills", "cargo xtask check-dependencies", "cargo xtask check-process-policy", "cargo xtask check-network-policy", "cargo xtask goldens check", "cargo xtask fixtures"]
 estimated_lem = 12
 artifact_families = ["ripr-evidence"]
 description = "Swarm Rust Small result gate routed through CX53, CX43, or GitHub-hosted fallback."
@@ -160,6 +160,16 @@ artifact_families = []
 description = "Proof-stack artifact and support-tier claim map checks, plus the non-blocking spec maintenance digest (#3467): candidate counts never gate, and an instrument failure is a failed advisory observation."
 
 [[lane]]
+id = "workflow-lint"
+posture = "advisory"
+workflow = ".github/workflows/workflow-lint.yml"
+jobs = ["jactionlint"]
+commands = ["jactionlint --profile correctness --no-online --shellcheck= --pyflakes="]
+estimated_lem = 1
+artifact_families = []
+description = "Optional path-filtered workflow correctness check with a checksum-verified jactionlint 2.5.0 binary, no Rust build and no API access. Findings fail this job; it is not a new branch-protection requirement."
+
+[[lane]]
 id = "badge-endpoints"
 posture = "advisory"
 workflow = ".github/workflows/badge-endpoints.yml"
@@ -194,10 +204,10 @@ id = "fuzz"
 posture = "advisory"
 workflow = ".github/workflows/fuzz.yml"
 jobs = ["fuzz"]
-commands = ["cargo test --locked -p ripr --test fuzz_panic_freedom --test fuzz_protocol_frames --test stage_metamorphic", "mkdir -p target/ripr/fuzz-findings; cp -r /tmp/ripr-fuzz-* target/ripr/fuzz-findings/ || true"]
+commands = ["cargo test --locked -p ripr --test fuzz_panic_freedom --test fuzz_protocol_frames --test stage_metamorphic --test fuzz_inprocess", "cargo test --locked -p ripr --lib differential_tests", "mkdir -p target/ripr/fuzz-findings; cp -r /tmp/ripr-fuzz-* target/ripr/fuzz-findings/ || true"]
 estimated_lem = 40
 artifact_families = ["fuzz-findings"]
-description = "Weekly and manual panic and hang fuzzing: mutated source, diff, config and MCP/LSP stdio frames through the built binary with a raised proptest case count; fails on a panic, a signal or a missed deadline and uploads leftover case workspaces."
+description = "Weekly and manual panic and hang fuzzing: mutated source, diff, config and MCP/LSP stdio frames through the built binary, and the same source, diff and config mutation through the CLI adapter in-process, with a raised proptest case count; fails on a panic, a signal or a missed deadline and uploads leftover case workspaces."
 
 [[lane]]
 id = "rust-corpus"
@@ -294,7 +304,7 @@ id = "coverage"
 posture = "advisory"
 workflow = ".github/workflows/coverage.yml"
 jobs = ["rust-coverage"]
-commands = ["cargo llvm-cov --workspace --all-features --lcov --output-path lcov.info"]
+commands = ["target/debug/repo-policy run-coverage"]
 estimated_lem = 18
 artifact_families = ["ripr-evidence"]
 description = "Coverage artifact and Codecov upload."
@@ -303,11 +313,11 @@ description = "Coverage artifact and Codecov upload."
 id = "test-analytics"
 posture = "advisory"
 workflow = ".github/workflows/test-analytics.yml"
-jobs = ["rust-tests-junit"]
-commands = ["cargo nextest run --workspace --all-features --profile ci", "cargo test --workspace --doc"]
+jobs = ["rust-tests-junit", "rust-tests-combine"]
+commands = ["cargo nextest run --workspace --all-features --profile ci --partition hash:N/4", "cargo test --workspace --doc", "cargo xtask verify-test-shards --all-features", "cargo xtask slow-test-report"]
 estimated_lem = 12
 artifact_families = ["ripr-evidence"]
-description = "Advisory all-feature JUnit telemetry plus a duplicate doctest receipt; neither substitutes for the routed required gates."
+description = "Advisory all-feature JUnit telemetry as four hash partitions mirroring the required shards, combined only after a verified disjoint green cover, plus a duplicate doctest receipt on shard 1 and the advisory slow-test report; neither substitutes for the routed required gates."
 
 [[lane]]
 id = "ripr-self-dogfood"
@@ -444,7 +454,7 @@ id = "publish-dry-run"
 posture = "on_demand_release"
 workflow = ".github/workflows/ci.yml"
 jobs = ["rust"]
-commands = ["cargo publish -p ripr --dry-run"]
+commands = ["cargo xtask publish-dry-run"]
 estimated_lem = 10
 artifact_families = ["release-readiness"]
 description = "crates.io publish dry-run proof."
@@ -473,11 +483,11 @@ description = "Marketplace and release-asset publish proof."
 id = "server-archive"
 posture = "on_demand_release"
 workflow = ".github/workflows/release-server-binaries.yml"
-jobs = ["build", "manifest"]
-commands = []
-estimated_lem = 60
+jobs = ["build", "manifest", "packages", "package-smoke"]
+commands = ["cargo xtask release-server-archive --packages-from <dir> --out-dir <dir>"]
+estimated_lem = 75
 artifact_families = ["release-readiness"]
-description = "Cross-platform server archive and manifest proof. Actual build commands come from the workflow matrix."
+description = "Cross-platform server archive and manifest proof, then the PyPI wheel and npm package family wrapped from those payloads and installed offline on each native runner (#5378). The entrypoint only delegates: the archive jobs run in server-archive-qualification.yml and the package build, package-smoke jobs and the listed command run in package-family-qualification.yml. Actual build commands come from the workflow matrices; no registry write."
 
 [[lane]]
 id = "python-wheelhouse"
@@ -508,3 +518,13 @@ commands = []
 estimated_lem = 5
 artifact_families = []
 description = "Reusable native Windows subset: test outcomes advisory, source/status/log/receipt and nonempty execution evidence mandatory. Called after merge-ready admission or explicit standalone diagnostics."
+
+[[lane]]
+id = "completions-smoke"
+posture = "advisory"
+workflow = ".github/workflows/completions-smoke.yml"
+jobs = ["completions"]
+commands = ["cargo test --locked -p ripr --test completions_command"]
+estimated_lem = 6
+artifact_families = []
+description = "Completion script smoke (#7438): on pull requests touching the completions command or catalog, and on dispatch, installs zsh and fish on a hosted Ubuntu runner and loads each `ripr completions` script in its shell (bash -n and source, zsh -n, fish --no-execute). A required shell that is missing fails the job."
