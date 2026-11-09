@@ -1,0 +1,7 @@
+[[artifact]]
+id = "RIPR-SPEC-0422"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0422-adapter-substrate-qualification-v1.md"
+status = "accepted"
+owner = "provider-contract"
+standalone_reason = "Slice #6382 introduces the adapter-substrate qualification receipt schema and validation without a spec anchor."

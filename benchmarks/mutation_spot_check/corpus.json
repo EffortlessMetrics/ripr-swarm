@@ -1,0 +1,18 @@
+{
+  "schema": "ripr-mutation-spot-check-corpus-v1",
+  "note": "Pinned checkouts for .github/workflows/mutation-spot-check.yml. The first five are the recorded 2026-11-04 receipt; the rest widen the sample (small pure-logic crates, a proc-macro crate, a macro-heavy crate). Add mutants_args only to narrow a slow crate; the receipt records them.",
+  "repos": [
+    { "name": "rust-hex", "url": "https://github.com/KokaKiwi/rust-hex", "rev": "e25a8701f7f6b5ec4acedffcb4a45cfb69cc34eb" },
+    { "name": "semver", "url": "https://github.com/dtolnay/semver", "rev": "280ebcb6edac3aa4cdc545dbff8a26c5ac4861fe" },
+    { "name": "strsim-rs", "url": "https://github.com/rapidfuzz/strsim-rs", "rev": "dacc84c0dc61eff0ee0ff66962bcf2e17018ad26" },
+    { "name": "bytesize", "url": "https://github.com/bytesize-rs/bytesize", "rev": "66a3715e33369e99cb428bcd5aee32291f8e0a94" },
+    { "name": "humantime", "url": "https://github.com/tailhook/humantime", "rev": "76c8929b4cc286f675322475a8e1841f35bafc57" },
+    { "name": "fastrand", "url": "https://github.com/smol-rs/fastrand", "rev": "7a1cc2c69ebde6cb3442809213db3fe19a2cb0ba" },
+    { "name": "glob", "url": "https://github.com/rust-lang/glob", "rev": "057cef2824f5a96f738e52d7d8ca3e024381bcc6" },
+    { "name": "humansize", "url": "https://github.com/LeopoldArkham/humansize", "rev": "be4ac44adcb8610dbcf7fc9e609c0f17b1bd32dd" },
+    { "name": "indoc", "url": "https://github.com/dtolnay/indoc", "rev": "79ab4aa68838fd831e577e1e192161c718325e60" },
+    { "name": "itoa", "url": "https://github.com/dtolnay/itoa", "rev": "1577ed901354d0d7448ac162328f9dbf5183124c" },
+    { "name": "bitflags", "url": "https://github.com/bitflags/bitflags", "rev": "8384f6f6e1fd1ab3f448ccf17d400a9e1d6a5280" },
+    { "name": "rust-shlex", "url": "https://github.com/comex/rust-shlex", "rev": "653936e120cdd0a8d1b4f0837e2cce0f347da4c0" }
+  ]
+}

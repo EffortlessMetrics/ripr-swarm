@@ -1,0 +1,23 @@
+# Cloned unused callbacks cannot borrow a plain helper's oracle (#13219).
+[[extend]]
+id = "RIPR-SPEC-0197"
+tests = [
+  "crates/ripr/src/analysis/syntax/ra/closure_callbacks/tests.rs::cloned_callback_names_keep_the_plain_helper_withhold",
+  "crates/ripr/src/analysis/syntax/ra/closure_callbacks/tests.rs::cloned_callback_binding_chains_keep_the_existing_depth_limit",
+  "crates/ripr/src/analysis/facts/test_helpers/tests/cloned_callbacks.rs::cloned_call_making_callbacks_do_not_lend_plain_helper_assertions",
+  "crates/ripr/src/analysis/facts/test_helpers/tests/cloned_callbacks.rs::ordinary_value_clones_keep_plain_helper_assertions",
+  "crates/ripr/src/analysis/facts/test_helpers/tests/cloned_callbacks.rs::cloned_call_less_closure_keeps_plain_helper_assertions",
+  "crates/ripr/tests/assertion_helper_credit.rs::cloned_unused_callbacks_have_no_public_observation_or_oracle",
+  "crates/ripr/tests/assertion_helper_credit.rs::invoked_literal_and_ordinary_value_clones_keep_public_oracles",
+  "crates/ripr/tests/assertion_helper_credit.rs::cloned_callbacks_keep_repo_audit_oracles_on_repeated_analysis",
+]
+
+[[extend]]
+id = "RIPR-SPEC-0108"
+tests = [
+  "fixtures/evidence-promotion-honesty-corpus/cases/rust_cloned_unused_callback.json",
+  "fixtures/evidence-promotion-honesty-corpus/cases/rust_bound_cloned_unused_callback.json",
+  "fixtures/evidence-promotion-honesty-corpus/cases/rust_literal_unused_callback.json",
+  "fixtures/evidence-promotion-honesty-corpus/cases/rust_eager_literal_callback.json",
+  "fixtures/evidence-promotion-honesty-corpus/cases/rust_ordinary_value_clone.json",
+]

@@ -503,6 +503,17 @@ pub enum StaticLimitKind {
     /// reaches the change is withheld and the class is `static_unknown`: the
     /// missing test may be one the walk never read. See RIPR-SPEC-0240.
     TypescriptWorkspaceDiscoveryTruncated,
+    /// Workspace source reads refused one or more files under the per-file
+    /// or aggregate byte cap. Those files may contain tests or a call path
+    /// to the change, so a finding that would claim `no_static_path` is
+    /// withheld as `static_unknown`. See RIPR-SPEC-0240 / #11985.
+    TypescriptWorkspaceReadLimited,
+    /// Every Rust test that reaches the changed `async fn` owner creates its
+    /// future and drops it without polling it: no `.await`, no executor or
+    /// runtime call, no async test attribute. The owner's body never runs in
+    /// those tests, so reach is not claimed. The gap is withheld and the class
+    /// is `static_unknown`; no runtime is chosen. See RIPR-SPEC-0240 / #13702.
+    RustFutureNeverPolled,
 }
 
 impl StaticLimitKind {
@@ -580,6 +591,8 @@ impl StaticLimitKind {
             StaticLimitKind::TypescriptWorkspaceDiscoveryTruncated => {
                 "typescript_workspace_discovery_truncated"
             }
+            StaticLimitKind::TypescriptWorkspaceReadLimited => "typescript_workspace_read_limited",
+            StaticLimitKind::RustFutureNeverPolled => "rust_future_never_polled",
         }
     }
 
@@ -774,6 +787,18 @@ impl StaticLimitKind {
                  were never read. ripr cannot say that no test \
                  reaches this change, so it does not claim a gap; this is a named limitation, \
                  not a coverage claim."
+            }
+            StaticLimitKind::TypescriptWorkspaceReadLimited => {
+                "TypeScript workspace source files were not read because they exceeded the \
+                 per-file or aggregate byte limit. They may contain tests or a call path to \
+                 this change, so ripr does not claim that no test reaches it; this is a named \
+                 limitation, not a coverage claim."
+            }
+            StaticLimitKind::RustFutureNeverPolled => {
+                "Future created but never polled: the Rust tests that call this `async fn` build \
+                 its future and drop it without `.await`, an executor or an async test \
+                 attribute, so the changed body does not run in them. ripr does not claim reach \
+                 or a gap; this is a named limitation, not a coverage claim."
             }
         }
     }
@@ -1142,6 +1167,14 @@ mod tests {
             StaticLimitKind::TypescriptWorkspaceDiscoveryTruncated.as_str(),
             "typescript_workspace_discovery_truncated"
         );
+        assert_eq!(
+            StaticLimitKind::TypescriptWorkspaceReadLimited.as_str(),
+            "typescript_workspace_read_limited"
+        );
+        assert_eq!(
+            StaticLimitKind::RustFutureNeverPolled.as_str(),
+            "rust_future_never_polled"
+        );
     }
 
     #[test]
@@ -1180,6 +1213,8 @@ mod tests {
             StaticLimitKind::ProofHarnessNotEvaluated,
             StaticLimitKind::RustInherentReceiverUnestablished,
             StaticLimitKind::TypescriptWorkspaceDiscoveryTruncated,
+            StaticLimitKind::TypescriptWorkspaceReadLimited,
+            StaticLimitKind::RustFutureNeverPolled,
         ];
         // Every variant has a non-empty, distinct explanation. Conservative
         // static-language vocabulary is enforced repo-wide by

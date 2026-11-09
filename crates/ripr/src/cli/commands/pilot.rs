@@ -4,7 +4,7 @@ use crate::app::{self, CheckInput, Mode, OutputFormat};
 use crate::cli::commands_numeric::{parse_positive_u64, parse_positive_usize};
 use crate::cli::commands_options::{PilotOptions, PilotStdoutFormat};
 use crate::cli::help;
-use crate::cli::parse::{expect_value, parse_mode};
+use crate::cli::parse::{expect_value, parse_mode, reconcile_root};
 use crate::cli::progress::{CliProgressSink, ProgressPolicy};
 use crate::cli::suggest::{unknown_argument, unknown_value};
 use crate::config::{CheckInputExplicit, RiprConfig, apply_to_check_input, load_for_root};
@@ -47,6 +47,10 @@ const PILOT_RETRY_TIMEOUT_MS: u64 = 240_000;
 /// rather than misreporting.
 /// Diff-bound generated-source selection also withholds identity whenever its
 /// source/evidence inputs differ from ordinary repo exposure.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the failed-evidence limitations travel beside the sibling disclosures this writer already takes; bundling them would hide which authority supplies each"
+)]
 fn write_pilot_repo_exposure_json(
     path: &Path,
     input: &CheckInput,
@@ -55,6 +59,7 @@ fn write_pilot_repo_exposure_json(
     generated_skip: Option<&output::repo_exposure::GeneratedRustSkip>,
     context: Option<&crate::agent::artifact::RepoExposureArtifactContext>,
     byte_bound: Option<&output::repo_exposure::RepoExposureByteBound>,
+    evidence_limitations: &[crate::analysis_outcome::AnalysisLimitation],
 ) -> Result<(), String> {
     let ts_guidance = output::render::detect_ts_full_repo_guidance_pub(&input.root, classified);
     let python_guidance =
@@ -70,6 +75,7 @@ fn write_pilot_repo_exposure_json(
                 python_guidance.as_ref(),
                 generated_skip,
                 byte_bound,
+                evidence_limitations,
             ),
         );
     };
@@ -82,6 +88,7 @@ fn write_pilot_repo_exposure_json(
             ts_guidance.as_ref(),
             python_guidance.as_ref(),
             generated_skip,
+            evidence_limitations,
             context,
             &mut writer,
         ) {
@@ -238,6 +245,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
                 skipped_generated: Vec::new(),
                 naming_only_skips: Vec::new(),
                 declined_rust_files: Vec::new(),
+                evidence_limitations: Vec::new(),
             },
             change,
             PilotStageTimes {
@@ -277,6 +285,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
                 current_change: None,
                 seam_limit: None,
                 repo_exposure_byte_bound: None,
+                inventory_evidence_limitations: &[],
             },
         )?;
         return Ok(());
@@ -315,6 +324,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
     let diff_bound_corpus = report.diff_bound_corpus;
     let mut inventory_limit_info = report.limit_info;
     let declined_rust_files = report.declined_rust_files.clone();
+    let inventory_evidence_limitations = report.evidence_limitations;
     let generated_skip = output::repo_exposure::GeneratedRustSkip::from_parts(
         report.skipped_generated,
         report.naming_only_skips,
@@ -399,6 +409,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
     };
     let current_change = current_change
         .with_absent_file_limitations(absent_file_limitations)
+        .with_evidence_limitations(folded.evidence_limitations)
         .with_seams_counted(&classified, folded.caveat_limit);
     let budget_started = Instant::now();
     let mut pilot_budget_info = analysis::apply_pilot_seam_budget(&mut classified, |entry| {
@@ -501,6 +512,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
         current_change: Some(&current_change),
         seam_limit: summary_limit.as_ref(),
         repo_exposure_byte_bound: repo_exposure_byte_bound.as_ref(),
+        inventory_evidence_limitations: &inventory_evidence_limitations,
     };
 
     let ts_guidance = output::render::detect_ts_full_repo_guidance_pub(&input.root, &classified);
@@ -534,6 +546,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
         generated_skip.as_ref(),
         snapshot_context.as_ref(),
         repo_exposure_byte_bound.as_ref(),
+        &inventory_evidence_limitations,
     )?;
     write_pilot_file(
         &artifacts.repo_exposure_md,
@@ -543,6 +556,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
             ts_guidance.as_ref(),
             python_guidance.as_ref(),
             generated_skip.as_ref(),
+            &inventory_evidence_limitations,
         ),
     )?;
     let packet_bound = analysis::pilot_packet_budget()?
@@ -935,7 +949,13 @@ fn parse_pilot_options(args: &[String]) -> Result<PilotOptions, String> {
         match args[i].as_str() {
             "--root" => {
                 i += 1;
-                options.root = PathBuf::from(expect_value(args, i, "--root")?);
+                let reconciled = reconcile_root(
+                    &options.root,
+                    options.root_explicit,
+                    expect_value(args, i, "--root")?,
+                    "pilot",
+                )?;
+                options.root = reconciled;
                 options.root_explicit = true;
             }
             "--out" => {
@@ -1695,6 +1715,7 @@ mod tests {
                     skipped_generated: Vec::new(),
                     naming_only_skips: Vec::new(),
                     declined_rust_files: Vec::new(),
+                    evidence_limitations: Vec::new(),
                 })
             },
         );
@@ -2145,6 +2166,7 @@ mod tests {
                 current_change: None,
                 seam_limit: None,
                 repo_exposure_byte_bound: None,
+                inventory_evidence_limitations: &[],
             },
         )?;
 

@@ -44,6 +44,7 @@ fn captured_server(
         untracked_working_tree_source_paths: Vec::new(),
         ignored_working_tree_source_paths: Vec::new(),
         unlinked_python_tests: None,
+        owner_opt_outs: Vec::new(),
         suppression: None,
         partial_scope: None,
         analyzed_revisions: None,
@@ -132,10 +133,13 @@ fn captured_source_recovery_covers_raw_tool_and_resource_envelope_overflow() -> 
                     if case == "tool-envelope" {
                         assert!(protocol::structured_envelope_bytes(&document)? > budget);
                     } else {
-                        let pretty = serde_json::to_string_pretty(&document)
-                            .map_err(|error| error.to_string())?;
+                        // Forge the resource envelope with the same compact
+                        // serialization the resource read path emits, so the
+                        // fixture measures the real wire encoding.
+                        let compact =
+                            serde_json::to_string(&document).map_err(|error| error.to_string())?;
                         let bytes =
-                            serde_json::to_vec(&json_envelope("ripr://gap/gap:test:1", pretty))
+                            serde_json::to_vec(&json_envelope("ripr://gap/gap:test:1", compact))
                                 .map_err(|error| error.to_string())?
                                 .len();
                         assert!(

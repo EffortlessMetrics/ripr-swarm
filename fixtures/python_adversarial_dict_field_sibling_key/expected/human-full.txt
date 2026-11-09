@@ -48,7 +48,10 @@ Evidence
 
 Weakness
   - A strong Python oracle reaches `build_config`, but its assertion does not observe the changed owner's output; static evidence cannot confirm the changed behavior is discriminated. Add an assertion on the changed owner's output
-  - missing discriminator host == "localhost": changed Python field/object value at line 2 lacks a concrete repair discriminator
+  - missing discriminator port == 9090: changed Python field/object value at line 2 lacks a concrete repair discriminator
+
+Next step
+  Python preview: strengthen the existing related test with a field/object assertion for the missing check `port == 9090`
 
 Python repair card (preview/advisory)
   card version: python_repair_card.v1
@@ -58,9 +61,9 @@ Python repair card (preview/advisory)
   changed owner: build_config
   changed behavior: field_value changed at src/conf.py:2: `return {"host": "localhost", "port": 9090}`
   current test evidence: tests/test_conf.py:4 test_host currently has oracle_strength=strong, oracle_kind=exact_value: assert build_config()["host"] == "localhost"
-  missing discriminator: host == "localhost"
-  recommended test shape: Strengthen the existing pytest returned mapping field assertion for `host == "localhost"`.
-  suggested assertion: Assert the returned mapping field directly, e.g. `assert result["host"] == "localhost"`.
+  missing discriminator: port == 9090
+  recommended test shape: Strengthen the existing pytest returned mapping field assertion for `port == 9090`.
+  suggested assertion: Assert the returned mapping field directly, e.g. `assert result["port"] == 9090`.
   suggested file: tests/test_conf.py
   suggested test: test_host
   pytest node: tests/test_conf.py::test_host
@@ -75,9 +78,6 @@ Python repair card (preview/advisory)
     - Syntax-first Python preview evidence only.
     - No source edits, generated tests, mutation execution, provider calls, or gate authority.
     - Verify success alone is not a gap-closure receipt.
-
-Next step
-  Python preview: strengthen the existing related test with a field/object assertion for the missing check `host == "localhost"`
 Drill in:
   (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/python_adversarial_dict_field_sibling_key/input --diff <cwd>/fixtures/python_adversarial_dict_field_sibling_key/diff.patch --mode fast probe:src_conf.py:python_preview:932c667d

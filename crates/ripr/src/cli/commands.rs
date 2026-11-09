@@ -3,6 +3,7 @@ use crate::app::{self, CheckInput, Mode, OutputFormat};
 use crate::cli::help;
 use crate::cli::parse::{
     base_with_diff_conflict_error, disclose_attached_terminal_stdin_read, expect_value, parse_mode,
+    reconcile_root,
 };
 use crate::cli::suggest::{unknown_argument, unknown_value};
 #[cfg(test)]
@@ -47,7 +48,8 @@ mod swarm_command;
 mod task_first;
 
 pub(super) use agent::{
-    SeamIdSurface, SeamIdTranslateError, agent, before_phase_stdout, resolve_agent_repair_root,
+    SeamIdSurface, SeamIdTranslateError, agent, before_phase_stdout,
+    before_phase_stdout_owns_start_result, resolve_agent_repair_root,
     run_before_repair_with_identity, translate_agent_repair_seam_id, translate_seam_id_for,
 };
 pub(super) use context::context;
@@ -147,14 +149,24 @@ mod review_comments;
 mod review_guidance_index_handoff;
 pub(super) use review_comments::review_comments;
 
+#[path = "commands/annotations.rs"]
+mod annotations_command;
 #[path = "commands/assistant_loop.rs"]
 mod assistant_loop;
 #[path = "commands/first_action.rs"]
 mod first_action;
 #[path = "commands/first_pr.rs"]
 pub(crate) mod first_pr;
+#[path = "commands/impacted_evidence.rs"]
+pub(crate) mod impacted_evidence_command;
+#[path = "commands/pr_evidence.rs"]
+pub(crate) mod pr_evidence_command;
+#[path = "commands/pr_summary.rs"]
+pub(crate) mod pr_summary_command;
 #[path = "commands/reports.rs"]
 mod reports;
+#[path = "commands/ripr_plus.rs"]
+pub(crate) mod ripr_plus_command;
 pub(super) use assistant_loop::assistant_loop;
 pub(super) use first_action::first_action;
 pub(super) use first_pr::first_pr;
@@ -163,6 +175,10 @@ pub(super) use reports::reports;
 #[path = "commands/capabilities.rs"]
 mod capabilities;
 pub(super) use capabilities::capabilities;
+
+#[path = "commands/completions.rs"]
+mod completions;
+pub(super) use completions::completions;
 
 #[path = "commands/doctor.rs"]
 mod doctor;
@@ -251,8 +267,26 @@ pub(super) fn evidence_health(args: &[String]) -> Result<(), String> {
     crate::atomic_file::ensure_default_output_contained(&options.root)?;
 
     let config = load_for_root(&options.root)?;
-    let (classified, _) =
-        analysis::inventory_classified_seams_at_with_config(&options.root, &config)?;
+    // #13055: the whole-workspace walk can run for minutes on a very large
+    // source file. Disclose it with the same stderr stage lines and heartbeats
+    // `ripr check` and `ripr explain` project, so a long run does not read as
+    // a hang. `--quiet` / `RIPR_QUIET` silence it; stdout and the report files
+    // are unchanged. The command writes files, so its output is not a machine
+    // stream and only the quiet switches key the silencing.
+    let progress = (!crate::cli::progress::progress_silenced(options.quiet, false)).then(|| {
+        crate::cli::progress::CliProgressSink::for_stderr(
+            std::io::IsTerminal::is_terminal(&std::io::stderr()),
+            crate::cli::progress::ProgressPolicy::STANDARD,
+        )
+    });
+    let progress_sink = progress
+        .as_ref()
+        .map(|sink| sink as &dyn app::AnalysisProgressSink);
+    let (classified, _) = app::repo_inventory_with_progress(
+        progress_sink,
+        || analysis::inventory_classified_seams_at_with_config(&options.root, &config),
+        Ok,
+    )?;
     let calibration = match &options.mutation_calibration {
         Some(path) => {
             let contents = crate::bounded_input::read_to_string(path).map_err(|err| {
@@ -279,6 +313,13 @@ pub(super) fn evidence_health(args: &[String]) -> Result<(), String> {
     write_text_file(&options.out_md, &rendered_md)?;
     println!("Wrote {}", output::path::human_path(&options.out));
     println!("Wrote {}", output::path::human_path(&options.out_md));
+    println!(
+        "{}",
+        output::evidence_health::render_evidence_health_headline(&report)
+    );
+    if let Some(progress) = &progress {
+        progress.commit_success();
+    }
     Ok(())
 }
 
@@ -995,6 +1036,9 @@ fn read_calibration_text(path: &Path, kind: SnapshotCaptureKind) -> Result<Strin
     })
 }
 
+const OUTCOME_BEFORE_REFUSAL: &str = "outcome requires --before <path>; pass the snapshot saved before your edit (capture one with `ripr check --format repo-exposure-json > before.json` before editing, not after)";
+const OUTCOME_AFTER_REFUSAL: &str = "outcome requires --after <path>; after your edit run `ripr check --format repo-exposure-json > after.json`, then pass `--after after.json`";
+
 fn parse_outcome_options(args: &[String]) -> Result<OutcomeOptions, String> {
     let mut before: Option<PathBuf> = None;
     let mut after: Option<PathBuf> = None;
@@ -1025,8 +1069,8 @@ fn parse_outcome_options(args: &[String]) -> Result<OutcomeOptions, String> {
         i += 1;
     }
 
-    let before = before.ok_or_else(|| "outcome requires --before <path>".to_string())?;
-    let after = after.ok_or_else(|| "outcome requires --after <path>".to_string())?;
+    let before = before.ok_or_else(|| OUTCOME_BEFORE_REFUSAL.to_string())?;
+    let after = after.ok_or_else(|| OUTCOME_AFTER_REFUSAL.to_string())?;
     Ok(OutcomeOptions {
         before,
         after,
@@ -1037,16 +1081,26 @@ fn parse_outcome_options(args: &[String]) -> Result<OutcomeOptions, String> {
 
 fn parse_evidence_health_options(args: &[String]) -> Result<EvidenceHealthOptions, String> {
     let mut root = PathBuf::from(".");
+    let mut root_explicit = false;
     let mut out = PathBuf::from("target/ripr/reports/evidence-health.json");
     let mut out_md = PathBuf::from("target/ripr/reports/evidence-health.md");
     let mut mutation_calibration: Option<PathBuf> = None;
+    let mut quiet = false;
 
     let mut i = 0usize;
     while i < args.len() {
         match args[i].as_str() {
+            "--quiet" => quiet = true,
             "--root" => {
                 i += 1;
-                root = PathBuf::from(expect_value(args, i, "--root")?);
+                let reconciled = reconcile_root(
+                    &root,
+                    root_explicit,
+                    expect_value(args, i, "--root")?,
+                    "evidence-health",
+                )?;
+                root = reconciled;
+                root_explicit = true;
             }
             "--out" => {
                 i += 1;
@@ -1074,6 +1128,7 @@ fn parse_evidence_health_options(args: &[String]) -> Result<EvidenceHealthOption
         out,
         out_md,
         mutation_calibration,
+        quiet,
     })
 }
 
@@ -1352,6 +1407,7 @@ fn parse_pr_evidence_ledger_options(args: &[String]) -> Result<PrEvidenceLedgerO
 
 fn parse_pr_comments_plan_options(args: &[String]) -> Result<PrCommentsPlanOptions, String> {
     let mut root = ".".to_string();
+    let mut root_explicit = false;
     let mut pr_guidance = None;
     let mut existing_comments = None;
     let mut mode = output::pr_inline_comment_publish_plan::CommentMode::Off;
@@ -1373,7 +1429,15 @@ fn parse_pr_comments_plan_options(args: &[String]) -> Result<PrCommentsPlanOptio
         match args[i].as_str() {
             "--root" => {
                 i += 1;
-                root = non_empty_string_arg(args, i, "--root", "pr-comments plan")?;
+                let value = non_empty_string_arg(args, i, "--root", "pr-comments plan")?;
+                let reconciled = reconcile_root(
+                    std::path::Path::new(&root),
+                    root_explicit,
+                    &value,
+                    "pr-comments plan",
+                )?;
+                root = reconciled.display().to_string();
+                root_explicit = true;
             }
             "--pr-guidance" => {
                 i += 1;
@@ -1483,6 +1547,7 @@ fn parse_pr_review_front_panel_options(
     args: &[String],
 ) -> Result<PrReviewFrontPanelOptions, String> {
     let mut root = ".".to_string();
+    let mut root_explicit = false;
     let mut pr_guidance = None;
     let mut first_action = None;
     let mut assistant_proof = None;
@@ -1504,7 +1569,15 @@ fn parse_pr_review_front_panel_options(
         match args[i].as_str() {
             "--root" => {
                 i += 1;
-                root = non_empty_string_arg(args, i, "--root", "pr-review front-panel")?;
+                let value = non_empty_string_arg(args, i, "--root", "pr-review front-panel")?;
+                let reconciled = reconcile_root(
+                    std::path::Path::new(&root),
+                    root_explicit,
+                    &value,
+                    "pr-review front-panel",
+                )?;
+                root = reconciled.display().to_string();
+                root_explicit = true;
             }
             "--pr-guidance" => {
                 i += 1;
@@ -2009,7 +2082,13 @@ fn parse_diff_options(args: &[String]) -> Result<DiffOptions, String> {
         match args[i].as_str() {
             "--root" => {
                 i += 1;
-                options.root = PathBuf::from(expect_value(args, i, "--root")?);
+                let reconciled = reconcile_root(
+                    &options.root,
+                    options.root_explicit,
+                    expect_value(args, i, "--root")?,
+                    "diff",
+                )?;
+                options.root = reconciled;
                 options.root_explicit = true;
             }
             "--base" => {
@@ -2196,7 +2275,10 @@ pub(super) fn explain(args: &[String]) -> Result<(), String> {
             }
             "--root" => {
                 i += 1;
-                input.root = PathBuf::from(expect_value(args, i, "--root")?);
+                let value = expect_value(args, i, "--root")?;
+                let reconciled =
+                    reconcile_root(&input.root, root_explicitly_provided, value, "explain")?;
+                input.root = reconciled;
                 root_explicitly_provided = true;
             }
             "--base" => {
@@ -2327,16 +2409,19 @@ pub(super) fn explain(args: &[String]) -> Result<(), String> {
     // looked like a hang. The same stderr-only stage lines `ripr check`
     // projects disclose the work without touching machine stdout. The
     // `--from` artifact path runs no pipeline and wires no sink.
-    // `explain` has no machine output format (its stdout is the human or
-    // markdown explanation), so only `--quiet` / `RIPR_QUIET` silence it; the
-    // machine-format default that `check` and `pilot` adopt has nothing to key on.
+    // `--quiet` / `RIPR_QUIET` always silence it. `--format agent` is the
+    // compact report a coding agent reads, so it takes the same machine-format
+    // default as `ripr check --format agent`: silent on a non-terminal stderr
+    // unless `RIPR_PROGRESS` asks for the stream. The agent loop follows the
+    // `next=ripr explain ...` line check prints, which carries no `--quiet`.
     if from_artifact.is_some()
         && input.suppression_policy.is_some()
         && format == app::ExplainFormat::Agent
     {
         return Err("`ripr explain --format agent` cannot apply `--suppression-policy` to a `--from` replay, so a suppressed finding could print as open; drop `--from` or `--suppression-policy`".to_string());
     }
-    let progress = (!crate::cli::progress::progress_silenced(quiet, false)).then(|| {
+    let machine_format = format == app::ExplainFormat::Agent;
+    let progress = (!crate::cli::progress::progress_silenced(quiet, machine_format)).then(|| {
         crate::cli::progress::CliProgressSink::for_stderr(
             std::io::IsTerminal::is_terminal(&std::io::stderr()),
             crate::cli::progress::ProgressPolicy::STANDARD,
@@ -2389,12 +2474,21 @@ fn parse_explain_format(value: &str) -> Result<app::ExplainFormat, String> {
     match value {
         "human" | "text" => Ok(app::ExplainFormat::Human),
         "agent" => Ok(app::ExplainFormat::Agent),
-        "json" => Err(
-            "`ripr explain --format json` is not offered; use `ripr context --at <finding-id>` for the JSON packet, or `--format agent` for compact lines"
-                .to_string(),
-        ),
-        other => Err(format!(
-            "unknown explain format `{other}`; expected `human` or `agent`"
+        "json" => {
+            let message = "`ripr explain --format json` is not offered; use `ripr context --at <finding-id>` for the JSON packet, or `--format agent` for compact lines"
+                .to_string();
+            // #11584: a JSON-requesting caller gets the typed refusal too.
+            crate::cli::usage_refusal::note_unknown_value(
+                "json",
+                &message,
+                Some("ripr explain --help"),
+            );
+            Err(message)
+        }
+        other => Err(unknown_value(
+            "explain format",
+            other,
+            &["human", "text", "agent"],
         )),
     }
 }
@@ -2524,40 +2618,30 @@ pub(super) fn drill_in_scope_conflict(
 /// Composes existing RIPR artifacts into a PR evidence summary. Does NOT run
 /// analysis or invoke Cargo. The canonical downstream replacement for
 /// `cargo xtask ripr-pr-summary`.
-pub(super) fn pr_summary(args: &[String]) -> Result<(), String> {
-    crate::app::pr_summary::run_pr_summary(args)
-}
+pub(super) use pr_summary_command::pr_summary;
 
 /// `ripr annotations` — binary-first GitHub Actions annotations (item 8b).
 /// Reads comments.json and emits `::warning` annotation lines. The canonical
 /// downstream replacement for `cargo xtask ripr-annotations`.
-pub(super) fn annotations(args: &[String]) -> Result<(), String> {
-    crate::app::annotations::run_annotations(args)
-}
+pub(super) use annotations_command::annotations;
 
 /// `ripr pr-evidence` — binary-first PR evidence packet (Campaign 31 item 8c).
 /// Writes the PR diff, runs an in-process RIPR check, and composes the result
 /// into a PR evidence packet. The canonical downstream replacement for
 /// `cargo xtask ripr-pr`. Unlike the xtask, it calls `check_workspace`
 /// directly instead of shelling out to `cargo run -p ripr -- check`.
-pub(super) fn pr_evidence(args: &[String]) -> Result<(), String> {
-    crate::app::pr_evidence::run_pr_evidence(args)
-}
+pub(super) use pr_evidence_command::pr_evidence;
 
 /// `ripr impacted-evidence` — binary-first mutation-routing evidence (item 8e).
 /// Reads PR evidence + labels and emits routing decision JSON + Markdown.
-pub(super) fn impacted_evidence(args: &[String]) -> Result<(), String> {
-    crate::app::impacted_evidence::run_impacted_evidence(args)
-}
+pub(super) use impacted_evidence_command::impacted_evidence;
 
 /// `ripr plus` — binary-first RIPR+ repo receipt (composition-only).
 /// Composes the repo-wide RIPR+ quality-gate receipt from a pre-computed
 /// `repo-exposure-summary-json` or `--gap-ledger` artifact. The canonical
 /// downstream replacement for `cargo xtask ripr-plus`. Unlike the xtask, it
 /// is artifact-composition-only and does not run an in-process full-repo scan.
-pub(super) fn ripr_plus(args: &[String]) -> Result<(), String> {
-    crate::app::ripr_plus::run_ripr_plus(args)
-}
+pub(super) use ripr_plus_command::ripr_plus;
 
 #[cfg(test)]
 mod tests {
@@ -2851,7 +2935,12 @@ mod tests {
                 out: PathBuf::from("target/ripr/reports/evidence-health.json"),
                 out_md: PathBuf::from("target/ripr/reports/evidence-health.md"),
                 mutation_calibration: None,
+                quiet: false,
             })
+        );
+        assert_eq!(
+            parse_evidence_health_options(&args(&["--quiet"])).map(|options| options.quiet),
+            Ok(true)
         );
         assert_eq!(
             parse_evidence_health_options(&args(&[
@@ -2871,6 +2960,7 @@ mod tests {
                 mutation_calibration: Some(PathBuf::from(
                     "target/ripr/reports/mutation-calibration.json"
                 )),
+                quiet: false,
             })
         );
     }
@@ -4927,11 +5017,11 @@ language = "rust"
     fn outcome_requires_before_and_after() {
         assert_eq!(
             parse_outcome_options(&args(&["--after", "after.json"])),
-            Err("outcome requires --before <path>".to_string())
+            Err(OUTCOME_BEFORE_REFUSAL.to_string())
         );
         assert_eq!(
             parse_outcome_options(&args(&["--before", "before.json"])),
-            Err("outcome requires --after <path>".to_string())
+            Err(OUTCOME_AFTER_REFUSAL.to_string())
         );
     }
     #[test]

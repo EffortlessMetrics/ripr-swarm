@@ -1,7 +1,7 @@
 use super::init_agents;
 use crate::cli::commands_options::{InitCi, InitOptions};
 use crate::cli::help;
-use crate::cli::parse::expect_value;
+use crate::cli::parse::{expect_value, reconcile_root};
 use crate::cli::suggest::{unknown_argument, unknown_value};
 use crate::config::{CONFIG_FILE_NAME, generated_init_config_for_root};
 use crate::output;
@@ -354,8 +354,25 @@ fn init_plan(options: &InitOptions) -> Result<Vec<InitTarget>, String> {
     if let Some(path) = cursor_mcp_path {
         targets.push(plan_mcp_target(path, options.force)?);
     }
+    // The instructions promise analysis only for languages `ripr check` will
+    // run: the config this run writes, else the one it keeps. A config that
+    // cannot be read enables nothing here (fail closed: no preview promise).
+    let enabled_languages = match targets[0].action {
+        InitAction::LeaveUnchanged => crate::config::load_for_root(&options.root)
+            .map(|config| config.languages().enabled().to_vec())
+            .unwrap_or_default(),
+        _ => crate::config::parse_config_diagnostic(&targets[0].body)
+            .map(|config| config.languages().enabled().to_vec())
+            .unwrap_or_default(),
+    };
+    let agent_languages = init_agents::AgentLanguages::detect(&options.root, &enabled_languages);
     for (agent, path) in options.agents.iter().zip(agent_paths) {
-        targets.push(init_agents::plan_agent_target(*agent, path, options.force)?);
+        targets.push(init_agents::plan_agent_target(
+            *agent,
+            path,
+            options.force,
+            agent_languages,
+        )?);
     }
     Ok(targets)
 }
@@ -367,7 +384,16 @@ const MCP_CONFIG_FILE_NAME: &str = ".mcp.json";
 const MCP_SERVER_NAME: &str = "ripr";
 
 fn ripr_mcp_server_entry() -> serde_json::Value {
-    serde_json::json!({ "command": "ripr", "args": ["mcp", "--stdio"] })
+    // #13050: `tools/list` rides every session start and about two thirds of it
+    // was `outputSchema` documents a coding agent never reads. Slim is the
+    // server default since #13803; the explicit value keeps an older ripr
+    // binary slim too (docs/interop/mcp.md). Results still carry
+    // `structuredContent`; set the value to `full` to get the schemas back.
+    serde_json::json!({
+        "command": "ripr",
+        "args": ["mcp", "--stdio"],
+        "env": { "RIPR_MCP_TOOLS_LIST": "slim" }
+    })
 }
 
 /// Plan the `.mcp.json` write: create it, add the `ripr` server beside the
@@ -817,12 +843,20 @@ pub(super) fn parse_init_options(args: &[String]) -> Result<InitOptions, String>
         mcp: false,
         agents: Vec::new(),
     };
+    let mut root_explicit = false;
     let mut i = 0usize;
     while i < args.len() {
         match args[i].as_str() {
             "--root" => {
                 i += 1;
-                options.root = PathBuf::from(expect_value(args, i, "--root")?);
+                let reconciled = reconcile_root(
+                    &options.root,
+                    root_explicit,
+                    expect_value(args, i, "--root")?,
+                    "init",
+                )?;
+                options.root = reconciled;
+                root_explicit = true;
             }
             "--ci" => {
                 i += 1;
@@ -1475,7 +1509,8 @@ mod tests {
         serde_json::from_str(body).map_err(|err| format!("body is not JSON: {err}\n{body}"))
     }
 
-    const RIPR_ENTRY: &str = r#"{"command":"ripr","args":["mcp","--stdio"]}"#;
+    const RIPR_ENTRY: &str =
+        r#"{"command":"ripr","args":["mcp","--stdio"],"env":{"RIPR_MCP_TOOLS_LIST":"slim"}}"#;
 
     #[test]
     fn mcp_plan_creates_project_config_and_keeps_an_existing_ripr_toml() -> Result<(), String> {

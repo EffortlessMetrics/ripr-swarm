@@ -67,6 +67,19 @@ struct RangeIdentity {
     all_reachable_sha256: String,
     first_parent_sha256: String,
     record_set_sha256: String,
+    /// #4006 item 6: raw NUL-framed changed-path count and digest over the
+    /// same `last_integrated_swarm_parent..candidate` range, carried from the
+    /// accepted #2768 ledger's `path_inventories.range_touched` (the same
+    /// range base and cut). Admission compares it typed against the retained
+    /// packet bytes; a manifest without the identity fails to parse, so a
+    /// missing inventory is never admitted as an empty one.
+    path_record_count: u64,
+    /// Bare 64-hex digest; the ledger's `sha256:` spelling is applied at the
+    /// comparison.
+    path_record_sha256: String,
+    /// The ledger's exact `range_touched` recipe; a foreign or LF-joined
+    /// recipe refuses.
+    path_record_recipe: String,
 }
 
 /// References to already accepted owner packets, not a second interpretation
@@ -224,7 +237,89 @@ impl LiveHeadSnapshot {
                     .to_string(),
             );
         }
+        // #4006 item 6: the manifest's path-record identity must equal the
+        // retained #2768 ledger's `range_touched` inventory, compared as typed
+        // fields against the exact retained packet bytes (raw-digest bound in
+        // custody), for the same base and candidate. The ledger computed that
+        // identity live at capture through the shared NUL-record authority
+        // (SPEC-0301); carrying it forward typed, instead of re-diffing here,
+        // keeps one producer and cannot hide behind a raw-byte binding. A
+        // digest copied from another role, an LF-joined digest, a missing
+        // inventory or a different range all refuse.
+        let packet = self.denominator_packet_bytes()?;
+        let ledger = packet
+            .get("ledger")
+            .filter(|ledger| ledger.is_object())
+            .unwrap_or(&packet);
+        let packet_base = ledger["source"]["base_sha"]
+            .as_str()
+            .ok_or_else(|| "retained #2768 packet names no source.base_sha".to_string())?;
+        if packet_base != expected.last_integrated_swarm_parent {
+            return Err(
+                "retained #2768 packet covers another range base than the manifest".to_string(),
+            );
+        }
+        let packet_cut = ledger["source"]["cut_sha"]
+            .as_str()
+            .ok_or_else(|| "retained #2768 packet names no source.cut_sha".to_string())?;
+        if packet_cut != sha {
+            return Err(
+                "retained #2768 packet covers another cut than the manifest candidate".to_string(),
+            );
+        }
+        let range_touched = &ledger["path_inventories"]["range_touched"];
+        if !range_touched.is_object() {
+            return Err(
+                "retained #2768 packet carries no path_inventories.range_touched; missing is not empty"
+                    .to_string(),
+            );
+        }
+        let packet_count = range_touched["path_record_count"].as_u64().ok_or_else(|| {
+            "retained #2768 packet range_touched names no path_record_count".to_string()
+        })?;
+        let packet_digest = range_touched["path_record_sha256"]
+            .as_str()
+            .ok_or_else(|| {
+                "retained #2768 packet range_touched names no path_record_sha256".to_string()
+            })?;
+        let packet_recipe = range_touched["path_record_recipe"]
+            .as_str()
+            .ok_or_else(|| {
+                "retained #2768 packet range_touched names no path_record_recipe".to_string()
+            })?;
+        if expected.path_record_count != packet_count
+            || format!("sha256:{}", expected.path_record_sha256) != packet_digest
+        {
+            return Err(
+                "direct manifest path-record inventory differs from the retained #2768 ledger"
+                    .to_string(),
+            );
+        }
+        let ledger_recipe = crate::reports::release_ledger::range_touched_recipe();
+        if expected.path_record_recipe != ledger_recipe || packet_recipe != ledger_recipe {
+            return Err(
+                "path-record recipe is not the ledger's shared NUL-record authority recipe"
+                    .to_string(),
+            );
+        }
         Ok(())
+    }
+
+    /// The retained raw bytes of the prerequisite #2768 denominator packet,
+    /// parsed for the typed path-inventory comparison.
+    fn denominator_packet_bytes(&self) -> Result<serde_json::Value, String> {
+        let prerequisites = self
+            .manifest
+            .prerequisites
+            .as_ref()
+            .ok_or_else(|| "direct manifest has no prerequisites".to_string())?;
+        let path = &prerequisites.denominator.packet.path;
+        let bytes = self
+            .raw
+            .get(path)
+            .ok_or_else(|| format!("retained custody lacks the #2768 packet bytes: {path}"))?;
+        serde_json::from_slice::<serde_json::Value>(bytes)
+            .map_err(|error| format!("parse retained #2768 packet {path}: {error}"))
     }
 
     pub(crate) fn verify_package_inputs(
@@ -395,8 +490,16 @@ fn validate_manifest(manifest: &LiveHeadManifest, version: &str) -> Result<(), S
         &range.all_reachable_sha256,
         &range.first_parent_sha256,
         &range.record_set_sha256,
+        &range.path_record_sha256,
     ] {
         require_hex("denominator digest", hash, 64)?;
+    }
+    let expected_range_recipe = crate::reports::release_ledger::range_touched_recipe();
+    if range.path_record_recipe != expected_range_recipe {
+        return Err(
+            "direct manifest path-record recipe is not the ledger's shared NUL-record authority recipe"
+                .to_string(),
+        );
     }
     let prerequisites = manifest
         .prerequisites
