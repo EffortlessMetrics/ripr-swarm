@@ -4,7 +4,7 @@
 //! line is projected from a typed `RepairCardV1` field; nothing is re-derived
 //! and the JSON card is untouched. Both the CLI adapter and the application
 //! layer's repair-card usability evidence consume this renderer, so neither
-//! `app` nor `output` imports `crate::cli` for it (#5193).
+//! `app` nor `output` depends on the CLI adapter for it (#5193).
 
 use crate::analysis;
 use crate::app::task_first::CardStartHold;
@@ -16,7 +16,7 @@ use crate::domain::{
 /// The default human card: a short brief a first-time reader can act on.
 /// Every line is projected from a typed card field; nothing is re-derived and
 /// the JSON card is untouched. The ledger rows (producer, subject, non-claim,
-/// detail routes, hashes) live in [`agent_card_prose_lines`] under
+/// detail routes, hashes) live in `agent_card_prose_lines` under
 /// `--verbose`.
 pub(crate) fn agent_card_plain_lines(
     card: &RepairCardV1,
