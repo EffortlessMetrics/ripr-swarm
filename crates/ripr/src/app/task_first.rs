@@ -2130,6 +2130,8 @@ impl RepairStartRefusal {
 pub(crate) struct RepairStartGate {
     root: std::path::PathBuf,
     state: std::cell::OnceCell<GateState>,
+    /// Build the inventory without mutating the seam cache (#13945).
+    cache_read_only: bool,
     /// Unit-test builds only: seam ids admitted regardless of the inventory.
     #[cfg(test)]
     admitted: Vec<String>,
@@ -2157,9 +2159,20 @@ impl RepairStartGate {
         Self {
             root: root.to_path_buf(),
             state: std::cell::OnceCell::new(),
+            cache_read_only: false,
             #[cfg(test)]
             admitted: Vec::new(),
         }
+    }
+
+    /// The gate a read-only command uses: its inventory is computed without
+    /// writing, pruning or sweeping anything under the seam cache. `ripr agent
+    /// status` is read-only with respect to repair-attempt custody, and an
+    /// attempt's bound verdict may list `target/ripr/cache` files that an
+    /// ordinary inventory would rewrite or prune (#13945).
+    pub(crate) fn read_only(mut self) -> Self {
+        self.cache_read_only = true;
+        self
     }
 
     /// The gate every production caller uses.
@@ -2220,7 +2233,9 @@ impl RepairStartGate {
         if self.admitted.iter().any(|id| id == seam_id) {
             return None;
         }
-        let state = self.state.get_or_init(|| load_gate_state(&self.root));
+        let state = self
+            .state
+            .get_or_init(|| load_gate_state(&self.root, self.cache_read_only));
         check_state(&self.root, state, seam_id)
     }
 
@@ -2251,7 +2266,9 @@ impl RepairStartGate {
         if matches!(self.state.get(), Some(GateState::Open)) {
             return None;
         }
-        let state = self.state.get_or_init(|| load_gate_state(&self.root));
+        let state = self
+            .state
+            .get_or_init(|| load_gate_state(&self.root, self.cache_read_only));
         let GateState::Loaded { classified, .. } = state else {
             return None;
         };
@@ -2268,7 +2285,12 @@ impl RepairStartGate {
     }
 }
 
-fn load_gate_state(root: &Path) -> GateState {
+fn load_gate_state(root: &Path, cache_read_only: bool) -> GateState {
+    let _suppressed = cache_read_only.then(|| {
+        crate::atomic_file::CacheMutationSuppressed::under(
+            &crate::analysis::seam_cache::cache_base_dir(root),
+        )
+    });
     let config = match load_for_root(root) {
         Ok(config) => config,
         Err(error) => {
@@ -4213,7 +4235,7 @@ pub(crate) mod tests {
         let (classified, _) = inventory_for_repair(&control_root, &control_config)?;
         assert!(!classified.is_empty(), "fixture must classify seams");
         assert!(matches!(
-            load_gate_state(&control_root),
+            load_gate_state(&control_root, false),
             GateState::Loaded { .. }
         ));
 
@@ -4240,7 +4262,7 @@ pub(crate) mod tests {
             };
             assert!(start.contains("producer_failure"), "{start}");
 
-            match load_gate_state(&root) {
+            match load_gate_state(&root, false) {
                 GateState::Unavailable(why) => assert!(why.contains("producer_failure"), "{why}"),
                 _ => return Err(format!("point {point}: the gate must be unavailable")),
             }
@@ -4261,6 +4283,105 @@ pub(crate) mod tests {
                 "point {point}: the selector must be undecided, not a clean miss"
             );
         }
+        Ok(())
+    }
+
+    /// #13945: the status gate's inventory must not rewrite, prune or add any
+    /// seam-cache file, because a repair attempt's bound verdict can list those
+    /// files. The same inventory with the default gate does write them, so the
+    /// unchanged snapshot is attributable to the read-only gate.
+    #[test]
+    fn read_only_gate_inventory_leaves_the_seam_cache_untouched() -> Result<(), String> {
+        fn snapshot(
+            dir: &Path,
+            out: &mut std::collections::BTreeMap<std::path::PathBuf, Vec<u8>>,
+        ) -> Result<(), String> {
+            let Ok(entries) = std::fs::read_dir(dir) else {
+                return Ok(());
+            };
+            for entry in entries {
+                let path = entry.map_err(|error| error.to_string())?.path();
+                if path.is_dir() {
+                    snapshot(&path, out)?;
+                } else {
+                    let bytes = std::fs::read(&path).map_err(|error| error.to_string())?;
+                    out.insert(path, bytes);
+                }
+            }
+            Ok(())
+        }
+        let cache_files = |root: &Path| -> Result<_, String> {
+            let mut files = std::collections::BTreeMap::new();
+            snapshot(
+                &crate::analysis::seam_cache::cache_base_dir(root),
+                &mut files,
+            )?;
+            Ok(files)
+        };
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|error| error.to_string())?
+            .as_nanos();
+        let root =
+            std::env::temp_dir().join(format!("ripr-readonly-gate-{}-{stamp}", std::process::id()));
+        std::fs::create_dir_all(root.join("src")).map_err(|error| error.to_string())?;
+        let _guard = TempRootGuard { root: root.clone() };
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"gate\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )
+        .map_err(|error| error.to_string())?;
+        let lib = root.join("src/lib.rs");
+        std::fs::write(
+            &lib,
+            "pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }\n",
+        )
+        .map_err(|error| error.to_string())?;
+
+        // Cold cache: the read-only gate still loads the inventory and writes
+        // nothing.
+        assert!(matches!(
+            load_gate_state(&root, true),
+            GateState::Loaded { .. }
+        ));
+        assert!(
+            cache_files(&root)?.is_empty(),
+            "a read-only gate must not create cache files"
+        );
+
+        // Discriminating control: the default gate populates the cache.
+        assert!(matches!(
+            load_gate_state(&root, false),
+            GateState::Loaded { .. }
+        ));
+        let warm = cache_files(&root)?;
+        assert!(!warm.is_empty(), "the default gate must populate the cache");
+
+        // New source bytes miss every cache key. The read-only gate leaves the
+        // warm snapshot byte-identical; the default gate then changes it.
+        std::fs::write(
+            &lib,
+            "pub fn discount(amount: i32, threshold: i32) -> bool { amount > threshold }\n",
+        )
+        .map_err(|error| error.to_string())?;
+        assert!(matches!(
+            load_gate_state(&root, true),
+            GateState::Loaded { .. }
+        ));
+        assert_eq!(
+            cache_files(&root)?,
+            warm,
+            "read-only gate mutated the cache"
+        );
+        assert!(matches!(
+            load_gate_state(&root, false),
+            GateState::Loaded { .. }
+        ));
+        assert_ne!(
+            cache_files(&root)?,
+            warm,
+            "the default gate must record the changed source"
+        );
         Ok(())
     }
 
@@ -4335,7 +4456,7 @@ pub(crate) mod tests {
         assert_eq!(classified.len(), plain.total);
 
         // Agent-status gate: same answer, not withheld as truncated.
-        let gate = load_gate_state(&root);
+        let gate = load_gate_state(&root, false);
         assert!(
             matches!(
                 gate,
