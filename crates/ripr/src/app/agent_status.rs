@@ -403,7 +403,7 @@ pub(crate) fn build_agent_status_report_from(
     };
     let receipt = read_workflow_receipt(root);
     // One lazily loaded repair-admission gate per status read (#8766).
-    let gate = RepairStartGate::new(root);
+    let gate = RepairStartGate::new(root).read_only();
     let repair_attempts =
         inspect_repair_attempts(root, &command_root, &receipt, &mut warnings, store, &gate);
     let (store_flag, store_locator) = match resolve_store(
@@ -2967,7 +2967,7 @@ pub(crate) fn selected_attempt_status_reading(
     current_head: Option<&str>,
 ) -> SelectedAttemptStatusReading {
     let workflow_receipt = read_workflow_receipt(root);
-    let gate = RepairStartGate::new(root);
+    let gate = RepairStartGate::new(root).read_only();
     let view = status_repair_attempt(
         command_root,
         store_locator,
