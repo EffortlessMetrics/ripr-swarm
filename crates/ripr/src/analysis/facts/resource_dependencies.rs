@@ -708,8 +708,8 @@ fn second() -> &'static str {
             let _ = spans.consumer_for_line(file, line);
         }
         assert_eq!(spans.builds.get(), 1, "one build for five lookups");
-        assert!(spans.consumer_for_line(file, 2).0.contains('a'));
-        assert!(spans.consumer_for_line(file, 5).0.contains('b'));
+        assert_eq!(spans.consumer_for_line(file, 2).0, "src/lib.rs::a");
+        assert_eq!(spans.consumer_for_line(file, 5).0, "src/lib.rs::b");
         assert!(
             spans
                 .consumer_for_line(file, 99)
