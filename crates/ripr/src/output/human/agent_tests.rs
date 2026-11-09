@@ -333,18 +333,36 @@ fn top_gap_carries_location_missing_value_test_id_and_next_command() {
         lines[1],
         "weakly_exposed|src/lib.rs:2|pct >= 50|missing=pct == 50|test=t1|id=probe:a"
     );
+    // RIPR-SPEC-0429: the staged-evidence states follow the record directly.
     assert_eq!(
         lines[2],
+        "stages=reach:yes,infect:weak,propagate:yes,observe:yes,discriminate:weak"
+    );
+    assert_eq!(
+        lines[3],
         "t1=tests/t.rs:3 discount_runs relational_check `assert!(discount(10, 100) > 0);` miss=weak_assertion"
     );
-    assert_eq!(lines[3], "next=ripr explain --format agent probe:a");
+    assert_eq!(lines[4], "next=ripr explain --format agent probe:a");
     // #13516: the verification record is last and repeats the header's full
     // counts (2 findings, 1 exposed); no outcome means refused.
     assert_eq!(
-        lines[4],
+        lines[5],
         "verify=refused|outcome=missing|findings=2|exposed=1|reason=outcome_missing,gaps_remain"
     );
-    assert_eq!(lines.len(), 5, "{text}");
+    assert_eq!(lines.len(), 6, "{text}");
+}
+
+/// RIPR-SPEC-0429: a record-free terminal run (done=) prints no `stages=`
+/// line; a `stages=` token is only emitted for records the run lists.
+#[test]
+fn record_free_terminal_runs_print_no_stages_line() {
+    let done = rendered(&output(vec![finding(
+        "probe:ok",
+        ExposureClass::Exposed,
+        4,
+    )]));
+    assert!(done.contains("\ndone="), "{done}");
+    assert!(!done.contains("stages="), "{done}");
 }
 
 /// #13157: all three compact check drill-ins retain the same source
@@ -997,6 +1015,8 @@ fn explain_agent_gap_is_one_record_one_test_open_terminal_and_context_next() {
         vec![
             "#ripr explain agent static-advisory class=weakly_exposed",
             "weakly_exposed|src/lib.rs:2|pct >= 50|missing=pct == 50|test=t1|id=probe:a",
+            // RIPR-SPEC-0429: the staged-evidence states follow the record.
+            "stages=reach:yes,infect:weak,propagate:yes,observe:yes,discriminate:weak",
             "t1=tests/t.rs:3 discount_runs relational_check `assert!(discount(10, 100) > 0);` miss=weak_assertion",
             "open=a test-side gap remains: no related test is shown to notice this change; static advisory, not runtime proof",
             "next=ripr context --root repo --at probe:a",

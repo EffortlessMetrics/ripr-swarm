@@ -11421,6 +11421,8 @@ fn absent_delimiter_boundary_returns_head() {
 }
 
 #[cfg(test)]
+mod cfg_kani_module_tests;
+#[cfg(test)]
 mod classify_panic_tests;
 #[cfg(test)]
 mod diff_workspace_skip_tests;
