@@ -11,6 +11,7 @@ tests = [
   "crates/ripr/src/cli/commands/init_agents.rs::tests::force_refreshes_generated_cursor_frontmatter_but_not_user_frontmatter",
   "crates/ripr/tests/cli_smoke.rs::init_agents_writes_language_appropriate_instructions",
   "crates/ripr/tests/cli_smoke.rs::init_agents_appends_marked_section_idempotently_and_never_clobbers",
+  "crates/ripr/tests/cli_smoke.rs::init_mcp_without_cursor_still_offers_the_cursor_route",
 ]
 code = [
   "crates/ripr/src/cli/commands/init_agents.rs",
