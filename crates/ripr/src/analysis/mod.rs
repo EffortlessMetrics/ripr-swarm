@@ -1498,7 +1498,7 @@ mod tests {
     /// #13949: every `%` the encoder emits starts a `%XX` spelling with
     /// uppercase hex, the only spelling the decoder reads back.
     fn percent_spellings_are_canonical(encoded: &str) -> bool {
-        let upper_hex = |byte: &u8| byte.is_ascii_digit() || (b'A'..=b'F').contains(byte);
+        let upper_hex = |byte: &u8| matches!(byte, b'0'..=b'9' | b'A'..=b'F');
         let bytes = encoded.as_bytes();
         bytes.iter().enumerate().all(|(at, byte)| {
             *byte != b'%'
@@ -1509,21 +1509,38 @@ mod tests {
         })
     }
 
+    /// A small alphabet that keeps the percent layer's hazards in play: `%`,
+    /// hex digits of both cases, separators, a backslash, invalid and
+    /// multi-byte UTF-8 lead bytes, and plain text.
+    #[cfg(unix)]
+    fn hazard_bytes() -> impl proptest::strategy::Strategy<Value = Vec<u8>> {
+        proptest::collection::vec(
+            proptest::sample::select(vec![
+                b'%', b'5', b'C', b'2', b'A', b'F', b'f', b'c', b'8', b'0', b'\\', b'/', b'a',
+                0x80, 0xC3, 0xA9, 0xFF,
+            ]),
+            0..16,
+        )
+    }
+
     proptest::proptest! {
         #![proptest_config(path_text_config())]
 
         /// #13949: the display form round-trips every path without a
         /// backslash (which display normalization folds into `/` by design,
         /// see `stable_source_path_text_preserves_literal_backslashes_before_display`),
-        /// whatever percent signs, spaces or non-ASCII text it carries.
+        /// whatever percent signs, hex digits, spaces or non-ASCII text it
+        /// carries. The comparison is on the exact OS string, so a decoder
+        /// that normalized repeated or trailing separators would fail.
         #[test]
         fn proptest_stable_path_text_round_trips_paths_without_backslashes(
-            text in "[^\\x00\\\\]{0,24}"
+            text in "[%0-9A-Fa-f/ a-z\u{e9}]{0,24}"
         ) {
             let path = PathBuf::from(&text);
             let encoded = stable_path_text(&path);
             proptest::prop_assert!(percent_spellings_are_canonical(&encoded));
-            proptest::prop_assert_eq!(decode_stable_path_text(&encoded), path);
+            let decoded = decode_stable_path_text(&encoded);
+            proptest::prop_assert_eq!(decoded.as_os_str(), path.as_os_str());
         }
     }
 
@@ -1531,25 +1548,41 @@ mod tests {
     proptest::proptest! {
         #![proptest_config(path_text_config())]
 
-        /// #13949: on Unix the source-identity encoding round-trips arbitrary
-        /// native bytes, including invalid UTF-8, backslashes and percents.
+        /// #13949: on Unix the source-identity encoding round-trips native
+        /// bytes exactly, including invalid UTF-8, backslashes and literal
+        /// `%XX` spellings that resemble the encoder's own escapes.
         #[test]
         fn proptest_stable_source_path_text_round_trips_arbitrary_bytes(
-            bytes in proptest::collection::vec(1u8..=255, 0..24)
+            bytes in hazard_bytes()
         ) {
             let path = native_path(bytes);
             let encoded = stable_source_path_text(&path);
             proptest::prop_assert!(percent_spellings_are_canonical(&encoded));
-            proptest::prop_assert_eq!(decode_stable_path_text(&encoded), path);
+            let decoded = decode_stable_path_text(&encoded);
+            proptest::prop_assert_eq!(decoded.as_os_str(), path.as_os_str());
         }
 
         /// #13949: distinct native paths never share a source-identity
-        /// spelling, so finding ids and receipts cannot merge two files.
+        /// spelling, so a literal `%80` or `%5C` cannot merge with an invalid
+        /// byte or a backslash. The second path is a one-edit mutation of the
+        /// first, so near-collisions are the common case.
         #[test]
         fn proptest_stable_source_path_text_is_injective(
-            left in proptest::collection::vec(1u8..=255, 0..12),
-            right in proptest::collection::vec(1u8..=255, 0..12)
+            left in hazard_bytes(),
+            edit in proptest::sample::select(vec![0u8, 1, 2]),
+            at in 0usize..16,
+            replacement in proptest::sample::select(vec![b'%', b'5', b'C', b'8', b'0', b'\\', 0x80, 0xFF]),
         ) {
+            let mut right = left.clone();
+            let at = at.min(right.len());
+            match edit {
+                0 if at < right.len() => right[at] = replacement,
+                1 => right.insert(at, replacement),
+                _ if at < right.len() => {
+                    right.remove(at);
+                }
+                _ => {}
+            }
             proptest::prop_assume!(left != right);
             proptest::prop_assert_ne!(
                 stable_source_path_text(&native_path(left)),

@@ -1561,17 +1561,22 @@ mod tests {
         #[test]
         fn proptest_c_quoted_old_path_confines_like_the_oracle(
             segments in proptest::collection::vec(
-                proptest::collection::vec(
-                    proptest::prop_oneof![
-                        4 => 0x20u8..=0x7e,
-                        1 => 1u8..=0x1f,
-                        2 => 0x80u8..=0xff,
-                        1 => proptest::strategy::Just(b'.'),
-                        1 => proptest::strategy::Just(b'"'),
-                        1 => proptest::strategy::Just(b'\\'),
-                    ],
-                    0..6,
-                ),
+                proptest::prop_oneof![
+                    2 => proptest::strategy::Just(b"..".to_vec()),
+                    2 => proptest::strategy::Just(b".".to_vec()),
+                    1 => proptest::strategy::Just(Vec::new()),
+                    6 => proptest::collection::vec(
+                        proptest::prop_oneof![
+                            4 => 0x20u8..=0x7e,
+                            1 => 1u8..=0x1f,
+                            2 => 0x80u8..=0xff,
+                            1 => proptest::strategy::Just(b'.'),
+                            1 => proptest::strategy::Just(b'"'),
+                            1 => proptest::strategy::Just(b'\\'),
+                        ],
+                        0..6,
+                    ),
+                ],
                 0..6,
             ),
             leading_slash in proptest::bool::ANY,
