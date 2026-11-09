@@ -21,9 +21,22 @@
 //! `ripr-dx-scoreboard-input-v1` shape. A metric with no instrument is
 //! `not_measured` with its reason; absence is never reported as a pass.
 //! Cloning the real-repository corpus is opt-in (`--clone`).
+//!
+//! The gate is a regression gate, not a completeness gate, so a run with
+//! some missing evidence can still pass. The headline stays honest about
+//! how much evidence that pass rests on: when `not_measured + uncompared`
+//! exceeds half of the selected metrics, the gate status is
+//! `pass_with_gaps` instead of plain `pass`, and the headline prints the
+//! meets / below / not-measured / failed / uncompared counts.
+//! `pass_with_gaps` does not exit nonzero; only `fail` does.
 
+mod input;
 mod measure;
+mod muse_plugin;
 mod population;
+mod workloads;
+
+pub(crate) use input::{check_baseline, ratio_sample};
 
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -68,6 +81,14 @@ const FIRST_RUN_WORKFLOW_LINES: &str = "workflow_lines";
 const DEFAULT_CONFIG: &str = "benchmarks/dx_scoreboard/scoreboards.toml";
 const DEFAULT_CORPUS_DIR: &str = "target/ripr/dx-scoreboard/corpus";
 const DEFAULT_TIMEOUT_MS: u64 = 900_000;
+/// Measured warm-check runs per repository after the warm-up run. Three is
+/// the smallest count with a median that survives one outlier; the cold
+/// instruments stay at one run.
+pub(crate) const DEFAULT_WARM_SAMPLES: usize = 3;
+/// Upper bound on `--samples` so a typo cannot hold a hosted runner for hours.
+const MAX_WARM_SAMPLES: usize = 50;
+/// The metric whose peak-memory ceiling a repository's `size_tier` supplies.
+pub(crate) const TIER_RSS_METRIC: &str = "speed.warm_check_peak_rss_mb";
 const BOARDS: [&str; 9] = [
     "speed",
     "ci",
@@ -80,7 +101,7 @@ const BOARDS: [&str; 9] = [
     "repair",
 ];
 
-const USAGE: &str = "usage: cargo xtask dx-scoreboard [--config <path>] [--boards <list>] [--repo <id>]... [--include-heavy] [--corpus-dir <dir>] [--clone] [--ripr-bin <path>] [--ingest <file>]... [--baseline <report.json>] [--gate] [--timeout-ms <n>]
+const USAGE: &str = "usage: cargo xtask dx-scoreboard [--config <path>] [--boards <list>] [--repo <id>]... [--include-heavy] [--corpus-dir <dir>] [--clone] [--ripr-bin <path>] [--ingest <file>]... [--baseline <report.json>] [--gate] [--timeout-ms <n>] [--samples <n>]
 
 Measures the developer-experience scoreboards declared in
 benchmarks/dx_scoreboard/scoreboards.toml and writes
@@ -94,6 +115,10 @@ target/ripr/reports/dx-scoreboard.{json,md}.
   --ripr-bin <path>   measure this binary instead of building release ripr
   --ingest <file>     merge metrics measured by another harness
   --baseline <file>   compare against an earlier dx-scoreboard.json
+  --samples <n>       measured warm-check runs per repository after the warm-up
+                      (default 3, at most 50); speed.warm_check_p50_ms and
+                      speed.warm_check_p95_ms are nearest-rank over them, and
+                      peak memory is the maximum. Cold instruments stay at one run
   --gate              exit nonzero when a metric regresses past its margin
                       or an instrument or case comparison fails";
 
@@ -112,6 +137,23 @@ pub(crate) struct Config {
     pub(crate) corpus: Vec<CorpusEntry>,
     #[serde(default)]
     pub(crate) metric: Vec<MetricDef>,
+    /// Repository-size tiers with the peak-memory bar each one is held to.
+    #[serde(default)]
+    pub(crate) size_tier: Vec<SizeTier>,
+}
+
+/// A repository-size tier. `peak_rss_mb` is the release-ladder bar for warm
+/// `ripr check` peak memory at that size (docs/METRICS.md, R1). A corpus
+/// entry naming the tier is held to it as a hard ceiling on
+/// `speed.warm_check_peak_rss_mb` unless the entry sets a different
+/// ceiling; a looser one needs a dated `memory_ratchet` note.
+#[derive(Debug, Clone, Deserialize)]
+pub(crate) struct SizeTier {
+    pub(crate) id: String,
+    pub(crate) description: String,
+    pub(crate) peak_rss_mb: f64,
+    /// Where the bar comes from: `ladder` or `ladder_hard_cap`.
+    pub(crate) bar_source: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -145,6 +187,14 @@ pub(crate) struct CorpusEntry {
     /// a complete result or any other limit fails the row (#12052).
     #[serde(default)]
     pub(crate) expected_partial: Option<String>,
+    /// Name of a `[[size_tier]]`; supplies the default peak-memory ceiling.
+    #[serde(default)]
+    pub(crate) size_tier: Option<String>,
+    /// Dated note required when this entry's `speed.warm_check_peak_rss_mb`
+    /// ceiling is looser than its tier's bar: current ceiling, ladder bar
+    /// and the date it was set.
+    #[serde(default)]
+    pub(crate) memory_ratchet: Option<String>,
 }
 
 /// Languages a corpus entry may declare.
@@ -204,6 +254,8 @@ pub(crate) struct Options {
     baseline: Option<PathBuf>,
     gate: bool,
     pub(crate) timeout_ms: u64,
+    /// Measured warm-check runs per repository after the warm-up run.
+    pub(crate) samples: usize,
 }
 
 /// One observation of a metric, optionally for one corpus repository.
@@ -239,8 +291,9 @@ pub(crate) fn dx_scoreboard(args: &[String]) -> Result<(), String> {
     let options = parse_options(args)?;
     let config = load_config(&options.config)?;
     let mut samples = Vec::new();
+    let mut muse_runs = std::collections::BTreeSet::new();
     for path in &options.ingest {
-        samples.extend(load_ingest(path, &config)?);
+        samples.extend(load_ingest(path, &config, &mut muse_runs)?);
     }
     samples.extend(file_samples(&config, &options.boards)?);
     let mut context = measure::measure(&config, &options, &mut samples)?;
@@ -269,6 +322,16 @@ pub(crate) fn dx_scoreboard(args: &[String]) -> Result<(), String> {
     crate::write_report("dx-scoreboard.md", &markdown)?;
     println!("Wrote target/ripr/reports/dx-scoreboard.json");
     println!("Wrote target/ripr/reports/dx-scoreboard.md");
+    let counts = &report["gate"]["counts"];
+    println!(
+        "Rollup: {} meet target, {} below target, {} not measured, {} failed, {} not compared. Gate: {}.",
+        counts["meets_target"],
+        counts["below_target"],
+        counts["not_measured"],
+        counts["failed"],
+        counts["uncompared"],
+        report["gate"]["status"].as_str().unwrap_or("not_run"),
+    );
     publish_to_actions(&json_text, &markdown);
     if options.gate && report["gate"]["status"].as_str() == Some("fail") {
         return Err(gate_failure_message(&report));
@@ -312,20 +375,6 @@ pub(crate) fn append_step_summary(path: &Path, markdown: &str) -> Result<(), Str
         .map_err(|err| format!("write step summary {}: {err}", path.display()))
 }
 
-/// A baseline must be an earlier dx-scoreboard report; any other JSON would
-/// make every metric "absent from baseline" and pass the gate.
-pub(crate) fn check_baseline(value: Value) -> Result<Value, String> {
-    if value["schema_version"].as_str() != Some(SCHEMA_VERSION) {
-        return Err(format!(
-            "baseline schema_version must be `{SCHEMA_VERSION}`"
-        ));
-    }
-    if !value["metrics"].is_array() {
-        return Err("baseline has no metrics array".to_string());
-    }
-    Ok(value)
-}
-
 pub(crate) fn parse_options(args: &[String]) -> Result<Options, String> {
     let mut options = Options {
         config: PathBuf::from(DEFAULT_CONFIG),
@@ -339,6 +388,7 @@ pub(crate) fn parse_options(args: &[String]) -> Result<Options, String> {
         baseline: None,
         gate: false,
         timeout_ms: DEFAULT_TIMEOUT_MS,
+        samples: DEFAULT_WARM_SAMPLES,
     };
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
@@ -383,6 +433,18 @@ pub(crate) fn parse_options(args: &[String]) -> Result<Options, String> {
                         .ok_or_else(|| {
                             format!("--timeout-ms must be a positive integer, got `{raw}`")
                         })?;
+            }
+            "--samples" => {
+                let raw = value("--samples")?;
+                options.samples = raw
+                    .parse::<usize>()
+                    .ok()
+                    .filter(|n| (1..=MAX_WARM_SAMPLES).contains(n))
+                    .ok_or_else(|| {
+                        format!(
+                            "--samples must be an integer from 1 to {MAX_WARM_SAMPLES}, got `{raw}`"
+                        )
+                    })?;
             }
             other => return Err(format!("unknown dx-scoreboard argument: {other}\n{USAGE}")),
         }
@@ -436,6 +498,8 @@ pub(crate) fn corpus_from_manifest(value: &Value) -> Result<(String, Vec<CorpusE
             // entry in the inline list only.
             ceilings: BTreeMap::new(),
             expected_partial: None,
+            size_tier: None,
+            memory_ratchet: None,
             // A present non-string value is an error, not an absent field:
             // reading it as absent would file the entry under `rust`.
             language: match &repo["language"] {
@@ -505,7 +569,7 @@ pub(crate) fn validate_corpus(corpus: &[CorpusEntry]) -> Result<(), String> {
 }
 
 pub(crate) fn parse_config(text: &str) -> Result<Config, String> {
-    let config: Config =
+    let mut config: Config =
         toml::from_str(text).map_err(|err| format!("parse dx scoreboard config: {err}"))?;
     if config.schema_version != CONFIG_SCHEMA_VERSION {
         return Err(format!(
@@ -569,8 +633,91 @@ pub(crate) fn parse_config(text: &str) -> Result<Config, String> {
             ));
         }
     }
+    apply_size_tiers(&mut config)?;
     validate_ceilings(&config)?;
     Ok(config)
+}
+
+/// Resolve each entry's `size_tier` into its peak-memory ceiling. An entry
+/// with no explicit ceiling takes the tier bar. An explicit ceiling tighter
+/// than or equal to the bar stands. A looser one is a ratchet toward the
+/// bar and must say so, with a date, in `memory_ratchet`; a ratchet note on
+/// an entry that meets its bar is stale and refused.
+fn apply_size_tiers(config: &mut Config) -> Result<(), String> {
+    let mut tiers = BTreeMap::new();
+    for tier in &config.size_tier {
+        if tiers.insert(tier.id.clone(), tier.clone()).is_some() {
+            return Err(format!("duplicate size_tier `{}`", tier.id));
+        }
+        if tier.description.trim().is_empty() {
+            return Err(format!("size_tier `{}` needs a description", tier.id));
+        }
+        if !tier.peak_rss_mb.is_finite() || tier.peak_rss_mb <= 0.0 {
+            return Err(format!(
+                "size_tier `{}` peak_rss_mb must be a positive number",
+                tier.id
+            ));
+        }
+        if !["ladder", "ladder_hard_cap"].contains(&tier.bar_source.as_str()) {
+            return Err(format!(
+                "size_tier `{}` bar_source must be `ladder` or `ladder_hard_cap`",
+                tier.id
+            ));
+        }
+    }
+    for entry in &mut config.corpus {
+        let Some(tier_id) = entry.size_tier.clone() else {
+            if entry.memory_ratchet.is_some() {
+                return Err(format!(
+                    "corpus `{}` sets memory_ratchet without a size_tier",
+                    entry.id
+                ));
+            }
+            continue;
+        };
+        let Some(tier) = tiers.get(&tier_id) else {
+            return Err(format!(
+                "corpus `{}` names unknown size_tier `{tier_id}`",
+                entry.id
+            ));
+        };
+        match entry.ceilings.get(TIER_RSS_METRIC).copied() {
+            None => {
+                if entry.memory_ratchet.is_some() {
+                    return Err(format!(
+                        "corpus `{}` has a memory_ratchet note but no explicit `{TIER_RSS_METRIC}` ceiling",
+                        entry.id
+                    ));
+                }
+                entry
+                    .ceilings
+                    .insert(TIER_RSS_METRIC.to_string(), tier.peak_rss_mb);
+            }
+            Some(ceiling) if ceiling > tier.peak_rss_mb => {
+                let note = entry.memory_ratchet.as_deref().unwrap_or_default();
+                let dated = note
+                    .split(|c: char| !(c.is_ascii_digit() || c == '-'))
+                    .any(|word| {
+                        word.len() == 10 && word.as_bytes()[4] == b'-' && word.as_bytes()[7] == b'-'
+                    });
+                if !dated || !note.contains(&format!("{ceiling}")) {
+                    return Err(format!(
+                        "corpus `{}` ceiling {ceiling} MB exceeds size_tier `{tier_id}` bar {} MB; memory_ratchet must state the current ceiling and a YYYY-MM-DD date",
+                        entry.id, tier.peak_rss_mb
+                    ));
+                }
+            }
+            Some(_) => {
+                if entry.memory_ratchet.is_some() {
+                    return Err(format!(
+                        "corpus `{}` meets its size_tier `{tier_id}` bar, so its memory_ratchet note is stale",
+                        entry.id
+                    ));
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Each corpus ceiling must name a measured per-repository metric where
@@ -680,10 +827,28 @@ fn ceiling_breaches(
 /// Read a `ripr-dx-scoreboard-input-v1` file produced by another harness.
 /// Every metric id must exist and declare `ingest:<source>` for the file's
 /// `source`, so a harness cannot overwrite a number this command measures.
-pub(crate) fn load_ingest(path: &Path, config: &Config) -> Result<Vec<Sample>, String> {
+pub(crate) fn load_ingest(
+    path: &Path,
+    config: &Config,
+    muse_runs: &mut std::collections::BTreeSet<String>,
+) -> Result<Vec<Sample>, String> {
     let text = fs::read_to_string(path).map_err(|err| format!("read {}: {err}", path.display()))?;
     let value = parse_ingest_text(&text).map_err(|err| format!("{}: {err}", path.display()))?;
-    parse_ingest(&value, config).map_err(|err| format!("{}: {err}", path.display()))
+    let mut samples =
+        parse_ingest(&value, config).map_err(|err| format!("{}: {err}", path.display()))?;
+    muse_plugin::register_run(&value, muse_runs)
+        .map_err(|err| format!("{}: {err}", path.display()))?;
+    if value["schema_version"].as_str() == Some(muse_plugin::SCHEMA_VERSION)
+        && let Some(first) = samples.first_mut()
+    {
+        use sha2::{Digest, Sha256};
+        first.detail.push_str(&format!(
+            "; input_receipt={} sha256={:x}",
+            path.display(),
+            Sha256::digest(text.as_bytes())
+        ));
+    }
+    Ok(samples)
 }
 
 /// Accept one JSON document, or JSON Lines whose every row is
@@ -693,6 +858,9 @@ pub(crate) fn parse_ingest_text(text: &str) -> Result<Value, String> {
     if let Ok(value) = serde_json::from_str::<Value>(text)
         && !is_row(&value)
     {
+        if value["schema_version"].as_str() == Some(muse_plugin::SCHEMA_VERSION) {
+            muse_plugin::validate_text(text)?;
+        }
         return Ok(value);
     }
     let mut rows = Vec::new();
@@ -779,6 +947,11 @@ fn record_ingested_identity(context: &mut RunContext, ingest: &[PathBuf]) {
 }
 
 pub(crate) fn parse_ingest(value: &Value, config: &Config) -> Result<Vec<Sample>, String> {
+    if value["schema_version"].as_str() == Some(muse_plugin::SCHEMA_VERSION) {
+        let converted = muse_plugin::to_input(value)?;
+        let samples = parse_ingest(&converted, config)?;
+        return muse_plugin::complete_projection(value, config, samples);
+    }
     if value["schema_version"].as_str() == Some(FIRST_RUN_SCHEMA_VERSION) {
         let converted = first_run_to_input(value)?;
         return parse_ingest(&converted, config);
@@ -810,7 +983,8 @@ pub(crate) fn parse_ingest(value: &Value, config: &Config) -> Result<Vec<Sample>
     }
     if value["schema_version"].as_str() != Some(INPUT_SCHEMA_VERSION) {
         return Err(format!(
-            "schema_version must be one of `{INPUT_SCHEMA_VERSION}`, `{FIRST_RUN_SCHEMA_VERSION}`, `{MUTATION_SPOT_CHECK_SCHEMA_VERSION}`, `{RUST_CORPUS_SMOKE_SCHEMA_VERSION}`, `{PILOT_RANKING_SCHEMA_VERSION}`, `{}`, or `{FIRST_RUN_ROW_SCHEMA_VERSION}` JSON Lines",
+            "schema_version must be one of `{INPUT_SCHEMA_VERSION}`, `{FIRST_RUN_SCHEMA_VERSION}`, `{MUTATION_SPOT_CHECK_SCHEMA_VERSION}`, `{RUST_CORPUS_SMOKE_SCHEMA_VERSION}`, `{PILOT_RANKING_SCHEMA_VERSION}`, `{}`, `{}`, or `{FIRST_RUN_ROW_SCHEMA_VERSION}` JSON Lines",
+            muse_plugin::SCHEMA_VERSION,
             super::REPORT_SCHEMA_VERSION
         ));
     }
@@ -827,22 +1001,7 @@ pub(crate) fn parse_ingest(value: &Value, config: &Config) -> Result<Vec<Sample>
         let id = row["id"]
             .as_str()
             .ok_or("ingest metric row needs an `id`")?;
-        let def = config
-            .metric
-            .iter()
-            .find(|metric| metric.id == id)
-            .ok_or_else(|| {
-                format!(
-                    "ingest names unknown metric `{id}`; declare it in \
-                     benchmarks/dx_scoreboard/scoreboards.toml or drop it from the receipt"
-                )
-            })?;
-        if def.source != format!("ingest:{source}") {
-            return Err(format!(
-                "metric `{id}` is sourced from `{}`, not `ingest:{source}`",
-                def.source
-            ));
-        }
+        ingest_metric(id, source, config)?;
         let number = row["value"]
             .as_f64()
             .filter(|number| number.is_finite())
@@ -879,6 +1038,27 @@ pub(crate) fn parse_ingest(value: &Value, config: &Config) -> Result<Vec<Sample>
         });
     }
     Ok(samples)
+}
+
+/// Both numeric rows and explicit native missing observations use this owner.
+fn ingest_metric<'a>(id: &str, source: &str, config: &'a Config) -> Result<&'a MetricDef, String> {
+    let def = config
+        .metric
+        .iter()
+        .find(|metric| metric.id == id)
+        .ok_or_else(|| {
+            format!(
+                "ingest names unknown metric `{id}`; declare it in \
+                 benchmarks/dx_scoreboard/scoreboards.toml or drop it from the receipt"
+            )
+        })?;
+    if def.source != format!("ingest:{source}") {
+        return Err(format!(
+            "metric `{id}` is sourced from `{}`, not `ingest:{source}`",
+            def.source
+        ));
+    }
+    Ok(def)
 }
 
 /// Convert a `first_run.v1` receipt into scoreboard input rows:
@@ -2012,35 +2192,6 @@ fn spec_example_coverage_sample(metric: &MetricDef, dir: &str, pointer: &str) ->
     }
 }
 
-pub(crate) fn ratio_sample(metric: &str, path: &str, pointer: &str, json: &Value) -> Sample {
-    let mut node = json;
-    for part in pointer.split('.').filter(|part| !part.is_empty()) {
-        node = &node[part];
-    }
-    let numerator = node["numerator"].as_f64();
-    let denominator = node["denominator"].as_f64();
-    let (outcome, detail) = match (numerator, denominator) {
-        (Some(n), Some(d)) if d > 0.0 => (
-            SampleOutcome::Value(n / d),
-            format!("{path} {pointer}: {n}/{d}"),
-        ),
-        (Some(_), Some(_)) => (
-            SampleOutcome::NotMeasured,
-            format!("{path} {pointer}: denominator is 0, no eligible cases yet"),
-        ),
-        _ => (
-            SampleOutcome::Failed,
-            format!("{path} {pointer}: missing numerator/denominator"),
-        ),
-    };
-    Sample {
-        metric: metric.to_string(),
-        repo: None,
-        outcome,
-        detail,
-    }
-}
-
 /// Host facts the report records next to its numbers.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct RunContext {
@@ -2060,10 +2211,17 @@ pub(crate) fn build_report(
     gate: bool,
 ) -> Value {
     let mut metrics = Vec::new();
+    // Muse rows describe one supplied trial; without a Muse record they would
+    // only dilute every other agent-board report's completeness count.
+    let muse = |def: &MetricDef| def.source == "ingest:muse-plugin";
+    let muse_ingested = config
+        .metric
+        .iter()
+        .any(|def| muse(def) && samples.iter().any(|s| s.metric == def.id));
     for def in config
         .metric
         .iter()
-        .filter(|metric| boards.contains(&metric.board))
+        .filter(|def| boards.contains(&def.board) && (muse_ingested || !muse(def)))
     {
         let mine: Vec<&Sample> = samples.iter().filter(|s| s.metric == def.id).collect();
         let mut row = metric_row(def, &mine);
@@ -2154,6 +2312,22 @@ pub(crate) fn build_report(
                 })
             })
         }))
+        .chain(metrics.iter().flat_map(|row| {
+            row["baseline"]["uncompared_repos"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(move |entry| {
+                    Some(json!({
+                        "metric": row["id"],
+                        "reason": format!(
+                            "repository {}: {}",
+                            entry["repo"].as_str()?,
+                            entry["reason"].as_str()?,
+                        ),
+                    }))
+                })
+        }))
         .collect();
     let review: Vec<Value> = metrics
         .iter()
@@ -2171,6 +2345,57 @@ pub(crate) fn build_report(
         .map(|row| json!({"metric": row["id"], "reason": row["baseline"]["reason"]}))
         .collect();
     let ceiling_breaches = ceiling_breaches(config, boards, samples, context);
+    // Boards whose selected metrics produced no evidence at all this run:
+    // nothing comparable with the baseline and no measured value (e.g. an
+    // ingest board run without its receipt). A measured-but-incomparable
+    // metric (runner class, population, or grain mismatch) is listed as
+    // uncompared and does not count here — that pass is a pinned contract.
+    // A gate that passes when nothing it selected was even measured is a
+    // false pass, so a run where every selected metric is value-less fails
+    // and names those boards.
+    let zero_evidence_boards: Vec<Value> = boards
+        .iter()
+        .filter(|board| {
+            let rows: Vec<&Value> = metrics
+                .iter()
+                .filter(|row| row["board"].as_str() == Some(board.as_str()))
+                .collect();
+            !rows.is_empty()
+                && rows
+                    .iter()
+                    .all(|row| row["baseline"]["comparable"] != true && row["value"].is_null())
+        })
+        .map(|board| json!(board))
+        .collect();
+    let no_comparable_evidence = baseline.is_some()
+        && !metrics.is_empty()
+        && metrics
+            .iter()
+            .all(|row| row["baseline"]["comparable"] != true && row["value"].is_null());
+    // The field names the boards the gate failed for, so it is populated
+    // only in that case. A mixed run that passes keeps it empty rather than
+    // printing a no-evidence board beside a passing gate; per-board failure
+    // would also fail the nightly, which selects every board without the
+    // ingest receipts several boards need.
+    let zero_evidence_boards = if gate && no_comparable_evidence {
+        zero_evidence_boards
+    } else {
+        Vec::new()
+    };
+    // Headline honesty: a passing regression gate whose evidence is mostly
+    // missing must not read as a plain pass. The gap count is the sum the
+    // headline prints (`not_measured` from the rollup plus the gate's
+    // `uncompared` list; a metric can appear in both, which is why the
+    // headline prints each count rather than a distinct-metric gap total).
+    let not_measured = rollup["not_measured"].as_u64().unwrap_or(0);
+    let gate_counts = json!({
+        "meets_target": rollup["meets_target"],
+        "below_target": rollup["below_target"],
+        "not_measured": not_measured,
+        "failed": failed.len() as u64,
+        "uncompared": uncompared.len() as u64,
+        "total": metrics.len() as u64,
+    });
     let gate_status = if !gate {
         "not_run"
     } else if !ceiling_breaches.is_empty() {
@@ -2181,8 +2406,10 @@ pub(crate) fn build_report(
         } else {
             "fail"
         }
+    } else if no_comparable_evidence {
+        "fail"
     } else if regressions.is_empty() && failed.is_empty() && comparison_failures.is_empty() {
-        "pass"
+        gate_pass_status(metrics.len() as u64, not_measured, uncompared.len() as u64)
     } else {
         "fail"
     };
@@ -2204,12 +2431,14 @@ pub(crate) fn build_report(
         "gate": {
             "enabled": gate,
             "status": gate_status,
+            "counts": gate_counts,
             "baseline_revision": baseline.map(|b| b["revision"].clone()).unwrap_or(Value::Null),
             "baseline_runner_class": baseline.map(|b| b["runner_class"].clone()).unwrap_or(Value::Null),
             "regressions": regressions,
             "failed_instruments": failed,
             "failed_comparisons": comparison_failures,
             "ceiling_breaches": ceiling_breaches,
+            "zero_evidence_boards": zero_evidence_boards,
             "review": review,
             "uncompared": uncompared,
         },
@@ -2454,10 +2683,16 @@ fn worsening(def: &MetricDef, base: f64, current: f64) -> f64 {
 /// Repositories whose own sample worsened past the margin against the same
 /// repository's baseline sample. The metric value is the worst sample, so
 /// without this a regression on any repository but the worst would pass.
-fn repo_regressions(def: &MetricDef, row: &Value, base_row: &Value) -> Vec<Value> {
+fn repo_regressions(
+    def: &MetricDef,
+    row: &Value,
+    base_row: &Value,
+    workloads: &workloads::WorkloadPairs,
+) -> Vec<Value> {
     let base = completed_repo_values(base_row);
     completed_repo_values(row)
         .into_iter()
+        .filter(|(repo, _)| workloads.includes(repo))
         .filter_map(|(repo, current)| {
             let (_, before) = base.iter().find(|(id, _)| *id == repo)?;
             let allowed =
@@ -2515,10 +2750,16 @@ fn repo_pick_growth(def: &MetricDef, row: &Value, base_row: &Value, repo: &str) 
 /// margin is for display only; a metric with `pick_growth_allowance` fails on
 /// its own repositories' verdicts, so an unchanged repository cannot revoke
 /// another's allowance.
-fn pick_growth(def: &MetricDef, row: &Value, base_row: &Value) -> Option<f64> {
+fn pick_growth(
+    def: &MetricDef,
+    row: &Value,
+    base_row: &Value,
+    workloads: &workloads::WorkloadPairs,
+) -> Option<f64> {
     let base = completed_repo_values(base_row);
     completed_repo_values(row)
         .iter()
+        .filter(|(repo, _)| workloads.includes(repo))
         .filter(|(repo, _)| base.iter().any(|(id, _)| id == repo))
         .map(|(repo, _)| repo_pick_growth(def, row, base_row, repo))
         .reduce(f64::min)
@@ -2540,7 +2781,11 @@ fn completed_repo_values(r: &Value) -> Vec<(String, f64)> {
 
 /// Repositories that completed in this run but not in the baseline. They have
 /// no comparable baseline value, so they are listed rather than dropped.
-fn recovered_repos(row: &Value, base_row: &Value) -> Vec<String> {
+fn recovered_repos(
+    row: &Value,
+    base_row: &Value,
+    workloads: &workloads::WorkloadPairs,
+) -> Vec<String> {
     let completed_base = completed_repo_values(base_row);
     let base_repos: Vec<&str> = base_row["samples"]
         .as_array()
@@ -2552,7 +2797,9 @@ fn recovered_repos(row: &Value, base_row: &Value) -> Vec<String> {
         .into_iter()
         .map(|(repo, _)| repo)
         .filter(|repo| {
-            base_repos.contains(&repo.as_str()) && !completed_base.iter().any(|(id, _)| id == repo)
+            workloads.includes(repo)
+                && base_repos.contains(&repo.as_str())
+                && !completed_base.iter().any(|(id, _)| id == repo)
         })
         .collect()
 }
@@ -2562,7 +2809,11 @@ fn recovered_repos(row: &Value, base_row: &Value) -> Vec<String> {
 /// no completed baseline sample (new to the corpus, or unmeasured then).
 /// Checked per repository because another repository may already have been
 /// incomplete in the baseline.
-fn repo_completion_losses(row: &Value, base_row: &Value) -> Vec<Value> {
+fn repo_completion_losses(
+    row: &Value,
+    base_row: &Value,
+    workloads: &workloads::WorkloadPairs,
+) -> Vec<Value> {
     let statuses = |r: &Value| -> Vec<(String, String)> {
         r["samples"]
             .as_array()
@@ -2586,7 +2837,10 @@ fn repo_completion_losses(row: &Value, base_row: &Value) -> Vec<Value> {
                 .find(|(id, _)| *id == repo)
                 .map(|(_, b)| b.as_str());
             let reason = match before {
-                Some("incomplete") => return None,
+                Some("incomplete") if workloads.includes(&repo) => return None,
+                Some("incomplete") => {
+                    "did not complete; baseline workload identity is unavailable or different"
+                }
                 Some("meets_target" | "below_target") => "did not complete where the baseline did",
                 Some(_) => "did not complete; the baseline has no completed sample for it",
                 None => "new in this run and did not complete; no baseline sample",
@@ -2604,7 +2858,12 @@ type CommonWorst = (Option<(f64, f64)>, Vec<String>);
 /// measured to completion, plus the repositories only this run measured. A repository new to
 /// the corpus is not a regression, so it must not move the compared worst.
 /// `None` when the samples carry no repositories.
-fn common_repo_worst(def: &MetricDef, row: &Value, base_row: &Value) -> Option<CommonWorst> {
+fn common_repo_worst(
+    def: &MetricDef,
+    row: &Value,
+    base_row: &Value,
+    workloads: &workloads::WorkloadPairs,
+) -> Option<CommonWorst> {
     let values = |r: &Value| -> Vec<(String, f64)> {
         r["samples"]
             .as_array()
@@ -2623,6 +2882,7 @@ fn common_repo_worst(def: &MetricDef, row: &Value, base_row: &Value) -> Option<C
     let completed_base = completed_repo_values(base_row);
     let common: Vec<(f64, f64)> = completed_repo_values(row)
         .iter()
+        .filter(|(repo, _)| workloads.includes(repo))
         .filter_map(|(repo, now)| {
             completed_base
                 .iter()
@@ -2648,6 +2908,12 @@ pub(crate) fn compare_with_baseline(
     context: &RunContext,
     baseline: Option<&Value>,
 ) -> Value {
+    if def.source == "ingest:muse-plugin" {
+        return json!({
+            "comparable": false,
+            "reason": "Muse plugin v1 records one supplied trial; baseline trend and efficacy comparisons are not defined",
+        });
+    }
     let Some(baseline) = baseline else {
         return json!({"comparable": false, "reason": "no baseline supplied"});
     };
@@ -2720,7 +2986,9 @@ pub(crate) fn compare_with_baseline(
     // A run that stops completing is broken on every runner class, and its
     // elapsed time can look faster than the baseline, so check it first, per
     // repository as well as for the metric.
-    let lost = repo_completion_losses(row, base_row);
+    let workloads = workloads::pair(def, row, base_row, context, baseline);
+    let missing = missing_repos(row, base_row);
+    let lost = repo_completion_losses(row, base_row, &workloads);
     if !lost.is_empty() || (incomplete(row) && !incomplete(base_row)) {
         // Repositories that completed but got worse would otherwise be hidden
         // behind the lost completion; list them too where values compare.
@@ -2728,13 +2996,13 @@ pub(crate) fn compare_with_baseline(
         if !def.runner_dependent
             || baseline["runner_class"].as_str() == Some(context.runner_class.as_str())
         {
-            for regression in repo_regressions(def, row, base_row) {
+            for regression in repo_regressions(def, row, base_row, &workloads) {
                 if !lost.iter().any(|entry| entry["repo"] == regression["repo"]) {
                     lost.push(regression);
                 }
             }
         }
-        return json!({
+        return workloads.retain_exclusions(json!({
             "comparable": true,
             "value": base_row["value"],
             "delta": Value::Null,
@@ -2742,13 +3010,14 @@ pub(crate) fn compare_with_baseline(
             "regressed": true,
             "reason": "a repository stopped completing or regressed; see each repository below",
             "regressed_repos": lost,
-            "recovered_repos": recovered_repos(row, base_row),
-        });
+            "missing_repos": missing,
+            "recovered_repos": recovered_repos(row, base_row, &workloads),
+        }));
     }
     if def.runner_dependent
         && baseline["runner_class"].as_str() != Some(context.runner_class.as_str())
     {
-        return json!({
+        return workloads.retain_exclusions(json!({
             "comparable": false,
             "value": base_row["value"],
             "reason": format!(
@@ -2756,32 +3025,37 @@ pub(crate) fn compare_with_baseline(
                 baseline["runner_class"].as_str().unwrap_or("unknown"),
                 context.runner_class
             ),
-        });
+            "missing_repos": missing,
+        }));
     }
-    let (values, new_repos) = match common_repo_worst(def, row, base_row) {
+    let (values, new_repos) = match common_repo_worst(def, row, base_row, &workloads) {
         Some((pair, new_repos)) => (pair, new_repos),
+        None if workloads.enforced() => (None, Vec::new()),
         None => (
             base_row["value"].as_f64().zip(row["value"].as_f64()),
             Vec::new(),
         ),
     };
-    let recovered = recovered_repos(row, base_row);
+    let recovered = recovered_repos(row, base_row, &workloads);
     let Some((base, current)) = values else {
-        return json!({
+        return workloads.retain_exclusions(json!({
             "comparable": false,
             "value": base_row["value"],
-            "reason": if new_repos.is_empty() && recovered.is_empty() {
+            "reason": if workloads.enforced() {
+                "no repository with matching workload identity completed in both reports"
+            } else if new_repos.is_empty() && recovered.is_empty() {
                 "baseline or current value is missing"
             } else {
                 "no repository completed in both reports"
             },
             "new_repos": new_repos,
+            "missing_repos": missing,
             "recovered_repos": recovered,
-        });
+        }));
     };
-    let growth = pick_growth(def, row, base_row);
+    let growth = pick_growth(def, row, base_row, &workloads);
     let allowed = allowed_worsening(def, base) + growth.unwrap_or(0.0);
-    let by_repo = repo_regressions(def, row, base_row);
+    let by_repo = repo_regressions(def, row, base_row, &workloads);
     // Each repository's own verdict decides a growth-allowance metric: the
     // worst values compared above can come from different repositories.
     let aggregate_regressed = worsening(def, base, current) > allowed;
@@ -2790,8 +3064,7 @@ pub(crate) fn compare_with_baseline(
     } else {
         aggregate_regressed || !by_repo.is_empty()
     };
-    let missing = missing_repos(row, base_row);
-    json!({
+    workloads.retain_exclusions(json!({
         "comparable": true,
         "value": round(base),
         "delta": round(current - base),
@@ -2801,7 +3074,7 @@ pub(crate) fn compare_with_baseline(
         "new_repos": new_repos,
         "missing_repos": missing,
         "recovered_repos": recovered,
-    })
+    }))
 }
 
 /// Repositories the baseline measured that this run has no value for. Their
@@ -2827,6 +3100,7 @@ fn missing_repos(row: &Value, base_row: &Value) -> Vec<String> {
 fn status_counts(rows: &[&Value]) -> Value {
     let mut counts = BTreeMap::from([
         ("meets_target", 0_u64),
+        ("partial", 0),
         ("below_target", 0),
         ("not_measured", 0),
         ("failed", 0),
@@ -2834,7 +3108,14 @@ fn status_counts(rows: &[&Value]) -> Value {
         ("comparison_failed", 0),
     ]);
     for row in rows {
-        if let Some(status) = row["status"].as_str()
+        // Keep the metric's target judgment, but do not advertise an
+        // incompletely measured cohort as wholly meeting its target.
+        let status = if row["status"] == "meets_target" && partially_measured(row) {
+            Some("partial")
+        } else {
+            row["status"].as_str()
+        };
+        if let Some(status) = status
             && let Some(slot) = counts.get_mut(status)
         {
             *slot += 1;
@@ -2853,12 +3134,29 @@ fn status_counts(rows: &[&Value]) -> Value {
     json!(counts)
 }
 
+/// The passing gate status for a run with no regression, failure or
+/// ceiling breach. Plain `pass` requires the missing-evidence counts the
+/// headline prints (`not_measured + uncompared`) to stay at or below half
+/// of the selected metrics; past that threshold the pass rests on a
+/// minority of the board and reads `pass_with_gaps`. Either status exits
+/// zero: this names the evidence, it does not turn the regression gate
+/// into a completeness gate.
+pub(crate) fn gate_pass_status(total: u64, not_measured: u64, uncompared: u64) -> &'static str {
+    if total > 0 && (not_measured + uncompared) * 2 > total {
+        "pass_with_gaps"
+    } else {
+        "pass"
+    }
+}
+
 fn board_status(counts: &Value) -> &'static str {
     let get = |key: &str| counts[key].as_u64().unwrap_or(0);
     if get("failed") > 0 || get("regressed") > 0 || get("comparison_failed") > 0 {
         "attention"
     } else if get("below_target") > 0 {
         "gaps"
+    } else if get("partial") > 0 {
+        "partial"
     } else if get("meets_target") == 0 {
         "not_measured"
     } else if get("not_measured") > 0 {
@@ -2866,6 +3164,12 @@ fn board_status(counts: &Value) -> &'static str {
     } else {
         "meets_target"
     }
+}
+
+/// Completeness of the selected numeric measurement, independent of its target
+/// or regression judgment. Older receipts may omit the optional partial flag.
+pub(crate) fn partially_measured(metric: &Value) -> bool {
+    metric["partial"] == true && metric["value"].as_f64().is_some()
 }
 
 fn gate_failure_message(report: &Value) -> String {
@@ -2938,6 +3242,16 @@ fn gate_failure_message(report: &Value) -> String {
             breach["reason"].as_str().unwrap_or("?")
         ));
     }
+    for board in report["gate"]["zero_evidence_boards"]
+        .as_array()
+        .into_iter()
+        .flatten()
+    {
+        lines.push(format!(
+            "  no measured evidence for board {}: no selected metric was measured this run or could be compared with the baseline",
+            board.as_str().unwrap_or("?")
+        ));
+    }
     lines.push("see target/ripr/reports/dx-scoreboard.md".to_string());
     lines.join("\n")
 }
@@ -2946,6 +3260,12 @@ pub(crate) fn render_markdown(report: &Value) -> String {
     let mut out = String::new();
     out.push_str("# ripr developer-experience scoreboards\n\n");
     let rollup = &report["rollup"];
+    let partial_count = rollup["partial"].as_u64().unwrap_or(0);
+    let partial_note = if partial_count == 0 {
+        String::new()
+    } else {
+        format!(", {partial_count} partially measured")
+    };
     out.push_str(&format!(
         "Revision `{}` · {} · runner `{}`\n\n",
         report["revision"].as_str().unwrap_or("unknown"),
@@ -2953,12 +3273,13 @@ pub(crate) fn render_markdown(report: &Value) -> String {
         report["runner_class"].as_str().unwrap_or("unknown"),
     ));
     out.push_str(&format!(
-        "**Rollup:** {} meet target, {} below target, {} not measured, {} failed, {} regressed. Gate: `{}`.\n\n",
+        "**Rollup:** {} meet target{partial_note}, {} below target, {} not measured, {} failed, {} regressed, {} not compared. Gate: `{}`.\n\n",
         rollup["meets_target"],
         rollup["below_target"],
         rollup["not_measured"],
         rollup["failed"],
         rollup["regressed"],
+        report["gate"]["counts"]["uncompared"],
         report["gate"]["status"].as_str().unwrap_or("not_run"),
     ));
     let review = report["gate"]["review"]
@@ -2986,6 +3307,16 @@ pub(crate) fn render_markdown(report: &Value) -> String {
             "\n**Comparison failed** `{}`: {}\n",
             item["metric"].as_str().unwrap_or("?"),
             item["reason"].as_str().unwrap_or("missing evidence")
+        ));
+    }
+    for board in report["gate"]["zero_evidence_boards"]
+        .as_array()
+        .into_iter()
+        .flatten()
+    {
+        out.push_str(&format!(
+            "\n**No measured evidence** for board `{}`: no selected metric was measured this run or could be compared with the baseline.\n",
+            board.as_str().unwrap_or("?")
         ));
     }
     let uncompared = report["gate"]["uncompared"]
@@ -3020,10 +3351,21 @@ pub(crate) fn render_markdown(report: &Value) -> String {
         }
         out.push('\n');
     }
-    out.push_str("| Board | Status | Meets | Below | Not measured |\n|---|---|---:|---:|---:|\n");
+    if partial_count > 0 {
+        out.push_str("| Board | Status | Meets | Partial | Below | Not measured |\n|---|---|---:|---:|---:|---:|\n");
+    } else {
+        out.push_str(
+            "| Board | Status | Meets | Below | Not measured |\n|---|---|---:|---:|---:|\n",
+        );
+    }
     for board in report["boards"].as_array().into_iter().flatten() {
+        let partial_cell = if partial_count > 0 {
+            format!(" {} |", board["counts"]["partial"].as_u64().unwrap_or(0))
+        } else {
+            String::new()
+        };
         out.push_str(&format!(
-            "| {} | {} | {} | {} | {} |\n",
+            "| {} | {} | {} |{partial_cell} {} | {} |\n",
             board["id"].as_str().unwrap_or("?"),
             board["status"].as_str().unwrap_or("?"),
             board["counts"]["meets_target"],
@@ -3069,7 +3411,7 @@ pub(crate) fn render_markdown(report: &Value) -> String {
                 display_value(&metric["value"]),
                 comparator(metric),
                 display_value(&metric["target"]),
-                metric["status"].as_str().unwrap_or("?"),
+                display_status(metric),
                 baseline_cell(&metric["baseline"]),
             ));
         }
@@ -3120,6 +3462,15 @@ fn comparator(metric: &Value) -> &'static str {
         "≥"
     } else {
         "≤"
+    }
+}
+
+fn display_status(metric: &Value) -> String {
+    let status = metric["status"].as_str().unwrap_or("?");
+    if partially_measured(metric) {
+        format!("{status} (partially measured)")
+    } else {
+        status.to_string()
     }
 }
 
@@ -3188,7 +3539,8 @@ fn baseline_cell(baseline: &Value) -> String {
             "ok"
         };
         let new_note = repo_note(baseline, "new_repos", "not in baseline")
-            + &repo_note(baseline, "recovered_repos", "completed again");
+            + &repo_note(baseline, "recovered_repos", "completed again")
+            + &workloads::comparison_note(baseline);
         format!(
             "{} (Δ {}) {verdict}{new_note}",
             display_value(&baseline["value"]),
@@ -3199,7 +3551,9 @@ fn baseline_cell(baseline: &Value) -> String {
             .as_str()
             .unwrap_or("not compared")
             .to_string()
+            + &repo_note(baseline, "new_repos", "not in baseline")
             + &repo_note(baseline, "recovered_repos", "completed again")
+            + &workloads::comparison_note(baseline)
     }
 }
 

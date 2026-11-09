@@ -43,6 +43,44 @@ use std::time::{Duration, Instant};
 #[cfg(windows)]
 use process_wrap::std::{ChildWrapper, CommandWrap, JobObject};
 
+/// `CREATE_NO_WINDOW` | `CREATE_SUSPENDED` (`0x0800_0000` | `0x4`).
+///
+/// `JobObject`'s `pre_spawn` sets the creation flags to `CREATE_SUSPENDED`
+/// (it resumes the child after assigning it to the job), and
+/// `Command::creation_flags` replaces rather than ORs, so this wrapper must
+/// keep `CREATE_SUSPENDED` while adding `CREATE_NO_WINDOW`. process-wrap's own
+/// `CreationFlags` wrapper would compose them, but it needs the `windows`
+/// crate's flag type, which this crate does not depend on.
+#[cfg(windows)]
+const NO_CONSOLE_SUSPENDED_CREATION_FLAGS: u32 = 0x0800_0000 | 0x0000_0004;
+
+/// `command` under `JobObject` ownership plus [`NoConsoleWindow`].
+///
+/// `NoConsoleWindow` is registered after `JobObject`: process-wrap runs
+/// `pre_spawn` hooks in registration order, and `JobObject`'s hook replaces the
+/// creation flags with `CREATE_SUSPENDED` only.
+#[cfg(windows)]
+fn no_console_wrap(command: Command) -> CommandWrap {
+    let mut wrapped = CommandWrap::from(command);
+    wrapped.wrap(JobObject);
+    wrapped.wrap(NoConsoleWindow);
+    wrapped
+}
+
+/// Adds `CREATE_NO_WINDOW` on top of `JobObject`'s suspended spawn (#9375).
+#[cfg(windows)]
+#[derive(Debug)]
+struct NoConsoleWindow;
+
+#[cfg(windows)]
+impl process_wrap::std::CommandWrapper for NoConsoleWindow {
+    fn pre_spawn(&mut self, command: &mut Command, _core: &CommandWrap) -> std::io::Result<()> {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(NO_CONSOLE_SUSPENDED_CREATION_FLAGS);
+        Ok(())
+    }
+}
+
 /// Bind the calling process's lifetime to its descendants (#9564, #9323 F2).
 ///
 /// Windows: puts the current process in one Job Object created with
@@ -212,6 +250,24 @@ pub struct OwnedProcess {
 }
 
 impl OwnedProcess {
+    /// [`Self::spawn`] for a child that never needs a console: its stdin,
+    /// stdout and stderr must all be redirected (null or piped). On Windows
+    /// the child is also created with `CREATE_NO_WINDOW`, so a ripr process
+    /// that has no console of its own (the editor server, a GUI-launched
+    /// agent) does not make Windows allocate and flash one per child (#9375).
+    /// Elsewhere this is exactly [`Self::spawn`].
+    pub fn spawn_without_console(command: Command) -> std::io::Result<Self> {
+        #[cfg(windows)]
+        {
+            let child = no_console_wrap(command).spawn()?;
+            Ok(Self::from_child(child))
+        }
+        #[cfg(not(windows))]
+        {
+            Self::spawn(command)
+        }
+    }
+
     /// Spawn the fully prepared `command` under owned containment.
     ///
     /// Stdio redirection, environment, working directory, arguments and any
@@ -712,6 +768,34 @@ mod tests {
     use super::*;
     use std::io::Read;
     use std::process::Stdio;
+
+    /// #9375: the console-free spawn keeps Job Object ownership and adds the
+    /// no-window hook. Dropping either registration fails here; the console
+    /// state of a real child is not observed by this test.
+    #[cfg(windows)]
+    #[test]
+    fn spawn_without_console_registers_job_object_and_no_window_hook() {
+        let wrapped = no_console_wrap(Command::new("git"));
+        assert!(
+            wrapped.has_wrap::<JobObject>(),
+            "Job Object ownership must stay"
+        );
+        assert!(
+            wrapped.has_wrap::<NoConsoleWindow>(),
+            "the CREATE_NO_WINDOW hook must be registered"
+        );
+    }
+
+    /// #9375: the hook replaces `JobObject`'s flags, so it must keep
+    /// `CREATE_SUSPENDED` (0x4) for assign-before-resume, not only add
+    /// `CREATE_NO_WINDOW` (0x0800_0000).
+    #[cfg(windows)]
+    #[test]
+    fn no_console_creation_flags_keep_the_suspended_spawn() {
+        let flags = NO_CONSOLE_SUSPENDED_CREATION_FLAGS;
+        assert_eq!(flags & 0x0800_0000, 0x0800_0000, "CREATE_NO_WINDOW");
+        assert_eq!(flags & 0x0000_0004, 0x0000_0004, "CREATE_SUSPENDED");
+    }
 
     fn platform_sleep_command(seconds: u32) -> Command {
         #[cfg(windows)]

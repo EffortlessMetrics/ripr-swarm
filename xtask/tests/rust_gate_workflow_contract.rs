@@ -11,6 +11,7 @@ const SHARDED_TEST_COMMAND: &str =
     "cargo nextest run --workspace --profile ci --partition hash:${{ matrix.shard }}/4";
 const SHARDED_LIST_COMMAND: &str = "cargo nextest list --workspace --profile ci --partition hash:${{ matrix.shard }}/4 --color never --message-format oneline 2> /dev/null | sort > target/nextest/ci/list-${{ matrix.shard }}.txt";
 const SHARDED_RECEIPT_COMMAND: &str = "printf 'profile=ci\\nshard=%s/4\\ncommand=cargo nextest run --workspace --profile ci --partition hash:%s/4\\n' \"${{ matrix.shard }}\" \"${{ matrix.shard }}\"";
+const COMBINED_PR_EVIDENCE_PRINTF: &str = "printf '| pr_evidence | %s |\\n| pr_evidence scope | %s |\\n' \"${PR_EVIDENCE_RESULT:-not_reported}\" \"${PR_EVIDENCE_SCOPE:-not_reported}\"";
 const REQUIRED_GATES: &[(&str, &str)] = &[
     ("formatting", "cargo fmt --check"),
     ("agent_skills", "cargo policy preflight"),
@@ -24,7 +25,7 @@ const REQUIRED_GATES: &[(&str, &str)] = &[
     ("network_policy", "cargo xtask check-network-policy"),
     (
         "all_features_check",
-        "cargo check -p ripr --all-targets --all-features",
+        "cargo clippy -p ripr --all-targets --all-features -- -D warnings",
     ),
     (
         "clippy",
@@ -92,6 +93,25 @@ fn contract_violations(workflow: &str) -> Vec<String> {
         }
         previous = Some(index);
     }
+    for (name, id) in [
+        ("Prepare independent user-text base", "user_text_base"),
+        (
+            "Recover pinned base compiler arity if needed",
+            "user_text_recovery",
+        ),
+        (
+            "User-text goldens judged by the merge-base matcher",
+            "user_text_matcher",
+        ),
+    ] {
+        let matches: Vec<_> = blocks
+            .iter()
+            .filter(|block| block.lines().next() == Some(&format!("name: {name}")))
+            .collect();
+        if matches.len() != 1 || step_id(matches[0]) != Some(id) {
+            findings.push(format!("{name}: expected unique step with id {id}"));
+        }
+    }
     let summaries: Vec<_> = blocks
         .iter()
         .filter(|block| step_id(block) == Some("gate_summary"))
@@ -113,12 +133,30 @@ fn contract_violations(workflow: &str) -> Vec<String> {
     {
         let variable = format!("{}_RESULT", id.replace('-', "_").to_ascii_uppercase());
         let binding = format!("          {variable}: ${{{{ steps.{id}.outcome }}}}");
-        let row =
-            format!("            printf '| {id} | %s |\\n' \"${{{variable}:-not_reported}}\"");
+        // The two pr_evidence rows share one printf to preserve the workflow's
+        // reviewed executable-line budget. Pin both argument positions so the
+        // compact form cannot swap or fabricate the required outcome.
+        let row = if id == "pr_evidence" {
+            format!("            {COMBINED_PR_EVIDENCE_PRINTF}")
+        } else {
+            format!("            printf '| {id} | %s |\\n' \"${{{variable}:-not_reported}}\"")
+        };
         if !summary.lines().any(|line| line == binding) || !summary.lines().any(|line| line == row)
         {
             findings.push(format!("summary: {id} must retain its actual outcome"));
         }
+    }
+    for id in ["user_text_base", "user_text_recovery", "user_text_matcher"] {
+        let variable = format!("{}_RESULT", id.to_ascii_uppercase());
+        let binding = format!("          {variable}: ${{{{ steps.{id}.outcome }}}}");
+        if !summary.lines().any(|line| line == binding) {
+            findings.push(format!("summary: {id} must bind its actual outcome"));
+        }
+    }
+    if !summary.lines().any(|line| {
+        line == "          PR_EVIDENCE_SCOPE: ${{ steps.pr_evidence.outputs.evidence }}"
+    }) {
+        findings.push("summary: pr_evidence scope must retain its actual output".to_owned());
     }
     findings
 }
@@ -127,6 +165,202 @@ fn contract_violations(workflow: &str) -> Vec<String> {
 fn rust_gate_workflow_preserves_complete_ordered_command_inventory() {
     let findings = contract_violations(WORKFLOW);
     assert!(findings.is_empty(), "{findings:?}");
+}
+
+#[test]
+fn user_text_summary_rejects_missing_or_swapped_outcome_bindings() {
+    for id in ["user_text_base", "user_text_recovery", "user_text_matcher"] {
+        let binding = format!("steps.{id}.outcome");
+        for replacement in ["success", "steps.precommit.outcome"] {
+            let changed = WORKFLOW.replace(&binding, replacement);
+            assert_ne!(changed, WORKFLOW);
+            assert!(
+                contract_violations(&changed)
+                    .contains(&format!("summary: {id} must bind its actual outcome"))
+            );
+        }
+        let step = format!("        id: {id}");
+        let changed = WORKFLOW.replace(&step, "        id: wrong_step");
+        assert_ne!(changed, WORKFLOW);
+        assert!(
+            contract_violations(&changed)
+                .iter()
+                .any(|finding| finding.contains(id))
+        );
+    }
+}
+
+#[cfg(unix)]
+struct SummaryScratch(std::path::PathBuf);
+
+#[cfg(unix)]
+impl SummaryScratch {
+    fn new(case: &str) -> std::io::Result<Self> {
+        let path = std::env::temp_dir().join(format!(
+            "ripr-user-text-summary-{}-{case}",
+            std::process::id()
+        ));
+        std::fs::File::create_new(&path)?;
+        Ok(Self(path))
+    }
+}
+
+#[cfg(unix)]
+impl Drop for SummaryScratch {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn user_text_summary_reports_each_actual_outcome_and_missing_value()
+-> Result<(), Box<dyn std::error::Error>> {
+    use std::fs;
+    use std::process::Command;
+
+    let summary = WORKFLOW
+        .split("\n      - ")
+        .find(|block| step_id(block) == Some("gate_summary"))
+        .ok_or("gate summary missing")?;
+    let script = summary
+        .split_once("        run: |\n")
+        .ok_or("summary shell missing")?
+        .1
+        .lines()
+        .map(|line| line.strip_prefix("          ").unwrap_or(line))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let variables = [
+        "USER_TEXT_BASE_RESULT",
+        "USER_TEXT_RECOVERY_RESULT",
+        "USER_TEXT_MATCHER_RESULT",
+    ];
+    let labels = ["user_text_base", "user_text_recovery", "user_text_matcher"];
+    let scratch = SummaryScratch::new("outcomes")?;
+    let path = &scratch.0;
+    for target in 0..3 {
+        for outcome in ["success", "failure", "skipped", "cancelled", ""] {
+            let mut command = Command::new("bash");
+            command
+                .arg("-eo")
+                .arg("pipefail")
+                .arg("-c")
+                .arg(&script)
+                .env_clear()
+                .env("GITHUB_STEP_SUMMARY", path)
+                .env("GITHUB_SHA", "workflow-sha")
+                .env("SUBJECT_HEAD", "subject-head")
+                .env("INTEGRATION_SUBJECT", "integration-sha")
+                .env("INTEGRATION_TREE", "integration-tree")
+                .env("GITHUB_RUN_ID", "run-id")
+                .env("GITHUB_RUN_ATTEMPT", "attempt-id")
+                .env("EXECUTION_ROUTE", "route")
+                .env("PRECOMMIT_RESULT", "skipped");
+            for (index, variable) in variables.iter().enumerate() {
+                if index != target || !outcome.is_empty() {
+                    command.env(variable, if index == target { outcome } else { "success" });
+                }
+            }
+            fs::write(path, "")?;
+            assert!(command.status()?.success());
+            let rendered = fs::read_to_string(path)?;
+            for (index, label) in labels.iter().enumerate() {
+                let expected = if index == target {
+                    if outcome.is_empty() {
+                        "not_reported"
+                    } else {
+                        outcome
+                    }
+                } else {
+                    "success"
+                };
+                assert!(
+                    rendered.contains(&format!("| {label} | {expected} |")),
+                    "missing or wrong row: {rendered}"
+                );
+            }
+            for expected in [
+                "workflow-sha",
+                "subject-head",
+                "integration-sha",
+                "integration-tree",
+                "run-id",
+                "attempt-id",
+                "route",
+                "| precommit | skipped |",
+            ] {
+                assert!(
+                    rendered.contains(expected),
+                    "missing identity or downstream result {expected}: {rendered}"
+                );
+            }
+        }
+    }
+    fs::remove_file(path)?;
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn user_text_summary_scratch_cleans_up_on_success_error_and_unwind()
+-> Result<(), Box<dyn std::error::Error>> {
+    let scratch = SummaryScratch::new("normal")?;
+    let normal_path = scratch.0.clone();
+    drop(scratch);
+    assert!(!normal_path.exists());
+
+    let error_path = std::env::temp_dir().join(format!(
+        "ripr-user-text-summary-{}-error",
+        std::process::id()
+    ));
+    let error = (|| -> std::io::Result<()> {
+        let scratch = SummaryScratch::new("error")?;
+        // Pin the exact scratch path so a naming-scheme change cannot let the
+        // error and unwind arms inspect an unrelated path.
+        assert_eq!(scratch.0, error_path);
+        assert!(error_path.exists());
+        Err(std::io::Error::other("injected error"))
+    })();
+    assert!(matches!(error, Err(ref error) if error.to_string() == "injected error"));
+    assert!(!error_path.exists());
+
+    let unwind_path = std::env::temp_dir().join(format!(
+        "ripr-user-text-summary-{}-unwind",
+        std::process::id()
+    ));
+    let unwind = std::panic::catch_unwind(|| -> std::io::Result<()> {
+        let scratch = SummaryScratch::new("unwind")?;
+        assert_eq!(scratch.0, unwind_path);
+        assert!(unwind_path.exists());
+        std::panic::resume_unwind(Box::new("injected unwind"));
+    });
+    // `assert!(x.is_err())` trips clippy::assertions_on_result_states and
+    // `unwrap_err` trips clippy::unwrap_used; `matches!` keeps the intent and
+    // pins the injected payload so an unrelated panic cannot pass as it.
+    assert!(matches!(unwind, Err(ref payload)
+        if payload.downcast_ref::<&str>() == Some(&"injected unwind")));
+    assert!(!unwind_path.exists());
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn user_text_summary_scratch_preserves_replacement_directory()
+-> Result<(), Box<dyn std::error::Error>> {
+    use std::fs;
+
+    let scratch = SummaryScratch::new("replacement")?;
+    let replacement = scratch.0.clone();
+    fs::remove_file(&replacement)?;
+    fs::create_dir(&replacement)?;
+    let sentinel = replacement.join("summary.md");
+    fs::write(&sentinel, "must survive")?;
+    drop(scratch);
+    assert_eq!(fs::read_to_string(&sentinel)?, "must survive");
+    fs::remove_file(sentinel)?;
+    fs::remove_dir(replacement)?;
+    Ok(())
 }
 
 #[test]
@@ -146,6 +380,36 @@ fn rust_gate_workflow_rejects_duplicate_required_command() {
     );
     let findings = contract_violations(&changed);
     assert!(findings.contains(&"rust-tests: expected one command invocation".to_owned()));
+}
+
+#[test]
+fn hosted_formatting_cannot_disappear_when_ci_policy_omits_its_duplicate() {
+    for changed in [
+        WORKFLOW.replace("        run: cargo fmt --check", "        run: true"),
+        WORKFLOW.replace(
+            "        id: formatting",
+            "        id: formatting\n        if: false",
+        ),
+        WORKFLOW.replace(
+            "        id: formatting",
+            "        id: formatting\n        continue-on-error: true",
+        ),
+        WORKFLOW.replace("run: cargo fmt --check", "run: cargo fmt --check || true"),
+        format!("{WORKFLOW}\n      - name: Duplicate formatter\n        run: cargo fmt --check\n"),
+        WORKFLOW.replace(
+            "FORMATTING_RESULT: ${{ steps.formatting.outcome }}",
+            "FORMATTING_RESULT: success",
+        ),
+    ] {
+        assert_ne!(changed, WORKFLOW, "negative must change the real workflow");
+        let findings = contract_violations(&changed);
+        assert!(
+            findings
+                .iter()
+                .any(|finding| finding.contains("formatting")),
+            "missing, softened, duplicate or fabricated formatting accepted: {findings:?}"
+        );
+    }
 }
 
 #[test]
@@ -236,9 +500,55 @@ fn rust_gate_workflow_rejects_fabricated_success_or_missing_outcome() {
 }
 
 #[test]
+fn combined_pr_evidence_summary_cannot_swap_or_fabricate_its_outcome() {
+    for changed in [
+        WORKFLOW.replace(
+            COMBINED_PR_EVIDENCE_PRINTF,
+            "printf '| pr_evidence | %s |\\n| pr_evidence scope | %s |\\n' \"success\" \"${PR_EVIDENCE_SCOPE:-not_reported}\"",
+        ),
+        WORKFLOW.replace(
+            COMBINED_PR_EVIDENCE_PRINTF,
+            "printf '| pr_evidence | %s |\\n| pr_evidence scope | %s |\\n' \"${PR_EVIDENCE_SCOPE:-not_reported}\" \"${PR_EVIDENCE_RESULT:-not_reported}\"",
+        ),
+        WORKFLOW.replace(
+            "PR_EVIDENCE_SCOPE: ${{ steps.pr_evidence.outputs.evidence }}",
+            "PR_EVIDENCE_SCOPE: fabricated",
+        ),
+    ] {
+        assert_ne!(changed, WORKFLOW, "negative must mutate the current summary");
+        let findings = contract_violations(&changed);
+        assert!(
+            findings.iter().any(|finding| finding.starts_with("summary: pr_evidence")),
+            "fabricated summary was accepted: {findings:?}"
+        );
+    }
+}
+
+#[test]
 fn rust_gate_workflow_rejects_local_convenience_clippy_composition() {
     let changed = WORKFLOW.replace("run: cargo xtask ci-policy", "run: cargo xtask precommit");
     assert!(contract_violations(&changed).contains(&"precommit: exact command missing".to_owned()));
+}
+
+#[test]
+fn rust_gate_workflow_rejects_losing_optional_feature_lint_coverage() {
+    for command in [
+        "cargo check -p ripr --all-targets --all-features",
+        "cargo clippy -p ripr --all-targets -- -D warnings",
+        "cargo clippy -p ripr --all-features -- -D warnings",
+        "cargo clippy -p ripr --all-targets --all-features",
+        "cargo clippy -p ripr --all-targets -- -D warnings --all-features",
+    ] {
+        let changed = WORKFLOW.replace(
+            "cargo clippy -p ripr --all-targets --all-features -- -D warnings",
+            command,
+        );
+        assert_ne!(changed, WORKFLOW, "negative must change the live command");
+        assert!(
+            contract_violations(&changed)
+                .contains(&"all_features_check: exact command missing".to_owned())
+        );
+    }
 }
 
 #[test]
@@ -247,11 +557,14 @@ fn rust_gate_workflow_rejects_narrowing_explicit_clippy_coverage() {
         "cargo clippy -p xtask --all-targets -- -D warnings",
         "cargo clippy --workspace -- -D warnings",
         "cargo clippy --workspace --all-targets",
+        // Enabling everything here drops cfg(not(feature = ...)) branches.
+        "cargo clippy --workspace --all-targets --all-features -- -D warnings",
     ] {
         let changed = WORKFLOW.replace(
             "cargo clippy --workspace --all-targets -- -D warnings",
             command,
         );
+        assert_ne!(changed, WORKFLOW, "negative must change the live command");
         assert!(
             contract_violations(&changed).contains(&"clippy: exact command missing".to_owned())
         );
@@ -617,6 +930,72 @@ fn test_build_script(workflow: &str) -> Result<String, String> {
         .map(|line| line.strip_prefix("          ").unwrap_or(line))
         .collect::<Vec<_>>()
         .join("\n"))
+}
+
+fn checks_with_prepared_xtask(workflow: &str) -> bool {
+    let commands = [
+        "          build_phase workspace cargo test --no-run --locked --workspace",
+        "        run: target/debug/xtask check-covered-by",
+        "          strip --strip-debug -o target/xtask-binary/xtask target/debug/xtask",
+        "      - name: Required Rust tests (shard ${{ matrix.shard }} of 4)",
+    ];
+    let mut previous = None;
+    for command in commands {
+        let positions: Vec<_> = workflow
+            .lines()
+            .enumerate()
+            .filter_map(|(index, line)| (line == command).then_some(index))
+            .collect();
+        let [position] = positions.as_slice() else {
+            return false;
+        };
+        if previous.is_some_and(|before| before >= *position) {
+            return false;
+        }
+        previous = Some(*position);
+    }
+    let Some(check) = workflow.split("\n      - ").find(|block| {
+        block.starts_with("name: Check covered-by with the prepared workspace binary\n")
+    }) else {
+        return false;
+    };
+    check
+        .lines()
+        .filter(|line| !line.trim().is_empty() && !line.trim_start().starts_with('#'))
+        .collect::<Vec<_>>()
+        .join("\n")
+        == "name: Check covered-by with the prepared workspace binary\n        timeout-minutes: 20\n        run: target/debug/xtask check-covered-by"
+        && !workflow.contains("cargo xtask check-covered-by")
+}
+
+#[test]
+fn shards_check_covered_by_after_preparation_without_another_cargo_build() {
+    assert!(checks_with_prepared_xtask(SHARDS));
+}
+
+#[test]
+fn shards_reject_missing_early_conditional_or_suppressed_prepared_checks() {
+    let command = "        run: target/debug/xtask check-covered-by";
+    let step = format!(
+        "      - name: Check covered-by with the prepared workspace binary\n        timeout-minutes: 20\n{command}\n"
+    );
+    for changed in [
+        SHARDS.replace(command, ""),
+        SHARDS.replace(command, &format!("{command} || true")),
+        SHARDS.replace(
+            command,
+            &format!("        if: matrix.shard == 1\n{command}"),
+        ),
+        SHARDS.replace(command, "        run: cargo xtask check-covered-by"),
+        SHARDS.replace(command, &format!("{command}\n{command}")),
+        format!("{step}{}", SHARDS.replace(&step, "")),
+        SHARDS.replace(
+            "          build_phase workspace cargo test --no-run --locked --workspace",
+            "",
+        ),
+    ] {
+        assert!(!checks_with_prepared_xtask(&changed));
+    }
 }
 
 #[test]

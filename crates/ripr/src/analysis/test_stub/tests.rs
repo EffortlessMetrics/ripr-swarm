@@ -78,9 +78,8 @@ fn boundary_stub_inserts_into_the_existing_inline_module_and_stops_at_the_expect
         use super::*;
         let amount: u32 = 100;
         let threshold: u32 = 100;
-        let actual = price(amount, threshold);
         let expected: u32 = todo!(\"ripr: write the value `price` should return for amount = 100, threshold = 100\");
-        assert_eq!(actual, expected);
+        assert_eq!(price(amount, threshold), expected);
     }
 ";
     assert_eq!(stub.text, expected);
@@ -104,7 +103,8 @@ fn unrelated_generic_does_not_remove_a_concrete_stub_comparison() -> Result<(), 
         stub.text
     );
     assert!(
-        stub.text.contains("assert_eq!(actual, expected);"),
+        stub.text
+            .contains("assert_eq!(price(amount, threshold), expected);"),
         "{}",
         stub.text
     );
@@ -289,7 +289,7 @@ impl ByteSize {
     assert!(stub.text.contains("let unit: u64 = 0;"));
     assert!(
         stub.text
-            .contains("let actual = subject.as_whole_units(unit);")
+            .contains("assert_eq!(subject.as_whole_units(unit), expected);")
     );
     assert!(!stub.text.contains("= as_whole_units("));
     Ok(())
@@ -403,6 +403,7 @@ fn integration_proposal_writes_a_new_file_through_the_crate_path() -> Result<(),
         file: PathBuf::from("tests/price_tests.rs"),
         owner: "demo::price".to_string(),
         provenance: NewTestProposalProvenance::ProducerOwned,
+        workspace_identity: String::new(),
     };
     let stub =
         rust_test_stub(&seam, Some(&proposal), PRICE, None).map_err(|r| r.reason().to_string())?;
@@ -458,7 +459,7 @@ pub fn count(n: u8) -> Option<Vec<u8>> { if n > 2 { Some(vec![n]) } else { None 
         stub.text
     );
     assert!(
-        stub.text.contains("assert_eq!(actual, expected);"),
+        stub.text.contains("assert_eq!(seen(n), expected);"),
         "{}",
         stub.text
     );
@@ -470,7 +471,12 @@ pub fn count(n: u8) -> Option<Vec<u8>> { if n > 2 { Some(vec![n]) } else { None 
         boundary(""),
     )?;
     let stub = rust_test_stub(&seam, None, source, None).map_err(|r| r.reason().to_string())?;
-    assert!(stub.text.contains("assert_eq!(actual, expected);"));
+    assert!(
+        stub.text.contains("assert_eq!(count(n), expected);"),
+        "{}",
+        stub.text
+    );
+    assert!(!stub.text.contains("let actual"), "{}", stub.text);
     Ok(())
 }
 
@@ -612,6 +618,7 @@ fn integration_stub_leaves_a_named_constant_as_a_fill_in() -> Result<(), String>
         file: PathBuf::from("tests/gate.rs"),
         owner: "demo::gate".to_string(),
         provenance: NewTestProposalProvenance::ProducerOwned,
+        workspace_identity: String::new(),
     };
     for source in [
         "const LIMIT: u8 = 3;
@@ -672,6 +679,7 @@ pub fn gate(n: u8) -> u8 {
         file: PathBuf::from("tests/gate.rs"),
         owner: "demo::gate".to_string(),
         provenance: NewTestProposalProvenance::ProducerOwned,
+        workspace_identity: String::new(),
     };
     let inline = rust_test_stub(&seam, None, SOURCE, None).map_err(|r| r.reason().to_string())?;
     assert!(
@@ -710,6 +718,7 @@ pub fn gate(n: u8) -> u8 {
         file: PathBuf::from("tests/gate.rs"),
         owner: "demo::gate".to_string(),
         provenance: NewTestProposalProvenance::ProducerOwned,
+        workspace_identity: String::new(),
     };
     let stub =
         rust_test_stub(&seam, Some(&proposal), SOURCE, None).map_err(|r| r.reason().to_string())?;
@@ -743,6 +752,7 @@ pub fn gate(n: u8) -> u8 {
         file: PathBuf::from("tests/gate.rs"),
         owner: "demo::gate".to_string(),
         provenance: NewTestProposalProvenance::ProducerOwned,
+        workspace_identity: String::new(),
     };
     let inline = rust_test_stub(&seam, None, SOURCE, None).map_err(|r| r.reason().to_string())?;
     assert!(
@@ -782,6 +792,7 @@ pub fn gate(n: u8) -> u8 {
         file: PathBuf::from("tests/gate.rs"),
         owner: "demo::gate".to_string(),
         provenance: NewTestProposalProvenance::ProducerOwned,
+        workspace_identity: String::new(),
     };
     let stub =
         rust_test_stub(&seam, Some(&proposal), SOURCE, None).map_err(|r| r.reason().to_string())?;
@@ -812,6 +823,7 @@ pub fn gate(n: u8, tag: crate::Tag) -> u8 {
         file: PathBuf::from("tests/gate.rs"),
         owner: "demo::gate".to_string(),
         provenance: NewTestProposalProvenance::ProducerOwned,
+        workspace_identity: String::new(),
     };
     let stub =
         rust_test_stub(&seam, Some(&proposal), SOURCE, None).map_err(|r| r.reason().to_string())?;
@@ -844,6 +856,7 @@ fn integration_stub_refuses_self_and_super_parameter_paths() -> Result<(), Strin
         file: PathBuf::from("tests/flag.rs"),
         owner: owner.to_string(),
         provenance: NewTestProposalProvenance::ProducerOwned,
+        workspace_identity: String::new(),
     };
     let self_source = "pub struct Cfg { pub on: bool }
 pub fn flag(cfg: &self::Cfg, n: i32) -> bool {
@@ -1027,9 +1040,22 @@ fn lifetime_only_impl_binds_the_subject_with_an_elided_lifetime() -> Result<(), 
             "{header}: {}",
             stub.text
         );
+        // `&mut self`: the call stays bound before `expected` (#13861 review)
+        // and is made exactly once.
         assert!(
             stub.text
                 .contains("let actual = subject.parse_unit(start, end);"),
+            "{header}: {}",
+            stub.text
+        );
+        assert!(
+            stub.text.contains("assert_eq!(actual, expected);"),
+            "{header}: {}",
+            stub.text
+        );
+        assert_eq!(
+            stub.text.matches("parse_unit(start, end)").count(),
+            1,
             "{header}: {}",
             stub.text
         );
@@ -1045,7 +1071,8 @@ fn lifetime_only_impl_binds_the_subject_with_an_elided_lifetime() -> Result<(), 
         let stub =
             rust_test_stub(&seam, None, &source, None).map_err(|r| r.reason().to_string())?;
         assert!(
-            stub.text.contains("let actual = Parser::open(src, limit);"),
+            stub.text
+                .contains("assert_eq!(Parser::open(src, limit), expected);"),
             "{header}: {}",
             stub.text
         );
@@ -1215,7 +1242,8 @@ fn field_of_the_returned_struct_literal_asserts_the_whole_return_value() -> Resu
     let stub = rust_test_stub(&seam, None, VERSION, None).map_err(|r| r.reason().to_string())?;
     assert_eq!(stub.test_name, "next_minor_field_discriminator");
     assert!(
-        stub.text.contains("let actual = subject.next_minor();"),
+        stub.text
+            .contains("assert_eq!(subject.next_minor(), expected);"),
         "{}",
         stub.text
     );
@@ -1619,11 +1647,20 @@ fn unit_result_owner_asserts_the_mut_input_after_the_call() -> Result<(), String
     for expected in [
         "let mut out: u64 = todo!(",
         "let actual = add_unit(unit, &mut out);",
+        "assert_eq!(actual, expected);",
         "let expected_out: u64 = todo!(",
         "assert_eq!(out, expected_out);",
     ] {
         assert!(stub.text.contains(expected), "{expected}\n{}", stub.text);
     }
+    // A `&mut` argument keeps the call bound before `expected` and makes it
+    // exactly once (#13861 review).
+    assert_eq!(
+        stub.text.matches("add_unit(unit, &mut out)").count(),
+        1,
+        "{}",
+        stub.text
+    );
     assert!(
         stub.fill_ins
             .iter()

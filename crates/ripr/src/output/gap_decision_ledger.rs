@@ -2088,7 +2088,8 @@ fn gap_record_from_typescript_not_delegatable_finding(
     finding: &Value,
     index: usize,
 ) -> Option<GapRecord> {
-    if string_at(finding, &["language"]) != Some("typescript")
+    let language = string_at(finding, &["language"])?;
+    if !matches!(language, "typescript" | "javascript")
         || finding.get("typescript_repair_packet").is_some()
     {
         return None;
@@ -2101,12 +2102,13 @@ fn gap_record_from_typescript_not_delegatable_finding(
     {
         return None;
     }
-    // Only a weakly exposed finding is a gap whose repair packet failed
-    // closed. An exposed finding has nothing to repair, and a no-path finding
-    // is a test gap rather than an analyzer limitation; neither may be framed
-    // as a not-delegatable static limitation (#4226 review).
-    if string_at(finding, &["classification"]) != Some("weakly_exposed")
-        || string_at(actionability, &["gap_state"]) == Some("already_observed")
+    // A weak or explicitly unknown preview finding with a closed packet and
+    // a producer reason is an advisory limitation, not missing input. Exposed
+    // and no-path findings must not be reframed as analyzer limitations.
+    if !matches!(
+        string_at(finding, &["classification"]),
+        Some("weakly_exposed" | "static_unknown")
+    ) || string_at(actionability, &["gap_state"]) == Some("already_observed")
     {
         return None;
     }
@@ -2136,7 +2138,7 @@ fn gap_record_from_typescript_not_delegatable_finding(
                 .map(python_static_limit_gap_component)
                 .unwrap_or_else(|| "module".to_string());
             format!(
-                "gap:typescript:{file}:{owner}:not_delegatable:{}",
+                "gap:{language}:{file}:{owner}:not_delegatable:{}",
                 python_static_limit_gap_component(behavior_kind)
             )
         });
@@ -2184,7 +2186,7 @@ fn gap_record_from_typescript_not_delegatable_finding(
         canonical_gap_id,
         seam_id: None,
         kind: "StaticLimitation".to_string(),
-        language: "typescript".to_string(),
+        language: language.to_string(),
         language_status: string_at(finding, &["language_status"])
             .unwrap_or("preview")
             .to_string(),
@@ -2685,7 +2687,7 @@ fn gap_record_from_python_no_repair_card_finding(
     // (`"analysis_scope": "repo"`); that, not placement, is why no card exists.
     let repo_reason = (string_at(finding, &["analysis_scope"]) == Some("repo"))
         .then(|| {
-            crate::domain::language_capability::repo_mode_no_repair_routing_reason(
+            ripr_contract::domain::language_capability::repo_mode_no_repair_routing_reason(
                 crate::domain::LanguageId::Python,
             )
         })
@@ -2695,16 +2697,22 @@ fn gap_record_from_python_no_repair_card_finding(
     // exists. Name that operand instead of the generic line; routing stays
     // fail-closed (no gap id, no card). The extraction is shared with the
     // human triage surface so the two wordings cannot drift.
-    let unresolved_operand =
-        crate::output::human::unresolved_boundary_operand(&string_array_at(finding, &["missing"]));
+    let missing = string_array_at(finding, &["missing"]);
+    let unresolved_operand = crate::output::human::unresolved_boundary_operand(&missing);
+    // #13790: a predicate with several comparisons names that reason, through
+    // the same extraction the human triage and the agent refusal use.
+    let multi_comparison = crate::output::human::multi_comparison_predicate(&missing)
+        .filter(|_| first_missing_discriminator_value(finding).is_none());
     let reason = if let Some(repo_reason) = repo_reason.as_deref() {
         repo_reason.to_string()
+    } else if let Some(predicate) = multi_comparison {
+        predicate.reason()
     } else if let Some(operand) = unresolved_operand {
         format!(
             "static evidence cannot bind `{operand}` to a test input, so the boundary equality cannot become a repair target"
         )
     } else if first_missing_discriminator_value(finding).is_none() {
-        "static evidence names no concrete missing discriminator".to_string()
+        "static evidence names no concrete missing check".to_string()
     } else {
         "its test placement or related-test evidence is incomplete".to_string()
     };
@@ -5695,7 +5703,16 @@ mod tests {
         // #12182: `python_nested_result_discarded` is a weak return finding
         // that names the result of the nested def as its discriminator, one
         // more direct-aligned card.
-        if (direct, no_strong, orthogonal, family_selection) != (22, 36, 31, 1) {
+        // #12952: the framework-shadow and dotted-module honesty fixtures each
+        // retain one weak `no_strong_oracle` error-path card. Their exact
+        // exception credit is withheld; both cards remain packet-eligible.
+        // #13621: `python_guarded_field_value_untaken` downgrades a guarded
+        // field value no test enters; its weak card names the `total < 0`
+        // discriminator, one more direct-aligned card.
+        // #12126: `python_coarse_{sign, residue, text_length}` keep a coarse
+        // projection of the changed owner result weakly exposed; each weak
+        // finding carries one orthogonal card, three more in total.
+        if (direct, no_strong, orthogonal, family_selection) != (23, 38, 34, 1) {
             return Err(format!(
                 "corpus inventory drift: direct={direct}, unknown={no_strong}, orthogonal={orthogonal}, family_selection={family_selection}"
             ));
@@ -6026,6 +6043,47 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn check_output_typescript_family_unknown_preserves_advisory_limit() -> Result<(), String> {
+        for language in ["typescript", "javascript"] {
+            let mut value: Value =
+                serde_json::from_str(&typescript_fail_closed_packet_check_output())
+                    .map_err(|error| error.to_string())?;
+            let finding = &mut value["findings"][0];
+            finding["language"] = Value::from(language);
+            finding["classification"] = Value::from("static_unknown");
+            finding["preview_actionability"]["gap_state"] = Value::from("unknown");
+            let reason = finding["preview_actionability"]["why_not_actionable"].clone();
+            let report = check_output_ledger(value.to_string());
+            assert_eq!(report.records.len(), 1, "{language}: {:?}", report.warnings);
+            let record = &report.records[0];
+            assert_eq!(record.language, language);
+            assert_eq!(record.gap_state, "static_limitation");
+            assert_eq!(record.static_limit_detail.as_deref(), reason.as_str());
+            assert_eq!(record.repairability, "analyzer_limitation");
+            assert!(record.repair_route.is_none());
+            assert!(record.verification_commands.is_empty());
+            assert!(record.receipt_command.is_none());
+            for projection in [
+                "agent_packet",
+                "pr_comment",
+                "gate_candidate",
+                "ripr_zero_count",
+                "ripr_plus_count",
+            ] {
+                assert!(!projection_eligible(record, projection), "{projection}");
+            }
+            // A language or reason the producer did not establish cannot be
+            // manufactured into a supported static-limit record.
+            value["findings"][0]["language"] = Value::from("rust");
+            assert!(check_output_ledger(value.to_string()).records.is_empty());
+            value["findings"][0]["language"] = Value::from(language);
+            value["findings"][0]["preview_actionability"]["why_not_actionable"] = Value::from("");
+            assert!(check_output_ledger(value.to_string()).records.is_empty());
+        }
+        Ok(())
+    }
+
     // #4226 review: an exposed TypeScript finding also carries
     // `repair_packet_ready: false`, but it has nothing to repair; it must not
     // become a not-delegatable static limitation.
@@ -6251,6 +6309,39 @@ mod tests {
             )
         );
         assert!(records[0].repair_route.is_none());
+        Ok(())
+    }
+
+    // #13790: a several-comparison predicate names that reason in the record
+    // detail; the record stays a non-delegatable static limitation.
+    #[test]
+    fn check_output_python_no_repair_card_names_a_multi_comparison_predicate() -> Result<(), String>
+    {
+        let mut payload: Value = serde_json::from_str(&python_no_repair_card_check_output())
+            .map_err(|error| format!("parse fixture check output: {error}"))?;
+        let findings = payload["findings"]
+            .as_array_mut()
+            .ok_or_else(|| "findings missing".to_string())?;
+        for finding in findings
+            .iter_mut()
+            .filter(|finding| finding["classification"] == "weakly_exposed")
+        {
+            finding["missing_discriminators"] = serde_json::json!([]);
+            finding["missing"] = serde_json::json!([
+                "A strong Python oracle reaches `discount`, but static evidence does not place a related test input at the changed predicate boundary. The changed predicate `rate < 0 or rate >= 1` holds 2 relational comparisons; static evidence cannot establish which boundary a related test call pins."
+            ]);
+        }
+        let report = check_output_ledger(payload.to_string());
+        let records = python_no_repair_card_records(&report);
+        assert_eq!(records.len(), 1, "{:?}", report.records);
+        assert_eq!(
+            records[0].static_limit_detail.as_deref(),
+            Some(
+                "this Python preview finding has no repair card (the changed predicate `rate < 0 or rate >= 1` holds 2 comparisons, so static evidence cannot tell which boundary a test pins), so `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; add or strengthen a test by hand, then rerun `ripr check`"
+            )
+        );
+        assert!(records[0].repair_route.is_none());
+        assert!(!projection_eligible(records[0], "agent_packet"));
         Ok(())
     }
 

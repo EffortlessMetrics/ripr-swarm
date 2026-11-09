@@ -154,3 +154,55 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — python_guarded_write_same_line_mask (13)
+
+Reason:
+RIPR-SPEC-0238 / #5574: per-row sink alignment tri-state re-serializes related-test oracle rows and human related-test lines; goldens check formatting_only; exposure classes unchanged.
+
+Command:
+`cargo xtask goldens bless python_guarded_write_same_line_mask --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — python_guarded_write_same_line_mask (14)
+
+Reason:
+RIPR-SPEC-0001: Python explain puts Next step before the repair card and drops the duplicated Weakness restatement (#11926)
+
+Command:
+`cargo xtask goldens bless python_guarded_write_same_line_mask --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — python_guarded_write_same_line_mask (15)
+
+Reason:
+RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; human rendering unchanged
+
+Command:
+`cargo xtask goldens bless python_guarded_write_same_line_mask --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — python_guarded_write_same_line_mask (16)
+
+Reason:
+RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; no test attribution; human rendering unchanged
+
+Command:
+`cargo xtask goldens bless python_guarded_write_same_line_mask --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

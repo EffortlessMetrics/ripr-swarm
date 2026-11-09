@@ -527,3 +527,55 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — python_adversarial_buffer_token (42)
+
+Reason:
+RIPR-SPEC-0238 / #5574: per-row sink alignment tri-state re-serializes related-test oracle rows and human related-test lines; goldens check formatting_only; exposure classes unchanged.
+
+Command:
+`cargo xtask goldens bless python_adversarial_buffer_token --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — python_adversarial_buffer_token (43)
+
+Reason:
+RIPR-SPEC-0001: Python explain puts Next step before the repair card and drops the duplicated Weakness restatement (#11926)
+
+Command:
+`cargo xtask goldens bless python_adversarial_buffer_token --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — python_adversarial_buffer_token (44)
+
+Reason:
+RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; human rendering unchanged
+
+Command:
+`cargo xtask goldens bless python_adversarial_buffer_token --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — python_adversarial_buffer_token (45)
+
+Reason:
+RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; no test attribution; human rendering unchanged
+
+Command:
+`cargo xtask goldens bless python_adversarial_buffer_token --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

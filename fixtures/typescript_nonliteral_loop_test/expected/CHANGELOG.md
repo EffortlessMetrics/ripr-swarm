@@ -143,3 +143,39 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — typescript_nonliteral_loop_test (13)
+
+Reason:
+RIPR-SPEC-0088: retain source-file provenance for advisory TypeScript-family unknown findings; verdicts and repair authority unchanged (#12930)
+
+Command:
+`cargo xtask goldens bless typescript_nonliteral_loop_test --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — typescript_nonliteral_loop_test (14)
+
+Reason:
+RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; human rendering unchanged
+
+Command:
+`cargo xtask goldens bless typescript_nonliteral_loop_test --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — typescript_nonliteral_loop_test (15)
+
+Reason:
+RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; no test attribution; human rendering unchanged
+
+Command:
+`cargo xtask goldens bless typescript_nonliteral_loop_test --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

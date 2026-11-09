@@ -367,7 +367,7 @@ fn empty_macro_arguments_cannot_activate_a_real_far_oracle() -> Result<(), Strin
             assert!(
                 finding["ripr"]["infect"]["summary"]
                     .as_str()
-                    .is_some_and(|s| s.contains("equality-boundary discriminator is missing"))
+                    .is_some_and(|s| s.contains("equality-boundary check is missing"))
             );
         }
         observations.push(finding.clone());

@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- With target-root placement available, an inherent owner call inside a bare `assert_matches!` whose receiver resolves now reads the named `rust_macro_wrapped_assertion_unresolved` limitation instead of an unnamed gap. Nothing is credited; a wrong receiver, a broad pattern, a pattern-only call and a local `assert_matches!` keep their gap. `pretty_assertions::assert_eq!` and workspace assertion macros remain gaps (#12829).
