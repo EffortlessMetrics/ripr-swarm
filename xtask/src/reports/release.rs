@@ -1842,7 +1842,7 @@ fn installed_command_surface_check(binary: &Path) -> ReleaseReadinessCheck {
     missing.extend(missing_required_needles(
         &first_pr_help.stdout,
         &[
-            "Create the start-here packet",
+            "Summarize what to fix in one PR",
             "Usage: ripr first-pr",
             "--gap-ledger",
             "--receipts-dir",

@@ -190,6 +190,18 @@ fn refusal_remedy_route(
         &root.to_string_lossy(),
     ));
     match kind {
+        // #13791: a TypeScript/Python preview finding or gap id has no seam
+        // and never will, so re-listing seams cannot find it. Its typed route
+        // is the same `check --format agent` command the refusal prose names
+        // (one owner renders both). Unknown and Rust-shaped ids keep pilot.
+        AgentCardRefusalKind::SeamNotFound
+            if crate::app::task_first::preview_item_language(seam_id).is_some() =>
+        {
+            crate::app::task_first::preview_check_command(
+                root_path,
+                crate::app::task_first::PreviewCheckInput::Default,
+            )
+        }
         AgentCardRefusalKind::SeamNotFound => {
             format!("ripr pilot --root {root}")
         }
@@ -979,6 +991,41 @@ mod tests {
         if !packet.starts_with("ripr agent packet --root ") || !packet.contains("--seam-id seam-a")
         {
             return Err("packet remedy must bind the invocation root and seam id".to_string());
+        }
+        Ok(())
+    }
+
+    /// #13791 review: a preview-shaped id's not-found route is the preview
+    /// `check --format agent` command the prose names, while an unknown seam
+    /// id and a Rust-shaped finding id keep re-listing through pilot.
+    #[test]
+    fn seam_not_found_remedy_route_names_check_for_preview_shaped_ids() -> Result<(), String> {
+        let root = std::path::Path::new(".");
+        let expected = crate::app::task_first::preview_check_command(
+            root,
+            crate::app::task_first::PreviewCheckInput::Default,
+        );
+        for id in [
+            "probe:src_discount.ts:typescript_preview:2396aec1",
+            "gap:python:pricing/core.py:bulk_discount_rate:predicate_boundary:predicate:units>=20",
+        ] {
+            let route = refusal_remedy_route(root, id, AgentCardRefusalKind::SeamNotFound);
+            if route != expected
+                || !route.starts_with("ripr check --root ")
+                || !route.ends_with(" --format agent")
+            {
+                return Err(format!("preview id `{id}` must route to check: {route}"));
+            }
+        }
+        for id in [
+            "seam:definitely-not-real",
+            "probe:src_lib.rs:12:predicate",
+            "gap:rust:src/lib.rs:add:call_deletion:x",
+        ] {
+            let route = refusal_remedy_route(root, id, AgentCardRefusalKind::SeamNotFound);
+            if !route.starts_with("ripr pilot --root ") {
+                return Err(format!("id `{id}` must keep the pilot route: {route}"));
+            }
         }
         Ok(())
     }

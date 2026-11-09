@@ -129,6 +129,10 @@ their detail and navigation as advisory evidence beneath the incomplete state;
 they do not acquire a contradictory completion or stop claim. Complete outcomes
 retain their existing triage behavior (#13138).
 
+A run that analyzed nothing because the diff held no analyzable source (for
+example docs-only; the empty-diff `no_scope` case is RIPR-SPEC-0083) never emits `done=` in the agent format and never prints the
+clean GitHub notice; it states the not-established state instead (#13658).
+
 The diff-scoped `check` and `diff` CLI commands map the producer's
 `unsupported_input` kind to exit `2` after writing the original report
 (#7440 for check, #7793 for diff). Retained findings, counts,
