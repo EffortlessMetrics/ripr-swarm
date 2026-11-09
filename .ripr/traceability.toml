@@ -18370,6 +18370,19 @@ id = "RIPR-SPEC-0238"
 name = "Python oracle and reach rules"
 spec = "docs/specs/RIPR-SPEC-0238-python-oracle-and-reach-rules.md"
 tests = [
+  "crates/ripr/src/analysis/language/python/approx_band_tests.rs::a_positional_band_is_read_in_pytests_parameter_order",
+  "crates/ripr/src/analysis/language/python/approx_band_tests.rs::only_pytests_own_approx_band_is_read",
+  "crates/ripr/src/analysis/language/python/approx_band_tests.rs::a_positional_band_outside_the_read_shape_keeps_abstaining",
+  "crates/ripr/src/analysis/language/python/approx_band_tests.rs::a_band_named_by_test_module_constants_is_read",
+  "crates/ripr/src/analysis/language/python/approx_band_tests.rs::a_named_band_that_may_differ_at_the_assertion_keeps_abstaining",
+  "crates/ripr/src/analysis/language/python/approx_band_tests.rs::functools_memoization_returns_the_decorated_result",
+  "crates/ripr/src/analysis/language/python/approx_band_tests.rs::a_decorator_that_may_change_the_result_keeps_abstaining",
+  "crates/ripr/src/analysis/language/python/approx_band_tests.rs::a_straight_line_body_is_rebuilt_when_the_line_is_the_whole_diff",
+  "crates/ripr/src/analysis/language/python/approx_band_tests.rs::a_body_that_cannot_be_rebuilt_keeps_abstaining",
+  "crates/ripr/src/analysis/language/python/approx_band_tests.rs::a_method_called_on_a_fresh_plain_instance_is_read",
+  "crates/ripr/src/analysis/language/python/approx_band_tests.rs::a_method_whose_instance_may_differ_keeps_abstaining",
+  "crates/ripr/src/analysis/language/python/approx_band_tests.rs::an_async_owner_keeps_abstaining",
+  "crates/ripr/src/analysis/language/python/approx_band_tests.rs::a_replaced_cache_decorator_or_class_dunder_keeps_abstaining",
   "crates/ripr/src/analysis/language/python/helper_module_attribute_tests.rs::given_a_helper_called_through_a_relative_conftest_module_when_resolved_then_it_reads_as_the_exact_assertion",
   "crates/ripr/src/analysis/language/python/helper_module_attribute_tests.rs::given_a_module_name_the_test_can_rebind_or_the_import_cannot_prove_when_called_then_nothing_resolves",
   "crates/ripr/src/analysis/language/python/helper_module_attribute_tests.rs::given_the_helper_is_patched_outside_the_test_body_when_called_then_nothing_resolves",
@@ -18608,6 +18621,7 @@ fixtures = [
   "fixtures/python_empty_sink_module_comparison",
 ]
 code = [
+  "crates/ripr/src/analysis/language/python/approx_band.rs",
   "crates/ripr/src/analysis/language/python/fixture_substitution.rs",
   "crates/ripr/src/analysis/language/python/helper_assertions/field_admission.rs",
   "crates/ripr/src/analysis/language/python/table_rows.rs",

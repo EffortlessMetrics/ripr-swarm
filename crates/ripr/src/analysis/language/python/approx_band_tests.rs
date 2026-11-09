@@ -476,3 +476,62 @@ fn an_async_owner_keeps_abstaining() -> Result<(), String> {
     );
     Ok(())
 }
+
+#[test]
+fn a_replaced_cache_decorator_or_class_dunder_keeps_abstaining() -> Result<(), String> {
+    let assertion = "band(10) == pytest.approx(30, rel=0.1)";
+    // A write to the decorator's own name replaces it under a bound
+    // `functools`, in the owner's module or the test's.
+    for owner in [
+        "import functools\nfunctools.lru_cache = lambda **kw: (lambda f: lambda x: 30)\n\n\n\
+         @functools.lru_cache(maxsize=None)\ndef band(x):\n    return x * 3\n",
+        "import functools\nfunctools.cache = lambda f: (lambda x: 30)\n\n\n\
+         @functools.cache\ndef band(x):\n    return x * 3\n",
+    ] {
+        assert_eq!(
+            memoized_edit(owner, "x * 3 + 5")?.0,
+            ExposureClass::StaticUnknown,
+            "{owner}"
+        );
+    }
+    let patched_test = test_module(
+        "band",
+        "\nimport functools\nfunctools.lru_cache = lambda **kw: (lambda f: lambda x: 30)\n",
+        assertion,
+    );
+    assert_eq!(
+        classify(
+            &MEMOIZED.replace("    return x * 3", "    return x * 3 + 5"),
+            6,
+            "    return x * 3",
+            &patched_test,
+            true,
+        )?
+        .0,
+        ExposureClass::StaticUnknown
+    );
+    // A class dunder written outside the class body redirects the method
+    // lookup without naming the method.
+    let dunder = "Rates.__getattribute__ = lambda self, name: (lambda x: 30)\n";
+    let test = method_test("Rates().band(10) == pytest.approx(30, rel=0.1)");
+    for dunder in [
+        dunder,
+        "class Other:\n    def band(self, x):\n        return 30\n\n\nRates.__new__ = lambda cls: Other()\n",
+    ] {
+        assert_eq!(
+            method_edit(&format!("{METHOD}\n\n{dunder}"), "x * 3 + 5", &test)?.0,
+            ExposureClass::StaticUnknown,
+            "{dunder}"
+        );
+    }
+    let dunder_test = test_module(
+        "Rates",
+        &format!("\n{dunder}"),
+        "Rates().band(10) == pytest.approx(30, rel=0.1)",
+    );
+    assert_eq!(
+        method_edit(METHOD, "x * 3 + 5", &dunder_test)?.0,
+        ExposureClass::StaticUnknown
+    );
+    Ok(())
+}

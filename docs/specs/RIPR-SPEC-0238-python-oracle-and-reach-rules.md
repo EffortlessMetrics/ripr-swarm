@@ -1039,18 +1039,22 @@ mutant calibrates the rule; ripr reports only the static shape.
     changed line is `return <expr>`; the same function decorated only by
     `functools.lru_cache` (bare, or called with a literal `maxsize` and
     `typed` and nothing else) or `functools.cache`, the name resolving to
-    `functools` and bound once in the module, which returns the function's
-    own result (#13723); a function whose body is single-line `name =
-    <expr>` assignments then `return <expr>`, when the file's whole diff is
-    the changed line and exactly one body statement spells it, so the old
+    `functools` and bound once in the module, with no attribute write in
+    the owner's or the test's module naming the decorator
+    (`functools.lru_cache = ...` replaces it under a bound `functools`),
+    which returns the function's own result (#13723); a function whose body
+    is single-line `name = <expr>` assignments then `return <expr>`, when
+    the file's whole diff is the changed line and exactly one body statement spells it, so the old
     body is the new body with the old line put back (#13723); or a
     one-statement method of a module-level class bound once, with no
     decorator, base or class keyword, whose body holds only undecorated
     non-dunder `def`s, a docstring or `pass`, whose method name no
-    attribute write in the module names, called as `Class().<method>(...)`
+    attribute write in the module names and with no dunder attribute write
+    in the module (`Rates.__getattribute__ = ...` redirects the lookup),
+    called as `Class().<method>(...)`
     with no constructor arguments, `Class` imported under its own name from
-    the owner's module and never rebound or attribute-written by the test
-    module (#13723). The assertion is `<call>(<numeric literals>) ==
+    the owner's module and never rebound or attribute-written, nor any
+    dunder attribute written, by the test module (#13723). The assertion is `<call>(<numeric literals>) ==
     approx(<expected>, <rel>, <abs>, <nan_ok>)` in either operand order,
     the band by keyword or positionally in pytest's parameter order (a
     positional `nan_ok` must be `True` or `False`, and a parameter passed
@@ -2274,6 +2278,22 @@ and the test is `tests/test_subject.py`, which imports each owner from
   the decorated control, the conftest, same-module and single-name forms,
   the off-boundary parity and every negative shape of example 42;
   `classify/tests.rs` `an_indirect_parametrize_argname_is_an_unresolved_fixture`.
+- Rule 21's `approx` band shapes (#13723):
+  `crates/ripr/src/analysis/language/python/approx_band_tests.rs` pins the
+  positional band (`a_positional_band_is_read_in_pytests_parameter_order`,
+  `a_positional_band_outside_the_read_shape_keeps_abstaining`), pytest's own
+  `approx` (`only_pytests_own_approx_band_is_read`), the named band constant
+  (`a_band_named_by_test_module_constants_is_read`,
+  `a_named_band_that_may_differ_at_the_assertion_keeps_abstaining`), the
+  memoized owner (`functools_memoization_returns_the_decorated_result`,
+  `a_decorator_that_may_change_the_result_keeps_abstaining`), the longer
+  body (`a_straight_line_body_is_rebuilt_when_the_line_is_the_whole_diff`,
+  `a_body_that_cannot_be_rebuilt_keeps_abstaining`), the method owner
+  (`a_method_called_on_a_fresh_plain_instance_is_read`,
+  `a_method_whose_instance_may_differ_keeps_abstaining`), a replaced cache
+  decorator or class dunder
+  (`a_replaced_cache_decorator_or_class_dunder_keeps_abstaining`) and the
+  async owner (`an_async_owner_keeps_abstaining`).
 
 ## Numeric factor reorders
 
@@ -2308,6 +2328,9 @@ strong assertions is retained.
 
 ## Implementation Mapping
 
+- `crates/ripr/src/analysis/language/python/approx_band.rs`: rule 21, the
+  `pytest.approx` band reader (owner edit, band, owner definition and the
+  argument binding).
 - `crates/ripr/src/analysis/language/python/doctest_tests.rs` and
   `doctest_eval.rs`: rule 26, collection detection, example reading and the
   evaluator gate.

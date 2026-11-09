@@ -299,7 +299,14 @@ impl ReturnEdit {
         };
         match &self.receiver_class {
             None => {
-                if call_name(&call_expr.func)? != owner.name {
+                // A test-side `functools.lru_cache = ...` before the owner's
+                // import replaces the decorator the owner read trusted.
+                if call_name(&call_expr.func)? != owner.name
+                    || owner.decorators.iter().any(|decorator| {
+                        let last = decorator.rsplit('.').next().unwrap_or_default();
+                        test.constant_rebinding.assigns_attribute(last)
+                    })
+                {
                     return None;
                 }
             }
@@ -614,6 +621,9 @@ fn memoizing_decorator(decorator: &Expr, owner: &PythonOwner, facts: &ModuleBind
         && owner.decorators.contains(&name)
         && is_imported_functools_memoization_decorator(&name, &owner.imports)
         && facts.bound_once(first)
+        // `functools.lru_cache = ...` replaces the decorator under a bound
+        // `functools`, so a write to the decorator's own name refuses it.
+        && !facts.may_assign_attribute(last)
 }
 
 /// The owner's class when a fresh instance of it calls the method's own
@@ -631,6 +641,9 @@ fn plain_owner_class<'a>(
     if !is_simple_python_identifier(class)
         || !facts.bound_once(class)
         || facts.may_assign_attribute(&owner.name)
+        // `Rates.__getattribute__ = ...` answers the call with another
+        // method without writing the method's own name.
+        || facts.assigns_dunder()
     {
         return None;
     }
@@ -737,7 +750,8 @@ fn fresh_instance_call(func: &Expr, class: &str, method: &str) -> bool {
 
 /// The test's `class` is the owner's: imported under its own name from the
 /// owner's module, by that import alone, and never rebound, attribute-written
-/// or written through a namespace by the test or its module.
+/// (including any dunder, which can redirect the method lookup) or written
+/// through a namespace by the test or its module.
 fn test_binds_owner_class(test: &PythonTest, owner: &PythonOwner, class: &str) -> bool {
     let mut bindings = test.imports.iter().filter(|import| import.alias == class);
     let from_owner_module = bindings.next().is_some_and(|import| {
@@ -750,6 +764,7 @@ fn test_binds_owner_class(test: &PythonTest, owner: &PythonOwner, class: &str) -
         && !rebinding.module_opaque
         && !rebinding.assigns_attribute(class)
         && !rebinding.assigns_attribute(&owner.name)
+        && !rebinding.assigns_dunder_attribute()
 }
 
 /// The literal value each owner parameter takes at the call: a positional or
