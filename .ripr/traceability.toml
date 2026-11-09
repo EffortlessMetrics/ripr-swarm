@@ -14792,6 +14792,9 @@ tests = [
   "crates/ripr/src/cli/agent.rs::tests::agent_repair_parses_explicit_store_and_rejects_empty",
   "crates/ripr/src/cli/agent.rs::tests::agent_status_parses_explicit_store_and_rejects_empty",
   "crates/ripr/src/edit_cage/mod.rs::tests::staged_publication_pair_outside_the_attempt_store_stays_unsafe",
+  "crates/ripr/src/edit_cage/mod.rs::tests::staged_pair_on_a_file_named_like_the_attempt_store_stays_unsafe",
+  "crates/ripr/src/edit_cage/mod.rs::tests::explicit_store_staged_pair_is_scoped_to_its_attempt_subtree",
+  "crates/ripr/src/edit_cage/mod.rs::tests::capture_accepts_an_explicit_store_pair_and_still_flags_other_pairs",
 ]
 fixtures = [
 ]
