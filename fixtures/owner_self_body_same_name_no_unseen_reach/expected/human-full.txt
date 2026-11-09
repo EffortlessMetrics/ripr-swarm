@@ -30,7 +30,7 @@ Static exposure
   no_static_path (warning, confidence 0.43)
 
 Evidence
-  - reach no: No test is seen calling get; tests share only its file or a name token: other_test
+  - reach no: No test is seen calling get; tests share only its file or a name token: other_test (unreferenced in workspace)
   - infection no: No test reaches the changed owner, so no test can activate this change
   - propagation yes: Changed behavior appears to influence returned value: 10
   - observation no: No test reaches the changed owner, so no test can observe this change

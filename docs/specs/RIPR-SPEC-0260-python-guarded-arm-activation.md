@@ -9,7 +9,8 @@ Created: 2026-10-14
 Linked issues: [#7392](https://github.com/EffortlessMetrics/ripr-swarm/issues/7392),
 [#9002](https://github.com/EffortlessMetrics/ripr-swarm/issues/9002),
 [#9184](https://github.com/EffortlessMetrics/ripr-swarm/issues/9184),
-[#9429](https://github.com/EffortlessMetrics/ripr-swarm/issues/9429).
+[#9429](https://github.com/EffortlessMetrics/ripr-swarm/issues/9429),
+[#13621](https://github.com/EffortlessMetrics/ripr-swarm/issues/13621).
 
 Support-tier impact: Python preview adapter output only; no support-tier
 change. See: [docs/status/SUPPORT_TIERS.md](../status/SUPPORT_TIERS.md).
@@ -28,7 +29,8 @@ a false `exposed` that told the user the change was already pinned.
 
 ## Behavior
 
-For a Python `return_value` probe on an added line inside one or more
+For a Python `return_value` or `field_construction` (#13621, a changed
+dict/field value such as `return {"status": 422}`) probe on an added line inside one or more
 guarding `if`/`while` arms, the classifier reads the enclosing conditions
 from the new-side source and the literal arguments the strong related tests
 bind:
@@ -272,6 +274,11 @@ text is display only and never feeds a decision:
 - `analysis::language::python::classify::tests::guarded_arm_*` and the
   `or_guard_*`, `unreadable_strong_call_*`, `rebound_parameter_*`, and
   `bool_numeric_guard_*` cases cover the end-to-end verdicts.
+- `analysis::language::python::classify::tests::guarded_field_value_*`
+  (#13621) cover a replaced field value inside a guard no input enters
+  (`weakly_exposed`, missing `total < 0`) and its entering-input control
+  (`exposed`); fixture `python_guarded_field_value_untaken` and its honesty
+  corpus row pin the same verdict end to end.
 - `analysis::language::python::classify::tests::else_arm_*` (including
   `else_text_inside_a_docstring_is_not_an_else_arm` and
   `nested_else_reason_does_not_claim_the_inner_chain_excluded_an_outer_guard_row`)
@@ -301,7 +308,8 @@ text is display only and never feeds a decision:
 - `crates/ripr/src/analysis/language/python/boundary.rs::strong_owner_call_rows_with_gaps`
   supplies the strong rows and the unbound-call flag the gate refuses on.
 - `crates/ripr/src/analysis/language/python/classify.rs` engages the gate
-  for `return_value` probes with new-side source.
+  for `return_value` and `field_construction` (#13621) probes with new-side
+  source.
 
 ## Metrics
 
