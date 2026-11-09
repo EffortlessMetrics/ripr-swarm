@@ -1,7 +1,12 @@
 # Quickstart
 
-Inspect a change, read the testing gap, and decide which focused test to add.
-ripr uses static analysis; it does not run mutants or write the test for you.
+Your tests pass. Would they notice if the change you just made were wrong?
+
+ripr reads your diff and the related tests and names a changed behavior no
+test appears to check, plus the missing case or assertion. Where a repair route
+exists, it also names the test to add. You read the gap and decide which
+focused test to write. ripr uses static analysis; it does not run mutants or
+write the test for you.
 
 ## Choose Your Path
 
@@ -99,21 +104,12 @@ cargo install --locked --git https://github.com/EffortlessMetrics/ripr-swarm rip
 ```
 
 From a `ripr-swarm` checkout, `cargo install --path crates/ripr` does the same.
-Either route compiles from source. A cold `cargo build --release` of the
-workspace (thin LTO, 16 codegen units) took about 6 minutes (366 s) on a 4-core
-Linux container in October 2026, against 17 minutes (1037 s) for the earlier
-fat-LTO, single-codegen-unit profile; `cargo install ripr` for 0.10.0 took about
-2 minutes on an earlier run. The packaged 0.11.0 crate carries no profile
-section, so `cargo install ripr --locked` should build in about 4.6 minutes
-(275 s) once 0.11.0 is on crates.io (measured by building the packaged crate with
-`cargo build --release` on the same container, not a download). In that walk,
-`doctor` and `check` each took under 3 seconds on small crates; `ripr pilot`
-takes longer on large repositories. The prebuilt 0.10.0 archive downloads in
-about a second, against about two minutes to compile 0.10.0 from source. There is
-no prebuilt 0.11 archive until 0.11.0 is published.
-`cargo xtask first-run --install-archive 0.10.0` replays the archive route end
-to end and times it; the [first-run scoreboard](../benchmarks/dx_scoreboard/README.md)
-tracks the install time so a rise shows.
+Every source route compiles. The git and path installs take about 5 to 6
+minutes cold on a 4-core machine (October 2026 measurement); `cargo install ripr`
+took about 2 minutes for 0.10.0 and is estimated at about 5 for 0.11.0. The prebuilt 0.10.0 archive downloads in
+about a second; there is no prebuilt 0.11 archive until 0.11.0 is published.
+`cargo xtask first-run --install-archive 0.10.0` replays and times the archive
+route; the [first-run scoreboard](../benchmarks/dx_scoreboard/README.md) tracks it.
 
 With [cargo-binstall](https://github.com/cargo-bins/cargo-binstall) installed,
 `cargo binstall ripr` uses the prebuilt 0.11.0 release archive when that asset is
@@ -123,6 +119,23 @@ each channel serves today.
 
 For another installation method or a pinned server, see
 [Server provisioning](SERVER_PROVISIONING.md).
+
+### Tab completion (optional)
+
+Not in the 0.10.0 release: `ripr completions` is in 0.11 development builds
+only, so check that `ripr completions --help` works before relying on this.
+It prints a script for `bash`, `zsh`, `fish` or `powershell` that completes
+command names and the word after a command, such as `cache status`. It does
+not complete flags. It prints to your terminal and changes nothing until you
+load it. In Bash:
+
+```bash
+source <(ripr completions bash)
+```
+
+In zsh, run `autoload -Uz compinit && compinit` first (once, in your `~/.zshrc`),
+then `source <(ripr completions zsh)`. Add the line to your shell startup file
+to keep it. `ripr completions --help` shows fish and PowerShell.
 
 ## CLI First Hour
 
@@ -138,55 +151,30 @@ the base branch, edit a tracked source file and run `ripr check` again. For a ne
 file, first use `git add -N PATH` so it enters the tracked diff. See
 [Choose the change](#choose-the-change) for explicit diff selection.
 
-Use `ripr doctor` to diagnose setup if analysis cannot complete; it is not a
-required first step. (doctor exits 3 when any check fails, so run it
-standalone — it does not chain with `&&`.) To explore a clean repository without making a change,
-use the separate [repository exploration](#explore-the-repository) path,
-`ripr pilot --root .`.
+### What you see
 
 No `ripr.toml` is required. The development CLI prints a summary and a bounded
 `Start here:` section with a finding, a no-action result, or the limitation
-preventing useful guidance. Read the changed behavior, related test, and
-suggested next test. No findings does not mean the tests are complete.
+preventing useful guidance. A checked excerpt from that output (the boundary
+example of [Why ripr](WHY_RIPR.md); `cargo xtask goldens check` keeps the full
+text current):
 
-While analysis is running, `ripr check` writes producer stages to **stderr**
-as `ripr progress: <stage> [<scope>]`, with throttled heartbeats if a stage
-stays active. JSON, SARIF, and other machine stdout stay byte-clean. Unknown
-totals never become a percentage or ETA. Progress does not mean analysis is
-faster or that the command will succeed. `--quiet` suppresses the progress
-stream; it does not change findings or exit codes. `ripr explain` and
-`ripr context` print the same `ripr progress:` lines on stderr and accept
-`--quiet`, as does `ripr pilot`. With a machine format (`--json`, `--format
-json`, `sarif`, `badge-*`, `agent`) or `ripr context` and a stderr that is not a
-terminal, progress is off by default (set `RIPR_PROGRESS=1` to restore it);
-`RIPR_QUIET` and `--quiet` silence it everywhere, including `ripr repair` and
-`ripr continue`. Stdout is the output contract, so for machine capture (for
-example the JSON from `context`) keep stderr separate rather than `2>&1`.
+```text
+  State: a test gap to inspect or repair
+  Changed behavior: amount >= discount_threshold
+  Missing check: amount == discount_threshold
+  Related test (1 of 2 matched rows): tests/pricing.rs:4 below_threshold_has_no_discount (no test input reaches `amount == discount_threshold`)
+  Next step: Add boundary tests for below, equal, and above the changed threshold with exact assertions
+```
 
-A short glossary for the terms below:
+Read the changed behavior, related test, and suggested next test. No findings
+does not mean the tests are complete. The mechanism behind the output —
+stderr progress rules, the glossary, the schema-value mapping, and JSON/agent
+handling — is collected in
+[Reference: output mechanics and terms](#reference-output-mechanics-and-terms)
+below.
 
-| Term | Meaning |
-| --- | --- |
-| seam | A place in the code where behavior could change; a repair targets one seam ID. |
-| discriminator | The check that would tell the old behavior from the new. |
-| oracle / assertion | What a test compares against; a weak oracle (for example `> 0`) reaches the code but does not notice the change. |
-| grip | How firmly tests hold a behavior, for example `weakly_gripped` or `strongly_gripped`. |
-| `probe:` ID | Names one finding in one diff. `explain` and `context` take it; `ripr repair` resolves it to its seam, then may refuse if that seam is not repair-eligible. |
-| edit cage | The repair attempt's rule: only new test functions inside the allowed test surface (for inline tests, the existing `#[cfg(test)] mod tests`) may be added; production code and existing tests stay unchanged. |
-| receipt | The static before/after evidence record from the after phase; not a test result. |
-
-Human output uses plain words for the schema values: `appear noticed` is
-`exposed`, `partly noticed` is `weakly_exposed`, `reached but not noticed` is
-`reachable_unrevealed`, and `no test path` is `no_static_path`. Use
-`--format human-full` or JSON to see the schema value. See
-[Terminology](TERMINOLOGY.md) for the seam-level words and
-[RIPR-SPEC-0122](specs/RIPR-SPEC-0122-bounded-human-check-output.md) for the human output wording.
-
-Agents and scripts reading `ripr check --json` get a stderr free of
-`ripr progress:` lines when stderr is a pipe or file; pass `--quiet` (or set
-`RIPR_QUIET=1`) to make that unconditional, including on a terminal. The JSON is the full versioned report and
-is large: read `summary` and `canonical_next_action` (when present) first, then fetch one
-finding's evidence with `ripr context --at <finding-id> --json --quiet`.
+### What to do next
 
 When a finding is selected, copy its printed `ripr explain` command to inspect
 the evidence, or its `ripr context` command for an agent handoff. Those commands
@@ -209,6 +197,59 @@ A finding can guide an ordinary test improvement through the
 repair attempt with before/after artifacts, the
 [repair workflow](#agent-or-reviewer-first-hour) prepares its supported route
 before the test edit.
+
+Use `ripr doctor` to diagnose setup if analysis cannot complete; it is not a
+required first step. (doctor exits 3 when any check fails, so run it
+standalone — it does not chain with `&&`.) To explore a clean repository
+without making a change, use the separate
+[repository exploration](#explore-the-repository) path,
+`ripr pilot --root .`.
+
+### Reference: output mechanics and terms
+
+The first run does not need this subsection. It collects, without loss, the
+mechanism behind the output above: stderr progress rules, the glossary, the
+schema-value mapping, and JSON/agent handling.
+
+**Progress rules.** While analysis is running, `ripr check` writes producer
+stages to **stderr** as `ripr progress: <stage> [<scope>]`, with throttled
+heartbeats if a stage stays active. JSON, SARIF, and other machine stdout stay
+byte-clean. Unknown totals never become a percentage or ETA. Progress does not
+mean analysis is faster or that the command will succeed. `--quiet` suppresses
+the progress stream; it does not change findings or exit codes. `ripr explain`
+and `ripr context` print the same `ripr progress:` lines on stderr and accept
+`--quiet`, as does `ripr pilot`. With a machine format (`--json`, `--format
+json`, `sarif`, `badge-*`, `agent`) or `ripr context` and a stderr that is not a
+terminal, progress is off by default (set `RIPR_PROGRESS=1` to restore it);
+`RIPR_QUIET` and `--quiet` silence it everywhere, including `ripr repair` and
+`ripr continue`. Stdout is the output contract, so for machine capture (for
+example the JSON from `context`) keep stderr separate rather than `2>&1`.
+
+**Glossary** for the terms above:
+
+| Term | Meaning |
+| --- | --- |
+| seam | A place in the code where behavior could change; a repair targets one seam ID. |
+| discriminator | The check that would tell the old behavior from the new. |
+| oracle / assertion | What a test compares against; a weak oracle (for example `> 0`) reaches the code but does not notice the change. |
+| grip | How firmly tests hold a behavior, for example `weakly_gripped` or `strongly_gripped`. |
+| `probe:` ID | Names one finding in one diff. `explain` and `context` take it; `ripr repair` resolves it to its seam, then may refuse if that seam is not repair-eligible. |
+| edit cage | The repair attempt's rule: only new test functions inside the allowed test surface (for inline tests, the existing `#[cfg(test)] mod tests`) may be added; production code and existing tests stay unchanged. |
+| receipt | The static before/after evidence record from the after phase; not a test result. |
+
+**Schema-value mapping.** Human output uses plain words for the schema values:
+`appear noticed` is `exposed`, `partly noticed` is `weakly_exposed`, `reached
+but not noticed` is `reachable_unrevealed`, and `no test path` is
+`no_static_path`. Use `--format human-full` or JSON to see the schema value. See
+[Terminology](TERMINOLOGY.md) for the seam-level words and
+[RIPR-SPEC-0122](specs/RIPR-SPEC-0122-bounded-human-check-output.md) for the human output wording.
+
+**JSON and agents.** Agents and scripts reading `ripr check --json` get a
+stderr free of `ripr progress:` lines when stderr is a pipe or file; pass
+`--quiet` (or set `RIPR_QUIET=1`) to make that unconditional, including on a
+terminal. The JSON is the full versioned report and
+is large: read `summary` and `canonical_next_action` (when present) first, then fetch one
+finding's evidence with `ripr context --at <finding-id> --json --quiet`.
 
 ### Choose the change
 
@@ -345,39 +386,32 @@ unavailable-adapter guidance, not the Rust repair sequence.
 
 ### Python first hour (preview)
 
-Python analysis is `preview`: its evidence is advisory, not Rust-grade. A
-Python project needs no `ripr.toml` — when the repository root has a Python
-project marker (`pyproject.toml`, `setup.py`, `setup.cfg`,
+Python analysis is `preview`: its evidence is advisory, not Rust-grade. No
+`ripr.toml` is needed. The CLI auto-enables the preview when the repository root
+has a Python marker (`pyproject.toml`, `setup.py`, `setup.cfg`,
 `requirements.txt`, `pytest.ini`, `tox.ini`, or `noxfile.py`) or Python source
-under `src/` or `tests/`, the CLI auto-enables the preview. Work from a Python repository on a branch with a change
-to inspect.
+under `src/` or `tests/`. Work from a Python repository on a branch with a
+change to inspect.
 
-Before the first run, add `/target/ripr/` (or `/target/`) to `.gitignore`:
-ripr writes its artifacts under `target/ripr`, and `check`, `pilot` and
-`agent repair` all create it, so ignoring it keeps `git add -A` from
-committing ripr's own reports. Then run:
+First add `/target/ripr/` (or `/target/`) to `.gitignore`: `check`, `pilot` and
+`agent repair` write reports under `target/ripr`, and ignoring it keeps
+`git add -A` from committing them. Then run:
 
 ```bash
 ripr check
 ```
 
-On a project with markers, `check` analyzes the changed Python files and
-reports the boundary gap with a pytest (or unittest) verify command; its
-top finding is labeled `State: preview language, advisory only`. For the
-repository-wide ranking and a repair recommendation, run:
+`check` analyzes the changed Python files and reports the boundary gap with a
+pytest (or unittest) verify command; the top finding is labeled
+`State: preview language, advisory only`. For the repository-wide ranking and a
+repair recommendation, run `ripr pilot --root .`. When the Rust ranking is
+empty, pilot's top recommendation is the Python repair card
+(`language: python (preview)`) and its `Next, in order:` route; run the steps it
+prints.
 
-```bash
-ripr pilot --root .
-```
-
-When the Rust ranking is empty, pilot's top recommendation is the Python
-repair card (`language: python (preview)`) and its `Next, in order:` route;
-run the steps it prints. Both commands write under `target/ripr/` (see the `.gitignore` note above;
-doctor and pilot also say so on the first run when no ignore rule covers it).
-
-A repository with no marker and no Python source under `src/` or `tests/`
-leaves the preview disabled; `check` then skips
-Python files and prints:
+If the preview is not enabled (no marker, no Python source under `src/` or
+`tests/`, or a `ripr.toml` with `enabled = ["rust"]`), `check` skips Python files
+and prints:
 
 ```text
 Note: this diff contains 1 Python file. The Python adapter is preview and not enabled, so these files were not analyzed — this is NOT a clean Rust-grade result. Enable it in ripr.toml [languages] to analyze them.
@@ -388,70 +422,58 @@ To enable, add to ripr.toml:
 enabled = ["python"]
 ```
 
-Enable it exactly as printed when the preview is not auto-enabled. Python
-repair routes and their evidence limits are described in
-[Known Limits](#known-limits) and
-[Language adapters](LANGUAGE_ADAPTER_PREVIEW.md).
-
-For Python and TypeScript the repair route is: `ripr check` -> `ripr agent
-repair --gap-id <gap> --base <base> --phase before` (check prints the exact
-command) -> edit the one named test file -> commit it -> `ripr continue
---attempt <id>`. `ripr repair` (seam-based) and `ripr agent stub` are
-Rust-only.
+Enable it exactly as printed. Repair routes and evidence limits are in
+[Known Limits](#known-limits) and [Language adapters](LANGUAGE_ADAPTER_PREVIEW.md).
+The repair route is the [shared preview repair route](#python-and-typescript-repair-route)
+below.
 
 ### TypeScript first hour (preview)
 
-TypeScript analysis is `preview`: its evidence is advisory, not Rust-grade. A
-TypeScript project needs no `ripr.toml` — when the repository root has a
-`tsconfig.json` or `jsconfig.json` (or TypeScript source under `src/` or
-`tests/`), or a package one level down or under `packages/*`, `apps/*`,
-`libs/*` or `libraries/*` has one, the CLI auto-enables the preview.
-JavaScript-led repositories can also qualify through a root `package.json`
-with eligible JavaScript or TypeScript source. See
+TypeScript analysis is `preview`: its evidence is advisory, not Rust-grade. No
+`ripr.toml` is needed. The CLI auto-enables the preview when the repository root
+has a `tsconfig.json` or `jsconfig.json` (or TypeScript source under `src/` or
+`tests/`), or a package one level down or under `packages/*`, `apps/*`, `libs/*`
+or `libraries/*` has one. JavaScript-led repositories can also qualify through a
+root `package.json` with eligible JavaScript or TypeScript source; see
 [language configuration](CONFIGURATION.md#languages) for the full detection
 rules, including mixed Rust repositories and compiled-adapter requirements.
-Work from a TypeScript repository on a branch with a change to inspect.
-
-Before the first run, add `/target/ripr/` (or `/target/`) to `.gitignore`:
-ripr writes its artifacts under `target/ripr`, and `check`, `pilot` and
-`agent repair` all create it. Then run:
+Work from a TypeScript repository on a branch with a change to inspect, with
+`/target/ripr/` in `.gitignore` as above, and run:
 
 ```bash
 ripr check
 ```
 
-`check` analyzes the changed TypeScript files; its top finding is labeled
+`check` analyzes the changed TypeScript files. The top finding is labeled
 `State: preview language, advisory only` and, when the repair packet is
 complete, names the test file, the missing case and a verify command such as
-`npx --no-install vitest run tests/pricing.test.ts`. It also prints the route
-under `Next: drill into the top finding:`. Start the repair with the
-`ripr agent repair` line it prints:
+`npx --no-install vitest run tests/pricing.test.ts`. It prints the route under
+`Next: drill into the top finding:`. A repository with a `ripr.toml` that sets
+`enabled = ["rust"]` keeps TypeScript off. Evidence limits are in
+[Known Limits](#known-limits) and [Language adapters](LANGUAGE_ADAPTER_PREVIEW.md).
+
+### Python and TypeScript repair route
+
+Run each step as `check` prints it:
 
 ```bash
 ripr agent repair --gap-id gap:typescript:... --base main --phase before
 ```
 
-Edit only the one test file the packet names (production code stays
-unchanged), **commit** the test, then run the `ripr continue` line the
-command printed:
+1. Edit only the one test file the packet names; production code stays
+   unchanged.
+2. **Commit** the test.
+3. Run the `ripr continue --attempt repair-attempt-...` line the previous command
+   printed. It runs the after phase: when the gap reads `exposed` it writes the
+   receipt under `target/ripr/reports/`. It compares static evidence only and
+   does not run your tests.
+4. Run the verify command from `check` yourself after `continue` succeeds (some
+   TypeScript runners write cache files that the attempt would otherwise
+   observe) and keep the test only if it passes.
 
-```bash
-ripr continue --attempt repair-attempt-...
-```
-
-`continue` runs the after phase: when the gap reads `exposed` it writes the
-receipt under `target/ripr/reports/`. It compares static evidence only and
-does not run your tests, so run the verify command from `check` yourself after
-`continue` succeeds (some TypeScript runners write cache files that the attempt
-would otherwise observe) and keep the test only if it passes.
-
-`ripr repair` (seam-based) and `ripr agent stub` are Rust-only: on a
-TypeScript path `ripr repair` points back to `ripr check`, and `ripr agent
-stub --at src/file.ts:N` exits `3` with `stub generation supports Rust files
-only`. A repository with a `ripr.toml` that sets `enabled = ["rust"]` keeps
-TypeScript off. Evidence limits are described in
-[Known Limits](#known-limits) and
-[Language adapters](LANGUAGE_ADAPTER_PREVIEW.md).
+`ripr repair` (seam-based) and `ripr agent stub` are Rust-only: on a Python or
+TypeScript path `ripr repair` points back to `ripr check`, and `ripr agent stub
+--at PATH:N` exits `3` with `stub generation supports Rust files only`.
 
 ## VS Code First Hour
 

@@ -1,0 +1,33 @@
+{
+  "subject_id": "authored-py-unittest-init-reexport",
+  "origin": "authored",
+  "version_label": "authored@12237",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "setup.cfg",
+      "sha256": "3f62166e83d5b84d55a74a8e594386eb949780b2560fd8f37fa5f6932977fcef"
+    },
+    {
+      "path": "shapes/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "shapes/rates/__init__.py",
+      "sha256": "5fd6de750181c0a22717ecdadb8db8d737b36ff3878c3881e402ba3ccbd86c10"
+    },
+    {
+      "path": "shapes/rates/table.py",
+      "sha256": "952162fa5e8890646b6e80e9c17356a6ee1584fe7bd4977570962928de0c9333"
+    },
+    {
+      "path": "tests/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "tests/test_rates.py",
+      "sha256": "33f9865444e31e42aa27bdbbad8b0887ea77ec36a4c22c0c523955246512df48"
+    }
+  ]
+}

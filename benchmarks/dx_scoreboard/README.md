@@ -94,6 +94,8 @@ never raised:
 | `ripr-swarm-2026-10` | `medium` | 1,536 MB | 1,024 MB | 2026-11-04 |
 | `vscode-typescript` | `python_ts` | 1,024 MB | 512 MB | 2026-11-04 |
 
+`bevy`, `deno` and `polars` (heavy, `large` tier) came from the 2026-11-08 robustness sweep (shallow clones, 15-file edits, peak RSS at most 525 MB; warm check 18 s, 32 s and 26 s; cold pilot 275 s, 73 s and 275 s). Their memory ceilings (700 MB) sit under the 1,024 MB large-tier bar, so none carries a `memory_ratchet` note, and the latency ceilings are ratchets about 30% above those measurements. The sweep's edits were synthetic; the rows pin a real upstream commit that edits several Rust files instead. The pilot stopping at exactly 275 s on bevy and polars is a suspected pilot-analysis-budget cut with a partial summary, **not verified**. A partial pilot is recorded as an incomplete sample, never a value, so a ceilinged pilot metric on those rows fails the gate until the pilot completes; the cold-pilot sample detail names the summary's `reason` (for example `timeout`) beside its `status`, so the first measured run shows whether the cut was a budget.
+
 Latency is not tiered: the ladder's 1 s p50 and 3 s p95 apply up to about
 1,000 Rust files and are the targets of `speed.warm_check_p50_ms` and
 `speed.warm_check_p95_ms`; rows above that size are held by their per-row
@@ -340,6 +342,16 @@ baseline" instead of failing the gate; one that does not complete still fails.
 A repository that completes again after an incomplete baseline sample has no
 value to compare, so it is listed as "completed again" and left out of the
 compared worst.
+A passing gate is named honestly. When the missing-evidence counts the
+headline prints — `not_measured` plus the not-compared list — exceed half
+of the selected metrics, the gate status is `pass_with_gaps` instead of
+plain `pass`, and the headline rollup (in the Markdown report, on the
+console, and as `gate.counts` in the JSON) prints the meets-target,
+below-target, not-measured, failed and not-compared counts.
+`pass_with_gaps` still exits zero; only `fail` exits nonzero, because the
+gate judges regressions, not completeness. The committed baseline, for
+example, records 37 `not_measured` and 17 uncompared of 66 metrics, so a
+run matching it would headline `pass_with_gaps`, not `pass`.
 Metrics the baseline measured that a run cannot compare, such as ingested
 metrics without a receipt, are listed as not compared. One exception: when
 every selected metric has no value this run and nothing comparable (as

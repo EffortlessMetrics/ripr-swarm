@@ -8,7 +8,7 @@ use crate::output::preview_actionability::{
 /// finding (`--format json` carries more plus `related_tests_total`). Number of
 /// reaching tests is core exposure evidence, so a window that does not say it
 /// is a window reads as the whole evidence.
-const MAX_RELATED_TESTS_SHOWN: usize = 5;
+pub(super) const MAX_RELATED_TESTS_SHOWN: usize = 5;
 
 /// #4320: the human evidence window shows at most this many observed values
 /// per finding (`--format json` keeps its own ranked 32-value window and
@@ -346,6 +346,32 @@ fn evidence_path<T>(
         lines.push(project(line, EvidenceSource::Flow(sink)));
     }
 
+    // A test judged by several retained assertion rows used to repeat its
+    // miss sentence once per row, so the explain context carried the same
+    // sentence N times (agent-efficiency study, Nov 2-4: the observation
+    // hedge appeared 8x across 4 tests). The first row of a test states
+    // `<label>: <reason>`; later rows of the same test keep the label alone —
+    // the reason is one fact about one test. Distinct reasons per row stay,
+    // and `ripr explain`'s verdict block references the row instead of
+    // re-stating any of this.
+    let mut stated_reasons: std::collections::BTreeMap<(String, usize, String), Vec<String>> =
+        std::collections::BTreeMap::new();
+    let mut reason_already_stated =
+        |test: &crate::domain::RelatedTest, label: &str, why: &str| -> bool {
+            let key = (
+                test.file.to_string_lossy().into_owned(),
+                test.line,
+                test.name.clone(),
+            );
+            let stated = stated_reasons.entry(key).or_default();
+            let reason = format!("{label}: {why}");
+            if stated.contains(&reason) {
+                true
+            } else {
+                stated.push(reason);
+                false
+            }
+        };
     for test in finding.related_tests.iter().take(MAX_RELATED_TESTS_SHOWN) {
         let why =
             crate::output::related_test_miss::related_test_miss_reason(test, &finding.probe.family);
@@ -353,13 +379,17 @@ fn evidence_path<T>(
             // #5344: an examined test with no matched oracle says why it
             // misses, then shows the assertion it was judged by, so the
             // claim can be checked in the source.
+            let label = crate::output::related_test_miss::related_test_miss_label(test);
             let mut line = format!(
-                "related test {}:{} {} {}: {why}",
+                "related test {}:{} {} {}",
                 display_path(&test.file),
                 test.line,
                 test.name,
-                crate::output::related_test_miss::related_test_miss_label(test),
+                label,
             );
+            if !reason_already_stated(test, label, why) {
+                line.push_str(&format!(": {why}"));
+            }
             if let Some(oracle) = &test.oracle {
                 line.push_str(&format!(
                     "; checked `{}`",
@@ -401,12 +431,14 @@ fn evidence_path<T>(
         // A matched row keeps its oracle projection and adds the reason it
         // still misses, so the oracle kind and strength stay readable.
         if let Some(why) = why {
+            let label = crate::output::related_test_miss::related_test_miss_label(test);
             let kept = line.trim_end_matches(';').len();
             line.truncate(kept);
-            line.push_str(&format!(
-                "; {}: {why}",
-                crate::output::related_test_miss::related_test_miss_label(test)
-            ));
+            if reason_already_stated(test, label, &why) {
+                line.push_str(&format!("; {label}"));
+            } else {
+                line.push_str(&format!("; {label}: {why}"));
+            }
         }
         lines.push(project(
             line,
@@ -532,13 +564,42 @@ pub(super) fn weakness_lines(finding: &Finding) -> Vec<String> {
         // keeps it.
         .map(|missing| plain_internal_wording(&plain_observation_wording(missing)))
         .collect::<Vec<_>>();
+    // #11926: only the `missing` sentences present before this loop can state a
+    // discriminator; bullets this loop pushes must never suppress a later one.
+    let stated = lines.len();
     for discriminator in &finding.activation.missing_discriminators {
+        // The Python adapter's `missing` sentence already carries the
+        // discriminator's reason (and its observed values). Restating it on a
+        // second bullet prints the same facts twice, so the bullet is dropped
+        // when one of those sentences contains the full reason and the value
+        // as a whole token (`n == 1` is not found inside `n == 10`). JSON
+        // `missing` and `missing_discriminators` are unchanged.
+        if !discriminator.reason.is_empty()
+            && !discriminator.value.is_empty()
+            && lines[..stated].iter().any(|line| {
+                line.contains(discriminator.reason.as_str())
+                    && contains_whole_token(line, discriminator.value.as_str())
+            })
+        {
+            continue;
+        }
         lines.push(format!(
             "missing discriminator {}: {}",
             discriminator.value, discriminator.reason
         ));
     }
     lines
+}
+
+/// Whether `needle` occurs in `haystack` not flanked by identifier characters,
+/// so `n == 1` does not match inside `n == 10`.
+fn contains_whole_token(haystack: &str, needle: &str) -> bool {
+    let is_word = |c: char| c.is_alphanumeric() || c == '_';
+    haystack.match_indices(needle).any(|(start, matched)| {
+        let before = haystack[..start].chars().next_back();
+        let after = haystack[start + matched.len()..].chars().next();
+        !before.is_some_and(is_word) && !after.is_some_and(is_word)
+    })
 }
 
 /// Whether a `missing` entry only restates a stage line the Evidence block

@@ -622,6 +622,48 @@ fn context_selector_miss_prints_error_without_a_failed_progress_line() -> Result
     Ok(())
 }
 
+/// #13239: `explain` takes the same fresh-run selector-miss path `context`
+/// fixed in #9244 item 9 — a miss after a successful analysis is
+/// user-fixable usage, so the real error and exit 2 stay but no
+/// `ripr progress: failed` line may precede them.
+#[test]
+fn explain_selector_miss_prints_error_without_a_failed_progress_line() -> Result<(), String> {
+    let fixture = DiffFixture::new()?;
+    let root = fixture.0.display().to_string();
+    let diff = fixture.0.join("change.diff").display().to_string();
+    let output = ripr()
+        .args([
+            "explain",
+            "--root",
+            root.as_str(),
+            "--diff",
+            diff.as_str(),
+            "nocolon",
+        ])
+        .output()
+        .map_err(|error| format!("run ripr explain: {error}"))?;
+    assert_eq!(output.status.code(), Some(2), "selector miss keeps exit 2");
+    assert!(output.stdout.is_empty(), "selector miss keeps empty stdout");
+    let stderr = stderr_text(&output);
+    assert!(
+        stderr.contains("no finding matched \"nocolon\""),
+        "the real selector error must still print: {stderr}"
+    );
+    assert!(
+        stderr.contains("ripr progress: building_output [diff]"),
+        "analysis progress still discloses the real work: {stderr}"
+    );
+    assert!(
+        !stderr.contains("ripr progress: failed"),
+        "a user-fixable selector miss must not project failed: {stderr}"
+    );
+    assert!(
+        !stderr.contains("ripr progress: completed"),
+        "a refused explain run must not project completed: {stderr}"
+    );
+    Ok(())
+}
+
 fn run_check_with_env(
     fixture: &DiffFixture,
     extra: &[&str],
@@ -1298,6 +1340,72 @@ fn context_on_a_pipe_is_silent_by_default() -> Result<(), String> {
     Ok(())
 }
 
+/// `ripr explain --format agent` is the compact report a coding agent reads,
+/// and the agent loop follows `ripr check`'s printed `next=ripr explain ...`
+/// line, which carries no `--quiet`. On a piped stderr it is silent by default
+/// like `check --format agent`; the human explain keeps its progress (negative
+/// control) and `RIPR_PROGRESS=1` restores the stream.
+#[test]
+fn explain_agent_format_on_a_pipe_is_silent_by_default() -> Result<(), String> {
+    let fixture = DiffFixture::new()?;
+    let check = run_check_as(ripr_default(), &fixture, &["--format", "json"])?;
+    let parsed: serde_json::Value = serde_json::from_slice(&check.stdout)
+        .map_err(|error| format!("stdout is not JSON: {error}"))?;
+    let finding_id = parsed["findings"]
+        .as_array()
+        .and_then(|findings| findings.first())
+        .and_then(|finding| finding["id"].as_str())
+        .ok_or_else(|| format!("diff fixture must report a finding id: {parsed}"))?
+        .to_string();
+    let root = fixture.0.display().to_string();
+    let diff = fixture.0.join("change.diff").display().to_string();
+    let human = [
+        "explain",
+        "--root",
+        root.as_str(),
+        "--diff",
+        diff.as_str(),
+        finding_id.as_str(),
+    ];
+    let mut agent = human.to_vec();
+    agent.extend_from_slice(&["--format", "agent"]);
+    let default = ripr_default()
+        .args(&agent)
+        .output()
+        .map_err(|error| format!("run ripr explain --format agent: {error}"))?;
+    assert!(default.status.success(), "{}", stderr_text(&default));
+    assert!(
+        String::from_utf8_lossy(&default.stdout).starts_with("#ripr explain agent"),
+        "explain must still render the agent report: {}",
+        String::from_utf8_lossy(&default.stdout)
+    );
+    assert!(
+        !stderr_text(&default).contains("ripr progress:"),
+        "explain --format agent on a pipe is silent by default: {}",
+        stderr_text(&default)
+    );
+    let forced = ripr()
+        .args(&agent)
+        .output()
+        .map_err(|error| format!("run ripr explain --format agent: {error}"))?;
+    assert!(
+        stderr_text(&forced).contains("ripr progress: loading_input [diff]"),
+        "RIPR_PROGRESS=1 restores explain progress (control): {}",
+        stderr_text(&forced)
+    );
+    assert_eq!(default.stdout, forced.stdout);
+    let human_default = ripr_default()
+        .args(human)
+        .output()
+        .map_err(|error| format!("run ripr explain: {error}"))?;
+    assert!(
+        stderr_text(&human_default).contains("ripr progress: loading_input [diff]"),
+        "the human explain keeps progress on a pipe: {}",
+        stderr_text(&human_default)
+    );
+    Ok(())
+}
+
 /// Catalog paths whose production path can emit progress or `wrote` narration.
 /// A path not in this list or [`NO_NARRATION`] fails so a new command cannot
 /// rot into an unclassified default (#12103). Runtime lives here because a new
@@ -1343,6 +1451,7 @@ const NO_NARRATION: &[&str] = &[
     "calibrate",
     "calibrate cargo-mutants",
     "capabilities",
+    "completions",
     "config",
     "config validate",
     "coverage-grip",
@@ -1355,6 +1464,7 @@ const NO_NARRATION: &[&str] = &[
     "first-action",
     "first-pr",
     "gate",
+    "gate check",
     "gate evaluate",
     "help",
     "impacted-evidence",

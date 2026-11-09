@@ -46,6 +46,7 @@ fn policy_with(
         untracked_build_lockfile: None,
         inline_test_module_target: false,
         external_test_file_target: false,
+        new_test_proposal: None,
     }
 }
 

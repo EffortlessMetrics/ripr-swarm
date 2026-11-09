@@ -1,13 +1,15 @@
-//! Arg-parsing and dispatch for `ripr gate evaluate`.
+//! Arg-parsing and dispatch for `ripr gate evaluate` and `ripr gate check`.
 //!
-//! This is the CLI adapter layer only. Gate evaluation and report rendering
+//! `gate check` is a composition, not a second policy: it runs the existing
+//! `review-comments` producer and hands its guidance document to the same
+//! `gate evaluate` path (RIPR-SPEC-0435). This is the CLI adapter layer only. Gate evaluation and report rendering
 //! live in `crate::output::gate`. This module owns argv parsing, output
 //! destination selection, and exit mapping for the gate command family.
 
 use crate::cli::CommandError;
 use crate::cli::commands_options::GateOptions;
 use crate::cli::help;
-use crate::cli::parse::expect_value;
+use crate::cli::parse::{expect_value, reconcile_root};
 use crate::cli::suggest::{unknown_argument, unknown_value};
 use crate::output;
 use std::io::IsTerminal;
@@ -45,15 +47,28 @@ pub(in crate::cli) fn gate(args: &[String]) -> Result<(), CommandError> {
             return Ok(());
         }
     };
-    if subcommand != "evaluate" {
-        return Err(CommandError::from(unknown_value(
+    match subcommand {
+        "evaluate" => gate_evaluate(rest),
+        "check" => gate_check(rest),
+        _ => Err(CommandError::from(unknown_value(
             "gate subcommand",
             subcommand,
-            &["evaluate"],
-        )));
+            GATE_SUBCOMMANDS,
+        ))),
     }
+}
 
-    let options = parse_gate_options(rest)?;
+const GATE_SUBCOMMANDS: &[&str] = &["evaluate", "check"];
+
+fn gate_evaluate(args: &[String]) -> Result<(), CommandError> {
+    let options = parse_gate_options(args)?;
+    evaluate_and_write(&options)
+}
+
+/// Evaluate a parsed gate request, write both reports, and map the decision
+/// onto the exit contract. Shared by `gate evaluate` and `gate check` so the
+/// two commands cannot drift into separate decision or exit paths.
+fn evaluate_and_write(options: &GateOptions) -> Result<(), CommandError> {
     crate::atomic_file::ensure_report_output_contained(&options.input.root)?;
     // Surface the missing-input requirement directly instead of burying it
     // inside the gate-decision.json config_errors array (#2589 review).
@@ -110,6 +125,7 @@ pub(in crate::cli) fn gate(args: &[String]) -> Result<(), CommandError> {
 
 fn parse_gate_options(args: &[String]) -> Result<GateOptions, String> {
     let mut root = PathBuf::from(".");
+    let mut root_explicit = false;
     let mut repo_exposure = None;
     let mut pr_guidance = None;
     let mut gap_ledger = None;
@@ -122,6 +138,7 @@ fn parse_gate_options(args: &[String]) -> Result<GateOptions, String> {
     let mut mutation_calibration = None;
     let mut baseline = None;
     let mut exception_policy = None;
+    let mut acknowledgements = None;
     let mut mode = output::gate::GateMode::VisibleOnly;
     let mut mode_explicit = false;
     let mut acknowledgement_labels = Vec::new();
@@ -133,7 +150,10 @@ fn parse_gate_options(args: &[String]) -> Result<GateOptions, String> {
         match args[i].as_str() {
             "--root" => {
                 i += 1;
-                root = non_empty_path_arg(args, i, "--root", "gate")?;
+                let value = non_empty_string_arg(args, i, "--root", "gate")?;
+                let reconciled = reconcile_root(&root, root_explicit, &value, "gate")?;
+                root = reconciled;
+                root_explicit = true;
             }
             "--repo-exposure" => {
                 i += 1;
@@ -192,6 +212,10 @@ fn parse_gate_options(args: &[String]) -> Result<GateOptions, String> {
             "--exception-policy" => {
                 i += 1;
                 exception_policy = Some(non_empty_path_arg(args, i, "--exception-policy", "gate")?);
+            }
+            "--acknowledgements" => {
+                i += 1;
+                acknowledgements = Some(non_empty_path_arg(args, i, "--acknowledgements", "gate")?);
             }
             "--mode" => {
                 i += 1;
@@ -252,10 +276,268 @@ fn parse_gate_options(args: &[String]) -> Result<GateOptions, String> {
             mode,
             acknowledgement_labels,
             exception_policy,
+            acknowledgements,
         },
         out,
         out_md,
         mode_explicit,
+    })
+}
+
+/// Default guidance path for `gate check`: the same path `review-comments`
+/// writes by default, so the gate report names the document CI already
+/// archives.
+const DEFAULT_GATE_CHECK_GUIDANCE: &str = "target/ripr/review/comments.json";
+
+/// A parsed `gate check` request: the producer argv for `review-comments` and
+/// the fully validated `gate evaluate` options that consume its output.
+#[derive(Debug)]
+struct GateCheckPlan {
+    review_comments_args: Vec<String>,
+    guidance_out: PathBuf,
+    gate: GateOptions,
+}
+
+/// `ripr gate check`: run `review-comments`, then `gate evaluate` over the
+/// guidance it wrote, in one process with one exit status.
+///
+/// Fail-closed contract: a stale guidance document from an earlier run is
+/// removed first, so a producer that fails before writing leaves no document
+/// and the gate's existing `config_error` path (exit 2) decides. A producer
+/// that writes an incomplete or refused document is likewise a
+/// `config_error`. No decision is derived here; `evaluate_and_write` owns it.
+fn gate_check(args: &[String]) -> Result<(), CommandError> {
+    gate_check_with_producer(args, super::review_comments)
+}
+
+/// `gate check` over an injectable producer, so tests can prove the
+/// fail-closed contract for a producer that writes guidance and then fails.
+fn gate_check_with_producer(
+    args: &[String],
+    produce: impl FnOnce(&[String]) -> Result<(), String>,
+) -> Result<(), CommandError> {
+    let plan = parse_gate_check_plan(args)?;
+    // Refuse escaping output paths (for example a committed `target` symlink)
+    // before deleting anything, not only before the producer writes.
+    crate::atomic_file::ensure_report_output_contained(&plan.gate.input.root)?;
+    crate::atomic_file::ensure_relative_output_contained(&plan.guidance_out)?;
+    ensure_guidance_parent_contained(&plan.guidance_out)?;
+    remove_stale_guidance(&plan.guidance_out)?;
+    if let Err(error) = produce(&plan.review_comments_args) {
+        // The producer can fail after it wrote a complete-looking document
+        // (for example its deadline or receipt write fails afterwards). An
+        // errored run never feeds the gate: drop whatever it left so the
+        // evaluator sees a missing input and decides config_error.
+        remove_stale_guidance(&plan.guidance_out)?;
+        eprintln!(
+            "ripr gate check: review-comments could not complete: {error}; the gate fails closed with config_error (exit 2)"
+        );
+    }
+    evaluate_and_write(&plan.gate)
+}
+
+/// Refuse destinations that would overwrite each other. review-comments
+/// writes the guidance JSON and its `.md` companion (the same leaf when the
+/// guidance path itself ends in `.md`), and the gate then writes its two
+/// reports; any shared leaf would lose the guidance or feed the gate a
+/// Markdown file. Compared lexically on absolute spellings, like
+/// `parse_gate_options` compares `--out` and `--out-md`.
+fn refuse_overlapping_outputs(guidance_out: &Path, gate: &GateOptions) -> Result<(), String> {
+    let absolute = |path: &Path, flag: &str| {
+        std::path::absolute(path).map_err(|err| {
+            format!(
+                "gate check could not resolve {flag}: {err}; pass a path whose directory exists"
+            )
+        })
+    };
+    let guidance = absolute(guidance_out, "--guidance-out")?;
+    let guidance_md = absolute(
+        &super::review_comments::review_comments_markdown_path(guidance_out),
+        "--guidance-out",
+    )?;
+    if output::path::same_output_leaf(&guidance, &guidance_md) {
+        return Err(
+            "gate check --guidance-out names a Markdown path; pass a JSON path such as target/ripr/review/comments.json, because review-comments writes its .md companion next to it"
+                .to_string(),
+        );
+    }
+    let out = absolute(&gate.out, "--out")?;
+    let out_md = absolute(&gate.out_md, "--out-md")?;
+    for produced in [&guidance, &guidance_md] {
+        for report in [&out, &out_md] {
+            if output::path::same_output_leaf(produced, report) {
+                return Err(format!(
+                    "gate check --guidance-out and the gate report path {} name the same file; choose distinct guidance and report destinations",
+                    output::path::human_path(report)
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// A relative guidance path is resolved against the invoking directory. Its
+/// existing parent must resolve inside that directory, so a committed
+/// symlink on the way (for example `out -> /elsewhere`) cannot make gate
+/// check delete files outside the workspace. Absolute paths are the caller's
+/// explicit choice, as for the shared report guards.
+fn ensure_guidance_parent_contained(path: &Path) -> Result<(), String> {
+    if path.is_absolute() {
+        return Ok(());
+    }
+    let cwd = std::env::current_dir()
+        .map_err(|err| format!("gate check cannot resolve the current directory: {err}; run ripr from an existing, readable directory"))?;
+    let Some(parent) = cwd.join(path).parent().map(Path::to_path_buf) else {
+        return Ok(());
+    };
+    // Walk up to the nearest existing ancestor; missing directories are
+    // created later by the producer under that ancestor.
+    let mut existing = parent.as_path();
+    while !existing.exists() {
+        match existing.parent() {
+            Some(next) => existing = next,
+            None => return Ok(()),
+        }
+    }
+    let canonical_cwd = cwd
+        .canonicalize()
+        .map_err(|err| format!("gate check cannot resolve the current directory: {err}; run ripr from an existing, readable directory"))?;
+    let canonical_parent = existing.canonicalize().map_err(|err| {
+        format!(
+            "gate check cannot resolve the --guidance-out directory {}: {err}; pass a --guidance-out whose directory is readable",
+            existing.display()
+        )
+    })?;
+    if canonical_parent.starts_with(&canonical_cwd) {
+        Ok(())
+    } else {
+        Err(format!(
+            "refusing gate check --guidance-out {}: its directory resolves outside the current directory ({}); pass a path inside the workspace or an explicit absolute path",
+            output::path::human_path(path),
+            canonical_parent.display()
+        ))
+    }
+}
+
+/// Remove the guidance JSON and its Markdown companion, if present.
+fn remove_stale_guidance(path: &Path) -> Result<(), String> {
+    for target in [
+        path.to_path_buf(),
+        super::review_comments::review_comments_markdown_path(path),
+    ] {
+        match std::fs::remove_file(&target) {
+            Ok(()) => {}
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+            Err(err) => {
+                return Err(format!(
+                    "gate check could not remove the previous guidance document {}: {err}; delete it or pass --guidance-out naming a writable path, then rerun",
+                    output::path::human_path(&target)
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn parse_gate_check_plan(args: &[String]) -> Result<GateCheckPlan, String> {
+    let mut review_args: Vec<String> = Vec::new();
+    let mut gate_args: Vec<String> = Vec::new();
+    let mut root_explicit = false;
+    let mut base = None;
+    let mut head = None;
+    let mut mode = None;
+    let mut guidance_out = PathBuf::from(DEFAULT_GATE_CHECK_GUIDANCE);
+
+    let mut i = 0usize;
+    while i < args.len() {
+        let flag = args[i].as_str();
+        match flag {
+            "--base" => {
+                i += 1;
+                base = Some(non_empty_string_arg(args, i, flag, "gate check")?);
+            }
+            "--head" => {
+                i += 1;
+                head = Some(non_empty_string_arg(args, i, flag, "gate check")?);
+            }
+            "--timeout-ms" => {
+                i += 1;
+                let value = non_empty_string_arg(args, i, flag, "gate check")?;
+                // Validate here so a bad budget is a usage error before any
+                // file is removed, not a config_error after.
+                crate::cli::commands_numeric::parse_positive_u64(&value, flag)?;
+                review_args.extend([flag.to_string(), value]);
+            }
+            "--guidance-out" => {
+                i += 1;
+                guidance_out = non_empty_path_arg(args, i, flag, "gate check")?;
+            }
+            "--mode" => {
+                i += 1;
+                let value = expect_value(args, i, flag)?;
+                // Validate here so a bad mode fails before analysis starts.
+                output::gate::GateMode::parse(value)?;
+                mode = Some(value.to_string());
+            }
+            "--root" => {
+                i += 1;
+                let value = non_empty_string_arg(args, i, flag, "gate check")?;
+                root_explicit = true;
+                review_args.extend([flag.to_string(), value.clone()]);
+                gate_args.extend([flag.to_string(), value]);
+            }
+            "--label"
+            | "--labels-json"
+            | "--acknowledgement-label"
+            | "--exception-policy"
+            | "--acknowledgements"
+            | "--baseline"
+            | "--out"
+            | "--out-md" => {
+                i += 1;
+                let value = non_empty_string_arg(args, i, flag, "gate check")?;
+                gate_args.extend([flag.to_string(), value]);
+            }
+            other => return Err(unknown_argument("gate check", other)),
+        }
+        i += 1;
+    }
+
+    let base = base.ok_or_else(|| {
+        "gate check requires --base <rev>; pass the pull request's base, for example `ripr gate check --base origin/main`".to_string()
+    })?;
+    let head = head.unwrap_or_else(|| "HEAD".to_string());
+    review_args.extend([
+        "--base".to_string(),
+        base,
+        "--head".to_string(),
+        head,
+        "--out".to_string(),
+        guidance_out.display().to_string(),
+    ]);
+
+    // `review-comments --out` follows the invoking directory while gate
+    // inputs resolve against `--root`; hand the gate an absolute path when a
+    // root is named so both sides name the same file.
+    let gate_guidance = if root_explicit || guidance_out.is_absolute() {
+        std::path::absolute(&guidance_out).map_err(|err| {
+            format!("gate check could not resolve --guidance-out: {err}; pass a path whose directory exists")
+        })?
+    } else {
+        guidance_out.clone()
+    };
+    gate_args.extend([
+        "--pr-guidance".to_string(),
+        gate_guidance.display().to_string(),
+        "--mode".to_string(),
+        mode.unwrap_or_else(|| output::gate::GateMode::Acknowledgeable.as_str().to_string()),
+    ]);
+    let gate = parse_gate_options(&gate_args)?;
+    refuse_overlapping_outputs(&guidance_out, &gate)?;
+    Ok(GateCheckPlan {
+        review_comments_args: review_args,
+        guidance_out,
+        gate,
     })
 }
 
@@ -466,6 +748,7 @@ mod tests {
                     mode: output::gate::GateMode::CalibratedGate,
                     acknowledgement_labels: vec!["custom-waive".to_string()],
                     exception_policy: None,
+                    acknowledgements: None,
                 },
                 out: PathBuf::from("target/ripr/reports/gate-decision.json"),
                 out_md: PathBuf::from("target/ripr/reports/gate-decision.md"),
@@ -489,13 +772,13 @@ mod tests {
         assert_eq!(
             gate(&args(&["inspect"])),
             Err(CommandError::Failure(
-                "unknown gate subcommand \"inspect\". Accepted: evaluate.".to_string()
+                "unknown gate subcommand \"inspect\". Accepted: evaluate, check.".to_string()
             ))
         );
         assert_eq!(
             gate(&args(&["foo"])),
             Err(CommandError::Failure(
-                "unknown gate subcommand \"foo\". Accepted: evaluate.".to_string()
+                "unknown gate subcommand \"foo\". Accepted: evaluate, check.".to_string()
             ))
         );
         assert_eq!(
@@ -529,6 +812,7 @@ mod tests {
                     mode: output::gate::GateMode::VisibleOnly,
                     acknowledgement_labels: Vec::new(),
                     exception_policy: None,
+                    acknowledgements: None,
                 },
                 out: PathBuf::from(output::gate::DEFAULT_GATE_OUT),
                 out_md: PathBuf::from("target/ripr/reports/gate-decision.md"),
@@ -542,7 +826,7 @@ mod tests {
         assert_eq!(
             gate(&args(&["evalute"])),
             Err(CommandError::Failure(
-                "unknown gate subcommand \"evalute\". Did you mean `evaluate`? Accepted: evaluate."
+                "unknown gate subcommand \"evalute\". Did you mean `evaluate`? Accepted: evaluate, check."
                     .to_string()
             ))
         );
@@ -578,7 +862,7 @@ mod tests {
         assert_ne!(
             flag_result,
             Err(CommandError::Failure(
-                "unknown gate subcommand \"--pr-guidance\". Accepted: evaluate.".to_string()
+                "unknown gate subcommand \"--pr-guidance\". Accepted: evaluate, check.".to_string()
             )),
             "leading --pr-guidance must not be a subcommand"
         );
@@ -1049,5 +1333,446 @@ mod tests {
         );
         assert_eq!(leaked, 0);
         Ok(())
+    }
+
+    // ── gate check (RIPR-SPEC-0435) ──────────────────────────────────────────
+
+    #[test]
+    fn gate_check_plan_defaults_to_acknowledgeable_over_fresh_guidance() -> Result<(), String> {
+        let plan = parse_gate_check_plan(&args(&[
+            "--base",
+            "origin/main",
+            "--label",
+            "ripr-waive",
+            "--labels-json",
+            "target/ci/labels.json",
+        ]))?;
+        assert_eq!(
+            plan.review_comments_args,
+            args(&[
+                "--base",
+                "origin/main",
+                "--head",
+                "HEAD",
+                "--out",
+                DEFAULT_GATE_CHECK_GUIDANCE,
+            ])
+        );
+        assert_eq!(
+            plan.guidance_out,
+            PathBuf::from(DEFAULT_GATE_CHECK_GUIDANCE)
+        );
+        assert_eq!(
+            plan.gate.input.pr_guidance,
+            Some(PathBuf::from(DEFAULT_GATE_CHECK_GUIDANCE))
+        );
+        assert_eq!(
+            plan.gate.input.mode,
+            output::gate::GateMode::Acknowledgeable
+        );
+        assert!(plan.gate.mode_explicit, "gate check always names its mode");
+        assert_eq!(plan.gate.input.labels, vec!["ripr-waive".to_string()]);
+        assert_eq!(
+            plan.gate.input.labels_json,
+            Some(PathBuf::from("target/ci/labels.json"))
+        );
+        assert_eq!(plan.gate.input.gap_ledger, None);
+        assert_eq!(plan.gate.out, PathBuf::from(output::gate::DEFAULT_GATE_OUT));
+        Ok(())
+    }
+
+    #[test]
+    fn gate_check_plan_routes_producer_and_gate_flags_to_their_owner() -> Result<(), String> {
+        let root = unique_command_test_dir("gate-check-plan-root");
+        std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+        let root_arg = root.display().to_string();
+        let plan = parse_gate_check_plan(&args(&[
+            "--root",
+            &root_arg,
+            "--base",
+            "abc123",
+            "--head",
+            "def456",
+            "--timeout-ms",
+            "5000",
+            "--guidance-out",
+            "target/gc/comments.json",
+            "--mode",
+            "baseline-check",
+            "--baseline",
+            ".ripr/gate-baseline.json",
+            "--acknowledgement-label",
+            "ripr-accept",
+            "--out",
+            "target/gc/gate.json",
+        ]))?;
+        assert_eq!(
+            plan.review_comments_args,
+            args(&[
+                "--root",
+                &root_arg,
+                "--timeout-ms",
+                "5000",
+                "--base",
+                "abc123",
+                "--head",
+                "def456",
+                "--out",
+                "target/gc/comments.json",
+            ])
+        );
+        assert_eq!(plan.gate.input.root, root);
+        assert_eq!(plan.gate.input.mode, output::gate::GateMode::BaselineCheck);
+        assert_eq!(
+            plan.gate.input.baseline,
+            Some(PathBuf::from(".ripr/gate-baseline.json"))
+        );
+        assert_eq!(
+            plan.gate.input.acknowledgement_labels,
+            vec!["ripr-accept".to_string()]
+        );
+        // With a named root the gate gets the absolute guidance path, because
+        // review-comments writes relative to the invoking directory.
+        let expected = std::path::absolute("target/gc/comments.json")
+            .map_err(|err| format!("absolute: {err}"))?;
+        assert_eq!(plan.gate.input.pr_guidance, Some(expected));
+        assert_eq!(plan.gate.out_md, PathBuf::from("target/gc/gate.md"));
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn gate_check_refuses_bad_surface_before_analysis() {
+        let missing_base = parse_gate_check_plan(&args(&["--head", "HEAD"]));
+        assert!(
+            matches!(&missing_base, Err(message) if message.contains("gate check requires --base <rev>")),
+            "{missing_base:?}"
+        );
+        // Candidate inputs belong to gate check itself; a caller cannot point
+        // it at a different (possibly stale) guidance document.
+        for flag in [
+            "--pr-guidance",
+            "--gap-ledger",
+            "--repo-exposure",
+            "--format",
+        ] {
+            let result = parse_gate_check_plan(&args(&["--base", "main", flag, "x"]));
+            assert!(
+                matches!(&result, Err(message) if message.contains(flag)),
+                "{flag} must be refused: {result:?}"
+            );
+        }
+        let bad_mode = parse_gate_check_plan(&args(&["--base", "main", "--mode", "strict"]));
+        assert!(bad_mode.is_err(), "unknown mode must refuse: {bad_mode:?}");
+        let empty_base = parse_gate_check_plan(&args(&["--base", " "]));
+        assert!(
+            empty_base.is_err(),
+            "blank base must refuse: {empty_base:?}"
+        );
+        for budget in ["0", "abc"] {
+            let result = parse_gate_check_plan(&args(&["--base", "main", "--timeout-ms", budget]));
+            assert!(
+                matches!(&result, Err(message) if message.contains("--timeout-ms")),
+                "--timeout-ms {budget} must be a usage error before analysis: {result:?}"
+            );
+        }
+        let unknown = gate(&args(&["chekc"]));
+        assert!(
+            matches!(&unknown, Err(CommandError::Failure(message)) if message.contains("check")),
+            "unknown subcommand must suggest check: {unknown:?}"
+        );
+    }
+
+    #[test]
+    fn gate_check_producer_failure_removes_stale_guidance_and_fails_closed()
+    -> Result<(), CommandError> {
+        // A base that resolves nowhere: review-comments cannot load a diff,
+        // whether or not the temp directory sits inside a git checkout. A clean guidance document from an earlier run sits at
+        // the guidance path. Control: evaluating that stale document alone
+        // passes, so a gate check that reused it would wrongly pass.
+        let dir = unique_command_test_dir("gate-check-stale");
+        std::fs::create_dir_all(&dir).map_err(|err| format!("create dir: {err}"))?;
+        let guidance = dir.join("comments.json");
+        let out = dir.join("gate-decision.json");
+        std::fs::write(&guidance, CLEAN_PR_GUIDANCE_JSON)
+            .map_err(|err| format!("write stale guidance: {err}"))?;
+        let dir_arg = dir.display().to_string();
+        let guidance_arg = guidance.display().to_string();
+        let out_arg = out.display().to_string();
+        gate(&args(&[
+            "evaluate",
+            "--root",
+            &dir_arg,
+            "--pr-guidance",
+            &guidance_arg,
+            "--mode",
+            "acknowledgeable",
+            "--out",
+            &out_arg,
+        ]))?;
+
+        let result = gate(&args(&[
+            "check",
+            "--root",
+            &dir_arg,
+            "--base",
+            "ripr-gate-check-no-such-base",
+            "--guidance-out",
+            &guidance_arg,
+            "--out",
+            &out_arg,
+        ]));
+        let Err(error) = result else {
+            return Err(CommandError::Failure(
+                "gate check must fail closed when review-comments cannot run".to_string(),
+            ));
+        };
+        assert_eq!(error.exit_code(), crate::cli::EXIT_COULD_NOT_COMPLETE);
+        assert!(
+            matches!(&error, CommandError::Failure(message) if message.contains(GATE_STATUS_CONFIG_ERROR)),
+            "{error:?}"
+        );
+        assert!(
+            !guidance.exists(),
+            "the stale guidance document must not survive a failed producer run"
+        );
+        let json_text =
+            std::fs::read_to_string(&out).map_err(|err| format!("read gate json: {err}"))?;
+        assert!(json_text.contains(&format!("\"status\": \"{GATE_STATUS_CONFIG_ERROR}\"")));
+        std::fs::remove_dir_all(&dir).map_err(|err| format!("remove dir: {err}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn gate_check_refuses_overlapping_guidance_and_report_paths() {
+        let markdown = parse_gate_check_plan(&args(&[
+            "--base",
+            "main",
+            "--guidance-out",
+            "target/gc/guidance.md",
+        ]));
+        assert!(
+            matches!(&markdown, Err(message) if message.contains("names a Markdown path")),
+            "a .md guidance path collides with its Markdown companion: {markdown:?}"
+        );
+        for (guidance, out) in [
+            ("target/gc/x.json", "target/gc/x.json"),
+            ("target/gc/x.json", "./target/gc/x.json"),
+            ("target/gc/x.json", "target/gc/other/../x.json"),
+        ] {
+            let result = parse_gate_check_plan(&args(&[
+                "--base",
+                "main",
+                "--guidance-out",
+                guidance,
+                "--out",
+                out,
+            ]));
+            assert!(
+                matches!(&result, Err(message) if message.contains("name the same file")),
+                "--guidance-out {guidance} with --out {out} must refuse: {result:?}"
+            );
+        }
+        let md_collision = parse_gate_check_plan(&args(&[
+            "--base",
+            "main",
+            "--guidance-out",
+            "target/gc/x.json",
+            "--out",
+            "target/gc/gate.json",
+            "--out-md",
+            "target/gc/x.md",
+        ]));
+        assert!(
+            matches!(&md_collision, Err(message) if message.contains("name the same file")),
+            "{md_collision:?}"
+        );
+        let distinct = parse_gate_check_plan(&args(&[
+            "--base",
+            "main",
+            "--guidance-out",
+            "target/gc/comments.json",
+            "--out",
+            "target/gc/gate.json",
+        ]));
+        assert!(distinct.is_ok(), "{distinct:?}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn gate_check_refuses_a_guidance_directory_that_escapes_through_a_symlink() -> Result<(), String>
+    {
+        // Relative guidance paths resolve against the current directory. A
+        // repository-relative link to a directory outside must be refused
+        // before anything is deleted.
+        let outside = unique_command_test_dir("gate-check-outside");
+        std::fs::create_dir_all(&outside).map_err(|err| format!("create outside: {err}"))?;
+        let victim = outside.join("comments.json");
+        std::fs::write(&victim, "{}").map_err(|err| format!("write victim: {err}"))?;
+        // Under `target/` but not `target/ripr/`, so the shared report guard
+        // that other tests run concurrently never enumerates this link.
+        let link = PathBuf::from("target").join(
+            unique_command_test_dir("gate-check-escape-link")
+                .file_name()
+                .map(std::ffi::OsStr::to_os_string)
+                .unwrap_or_default(),
+        );
+        if let Some(parent) = link.parent() {
+            std::fs::create_dir_all(parent).map_err(|err| format!("create parent: {err}"))?;
+        }
+        std::os::unix::fs::symlink(&outside, &link).map_err(|err| format!("symlink: {err}"))?;
+        let guidance = link.join("comments.json");
+        let result = ensure_guidance_parent_contained(&guidance);
+        let inside =
+            ensure_guidance_parent_contained(Path::new("target/gate-check-new-dir/x.json"));
+        std::fs::remove_file(&link).map_err(|err| format!("remove link: {err}"))?;
+        assert!(
+            matches!(&result, Err(message) if message.contains("resolves outside")),
+            "{result:?}"
+        );
+        assert!(victim.exists(), "the outside file must not be touched");
+        assert_eq!(inside, Ok(()));
+        std::fs::remove_dir_all(&outside).map_err(|err| format!("remove outside: {err}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn gate_check_producer_that_writes_then_fails_still_fails_closed() -> Result<(), CommandError> {
+        // review-comments can write a complete-looking document and only then
+        // fail (deadline, Markdown or receipt write). That document passes on
+        // its own; gate check must not evaluate it.
+        let dir = unique_command_test_dir("gate-check-late-failure");
+        std::fs::create_dir_all(&dir).map_err(|err| format!("create dir: {err}"))?;
+        let guidance = dir.join("comments.json");
+        let guidance_md = dir.join("comments.md");
+        let out = dir.join("gate-decision.json");
+        let dir_arg = dir.display().to_string();
+        let guidance_arg = guidance.display().to_string();
+        let out_arg = out.display().to_string();
+        let argv = args(&[
+            "--root",
+            &dir_arg,
+            "--base",
+            "main",
+            "--guidance-out",
+            &guidance_arg,
+            "--out",
+            &out_arg,
+        ]);
+
+        let mut produced_args = Vec::new();
+        let result = gate_check_with_producer(&argv, |producer_args| {
+            produced_args = producer_args.to_vec();
+            std::fs::write(&guidance, CLEAN_PR_GUIDANCE_JSON)
+                .map_err(|err| format!("write guidance: {err}"))?;
+            std::fs::write(&guidance_md, "# guidance\n")
+                .map_err(|err| format!("write guidance md: {err}"))?;
+            Err("review-comments exceeded --timeout-ms during artifact_io".to_string())
+        });
+        assert!(
+            produced_args
+                .windows(2)
+                .any(|pair| pair[0] == "--out" && pair[1] == guidance_arg),
+            "producer must write the guidance path: {produced_args:?}"
+        );
+        let Err(error) = result else {
+            return Err(CommandError::Failure(
+                "a producer error must never let gate check pass".to_string(),
+            ));
+        };
+        assert_eq!(error.exit_code(), crate::cli::EXIT_COULD_NOT_COMPLETE);
+        assert!(!guidance.exists() && !guidance_md.exists());
+
+        // Control: the same producer returning Ok lets the gate evaluate its
+        // document, so the failure above comes from the producer error alone.
+        let ok = gate_check_with_producer(&argv, |_| {
+            std::fs::write(&guidance, CLEAN_PR_GUIDANCE_JSON)
+                .map_err(|err| format!("write guidance: {err}"))
+        });
+        assert_eq!(ok, Ok(()));
+        std::fs::remove_dir_all(&dir).map_err(|err| format!("remove dir: {err}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn gate_check_blocks_a_weak_boundary_test_and_passes_waived_or_fixed() -> Result<(), String> {
+        use crate::testing::fixture_git::{fixture_git_ok, remove_fixture_tree};
+        let root = unique_command_test_dir("gate-check-e2e");
+        std::fs::create_dir_all(root.join("src")).map_err(|err| format!("create src: {err}"))?;
+        fixture_git_ok(&root, &["init", "-q", "--initial-branch=main"])?;
+        for (key, value) in [
+            ("user.name", "Gate Check"),
+            ("user.email", "gate-check@example.com"),
+            ("commit.gpgsign", "false"),
+        ] {
+            fixture_git_ok(&root, &["config", "--local", key, value])?;
+        }
+        let write = |path: &str, text: &str| {
+            std::fs::write(root.join(path), text).map_err(|err| format!("write {path}: {err}"))
+        };
+        write(
+            "Cargo.toml",
+            "[package]\nname = \"gatecheck\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )?;
+        write(
+            "src/lib.rs",
+            "pub fn is_large(n: u32) -> bool {\n    n > 10\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn large() {\n        assert!(is_large(50));\n    }\n}\n",
+        )?;
+        fixture_git_ok(&root, &["add", "."])?;
+        fixture_git_ok(&root, &["commit", "-q", "-m", "base"])?;
+        write(
+            "src/lib.rs",
+            "pub fn is_large(n: u32) -> bool {\n    n >= 10\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn large() {\n        assert!(is_large(50));\n    }\n}\n",
+        )?;
+        fixture_git_ok(&root, &["commit", "-q", "-am", "weak"])?;
+
+        let root_arg = root.display().to_string();
+        let guidance_arg = root.join("out/comments.json").display().to_string();
+        let out_arg = root.join("out/gate-decision.json").display().to_string();
+        std::fs::create_dir_all(root.join("out")).map_err(|err| format!("create out: {err}"))?;
+        let run = |extra: &[&str]| {
+            let mut argv = vec![
+                "check",
+                "--root",
+                &root_arg,
+                "--base",
+                "HEAD~1",
+                "--guidance-out",
+                &guidance_arg,
+                "--out",
+                &out_arg,
+            ];
+            argv.extend_from_slice(extra);
+            gate(&args(&argv))
+        };
+
+        let weak = run(&[]);
+        assert!(
+            matches!(&weak, Err(CommandError::Decision(message)) if message.contains(GATE_STATUS_BLOCKED)),
+            "a weak boundary test must block with exit 3: {weak:?}"
+        );
+        let waived = run(&["--label", "ripr-waive"]);
+        assert_eq!(waived, Ok(()), "the waiver label must acknowledge the gap");
+        let advisory = run(&["--mode", "visible-only"]);
+        assert_eq!(advisory, Ok(()), "visible-only never blocks on findings");
+
+        write(
+            "src/lib.rs",
+            "pub fn is_large(n: u32) -> bool {\n    n >= 10\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn large() {\n        assert!(is_large(50));\n        assert!(is_large(10));\n        assert!(!is_large(9));\n    }\n}\n",
+        )?;
+        fixture_git_ok(&root, &["commit", "-q", "-am", "boundary"])?;
+        let fixed = gate(&args(&[
+            "check",
+            "--root",
+            &root_arg,
+            "--base",
+            "HEAD~2",
+            "--guidance-out",
+            &guidance_arg,
+            "--out",
+            &out_arg,
+        ]));
+        assert_eq!(fixed, Ok(()), "a boundary-discriminating test must pass");
+        remove_fixture_tree(&root)
     }
 }

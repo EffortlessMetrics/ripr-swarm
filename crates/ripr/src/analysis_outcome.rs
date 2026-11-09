@@ -13,6 +13,30 @@ pub(crate) const ANALYSIS_OUTCOME_SCHEMA_VERSION: &str = "0.1";
 pub(crate) const ANALYSIS_OUTCOME_CLAIM_BOUNDARY: &str = "Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim.";
 pub(crate) const MAX_ANALYSIS_LIMITATION_DETAIL_CHARS: usize = 512;
 
+/// Recovery texts of the per-file "this file could not be parsed or read"
+/// limitations (Rust syntax/nesting, Rust non-UTF-8, Python syntax). The
+/// editor keys its parse-failure disclosure on these exact producer-owned
+/// texts, so a different per-file `producer_failure` (an internal
+/// classification error, a missing Python identity context) is not named a
+/// parse failure (#11799).
+pub(crate) const RUST_PARSE_FAILURE_RECOVERY: &str =
+    "Fix the file so it parses as Rust, then re-run the analysis.";
+/// Recovery text of the `rust_nesting_budget` static-limit decline. ripr
+/// declined to parse the file over a static limit, so it must not read as a
+/// syntax error; it does not certify the file as valid Rust either, because
+/// the nesting scan runs before parsing and a syntax error can coexist
+/// (#13660). The editor still marks the file (see
+/// `lsp::diagnostics::limitation_is_file_parse_failure`) with this text.
+pub(crate) const RUST_NESTING_BUDGET_RECOVERY: &str = "ripr declined to parse this file because it exceeds the nesting budget; split or flatten the deeply nested expression, long operator chain or `else if` chain, then re-run the analysis.";
+pub(crate) const RUST_NOT_UTF8_RECOVERY: &str = "Save the file as UTF-8, then re-run the analysis.";
+pub(crate) const PYTHON_PARSE_FAILURE_RECOVERY: &str =
+    "Fix the file so it parses as Python, then re-run the analysis.";
+/// The TypeScript/JavaScript producer reports a parse failure as a
+/// `language_scope_unsupported` limitation (not a `producer_failure`), so the
+/// editor keys on this text together with that kind (#13371).
+pub(crate) const TYPESCRIPT_PARSE_FAILURE_RECOVERY: &str =
+    "Fix the TypeScript or JavaScript parse error, then re-run the analysis.";
+
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum AnalysisOutcomeKind {
@@ -112,6 +136,17 @@ impl AnalysisOutcomeKind {
     /// MCP-owned surface phrasing housed in the single wording owner so the
     /// hint cannot drift from the shared cause sentence above.
     pub(crate) const EMPTY_SCOPE_MCP_BASE_RETRY_ROUTE: &str = "retry ripr_refresh with `base` set to the revision your change branches from, for example {\"base\": \"origin/main\"}";
+
+    /// #13096: concrete retry when the default base resolved to the analyzed
+    /// commit and the change under review is the last commit. Named, never
+    /// inferred: the server does not silently widen the base.
+    pub(crate) const EMPTY_SCOPE_MCP_LAST_COMMIT_RETRY_ROUTE: &str = "if the change under review is the last commit, retry ripr_refresh with {\"base\": \"HEAD~1\"}; the server does not infer this base";
+
+    /// #13096: the default-base-resolved-to-analyzed-commit causes exclude
+    /// `no_behavioral_candidates`, whose diff was non-empty.
+    pub(crate) const fn is_no_behavioral_candidates(self) -> bool {
+        matches!(self, Self::NoBehavioralCandidates)
+    }
 
     /// #12416: the MCP `ripr_refresh` worktree-source retry route, verbatim.
     /// Same single-owner rationale as `EMPTY_SCOPE_MCP_BASE_RETRY_ROUTE`.

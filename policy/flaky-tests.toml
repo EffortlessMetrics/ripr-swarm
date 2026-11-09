@@ -64,12 +64,26 @@ id = "windows-cache-export-input-witness"
 test = "cli::commands::cache_command::tests::export_current_snapshot_through_command_preserves_source_and_bounds_history"
 lane = "Windows Advisory nightly (--no-default-features pass)"
 class = "shared-state"
-status = "open"
+status = "fixed"
 issue = 12421
 first_seen = "2026-11-02"
 evidence = ["run 41311936942 (fc68d7f, failed 2 of 2)", "run 41394117143 (c6a7e5a, passed 3 of 3)", "run 41583153155 (dfa023b8, failed in the nofeatures pass with export_preserves_relative_analysis_root_identity)"]
 symptom = "Cache export refuses mid-test with \"workspace inputs changed during export\"; since the #12442 diagnostic the refusal names the moved input, which was `seam limit` in run 41583153155."
-root_cause = "Not established: the export input-witness check observes an input (the seam limit) move during the test's own export. #12421 owns the investigation."
+root_cause = "The export input witness reads the effective seam limit before and after the copy (seam_cache/export.rs changed_inputs). That limit resolves through the process-wide PILOT_INVENTORY_DEFAULT, which every in-process pilot run moves to the pilot budget (2000 against the 10000 default) for the run's duration and repair reruns move to the widened total, so a concurrent pilot or repair test in the same cargo test binary moved it between the two reads and the witness refused with `changed: seam limit`. Both guards now hold the mutator lock for their lifetime, and the two cache export tests hold it across their reads."
+guard = "pilot_default_guard_excludes_concurrent_mutators_until_dropped"
+
+[[flake]]
+id = "seam-inventory-key-tests-moved-seam-limit"
+test = "analysis::seam_inventory::tests::same_key_fingerprint_payload_edit_declines_and_rehashes_source_truth"
+lane = "Rust-only feature lane (cargo test --no-default-features --features lang-rust)"
+class = "shared-state"
+status = "fixed"
+issue = 13393
+first_seen = "2026-11-06"
+evidence = ["run 42151407929 (PR #13370 head 475c9ee7, failed 1 of 13689)", "run 42156162873 (PR #13388, streaming_collect_matches_legacy_hash_key_and_order)", "run 42154025547 (main 2a86f7c, passed)"]
+symptom = "A seam_inventory test that builds the workspace cache key twice fails with a key or evidence mismatch on a PR that does not touch seam_inventory, and passes on rerun."
+root_cause = "The workspace cache key embeds the effective seam limit, which resolves through the process-wide PILOT_INVENTORY_DEFAULT. A concurrent in-process pilot or repair test in the same cargo test binary moves it between the test's two reads, so the keys differ. #12421 held the mutator lock only in the cache export tests; every other seam_inventory test that compares keys, mappings or inventories from separate reads now holds it too."
+guard = "pilot_default_guard_excludes_concurrent_mutators_until_dropped"
 
 [[flake]]
 id = "managed-sigint-exporter-failure-misclassified"
@@ -162,13 +176,14 @@ id = "ts-binding-names-wall-clock-bound"
 test = "analysis::language::typescript::loop_count_guard::tests::binding_names_skip_defaults_and_keys"
 lane = "Required nextest lane"
 class = "wall-clock-bound"
-status = "open"
+status = "fixed"
 issue = 10483
 timing_dependent = true
 first_seen = "2026-10-25"
-evidence = ["run 40236320956 (job 121298726158, PR #10478)"]
+evidence = ["run 40236320956 (job 121298726158, PR #10478; original failure)", "PR #10493 merged as 8ba2eed9e2cddfb270f377011bf9c68649efd160; required run 40241738076", "PR #10493 comment 6404897841: correct reducer accepted, input-scaled-budget mutant assertion rejected", "issue #10483 comment 6680899281: bounded acceptance reconciliation"]
 symptom = "A 2 s wall-clock bound on 20,000-deep reductions failed under a loaded runner (about 0.2 s per unit locally)."
-root_cause = "A wall-clock bound cannot tell a slow runner from a quadratic reduction. Bound the work (steps or rescans, depth N versus 2N) instead."
+root_cause = "The original absolute 2 s ceiling was replaced by a calibrated 10k/20k depth comparison in #10493. The retained control accepted the correct reducer and rejected an input-scaled-budget mutant. This completes the original absolute-threshold claim; the replacement remains timing-dependent and establishes neither scheduler causality, universal scheduling immunity nor asymptotic proof."
+guard = "binding_names_skip_defaults_and_keys"
 
 [[flake]]
 id = "rust-only-routing-timeout-windows"

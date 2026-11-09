@@ -80,6 +80,9 @@ const REFRESH_COMMAND: &str = "ripr.refresh";
 const HOVER_TEXT: &str = "ripr estimates static RIPR exposure for changed Rust behavior. Run `ripr check --format json` for current findings.";
 
 pub fn serve() -> Result<(), String> {
+    // Each save re-indexes the workspace; unchanged files' parse facts are
+    // served from memory instead of being decoded from the disk cache again.
+    crate::analysis::enable_process_fact_memo();
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
@@ -262,3 +265,6 @@ fn build_service(
     )
     .finish()
 }
+
+#[cfg(test)]
+mod surface_conformance_tests;

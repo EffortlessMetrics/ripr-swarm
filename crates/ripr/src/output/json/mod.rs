@@ -3,6 +3,7 @@ mod finding_alignment;
 mod findings_priority;
 mod formatter;
 mod report;
+mod terse;
 
 pub(crate) use context_packet::CONTEXT_PACKET_VERSION_CONTRACT;
 pub use context_packet::render_context_packet;
@@ -19,6 +20,7 @@ pub(crate) use report::{
     CHECK_FINDINGS_BYTES_ENV, FINDINGS_BOUND_RUN_STATUS, check_findings_byte_budget,
     render_with_config,
 };
+pub(crate) use terse::render_terse;
 
 pub(crate) use formatter::{array_field, escape, escape_into, field, float_field, number_field};
 
@@ -30,22 +32,6 @@ where
 {
     serde_json::to_string_pretty(value)
         .map_err(|err| format!("failed to render {context} JSON: {err}"))
-}
-
-/// Minifies an already-rendered JSON document (`json-compact`, #13103):
-/// parses and re-serializes without insignificant whitespace, so the parsed
-/// value is identical to the pretty document. A document that does not
-/// parse is returned unchanged, so this step can never corrupt output.
-pub(crate) fn render_compact(rendered: &str) -> String {
-    match serde_json::from_str::<serde_json::Value>(rendered) {
-        Ok(value) => {
-            let mut minified =
-                serde_json::to_string(&value).unwrap_or_else(|_| rendered.to_string());
-            minified.push('\n');
-            minified
-        }
-        Err(_) => rendered.to_string(),
-    }
 }
 
 /// Renders pretty JSON and appends the trailing newline expected by artifact
@@ -70,30 +56,15 @@ mod tests {
     };
     use crate::app::{CheckOutput, Mode};
     use crate::domain::{
-        ActivationEvidence, Confidence, DeltaKind, ExposureClass, Finding, FindingCanonicalGap,
-        FlowSinkFact, FlowSinkKind, LanguageId, LanguageStatus, MissingDiscriminatorFact,
-        OracleKind, OracleStrength, OwnerKind, Probe, ProbeFamily, ProbeId, RelatedTest,
-        RevealEvidence, RiprEvidence, SourceLocation, StageEvidence, StageState, StaticLimitKind,
-        Summary, SymbolId, ValueContext, ValueFact,
+        ActivationEvidence, Confidence, ConfidenceCap, DeltaKind, DiscriminatorShape,
+        ExposureClass, Finding, FindingCanonicalGap, FlowSinkFact, FlowSinkKind, LanguageId,
+        LanguageStatus, MissingDiscriminatorFact, OracleKind, OracleStrength, OwnerKind, Probe,
+        ProbeFamily, ProbeId, RelatedTest, RelatedTestMiss, RevealEvidence, RiprEvidence,
+        SourceLocation, StageEvidence, StageState, StaticLimitKind, Summary, SymbolId,
+        ValueContext, ValueFact,
     };
     use proptest::prelude::*;
     use std::path::{Path, PathBuf};
-
-    #[test]
-    fn render_compact_minifies_without_changing_the_parsed_value() -> Result<(), String> {
-        let pretty = "{\n  \"a\": 1,\n  \"b\": [\n    1,\n    2\n  ]\n}\n";
-        let compact = super::render_compact(pretty);
-        assert_eq!(
-            serde_json::from_str::<serde_json::Value>(&compact)
-                .map_err(|error| error.to_string())?,
-            serde_json::from_str::<serde_json::Value>(pretty).map_err(|error| error.to_string())?
-        );
-        assert!(compact.len() < pretty.len(), "{compact}");
-        assert!(!compact.contains("\n  "), "{compact}");
-        // A document that does not parse passes through unchanged.
-        assert_eq!(super::render_compact("not json"), "not json");
-        Ok(())
-    }
 
     #[test]
     fn typed_incomplete_outcome_matches_human_and_json_projection() -> Result<(), String> {
@@ -160,6 +131,83 @@ mod tests {
         Ok(())
     }
 
+    /// RIPR-SPEC-0429: the staged-evidence row form sits beside the `ripr`
+    /// object — five rows in Evidence order with the stage tokens and wire
+    /// values the typed stages hold. No row references a related test: the
+    /// general decision-set role is not stage provenance (#13453).
+    #[test]
+    fn finding_json_emits_structured_stage_rows_without_test_attribution() -> Result<(), String> {
+        let mut finding = unknown_finding();
+        finding.ripr = RiprEvidence {
+            reach: StageEvidence::new(StageState::Yes, Confidence::Medium, "reached"),
+            infect: StageEvidence::new(StageState::Weak, Confidence::Low, "weak infection"),
+            propagate: StageEvidence::new(StageState::Unknown, Confidence::Low, "unknown flow"),
+            reveal: RevealEvidence {
+                observe: StageEvidence::new(StageState::Yes, Confidence::Medium, "observed"),
+                discriminate: StageEvidence::new(StageState::No, Confidence::High, "no oracle"),
+            },
+        };
+        finding.related_tests.push(RelatedTest {
+            name: "below_threshold_has_no_discount".to_string(),
+            file: PathBuf::from("tests/pricing.rs"),
+            line: 4,
+            oracle: Some("assert_eq!(discounted_total(50, 100), 50);".to_string()),
+            oracle_kind: OracleKind::ExactValue,
+            oracle_strength: OracleStrength::Strong,
+            relation_reason: None,
+            relation_confidence: None,
+            miss: None,
+            miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
+        });
+        finding.related_tests.push(RelatedTest {
+            name: "examined_but_matched_nothing".to_string(),
+            file: PathBuf::from("tests/other.rs"),
+            line: 9,
+            oracle: None,
+            oracle_kind: OracleKind::Unknown,
+            oracle_strength: OracleStrength::None,
+            relation_reason: None,
+            relation_confidence: None,
+            miss: Some(RelatedTestMiss::NoAssertion),
+            miss_support: None,
+            role: crate::domain::RelatedTestRole::ExaminedOnly,
+        });
+        finding.confidence_basis = vec![
+            ConfidenceCap::PreviewStagesNotModeled,
+            ConfidenceCap::ObservationNotConfirmed,
+            ConfidenceCap::BoundaryInputNotMatched,
+        ];
+
+        let mut out = String::new();
+        finding_json(&mut out, &finding, 0);
+
+        let stages_block = out
+            .split("\"evidence_stages\": [\n")
+            .nth(1)
+            .and_then(|rest| rest.split("\n  ]").next())
+            .ok_or("evidence_stages block missing")?;
+        let expected = [
+            "    {\"stage\":\"reach\",\"state\":\"yes\",\"confidence\":\"medium\"},",
+            "    {\"stage\":\"infect\",\"state\":\"weak\",\"confidence\":\"low\"},",
+            "    {\"stage\":\"propagate\",\"state\":\"unknown\",\"confidence\":\"low\"},",
+            "    {\"stage\":\"observe\",\"state\":\"yes\",\"confidence\":\"medium\",\"basis\":[{\"code\":\"observation_not_confirmed\",\"summary\":\"the assertion is not confirmed to observe the changed value\"}]},",
+            "    {\"stage\":\"discriminate\",\"state\":\"no\",\"confidence\":\"high\"}",
+        ];
+        let actual = stages_block.lines().collect::<Vec<_>>();
+        assert_eq!(actual, expected, "{stages_block}");
+        // The finding-level and oracle-level caps claim no row, and the
+        // contributing related test is never attributed to a stage.
+        assert!(
+            !stages_block.contains("preview_stages_not_modeled")
+                && !stages_block.contains("boundary_input_not_matched")
+                && !stages_block.contains("\"tests\"")
+                && !stages_block.contains("below_threshold_has_no_discount"),
+            "{stages_block}"
+        );
+        Ok(())
+    }
+
     #[test]
     fn finding_json_includes_effective_stop_reasons_for_unknowns() {
         let finding = unknown_finding();
@@ -192,6 +240,8 @@ mod tests {
                 value: "amount == discount_threshold".to_string(),
                 reason: "No related test calls the boundary value".to_string(),
                 flow_sink: None,
+                shape: DiscriminatorShape::Boundary,
+                drafted_boundary: None,
             });
         finding.related_tests.push(RelatedTest {
             name: "below_threshold_has_no_discount".to_string(),
@@ -1157,6 +1207,7 @@ mod tests {
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
+            owner_opt_outs: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -1290,6 +1341,7 @@ mod tests {
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
+            owner_opt_outs: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -1469,6 +1521,7 @@ mod tests {
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
+            owner_opt_outs: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -2308,6 +2361,8 @@ mod tests {
             reason: "Related Perl test reaches the owner but lacks an exact return discriminator"
                 .to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Other,
+            drafted_boundary: None,
         }];
         finding.related_tests = vec![RelatedTest {
             name: "discount_smoke".to_string(),
@@ -2413,6 +2468,7 @@ mod tests {
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
+            owner_opt_outs: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -2553,6 +2609,7 @@ mod tests {
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
+            owner_opt_outs: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -2670,6 +2727,7 @@ mod tests {
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
+            owner_opt_outs: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -2700,6 +2758,7 @@ mod tests {
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
+            owner_opt_outs: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -2766,6 +2825,7 @@ mod tests {
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
+            owner_opt_outs: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -2808,6 +2868,7 @@ mod tests {
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
+            owner_opt_outs: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,

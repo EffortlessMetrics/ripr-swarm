@@ -242,6 +242,17 @@ unchanged. Ordinary unmarked gaps and weak asserting controls remain eligible
 for selection. A pilot with only these limitations names the withheld work and
 provides no repair, after-snapshot or outcome command (#12977).
 
+The full and compact producers reserve the exact
+`rust_panic_outcome_unresolved: ` prefix of the discrimination summary
+(#13291). `names_static_limit` is the common authority for pilot, brief,
+repair admission and the typed limitation row. A matching test name, a code
+mention in another stage, or a token later in a summary supplies no marker.
+The panic producer retains the deciding tests and original discrimination
+summary after the prefix. It runs before the field-snapshot adapter, which
+preserves an established panic marker and its reason rather than obscuring
+it with a second prefix. This changes no grip class or stage state and grants
+no new observation, panic or snapshot credit.
+
 ### Profile-dependent `debug_assert_eq!`
 
 `debug_assert_eq!` runs under the default `cargo test` profile and is
@@ -419,28 +430,42 @@ non-ignored related test matches one of these shapes:
   strict snapshot grader names the owner by its identifier, so a different
   receiver's `other.own(..)` or a shadowed `own` is read as the owner; aliasing
   and escape are not followed.
-- **insta**: a `direct_owner_call` test with a snapshot macro that has no
-  inline `@` literal, whose snapshotted value (after an optional literal name)
-  derives from the owner as above (a live binding at the assertion),
-  on a changed `field:` initializer that no redaction selector (a literal
-  keyed by `=>`, such as `".id"` or `"[].id"`) names. Any other changed line
-  keeps the gap (the `snapshot_oracle` fixture's changed predicate), and so
-  does a literal redacted field (`lib-insta-json-redacted-id`) when no unread
-  settings are present. Executable whole names `add_redaction`, `with_settings`
-  or `Settings` before the owner-bound snapshot identify configuration this
-  reader does not evaluate (#13035). That case carries the same typed
-  limitation with advice naming the unread settings or redactions; it does not
-  assert that no redaction names the field. This limitation also applies to an
-  inline `@` snapshot under that unread configuration. Comments, strings,
-  identifier substrings, configuration only after the assertion, a snapshot
-  of another value, and settings without an owner-bound snapshot do not supply
-  this witness. Constant selectors remain withheld, and ordinary inline
-  snapshots retain their existing disposition. This is bounded syntax
-  admission; settings scopes, type aliases and dynamic selector evaluation
-  remain unsupported. Snapshot-byte identity and positive projection credit
-  remain with #8121. This reader governs fresh `Finding` output; repository
-  seam evidence and pilot/brief selection have a separate producer, whose
-  snapshot-uncertainty disclosure remains a residual under #8121.
+- **insta**: a `direct_owner_call` test whose snapshotted value (after an
+  optional literal name) derives from the owner as above (a live binding at
+  the assertion), on a changed `field:` initializer. With no inline `@`
+  literal, an unredacted field is serialized into expected bytes ripr does
+  not read and is withheld. A readable literal selector naming the field
+  keeps the gap only when no unread settings can alter the comparison.
+  Selector maps are parsed through Rust syntax, preserving Unicode trivia,
+  raw strings, generic calls, closures and comment trivia. Unreadable maps,
+  including nonliteral keys, establish neither serialization nor redaction.
+  Executable whole names `add_redaction`, `with_settings` or `Settings`
+  before the snapshot likewise identify unread configuration. After owner-result
+  and changed-field gates, either uncertainty retains `static_unknown` with
+  `rust_framework_oracle_unresolved` and accurate advice, including inline
+  expected text. Settings after the assertion, strings/comments/longer names,
+  another value's snapshot and unrelated changed lines do not supply this witness.
+  Ordinary inline snapshots and literal redactions retain their existing
+  disposition when configuration is readable. This is bounded syntax admission;
+  settings scopes, type aliases and dynamic selectors remain unsupported.
+  Snapshot-byte identity and positive projection credit remain with #8121.
+  The same reader governs candidate field changes in
+  repository seam evidence (#13278). The adapter supplies each extracted field
+  expression while retaining owner-span checks, preserving field identity when
+  initializers share a line or span several lines. On weak or unrevealed field seams, both
+  full and compact producers read every directly related, nonignored test
+  before detail caps, naming `rust_framework_oracle_unresolved` in the
+  discrimination summary using the reserved `<code>: ` prefix. A test name or
+  other source mention of the code cannot manufacture that marker. Raw class
+  and all stage states stay intact. Pilot,
+  agent brief and repair admission honor the marker, including when every
+  stage is concrete. Literal redacted-field gaps and independent exact
+  assertions keep their existing behavior. Return-value recommendations and
+  other framework idioms are outside this repository-seam adaptation.
+  The shared reader's bounded matching does not establish arbitrary callee
+  identity: a separate direct owner call beside a snapshot initialized by a
+  same-named method can still produce conservative uncertainty. That inherited
+  false withholding remains an explicit residual under #8121.
 - **fixture receiver** (#9609): a `return_value` probe whose changed line
   holds a closure (`|..|`, `move |..|` or `|| ..` opening an argument; a boolean or bitwise `||` / `|` is not one) in a `&self` method, and a `direct_owner_call` test
   with a strong assertion: an `assert_eq!` with a literal (number, string,
@@ -1112,6 +1137,44 @@ test and its oracle; a finished read with no test keeps `no_static_path`.
 Refusing the changed source itself still produces no owner or invented
 finding. The byte caps and all reader refusals remain enforced.
 
+### A future created but never polled (#13702)
+
+Calling an `async fn` builds a future; its body runs only when something polls
+it. A direct-call relation from a synchronous `#[test]` that writes
+`let _f = fetch_len("abc");` and drops the future read as reach `yes` and a
+`reachable_unrevealed` gap, though the changed line never runs in that test.
+
+When the changed owner's declaration reads as `async`, every related test,
+whatever its relation, is a `direct_owner_call`, every indexed test that names
+the owner is one of them, no other function names the owner, every spelling of
+the owner's name in the indexed files is its own declaration, one of those test
+bodies or a plain `use` leaf (no `use … as …` rename, no `macro_rules!` or other
+item naming it), and
+each such test is a plain synchronous `#[test]` (only `#[test]` and lint
+attributes) whose every owner mention is a call that is a bare statement, the
+sole argument of `std::mem::drop(..)`/`core::mem::drop(..)` (or of a bare
+`drop(..)` when no user-defined `drop` is indexed or brought into the test's
+file), or the initializer of a `let` bound to `_` or to a name the test never
+mentions again, in a body with no `.await`, `async`,
+`block_on`, `block_in_place`, `Runtime`, `Handle`, `spawn` or `poll` spelling,
+then the finding is rewritten through the shared `withhold_gap` owner to
+`static_unknown` under `rust_future_never_polled`. The reach stage becomes
+`unknown` with the summary "future created but never polled", infection
+becomes `unknown` when it reads `yes` or `weak`, and the replaced reach and
+infection evidence lines are dropped. Propagation reads the owner's own code
+and is kept. The rule
+runs in `apply_probe_and_oracle_limits` before the oracle-side limits.
+
+An awaited call in `#[tokio::test]`, `block_on(owner(..))`, an async test
+attribute, a binding used again, a future passed to another call, a closure
+whose tail expression is the call, a mention inside a macro, a `use … as …`
+alias or `macro_rules!` naming the owner, a user-defined `drop`, another
+function naming the owner and a helper relation all keep today's reading. A
+closure whose body drops the call as a statement
+(`let c = || { fetch_len("abc"); }; c();`) still drops the future unpolled
+and is named. Nothing is credited, no runtime is chosen,
+and repair still does not start.
+
 ## Scope boundary
 
 - Rust check findings, the TypeScript truncated-discovery and byte-read-limit
@@ -1230,6 +1293,9 @@ Tests in `crates/ripr/src/analysis/classify/framework_oracle.rs` and
 - `an_arm_chosen_by_the_environment_is_withheld` and its keeps-the-gap control
 - `an_expect_debug_literal_is_withheld` and its keeps-the-gap control
 - `an_unredacted_insta_field_is_withheld` and its keeps-the-gap control
+- `unread_insta_selectors_withhold_changed_fields` retains typed uncertainty
+  for constant selectors, named and match-prefixed maps, mixed literal/constant
+  keys and inline expected text, while unrelated snapshot operands keep a gap.
 - `insta_settings::unread_settings_withhold_both_fields` and
   `insta_settings::with_settings_withholds_both_fields` exercise the public
   classifier on both the redacted field and its unredacted sibling; controls
@@ -1351,6 +1417,43 @@ real producer's named summary into a controlled concrete-stage consumer pair.
 The marked seam is withheld while the otherwise identical, unmarked
 `ReachableUnrevealed` seam remains selectable.
 
+Repository field-snapshot selection (#13278):
+`crates/ripr/src/analysis/test_grip_evidence/tests/framework_snapshot.rs`
+covers the shared external snapshot, unread settings, inline configuration,
+constant selector and literal redaction decisions in both full and compact
+evidence. Its late-witness control requires the directly related snapshot
+test to rank beyond the compact cap before checking the marker. Wrong-owner
+and shadowed values, ordinary inline snapshots, non-code configuration words,
+weak assertions and an independent exact field assertion keep their semantics.
+`crates/ripr/src/output/pilot/tests/framework_snapshot.rs` compares identical
+classes and stages with and without the producer's named summary; only the
+marked entry is withheld. It checks repair eligibility, category, reason,
+route and inspection preservation as well as pilot and brief selection.
+`crates/ripr/tests/task_first_facade/field_snapshot.rs` requires real field
+seams, the exact marker and five concrete stages before checking native pilot
+and brief behavior, with literal-redacted, weak, exact, unrelated and inline
+controls. A weak test whose name equals the marker must retain all three
+actionable seams and exact field briefs. Full/compact and consumer controls
+also reject source mentions in other stage summaries. A warm-cache read must
+preserve the evidence and selected count.
+
+Producer-owned panic markers (#13291):
+`crates/ripr/src/analysis/test_grip_evidence/tests/panic_marker.rs` follows
+ordinary test-name collisions, genuine panic uncertainty, a weak asserting
+control and combined panic/snapshot uncertainty through full and compact
+evidence. The combined control first requires the framework reader's own
+uncertainty witness, then requires preservation of the established panic
+marker. `source_mentions_do_not_manufacture_a_panic_limitation` checks
+selection, repair, brief and projection with otherwise unchanged concrete
+evidence and with an independently unknown stage. The public controls in
+`crates/ripr/tests/task_first_facade/panic_marker.rs` require exact seam
+identities, classes, all five states, pilot counts, field briefs and a warm
+cache hit for the name-only pair. Three independent corpus cases pin absent
+panic/framework markers for ordinary names and the genuine panic marker's
+precedence over a competing field-snapshot witness. The existing genuine
+`pilot_and_brief_withhold_the_should_panic_limitation` stimuli and expected
+selection remain unchanged, including its all-concrete-stage case.
+
 `crates/ripr/tests/indirect_owner_limit.rs` (function value, pointer binding,
 local and known executors, item macro, inert-macro, `cfg_attr` and
 trailing-comment controls) and `cfg_predicates::tests::cfg_attr_introduces_test_only_under_a_predicate_known_true`.
@@ -1373,6 +1476,11 @@ is unchanged beside an unread unrelated source; and a refused changed source
 does not fabricate a finding. The shared withholding unit test also pins
 idempotence, zero-refusal behavior, other classes, and existing typed limits.
 
+The never-polled future rule (#13702) is exercised by
+`crates/ripr/tests/unpolled_future_limit.rs` and the fixtures
+`rust_async_future_unpolled`, `rust_async_future_awaited_control` and
+`rust_async_future_block_on_control`.
+
 Wire strings are pinned by
 `crates/ripr-contract/src/domain/language.rs::tests::static_limit_kind_wire_strings_are_stable`
 and `crates/ripr-contract/src/domain/probe.rs::tests::stop_reason_glosses_are_clean_prose`.
@@ -1390,10 +1498,18 @@ and `crates/ripr-contract/src/domain/probe.rs::tests::stop_reason_glosses_are_cl
 - `crates/ripr/src/analysis/classifier/evidence.rs` computes the refusal
   scope; `crates/ripr/src/analysis/classifier/finding.rs` marks the finding.
 - `crates/ripr/src/analysis/classify/gap_admission.rs` owns the decision.
+- `crates/ripr/src/analysis/classify/framework_oracle.rs` owns the field
+  snapshot reader; `test_grip_evidence/framework_snapshot.rs` adapts that
+  decision to full and compact repository evidence without changing stages.
+- `crates/ripr/src/output/evidence_record.rs` owns the shared recommendation
+  filter and limitation projection; `analysis/repair_route.rs` honors the
+  same typed marker for repair admission.
 - `crates/ripr/src/analysis/classify/implicit_call.rs` owns the implicit-call
   rule (#9441).
 - `crates/ripr/src/analysis/classify/indirect_owner.rs` owns the
   indirect-owner decision.
+- `crates/ripr/src/analysis/classify/unpolled_future.rs` owns the
+  never-polled future decision (#13702).
 - `crates/ripr/src/analysis/language/rust/mod.rs` calls it last in
   `apply_probe_and_oracle_limits`.
 - `crates/ripr/src/analysis/language/typescript/mod.rs` applies byte-read

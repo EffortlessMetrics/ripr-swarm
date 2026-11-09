@@ -62,6 +62,7 @@ fn external_policy() -> Result<EditCagePolicy, String> {
         untracked_build_lockfile: None,
         inline_test_module_target: false,
         external_test_file_target: true,
+        new_test_proposal: None,
     })
 }
 
@@ -201,6 +202,7 @@ fn deleted_or_uncommitted_external_test_cannot_become_an_empty_baseline() -> Res
         match state {
             "staged-deletion" => git_ok(&fixture.root, &["add", "-u"])?,
             "untracked" | "staged-new" => {
+                fs::create_dir_all(fixture.root.join("tests")).map_err(|e| e.to_string())?;
                 fs::write(fixture.root.join("tests/pricing.rs"), BASELINE)
                     .map_err(|e| e.to_string())?;
                 if state == "staged-new" {

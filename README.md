@@ -29,9 +29,14 @@
 eligible repairs, not coverage, runtime mutation outcomes, or all test gaps.
 See docs/BADGE_POLICY.md and docs/VERIFICATION.md. -->
 
-ripr reads your diff and related tests to find potential gaps in what they
-check. It explains the evidence and suggests where a focused test could help.
-Use the finding during review or hand it to a coding agent.
+Your tests pass. Would they notice if the change you just made were wrong?
+
+ripr reads your diff and the related tests and names a changed behavior no
+test appears to check, plus the missing case or assertion. Where a repair route
+exists, it also names the test to add. It does not run your tests or any
+mutants. Use the finding in review, or hand the gap to a coding agent.
+[Why ripr](docs/WHY_RIPR.md) covers how this differs from coverage, mutation
+testing and formal verification.
 
 A test can run the changed code without checking the behavior that changed:
 
@@ -125,8 +130,8 @@ Using a coding agent? `ripr init --agents claude|codex|cursor|all` adds a short
 find-gap, write-test, verify loop with an explicit done and stop rule to your
 agent's instruction file (see the [agent quickstart](docs/AGENT_QUICKSTART.md)).
 Or run `ripr check`, then run the follow-up commands it
-prints exactly as printed; their IDs belong to that run. For repairs,
-`ripr check` prints the `ripr repair` command when an eligible repair exists; `ripr pilot --root .` is optional broader exploration.
+prints exactly as printed; their IDs belong to that run. When an eligible
+repair exists, `ripr check` prints the `ripr repair` command.
 Add `--format json` for machine-readable results. Repair-attempt file rules,
 card handoff and exit codes are in the
 [agent repair details](docs/QUICKSTART.md#agent-repair-details),
@@ -150,8 +155,6 @@ Under the hood, ripr follows the path from a changed behavior through test
 inputs and observable effects to an assertion. When that path becomes opaque,
 it reports the limitation. See the [static exposure model](docs/STATIC_EXPOSURE_MODEL.md)
 and [terminology](docs/TERMINOLOGY.md) for the precise model and classifications.
-[Why ripr](docs/WHY_RIPR.md) compares it with coverage, mutation testing and
-formal verification.
 
 ## Status
 

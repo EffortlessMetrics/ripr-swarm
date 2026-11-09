@@ -1,0 +1,72 @@
+# CONTEXT: ripr analyzer output
+# Crate: inserted-guard
+# ripr version: ripr 0.11.0 (e19f45c83e93855317059944b91e36932e58a7c7)
+# Captured with: ripr check --root <CRATE_PATH> --base HEAD~1 --format agent
+# plus ripr explain on the top finding (ripr's own suggested follow-up).
+# ripr is a static advisory tool: it does not write tests.
+
+===== ripr check --root <CRATE_PATH> --base HEAD~1 --format agent =====
+#ripr agent static-advisory base=HEAD~1 findings=2 gaps=1 exposed=1 weakly_exposed=1
+weakly_exposed|src/lib.rs:8|return 0|missing=No strong discriminator was detected|test=t1|id=probe:src_lib.rs:return_value:6085c774
+t1=tests/baseline.rs:6 invoice_line_matches_quote exact_value `assert_eq!(total_after_fee(499_900, 325), 499_575);` miss=observation_unconfirmed
+next=ripr explain --root <study-harness>/inserted-guard --base "HEAD~1" --committed probe:src_lib.rs:return_value:6085c774
+
+===== ripr explain (top finding): explain --root <study-harness>/inserted-guard --base HEAD~1 --committed probe:src_lib.rs:return_value:6085c774 =====
+WARNING ./src/lib.rs:8
+  id: probe:src_lib.rs:return_value:6085c774
+
+Changed
+  after:  return 0
+
+Change type
+  a returned value changed
+  family: return_value
+  delta:  value (changes a computed value)
+  owner:  src/lib.rs::total_after_fee
+  gap id (for scripts): gap:rust:src/lib.rs:total_after_fee:return_value:return_value:0
+
+Static exposure
+  weakly_exposed (warning, confidence 0.66)
+
+Evidence
+  - reach yes: Related tests appear to reach total_after_fee: invoice_line_matches_quote, large_cart_totals_are_stable, positive_amount_subtracts_fee
+  - infection yes: Reachable tests can plausibly activate this changed behavior
+  - propagation weak: No complete owner-bound propagation witness found for returned value: 0
+  - observation yes: A related test observes a value or effect near the changed behavior
+  - discriminator weak: Discriminator unconfirmed: no assertion text references the changed expression
+  - local flow reaches returned value: 0 (line 8)
+  - related test tests/baseline.rs:6 invoice_line_matches_quote uses strong exact value oracle: assert_eq!(total_after_fee(499_900, 325), 499_575); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
+  - related test tests/baseline.rs:11 large_cart_totals_are_stable uses strong exact value oracle: assert_eq!(total_after_fee(1_000_000, 0), 1_000_000); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
+  - related test src/lib.rs:18 positive_amount_subtracts_fee uses strong exact value oracle: assert_eq!(total_after_fee(10_000, 250), 9_750); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
+  - related test src/lib.rs:23 zero_amount_is_fee_only uses strong exact value oracle: assert_eq!(total_after_fee(0, 250), -250); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
+  - source assertion argument value 499_575 at tests/baseline.rs:7
+  - source function argument value amount = 499_900 at tests/baseline.rs:7
+  - source function argument value fee_cents = 325 at tests/baseline.rs:7
+  - source assertion argument value 1_000_000 at tests/baseline.rs:12
+  - source function argument value amount = 1_000_000 at tests/baseline.rs:12
+  - source function argument value fee_cents = 0 at tests/baseline.rs:12
+  - source assertion argument value 9_750 at src/lib.rs:19
+  - source function argument value amount = 10_000 at src/lib.rs:19
+  - source values (showing 8 of 12 read from related tests; full list via ripr check, using its JSON format)
+
+Weakness
+  - No strong discriminator was detected
+
+Next step
+  The related test `zero_amount_is_fee_only` already has an exact assertion; this does not establish observation of the returned value. Check whether the change can affect the returned value. If it can, add a separating input and assert the exact returned value. If it cannot, test the changed effect separately; another input cannot distinguish unchanged returns
+
+Why this verdict
+  Tests examined: 4 listed (4 assertion row(s) of 4)
+  - tests/baseline.rs:6 invoice_line_matches_quote: unconfirmed: ripr could not confirm that this assertion observes the changed behavior
+      checked: assert_eq!(total_after_fee(499_900, 325), 499_575)
+  - tests/baseline.rs:11 large_cart_totals_are_stable: unconfirmed: ripr could not confirm that this assertion observes the changed behavior
+      checked: assert_eq!(total_after_fee(1_000_000, 0), 1_000_000)
+  - src/lib.rs:18 positive_amount_subtracts_fee: unconfirmed: ripr could not confirm that this assertion observes the changed behavior
+      checked: assert_eq!(total_after_fee(10_000, 250), 9_750)
+  - src/lib.rs:23 zero_amount_is_fee_only: unconfirmed: ripr could not confirm that this assertion observes the changed behavior
+      checked: assert_eq!(total_after_fee(0, 250), -250)
+  To change the verdict, a test needs to:
+  - assert on the changed value itself, by name
+
+Next: ripr context --root <study-harness>/inserted-guard --base "HEAD~1" --committed --at probe:src_lib.rs:return_value:6085c774
+
