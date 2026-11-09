@@ -682,7 +682,7 @@ struct ItemBindings {
 enum ScopeSyntax {
     /// A scope whose shadow flag the tree alone decides.
     Fixed(ra_ap_syntax::TextRange, bool),
-    /// A block holding a `use` that binds the owner's name. It shadows only
+    /// A block holding a `use` that binds the owner's name or holds a glob. It shadows only
     /// when `eligible` and the resolver reads every path as another
     /// definition (`None` is an opaque binding, which never does).
     Import {
