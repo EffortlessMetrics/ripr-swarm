@@ -134,6 +134,11 @@ pub(crate) enum SeamVerdict {
     /// is the existing related test in `file` (`recommended_test_for`, the
     /// "test to extend" `ripr repair` names). The fix site must be that file.
     AdmittedExisting { file: String },
+    /// Exactly one seam, admitted by the shared repair gate, whose only repair
+    /// target is the producer-owned new-test proposal (#13204). It carries the
+    /// shared projection so MCP names the same kind and file the card and
+    /// packet do; the admit-or-refuse decision is the one `Admitted` made.
+    AdmittedProposed(crate::analysis::new_test_target::SelectedProposal),
     /// The finding is not startable; `code` is the typed reason and
     /// `detail` the shared validator's own explanation.
     Refused { code: &'static str, detail: String },
@@ -275,39 +280,55 @@ impl SeamAdmission {
 /// module carries that module, read through the same predicate the CLI and
 /// packet surfaces ask (`recommended_inline_test_module`), so MCP states the
 /// confinement the edit cage will enforce rather than a parallel rule.
-fn inline_verdict(seam_id: &str, candidate_seams: &[ClassifiedSeam]) -> SeamVerdict {
-    let inline = candidate_seams
+pub(crate) fn inline_verdict(seam_id: &str, candidate_seams: &[ClassifiedSeam]) -> SeamVerdict {
+    let Some(entry) = candidate_seams
         .iter()
         .find(|entry| entry.seam.id().as_str() == seam_id)
-        .and_then(|entry| {
-            let recommended = crate::output::agent_seam_packets::recommended_test_for(entry);
-            crate::output::agent_seam_packets::recommended_inline_test_module(
-                entry,
-                &recommended.file,
-            )
-            .map(|module| (recommended.file.clone(), module.to_string()))
+    else {
+        return SeamVerdict::Admitted;
+    };
+    let recommended = crate::output::agent_seam_packets::recommended_test_for(entry);
+    // The producer-owned new-test proposal, through the one shared projection
+    // (#13204), is read first (#13538): an InlineUnit proposal's file is the
+    // seam's own production file, which also carries the owner's governed
+    // inline region, so the inline check below would otherwise report the
+    // proposal-only target as a plain inline module and the proposal fix site
+    // (module-confined, and distinct from an existing inline test) would be
+    // unreachable. Only a shared-gate `Proposed` target qualifies.
+    let proposed = entry
+        .evidence
+        .new_test_target
+        .as_ref()
+        .and_then(crate::analysis::new_test_target::SelectedProposal::from_admission)
+        .filter(|selected| {
+            matches!(
+                crate::analysis::repair_route::repair_packet_eligibility(entry)
+                    .readiness
+                    .target_selection,
+                crate::analysis::repair_route::RepairTargetSelection::Proposed(_)
+            ) && selected.file == recommended.file
         });
-    match inline {
-        Some((file, module)) => SeamVerdict::AdmittedInline { file, module },
-        None => {
-            // The CLI edits the recommended *existing* related test; carry its
-            // file so the finding-level fix site cannot name a different test.
-            let existing = candidate_seams
-                .iter()
-                .find(|entry| entry.seam.id().as_str() == seam_id)
-                .map(crate::output::agent_seam_packets::recommended_test_for)
-                .filter(|recommended| {
-                    recommended.target_kind
-                        == crate::output::agent_seam_packets::RecommendedTestTargetKind::ExistingTest
-                });
-            match existing {
-                Some(recommended) => SeamVerdict::AdmittedExisting {
-                    file: recommended.file,
-                },
-                None => SeamVerdict::Admitted,
-            }
-        }
+    if let Some(selected) = proposed {
+        return SeamVerdict::AdmittedProposed(selected);
     }
+    if let Some(module) =
+        crate::output::agent_seam_packets::recommended_inline_test_module(entry, &recommended.file)
+    {
+        return SeamVerdict::AdmittedInline {
+            file: recommended.file.clone(),
+            module: module.to_string(),
+        };
+    }
+    // The CLI edits the recommended *existing* related test; carry its file
+    // so the finding-level fix site cannot name a different test.
+    if recommended.target_kind
+        == crate::output::agent_seam_packets::RecommendedTestTargetKind::ExistingTest
+    {
+        return SeamVerdict::AdmittedExisting {
+            file: recommended.file,
+        };
+    }
+    SeamVerdict::Admitted
 }
 
 fn verdict_for(

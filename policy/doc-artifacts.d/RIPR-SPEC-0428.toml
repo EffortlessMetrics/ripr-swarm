@@ -1,0 +1,7 @@
+[[artifact]]
+id = "RIPR-SPEC-0428"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0428-check-missed-txt-gap-lines.md"
+status = "accepted"
+owner = "output"
+standalone_reason = "Slice #13626 adds a new check output format whose selection, ordering and not-clean comment contract had no governing spec."

@@ -1,0 +1,7 @@
+[[artifact]]
+id = "RIPR-SPEC-0423"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0423-shell-completions.md"
+status = "accepted"
+owner = "cli"
+standalone_reason = "Slice #7438 adds the completions command without a prior spec anchor."

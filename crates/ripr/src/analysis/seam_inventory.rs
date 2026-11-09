@@ -400,18 +400,27 @@ impl ClassifiedSeamsReport {
     /// pass-wide, and names no causing file. Callers that can render the
     /// limitation read `evidence_limitations` instead.
     pub(crate) fn require_complete_evidence(&self, consumer: &str) -> Result<(), String> {
-        match self.evidence_limitations.first() {
-            None => Ok(()),
-            Some(limitation) => Err(format!(
-                "{consumer} refused: seam evidence failed ({}; pass-wide, no single file is the cause): {}; next step: {}",
-                limitation.kind.as_str(),
-                limitation
-                    .bounded_detail
-                    .as_deref()
-                    .unwrap_or("every seam reads as an opaque stand-in"),
-                limitation.recovery.detail
-            )),
-        }
+        refuse_failed_evidence(&self.evidence_limitations, consumer)
+    }
+}
+
+/// The one refusal text for a consumer that cannot render the pass-wide
+/// `producer_failure` limitation; the full and the scoped inventory share it.
+fn refuse_failed_evidence(
+    limitations: &[AnalysisLimitation],
+    consumer: &str,
+) -> Result<(), String> {
+    match limitations.first() {
+        None => Ok(()),
+        Some(limitation) => Err(format!(
+            "{consumer} refused: seam evidence failed ({}; pass-wide, no single file is the cause): {}; next step: {}",
+            limitation.kind.as_str(),
+            limitation
+                .bounded_detail
+                .as_deref()
+                .unwrap_or("every seam reads as an opaque stand-in"),
+            limitation.recovery.detail
+        )),
     }
 }
 
@@ -1483,6 +1492,13 @@ impl ScopedClassifiedSeamInventory {
     /// replayed as complete.
     pub(crate) fn evidence_incomplete(&self) -> bool {
         !self.evidence_limitations.is_empty()
+    }
+
+    /// Fail closed for a scoped consumer that cannot render the pass-wide
+    /// limitation (#13340); the same refusal as
+    /// `ClassifiedSeamsReport::require_complete_evidence`.
+    pub(crate) fn require_complete_evidence(&self, consumer: &str) -> Result<(), String> {
+        refuse_failed_evidence(&self.evidence_limitations, consumer)
     }
 }
 
@@ -8425,14 +8441,14 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
             start_line: 1,
             end_line: 5,
             body: String::new().into(),
-            calls: Vec::new(),
+            calls: crate::analysis::facts::SharedFactSlice::empty(),
             returns: Vec::new(),
-            literals: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
             source_role: FunctionSourceRole::Production,
-            attrs: Vec::new(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
             impl_attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             item: Default::default(),
             impl_context: Default::default(),
         };
@@ -8480,14 +8496,14 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
             start_line: 10,
             end_line: 14,
             body: String::new().into(),
-            calls: Vec::new(),
+            calls: crate::analysis::facts::SharedFactSlice::empty(),
             returns: Vec::new(),
-            literals: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
             source_role: FunctionSourceRole::TestAttribute,
-            attrs: vec!["#[test]".to_string()],
+            attrs: vec!["#[test]".to_string()].into(),
             impl_attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             item: Default::default(),
             impl_context: Default::default(),
         };

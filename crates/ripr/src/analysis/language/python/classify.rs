@@ -405,6 +405,8 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
         return None;
     }
     let (family, delta) = classify_probe_shape_with_old(line_text, old_line_text);
+    // Analysis keeps `family`; only the finding's own presentation reads a
+    // plain local value edit as a value (#13587).
     // The changed line's probe family (and, for a field change, its changed
     // field) selects which assertion of each related test this finding judges
     // (#5572). Every consumer below — the public rows, sink alignment, the
@@ -899,7 +901,10 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
     // equality side. Unreadable guards, unbound operands, and rows without
     // literal inputs fail open and keep the existing oracle verdict.
     let guarded_arm_gap = (static_limit.is_none()
-        && matches!(family, ProbeFamily::ReturnValue | ProbeFamily::Predicate)
+        && matches!(
+            family,
+            ProbeFamily::ReturnValue | ProbeFamily::FieldConstruction | ProbeFamily::Predicate
+        )
         && boundary_gap.is_none()
         && inactive_term.is_none()
         && !no_behavior.multi_line_def_header_line)
@@ -1138,15 +1143,45 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
             )],
         )
     } else if !has_oracle_eligible_relation {
+        // Every related test provably never runs (an unconditional skip, an
+        // empty or refused parametrize table, a replacing later binding): the
+        // repair is an active test, not a stronger assertion in a dead one.
+        let never_run: Vec<(&str, &str)> = related_candidates
+            .iter()
+            .map_while(|candidate| {
+                super::test_activation::never_runs(candidate.test)
+                    .map(|control| (candidate.test.name.as_str(), control))
+            })
+            .collect();
+        let others = never_run
+            .iter()
+            .map(|(test, _)| *test)
+            .collect::<std::collections::BTreeSet<_>>()
+            .len()
+            .saturating_sub(1);
+        let missing = match never_run.as_slice() {
+            [(test, control), ..] if never_run.len() == related_candidates.len() => {
+                format!(
+                    "Related test `{test}`{} never runs (`{control}`), so no test can notice this change to `{}`; remove the control or add an active pytest or unittest test with an exact-value assertion.",
+                    if others == 0 {
+                        String::new()
+                    } else {
+                        format!(" and {others} other related test(s)")
+                    },
+                    owner.name
+                )
+            }
+            _ => format!(
+                "Only heuristic Python test links were found for `{}`; verify the suggested test location or add a direct pytest or unittest call with an exact-value assertion.",
+                owner.name
+            ),
+        };
         (
             ExposureClass::WeaklyExposed,
             StageState::Weak,
             StageState::Weak,
             StageState::Weak,
-            vec![format!(
-                "Only heuristic Python test links were found for `{}`; verify the suggested test location or add a direct pytest or unittest call with an exact-value assertion.",
-                owner.name
-            )],
+            vec![missing],
         )
     } else if let Some(credit) = log_evidence
         .as_ref()
@@ -1443,7 +1478,7 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
         location: SourceLocation::new(file.to_string_lossy().as_ref(), line, 1),
         owner: Some(owner.symbol_id()),
         family: family.clone(),
-        delta,
+        delta: delta.clone(),
         before: None,
         after: Some(line_text.to_string()),
         expression: line_text.to_string(),
@@ -1634,7 +1669,14 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
                 drafted_boundary: None,
             }]
         } else {
-            python_missing_discriminators(&family, line, line_text, owner, flow_sink.as_ref())
+            python_missing_discriminators(
+                &family,
+                line,
+                line_text,
+                old_line_text,
+                owner,
+                flow_sink.as_ref(),
+            )
         }
     } else {
         Vec::new()
@@ -1699,6 +1741,11 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
         has_oracle_eligible_relation,
         &missing_discriminators,
     );
+    // The value presentation (#13587) applies only to the plain no-card case.
+    // A repair card requires a missing discriminator and keys its wording on
+    // the family, so a finding with one keeps the analysis family: a message
+    // pin never reads as an "exact return-value assertion".
+    let presentation_allowed = missing_discriminators.is_empty();
     let repair_placement = (!unproven_list_equality && !imported_literal_gap)
         .then(|| python_repair_placement(&class, &related_candidates))
         .flatten();
@@ -1879,6 +1926,12 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
                 test.name
             ));
         }
+        if let Some(control) = super::test_activation::never_runs(test) {
+            evidence.push(format!(
+                "related_test_never_runs: `{control}` ({})",
+                test.name
+            ));
+        }
         if let Some(helper) = helper_callers
             .iter()
             .find(|helper| std::ptr::eq(helper.candidate.test, test))
@@ -2019,6 +2072,24 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
         // Resolved above, before the probe moved into the finding (#3281).
         source_currentness,
     };
+    if presentation_allowed && finding.canonical_gap.is_some() {
+        let (presented_family, presented_delta) = super::probe_shape::presented_python_shape(
+            owner,
+            &finding.probe.family,
+            &finding.probe.delta,
+            line_text,
+        );
+        if presented_family != finding.probe.family {
+            finding.canonical_gap = Some(canonical_python_gap_for(
+                file,
+                owner,
+                &presented_family,
+                line_text,
+            ));
+            finding.probe.family = presented_family;
+            finding.probe.delta = presented_delta;
+        }
+    }
     apply_python_no_static_path_limit(&mut finding, owner, owners, all_tests);
     note_runner_invocation(&mut finding, owner, all_tests);
     // #10708: the with-no-static-link guidance is pre-limit advice. The

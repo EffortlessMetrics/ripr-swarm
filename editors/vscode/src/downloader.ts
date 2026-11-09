@@ -537,26 +537,74 @@ async function fetchBuffer(url: string): Promise<Buffer> {
   throw placementFetchError(outcome);
 }
 
-function extractArchive(archivePath: string, destination: string, platform: RiprPlatform): Promise<void> {
+async function extractArchive(archivePath: string, destination: string, platform: RiprPlatform): Promise<void> {
   if (platform.archiveExtension === 'zip') {
-    return runProcess('powershell.exe', [
+    await runProcess('powershell.exe', [
       '-NoProfile',
       '-ExecutionPolicy',
       'Bypass',
       '-Command',
       `Expand-Archive -LiteralPath ${quotePowerShell(archivePath)} -DestinationPath ${quotePowerShell(destination)} -Force`
     ]);
+    return;
   }
-  return runProcess('tar', ['-xzf', archivePath, '-C', destination]);
+  await inspectTarArchive(archivePath);
+  await runProcess('tar', ['-xzf', archivePath, '-C', destination]);
 }
 
-function runProcess(command: string, args: string[]): Promise<void> {
+/** Maximum member count accepted from a server archive before extraction. */
+export const ARCHIVE_MAX_MEMBERS = 1000;
+
+/**
+ * Lists a tar archive and refuses unsafe members before anything is written
+ * (#13640): the post-extraction walk cannot undo writes made through a symlink
+ * or `..` member, so those members must never reach `tar -x`.
+ */
+export async function inspectTarArchive(archivePath: string): Promise<void> {
+  const names = await runProcess('tar', ['-tzf', archivePath]);
+  const verbose = await runProcess('tar', ['-tvzf', archivePath]);
+  assertSafeTarListing(names.split(/\r?\n/), verbose.split(/\r?\n/));
+}
+
+/**
+ * Pure policy over `tar -tzf` names and `tar -tvzf` lines: rejects absolute or
+ * drive-qualified paths, `..` segments, NUL/backslash tricks, symlink and
+ * hard-link members, any non-file/directory type, and oversized member counts.
+ */
+export function assertSafeTarListing(nameLines: readonly string[], verboseLines: readonly string[]): void {
+  const names = nameLines.filter((line) => line.length > 0);
+  if (names.length > ARCHIVE_MAX_MEMBERS) {
+    throw new Error(`Server archive lists ${names.length} members, over the ${ARCHIVE_MAX_MEMBERS} member limit.`);
+  }
+  for (const name of names) {
+    const segments = name.split(/[\\/]/);
+    if (/^[\\/]/.test(name) || /^[A-Za-z]:/.test(name) || name.includes('\0') || segments.includes('..')) {
+      throw new Error(`Refusing server archive member with unsafe path ${JSON.stringify(name)}.`);
+    }
+  }
+  for (const line of verboseLines) {
+    if (line.length === 0) {
+      continue;
+    }
+    // GNU tar marks links with a leading 'l'/'h'; bsdtar prints hard links as
+    // regular rows containing "link to". Anything but '-' or 'd' is refused.
+    const kind = line[0];
+    if (kind !== '-' && kind !== 'd') {
+      throw new Error(`Refusing server archive member of unsupported type: ${JSON.stringify(line)}.`);
+    }
+    if (/ link to /.test(line)) {
+      throw new Error(`Refusing server archive hard link member: ${JSON.stringify(line)}.`);
+    }
+  }
+}
+
+function runProcess(command: string, args: string[]): Promise<string> {
   return new Promise((resolve, reject) => {
-    cp.execFile(command, args, (error, _stdout, stderr) => {
+    cp.execFile(command, args, { maxBuffer: 16 * 1024 * 1024 }, (error, stdout, stderr) => {
       if (error) {
         reject(new Error(stderr.trim() || error.message));
       } else {
-        resolve();
+        resolve(stdout);
       }
     });
   });

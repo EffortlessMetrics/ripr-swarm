@@ -24,7 +24,8 @@ WRAPPER
 chmod +x "$root/bin/mv"
 printf 'context\n' > "$root/context"
 printf 'fn probe() {}\n' > "$root/test.rs"
-printf 'DISCRIMINATES: yes\n' > "$root/eval"
+probe_hash="$(sha256sum "$root/test.rs" | awk '{print $1}')"
+printf 'DISCRIMINATES: yes\nTEST_SOURCE_SHA256: %s\n' "$probe_hash" > "$root/eval"
 record() {
   bash "$bench/record-run.sh" --results-dir "$root/results" --run-id "inserted-guard-vanilla-r$1" \
     --scenario inserted-guard --variant vanilla --context-file "$root/context" --rounds 1 \

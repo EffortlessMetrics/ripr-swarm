@@ -25,7 +25,7 @@ const REQUIRED_GATES: &[(&str, &str)] = &[
     ("network_policy", "cargo xtask check-network-policy"),
     (
         "all_features_check",
-        "cargo check -p ripr --all-targets --all-features",
+        "cargo clippy -p ripr --all-targets --all-features -- -D warnings",
     ),
     (
         "clippy",
@@ -378,6 +378,36 @@ fn rust_gate_workflow_rejects_duplicate_required_command() {
 }
 
 #[test]
+fn hosted_formatting_cannot_disappear_when_ci_policy_omits_its_duplicate() {
+    for changed in [
+        WORKFLOW.replace("        run: cargo fmt --check", "        run: true"),
+        WORKFLOW.replace(
+            "        id: formatting",
+            "        id: formatting\n        if: false",
+        ),
+        WORKFLOW.replace(
+            "        id: formatting",
+            "        id: formatting\n        continue-on-error: true",
+        ),
+        WORKFLOW.replace("run: cargo fmt --check", "run: cargo fmt --check || true"),
+        format!("{WORKFLOW}\n      - name: Duplicate formatter\n        run: cargo fmt --check\n"),
+        WORKFLOW.replace(
+            "FORMATTING_RESULT: ${{ steps.formatting.outcome }}",
+            "FORMATTING_RESULT: success",
+        ),
+    ] {
+        assert_ne!(changed, WORKFLOW, "negative must change the real workflow");
+        let findings = contract_violations(&changed);
+        assert!(
+            findings
+                .iter()
+                .any(|finding| finding.contains("formatting")),
+            "missing, softened, duplicate or fabricated formatting accepted: {findings:?}"
+        );
+    }
+}
+
+#[test]
 fn rust_gate_workflow_rejects_suppressed_or_optional_required_command() {
     for replacement in [
         "        id: rust-tests\n        continue-on-error: true",
@@ -496,16 +526,40 @@ fn rust_gate_workflow_rejects_local_convenience_clippy_composition() {
 }
 
 #[test]
+fn rust_gate_workflow_rejects_losing_optional_feature_lint_coverage() {
+    for command in [
+        "cargo check -p ripr --all-targets --all-features",
+        "cargo clippy -p ripr --all-targets -- -D warnings",
+        "cargo clippy -p ripr --all-features -- -D warnings",
+        "cargo clippy -p ripr --all-targets --all-features",
+        "cargo clippy -p ripr --all-targets -- -D warnings --all-features",
+    ] {
+        let changed = WORKFLOW.replace(
+            "cargo clippy -p ripr --all-targets --all-features -- -D warnings",
+            command,
+        );
+        assert_ne!(changed, WORKFLOW, "negative must change the live command");
+        assert!(
+            contract_violations(&changed)
+                .contains(&"all_features_check: exact command missing".to_owned())
+        );
+    }
+}
+
+#[test]
 fn rust_gate_workflow_rejects_narrowing_explicit_clippy_coverage() {
     for command in [
         "cargo clippy -p xtask --all-targets -- -D warnings",
         "cargo clippy --workspace -- -D warnings",
         "cargo clippy --workspace --all-targets",
+        // Enabling everything here drops cfg(not(feature = ...)) branches.
+        "cargo clippy --workspace --all-targets --all-features -- -D warnings",
     ] {
         let changed = WORKFLOW.replace(
             "cargo clippy --workspace --all-targets -- -D warnings",
             command,
         );
+        assert_ne!(changed, WORKFLOW, "negative must change the live command");
         assert!(
             contract_violations(&changed).contains(&"clippy: exact command missing".to_owned())
         );
@@ -871,6 +925,72 @@ fn test_build_script(workflow: &str) -> Result<String, String> {
         .map(|line| line.strip_prefix("          ").unwrap_or(line))
         .collect::<Vec<_>>()
         .join("\n"))
+}
+
+fn checks_with_prepared_xtask(workflow: &str) -> bool {
+    let commands = [
+        "          build_phase workspace cargo test --no-run --locked --workspace",
+        "        run: target/debug/xtask check-covered-by",
+        "          strip --strip-debug -o target/xtask-binary/xtask target/debug/xtask",
+        "      - name: Required Rust tests (shard ${{ matrix.shard }} of 4)",
+    ];
+    let mut previous = None;
+    for command in commands {
+        let positions: Vec<_> = workflow
+            .lines()
+            .enumerate()
+            .filter_map(|(index, line)| (line == command).then_some(index))
+            .collect();
+        let [position] = positions.as_slice() else {
+            return false;
+        };
+        if previous.is_some_and(|before| before >= *position) {
+            return false;
+        }
+        previous = Some(*position);
+    }
+    let Some(check) = workflow.split("\n      - ").find(|block| {
+        block.starts_with("name: Check covered-by with the prepared workspace binary\n")
+    }) else {
+        return false;
+    };
+    check
+        .lines()
+        .filter(|line| !line.trim().is_empty() && !line.trim_start().starts_with('#'))
+        .collect::<Vec<_>>()
+        .join("\n")
+        == "name: Check covered-by with the prepared workspace binary\n        timeout-minutes: 20\n        run: target/debug/xtask check-covered-by"
+        && !workflow.contains("cargo xtask check-covered-by")
+}
+
+#[test]
+fn shards_check_covered_by_after_preparation_without_another_cargo_build() {
+    assert!(checks_with_prepared_xtask(SHARDS));
+}
+
+#[test]
+fn shards_reject_missing_early_conditional_or_suppressed_prepared_checks() {
+    let command = "        run: target/debug/xtask check-covered-by";
+    let step = format!(
+        "      - name: Check covered-by with the prepared workspace binary\n        timeout-minutes: 20\n{command}\n"
+    );
+    for changed in [
+        SHARDS.replace(command, ""),
+        SHARDS.replace(command, &format!("{command} || true")),
+        SHARDS.replace(
+            command,
+            &format!("        if: matrix.shard == 1\n{command}"),
+        ),
+        SHARDS.replace(command, "        run: cargo xtask check-covered-by"),
+        SHARDS.replace(command, &format!("{command}\n{command}")),
+        format!("{step}{}", SHARDS.replace(&step, "")),
+        SHARDS.replace(
+            "          build_phase workspace cargo test --no-run --locked --workspace",
+            "",
+        ),
+    ] {
+        assert!(!checks_with_prepared_xtask(&changed));
+    }
 }
 
 #[test]

@@ -87,6 +87,40 @@ modules (or one source binds it as an ordinary export), a cycle, a mocked barrel
 specifier leave the import as written. A body-local `units`, an enclosing
 scope that rebinds it, and `export type * as` bind no namespace value.
 
+### Classes through a barrel
+
+A test that imports a CLASS through a barrel (`import { Url } from '../src'`
+where `src/index.ts` has `export * from './url'`) constructs and calls the
+same code as `import { Url } from '../src/url'`. After the index is built,
+every named import whose bounded chain lands on a class declared in the
+workspace (a name an owner of that class carries, or a module whose default
+export is a class) is replaced in the test's import list by the direct import
+of the declaring module, so the receiver, constructor and static-call
+relations, and every guard that reads the test's imports, see the binding
+they already trust for a direct import (#13592 B3). The chain is the one a
+function owner follows: `MAX_REEXPORT_HOPS`, mock-aware, ambiguity-failing.
+The relation is disclosed as `re_export_chain_followed`, never as a direct
+import. An import is left as written when the chain is mocked, ambiguous,
+cyclic or over-deep, lands on a function, constant or type, lands on a
+different module than the owner's, or is a namespace, default or type-only
+import of the barrel. A body-local or enclosing-scope rebinding of the class
+name, a computed or reassigned constructor, and a class used only in type
+position still bind no construction, because the unchanged receiver rules
+apply to the rewritten import.
+
+Illustrations (fixture-backed; not numbered acceptance examples, which the
+runtime-labeled verdict corpus covers one for one):
+
+```
+credited:   owner get origin() of class Url in src/url.ts
+            barrel src/index.ts — export * from './url'
+            test   import { Url } from '../src/index'; new Url(..).origin
+            Before no_static_path; after exposed, re_export_chain_followed
+
+not credited: the same test, but the barrel is export * from './other'
+            (another class Url) — stays no_static_path, 0 related tests
+```
+
 ### Fail-closed bounds
 
 - A chain longer than `MAX_REEXPORT_HOPS` (4) hops is not followed.
@@ -148,6 +182,17 @@ involves indirection that ripr cannot verify at runtime.
 - Fixture `typescript_reexport_barrel_other_name`: the test imports only
   another name from the barrel that forwards the changed owner → must stay
   `no_static_path`, 0 related tests.
+- Fixture `typescript_reexport_class_receiver`: a class imported through a
+  star barrel, constructed and read through a getter → must produce `exposed`,
+  `relation_reason: re_export_chain_followed`.
+- Fixture `typescript_reexport_class_receiver_no_false_credit`: the barrel
+  forwards a same-named class of a DIFFERENT module → must stay
+  `no_static_path`, 0 related tests.
+- Unit tests in `class_barrel_reexport_tests` for the getter, constructor and
+  static owners through star, named, renamed, nested and default barrels, and
+  the same-named class, ambiguous star, mocked module, shadowed name,
+  type-only, computed or reassigned constructor, sibling-export and namespace
+  controls.
 - Unit tests in `reexport_chain_tests` for the over-bound chain, cycle,
   ambiguous star, non-exported star target, file-module-over-index, and
   shadowed import controls.
@@ -227,6 +272,12 @@ involves indirection that ripr cannot verify at runtime.
 
 ## Test Mapping
 
+- `fixtures/typescript_reexport_class_receiver/` — golden fixture for a class
+  reached through a barrel.
+- `fixtures/typescript_reexport_class_receiver_no_false_credit/` — golden
+  fixture for the same-named-class guard.
+- `crates/ripr/src/analysis/language/typescript/tests/class_barrel_reexport_tests.rs`
+  — classes through a barrel: positive owners and every fail-closed control.
 - `fixtures/typescript_reexport_single_hop/` — golden fixture for single-hop credit.
 - `fixtures/typescript_reexport_no_false_credit/` — golden fixture for name-collision guard.
 - `fixtures/typescript_reexport_two_hop_limit/` — golden fixture for a
@@ -265,6 +316,11 @@ involves indirection that ripr cannot verify at runtime.
   - `find_related_tests` — calls `ts_relation_to_domain()` to populate
     `relation_reason` and `relation_confidence` for all relation kinds.
   - `ts_relation_to_domain()` — new mapping fn.
+  - `ReExportIndex::rewrite_class_barrel_imports` /
+    `with_class_barrel_imports` and `ExportedClasses` — rewrite a barrel
+    import of a workspace class to the declaring module through the same
+    bounded `resolve_export` walk; `class_import_followed_barrel` makes the
+    receiver and class-method relations disclose the hop.
 - `crates/ripr/src/analysis/language/typescript/classifier.rs`:
   `classify_change` accepts `reexport_index` parameter.
 - `crates/ripr/src/analysis/language/typescript/mod.rs`:
@@ -289,3 +345,9 @@ involves indirection that ripr cannot verify at runtime.
 - `typescript_reexport_barrel_other_name_stays_no_path`: fixture
   `typescript_reexport_barrel_other_name` produces `no_static_path` with 0
   related tests.
+- `typescript_reexport_class_receiver_credits_via_barrel`: fixture
+  `typescript_reexport_class_receiver` produces `exposed` with a related test
+  carrying `relation_reason: re_export_chain_followed`.
+- `typescript_reexport_class_receiver_same_name_stays_no_path`: fixture
+  `typescript_reexport_class_receiver_no_false_credit` produces
+  `no_static_path` with 0 related tests.

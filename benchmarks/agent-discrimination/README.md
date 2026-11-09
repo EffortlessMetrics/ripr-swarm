@@ -44,12 +44,24 @@ runs, left cargo off the harness PATH, swallowed cargo's true exit codes, and
 wrote records with zeroed structured fields. This encoding fixes all four:
 per-run cloned crates (one writer, run-namespaced scratch, never shared temp
 space — the scripts refuse shared temp roots such as drive-letter Temp
-directories, `/tmp`, and `/var/tmp`, and refuse
-destinations under any Cargo workspace manifest, where cargo would claim the
-materialized package), step-zero toolchain
-PATH normalization in `eval.sh`/`build-contexts.sh` and the prompt, true cargo
-exit codes captured in `run_phase`, and `record-run.sh` (validated structured
-fields, atomic report writes, `summary.csv` derived from the reports).
+directories, `/tmp`, and `/var/tmp`, and refuse destinations under ancestor
+Cargo manifests as a conservative proxy for workspace membership; Cargo can
+accept some non-workspace ancestors), step-zero toolchain PATH normalization
+in `eval.sh`/`build-contexts.sh` and the prompt, true cargo exit codes
+captured in `run_phase`, and `record-run.sh` (validated structured fields,
+atomic report writes, `summary.csv` derived from the reports).
+
+The evaluator also binds every verdict to evidence: the test name must be
+defined in exactly one top-level `tests/*.rs` integration target and the
+phases run that target with an exact name filter, so an identically named
+test elsewhere cannot be credited; `eval.sh` prints a SHA-256 digest of the
+test source it ran and `record-run.sh` refuses a `--final-test` whose bytes
+do not match, so a recorded report cannot carry source the evaluator never
+executed. `build-contexts.sh` fails closed when `ripr check` itself fails and
+captures the follow-up `ripr explain` with validated, shell-quoted arguments
+instead of re-parsing rendered command text. `test-harness.sh` exercises
+these controls against a real toolchain and retains its artifacts for
+inspection.
 
 ## Recorded first calibration: results/seed-study/
 
@@ -58,9 +70,10 @@ run records are retained** in `results/seed-study/` (+ `summary.csv`); the
 other 4 records (the three `ripr-context` variant cells and
 `silent-return-vanilla`) were not written before the harness was reworked and
 are not recoverable — this recording loss is exactly defect 4 of issue
-#13113, and `record-run.sh` exists so future runs cannot lose rows. Do not
-average over the missing cells. Provenance and the encode-time path
-sanitization are documented in `results/seed-study/README.md`.
+#13113, and `record-run.sh` rebuilds the summary from retained reports on
+each successful write. Do not average over the missing cells. Provenance and
+the encode-time path sanitization are documented in
+`results/seed-study/README.md`.
 
 Retained records (all `rounds: 1`, all `discriminates: yes`):
 
