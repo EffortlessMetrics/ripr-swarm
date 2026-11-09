@@ -256,6 +256,22 @@ fn exit_zero_partial_reason_survives_real_measurement_cleanup() -> Result<(), St
 }
 
 #[test]
+fn invalid_utf8_stream_identity_is_labelled_as_the_decoded_text() -> Result<(), String> {
+    let (_fixture, report) = run_fixture(
+        "printf '\\377' >&2; printf '%s' '{\"status\":\"partial\"}' > \"$out/pilot-summary.json\"; exit 0",
+        "printf '{}'; exit 0",
+        false,
+        2_000,
+    )?;
+    let streams = &invocations(&report)?[0]["streams"];
+    assert_eq!(streams["identity"], "lossy_utf8_decoded");
+    // One raw 0xff byte decodes to a three-byte replacement character; the
+    // report must not present that count as the emitted byte count.
+    assert_eq!(streams["stderr"]["bytes"], 3);
+    Ok(())
+}
+
+#[test]
 fn complete_pilot_retains_existing_admission() -> Result<(), String> {
     let (_fixture, report) = run_fixture(
         "printf '%s' '{\"status\":\"complete\"}' > \"$out/pilot-summary.json\"; exit 0",

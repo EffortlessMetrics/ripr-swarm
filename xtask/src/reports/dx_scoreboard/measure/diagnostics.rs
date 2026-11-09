@@ -222,6 +222,9 @@ pub(super) fn record(
         "pilot_summary": subject.is_none().then(|| pilot_projection(summary)),
         "streams": {
             "retention": "digests_only",
+            // The shared capture reader returns lossily decoded UTF-8, so the
+            // counts and digests identify that decoded text, not raw bytes.
+            "identity": "lossy_utf8_decoded",
             "stdout": {"bytes": output.stdout.len(), "sha256": digest(&output.stdout)},
             "stderr": {"bytes": output.stderr.len(), "sha256": digest(&output.stderr)},
         },

@@ -156,7 +156,10 @@ guarantee.
 Arbitrary stdout/stderr, configuration/environment contents, source text and
 credentials are not copied into the report. Stream byte counts and SHA-256
 identities are retained with `retention: digests_only`; those fields are **not**
-references to recoverable raw bytes. Only the listed pilot-summary fields are
+references to recoverable raw bytes. They identify the lossily decoded UTF-8 text
+that the shared capture reader returns (`identity: lossy_utf8_decoded`), so a
+stream with invalid bytes is counted after replacement-character decoding, not
+as the emitted bytes. Only the listed pilot-summary fields are
 retained, not its full packet. Older reports without this additive diagnostic
 object remain valid. No old measurement is relabeled by this change.
 
