@@ -22,6 +22,10 @@ const BEGIN_LINE: &str = "<!-- ripr:agents:begin (written by `ripr init --agents
 const END_LINE: &str = "<!-- ripr:agents:end -->";
 
 pub(super) const FOLLOW_UP: &str = "Commit the agent instruction file(s) so every session sees them. Register the MCP server only if your agent prefers tools over the CLI: see docs/AGENT_QUICKSTART.md.";
+/// Used when the same run already plans the MCP config, so the registration
+/// hint would tell the user to do what `--mcp` just did.
+pub(super) const FOLLOW_UP_WITH_MCP: &str =
+    "Commit the agent instruction file(s) so every session sees them.";
 
 /// The instruction block. `docs/AGENT_QUICKSTART.md` carries the identical
 /// text; a unit test keeps the two equal.
