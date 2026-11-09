@@ -2019,6 +2019,21 @@ impl Backend {
         snapshot.as_ref().map(|value| value.as_ref().clone())
     }
 
+    /// Run `f` against the live document store the real `didOpen` /
+    /// `didChange` / `didClose` handlers mutate, so a handler-level test can
+    /// stage store occupancy or limits without 4,096 notifications (#11666).
+    #[cfg(test)]
+    pub(super) fn with_documents_for_test<R>(
+        &self,
+        f: impl FnOnce(&mut super::state::DocumentStore) -> R,
+    ) -> Option<R> {
+        self.quarantine
+            .documents
+            .lock()
+            .ok()
+            .map(|mut documents| f(&mut documents))
+    }
+
     #[cfg(test)]
     pub(super) fn document_state_for_test(&self, uri: &Uri) -> Option<super::state::DocumentState> {
         self.quarantine

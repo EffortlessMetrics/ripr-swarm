@@ -91,6 +91,7 @@ mod analysis_thread_routing_tests;
 mod bare_cr_origin_tests;
 mod consumed_source_tests;
 mod diagnostics_generation_tests;
+mod document_store_overflow_tests;
 mod panic_containment_tests;
 mod progress_completion_tests;
 mod progress_create_liveness_tests;
