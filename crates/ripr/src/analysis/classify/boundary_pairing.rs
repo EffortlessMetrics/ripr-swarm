@@ -824,6 +824,22 @@ fn assertion_observes_boundary_owner_call(
     } else {
         owner_call_sites(&subject, owner)
     };
+    // #13037: a comparison guarded by `&& flag` pairs only with a call that
+    // sits on the boundary and holds every guard; an unread guarded shape
+    // keeps the readings below.
+    if let Some(reached) = super::activation::guarded_comparison(probe, owner).and_then(|guarded| {
+        lists.iter().try_fold(false, |any, arguments| {
+            let values: Vec<Vec<String>> = arguments
+                .iter()
+                .map(|argument| pairing_argument_values(test, argument, scope))
+                .collect();
+            guarded
+                .call_reaches_boundary(probe, owner, index, &values)
+                .map(|reached| any || reached)
+        })
+    }) {
+        return reached;
+    }
     if lists
         .iter()
         .any(|arguments| argument_list_activates_boundary(probe, owner, test, arguments, scope))
@@ -1252,7 +1268,12 @@ fn owner_call_activates_boundary(
         if argument_list_activates_boundary(probe, owner, test, arguments, scope) {
             return true;
         }
-        if !owner_call_arguments_admit_activation_fallback(probe, owner, arguments) {
+        // #13037: the guarded argument check above already read this call's
+        // own guards and boundary; a line-level fact may belong to a sibling
+        // call on the same line that holds the guards.
+        if super::activation::guarded_comparison(probe, owner).is_some()
+            || !owner_call_arguments_admit_activation_fallback(probe, owner, arguments)
+        {
             return false;
         }
     }
@@ -1273,10 +1294,23 @@ fn argument_list_activates_boundary(
         .iter()
         .map(|argument| pairing_argument_values(test, argument, scope))
         .collect();
-    let Some((left, right)) = comparison_operands(&probe.expression) else {
+    let parameters = function_parameters(owner);
+    // #13037: a guarded comparison is reached only by a call that holds
+    // every guard, and its boundary operand is the comparison's alone (not
+    // `5 && !x`).
+    let guarded = super::activation::guarded_comparison(probe, owner);
+    if guarded
+        .as_ref()
+        .is_some_and(|guarded| !guarded.guards_hold_in(&parameters, &arg_values))
+    {
+        return false;
+    }
+    let expression = guarded
+        .as_ref()
+        .map_or(probe.expression.as_str(), |guarded| guarded.comparison());
+    let Some((left, right)) = comparison_operands(expression) else {
         return false;
     };
-    let parameters = function_parameters(owner);
     let left_index = parameter_index(&parameters, &left);
     let right_index = parameter_index(&parameters, &right);
     if let (Some(left_index), Some(right_index)) = (left_index, right_index) {

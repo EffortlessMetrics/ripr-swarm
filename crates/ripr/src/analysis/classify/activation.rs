@@ -421,6 +421,15 @@ fn observed_discriminator_values(
     let Some(owner) = owner_fn else {
         return Vec::new();
     };
+    // #13037: a guarded comparison's boundary rows are the ones that hold
+    // its guards; an unread guarded shape keeps the reading below.
+    if let Some(guarded) = guarded_comparison(probe, owner) {
+        match guarded.reading(probe, owner, related_tests, helper_chain, index) {
+            GuardedReading::Reached(facts) => return facts,
+            GuardedReading::Unreached(_) => return Vec::new(),
+            GuardedReading::Unread => {}
+        }
+    }
     let parameters = function_parameters(owner);
     let owner_source = index
         .files()
@@ -2623,6 +2632,375 @@ fn missing_boundary_discriminator(
     unresolved: &mut Option<String>,
 ) -> Option<MissingDiscriminatorFact> {
     let owner = owner_fn?;
+    let legacy = |unresolved: &mut Option<String>| {
+        missing_boundary_discriminator_in(
+            probe,
+            owner,
+            related_tests,
+            flow_sinks,
+            helper_chain,
+            index,
+            workspace_complete,
+            unresolved,
+        )
+    };
+    // #13037: `amount >= LIMIT && !express` compares `amount` with `LIMIT`;
+    // the `&&` tail only selects which rows reach that boundary, so it is
+    // not part of either operand. Only the narrow readable shape is read
+    // here; every other shape keeps the reading below unchanged. A guarded
+    // boundary no row reaches is reported as unresolved with the guard
+    // named, never as an actionable missing discriminator (fail-closed).
+    let Some(guarded) = guarded_comparison(probe, owner) else {
+        return legacy(unresolved);
+    };
+    match guarded.reading(probe, owner, related_tests, helper_chain, index) {
+        GuardedReading::Reached(_) => None,
+        GuardedReading::Unreached(reason) => {
+            *unresolved = Some(reason);
+            None
+        }
+        GuardedReading::Unread => legacy(unresolved),
+    }
+}
+
+/// What the related-test rows say about a guarded comparison's boundary.
+enum GuardedReading {
+    /// Readable rows hold every guard and sit on the boundary value; one
+    /// `parameter == value && guard == bool` fact per such row.
+    Reached(Vec<ValueFact>),
+    /// Rows are readable, but none that holds the guards sits on the boundary.
+    Unreached(String),
+    /// The operands, rows or control flow are not ones this reading trusts.
+    Unread,
+}
+
+/// A changed comparison joined by top-level `&&` to boolean guards that are
+/// each a bare owner parameter or its negation (`amount >= LIMIT &&
+/// !express`), so the comparison alone is the boundary and the guards only
+/// select which related-test rows reach it (#13037).
+pub(in crate::analysis) struct GuardedComparison {
+    comparison: String,
+    /// `(parameter, value it must hold)`; `!express` requires `false`.
+    guards: Vec<(String, bool)>,
+    /// The old comparison when the edit changed only the comparison; `None`
+    /// for a pure insertion.
+    before: Option<String>,
+}
+
+impl GuardedComparison {
+    fn unreached_reason(&self, parameter: &str, boundary: &str, value: &str) -> String {
+        let guards = self
+            .guards
+            .iter()
+            .map(|(parameter, value)| format!("`{parameter} = {value}`"))
+            .collect::<Vec<_>>()
+            .join(" and ");
+        format!(
+            "the changed boundary `{}` decides the result only when {guards}, and no related test row with {guards} passes `{parameter}` at the boundary value {}, so ripr cannot tell whether a test reaches it",
+            self.comparison,
+            if boundary == value {
+                format!("`{value}`")
+            } else {
+                format!("`{boundary}` ({value})")
+            }
+        )
+    }
+
+    fn reading(
+        &self,
+        probe: &Probe,
+        owner: &FunctionSummary,
+        related_tests: &[&TestSummary],
+        helper_chain: Option<&super::helper_transfer::HelperChain>,
+        index: &crate::analysis::rust_index::RustIndex,
+    ) -> GuardedReading {
+        let Some((parameter, boundary, boundary_value)) =
+            self.resolved_boundary(probe, owner, index)
+        else {
+            return GuardedReading::Unread;
+        };
+        let parameters = function_parameters(owner);
+        let rows = call_values_for_owner(
+            owner,
+            &parameters,
+            related_tests,
+            helper_chain,
+            index,
+            false,
+        );
+        // Every row must spell each guard as a literal: a guard fed from a
+        // variable or a helper row without the guard column is not a row
+        // that misses the guard, so neither credit nor the unreached reason
+        // may rest on it.
+        let guards_readable = |row: &Vec<ParameterValue>| {
+            self.guards.iter().all(|(guard, _)| {
+                parameter_value(row, guard)
+                    .is_some_and(|cell| matches!(cell.value.trim(), "true" | "false"))
+            })
+        };
+        if rows.is_empty() || !rows.iter().all(guards_readable) {
+            return GuardedReading::Unread;
+        }
+        let guarded_rows = || rows.iter().filter(|row| self.holds(row));
+        let facts = guarded_rows()
+            .filter_map(|row| parameter_value(row, &parameter))
+            .filter(|cell| comparable_value(&cell.value) == comparable_value(&boundary_value.value))
+            .map(|cell| ValueFact {
+                file: cell.file.clone(),
+                line: cell.line,
+                text: cell.text.clone(),
+                // The value as fed, plus each guard as fed: same-test
+                // pairing matches only `parameter == literal` terms against
+                // the literals one call passes, so a call that misses a
+                // guard cannot pair with this boundary row.
+                value: std::iter::once(format!("{parameter} == {}", cell.value))
+                    .chain(
+                        self.guards
+                            .iter()
+                            .map(|(guard, value)| format!("{guard} == {value}")),
+                    )
+                    .collect::<Vec<_>>()
+                    .join(" && "),
+                context: ValueContext::FunctionArgument,
+            })
+            .collect::<Vec<_>>();
+        if facts.is_empty() {
+            GuardedReading::Unreached(self.unreached_reason(
+                &parameter,
+                &boundary,
+                &boundary_value.value,
+            ))
+        } else {
+            GuardedReading::Reached(facts)
+        }
+    }
+
+    /// The compared owner parameter, the boundary operand and its visible
+    /// value. `None` unless exactly one side is a plain owner parameter the
+    /// owner never rebinds, the other is a literal or a named constant whose
+    /// value the owner's file shows, and nothing before the changed line can
+    /// divert a row away from it.
+    fn resolved_boundary(
+        &self,
+        probe: &Probe,
+        owner: &FunctionSummary,
+        index: &crate::analysis::rust_index::RustIndex,
+    ) -> Option<(String, String, ExactOperand)> {
+        let parameters = function_parameters(owner);
+        let owner_source = index
+            .files()
+            .get(&owner.file)
+            .map(|facts| &*facts.data().source);
+        let (left, right) = comparison_operands(&self.comparison)?;
+        let is_parameter = |operand: &str| parameters.iter().any(|parameter| parameter == operand);
+        let (parameter, boundary) = match (is_parameter(&left), is_parameter(&right)) {
+            (true, false) => (left, right),
+            (false, true) => (right, left),
+            _ => return None,
+        };
+        // A row on the boundary value tells the old comparison from the new
+        // one only when the edit changed just the operator and the two
+        // operators disagree at equality (`>` to `>=`, not `>=` to `<=`); a
+        // moved threshold (`x >= 5` to `x >= 6`) needs a row this reading
+        // does not look for. A pure insertion has no old comparison: the
+        // boundary row must enter the inserted branch (#12414), so a strict
+        // operator, whose boundary row stays outside it, is not read.
+        let new_at_equality = holds_at_equality(&self.comparison)?;
+        match self.before.as_deref() {
+            None if !new_at_equality => return None,
+            None => {}
+            Some(before) => {
+                let (old_left, old_right) = comparison_operands(before)?;
+                let same_operands = (old_left == parameter && old_right == boundary)
+                    || (old_right == parameter && old_left == boundary);
+                if !same_operands || holds_at_equality(before)? == new_at_equality {
+                    return None;
+                }
+            }
+        }
+        let constant = boundary_constant(owner, &boundary, index);
+        let value = visible_operand(&boundary, constant.as_ref())?;
+        // An earlier branch or early return may take a row away from the
+        // changed line; a rebound parameter is not the caller's value.
+        if parameter_may_be_rebound(owner, &parameter, probe.location.line)
+            || !first_decision_is_clear(owner, owner_source, probe, false)
+        {
+            return None;
+        }
+        Some((parameter, boundary, value))
+    }
+
+    /// The comparison alone, without its guards (`amount >= LIMIT`).
+    pub(in crate::analysis) fn comparison(&self) -> &str {
+        &self.comparison
+    }
+
+    /// Whether one owner call's argument values (one list per parameter, in
+    /// order) hold every guard as a single literal.
+    pub(in crate::analysis) fn guards_hold_in(
+        &self,
+        parameters: &[String],
+        arguments: &[Vec<String>],
+    ) -> bool {
+        self.guards.iter().all(|(guard, required)| {
+            parameters
+                .iter()
+                .position(|parameter| parameter == guard)
+                .and_then(|at| arguments.get(at))
+                .is_some_and(|values| {
+                    values.len() == 1
+                        && values[0].trim() == if *required { "true" } else { "false" }
+                })
+        })
+    }
+
+    /// Whether one owner call's argument values (one list per parameter, in
+    /// order) sit on the boundary while holding every guard. Same-test
+    /// pairing reads this per observed call, so a call that misses a guard
+    /// never pairs. `None` when the shape is not one this reading resolves.
+    pub(in crate::analysis) fn call_reaches_boundary(
+        &self,
+        probe: &Probe,
+        owner: &FunctionSummary,
+        index: &crate::analysis::rust_index::RustIndex,
+        arguments: &[Vec<String>],
+    ) -> Option<bool> {
+        let (parameter, _, value) = self.resolved_boundary(probe, owner, index)?;
+        let parameters = function_parameters(owner);
+        let on_boundary = parameters
+            .iter()
+            .position(|name| *name == parameter)
+            .and_then(|at| arguments.get(at))
+            .is_some_and(|values| {
+                values
+                    .iter()
+                    .any(|fed| comparable_value(fed) == comparable_value(&value.value))
+            });
+        Some(on_boundary && self.guards_hold_in(&parameters, arguments))
+    }
+
+    fn holds(&self, row: &[ParameterValue]) -> bool {
+        self.guards.iter().all(|(parameter, value)| {
+            parameter_value(row, parameter)
+                .is_some_and(|cell| cell.value.trim() == if *value { "true" } else { "false" })
+        })
+    }
+}
+
+/// The comparison and guards of a changed `comparison && guard && ...`
+/// predicate. `None` for anything else: no top-level `&&`, an `||` anywhere
+/// at top level, more or fewer than one comparison, a guard that is not a
+/// bare owner parameter (optionally negated) the owner never rebinds, or an
+/// edit that touches the guards (`a >= T` to `a >= T && !x`, or a flipped or
+/// added guard): rows that hold the new guards may not see that change.
+pub(in crate::analysis) fn guarded_comparison(
+    probe: &Probe,
+    owner: &FunctionSummary,
+) -> Option<GuardedComparison> {
+    let (comparison, guards) = split_guarded(&probe.expression, owner, probe.location.line)?;
+    let before = match probe.before.as_deref() {
+        None => None,
+        Some(before) => {
+            let (old_comparison, old_guards) = split_guarded(before, owner, probe.location.line)?;
+            let sorted = |guards: &[(String, bool)]| {
+                let mut guards = guards.to_vec();
+                guards.sort();
+                guards
+            };
+            if sorted(&old_guards) != sorted(&guards) {
+                return None;
+            }
+            Some(old_comparison)
+        }
+    };
+    Some(GuardedComparison {
+        comparison,
+        guards,
+        before,
+    })
+}
+
+/// Whether a single comparison holds when its two operands are equal, read
+/// from its operator as `comparison_operands` picks it.
+fn holds_at_equality(comparison: &str) -> Option<bool> {
+    [">=", "<=", "==", "!=", ">", "<"]
+        .into_iter()
+        .find(|operator| comparison.contains(operator))
+        .map(|operator| matches!(operator, ">=" | "<=" | "=="))
+}
+
+fn split_guarded(
+    expression: &str,
+    owner: &FunctionSummary,
+    line: usize,
+) -> Option<(String, Vec<(String, bool)>)> {
+    let expression = clean_operand(expression);
+    let masked = crate::analysis::language::mask_rust_comments_and_strings(&expression);
+    if masked.len() != expression.len() {
+        return None;
+    }
+    let bytes = masked.as_bytes();
+    let mut depth = 0i32;
+    let mut cuts = Vec::new();
+    let mut start = 0usize;
+    let mut at = 0usize;
+    while at < bytes.len() {
+        match bytes[at] {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => depth -= 1,
+            b'|' if depth == 0 && bytes.get(at + 1) == Some(&b'|') => return None,
+            b'&' if depth == 0 && bytes.get(at + 1) == Some(&b'&') => {
+                cuts.push(expression[start..at].trim());
+                at += 2;
+                start = at;
+                continue;
+            }
+            _ => {}
+        }
+        at += 1;
+    }
+    if cuts.is_empty() || depth != 0 {
+        return None;
+    }
+    cuts.push(expression[start..].trim());
+    let parameters = function_parameters(owner);
+    let mut comparison = None;
+    let mut guards = Vec::new();
+    for part in cuts {
+        let (negated, name) = match part.strip_prefix('!') {
+            Some(rest) => (true, rest.trim()),
+            None => (false, part),
+        };
+        if parameters.iter().any(|parameter| parameter == name) {
+            if parameter_may_be_rebound(owner, name, line) {
+                return None;
+            }
+            guards.push((name.to_string(), !negated));
+            continue;
+        }
+        if comparison.is_some() || comparison_operands(part).is_none() {
+            return None;
+        }
+        comparison = Some(part.to_string());
+    }
+    let comparison = comparison?;
+    (!guards.is_empty()).then_some((comparison, guards))
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the shared evidence inputs plus the unresolved-boundary reason computed on the same pass"
+)]
+fn missing_boundary_discriminator_in(
+    probe: &Probe,
+    owner: &FunctionSummary,
+    related_tests: &[&TestSummary],
+    flow_sinks: &[FlowSinkFact],
+    helper_chain: Option<&super::helper_transfer::HelperChain>,
+    index: &crate::analysis::rust_index::RustIndex,
+    workspace_complete: bool,
+    unresolved: &mut Option<String>,
+) -> Option<MissingDiscriminatorFact> {
     // #12414: a pure insertion whose changed line is itself a predicate
     // names the inserted guard's activating domain, not the changed
     // comparison's equality boundary: the equality point passes on both
