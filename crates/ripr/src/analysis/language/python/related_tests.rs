@@ -3385,7 +3385,9 @@ pub(super) fn strong_tests_import_only_rival_modules(
     strong_tests: &[&RelatedTest],
     all_tests: &TestLookup<'_>,
 ) -> bool {
-    if owner.ambiguous_src_modules.is_empty() || strong_tests.is_empty() {
+    if (owner.ambiguous_src_modules.is_empty() && owner.test_local_shadows.is_empty())
+        || strong_tests.is_empty()
+    {
         return false;
     }
     strong_tests.iter().all(|related_test| {

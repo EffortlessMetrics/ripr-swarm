@@ -380,6 +380,15 @@ directory set is the basedir of the test's directory (the first ancestor,
 inclusive, without an `__init__.py`), the same basedir for each `conftest.py`
 at or above the test, and the repository root; package directories themselves
 are not on `sys.path` and are not included.
+Known limits of this pass: directories a pytest `pythonpath` setting
+(`pytest.ini`, `[tool.pytest.ini_options]`, `tox.ini`, `setup.cfg`) puts ahead on
+`sys.path` are not read, so a shadowing module reachable only through one is not
+detected; the model is one pytest invocation per project, so cross-project
+`sys.path` and `sys.modules` effects of a repository-wide run are not modeled,
+nor is a subproject directory used as the working directory; and the
+module-attribute credit sites (`boundary.rs`, `transitive_reach.rs`) match
+`owner_module_paths` directly and are not gated by the shadow, the same as the
+pre-existing rival-module case (#4566).
 A test that imports a free-function owner's name from a workspace module that
 defines its own function of that name, when no import reaches the owner's module,
 is not related to the owner even if its call text matches the name (#8759). The
