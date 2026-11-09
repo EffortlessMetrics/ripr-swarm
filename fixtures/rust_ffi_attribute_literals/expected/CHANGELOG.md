@@ -232,7 +232,18 @@ Updated:
 ## Pending — rust_ffi_attribute_literals (19)
 
 Reason:
+RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; human rendering unchanged
 Reach summary of a workspace-unreferenced owner now ends '(unreferenced in workspace)' (RIPR-SPEC-0219, #12766); class unchanged
+
+Command:
+`cargo xtask goldens bless rust_ffi_attribute_literals --reason "..."`
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — rust_ffi_attribute_literals (20)
+Reason:
+Unreferenced-in-workspace marker withheld: the owner carries an exporting attribute or its name appears elsewhere as a whole word (RIPR-SPEC-0219 review fix, #12766); class unchanged
 
 Command:
 `cargo xtask goldens bless rust_ffi_attribute_literals --reason "..."`
@@ -241,10 +252,10 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 
-## Pending — rust_ffi_attribute_literals (20)
+## Pending — rust_ffi_attribute_literals (21)
 
 Reason:
-Unreferenced-in-workspace marker withheld: the owner carries an exporting attribute or its name appears elsewhere as a whole word (RIPR-SPEC-0219 review fix, #12766); class unchanged
+RIPR-SPEC-0423: merge of origin/main union re-bless; additive evidence_stages rows combined with main-side bless entries and wording updates
 
 Command:
 `cargo xtask goldens bless rust_ffi_attribute_literals --reason "..."`
