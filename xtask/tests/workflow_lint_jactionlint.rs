@@ -4,10 +4,11 @@
 //!
 //! The workflow fetches a pinned release tarball over HTTPS, verifies its
 //! SHA-256 with `sha256sum --check`, extracts `jactionlint`, and executes it
-//! offline. A transient HTTP 504 on the download must recover when `--retry 5
-//! --retry-all-errors` is present on the invocation, while a persistent failure
-//! beyond the retry budget or a corrupted payload must still fail the step
-//! before executing `jactionlint`.
+//! offline. A transient HTTP 504 on the download must recover when `--retry 5`
+//! is present on the invocation, while a permanent HTTP 404 must fail fast
+//! without consuming the retry budget, a persistent failure beyond the retry
+//! budget or a corrupted payload must still fail the step before executing
+//! `jactionlint`.
 
 #![cfg(unix)]
 
@@ -20,10 +21,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 const WORKFLOW: &str = ".github/workflows/workflow-lint.yml";
 const PINNED_SHA256: &str = "5ac307b0499bb0eab45ae99c23e8e0790874fbc667c75224410954e0e3c6e0f5";
 
-const FAKE_FETCH: &str = r#"#!/bin/bash
+const FAKE_FETCH: &str = r#"#!/usr/bin/env bash
 set -euo pipefail
 retries=0
-retry_all=0
 out=""
 url=""
 while [ $# -gt 0 ]; do
@@ -31,10 +31,6 @@ while [ $# -gt 0 ]; do
     --retry)
       retries="$2"
       shift 2
-      ;;
-    --retry-all-errors)
-      retry_all=1
-      shift
       ;;
     -o)
       out="$2"
@@ -49,12 +45,10 @@ while [ $# -gt 0 ]; do
       ;;
   esac
 done
-printf 'FETCH retries=%s retry_all=%s url=%s out=%s\n' "$retries" "$retry_all" "$url" "$out" >> "$FAKE_DIR/log"
+printf 'FETCH retries=%s url=%s out=%s\n' "$retries" "$url" "$out" >> "$FAKE_DIR/log"
 max_attempts=1
-if [ "$retries" -gt 0 ]; then
-  if [ "$retry_all" -eq 1 ] || [ "${FAKE_HTTP_STATUS:-504}" -ge 500 ]; then
-    max_attempts=$((retries + 1))
-  fi
+if [ "$retries" -gt 0 ] && [ "${FAKE_HTTP_STATUS:-504}" -ge 500 ]; then
+  max_attempts=$((retries + 1))
 fi
 attempt=0
 while [ "$attempt" -lt "$max_attempts" ]; do
@@ -70,7 +64,7 @@ done
 exit 22
 "#;
 
-const FAKE_SHA256SUM: &str = r#"#!/bin/bash
+const FAKE_SHA256SUM: &str = r#"#!/usr/bin/env bash
 set -euo pipefail
 printf 'SHA256SUM %s\n' "$*" >> "$FAKE_DIR/log"
 check_file="$2"
@@ -123,7 +117,12 @@ fn spawn_tool(program: &str) -> Command {
     Command::new(program)
 }
 
-fn run_step(fail_attempts: usize, corrupt_tarball: bool, case: &str) -> Result<Outcome, String> {
+fn run_step(
+    fail_attempts: usize,
+    corrupt_tarball: bool,
+    case: &str,
+    http_status: u16,
+) -> Result<Outcome, String> {
     let nonce = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(|e| e.to_string())?
@@ -140,7 +139,7 @@ fn run_step(fail_attempts: usize, corrupt_tarball: bool, case: &str) -> Result<O
     let jactionlint_bin = dir.join("pkg/jactionlint");
     write_executable(
         &jactionlint_bin,
-        "#!/bin/bash\nprintf 'JACTIONLINT %s\\n' \"$*\" >> \"$FAKE_DIR/log\"\nexit 0\n",
+        "#!/usr/bin/env bash\nprintf 'JACTIONLINT %s\\n' \"$*\" >> \"$FAKE_DIR/log\"\nexit 0\n",
     )?;
     let tar_out = spawn_tool("tar")
         .args([
@@ -183,6 +182,7 @@ fn run_step(fail_attempts: usize, corrupt_tarball: bool, case: &str) -> Result<O
         .env("FAKE_DIR", &dir)
         .env("RUNNER_TEMP", dir.join("runner-temp"))
         .env("FAKE_FAIL_ATTEMPTS", fail_attempts.to_string())
+        .env("FAKE_HTTP_STATUS", http_status.to_string())
         .env("EXPECTED_SHA256", PINNED_SHA256)
         .output()
         .map_err(|e| e.to_string())?;
@@ -201,8 +201,22 @@ fn run_step(fail_attempts: usize, corrupt_tarball: bool, case: &str) -> Result<O
 }
 
 #[test]
+fn workflow_requests_bounded_transient_retries_only() -> Result<(), String> {
+    let block = run_block()?;
+    assert!(
+        block.contains("--retry 5"),
+        "workflow must keep a bounded retry budget: {block}"
+    );
+    assert!(
+        !block.contains("--retry-all-errors"),
+        "workflow must not widen retries to permanent failures: {block}"
+    );
+    Ok(())
+}
+
+#[test]
 fn transient_504_failures_recover_within_retry_budget_and_run_jactionlint() -> Result<(), String> {
-    let outcome = run_step(2, false, "transient-504")?;
+    let outcome = run_step(2, false, "transient-504", 504)?;
     assert!(
         outcome.success,
         "expected transient failure to recover: stderr={} log={}",
@@ -210,11 +224,7 @@ fn transient_504_failures_recover_within_retry_budget_and_run_jactionlint() -> R
     );
     assert_eq!(outcome.attempts, 3, "{}", outcome.log);
     assert_eq!(outcome.linter_runs, 1, "{}", outcome.log);
-    assert!(
-        outcome.log.contains("FETCH retries=5 retry_all=1"),
-        "{}",
-        outcome.log
-    );
+    assert!(outcome.log.contains("FETCH retries=5"), "{}", outcome.log);
     assert!(
         outcome
             .log
@@ -226,9 +236,22 @@ fn transient_504_failures_recover_within_retry_budget_and_run_jactionlint() -> R
 }
 
 #[test]
+fn permanent_404_fails_fast_without_consuming_retry_budget() -> Result<(), String> {
+    let outcome = run_step(6, false, "permanent-404", 404)?;
+    assert!(
+        !outcome.success,
+        "expected permanent failure to fail the step: {}",
+        outcome.log
+    );
+    assert_eq!(outcome.attempts, 1, "{}", outcome.log);
+    assert_eq!(outcome.linter_runs, 0, "{}", outcome.log);
+    Ok(())
+}
+
+#[test]
 fn persistent_504_failure_exhausts_retry_budget_and_fails_without_running_linter()
 -> Result<(), String> {
-    let outcome = run_step(6, false, "persistent-504")?;
+    let outcome = run_step(6, false, "persistent-504", 504)?;
     assert!(
         !outcome.success,
         "expected persistent failure to fail the step: {}",
@@ -242,7 +265,7 @@ fn persistent_504_failure_exhausts_retry_budget_and_fails_without_running_linter
 #[test]
 fn corrupted_tarball_fails_sha256_check_before_extracting_or_running_linter() -> Result<(), String>
 {
-    let outcome = run_step(1, true, "corrupt-tarball")?;
+    let outcome = run_step(1, true, "corrupt-tarball", 504)?;
     assert!(
         !outcome.success,
         "expected sha256 mismatch to fail the step: {}",
