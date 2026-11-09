@@ -7,7 +7,7 @@ use super::model::{
     BADGE_REASON_KEYS, BadgeCounts, BadgeKind, BadgePolicy, BadgeStatus, BadgeSummary,
 };
 use super::summaries::{
-    apply_analysis_outcome_disclosure, badge_status_color, calibrated_unknown_count,
+    apply_analysis_outcome_disclosure, badge_status_color, headline_calibrated_unknown_count,
     ripr_badge_summary_with_suppressions, unknown_headline_contribution,
 };
 
@@ -312,7 +312,7 @@ pub fn ripr_plus_badge_summary_with_suppressions(
         today,
         policy,
         scope,
-        calibrated_unknown_count(&output.findings),
+        headline_calibrated_unknown_count(output),
     )
 }
 

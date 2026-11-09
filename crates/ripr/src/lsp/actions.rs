@@ -312,6 +312,7 @@ pub(super) fn disable_retained_analysis_actions(
                         | "verification_route_unavailable"
                         | "receipt_route_unavailable"
                         | "preview_or_static_limitation"
+                        | "repair_route_not_ready"
                 )
             )
         {
@@ -685,11 +686,8 @@ fn push_seam_actions(
         }
         return;
     }
-    let instruction_summary = fix_instruction_authority::summary_for_seam_action(
-        context.snapshot,
-        context.diagnostic,
-        context.seam,
-    );
+    let instruction_summary =
+        fix_instruction_authority::summary_for_seam_action(context.diagnostic, context.seam);
     let instruction_blocks_repair =
         fix_instruction_authority::blocks_repair_ready_actions(&instruction_summary);
     // The targeted-test brief is the editor's repair-packet surface, so the
@@ -701,7 +699,7 @@ fn push_seam_actions(
     if instruction_blocks_repair {
         if client_features.code_action_disabled
             && let Some(reason) = fix_instruction_authority::disabled_reason_for_instruction_state(
-                instruction_summary.state,
+                &instruction_summary,
             )
             && let Some(action) = disabled_action(
                 TARGETED_TEST_BRIEF_TITLE,
@@ -1062,7 +1060,7 @@ fn push_gap_actions(
             if client_features.code_action_disabled
                 && let Some(reason) =
                     fix_instruction_authority::disabled_reason_for_instruction_state(
-                        instruction_summary.state,
+                        &instruction_summary,
                     )
                 && let Some(action) = disabled_action(
                     INSPECT_GAP_PACKET_TITLE,

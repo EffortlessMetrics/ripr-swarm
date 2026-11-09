@@ -272,23 +272,33 @@ pub(super) fn resolve_agent_brief_working_set(
         crate::cli::agent::AgentBriefWorkingSet::Diff(path) => {
             let diff_path = validate_agent_brief_diff_path(root, path)?;
             let diff_text = analysis::load_diff_core(root, None, Some(&diff_path), None)?;
-            let changed_lines = agent_brief_checked_lines_from_diff(root, &diff_text)?;
+            let (changed_lines, changed_paths) =
+                agent_brief_checked_lines_from_diff(root, &diff_text)?;
             let changed_owners = agent_brief_owners_for_lines(root, &changed_lines);
             Ok(AgentBriefResolvedWorkingSet::diff(
                 path.clone(),
                 changed_lines,
             ))
-            .map(|working_set| working_set.with_changed_owners(changed_owners))
+            .map(|working_set| {
+                working_set
+                    .with_changed_owners(changed_owners)
+                    .with_changed_paths(changed_paths)
+            })
         }
         crate::cli::agent::AgentBriefWorkingSet::Base(base) => {
             let diff_text = analysis::load_diff_core(root, Some(base.as_str()), None, None)?;
-            let changed_lines = agent_brief_checked_lines_from_diff(root, &diff_text)?;
+            let (changed_lines, changed_paths) =
+                agent_brief_checked_lines_from_diff(root, &diff_text)?;
             let changed_owners = agent_brief_owners_for_lines(root, &changed_lines);
             Ok(AgentBriefResolvedWorkingSet::base(
                 base.clone(),
                 changed_lines,
             ))
-            .map(|working_set| working_set.with_changed_owners(changed_owners))
+            .map(|working_set| {
+                working_set
+                    .with_changed_owners(changed_owners)
+                    .with_changed_paths(changed_paths)
+            })
         }
         crate::cli::agent::AgentBriefWorkingSet::Files(files) => files
             .iter()
@@ -302,7 +312,9 @@ pub(super) fn resolve_agent_brief_working_set(
     }
 }
 
-fn validate_agent_brief_diff_path(root: &Path, path: &Path) -> Result<PathBuf, String> {
+/// Resolve and confine an `agent brief --diff` path. Shared with the preview
+/// route (#13791), which renders the same resolved patch as `check --diff`.
+pub(super) fn validate_agent_brief_diff_path(root: &Path, path: &Path) -> Result<PathBuf, String> {
     let root = root.canonicalize().map_err(|err| {
         format!(
             "canonicalize agent brief root {} failed: {err}",
@@ -336,13 +348,20 @@ fn validate_agent_brief_diff_path(root: &Path, path: &Path) -> Result<PathBuf, S
     Ok(candidate)
 }
 
+/// The changed lines a diff selects, paired with every path the diff changed
+/// (#13791): added-line files, files whose hunks only remove lines, and pure
+/// renames, normalized like the lines. The paths are `None` when the diff
+/// deletes a whole file, whose language this metadata does not carry, so a
+/// language classification over them stays generic instead of guessing.
+type AgentBriefDiffSelection = (Vec<AgentBriefLine>, Option<Vec<PathBuf>>);
+
 /// Refuse parser-limited input before owner lookup or repository fallback can
 /// turn unexamined changed lines into a successful brief. The compatibility
 /// projection below remains available to the separate review-comments route.
 fn agent_brief_checked_lines_from_diff(
     root: &Path,
     diff_text: &str,
-) -> Result<Vec<AgentBriefLine>, crate::core_error::CoreError> {
+) -> Result<AgentBriefDiffSelection, crate::core_error::CoreError> {
     let parsed = analysis::parse_unified_diff_bounded_with_metadata_core(diff_text)
         .map_err(|error| crate::core_error::CoreError::diff_input_unsupported(error.to_string()))?;
     if let Some(limitation) = parsed.limitations.first() {
@@ -364,7 +383,19 @@ fn agent_brief_checked_lines_from_diff(
             ),
         ));
     }
-    Ok(parsed
+    let changed_paths = (parsed.deleted_file_count == 0).then(|| {
+        let mut paths: Vec<PathBuf> = parsed
+            .changed_files
+            .iter()
+            .map(|file| &file.path)
+            .chain(parsed.pure_rename_paths.iter())
+            .map(|path| normalize_agent_brief_path(root, path))
+            .collect();
+        paths.sort();
+        paths.dedup();
+        paths
+    });
+    let lines = parsed
         .changed_files
         .into_iter()
         .flat_map(|file| {
@@ -373,7 +404,8 @@ fn agent_brief_checked_lines_from_diff(
                 .into_iter()
                 .map(move |line| AgentBriefLine::new(path.clone(), line.line))
         })
-        .collect())
+        .collect();
+    Ok((lines, changed_paths))
 }
 
 pub(super) fn agent_brief_lines_from_diff(root: &Path, diff_text: &str) -> Vec<AgentBriefLine> {
