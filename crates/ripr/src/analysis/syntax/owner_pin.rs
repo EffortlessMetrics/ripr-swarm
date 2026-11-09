@@ -720,23 +720,66 @@ fn glob_is_root_sibling_module(import: &ast::Use, item: &ast::UseTree, root: &st
     let named_root = |name: Option<ast::Name>| {
         name.is_some_and(|name| name.text().trim_start_matches("r#") == root)
     };
-    let mut declared = false;
+    let mut declared = 0usize;
     for child in parent.children() {
         if let Some(module) = ast::Module::cast(child.clone()) {
-            declared |= named_root(module.name());
+            if !named_root(module.name()) {
+                continue;
+            }
+            declared += 1;
+            // `#[path]` can mount a file the scan never reads, and an
+            // item-position macro inside an inline module may emit any item.
+            if module
+                .attrs()
+                .any(|attr| attr.syntax().text().to_string().contains("path"))
+                || module.item_list().is_some_and(|list| {
+                    list.syntax()
+                        .children()
+                        .any(|item| ast::MacroCall::can_cast(item.kind()))
+                })
+            {
+                return false;
+            }
         } else if let Some(krate) = ast::ExternCrate::cast(child.clone()) {
             // An `extern crate` or alias of the same spelling is another item.
-            if krate.name_ref().is_some_and(|name| name.text() == root)
+            if krate
+                .name_ref()
+                .is_some_and(|name| name.text().trim_start_matches("r#") == root)
                 || named_root(krate.rename().and_then(|rename| rename.name()))
             {
+                return false;
+            }
+        } else if let Some(other) = ast::Use::cast(child.clone()) {
+            // Another import taking the root's name (`use dep as global;`),
+            // possibly under a `cfg` the scan does not evaluate.
+            let binds_root = other
+                .syntax()
+                .descendants()
+                .filter_map(ast::UseTree::cast)
+                .any(|leaf| {
+                    if leaf.star_token().is_some() {
+                        return false;
+                    }
+                    if let Some(rename) = leaf.rename() {
+                        return named_root(rename.name());
+                    }
+                    leaf.path()
+                        .and_then(|path| path.segment())
+                        .and_then(|segment| segment.name_ref())
+                        .is_some_and(|name| name.text().trim_start_matches("r#") == root)
+                });
+            if binds_root {
                 return false;
             }
         } else if ast::MacroCall::can_cast(child.kind()) {
             // An item-position macro may emit any binding of that name.
             return false;
+        } else if ast::AnyHasName::cast(child.clone()).is_some_and(|item| named_root(item.name())) {
+            return false;
         }
     }
-    declared
+    // Two declarations (`cfg`-exclusive alternatives) are not one module.
+    declared == 1
 }
 
 /// An `extern crate other as std;` (or `core`, `alloc`) alias.

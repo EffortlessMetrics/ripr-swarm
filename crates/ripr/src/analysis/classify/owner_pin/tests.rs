@@ -9236,6 +9236,35 @@ fn a_root_glob_of_a_module_the_file_declares_is_not_a_foreign_glob() -> Result<(
             false,
         ),
         ("mod global;\nitems!();\npub use global::*;\n", false),
+        // Another item or import may bind the root under a `cfg` the scan
+        // does not evaluate, or the module may hold files it cannot see.
+        (
+            "#[cfg(unix)]\nmod global;\n#[cfg(not(unix))]\nuse dep as global;\npub use global::*;\n",
+            false,
+        ),
+        (
+            "#[cfg(unix)]\nmod global;\n#[cfg(not(unix))]\nuse dep::global;\npub use global::*;\n",
+            false,
+        ),
+        (
+            "#[cfg(a)]\nmod global;\n#[cfg(not(a))]\nmod global {}\npub use global::*;\n",
+            false,
+        ),
+        (
+            "#[path = \"x.rs\"]\nmod global;\npub use global::*;\n",
+            false,
+        ),
+        (
+            "mod global { include!(\"x.rs\"); }\npub use global::*;\n",
+            false,
+        ),
+        (
+            "mod global;\nextern crate r#global;\npub use global::*;\n",
+            false,
+        ),
+        ("mod global;\npub use ::global::*;\n", false),
+        // One local glob never suppresses another, foreign one.
+        ("mod global;\npub use global::*;\npub use dep::*;\n", false),
         // Only the whole `module::*` glob is read: a longer path or a grouped
         // glob keeps its dedicated rule.
         ("mod global;\npub use global::prelude::*;\n", false),
