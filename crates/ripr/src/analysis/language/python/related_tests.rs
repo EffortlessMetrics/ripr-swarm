@@ -2890,6 +2890,94 @@ fn api_client_route_calls_owner(test: &PythonTest, owner: &PythonOwner) -> Optio
     found
 }
 
+/// Local names that hold the response of a call to one of the owner's routes
+/// through a client built over the owner's own application (#13869): the
+/// name is bound once, to that call, in the test body. Only these names let a
+/// response assertion stand for the handler's returned value; an
+/// unidentified or rival application, an inline call or a rebound name
+/// yields nothing.
+pub(super) fn identified_route_response_names(
+    test: &PythonTest,
+    owner: &PythonOwner,
+) -> Vec<String> {
+    if owner.route_paths.is_empty() {
+        return Vec::new();
+    }
+    let receivers = super::route_client::client_receivers(&test.body_text);
+    let mut names = Vec::new();
+    for (index, route) in owner.route_paths.iter().enumerate() {
+        let verbs = owner
+            .route_methods
+            .get(index)
+            .map(Vec::as_slice)
+            .unwrap_or_default();
+        for receiver in &receivers {
+            if !body_calls_api_client_route(&test.body_text, receiver, route, verbs)
+                || client_app_identity(
+                    test,
+                    owner,
+                    receiver,
+                    owner.route_receivers.get(index).map(String::as_str),
+                ) != ClientApp::Own
+            {
+                continue;
+            }
+            for verb in ["get", "post", "put", "patch", "delete", "options", "head"] {
+                if !verbs.is_empty() && !verbs.iter().any(|accepted| accepted == verb) {
+                    continue;
+                }
+                let callee = format!("{receiver}.{verb}");
+                for (name, _) in super::route_client::single_call_bindings(&test.body_text, &callee)
+                {
+                    if binding_calls_route(&test.body_text, &name, &callee, route)
+                        && !names.contains(&name)
+                    {
+                        names.push(name);
+                    }
+                }
+            }
+        }
+    }
+    names
+}
+
+/// Whether the raw source line binding `name` (`name = callee("<path>", ...)`)
+/// calls `callee` with a first argument the route accepts. The binding is the
+/// body's only one for `name`, so its first line is the one that starts with
+/// the name and a plain `=`.
+fn binding_calls_route(body_text: &str, name: &str, callee: &str, route: &str) -> bool {
+    let mut offset = 0usize;
+    for line in body_text.split_inclusive('\n') {
+        let start = offset;
+        offset += line.len();
+        let code = line.trim_start();
+        let Some(rest) = code.strip_prefix(name) else {
+            continue;
+        };
+        let rest = rest.trim_start();
+        let rest = rest
+            .strip_prefix(':')
+            .and_then(|annotated| annotated.split_once('=').map(|(_, value)| value))
+            .or_else(|| {
+                rest.strip_prefix('=')
+                    .filter(|value| !value.starts_with('='))
+            });
+        let Some(value) = rest else {
+            continue;
+        };
+        let value_start = start + line.len() - value.len();
+        let Some(call) = body_text.get(value_start..) else {
+            return false;
+        };
+        let call = call.trim_start();
+        return call
+            .strip_prefix(callee)
+            .and_then(|arguments| first_parenthesized_string_argument(arguments.trim_start()))
+            .is_some_and(|argument| python_route_matches_call_path(route, &argument));
+    }
+    false
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ClientApp {
     Own,

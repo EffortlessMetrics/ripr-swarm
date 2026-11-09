@@ -49,6 +49,15 @@ const WARN_EDIT: Edit = Edit {
     new: "    warnings.warn(\"legacy is deprecated\", UserWarning)",
 };
 
+const PRICE_APP: &str = "from fastapi import FastAPI\n\napp = FastAPI()\n\n\n@app.get(\"/price\")\ndef price():\n    return {\"total\": 200 - 10, \"count\": 3}\n";
+const PRICE_EDIT: Edit = Edit {
+    owner: "src/app.py",
+    old: "    return {\"total\": 200 - 10, \"count\": 3}",
+    new: "    return {\"total\": 200 - 5, \"count\": 3}",
+};
+const CLIENT_IMPORTS: &str =
+    "from fastapi.testclient import TestClient\n\nfrom src.app import app\n\n\n";
+
 const CONFTEST_CART: &str = "import pytest\n\nfrom src.cart import Cart\n\n\n@pytest.fixture\ndef cart():\n    return Cart(200)\n";
 
 #[derive(Clone, Copy)]
@@ -181,6 +190,22 @@ const STYLES: &[Style] = &[
         weak: "import pytest\n\nfrom src.checked import checked\n\n\ndef test_negative():\n    with pytest.raises(Exception):\n        checked(-1)\n",
         strong_before: "import pytest\n\nfrom src.checked import checked\n\n\ndef test_negative():\n    with pytest.raises(ValueError):\n        checked(-1)\n",
         strong_after: "import pytest\n\nfrom src.checked import checked\n\n\ndef test_negative():\n    with pytest.raises(TypeError):\n        checked(-1)\n",
+    },
+    Style {
+        name: "FastAPI TestClient response JSON",
+        sources: &[("src/app.py", PRICE_APP)],
+        edit: PRICE_EDIT,
+        weak: "from fastapi.testclient import TestClient\n\nfrom src.app import app\n\n\ndef test_price():\n    client = TestClient(app)\n    response = client.get(\"/price\")\n    assert response.status_code == 200\n",
+        strong_before: "from fastapi.testclient import TestClient\n\nfrom src.app import app\n\n\ndef test_price():\n    client = TestClient(app)\n    response = client.get(\"/price\")\n    assert response.json()[\"total\"] == 190\n",
+        strong_after: "from fastapi.testclient import TestClient\n\nfrom src.app import app\n\n\ndef test_price():\n    client = TestClient(app)\n    response = client.get(\"/price\")\n    assert response.json() == {\"total\": 195, \"count\": 3}\n",
+    },
+    Style {
+        name: "unittest assertEqual on a TestClient response",
+        sources: &[("src/app.py", PRICE_APP)],
+        edit: PRICE_EDIT,
+        weak: "import unittest\n\nfrom fastapi.testclient import TestClient\n\nfrom src.app import app\n\n\nclass PriceTests(unittest.TestCase):\n    def test_price(self):\n        client = TestClient(app)\n        response = client.get(\"/price\")\n        self.assertEqual(response.status_code, 200)\n",
+        strong_before: "import unittest\n\nfrom fastapi.testclient import TestClient\n\nfrom src.app import app\n\n\nclass PriceTests(unittest.TestCase):\n    def test_price(self):\n        client = TestClient(app)\n        response = client.get(\"/price\")\n        self.assertEqual(response.json()[\"total\"], 190)\n",
+        strong_after: "import unittest\n\nfrom fastapi.testclient import TestClient\n\nfrom src.app import app\n\n\nclass PriceTests(unittest.TestCase):\n    def test_price(self):\n        client = TestClient(app)\n        response = client.get(\"/price\")\n        self.assertEqual(response.json()[\"total\"], 195)\n",
     },
 ];
 
@@ -316,6 +341,59 @@ fn a_collected_doctest_the_evaluator_cannot_run_abstains() -> Result<(), String>
     )?;
     assert_eq!(finding.class, ExposureClass::StaticUnknown, "{finding:?}");
     assert!(!finding.related_tests.is_empty(), "{finding:?}");
+    Ok(())
+}
+
+#[test]
+fn a_route_response_read_credits_only_the_changed_key_of_the_owners_route() -> Result<(), String> {
+    // Each test calls the edited handler but does not pin the changed
+    // `total` value of the owner's own route through one response, so none
+    // may read `exposed` (#13869).
+    let tests = [
+        (
+            "another key",
+            "def test_price():\n    client = TestClient(app)\n    response = client.get(\"/price\")\n    assert response.json()[\"count\"] == 3\n",
+        ),
+        (
+            "an arithmetic side",
+            "def test_price():\n    client = TestClient(app)\n    response = client.get(\"/price\")\n    other = {\"x\": 0}\n    assert response.json()[\"total\"] + other[\"x\"] == 190\n",
+        ),
+        (
+            "a rebound response",
+            "def test_price():\n    client = TestClient(app)\n    response = client.get(\"/price\")\n    response = client.get(\"/other\")\n    assert response.json()[\"total\"] == 190\n",
+        ),
+        (
+            "another route",
+            "def test_price():\n    client = TestClient(app)\n    response = client.get(\"/other\")\n    assert response.json()[\"total\"] == 190\n",
+        ),
+        (
+            "a method the route does not accept",
+            "def test_price():\n    client = TestClient(app)\n    response = client.post(\"/price\")\n    assert response.json()[\"total\"] == 190\n",
+        ),
+        (
+            "an inequality",
+            "def test_price():\n    client = TestClient(app)\n    response = client.get(\"/price\")\n    assert response.json()[\"total\"] != 0\n",
+        ),
+        (
+            "an unconditional disjunction",
+            "def test_price():\n    client = TestClient(app)\n    response = client.get(\"/price\")\n    assert response.json()[\"total\"] == 190 or True\n",
+        ),
+    ];
+    let mut failures = Vec::new();
+    for (name, body) in tests {
+        let test = format!("{CLIENT_IMPORTS}{body}");
+        let finding = check_style(name, &[("src/app.py", PRICE_APP)], PRICE_EDIT, &test)?;
+        if finding.class == ExposureClass::Exposed {
+            failures.push(format!("{name}: read exposed"));
+        }
+    }
+    // A client over another application does not reach the owner's handler.
+    let rival = "from fastapi import FastAPI\nfrom fastapi.testclient import TestClient\n\nfrom src.app import app\n\nother_app = FastAPI()\n\n\ndef test_price():\n    client = TestClient(other_app)\n    response = client.get(\"/price\")\n    assert response.json()[\"total\"] == 190\n";
+    let finding = check_style("rival app", &[("src/app.py", PRICE_APP)], PRICE_EDIT, rival)?;
+    if finding.class == ExposureClass::Exposed {
+        failures.push("rival app: read exposed".to_string());
+    }
+    assert!(failures.is_empty(), "{failures:#?}");
     Ok(())
 }
 

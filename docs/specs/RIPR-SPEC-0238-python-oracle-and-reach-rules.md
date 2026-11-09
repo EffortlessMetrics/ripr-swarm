@@ -513,7 +513,18 @@ Relations, first match wins (rank, oracle-eligible):
   another name, a decorator on a receiver the adapter does not recognise) that
   still calls the route's path and verb is `api_client_route_unidentified_app`
   (2, reach only, never an oracle) and reads as the static limit
-  `missing_import_graph`, not as a gap or a credit (#10110);
+  `missing_import_graph`, not as a gap or a credit (#10110). When the
+  edited line is the handler's `return` of a changed dict literal, an
+  `api_client_route_call` test can observe it through the response: the
+  test binds one name once, to a call of an accepted verb on a client over
+  the owner's own application with a first argument the route accepts, and
+  an exact assertion (`assert` with one `==`, or `self.assertEqual` with two
+  plain arguments) compares that name's `.json()`, whole or with one quoted
+  key subscript, with the other side. The changed-key gate still decides
+  which key observes the edit. Another key, a rebound or inline response, an
+  arithmetic or other expression around the read, another route or verb, an
+  unidentified or rival application, or an inequality grants no credit
+  (`strong_oracle_observes_route_response`, #13869);
 - R4: `construct_call` (4, eligible): a `__call__` owner invoked as
   `Class(...)(...)`;
 - R5: `local_binding` (4, eligible): a `__call__` owner invoked through

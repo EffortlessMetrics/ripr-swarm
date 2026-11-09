@@ -1565,7 +1565,26 @@ fn sink_alignment_and_rows(
             && fstring_credit_ok(unit)
             && !assertion_calls_stand_in(unit, owner)
     };
-    let branches: [CreditBranch<'_, '_>; 7] = [
+    // A route handler returning a changed dict literal is observed by an
+    // identified client's response (#13869, #10237 gap 5): the JSON body of
+    // `response = client.get("/path")` is the returned dict. The response
+    // names come from the test body alone and only for the owner's own
+    // application; the changed-key gate in `gates_ok` still decides which
+    // response field observes the edit.
+    let returns_changed_dict = !owner.route_paths.is_empty()
+        && line_text.trim_start().starts_with("return ")
+        && dict_change.is_some();
+    let route_response_observed = |unit: &AlignmentUnit<'_>| {
+        returns_changed_dict
+            && unit.kind == OracleKind::ExactValue
+            && unit.test.is_some_and(|test| {
+                super::related_tests::identified_route_response_names(test, owner)
+                    .iter()
+                    .any(|name| reads_response_json(&unit.text, name))
+            })
+            && gates_ok(unit)
+    };
+    let branches: [CreditBranch<'_, '_>; 8] = [
         ("direct", "strong_oracle_observes_owner_name", &|unit| {
             observes_imported_owner(unit, &identity_tokens)
                 && (method_owner_identity(unit) || free_fn_module_identity(unit))
@@ -1605,6 +1624,11 @@ fn sink_alignment_and_rows(
             "strong_oracle_observes_owner_call_through_module",
             &|unit| module_call_observed(unit) && result_gates_ok(unit),
         ),
+        (
+            "direct",
+            "strong_oracle_observes_route_response",
+            &route_response_observed,
+        ),
         // Gate the changed-sink-token path with the same free-function module
         // identity as the direct/alias paths: a same-named free function from a
         // different module must not credit `exposed` via this sibling branch
@@ -1640,6 +1664,108 @@ fn sink_alignment_and_rows(
         finding_sink_alignment_from_units(&units, &branches, changed_sink, observed_sink),
         row_alignments,
     )
+}
+
+/// Whether an exact assertion compares `name.json()` (the whole body, or one
+/// subscript of it) with `==`: `response.json()["total"] == 195` or
+/// `{"total": 195} == response.json()`. Any other comparison, or a read of
+/// another attribute of the response (`status_code`, `text`), is not it.
+fn reads_response_json(text: &str, name: &str) -> bool {
+    let text = text.trim();
+    let (left, right) = if let Some(arguments) = text
+        .strip_prefix("self.assertEqual(")
+        .and_then(|rest| rest.strip_suffix(')'))
+    {
+        let Some(pair) = two_plain_arguments(arguments) else {
+            return false;
+        };
+        pair
+    } else {
+        let text = text.strip_prefix("assert ").unwrap_or(text).trim();
+        let Some((left, right)) = text.split_once("==") else {
+            return false;
+        };
+        if right.contains("==") || left.ends_with(['!', '<', '>', '=']) || right.starts_with('=') {
+            return false;
+        }
+        (left, right)
+    };
+    let target = format!("{name}.json()");
+    let reads = |side: &str| {
+        let side = side.trim();
+        side.strip_prefix(target.as_str()).is_some_and(|rest| {
+            let rest = rest.trim_start();
+            rest.is_empty() || plain_key_subscript(rest)
+        })
+    };
+    reads(left) || reads(right)
+}
+
+/// The two arguments of `self.assertEqual(first, second)`, split at the one
+/// top-level comma. A third argument, a keyword argument, an escaped string or
+/// unbalanced brackets yield nothing.
+fn two_plain_arguments(arguments: &str) -> Option<(&str, &str)> {
+    let mut depth = 0usize;
+    let mut split = None;
+    let mut quote: Option<char> = None;
+    for (idx, ch) in arguments.char_indices() {
+        if let Some(open) = quote {
+            if ch == '\\' {
+                return None;
+            }
+            if ch == open {
+                quote = None;
+            }
+            continue;
+        }
+        match ch {
+            '"' | '\'' => quote = Some(ch),
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth = depth.checked_sub(1)?,
+            // `first=...` or any other top-level `=` is not a plain argument.
+            '=' if depth == 0 => return None,
+            ',' if depth == 0 => {
+                if split.is_some() {
+                    return None;
+                }
+                split = Some(idx);
+            }
+            _ => {}
+        }
+    }
+    if quote.is_some() || depth != 0 {
+        return None;
+    }
+    let idx = split?;
+    let (first, second) = (arguments.get(..idx)?, arguments.get(idx + 1..)?);
+    Some((first, second))
+}
+
+/// Whether `text` is exactly one subscript by a quoted identifier-like key
+/// (`["total"]`, `['total']`). Anything after it (`["a"] + x["b"]`, a second
+/// subscript, a call) is not.
+fn plain_key_subscript(text: &str) -> bool {
+    let Some(inner) = text
+        .strip_prefix('[')
+        .and_then(|rest| rest.strip_suffix(']'))
+    else {
+        return false;
+    };
+    let inner = inner.trim();
+    let key = inner
+        .strip_prefix('"')
+        .and_then(|rest| rest.strip_suffix('"'))
+        .or_else(|| {
+            inner
+                .strip_prefix('\'')
+                .and_then(|rest| rest.strip_suffix('\''))
+        });
+    key.is_some_and(|key| {
+        !key.is_empty()
+            && key
+                .chars()
+                .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '-')
+    })
 }
 
 /// Receivers of `.attr` reads in an assertion text: the trailing
