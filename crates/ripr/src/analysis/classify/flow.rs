@@ -1246,7 +1246,7 @@ pub(in crate::analysis) fn predicate_branch_side_effect_only(
 /// Whether the owner body can mutate a local through a `&mut` borrow or a
 /// `let mut` binding. A unit-returning call such as `bump(&mut x);`, or one
 /// through a mutable alias, can change a value the owner later returns, so
-/// independence from the return cannot be proven. Fail closed (#5384): keep the
+/// independence from the return cannot be established. Fail closed (#5384): keep the
 /// established return-value sink for such owners.
 fn body_may_mutate_locals(body: &str) -> bool {
     let masked = crate::analysis::extract::mask_comments_and_strings(body);
