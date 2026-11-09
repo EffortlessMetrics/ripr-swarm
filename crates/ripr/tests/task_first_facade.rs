@@ -1905,20 +1905,30 @@ fn check_drill_down_prints_repair_identity_that_starts_the_same_seam() -> Result
             "json",
         ],
     )?;
-    // #11976: JSON gains only the additive `finding_routes` projection, and
-    // its repair command is the identity-bound line the screen printed.
+    // #11976: JSON gains only the additive `finding_routes` projection.
+    // #13636: the weakened predicate is still uncommitted, so the start
+    // would refuse; JSON reports the same seam as blocked on that file with
+    // no runnable command, and the screen names the commit step first.
     let json_text = stdout_text(&json);
     let routes = finding_routes(&json_text)?;
     let repair = routes
         .iter()
         .find_map(|route| route.get("repair"))
         .ok_or_else(|| format!("JSON must carry the repair route:\n{json_text}"))?;
-    assert_eq!(repair["status"], "ready");
+    assert_eq!(repair["status"], "blocked_uncommitted", "{json_text}");
     assert_eq!(repair["seam_id"], identity);
-    let command = repair["command"].as_str().unwrap_or_default();
+    assert_eq!(
+        repair["uncommitted_files"],
+        serde_json::json!(["src/lib.rs"]),
+        "{json_text}"
+    );
     assert!(
-        stdout.lines().any(|line| line.trim() == command),
-        "JSON command must be a printed line: {command}\n{stdout}"
+        repair.get("command").is_none(),
+        "a blocked start must carry no runnable command:\n{json_text}"
+    );
+    assert!(
+        stdout.contains("Commit your production change first"),
+        "the screen must name the commit step before the repair start:\n{stdout}"
     );
     // Round-trip: the printed identity resolves through `ripr repair` to
     // the same seam and starts exactly one before-phase attempt for it.
