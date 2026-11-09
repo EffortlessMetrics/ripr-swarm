@@ -154,7 +154,7 @@ pub(crate) fn mask_comments_and_strings(text: &str) -> String {
 /// `SHARED_BODY_MIN_BYTES..=SHARED_BODY_MAX_BYTES` are scanned every time.
 pub(crate) fn masked_body_shared(text: &str) -> std::rc::Rc<str> {
     if !(SHARED_BODY_MIN_BYTES..=SHARED_BODY_MAX_BYTES).contains(&text.len()) {
-        return std::rc::Rc::from(mask_with_char_literals(text).0.as_str());
+        return std::rc::Rc::from(mask_comments_and_strings(text));
     }
     SHARED_BODIES.with(|memo| {
         let mut memo = memo.borrow_mut();
@@ -166,7 +166,7 @@ pub(crate) fn masked_body_shared(text: &str) -> std::rc::Rc<str> {
         }
         #[cfg(test)]
         SHARED_BODY_MISSES.with(|misses| misses.set(misses.get() + 1));
-        let masked: std::rc::Rc<str> = std::rc::Rc::from(mask_with_char_literals(text).0.as_str());
+        let masked: std::rc::Rc<str> = std::rc::Rc::from(mask_with_char_literals(text).0);
         if memo.bytes + 2 * text.len() > SHARED_BODY_BUDGET {
             memo.entries.clear();
             memo.bytes = 0;
@@ -607,6 +607,23 @@ mod tests {
             mask_with_char_literals(&edited).0
         );
         assert_eq!(misses() - before, 1, "same address, other bytes: a miss");
+        let large = "fn t() { \"x\" } // note\n".repeat(MEMO_MIN_BYTES / 10);
+        assert!(large.len() > SHARED_BODY_MAX_BYTES);
+        let before = misses();
+        let whole_file_misses = || MASK_MEMO_MISSES.with(std::cell::Cell::get);
+        let file_before = whole_file_misses();
+        for _ in 0..3 {
+            assert_eq!(
+                &*masked_body_shared(&large),
+                mask_with_char_literals(&large).0
+            );
+        }
+        assert_eq!(misses(), before, "a whole file bypasses this memo");
+        assert_eq!(
+            whole_file_misses() - file_before,
+            1,
+            "and is still remembered by the whole-file memo"
+        );
         let short = "fn t() { \"x\" }";
         let before = misses();
         for _ in 0..3 {
