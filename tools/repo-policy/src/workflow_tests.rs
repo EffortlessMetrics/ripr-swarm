@@ -2103,8 +2103,9 @@ fn retired_major_is_rejected_when_a_sha_pin_comment_names_it() {
 
 /// Every input `cargo kani -p ripr` compiles or the lane driver uses to judge
 /// a verdict (#12904): the `ripr` crate, its `ripr-contract` path dependency,
-/// workspace manifests and toolchain, and the xtask lane driver.
-const KANI_LANE_INPUTS: &str = "crates/ripr/src/*|crates/ripr/build.rs|crates/ripr/Cargo.toml|crates/ripr-contract/*|Cargo.toml|Cargo.lock|rust-toolchain.toml|.cargo/*|xtask/Cargo.toml|xtask/src/main.rs|xtask/src/run.rs|xtask/src/kani_lane.rs|.github/workflows/kani.yml)";
+/// workspace manifests and toolchain, and the whole xtask package (lane driver, command
+/// parsing and dispatch, and the process runner it uses to judge a verdict).
+const KANI_LANE_INPUTS: &str = "crates/ripr/src/*|crates/ripr/build.rs|crates/ripr/Cargo.toml|crates/ripr-contract/*|Cargo.toml|Cargo.lock|rust-toolchain.toml|.cargo/*|xtask/*|.github/workflows/kani.yml)";
 
 /// Whether `kani.yml` keeps the always-reported `Kani Result` contract
 /// (#12904): no trigger-level `paths` filter, a `detect` gate in front of
@@ -2171,7 +2172,7 @@ fn kani_result_is_always_reported_and_never_passes_by_absence() -> Result<(), St
         text.replace(r#"if [ "$EVENT_NAME" = pull_request ] && {"#, "if {"),
         text.replace("crates/ripr-contract/*|", ""),
         text.replace("crates/ripr/src/*|", ""),
-        text.replace("xtask/src/run.rs|", ""),
+        text.replace("xtask/*|", ""),
         text.replace(
             "reason=lane_input; return 0",
             r#"reason="lane_input:$path"; return 0"#,

@@ -81,7 +81,7 @@ jobs:
             while IFS= read -r -d '' path; do
               case "$path" in
                 # Fixed reason only: a PR-controlled path never reaches $GITHUB_OUTPUT.
-                crates/ripr/src/*|crates/ripr/build.rs|crates/ripr/Cargo.toml|crates/ripr-contract/*|Cargo.toml|Cargo.lock|rust-toolchain.toml|.cargo/*|xtask/Cargo.toml|xtask/src/main.rs|xtask/src/run.rs|xtask/src/kani_lane.rs|.github/workflows/kani.yml) reason=lane_input; return 0 ;;
+                crates/ripr/src/*|crates/ripr/build.rs|crates/ripr/Cargo.toml|crates/ripr-contract/*|Cargo.toml|Cargo.lock|rust-toolchain.toml|.cargo/*|xtask/*|.github/workflows/kani.yml) reason=lane_input; return 0 ;;
               esac
             done < "$changed"
             relevant=false reason=no_lane_input

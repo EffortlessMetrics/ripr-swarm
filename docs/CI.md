@@ -745,9 +745,9 @@ made required without blocking unrelated PRs (#12904).
   `kani` only when the diff touches the lane's inputs: `crates/ripr/src/**`,
   `crates/ripr/build.rs`, `crates/ripr/Cargo.toml`, `crates/ripr-contract/**`
   (a path dependency whose domain types the harnesses use), the root
-  `Cargo.toml`, `Cargo.lock`, `rust-toolchain.toml`, `.cargo/**`, the lane
-  driver (`xtask/Cargo.toml`, `xtask/src/main.rs`, `xtask/src/run.rs`,
-  `xtask/src/kani_lane.rs`) or the workflow. Detection writes only fixed
+  `Cargo.toml`, `Cargo.lock`, `rust-toolchain.toml`, `.cargo/**`, the whole
+  `xtask/**` package (the lane driver plus the command parsing, dispatch and
+  process runner that decide its verdict) or the workflow. Detection writes only fixed
   output values, never a PR-controlled path. Anything it cannot classify (missing history, a failed diff, an
   empty diff) runs the lane. Schedule and dispatch always run `kani`. Kani
   compiles the whole `ripr` library, so a run takes minutes and several GB of
