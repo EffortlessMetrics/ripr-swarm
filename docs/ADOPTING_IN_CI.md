@@ -124,6 +124,18 @@ run `ripr baseline create --from target/ripr/reports/gate-decision.json --out .r
 commit the result and pass it with `--baseline` (`RIPR_GATE_BASELINE`). A
 `blocked` decision, by contrast, exits 3.
 
+## GitLab merge requests
+
+Steps 2 to 4 above are GitHub-only: they use the GitHub workflow's `RIPR_GATE_MODE`
+and `RIPR_GATE_BASELINE` variables. For GitLab, `ripr init --ci gitlab` writes
+`.gitlab-ci.yml` with one `ripr-advisory` job that runs only on merge-request
+pipelines and has `allow_failure: true`, so it never blocks a merge request. It
+runs `ripr check` and `ripr review-comments` and keeps `target/ripr/` as a job
+artifact for 14 days. It does not post merge-request comments, render SARIF or
+configure gate modes. For a merge request from a fork it fetches the target
+project's branch as the diff base. It needs no secrets (only public release downloads), so
+keep protected CI/CD variables out of merge-request pipelines. Details: [CI strategy](CI.md).
+
 ## Rolling back
 
 Unset `RIPR_GATE_MODE` to return to advisory-only. The job is
