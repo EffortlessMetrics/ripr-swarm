@@ -255,7 +255,10 @@ jobs:
           done
           [[ -f /cache/cargo/.global-cache && -w /cache/cargo/.global-cache && ! -L /cache/cargo/.global-cache ]]
           for path in "$GITHUB_WORKSPACE/target" "$GITHUB_WORKSPACE/target/tmp"; do
-            [[ ! -L "$path" ]] && { [[ ! -e "$path" ]] || [[ -d "$path" ]]; }
+            if [[ -L "$path" || ( -e "$path" && ! -d "$path" ) ]]; then
+              echo "unsafe workspace directory: $path" >&2
+              exit 1
+            fi
             mkdir -p "$path"
           done
           {

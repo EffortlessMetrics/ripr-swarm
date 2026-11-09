@@ -10,7 +10,7 @@
 # Local composite actions (.github/actions/*/action.yml) run inside the calling
 # workflow, so their run blocks carry the same visible budget (#3841).
 
-.github/actions/select-owned-rust/action.yml|47|#4838/#8082: select and verify repository Rust 1.95.0 with auto-install disabled; if components are absent, install only in a fresh bounded per-job Rust home, preserving the runner primary and governed dependency/compiler caches. Executed positive/missing/wrong-version/failure controls in rust_gates_admission_replay.
+.github/actions/select-owned-rust/action.yml|50|#4838/#8082/#13863: select and verify repository Rust 1.95.0 with auto-install disabled; if components are absent, install only in a fresh bounded per-job Rust home, preserving the runner primary and governed dependency/compiler caches. Explicitly refuse symlink/non-directory target paths before environment publication. Executed toolchain controls in rust_gates_admission_replay and path-boundary controls in merge_group_subject.
 
 .github/actions/verify-merge-group-subject/action.yml|84|#8082: pre-toolchain stdlib-Python verifier binds native G event/repository/ref/run, frozen H/B/G/tree, Git ancestry and singleton composition; observes real parents and verifies the complete caller receipt when required. Read-only bounded Git, no admission, publisher, cache or landing authority; exercised by repo-policy merge_group_subject real-history controls.
 
