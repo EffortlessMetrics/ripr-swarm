@@ -535,7 +535,7 @@ fn run_facade_repair(mut options: RepairFacadeOptions) -> Result<(), CommandErro
     // advanced route serves. The attempt is already published here, so a
     // card failure must name the started attempt and its recovery
     // instead of implying no attempt exists.
-    let card_stdout = super::agent_card::agent_card_stdout(AgentCardOptions {
+    let card_stdout = super::agent_card::agent_card_stdout_after_start(AgentCardOptions {
         root: options.root.clone(),
         root_explicit: true,
         seam_id: seam_id.clone(),
