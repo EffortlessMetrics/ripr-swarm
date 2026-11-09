@@ -6,6 +6,7 @@
 //! and the warm check reuses that same cache.
 
 mod check_admission;
+mod diagnostics;
 pub(crate) use check_admission::typed_cause_of_static_limit;
 mod editor_refresh;
 
@@ -242,7 +243,10 @@ pub(super) fn measure_corpus_entry(
     }
     let _ = fs::remove_dir_all(checkout.join("target/ripr"));
     let cache_text = cache.display().to_string();
-    let envs = [(CACHE_ENV, cache_text.as_str())];
+    let mut envs = vec![(CACHE_ENV, cache_text.as_str())];
+    envs.extend(crate::repo_exposure_latency_envs(
+        crate::repo_exposure_receipt_token(),
+    ));
     let root = checkout.display().to_string();
 
     let pilot_args = vec![
@@ -260,29 +264,39 @@ pub(super) fn measure_corpus_entry(
     let mut contradictions: Option<(usize, Vec<String>)> = None;
     // Both documents must be scanned; one alone would undercount.
     let mut missing_sources: Vec<&str> = Vec::new();
-    match capture_output_measured(
+    // Hash only a bounded regular executable; an invalid --ripr-bin must
+    // not turn diagnostic identity into an unbounded FIFO/device read.
+    // This observation does not qualify concurrent filesystem mutation.
+    let binary_sha256 = fs::metadata(binary)
+        .ok()
+        .filter(|metadata| metadata.is_file() && metadata.len() <= 256 * 1024 * 1024)
+        .and_then(|_| crate::reports::release_server::sha256_file_io(binary).ok());
+    let mut invocations = Vec::new();
+    let pilot = capture_output_measured(
         &binary.display().to_string(),
         &pilot_args,
         None,
         &envs,
         timeout,
         "dx-scoreboard cold pilot",
-    ) {
+    );
+    let summary = read_json_file(&out.join("pilot-summary.json"));
+    invocations.push(diagnostics::record("pilot", &pilot, summary.as_ref(), None));
+    match pilot {
         Ok(measured) => {
-            let summary = read_json_file(&out.join("pilot-summary.json"));
-            let status = summary
-                .as_ref()
-                .and_then(|summary| summary["status"].as_str().map(str::to_string))
-                .unwrap_or_else(|| "missing".to_string());
+            let status = diagnostics::pilot_status(summary.as_ref());
             let complete = exited_zero(&measured) && status == "complete";
             let ms = duration_ms(&measured);
-            let reason = summary
-                .as_ref()
-                .and_then(|summary| summary["reason"].as_str().map(str::to_string));
+            // Only the bounded vocabulary reaches the retained detail; an
+            // arbitrary producer string is never copied into the report.
+            let reason = match diagnostics::pilot_reason(summary.as_ref()) {
+                "not_reported" => None,
+                reason => Some(reason),
+            };
             let detail = format!(
                 "exit {}, pilot status `{status}`{}{}",
                 exit_label(&measured),
-                pilot_reason_suffix(reason.as_deref()),
+                pilot_reason_suffix(reason),
                 if measured.output.timed_out {
                     ", harness deadline reached"
                 } else {
@@ -326,6 +340,7 @@ pub(super) fn measure_corpus_entry(
         }
     }
 
+    drop(summary);
     let base = entry
         .base_sha
         .clone()
@@ -342,7 +357,10 @@ pub(super) fn measure_corpus_entry(
     // The contradiction scan reads every finding, so the measured check
     // renders the full set instead of the byte-bounded prefix that a large
     // diff (131 findings on `ripr-swarm-2026-10`) is otherwise cut to.
-    let check_envs = warm_check_envs(&cache_text);
+    let mut check_envs = warm_check_envs(&cache_text).to_vec();
+    check_envs.extend(crate::repo_exposure_latency_envs(
+        crate::repo_exposure_receipt_token(),
+    ));
     // The first run warms the cache for this exact diff; the second is the
     // edit-check loop a developer repeats. Warm-up success is required
     // before the measured population may be described as warm.
@@ -357,18 +375,33 @@ pub(super) fn measure_corpus_entry(
     // N measured runs follow the warm-up. The first run that is not an
     // admitted success ends the series: the rest would only repeat a failure,
     // and `record_warm_check` reports the series as incomplete.
+    invocations.push(diagnostics::record(
+        "check_warmup",
+        &warmup,
+        None,
+        Some(&subject),
+    ));
     let mut measured_runs = Vec::new();
+    let mut attempted = 0;
     let mut measured_error = None;
     if matches!(&warmup, Ok(warmup) if !warmup.output.timed_out) {
         for _ in 0..options.samples.max(1) {
-            match capture_output_measured(
+            let captured = capture_output_measured(
                 &binary.display().to_string(),
                 &check_args,
                 None,
                 &check_envs,
                 timeout,
                 "dx-scoreboard warm check",
-            ) {
+            );
+            invocations.push(diagnostics::record(
+                "check_measured",
+                &captured,
+                None,
+                Some(&subject),
+            ));
+            attempted += 1;
+            match captured {
                 Ok(run) => {
                     let stop = run.output.timed_out || !exited_zero(&run);
                     measured_runs.push(run);
@@ -382,6 +415,9 @@ pub(super) fn measure_corpus_entry(
                 }
             }
         }
+    }
+    for _ in attempted..options.samples.max(1) {
+        invocations.push(diagnostics::not_run("check_measured"));
     }
     let measured = match measured_error {
         Some(err) => Err(err),
@@ -512,7 +548,19 @@ pub(super) fn measure_corpus_entry(
 
     let (outcome, detail) = contradiction_outcome(contradictions, &missing_sources);
     samples.push(sample("trust.self_contradictions", outcome, detail));
-    measured_corpus_entry(entry, &editor_base)
+    let mut row = measured_corpus_entry(entry, &editor_base);
+    row["terminal_evidence"] = json!({
+        "schema_version": "1",
+        "commands": ["pilot", "check"],
+        "binary_identity_limitation": binary_sha256.is_none().then_some("binary_sha256_unavailable"),
+        "binary_sha256_before_pilot": binary_sha256,
+        "root_identity_sha256": crate::blind_journey::sha256_hex(subject.root.as_bytes()),
+        "base": subject.base,
+        "pilot_mode": "ready",
+        "check_mode": WARM_CHECK_MODE,
+        "invocations": invocations,
+    });
+    row
 }
 
 /// Retain the workload actually selected by the corpus producer. The effective

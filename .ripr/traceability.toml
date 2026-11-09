@@ -19948,6 +19948,10 @@ id = "RIPR-SPEC-0240"
 name = "Unknown, not a gap"
 spec = "docs/specs/RIPR-SPEC-0240-unknown-not-a-gap.md"
 tests = [
+  "crates/ripr/tests/refusal_note_owner_identity.rs::a_same_named_associated_function_does_not_front_for_the_owner",
+  "crates/ripr/tests/refusal_note_owner_identity.rs::a_receiver_call_of_the_same_name_does_not_front_for_the_owner",
+  "crates/ripr/tests/refusal_note_owner_identity.rs::a_real_conditional_owner_call_still_outranks_the_limit_refusal",
+  "crates/ripr/tests/refusal_note_owner_identity.rs::a_spaced_or_module_qualified_owner_call_still_counts_as_the_owner",
   "crates/ripr/tests/unpolled_future_limit.rs::a_dropped_unpolled_future_is_a_named_limit_not_reach",
   "crates/ripr/tests/unpolled_future_limit.rs::other_dropped_shapes_are_named_too",
   "crates/ripr/tests/unpolled_future_limit.rs::an_awaited_call_in_a_tokio_test_keeps_its_reading",
