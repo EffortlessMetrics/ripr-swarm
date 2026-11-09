@@ -8599,6 +8599,19 @@ pub(crate) fn classify_resolved_owner(
             .removed_throw_candidates
             .iter()
             .all(|removed| old_line_text.is_some_and(|old| old.trim() == removed))
+        // Only a test that calls the owner itself: through an exported
+        // wrapper (`ModuleEntryCall`) the wrapper's own unchanged throws can
+        // fire first with a message that contains the pinned one.
+        && !related_candidates.is_empty()
+        && related_candidates.iter().all(|candidate| {
+            matches!(
+                candidate.relation,
+                TypeScriptRelationKind::DirectOwnerCall
+                    | TypeScriptRelationKind::ImportAliasOwnerCall
+                    | TypeScriptRelationKind::ImportedOwnerCall
+                    | TypeScriptRelationKind::ReExportChainFollowed
+            )
+        })
         && let Some(message) = error_facts.pinnable_generic_error_message()
     {
         evidence.push(format!("typescript_error_message_pin: {message}"));

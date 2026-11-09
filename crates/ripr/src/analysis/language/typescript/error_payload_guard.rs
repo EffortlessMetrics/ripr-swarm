@@ -285,19 +285,28 @@ fn calls_unknown_function_except(masked: &str, params: &[String], pure_math: boo
 }
 
 /// Whether a removed line could have thrown or rejected the old side's
-/// error (#13827): it names `throw`, `reject` or `Promise` anywhere in its
-/// raw text, or calls anything but a pure `Math` method or a non-throwing
-/// built-in construction. Conservative: a removed signature or any call
-/// counts, so the message pin is refused rather than guessed.
+/// error (#13827): it names `throw`, `reject`, `Promise`, `new`, `await` or
+/// `yield` anywhere in its raw text, holds a template, opens with `(`, or
+/// calls anything but a pure `Math` method. Conservative: a removed
+/// signature or any call counts, so the message pin is refused rather than
+/// guessed. A throwing setter or coercion hook is not read.
 pub(crate) fn removed_line_may_throw(line: &str) -> bool {
     let names = |word: &str| {
         line.split(|c: char| !(c.is_alphanumeric() || c == '_' || c == '$'))
             .any(|token| token == word)
     };
-    if names("throw") || names("reject") || names("Promise") {
+    if ["throw", "reject", "Promise", "new", "await", "yield"]
+        .iter()
+        .any(|word| names(word))
+    {
         return true;
     }
     let masked = ts_mask_literals_and_comments(line);
+    // A template (possibly tagged, or spanning lines) or a line that opens
+    // with `(` (a call whose callee sits on the line above) is unread.
+    if line.contains('`') || masked.trim_start().starts_with('(') {
+        return true;
+    }
     // Scan the whole line: the leading `{` stops the signature skip.
     calls_unknown_function_except(&format!("{{{masked}"), &[], true)
 }
@@ -466,6 +475,9 @@ pub(crate) struct ErrorChangeFacts {
     /// [`Self::sole_throw_site`], with pure `Math` method calls in the owner
     /// treated as unable to throw (#13827).
     sole_throw_site_allowing_pure_math: bool,
+    /// The old line calls something that may throw its own error: any call
+    /// but a pure `Math` method or a built-in construction (#13827).
+    old_line_calls_unknown: bool,
 }
 
 impl ErrorChangeFacts {
@@ -572,6 +584,10 @@ impl ErrorChangeFacts {
             new_shape,
             old_line_read: old_line.is_some(),
             sole_throw_site_allowing_pure_math: false,
+            old_line_calls_unknown: old_line.is_some_and(|line| {
+                let masked = ts_mask_literals_and_comments(line);
+                calls_unknown_function_except(&format!("{{{masked}"), &[], true)
+            }),
         }
     }
 
@@ -596,6 +612,13 @@ impl ErrorChangeFacts {
             return None;
         }
         if self.old_line_read {
+            // The old message is the runtime message only for a built-in
+            // error class: a user class or factory (`new NotFoundError('user')`
+            // with `super(`${r} not found`)`) can build a longer one, and a
+            // call inside the old line can throw first.
+            if self.old_builtin_class.is_none() || self.old_line_calls_unknown {
+                return None;
+            }
             let old = self.old_message.as_deref()?;
             if old.contains(message) {
                 return None;
@@ -2020,6 +2043,17 @@ mod tests {
             None
         );
         assert_eq!(pin(Some("throw 'division by zero';"), new), None);
+        // A user class or factory may build a longer runtime message, and a
+        // call inside the old line may throw first.
+        assert_eq!(pin(Some("throw new DivisionError('division');"), new), None);
+        assert_eq!(pin(Some("throw divisionError('division');"), new), None);
+        assert_eq!(
+            pin(
+                Some("throw new Error('empty divisor', { cause: check(b) });"),
+                new
+            ),
+            None
+        );
         // A replaced non-throw line or an unread old message is not established.
         assert_eq!(pin(Some("return a / b;"), new), None);
         assert_eq!(pin(Some("throw new Error(`div ${b}`);"), new), None);
@@ -2041,6 +2075,11 @@ mod tests {
             "  const c = new Custom(1);",
             "export function divide(a: number, b: number): number {",
             "  /* throw */ return a;",
+            "  const m = new Map();",
+            "  const c = new Custom;",
+            "  await pending;",
+            "  return validate`${b}`;",
+            "  (b);",
         ] {
             assert!(removed_line_may_throw(line), "{line}");
         }
@@ -2048,7 +2087,6 @@ mod tests {
             "  return Math.floor(a / b);",
             "  if (b === 0) {",
             "  const q = a / b;",
-            "  const m = new Map();",
             "  return 'checkDivisor(b)';",
             "  }",
             "",

@@ -224,13 +224,15 @@ that ineligibility and remains the sole packet-readiness authority.
   - the analyzer emits `typescript_error_message_pin: <message>`. It does so
     only at the owner's sole throw site, and only when the old side cannot
     satisfy the same substring check: a pure addition, or an old message that
-    does not contain the new one. Every removed line of the file that could
+    does not contain the new one, thrown as a built-in error class with no
+    other call on the old line. Every removed line of the file that could
     have thrown (a `throw`, `reject`, `Promise` or any call other than a pure
     `Math` method) must be the changed throw's own paired old line.
 
   A lookup key, ternary, `||` fallback, concatenation, shortened message,
-  moved or inlined throw, other removed throw or second throw site gets no
-  packet. Such a packet also carries a stop condition
+  moved or inlined throw, other removed throw, replaced user error class or
+  factory, second throw site, or a test that reaches the owner only through
+  an exported wrapper gets no packet. Such a packet also carries a stop condition
   for a test that reaches a different `throw`.
 - **G-D. Oracle-eligible, token-aware relation.**
   `has_oracle_eligible_relation == true` — the related test is linked by

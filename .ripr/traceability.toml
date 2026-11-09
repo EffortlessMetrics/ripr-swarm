@@ -8416,6 +8416,8 @@ tests = [
   "crates/ripr/src/app/tests/typescript_error_variant_packets.rs::bare_tothrow_moved_throw_with_contained_message_offers_no_message_packet",
   "crates/ripr/src/app/tests/typescript_error_variant_packets.rs::bare_tothrow_inlined_helper_throw_offers_no_message_packet",
   "crates/ripr/src/app/tests/typescript_error_variant_packets.rs::bare_tothrow_removed_earlier_throw_offers_no_message_packet",
+  "crates/ripr/src/app/tests/typescript_error_variant_packets.rs::bare_tothrow_replaced_user_error_class_offers_no_message_packet",
+  "crates/ripr/src/app/tests/typescript_error_variant_packets.rs::bare_tothrow_through_an_exported_wrapper_offers_no_message_packet",
   "crates/ripr/src/analysis/language/typescript/error_payload_guard.rs::tests::removed_line_may_throw_flags_throws_rejections_and_calls",
   "crates/ripr/src/analysis/language/typescript/error_payload_guard.rs::tests::pinnable_generic_error_message_needs_a_literal_the_old_side_cannot_satisfy",
   "crates/ripr/tests/cli_smoke/typescript_finally_completion.rs::completion_replacing_finalizers_cannot_confirm_the_changed_throw",

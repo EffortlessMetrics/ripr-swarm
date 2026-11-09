@@ -48,6 +48,16 @@ const DIVIDE_EARLIER_THROW_TS: &str = "export function divide(a: number, b: numb
 
 const DIVIDE_EARLIER_THROW_DIFF: &str = "diff --git a/src/index.ts b/src/index.ts\nindex 0000000..1111111 100644\n--- a/src/index.ts\n+++ b/src/index.ts\n@@ -1,8 +1,7 @@\n export function divide(a: number, b: number): number {\n-  if (b === 0) throw new Error('division by zero occurred');\n   const q = a / b;\n   if (q === Infinity) {\n-    throw new Error('overflow');\n+    throw new Error('division by zero');\n   }\n   return q;\n }\n";
 
+const DIVIDE_USER_CLASS_TS: &str = "class DivisionError extends Error {\n  constructor(what: string) {\n    super(what + ' by zero');\n  }\n}\n\nexport function divide(a: number, b: number): number {\n  if (b === 0) {\n    throw new Error('division by zero');\n  }\n  return Math.floor(a / b);\n}\n";
+
+const DIVIDE_USER_CLASS_DIFF: &str = "diff --git a/src/index.ts b/src/index.ts\nindex 0000000..1111111 100644\n--- a/src/index.ts\n+++ b/src/index.ts\n@@ -6,7 +6,7 @@ class DivisionError extends Error {\n \n export function divide(a: number, b: number): number {\n   if (b === 0) {\n-    throw new DivisionError('division');\n+    throw new Error('division by zero');\n   }\n   return Math.floor(a / b);\n }\n";
+
+const PARSE_AGE_TS: &str = "function checkAge(n: number): number {\n  if (n < 0) {\n    throw new Error('invalid age');\n  }\n  return n;\n}\n\nexport function parseAge(s: string): number {\n  if (s === '') {\n    throw new Error('invalid age: empty');\n  }\n  return checkAge(Number(s));\n}\n";
+
+const PARSE_AGE_DIFF: &str = "diff --git a/src/index.ts b/src/index.ts\nindex 0000000..1111111 100644\n--- a/src/index.ts\n+++ b/src/index.ts\n@@ -1,3 +1,6 @@\n function checkAge(n: number): number {\n+  if (n < 0) {\n+    throw new Error('invalid age');\n+  }\n   return n;\n }\n \n";
+
+const PARSE_AGE_TEST: &str = "import { parseAge } from '../src/index';\n\ntest('empty age throws', () => {\n  expect(() => parseAge('')).toThrow();\n});\n";
+
 const DIVIDE_TWO_THROWS_TS: &str = "export function divide(a: number, b: number): number {\n  if (a < 0) {\n    throw new Error('negative dividend');\n  }\n  if (b === 0) {\n    throw new Error('division by zero');\n  }\n  return Math.floor(a / b);\n}\n";
 
 const DIVIDE_TWO_THROWS_DIFF: &str = "diff --git a/src/index.ts b/src/index.ts\nindex 0000000..1111111 100644\n--- a/src/index.ts\n+++ b/src/index.ts\n@@ -1,6 +1,9 @@\n export function divide(a: number, b: number): number {\n   if (a < 0) {\n     throw new Error('negative dividend');\n   }\n+  if (b === 0) {\n+    throw new Error('division by zero');\n+  }\n   return Math.floor(a / b);\n }\n";
@@ -448,4 +458,37 @@ fn bare_tothrow_removed_earlier_throw_offers_no_message_packet() -> Result<(), S
         4,
         Some("throw new Error('overflow');"),
     )
+}
+
+/// #13827 negative control: the old line threw a user error class whose
+/// constructor builds a longer runtime message (`'division' + ' by zero'`),
+/// so its literal argument is not the old message and the pin is refused.
+#[test]
+fn bare_tothrow_replaced_user_error_class_offers_no_message_packet() -> Result<(), String> {
+    assert_no_message_packet(
+        "divide-user-class",
+        DIVIDE_USER_CLASS_TS,
+        DIVIDE_USER_CLASS_DIFF,
+        9,
+        Some("throw new DivisionError('division');"),
+    )
+}
+
+/// #13827 negative control: the test reaches the changed private helper only
+/// through an exported wrapper whose own unchanged throw fires first with a
+/// message containing the new one, so no message packet is offered.
+#[test]
+fn bare_tothrow_through_an_exported_wrapper_offers_no_message_packet() -> Result<(), String> {
+    let check = check_typescript_with("parse-age", PARSE_AGE_TS, PARSE_AGE_DIFF, PARSE_AGE_TEST)?;
+    if check
+        .assertion_shape()
+        .is_some_and(|shape| shape.contains("toThrow('"))
+        || check.any_agent_packet_eligible()
+    {
+        return Err(format!(
+            "a wrapper's own throw may satisfy the pin, so no message packet: {}",
+            check.finding
+        ));
+    }
+    Ok(())
 }
