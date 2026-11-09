@@ -44,6 +44,15 @@
       "items": { "$ref": "#/$defs/finding" }
     },
     "suppression_policy": { "type": "object" },
+    "owner_opt_outs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["withheld", "reason"],
+      "properties": {
+        "withheld": { "type": "integer", "minimum": 1 },
+        "reason": { "enum": ["owner_mutants_skip"] }
+      }
+    },
     "language_runs": {
       "type": "array",
       "items": { "$ref": "#/$defs/language_run" }
@@ -317,6 +326,7 @@
           }
         },
         "suppressed_by_policy": { "type": "integer", "minimum": 0 },
+        "withheld_by_owner_opt_out": { "type": "integer", "minimum": 1 },
         "conflicting_expressions": { "type": "integer", "minimum": 1 },
         "proof_harness_only": { "type": "integer", "minimum": 1 }
       }
@@ -479,6 +489,7 @@
         "id": { "type": "string", "minLength": 1 },
         "suppressed": { "type": "boolean" },
         "suppressed_by": { "type": "string", "minLength": 1 },
+        "withheld_by": { "enum": ["owner_mutants_skip"] },
         "analysis_scope": { "const": "repo" },
         "canonical_gap_id": { "type": "string", "minLength": 1 },
         "canonical_gap_group_size": { "type": "integer", "minimum": 1 },
@@ -500,6 +511,13 @@
           }
         },
         "confidence_why_capped": { "type": "string", "minLength": 1 },
+        "evidence_stages": {
+          "description": "Additive (RIPR-SPEC-0423, schema 0.2): the staged-evidence row form — one row per ripr stage in Evidence-block order. `basis` is present only when the finding's confidence_basis names that stage. No row carries test or assertion references (producer-backed stage attribution is #13453).",
+          "type": "array",
+          "minItems": 5,
+          "maxItems": 5,
+          "items": { "$ref": "#/$defs/evidence_stage_row" }
+        },
         "probe": { "$ref": "#/$defs/probe" },
         "ripr": { "$ref": "#/$defs/ripr" },
         "evidence_path": { "type": "array", "items": { "type": "string" } },
@@ -631,6 +649,29 @@
         "state": { "type": "string", "minLength": 1 },
         "confidence": { "type": "string", "minLength": 1 },
         "summary": { "type": "string", "minLength": 1 }
+      }
+    },
+    "evidence_stage_row": {
+      "description": "One staged-evidence row (RIPR-SPEC-0423): `stage` reuses the ripr object's key, `state`/`confidence` repeat that stage's wire tokens.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["stage", "state", "confidence"],
+      "properties": {
+        "stage": { "type": "string", "minLength": 1 },
+        "state": { "type": "string", "minLength": 1 },
+        "confidence": { "type": "string", "minLength": 1 },
+        "basis": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["code", "summary"],
+            "additionalProperties": false,
+            "properties": {
+              "code": { "type": "string", "minLength": 1 },
+              "summary": { "type": "string", "minLength": 1 }
+            }
+          }
+        }
       }
     },
     "activation": {

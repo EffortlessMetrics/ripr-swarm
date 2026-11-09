@@ -87,6 +87,7 @@ mod dropped_term_guard;
 mod enum_member_guard;
 mod error_payload_guard;
 mod extraction_cache;
+mod fact_prefetch;
 mod fact_store;
 mod fast_check;
 #[cfg(test)]
@@ -97,6 +98,8 @@ mod comment_whitespace_only;
 type MultilineRanges = (Vec<(usize, usize)>, Vec<(usize, usize)>);
 #[cfg(test)]
 mod comment_whitespace_only_tests;
+#[cfg(test)]
+mod fact_prefetch_tests;
 #[cfg(test)]
 mod fact_store_tests;
 mod field_update_guard;
@@ -620,6 +623,7 @@ impl TypeScriptAdapter {
                 rust_diagnostic_origins: Default::default(),
                 rust_consumed_sources: Default::default(),
                 preview_fact_cache: Default::default(),
+                owner_opt_outs: Vec::new(),
             });
         }
         // Phase 1: discover and index every accepted file in the workspace
@@ -775,8 +779,60 @@ impl TypeScriptAdapter {
         let mut export_facts_by_file: std::collections::HashMap<PathBuf, ModuleExportFacts> =
             std::collections::HashMap::new();
         let mut pending_fact_stores: Vec<PendingFactStore> = Vec::new();
+        // #13832: derive upcoming files' facts on a few threads, one window
+        // at a time; each result is seeded right before the loop's own
+        // lookup below, so the loop body and its outputs are unchanged.
+        let prefetch_workers = fact_prefetch::workers();
+        let prefetch_window = fact_prefetch::window(prefetch_workers);
+        let mut prefetched = fact_prefetch::Prefetched::default();
 
-        for relative in &workspace_files {
+        for (file_index, relative) in workspace_files.iter().enumerate() {
+            if prefetch_workers > 1 && file_index % prefetch_window == 0 {
+                let upcoming = workspace_files
+                    .iter()
+                    .skip(file_index)
+                    .take(prefetch_window)
+                    .filter_map(|relative| {
+                        let source = source_cache.get(relative)?;
+                        if extraction_cache::file_facts_in_memory(
+                            relative,
+                            source,
+                            &options.root,
+                            alias_map_ref,
+                        ) {
+                            return None;
+                        }
+                        // A file a persisted envelope could serve is left to
+                        // the loop's own lookup (the same lossless-path rule).
+                        let path_is_lossless = relative
+                            .to_str()
+                            .is_some_and(|path| cfg!(windows) || !path.contains('\\'));
+                        if fact_store_usable
+                            && path_is_lossless
+                            && fact_store.entry_exists(&fact_store::TypeScriptFileFactKey::new(
+                                relative,
+                                source,
+                                &options.root,
+                                alias_map_ref,
+                            ))
+                        {
+                            return None;
+                        }
+                        Some(fact_prefetch::PrefetchRequest {
+                            relative,
+                            source,
+                            tests: is_test_file(relative)
+                                && !extraction_cache::test_extraction_in_memory(relative, source),
+                        })
+                    })
+                    .collect::<Vec<_>>();
+                prefetched = fact_prefetch::derive_window(
+                    &upcoming,
+                    &options.root,
+                    alias_map_ref,
+                    prefetch_workers,
+                );
+            }
             let Some(source) = source_cache.get(relative) else {
                 continue;
             };
@@ -816,6 +872,7 @@ impl TypeScriptAdapter {
             match lookup {
                 None => {}
                 Some(crate::analysis::seam_cache::CacheLoad::Hit(persisted)) => {
+                    prefetched.discard(relative);
                     fact_cache_stats.hits += 1;
                     persisted_gap = persisted
                         .partial_extraction
@@ -859,6 +916,7 @@ impl TypeScriptAdapter {
             // re-parsing. A refused/failed parse (`Err`) and a parse error
             // (`Some(parse_error)`) disclose exactly like the previous
             // dedicated parse-error pass.
+            prefetched.seed_facts(relative, source, &options.root, alias_map_ref);
             let facts = match extraction_cache::file_facts_cached(
                 relative,
                 source,
@@ -911,6 +969,7 @@ impl TypeScriptAdapter {
                 // is served from the content-keyed cache; the clone below is
                 // what snapshot promotion mutates, so promotion still reads
                 // the filesystem on every run.
+                prefetched.seed_tests(relative, source);
                 let (extraction, extraction_failure) =
                     extraction_cache::test_extraction_cached_disclosing(relative, source);
                 // #11132: a parse-worker failure during test extraction
@@ -1938,6 +1997,7 @@ impl TypeScriptAdapter {
             rust_diagnostic_origins: Default::default(),
             rust_consumed_sources: Default::default(),
             preview_fact_cache: fact_cache_stats,
+            owner_opt_outs: Vec::new(),
         })
     }
 }
