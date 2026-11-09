@@ -23,7 +23,7 @@ pub(crate) use literals::{extract_literal_facts, extract_literals};
 // contents are `text[open + 1..close]`, escapes unprocessed (#7133).
 pub(crate) use mask::{
     mask_comments_and_strings, mask_with_char_literals, mask_with_string_delimiter_quotes,
-    rust_identity_spans, string_literal_spans,
+    masked_body_shared, rust_identity_spans, string_literal_spans,
 };
 pub(crate) use oracles::{
     LazyDecls, OracleTextShape, assertion_oracle_text, classify_assertion, classify_assertion_with,

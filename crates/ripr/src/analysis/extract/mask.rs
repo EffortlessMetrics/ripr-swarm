@@ -141,6 +141,72 @@ pub(crate) fn mask_comments_and_strings(text: &str) -> String {
     })
 }
 
+/// [`mask_comments_and_strings`] for a short body the caller asks about many
+/// times (a test body, once per seam, related test and oracle), shared instead
+/// of rescanned and copied on every ask (#13577).
+///
+/// Entries are found by the text's address and length and then confirmed by
+/// comparing the bytes, so a freed buffer reused for other text can never
+/// answer for it: a mismatch is a miss and replaces the stale entry. The memo
+/// is per thread, so it also serves the rayon workers that run without a
+/// `run_memo` scope, and it holds at most [`SHARED_BODY_BUDGET`] bytes of
+/// copied text before it starts over. Texts outside
+/// `SHARED_BODY_MIN_BYTES..=SHARED_BODY_MAX_BYTES` are scanned every time.
+pub(crate) fn masked_body_shared(text: &str) -> std::rc::Rc<str> {
+    if !(SHARED_BODY_MIN_BYTES..=SHARED_BODY_MAX_BYTES).contains(&text.len()) {
+        return std::rc::Rc::from(mask_with_char_literals(text).0.as_str());
+    }
+    SHARED_BODIES.with(|memo| {
+        let mut memo = memo.borrow_mut();
+        let identity = (text.as_ptr() as usize, text.len());
+        if let Some((source, masked)) = memo.entries.get(&identity)
+            && **source == *text
+        {
+            return std::rc::Rc::clone(masked);
+        }
+        #[cfg(test)]
+        SHARED_BODY_MISSES.with(|misses| misses.set(misses.get() + 1));
+        let masked: std::rc::Rc<str> = std::rc::Rc::from(mask_with_char_literals(text).0.as_str());
+        if memo.bytes + 2 * text.len() > SHARED_BODY_BUDGET {
+            memo.entries.clear();
+            memo.bytes = 0;
+        }
+        if let Some((old, _)) = memo.entries.insert(
+            identity,
+            (std::rc::Rc::from(text), std::rc::Rc::clone(&masked)),
+        ) {
+            memo.bytes = memo.bytes.saturating_sub(2 * old.len());
+        }
+        memo.bytes += 2 * text.len();
+        masked
+    })
+}
+
+/// Bodies below this size scan faster than they look up.
+const SHARED_BODY_MIN_BYTES: usize = 128;
+
+/// Larger bodies are whole files, which [`mask_comments_and_strings`] already
+/// remembers.
+const SHARED_BODY_MAX_BYTES: usize = MEMO_MIN_BYTES - 1;
+
+/// Copied source and masked text one thread keeps before starting over.
+const SHARED_BODY_BUDGET: usize = 16 * 1024 * 1024;
+
+#[derive(Default)]
+struct SharedBodies {
+    entries: std::collections::HashMap<(usize, usize), (std::rc::Rc<str>, std::rc::Rc<str>)>,
+    bytes: usize,
+}
+
+thread_local! {
+    static SHARED_BODIES: std::cell::RefCell<SharedBodies> = std::cell::RefCell::new(SharedBodies::default());
+}
+
+#[cfg(test)]
+thread_local! {
+    static SHARED_BODY_MISSES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 /// Whole-file callers mask the same few files once per probe or per
 /// assertion; below this size a scan is cheaper than the lookup. The memo is
 /// content-compared and works on every thread, unlike the run-scoped
@@ -506,6 +572,50 @@ mod tests {
             4 + MEMO_CAPACITY,
             "evicted file rescanned"
         );
+    }
+
+    /// A body asked about repeatedly is scanned once, every answer equals a
+    /// fresh scan, and a different text at the same address or length never
+    /// reuses an entry.
+    #[test]
+    fn a_shared_body_is_masked_once_and_never_answers_for_other_text() {
+        let misses = || SHARED_BODY_MISSES.with(std::cell::Cell::get);
+        let body = "fn t() { let a = \"x\"; assert_eq!(a, 1); } // note\n".repeat(8);
+        let before = misses();
+        for _ in 0..50 {
+            assert_eq!(
+                &*masked_body_shared(&body),
+                mask_with_char_literals(&body).0
+            );
+        }
+        assert_eq!(misses() - before, 1, "fifty asks, one scan");
+        let mut edited = body.clone();
+        assert_eq!(
+            &*masked_body_shared(&edited),
+            mask_with_char_literals(&edited).0
+        );
+        let address = edited.as_ptr();
+        edited.replace_range(3..4, "u");
+        assert_eq!(
+            edited.as_ptr(),
+            address,
+            "edited in place: same address and length"
+        );
+        let before = misses();
+        assert_eq!(
+            &*masked_body_shared(&edited),
+            mask_with_char_literals(&edited).0
+        );
+        assert_eq!(misses() - before, 1, "same address, other bytes: a miss");
+        let short = "fn t() { \"x\" }";
+        let before = misses();
+        for _ in 0..3 {
+            assert_eq!(
+                &*masked_body_shared(short),
+                mask_with_char_literals(short).0
+            );
+        }
+        assert_eq!(misses(), before, "below the minimum bypasses the memo");
     }
 
     /// The memo covers exactly `MEMO_MIN_BYTES..=MEMO_MAX_BYTES`: a text one

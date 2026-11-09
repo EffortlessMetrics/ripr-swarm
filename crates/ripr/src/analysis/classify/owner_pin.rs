@@ -13267,7 +13267,7 @@ fn parameter_annotation(test: &TestSummary, receiver: &str) -> Option<String> {
 /// test body (the optional annotation and the initializer), or `None` when
 /// the name may be bound some other way ripr does not read.
 fn receiver_let_bindings<'a>(test: &'a TestSummary, receiver: &str) -> Option<Vec<&'a str>> {
-    let masked = mask_comments_and_strings(&test.body);
+    let masked = crate::analysis::extract::masked_body_shared(&test.body);
     if binds_outside_let(&masked, receiver) {
         return None;
     }
