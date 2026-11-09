@@ -17,10 +17,13 @@
 //! performed (`import tomli as tomllib`), so every later reader sees the
 //! same evidence it would see had the test imported the module directly.
 //!
+//! Only a package that contains the test file is followed, so the
+//! dotted name always names the package Python imports for that test.
 //! It fails closed. The initializer must be read and parse, and bind the
 //! name exactly once, through one unconditional top-level `import` or
 //! `from ... import`. Any other binding of the name, a star import, a
-//! module `__getattr__`, `global` or a dynamic namespace write refuses, as
+//! `match` or `type` statement, a module `__getattr__`, `global`, a walrus
+//! or a dynamic namespace write refuses, as
 //! does a submodule or subpackage of the same name, which another import
 //! could load over the binding. Chains through further package
 //! initializers stop after [`MAX_ALIAS_HOPS`].
@@ -38,10 +41,13 @@ const MAX_ALIAS_HOPS: usize = 3;
 
 /// Source spellings that can rebind a module global outside the statements
 /// this reader checks.
-const DYNAMIC_WRITES: [&str; 8] = [
+const DYNAMIC_WRITES: [&str; 11] = [
     "global",
     "globals(",
+    "locals(",
     "vars(",
+    "modules[",
+    ":=",
     "setattr(",
     "sys.modules",
     "__getattr__",
@@ -59,15 +65,20 @@ pub(super) fn apply_package_import_aliases<'s>(
 ) {
     let mut bindings: HashMap<(String, String), Option<PythonImport>> = HashMap::new();
     for test in tests {
+        let file = test.file.clone();
         for import in &mut test.imports {
-            if let Some(resolved) = resolve(import, &source, &is_present, &mut bindings) {
+            if let Some(resolved) = resolve(&file, import, &source, &is_present, &mut bindings) {
                 *import = resolved;
             }
         }
     }
 }
 
+/// Only a package containing the test file is followed: a dotted name is
+/// read from the workspace root, and in a nested project that spelling can
+/// name another package than the one Python imports for this test.
 fn resolve<'s>(
+    test_file: &Path,
     import: &PythonImport,
     source: &impl Fn(&Path) -> Option<&'s str>,
     is_present: &impl Fn(&Path) -> bool,
@@ -76,7 +87,10 @@ fn resolve<'s>(
     let mut current: Option<PythonImport> = None;
     for _ in 0..MAX_ALIAS_HOPS {
         let step = current.as_ref().unwrap_or(import);
-        if step.source_module.is_empty() || step.imported == "*" {
+        if step.source_module.is_empty()
+            || step.imported == "*"
+            || !test_file.starts_with(package_directory(&step.source_module))
+        {
             break;
         }
         let key = (step.source_module.clone(), step.imported.clone());
@@ -97,6 +111,10 @@ fn resolve<'s>(
     current
 }
 
+fn package_directory(package: &str) -> PathBuf {
+    package.split('.').collect()
+}
+
 /// The import through which package `package`'s initializer binds `name`,
 /// when that binding is the only one and nothing else can replace it.
 fn initializer_binding<'s>(
@@ -105,7 +123,7 @@ fn initializer_binding<'s>(
     source: &impl Fn(&Path) -> Option<&'s str>,
     is_present: &impl Fn(&Path) -> bool,
 ) -> Option<PythonImport> {
-    let directory: PathBuf = package.split('.').collect();
+    let directory = package_directory(package);
     if package.split('.').any(str::is_empty) || package == "src" {
         return None;
     }
@@ -125,7 +143,13 @@ fn initializer_binding<'s>(
     let Ok(Mod::Module(module)) = parse_module_result(&init, text) else {
         return None;
     };
-    if module.body.iter().any(is_star_import) {
+    // A `match` capture and a `type` alias bind names the binder scan
+    // below does not read.
+    if module
+        .body
+        .iter()
+        .any(|stmt| is_star_import(stmt) || matches!(stmt, Stmt::Match(_) | Stmt::TypeAlias(_)))
+    {
         return None;
     }
     let mut binders = module

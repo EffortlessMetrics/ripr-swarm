@@ -1541,15 +1541,22 @@ mutant calibrates the rule; ripr reports only the static shape.
     same evidence the direct import gives. The initializer must be read and
     parse and bind `X` exactly once, through one unconditional top-level
     import statement with one alias of that name; up to three package
-    initializers are followed. The import keeps its unresolved reading (no
-    link) when: the initializer is missing, unread or unparsable; `X` is
-    also bound by an assignment, `def`, `class`, loop, `with`, `del`,
-    `try`/`if` branch or a second import; the initializer has a star import
-    or spells a dynamic namespace write (`global`, `globals(`, `vars(`,
+    initializers are followed, each a package that contains the test file
+    (the dotted name is read from the workspace root, and in a nested
+    project another package can carry it). The import keeps its unresolved
+    reading (no link) when: the package does not contain the test file; the
+    initializer is missing, unread or unparsable; `X` is also bound by an
+    assignment, `def`, `class`, loop, `with`, `del`, `try`/`if` branch or a
+    second import, or only inside such a branch; the initializer has a star
+    import, a `match` or `type` statement, or spells a dynamic namespace
+    write (`global`, `globals(`, `locals(`, `vars(`, `modules[`, `:=`,
     `setattr(`, `sys.modules`, `__getattr__`, `exec(`, `__dict__`); or `P`
     has a submodule or subpackage named `X`, which an import elsewhere could
-    load over the binding. This runs after the rule 32 helper substitution,
-    which keeps its own module-attribute rule.
+    load over the binding. A followed `from M import Y as X` is a rename
+    the package re-export reading does not follow; it is followed here
+    because the test names the bound `X` itself. This runs after the rule 32
+    helper substitution, which keeps its own module-attribute rule, and
+    fixture definitions' imports are not rewritten.
 
 ### Verdict ladder
 

@@ -123,13 +123,29 @@ fn a_rebound_or_conditional_package_name_stays_unlinked() -> Result<(), String> 
             "try:\n    import tomllib\nexcept ImportError:\n    import tomli as tomllib\n",
         ),
         ("star", "import tomli as tomllib\nfrom helpers import *\n"),
+        ("deleted", "import tomli as tomllib\ndel tomllib\n"),
+        (
+            "nested-only",
+            "import sys\nif sys.version_info >= (3, 8):\n    import tomli as tomllib\n",
+        ),
+        ("two-aliases", "import json as tomllib, tomli as tomllib\n"),
+        ("dotted", "import tomllib.sub\n"),
+        ("walrus", "import tomli as tomllib\n(tomllib := None)\n"),
+        (
+            "locals",
+            "import tomli as tomllib\nlocals()[\"tomllib\"] = None\n",
+        ),
+        (
+            "match-capture",
+            "import tomli as tomllib\nmatch 1:\n    case tomllib:\n        pass\n",
+        ),
         (
             "dynamic",
             "import tomli as tomllib\nglobals()[\"tomllib\"] = object()\n",
         ),
         (
             "module-getattr",
-            "def __getattr__(name):\n    import tomli\n    return tomli\n",
+            "import tomli as tomllib\n\n\ndef __getattr__(name):\n    return None\n",
         ),
     ];
     for (label, init) in cases {
@@ -148,6 +164,82 @@ fn a_same_named_submodule_of_the_test_package_stays_unlinked() -> Result<(), Str
         &[("tests/tomllib.py", "def loads(text):\n    return {}\n")],
     )?;
     expect_unlinked("tests/tomllib.py beside the binding", &finding)
+}
+
+#[test]
+fn a_same_named_subpackage_of_the_test_package_stays_unlinked() -> Result<(), String> {
+    let finding = tomli_case(
+        "init-subpackage-shadow",
+        Some("import tomli as tomllib\n"),
+        "from . import tomllib",
+        &[("tests/tomllib/__init__.py", "")],
+    )?;
+    expect_unlinked("tests/tomllib/ beside the binding", &finding)
+}
+
+#[test]
+fn an_absolute_import_of_the_containing_test_package_links() -> Result<(), String> {
+    let finding = tomli_case(
+        "init-absolute",
+        Some("import tomli as tomllib\n"),
+        "from tests import tomllib",
+        &[],
+    )?;
+    expect_linked("from tests import tomllib", &finding)
+}
+
+#[test]
+fn a_package_that_does_not_contain_the_test_is_not_followed() -> Result<(), String> {
+    // `support/__init__.py` binds the name, but the test lives in `tests/`:
+    // in a nested project the dotted name can be another package.
+    let finding = tomli_case(
+        "init-not-ancestor",
+        None,
+        "from support import tomllib",
+        &[("support/__init__.py", "import tomli as tomllib\n")],
+    )?;
+    expect_unlinked("from support import tomllib", &finding)
+}
+
+#[test]
+fn a_parent_package_binding_links_through_a_two_level_relative_import() -> Result<(), String> {
+    let finding = analyze_one_line(
+        "init-level-two",
+        &[
+            ("src/tomli/_parser.py", PARSER_PY),
+            ("src/tomli/__init__.py", PACKAGE_INIT),
+            ("tests/__init__.py", "import tomli as tomllib\n"),
+            ("tests/unit/__init__.py", ""),
+            (
+                "tests/unit/test_misc.py",
+                "from .. import tomllib\n\n\ndef test_loads():\n    assert tomllib.loads(\"\") == {}\n",
+            ),
+        ],
+        "src/tomli/_parser.py",
+        2,
+    )?;
+    expect_linked("from .. import tomllib", &finding)
+}
+
+#[test]
+fn a_chain_through_the_parent_package_initializer_links() -> Result<(), String> {
+    // `tests/unit/__init__.py` re-binds the parent's name; two hops.
+    let finding = analyze_one_line(
+        "init-two-hops",
+        &[
+            ("src/tomli/_parser.py", PARSER_PY),
+            ("src/tomli/__init__.py", PACKAGE_INIT),
+            ("tests/__init__.py", "import tomli as tomllib\n"),
+            ("tests/unit/__init__.py", "from .. import tomllib\n"),
+            (
+                "tests/unit/test_misc.py",
+                "from . import tomllib\n\n\ndef test_loads():\n    assert tomllib.loads(\"\") == {}\n",
+            ),
+        ],
+        "src/tomli/_parser.py",
+        2,
+    )?;
+    expect_linked("two package hops", &finding)
 }
 
 #[test]

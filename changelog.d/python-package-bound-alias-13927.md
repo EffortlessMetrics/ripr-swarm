@@ -1,2 +1,2 @@
 <!-- section: Fixed -->
-- Python: a test that writes `from . import tomllib`, where its test package's `__init__.py` binds `import tomli as tomllib`, now links to the code exactly as `import tomli as tomllib` does, instead of every changed line reading "no test reaches this" (#13927).
+- Python: a test that imports a name from its own test package (`from . import tomllib`, `from tests import tomllib`), where that package's `__init__.py` binds the name by import (`import tomli as tomllib`), now links to the code exactly as the direct import does, instead of every changed line reading "no test reaches this" (#13927). Any other binding of the name in the `__init__.py`, or a same-named submodule, keeps the old unlinked reading.
