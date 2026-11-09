@@ -2350,7 +2350,7 @@ pub(super) fn own_crate_qualified_entry_path(
     .then_some(spelled_path)
 }
 
-/// Whether `owner` is an item of the root package's library (`src/lib.rs` or a
+/// Whether `owner` is a top-level `impl` item of a file of the root package's library (`src/lib.rs` or a
 /// module composed under it), the only owner a root integration test reaches
 /// through the library's own crate name.
 fn owner_is_root_library_item(index: &RustIndex, owner: &FunctionSummary) -> bool {
@@ -2358,6 +2358,10 @@ fn owner_is_root_library_item(index: &RustIndex, owner: &FunctionSummary) -> boo
         && package_prefix(&owner.file).is_none()
         && super::owner_pin::target_root(&owner.file, index, &BTreeSet::new())
             .is_some_and(|root| root == Path::new("src/lib.rs"))
+        // The `impl` must be a top-level item of its file: a function-local or
+        // inline-module namesake type's method shares the exported type's
+        // indexed id, so only the placement tells them apart.
+        && owner_impl_is_root_item_of(index, owner, &owner.file)
 }
 
 /// Whether `krate` is the root package's library identifier and `test` — an

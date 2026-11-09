@@ -24,6 +24,10 @@ fn finding(test: &str) -> Result<Finding, String> {
 }
 
 fn finding_at(test_path: &str, test: &str) -> Result<Finding, String> {
+    finding_for(OWNER, test_path, test)
+}
+
+fn finding_for(owner_source: &str, test_path: &str, test: &str) -> Result<Finding, String> {
     static SEQUENCE: AtomicU64 = AtomicU64::new(0);
     let sequence = SEQUENCE.fetch_add(1, Ordering::Relaxed);
     let repo = TempRepo {
@@ -42,12 +46,12 @@ fn finding_at(test_path: &str, test: &str) -> Result<Finding, String> {
         "Cargo.toml",
         "[package]\nname = \"rg\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[workspace]\n",
     )?;
-    write("src/lib.rs", OWNER)?;
+    write("src/lib.rs", owner_source)?;
     if let Some(parent) = std::path::Path::new(test_path).parent() {
         std::fs::create_dir_all(root.join(parent)).map_err(|error| format!("test dir: {error}"))?;
     }
     write(test_path, test)?;
-    let lines: Vec<&str> = OWNER.lines().collect();
+    let lines: Vec<&str> = owner_source.lines().collect();
     let changed_line = lines
         .iter()
         .position(|line| line.contains("base > 9"))
@@ -193,6 +197,23 @@ fn enum_variant_spelling_is_not_a_constructor_receiver() -> Result<(), String> {
         related_reason(&found, "rng_digit")?.0,
         Some(RelationReason::DirectOwnerCall),
         "{found:#?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn function_local_namesake_type_method_gets_no_credit() -> Result<(), String> {
+    // The changed `digit` belongs to a struct declared inside `helper`, not to
+    // the exported `Rng`; `rg::Rng::new()` cannot reach it.
+    let owner = "pub struct Rng(u32);\nimpl Rng {\n    pub fn new() -> Rng {\n        Rng(0)\n    }\n}\npub fn helper() -> u32 {\n    struct Rng;\n    impl Rng {\n        fn digit(&mut self, base: u32) -> u32 {\n            if base > 9 { 2 } else { 1 }\n        }\n    }\n    Rng.digit(3)\n}\n";
+    let test = "#[test]\nfn rng_digit() {\n    let mut rng = rg::Rng::new();\n    assert_eq!(rng.digit(10), 2);\n}\n";
+    let found = finding_for(owner, "tests/t.rs", test)?;
+    assert!(
+        !found.related_tests.iter().any(|related| {
+            related.name == "rng_digit"
+                && related.relation_reason == Some(RelationReason::DirectOwnerCall)
+        }),
+        "a function-local type's method is not reachable through the exported type: {found:#?}"
     );
     Ok(())
 }
