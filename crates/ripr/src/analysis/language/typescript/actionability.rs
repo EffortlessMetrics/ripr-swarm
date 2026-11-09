@@ -285,6 +285,7 @@ pub(crate) fn typescript_raw_evidence_ref(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::DiscriminatorShape;
     use std::collections::HashSet;
 
     fn sample_missing_discriminator() -> MissingDiscriminatorFact {
@@ -292,6 +293,8 @@ mod tests {
             value: "amount == threshold".to_string(),
             reason: "missing exact boundary".to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Boundary,
+            drafted_boundary: None,
         }
     }
 

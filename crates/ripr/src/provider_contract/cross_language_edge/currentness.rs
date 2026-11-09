@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use super::digest::{cross_language_edge_content_digest, cross_language_edge_semantic_key};
 use super::model::LoadedCrossLanguageEdgeRegistryV1;
@@ -38,9 +38,32 @@ pub fn analyze_cross_language_edge_registry_currentness(
     detect_over_broad_edges(&loaded.registry.edges, &mut anomalies);
     detect_artifact_cross_bind(&artifact_index, &mut anomalies);
 
+    // Derived from the full anomaly set, before the report cap truncates it, so
+    // a consumer never depends on the bounded list to catch a bad edge (#13044).
+    let mut untrusted_edge_ids = relation_untrusted_edge_ids(&anomalies);
+    untrusted_edge_ids.extend(conflicting_group_edge_ids(&semantic_index));
+
     for edge in &loaded.registry.edges {
         let (effective_disposition, first_unresolved_leg, positive_relation_available) =
             effective_edge_state(loaded, edge, &mut anomalies, &mut recovery_guidance);
+        let (effective_disposition, first_unresolved_leg, positive_relation_available) =
+            if positive_relation_available && untrusted_edge_ids.contains(&edge.edge_id) {
+                recovery_guidance.push(format!(
+                    "resolve the registry anomalies naming edge `{}` before trusting it",
+                    edge.edge_id
+                ));
+                (
+                    EdgeDispositionV1::UnresolvedLeg,
+                    Some("registry_anomaly".into()),
+                    false,
+                )
+            } else {
+                (
+                    effective_disposition,
+                    first_unresolved_leg,
+                    positive_relation_available,
+                )
+            };
         effective_edges.push(CrossLanguageEdgeEffectiveRecordV1 {
             edge_id: edge.edge_id.clone(),
             effective_disposition,
@@ -87,6 +110,57 @@ pub fn subjects_related_by_effective_registered_edge(
                     && super::validate::edge_connects_subjects(edge, left, right)
             })
     }))
+}
+
+/// Edges named by an anomaly that makes a positive relation untrustworthy:
+/// conflicting, reversed, over-broad or cross-bound. A byte-identical
+/// duplicate kind states the same relationship twice and does not demote by
+/// itself (the reversed-edge scan may still name both positive edges).
+fn relation_untrusted_edge_ids(
+    anomalies: &[CrossLanguageEdgeRegistryAnomalyV1],
+) -> BTreeSet<String> {
+    let mut ids = BTreeSet::new();
+    for anomaly in anomalies {
+        if matches!(
+            anomaly.kind,
+            CrossLanguageEdgeRegistryAnomalyKindV1::ConflictingEdge
+                | CrossLanguageEdgeRegistryAnomalyKindV1::ReversedEdge
+                | CrossLanguageEdgeRegistryAnomalyKindV1::OverBroadEdge
+                | CrossLanguageEdgeRegistryAnomalyKindV1::ArtifactCrossBind
+        ) {
+            ids.insert(anomaly.edge_id.clone());
+            ids.extend(anomaly.related_edge_id.clone());
+        }
+    }
+    ids
+}
+
+/// Every edge of a semantic slot whose members do not all share one content
+/// digest. The pairwise anomaly scan compares only adjacent members, so a
+/// conflicting slot demotes as a whole rather than by its reported pairs.
+fn conflicting_group_edge_ids(
+    semantic_index: &BTreeMap<String, Vec<&CrossLanguageEdgeV1>>,
+) -> BTreeSet<String> {
+    let mut ids = BTreeSet::new();
+    for edges in semantic_index.values() {
+        if edges.len() < 2 {
+            continue;
+        }
+        let Some(first_edge) = edges.first() else {
+            continue;
+        };
+        // A digest error (`None`) never equals another digest, so it demotes.
+        let first = cross_language_edge_content_digest(first_edge).ok();
+        let conflicting = first.is_none()
+            || edges
+                .iter()
+                .skip(1)
+                .any(|edge| cross_language_edge_content_digest(edge).ok() != first);
+        if conflicting {
+            ids.extend(edges.iter().map(|edge| edge.edge_id.clone()));
+        }
+    }
+    ids
 }
 
 fn effective_edge_state(

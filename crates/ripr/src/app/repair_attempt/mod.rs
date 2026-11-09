@@ -38,6 +38,8 @@ pub(crate) const TERMINAL_RECEIPT_ROLE: &str = "agent_receipt";
 pub(crate) const TERMINAL_VERIFY_ROLE: &str = "agent_verify";
 /// The exact gap producer snapshot used by the retained verify/receipt pair.
 pub(crate) const TERMINAL_GAP_AFTER_ROLE: &str = "after_check_findings";
+/// The validated caller-supplied focused test run (#13203 slice B).
+pub(crate) const TERMINAL_FOCUSED_RUN_ROLE: &str = "focused_test_result";
 /// Cargo's default build directory, relative to the workspace root.
 const CARGO_DEFAULT_BUILD_OUTPUT_DIR: &str = "target";
 /// The lockfile Cargo writes at the workspace root when it resolves
@@ -189,6 +191,9 @@ pub(crate) struct RepairAttemptManifest {
     pub(crate) non_claims: Vec<String>,
     #[serde(default)]
     pub(crate) after: Option<RepairAttemptAfter>,
+    /// Durable receipt evaluation for a focused finish, excluded from the before commitment.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) focused_receipt_evaluation: Option<FocusedReceiptEvaluation>,
     /// The refusal of this attempt's most recent after phase, when that phase
     /// refused after selecting the attempt. It is an observation, not a state:
     /// it never changes `state` or `after`, the before commitment excludes it,
@@ -316,8 +321,38 @@ pub(crate) struct RepairAttemptAfter {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) receipt_projection_predecessor: Option<ReceiptProjectionPredecessor>,
     pub(crate) packet_sha256: String,
+    /// The validated caller claim committed with this finish, before any
+    /// separately published terminal files can be recovered by another run.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) focused_result: Option<PendingFocusedResult>,
     pub(crate) current: bool,
     pub(crate) verdict: EditCageVerdict,
+    /// Paths whose only change was a git-invisible line-ending flip on a path
+    /// Git normalizes (`core.autocrlf` or a `text` attribute), so the cage
+    /// did not count them as edits (#7377, #13833). Recorded beside the
+    /// verdict, not in it, so the receipt binding's verdict comparison is
+    /// unchanged. Absent when there were none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) line_ending_only_paths: Vec<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct PendingFocusedResult {
+    pub(crate) record: String,
+    pub(crate) custody: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) receipt_protocol: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "state", rename_all = "snake_case", deny_unknown_fields)]
+pub(crate) enum FocusedReceiptEvaluation {
+    Started,
+    Accepted {
+        receipt_sha256: String,
+        verify_sha256: String,
+    },
 }
 
 fn open_attempt(
@@ -1998,7 +2033,7 @@ fn complete_repair_attempt(
             // baseline that IS staged cannot silently dodge the read: these
             // bytes were just bound by digest, so a failure here is
             // publication trouble.
-            let baseline_ambiguous = artifacts
+            let baseline_state = artifacts
                 .iter()
                 .find(|artifact| artifact.role == "edit_cage_baseline")
                 .map(|artifact| {
@@ -2020,13 +2055,42 @@ fn complete_repair_attempt(
                         serde_json::from_slice(&bytes).map_err(|error| {
                             format!("decode staged edit-cage baseline failed: {error}")
                         })?;
-                    Ok(baseline.is_ambiguous())
+                    let followed = baseline
+                        .followed_new_test_proposal()
+                        .map(|proposal| (proposal.kind, proposal.file.clone()));
+                    Ok((baseline.is_ambiguous(), followed))
                 })
                 .transpose()?
-                .unwrap_or(false);
+                .unwrap_or((false, None));
+            let (baseline_ambiguous, followed_proposal) = baseline_state;
             let mut limitations = vec![
                 "after-phase verify and receipt outputs remain mirrored through target/ripr/workflow compatibility paths; those files are compatibility projections and not the sole surviving copy of an attempt result".to_string(),
             ];
+            // #13205: a followed new-test proposal has no test yet. Say so, with
+            // the owning package, instead of leaving a missing result to read
+            // as an empty one; a target that no longer passes the preflight
+            // fails the start closed.
+            if let Some((kind, file)) = &followed_proposal {
+                match crate::analysis::new_test_target::preflight_new_test_target(
+                    canonical_root,
+                    *kind,
+                    file,
+                ) {
+                    crate::analysis::new_test_target::ProposedTargetPreflight::NoTestYet {
+                        package,
+                    } => limitations.push(match kind {
+                        crate::analysis::new_test_target::NewTestKind::Integration => format!(
+                            "target preflight: at the before phase, the proposed test file `{file}` (package `{package}`) had not yet been written, so no test result was available for it then"
+                        ),
+                        crate::analysis::new_test_target::NewTestKind::InlineUnit => format!(
+                            "target preflight: at the before phase, the proposed test in the existing inline test module in `{file}` (package `{package}`) had not yet been written, so no test result was available for it then"
+                        ),
+                    }),
+                    crate::analysis::new_test_target::ProposedTargetPreflight::Refused(reason) => {
+                        return Err(reason);
+                    }
+                }
+            }
             if baseline_ambiguous {
                 limitations.push("the captured edit-cage baseline recorded `ambiguous: true`, so the cage cannot prove the exact worktree state this attempt measures: the after phase can refuse the attempt as Incomparable with an empty violations list even when the edit stays inside the allowed test surface. Resolve the workspace condition that made the baseline ambiguous (a stale target/ state is a common Windows trigger) and start a fresh attempt if a scorable result is needed".to_string());
             }
@@ -2050,6 +2114,7 @@ fn complete_repair_attempt(
                     "this manifest does not authorize mutation execution or merge".to_string(),
                 ],
                 after: None,
+                focused_receipt_evaluation: None,
                 last_after_refusal: None,
                 after_refusal_count: 0,
                 after_refusal_history: Vec::new(),
@@ -2446,11 +2511,43 @@ pub(crate) fn retain_terminal_evidence_from(
     attempt_id: &RepairAttemptId,
     sources: &[BeforeArtifactSource<'_>],
 ) -> Result<Vec<RepairAttemptArtifact>, String> {
+    retain_terminal_evidence_with_custody_from(root, store, attempt_id, sources, None)
+        .map(|(artifacts, _)| artifacts)
+}
+
+/// Proof that this invocation, rather than an earlier retainer, committed
+/// these exact terminal references. A reused existing result grants no proof.
+pub(crate) struct TerminalRetentionCustody {
+    attempt_id: RepairAttemptId,
+    committed_manifest: Vec<u8>,
+}
+
+pub(crate) fn retain_terminal_evidence_with_custody_from(
+    root: &Path,
+    store: Option<&Path>,
+    attempt_id: &RepairAttemptId,
+    sources: &[BeforeArtifactSource<'_>],
+    expected: Option<&RepairAttemptAfter>,
+) -> Result<(Vec<RepairAttemptArtifact>, Option<TerminalRetentionCustody>), String> {
     if sources.is_empty() {
         return Err("terminal retention requires at least one after-phase artifact".to_string());
     }
+    // Hold the commit lock while writing attempt-local files as well as while
+    // committing their manifest. Otherwise a losing retainer can replace a
+    // winner's files between the winner's commit and its own failed commit.
+    let (_, manifest_path, _, _) = open_attempt_with_bytes(root, store, attempt_id)?;
+    let attempt_dir = manifest_path
+        .parent()
+        .ok_or("repair attempt manifest path has no parent")?;
+    let _lock = lock_manifest_for_commit(attempt_dir, attempt_id)?;
     let (store, manifest_path, base_bytes, mut manifest) =
         open_attempt_with_bytes(root, store, attempt_id)?;
+    if expected.is_some_and(|expected| manifest.after.as_ref() != Some(expected)) {
+        return Err(
+            "focused finish custody changed before terminal retention; refusing to retain"
+                .to_string(),
+        );
+    }
     let root = store.canonical_root().to_path_buf();
     if manifest.state != RepairAttemptState::ReadyToFinish {
         return Err(format!(
@@ -2461,6 +2558,34 @@ pub(crate) fn retain_terminal_evidence_from(
     let destination_directory = store
         .attempt_directory(attempt_id)
         .join(REPAIR_ATTEMPT_ARTIFACTS_DIRECTORY);
+    let pending_focused = manifest
+        .after
+        .as_ref()
+        .and_then(|after| after.focused_result.as_ref());
+    if pending_focused
+        .is_some_and(|pending| pending.receipt_protocol.as_deref() == Some("durable-v1"))
+        && !matches!(
+            manifest.focused_receipt_evaluation,
+            Some(FocusedReceiptEvaluation::Accepted { .. })
+        )
+    {
+        return Err("focused receipt evaluation has no committed successful outcome".to_string());
+    }
+    let legacy_focused = manifest
+        .terminal_artifacts
+        .iter()
+        .find(|artifact| artifact.role == TERMINAL_FOCUSED_RUN_ROLE);
+    let supplied_focused = sources
+        .iter()
+        .any(|source| source.role == TERMINAL_FOCUSED_RUN_ROLE);
+    if (pending_focused.is_some() && !supplied_focused)
+        || (supplied_focused && pending_focused.is_none() && legacy_focused.is_none())
+    {
+        return Err(
+            "terminal evidence must include exactly the focused result committed with the finish"
+                .to_string(),
+        );
+    }
     let mut retained = Vec::with_capacity(sources.len());
     let mut roles = BTreeSet::new();
     let mut names = BTreeSet::new();
@@ -2474,6 +2599,7 @@ pub(crate) fn retain_terminal_evidence_from(
         if source.role != TERMINAL_RECEIPT_ROLE
             && source.role != TERMINAL_VERIFY_ROLE
             && source.role != TERMINAL_GAP_AFTER_ROLE
+            && source.role != TERMINAL_FOCUSED_RUN_ROLE
         {
             return Err(format!(
                 "repair attempt terminal artifact role `{}` is not a retained after-phase result",
@@ -2526,7 +2652,37 @@ pub(crate) fn retain_terminal_evidence_from(
                     crate::output::path::human_path(&source_path)
                 )
             })?;
+        if source.role == TERMINAL_FOCUSED_RUN_ROLE
+            && match pending_focused {
+                Some(pending) => bytes != pending.record.as_bytes(),
+                None => legacy_focused.is_none_or(|artifact| {
+                    artifact.sha256 != sha256_bytes(&bytes) || artifact.bytes != bytes.len() as u64
+                }),
+            }
+        {
+            return Err(
+                "focused test result changed after validation; refusing to retain foreign bytes"
+                    .to_string(),
+            );
+        }
         let digest = sha256_bytes(&bytes);
+        if let Some(FocusedReceiptEvaluation::Accepted {
+            receipt_sha256,
+            verify_sha256,
+        }) = &manifest.focused_receipt_evaluation
+        {
+            let expected_digest = match source.role {
+                TERMINAL_RECEIPT_ROLE => Some(receipt_sha256),
+                TERMINAL_VERIFY_ROLE => Some(verify_sha256),
+                _ => None,
+            };
+            if expected_digest.is_some_and(|expected| expected != &digest) {
+                return Err(
+                    "receipt evaluation evidence changed before retention; refusing foreign bytes"
+                        .to_string(),
+                );
+            }
+        }
         let size = u64::try_from(bytes.len()).map_err(|error| {
             format!("repair attempt terminal artifact size does not fit u64: {error}")
         })?;
@@ -2603,14 +2759,14 @@ pub(crate) fn retain_terminal_evidence_from(
         ));
     }
     if manifest.terminal_artifacts == retained {
-        return Ok(retained);
+        return Ok((retained, None));
     }
     manifest.terminal_artifacts = retained.clone();
     validate_manifest(&manifest)?;
     let mut bytes = serde_json::to_vec_pretty(&manifest)
         .map_err(|error| format!("serialize repair attempt terminal retention failed: {error}"))?;
     bytes.push(b'\n');
-    commit_manifest_locked(&manifest_path, attempt_id, &base_bytes, &bytes, |current| {
+    commit_manifest_with_held_lock(&manifest_path, attempt_id, &base_bytes, &bytes, |current| {
         if current.state != RepairAttemptState::ReadyToFinish {
             return Err(format!(
                 "repair attempt {} is not ready_to_finish; terminal evidence is retained only after a compliant finish",
@@ -2626,7 +2782,13 @@ pub(crate) fn retain_terminal_evidence_from(
         Ok(())
     })?;
     read_repair_attempt_manifest_at(&store, &manifest_path)?;
-    Ok(retained)
+    Ok((
+        retained,
+        Some(TerminalRetentionCustody {
+            attempt_id: attempt_id.clone(),
+            committed_manifest: bytes,
+        }),
+    ))
 }
 
 /// Completes terminal retention for a finished attempt whose after phase
@@ -2664,6 +2826,17 @@ pub(crate) fn complete_pending_terminal_retention_from(
     let root = store.canonical_root().to_path_buf();
     if manifest.state != RepairAttemptState::ReadyToFinish
         || find_terminal_artifact_by_role(&manifest, TERMINAL_RECEIPT_ROLE).is_some()
+    {
+        return Ok(false);
+    }
+    // A focused finish carries a pending caller-reported claim that this
+    // generic promotion cannot retain or verify, so it never promotes one.
+    // An interrupted focused finish is inspected and restarted as a new
+    // attempt; recovering it with the original claim is a later change.
+    if manifest
+        .after
+        .as_ref()
+        .is_some_and(|after| after.focused_result.is_some())
     {
         return Ok(false);
     }
@@ -2895,6 +3068,7 @@ fn manifest_before_bytes(manifest: &RepairAttemptManifest) -> Result<Vec<u8>, St
     let mut before = manifest.clone();
     before.state = RepairAttemptState::AwaitingEdit;
     before.after = None;
+    before.focused_receipt_evaluation = None;
     before.last_after_refusal = None;
     before.after_refusal_count = 0;
     before.after_refusal_history.clear();
@@ -3414,6 +3588,7 @@ pub(crate) fn restore_repair_attempt_to_awaiting_edit_from(
     }
     manifest.state = RepairAttemptState::AwaitingEdit;
     manifest.after = None;
+    manifest.focused_receipt_evaluation = None;
     // Terminal files stay on disk. They are not before-phase inputs; clearing
     // the manifest field keeps the restored awaiting_edit record from claiming
     // a finished result. A retry reuses them when the bytes still match, and
@@ -3440,6 +3615,200 @@ pub(crate) fn restore_repair_attempt_to_awaiting_edit_from(
         Ok(())
     })?;
     Ok(())
+}
+
+pub(crate) struct FocusedEvaluationCustody {
+    committed_manifest: Vec<u8>,
+}
+
+/// Commit the evaluation boundary before any receipt decision is made.
+pub(crate) fn start_focused_receipt_evaluation_from(
+    root: &Path,
+    store: Option<&Path>,
+    attempt_id: &RepairAttemptId,
+    expected: &RepairAttemptAfter,
+) -> Result<FocusedEvaluationCustody, String> {
+    let (_, path, base, mut manifest) = open_attempt_with_bytes(root, store, attempt_id)?;
+    if manifest.after.as_ref() != Some(expected)
+        || !manifest.terminal_artifacts.is_empty()
+        || manifest.focused_receipt_evaluation.is_some()
+        || expected
+            .focused_result
+            .as_ref()
+            .is_none_or(|pending| pending.receipt_protocol.as_deref() != Some("durable-v1"))
+    {
+        return Err(
+            "focused receipt evaluation custody changed; inspect the attempt before retrying"
+                .to_string(),
+        );
+    }
+    manifest.focused_receipt_evaluation = Some(FocusedReceiptEvaluation::Started);
+    validate_manifest(&manifest)?;
+    let mut bytes = serde_json::to_vec_pretty(&manifest).map_err(|error| error.to_string())?;
+    bytes.push(b'\n');
+    commit_manifest_locked(&path, attempt_id, &base, &bytes, |current| {
+        if current.after.as_ref() != Some(expected)
+            || !current.terminal_artifacts.is_empty()
+            || current.focused_receipt_evaluation.is_some()
+        {
+            return Err("focused receipt evaluation custody changed".to_string());
+        }
+        Ok(())
+    })?;
+    Ok(FocusedEvaluationCustody {
+        committed_manifest: bytes,
+    })
+}
+
+/// Record the successful decision and exact in-memory result before publishing it.
+pub(crate) fn accept_focused_receipt_evaluation_from(
+    root: &Path,
+    store: Option<&Path>,
+    attempt_id: &RepairAttemptId,
+    expected: &RepairAttemptAfter,
+    receipt: &[u8],
+    verify: &[u8],
+    custody: &mut FocusedEvaluationCustody,
+) -> Result<(), String> {
+    let (_, path, base, mut manifest) = open_attempt_with_bytes(root, store, attempt_id)?;
+    if base != custody.committed_manifest
+        || manifest.after.as_ref() != Some(expected)
+        || !manifest.terminal_artifacts.is_empty()
+        || manifest.focused_receipt_evaluation != Some(FocusedReceiptEvaluation::Started)
+    {
+        return Err("focused receipt evaluation custody changed before acceptance".to_string());
+    }
+    let receipt_value: serde_json::Value = serde_json::from_slice(receipt)
+        .map_err(|error| format!("decode focused receipt before acceptance failed: {error}"))?;
+    if receipt_value
+        .pointer("/provenance/verify_artifact/sha256")
+        .and_then(serde_json::Value::as_str)
+        != Some(sha256_bytes(verify).as_str())
+    {
+        return Err("focused receipt verify bytes changed during evaluation".to_string());
+    }
+    validate_issued_receipt_evidence(root, &manifest, &receipt_value, verify)?;
+    manifest.focused_receipt_evaluation = Some(FocusedReceiptEvaluation::Accepted {
+        receipt_sha256: sha256_bytes(receipt),
+        verify_sha256: sha256_bytes(verify),
+    });
+    validate_manifest(&manifest)?;
+    let mut bytes = serde_json::to_vec_pretty(&manifest).map_err(|error| error.to_string())?;
+    bytes.push(b'\n');
+    commit_manifest_locked(&path, attempt_id, &base, &bytes, |current| {
+        if current.after.as_ref() != Some(expected)
+            || !current.terminal_artifacts.is_empty()
+            || current.focused_receipt_evaluation != Some(FocusedReceiptEvaluation::Started)
+        {
+            return Err("focused receipt evaluation custody changed before acceptance".to_string());
+        }
+        Ok(())
+    })?;
+    custody.committed_manifest = bytes;
+    Ok(())
+}
+
+/// Restore only the exact evaluation snapshot this invocation committed.
+pub(crate) fn restore_owned_focused_evaluation_from(
+    root: &Path,
+    store: Option<&Path>,
+    attempt_id: &RepairAttemptId,
+    expected: &RepairAttemptAfter,
+    custody: FocusedEvaluationCustody,
+) -> Result<(), String> {
+    let (_, path, base, mut manifest) = open_attempt_with_bytes(root, store, attempt_id)?;
+    if base != custody.committed_manifest
+        || manifest.after.as_ref() != Some(expected)
+        || !manifest.terminal_artifacts.is_empty()
+    {
+        return Err("focused receipt evaluation custody changed; refusing to restore".to_string());
+    }
+    manifest.state = RepairAttemptState::AwaitingEdit;
+    manifest.after = None;
+    manifest.focused_receipt_evaluation = None;
+    validate_manifest(&manifest)?;
+    let mut bytes = serde_json::to_vec_pretty(&manifest).map_err(|error| error.to_string())?;
+    bytes.push(b'\n');
+    commit_manifest_locked(&path, attempt_id, &base, &bytes, |current| {
+        if current.after.as_ref() != Some(expected) || !current.terminal_artifacts.is_empty() {
+            return Err(
+                "focused receipt evaluation custody changed; refusing to restore".to_string(),
+            );
+        }
+        Ok(())
+    })
+}
+
+/// Roll back only the focused finish owned by this caller, before any other
+/// process has committed terminal evidence for it.
+pub(crate) fn restore_focused_finish_from(
+    root: &Path,
+    store: Option<&Path>,
+    attempt_id: &RepairAttemptId,
+    expected: &RepairAttemptAfter,
+) -> Result<(), String> {
+    if expected.focused_result.is_none() {
+        return Err("focused finish custody is missing".to_string());
+    }
+    let (_store, manifest_path, base_bytes, mut manifest) =
+        open_attempt_with_bytes(root, store, attempt_id)?;
+    let check = |current: &RepairAttemptManifest| {
+        if current.after.as_ref() != Some(expected)
+            || !current.terminal_artifacts.is_empty()
+            || current.focused_receipt_evaluation.is_some()
+        {
+            return Err("focused finish custody changed or terminal evidence is already retained; refusing to restore".to_string());
+        }
+        Ok(())
+    };
+    check(&manifest)?;
+    manifest.state = RepairAttemptState::AwaitingEdit;
+    manifest.after = None;
+    manifest.focused_receipt_evaluation = None;
+    validate_manifest(&manifest)?;
+    let mut bytes = serde_json::to_vec_pretty(&manifest)
+        .map_err(|error| format!("serialize restored repair attempt failed: {error}"))?;
+    bytes.push(b'\n');
+    commit_manifest_locked(&manifest_path, attempt_id, &base_bytes, &bytes, check)
+}
+
+/// Revert a focused finish and terminal retention only while the exact
+/// manifest committed by this invocation still stands. A retainer that found
+/// an existing result receives no custody and cannot roll it back.
+pub(crate) fn restore_owned_focused_retention_from(
+    root: &Path,
+    store: Option<&Path>,
+    attempt_id: &RepairAttemptId,
+    expected: &RepairAttemptAfter,
+    custody: TerminalRetentionCustody,
+) -> Result<(), String> {
+    if custody.attempt_id != *attempt_id || expected.focused_result.is_none() {
+        return Err("focused terminal retention custody does not match the attempt".to_string());
+    }
+    let (_store, manifest_path, base_bytes, mut manifest) =
+        open_attempt_with_bytes(root, store, attempt_id)?;
+    if base_bytes != custody.committed_manifest
+        || manifest.after.as_ref() != Some(expected)
+        || manifest.terminal_artifacts.is_empty()
+    {
+        return Err("focused terminal retention custody changed; refusing to restore".to_string());
+    }
+    manifest.state = RepairAttemptState::AwaitingEdit;
+    manifest.after = None;
+    manifest.focused_receipt_evaluation = None;
+    manifest.terminal_artifacts.clear();
+    validate_manifest(&manifest)?;
+    let mut bytes = serde_json::to_vec_pretty(&manifest)
+        .map_err(|error| format!("serialize restored repair attempt failed: {error}"))?;
+    bytes.push(b'\n');
+    commit_manifest_locked(&manifest_path, attempt_id, &base_bytes, &bytes, |current| {
+        if current.after.as_ref() != Some(expected) || current.terminal_artifacts.is_empty() {
+            return Err(
+                "focused terminal retention custody changed; refusing to restore".to_string(),
+            );
+        }
+        Ok(())
+    })
 }
 
 /// Records the after-phase verdict. `movement` states whether commits made
@@ -3502,7 +3871,17 @@ pub(crate) fn finish_repair_attempt_from(
         packet_path,
         movement,
         &[],
+        None,
     )
+}
+
+/// Identity of the source bytes used to validate a caller's focused result.
+/// The cage capture, not a later filesystem read, must confirm this identity.
+pub(crate) struct FocusedResultIdentity {
+    pub(crate) head: String,
+    pub(crate) file: String,
+    pub(crate) worktree_digest: String,
+    pub(crate) record: String,
 }
 
 pub(crate) fn finish_repair_attempt_with_workflow_backups_from(
@@ -3512,6 +3891,7 @@ pub(crate) fn finish_repair_attempt_with_workflow_backups_from(
     packet_path: &Path,
     movement: HeadMovement,
     backups: &[(PathBuf, String, bool)],
+    focused: Option<&FocusedResultIdentity>,
 ) -> Result<RepairAttemptAfter, String> {
     let root_argument = root;
     let (store, manifest_path, base_bytes, mut manifest) =
@@ -3568,7 +3948,12 @@ pub(crate) fn finish_repair_attempt_with_workflow_backups_from(
     // swap inside the window is undetectable by commit comparison alone,
     // so the reflog fingerprint makes `current` robust to it (#5930).
     let before = crate::agent::artifact::current_git_head_identity(&root)?;
-    let (mut delta, _) = evaluate_repository_edit_cage_with_head_movement(&baseline, movement)?;
+    let (mut delta, _, captured_digest, line_ending_only_paths) =
+        crate::edit_cage::evaluate_repository_edit_cage_with_captured_digest(
+            &baseline,
+            movement,
+            focused.map(|result| result.file.as_str()),
+        )?;
     crate::edit_cage::omit_attempt_manifest_identity(
         &mut delta,
         &baseline,
@@ -3578,6 +3963,17 @@ pub(crate) fn finish_repair_attempt_with_workflow_backups_from(
     let mut verdict = crate::edit_cage::evaluate_edit_cage(baseline.policy(), &delta);
     let (current, current_head) =
         after_phase_window_is_current(&root, &before, &manifest.repository_head, movement)?;
+    if current
+        && verdict.status == crate::edit_cage::EditCageVerdictStatus::Compliant
+        && let Some(focused) = focused
+        && (current_head != focused.head
+            || captured_digest.as_deref() != Some(focused.worktree_digest.as_str()))
+    {
+        return Err(format!(
+            "repair attempt {} {REPAIR_ATTEMPT_FOCUSED_IDENTITY_TAIL}",
+            attempt_id.as_str()
+        ));
+    }
     if !current {
         verdict.status = crate::edit_cage::EditCageVerdictStatus::Incomparable;
     }
@@ -3585,6 +3981,25 @@ pub(crate) fn finish_repair_attempt_with_workflow_backups_from(
         .map_err(|error| format!("serialize repair delta failed: {error}; rerun, and report a repeat as a ripr bug with this message"))?;
     let receipt_projection_predecessor =
         receipt_projection_predecessor(&root, &manifest, &baseline, &delta);
+    let pending_focused =
+        if current && verdict.status == crate::edit_cage::EditCageVerdictStatus::Compliant {
+            focused
+                .map(|focused| -> Result<_, String> {
+                    Ok(PendingFocusedResult {
+                        record: focused.record.clone(),
+                        receipt_protocol: Some("durable-v1".to_string()),
+                        custody: format!(
+                            "{}-{}-{}",
+                            current_unix_ms()?,
+                            std::process::id(),
+                            ATTEMPT_NONCE.fetch_add(1, Ordering::Relaxed)
+                        ),
+                    })
+                })
+                .transpose()?
+        } else {
+            None
+        };
     let after = RepairAttemptAfter {
         attempt_id: manifest.repair_attempt_id.clone(),
         repository_head: current_head,
@@ -3592,8 +4007,10 @@ pub(crate) fn finish_repair_attempt_with_workflow_backups_from(
         delta_binding: Some("path-state-v1".to_string()),
         receipt_projection_predecessor,
         packet_sha256,
+        focused_result: pending_focused,
         current,
         verdict,
+        line_ending_only_paths,
     };
     manifest.after = Some(after.clone());
     // This after phase reached the durable finish, so an earlier refusal no
@@ -4324,6 +4741,20 @@ pub(crate) const REPAIR_ATTEMPT_CONTENTION_TAIL: &str =
 pub(crate) const REPAIR_ATTEMPT_CHANGED_UNDERFOOT_TAIL: &str =
     "changed while the after phase ran; retry the after phase";
 
+/// The result was checked against another HEAD or test-file snapshot than the
+/// one the cage captured. No after verdict has been committed.
+pub(crate) const REPAIR_ATTEMPT_FOCUSED_IDENTITY_TAIL: &str = "focused test result no longer matches the captured HEAD or test file; rerun the focused test and retry the after phase with --test-result FILE";
+
+pub(crate) fn repair_attempt_focused_identity_is_retry_refusal(error: &str) -> bool {
+    let Some((id, tail)) = error
+        .strip_prefix("repair attempt ")
+        .and_then(|sentence| sentence.split_once(' '))
+    else {
+        return false;
+    };
+    RepairAttemptId::parse(id).is_ok() && tail == REPAIR_ATTEMPT_FOCUSED_IDENTITY_TAIL
+}
+
 /// True when a manifest-commit error is a retryable named refusal (lock
 /// contention or a concurrent commit underfoot) rather than an operational
 /// failure. Match the complete product sentence and validate its attempt ID:
@@ -4398,6 +4829,16 @@ fn commit_manifest_locked(
         .parent()
         .ok_or_else(|| "repair attempt manifest path has no parent".to_string())?;
     let _lock = lock_manifest_for_commit(attempt_dir, attempt_id)?;
+    commit_manifest_with_held_lock(manifest_path, attempt_id, base_bytes, bytes, check)
+}
+
+fn commit_manifest_with_held_lock(
+    manifest_path: &Path,
+    attempt_id: &RepairAttemptId,
+    base_bytes: &[u8],
+    bytes: &[u8],
+    check: impl FnOnce(&RepairAttemptManifest) -> Result<(), String>,
+) -> Result<(), String> {
     let current_bytes = std::fs::read(manifest_path)
         .map_err(|error| format!("read {} failed: {error}", manifest_path.display()))?;
     let current: RepairAttemptManifest = serde_json::from_slice(&current_bytes)
@@ -4657,6 +5098,58 @@ fn validate_manifest(manifest: &RepairAttemptManifest) -> Result<(), String> {
         return Err("repair attempt delta binding version is not recognized".to_string());
     }
     if let Some(after) = &manifest.after
+        && let Some(pending) = &after.focused_result
+        && (!after.current
+            || after.verdict.status != crate::edit_cage::EditCageVerdictStatus::Compliant
+            || pending.record.is_empty()
+            || pending.custody.is_empty())
+    {
+        return Err(
+            "repair attempt pending focused result is inconsistent with its finish".to_string(),
+        );
+    }
+    if let Some(pending) = manifest
+        .after
+        .as_ref()
+        .and_then(|after| after.focused_result.as_ref())
+        && pending
+            .receipt_protocol
+            .as_deref()
+            .is_some_and(|protocol| protocol != "durable-v1")
+    {
+        return Err("focused receipt recovery protocol is unsupported".to_string());
+    }
+    if let Some(FocusedReceiptEvaluation::Accepted {
+        receipt_sha256,
+        verify_sha256,
+    }) = &manifest.focused_receipt_evaluation
+        && (!is_sha256_digest(receipt_sha256) || !is_sha256_digest(verify_sha256))
+    {
+        return Err("focused receipt evaluation has invalid evidence digests".to_string());
+    }
+    if manifest.focused_receipt_evaluation.is_some()
+        && manifest
+            .after
+            .as_ref()
+            .and_then(|after| after.focused_result.as_ref())
+            .is_none_or(|pending| pending.receipt_protocol.as_deref() != Some("durable-v1"))
+    {
+        return Err("focused receipt evaluation lacks its durable finish protocol".to_string());
+    }
+    if !manifest.terminal_artifacts.is_empty()
+        && manifest
+            .after
+            .as_ref()
+            .and_then(|after| after.focused_result.as_ref())
+            .is_some_and(|pending| pending.receipt_protocol.as_deref() == Some("durable-v1"))
+        && !matches!(
+            manifest.focused_receipt_evaluation,
+            Some(FocusedReceiptEvaluation::Accepted { .. })
+        )
+    {
+        return Err("focused terminal evidence lacks a committed receipt outcome".to_string());
+    }
+    if let Some(after) = &manifest.after
         && let Some(predecessor) = &after.receipt_projection_predecessor
     {
         RepairAttemptId::parse(predecessor.attempt_id.as_str().to_string())?;
@@ -4729,14 +5222,49 @@ fn validate_manifest(manifest: &RepairAttemptManifest) -> Result<(), String> {
             .iter()
             .any(|artifact| artifact.role == role)
     };
+    if let Some(pending) = manifest
+        .after
+        .as_ref()
+        .and_then(|after| after.focused_result.as_ref())
+        && !manifest.terminal_artifacts.is_empty()
+        && manifest
+            .terminal_artifacts
+            .iter()
+            .find(|artifact| artifact.role == TERMINAL_FOCUSED_RUN_ROLE)
+            .is_none_or(|artifact| {
+                artifact.sha256 != sha256_bytes(pending.record.as_bytes())
+                    || artifact.bytes != pending.record.len() as u64
+            })
+    {
+        return Err("retained focused result does not match the focused finish".to_string());
+    }
+    if manifest.terminal_artifacts.iter().any(|artifact| {
+        ![
+            TERMINAL_RECEIPT_ROLE,
+            TERMINAL_VERIFY_ROLE,
+            TERMINAL_GAP_AFTER_ROLE,
+            TERMINAL_FOCUSED_RUN_ROLE,
+        ]
+        .contains(&artifact.role.as_str())
+    }) {
+        return Err(
+            "repair attempt manifest contains an unknown terminal artifact role".to_string(),
+        );
+    }
+    // The optional caller-reported focused result is a fourth role beside
+    // the three required gap roles; it never stands in for one of them.
+    let required_terminal_roles = terminal_roles
+        .iter()
+        .filter(|role| role.as_str() != TERMINAL_FOCUSED_RUN_ROLE)
+        .count();
     if has_terminal_role(TERMINAL_GAP_AFTER_ROLE)
         && (manifest.gap_binding.is_none()
-            || terminal_roles.len() != 3
+            || required_terminal_roles != 3
             || !has_terminal_role(TERMINAL_RECEIPT_ROLE)
             || !has_terminal_role(TERMINAL_VERIFY_ROLE))
     {
         return Err(
-            "gap after retention requires exactly the gap snapshot, receipt and verify roles"
+            "gap after retention requires the gap snapshot, receipt and verify roles, plus at most one focused test result"
                 .to_string(),
         );
     }
@@ -5205,6 +5733,7 @@ mod tests {
             limitations: Vec::new(),
             non_claims: vec!["not merge authority".to_string()],
             after: None,
+            focused_receipt_evaluation: None,
             last_after_refusal: None,
             after_refusal_count: 0,
             after_refusal_history: Vec::new(),
@@ -5725,9 +6254,11 @@ mod tests {
                 .to_string(),
             delta_binding: None,
             receipt_projection_predecessor: None,
+            focused_result: None,
             packet_sha256:
                 "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
                     .to_string(),
+            line_ending_only_paths: Vec::new(),
             current: true,
             verdict: crate::edit_cage::EditCageVerdict {
                 status: crate::edit_cage::EditCageVerdictStatus::Compliant,
@@ -6014,6 +6545,206 @@ mod tests {
         }
         std::fs::remove_dir_all(&root)
             .map_err(|error| format!("remove {} failed: {error}", root.display()))?;
+        Ok(())
+    }
+
+    fn terminal_artifact(role: &str) -> RepairAttemptArtifact {
+        RepairAttemptArtifact {
+            role: role.to_string(),
+            path: format!("target/ripr/repair-attempts/sample/artifacts/{role}.json"),
+            sha256: "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+                .to_string(),
+            bytes: 2,
+        }
+    }
+
+    #[test]
+    fn a_gap_attempt_accepts_one_optional_focused_result_but_no_other_extra_role()
+    -> Result<(), String> {
+        let root = test_root("terminal-roles")?;
+        let gap_roles = [
+            TERMINAL_RECEIPT_ROLE,
+            TERMINAL_VERIFY_ROLE,
+            TERMINAL_GAP_AFTER_ROLE,
+        ];
+        let build = |roles: &[&str]| -> Result<RepairAttemptManifest, String> {
+            let mut manifest = sample_manifest(&root)?;
+            manifest.gap_binding = Some(RepairAttemptGapBinding {
+                base: "HEAD~1".to_string(),
+                base_commit: Some("0123456789abcdef0123456789abcdef01234567".to_string()),
+            });
+            manifest.terminal_artifacts = roles.iter().map(|r| terminal_artifact(r)).collect();
+            Ok(manifest)
+        };
+        let mut with_focused = gap_roles.to_vec();
+        with_focused.push(TERMINAL_FOCUSED_RUN_ROLE);
+        let mut with_foreign = gap_roles.to_vec();
+        with_foreign.push("foreign_role");
+        let outcome = (|| {
+            validate_manifest(&build(&gap_roles)?)
+                .map_err(|e| format!("three gap roles refused: {e}"))?;
+            validate_manifest(&build(&with_focused)?)
+                .map_err(|e| format!("gap roles plus focused result refused: {e}"))?;
+            if validate_manifest(&build(&with_foreign)?).is_ok() {
+                return Err("a foreign terminal role was accepted".to_string());
+            }
+            if validate_manifest(&build(&[
+                TERMINAL_GAP_AFTER_ROLE,
+                TERMINAL_FOCUSED_RUN_ROLE,
+            ])?)
+            .is_ok()
+            {
+                return Err("the focused result stood in for a required gap role".to_string());
+            }
+            Ok(())
+        })();
+        std::fs::remove_dir_all(&root)
+            .map_err(|error| format!("remove {} failed: {error}", root.display()))?;
+        outcome
+    }
+
+    #[test]
+    fn focused_restore_refuses_another_finish_or_committed_evidence() -> Result<(), String> {
+        let root = test_repo_root("focused-restore-custody")?;
+        let prepared = prepare_sample_attempt(&root, "seam:sample", "focused-restore")?;
+        let attempt_id = prepared.manifest.repair_attempt_id.clone();
+        let resolved = resolve_awaiting_repair_attempt(&root, Some(attempt_id.as_str()), None)?;
+        let source = "#[test]\nfn focused() {}\n";
+        std::fs::create_dir_all(root.join("tests")).map_err(|error| error.to_string())?;
+        std::fs::write(root.join("tests/target.rs"), source).map_err(|error| error.to_string())?;
+        let focused = FocusedResultIdentity {
+            head: crate::agent::artifact::current_git_head(&root)?,
+            file: "tests/target.rs".to_string(),
+            worktree_digest: crate::edit_cage::inline_test_region::digest_bytes(source.as_bytes()),
+            record: "validated focused record\n".to_string(),
+        };
+        let after = finish_repair_attempt_with_workflow_backups_from(
+            &root,
+            None,
+            &attempt_id,
+            &resolved.packet_path,
+            HeadMovement::AdmitDescendantCommits,
+            &[],
+            Some(&focused),
+        )?;
+        let mut other = after.clone();
+        other
+            .focused_result
+            .as_mut()
+            .ok_or("missing focused custody")?
+            .custody
+            .push_str("-other");
+        if restore_focused_finish_from(&root, None, &attempt_id, &other).is_ok() {
+            return Err("restored a different finish".to_string());
+        }
+        let receipt = root.join("agent-receipt.json");
+        let verify = root.join("agent-verify.json");
+        let result = root.join("focused-test-result.json");
+        std::fs::write(&receipt, b"receipt").map_err(|error| error.to_string())?;
+        std::fs::write(&verify, b"verify").map_err(|error| error.to_string())?;
+        std::fs::write(&result, focused.record.as_bytes()).map_err(|error| error.to_string())?;
+        // This isolated custody unit supplies synthetic receipt bytes; seed an
+        // accepted outcome solely to exercise retention ownership independently
+        // of the real receipt producer's validation.
+        let (_, path, mut staged) = open_attempt(&root, None, &attempt_id)?;
+        staged.focused_receipt_evaluation = Some(FocusedReceiptEvaluation::Accepted {
+            receipt_sha256: sha256_bytes(b"receipt"),
+            verify_sha256: sha256_bytes(b"verify"),
+        });
+        let mut staged_bytes =
+            serde_json::to_vec_pretty(&staged).map_err(|error| error.to_string())?;
+        staged_bytes.push(b'\n');
+        replace_manifest_bytes(&path, &staged_bytes)?;
+        let sources = [
+            BeforeArtifactSource {
+                role: TERMINAL_RECEIPT_ROLE,
+                path: &receipt,
+            },
+            BeforeArtifactSource {
+                role: TERMINAL_VERIFY_ROLE,
+                path: &verify,
+            },
+            BeforeArtifactSource {
+                role: TERMINAL_FOCUSED_RUN_ROLE,
+                path: &result,
+            },
+        ];
+        let (_, first_custody) = retain_terminal_evidence_with_custody_from(
+            &root,
+            None,
+            &attempt_id,
+            &sources,
+            Some(&after),
+        )?;
+        let first_custody = first_custody.ok_or("first retention granted no custody")?;
+        let (_, reused_custody) = retain_terminal_evidence_with_custody_from(
+            &root,
+            None,
+            &attempt_id,
+            &sources,
+            Some(&after),
+        )?;
+        if reused_custody.is_some() {
+            return Err("an idempotent second retainer acquired rollback custody".to_string());
+        }
+        let before = open_attempt(&root, None, &attempt_id)?.2;
+        if restore_focused_finish_from(&root, None, &attempt_id, &after).is_ok() {
+            return Err("restored over committed terminal evidence".to_string());
+        }
+        let actual = open_attempt(&root, None, &attempt_id)?.2;
+        if actual != before {
+            return Err("restore altered the winner's manifest".to_string());
+        }
+        // Even the original writer loses rollback custody if any other
+        // manifest commit lands after its terminal retention.
+        let mut changed = actual.clone();
+        changed.after_refusal_count = changed.after_refusal_count.saturating_add(1);
+        let (_, path, _) = open_attempt(&root, None, &attempt_id)?;
+        let mut bytes = serde_json::to_vec_pretty(&changed).map_err(|error| error.to_string())?;
+        bytes.push(b'\n');
+        replace_manifest_bytes(&path, &bytes)?;
+        if restore_owned_focused_retention_from(&root, None, &attempt_id, &after, first_custody)
+            .is_ok()
+        {
+            return Err("restored a changed terminal manifest".to_string());
+        }
+        if open_attempt(&root, None, &attempt_id)?.2 != changed {
+            return Err("changed terminal evidence was overwritten".to_string());
+        }
+        // A finish retained by an older producer has no pending field. Its
+        // committed focused artifact remains idempotent, but different bytes
+        // must not be substituted on that legacy route either.
+        let mut legacy = changed;
+        legacy.focused_receipt_evaluation = None;
+        legacy
+            .after
+            .as_mut()
+            .ok_or("missing finish")?
+            .focused_result = None;
+        let (_, path, _) = open_attempt(&root, None, &attempt_id)?;
+        let mut bytes = serde_json::to_vec_pretty(&legacy).map_err(|error| error.to_string())?;
+        bytes.push(b'\n');
+        replace_manifest_bytes(&path, &bytes)?;
+        let sources = [
+            BeforeArtifactSource {
+                role: TERMINAL_RECEIPT_ROLE,
+                path: &receipt,
+            },
+            BeforeArtifactSource {
+                role: TERMINAL_VERIFY_ROLE,
+                path: &verify,
+            },
+            BeforeArtifactSource {
+                role: TERMINAL_FOCUSED_RUN_ROLE,
+                path: &result,
+            },
+        ];
+        retain_terminal_evidence_from(&root, None, &attempt_id, &sources)?;
+        std::fs::write(&result, "foreign bytes\n").map_err(|error| error.to_string())?;
+        if retain_terminal_evidence_from(&root, None, &attempt_id, &sources).is_ok() {
+            return Err("legacy re-retention accepted different focused bytes".to_string());
+        }
+        std::fs::remove_dir_all(&root).map_err(|error| error.to_string())?;
         Ok(())
     }
 
@@ -9865,7 +10596,9 @@ mod tests {
             delta_sha256: String::new(),
             delta_binding: None,
             receipt_projection_predecessor: None,
+            focused_result: None,
             packet_sha256: String::new(),
+            line_ending_only_paths: Vec::new(),
             current,
             verdict: crate::edit_cage::EditCageVerdict {
                 status,

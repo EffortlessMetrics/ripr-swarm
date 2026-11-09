@@ -394,11 +394,86 @@ pub struct ValueFact {
     pub context: ValueContext,
 }
 
+/// Whether a missing-discriminator recommendation names an equality input
+/// boundary, the activating domain of a guard, or some other shape. The
+/// consumers that used to string-match `==` in [`MissingDiscriminatorFact`]
+/// value (the predicate decision suppression, the predicate infection
+/// summary, [`input_boundary_fact`]) read this instead, so a new fact shape
+/// cannot silently fall into the equality reading (#12414).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DiscriminatorShape {
+    /// The equality input boundary a changed comparison sits on:
+    /// `left == right`, the input no related test supplies
+    /// (`classify::activation::missing_boundary_discriminator`).
+    Boundary,
+    /// The activating domain of a guard: `if <parameter> <op> <bound>`, the
+    /// region no related test's input enters (RIPR-SPEC-0263, and the
+    /// inserted-guard route of #12414).
+    GuardDomain,
+    /// Any other recommendation (an unselected arm, an exact assertion, a
+    /// named value). No consumer selects it by equality or guard shape.
+    Other,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MissingDiscriminatorFact {
     pub value: String,
     pub reason: String,
     pub flow_sink: Option<FlowSinkFact>,
+    /// The concrete drafted boundary call for the equality boundary this
+    /// fact names, when the analyzer's static model can pin the boundary
+    /// input from the related tests' own call rows. `expected` stays `None`
+    /// when the owner's returned expression does not fold at that input;
+    /// the rendered assertion then keeps its `/* expected */` placeholder.
+    /// This is a static draft: ripr has not run or verified anything, and
+    /// the developer confirms the expected value before relying on it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub drafted_boundary: Option<DraftedBoundaryAssertion>,
+    /// What the recommendation names. No serde default: a cached fact or
+    /// persisted evidence written before the field existed must fail to
+    /// decode rather than silently re-read as the wrong shape, mirroring the
+    /// `statically_contradicted_related_tests` precedent (#9110); the seam
+    /// cache schema versions bump with this field.
+    pub shape: DiscriminatorShape,
+}
+
+/// The owner-call argument texts a drafted boundary assertion passes, plus
+/// the statically folded expected value when the analyzer's bounded integer
+/// fold derives one. Argument texts are plain integer literals, so the
+/// drafted call is paste-ready; the expected value is a fold of the current
+/// behavior, not an observed or verified result.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DraftedBoundaryAssertion {
+    pub arguments: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected: Option<String>,
+}
+
+impl MissingDiscriminatorFact {
+    /// The fact for an emitters whose recommendation is spelled
+    /// `left == right` only sometimes (the syntax-first language previews,
+    /// the bun bridge, the Perl preview): the value keeps the equality
+    /// reading exactly when it is equality-spelled, the same rule the
+    /// `==`-string readers applied before the typed shape existed (#12414).
+    /// Emitters whose value format is fixed use the shape field directly.
+    pub fn equality_spelled(
+        value: String,
+        reason: String,
+        flow_sink: Option<FlowSinkFact>,
+    ) -> Self {
+        let shape = if value.contains(" == ") {
+            DiscriminatorShape::Boundary
+        } else {
+            DiscriminatorShape::Other
+        };
+        Self {
+            value,
+            reason,
+            flow_sink,
+            shape,
+            drafted_boundary: None,
+        }
+    }
 }
 
 /// Opens the reason of a match-arm missing discriminator that names an arm
@@ -430,20 +505,24 @@ pub fn input_boundary_fact<'a>(
     facts: &'a [MissingDiscriminatorFact],
     family: &ProbeFamily,
 ) -> Option<&'a MissingDiscriminatorFact> {
+    let boundary = |facts: &'a [MissingDiscriminatorFact]| {
+        facts
+            .iter()
+            .find(|fact| fact.shape == DiscriminatorShape::Boundary)
+    };
+    let guard = |facts: &'a [MissingDiscriminatorFact]| {
+        facts
+            .iter()
+            .find(|fact| fact.shape == DiscriminatorShape::GuardDomain)
+    };
     match family {
         // A returned bare comparison reads the same boundary (#9094); no
         // other return-value fact is spelled `left == right`.
-        ProbeFamily::Predicate => facts.iter().find(|fact| fact.value.contains(" == ")),
+        // An inserted predicate names its guard domain instead (#12414).
+        ProbeFamily::Predicate => boundary(facts).or_else(|| guard(facts)),
         // A returned error variant under an unentered `if` reads the guard
         // (#11147), after the bare-comparison reading above.
-        ProbeFamily::ReturnValue => facts
-            .iter()
-            .find(|fact| fact.value.contains(" == "))
-            .or_else(|| {
-                facts
-                    .iter()
-                    .find(|fact| fact.reason.starts_with(GUARD_UNENTERED_REASON_PREFIX))
-            }),
+        ProbeFamily::ReturnValue => boundary(facts).or_else(|| guard(facts)),
         ProbeFamily::MatchArm => facts
             .iter()
             .find(|fact| fact.reason.starts_with(ARM_UNSELECTED_REASON_PREFIX)),

@@ -40,6 +40,48 @@ pub(crate) struct RepairFixSite {
     /// when the fix site is the seam's own production file (#5516). `None`
     /// for a test-surface fix site.
     pub(crate) inline_test_module: Option<String>,
+    /// The producer-owned new-test proposal kind (`integration` or
+    /// `inline_unit`) when this fix site is the shared gate's proposal target
+    /// rather than an existing test (#13538). `test_name`, `line` and `oracle`
+    /// are then placeholders (empty, 0, `None`): there is no test yet.
+    pub(crate) new_test_kind: Option<&'static str>,
+}
+
+impl RepairFixSite {
+    /// The fix-site shape of the shared gate's proposal target, or `None` when
+    /// the proposal cannot be confined the way the edit cage confines it: an
+    /// integration proposal must sit on a shared test-surface path and an
+    /// inline proposal must name its one governed module. Fail-closed: this
+    /// only ever narrows what the shared verdict admitted.
+    fn from_proposal(
+        selected: &crate::analysis::new_test_target::SelectedProposal,
+    ) -> Option<Self> {
+        use crate::analysis::new_test_target::NewTestKind;
+        let (kind, inline_test_module) = match (selected.kind, &selected.module) {
+            _ if !crate::analysis::new_test_target::is_plain_relative_path(&selected.file) => {
+                return None;
+            }
+            (NewTestKind::Integration, None)
+                if crate::analysis::new_test_target::is_integration_test_file_shape(
+                    &selected.file,
+                ) && crate::analysis::is_test_surface_path(&selected.file) =>
+            {
+                ("integration", None)
+            }
+            (NewTestKind::InlineUnit, Some(module)) => ("inline_unit", Some(module.clone())),
+            _ => return None,
+        };
+        Some(Self {
+            test_name: String::new(),
+            file: selected.file.clone(),
+            line: 0,
+            oracle: None,
+            oracle_kind: "none",
+            oracle_strength: "none",
+            inline_test_module,
+            new_test_kind: Some(kind),
+        })
+    }
 }
 
 /// Producer-fact repair readiness for one canonical item, computed once when
@@ -79,6 +121,10 @@ pub(crate) struct RepairReadiness {
     /// The shared repair validator's own explanation when the seam-level
     /// admission refused an otherwise finding-ready item (#8717).
     pub(crate) seam_detail: Option<String>,
+    /// The producer-owned new-test proposal the seam's repair follows
+    /// (#13204): the shared projection. When it also takes a fix-site shape
+    /// (#13538) it is the item's fix site and the item is ready.
+    pub(crate) proposed_new_test: Option<crate::analysis::new_test_target::SelectedProposal>,
 }
 
 impl RepairReadiness {
@@ -115,6 +161,52 @@ impl RepairReadiness {
             site.inline_test_module = Some(module.clone());
             self.ready = true;
             self.ineligibility = None;
+        }
+        self
+    }
+
+    /// Adopts the producer-owned new-test proposal when the shared gate's
+    /// verdict names one (#13204, #13538). The verdict is the one authority:
+    /// `ripr agent repair --phase before` starts from that proposal exactly
+    /// when `repair_packet_eligibility` selects it, so a finding that passed
+    /// the finding-level actionability and discriminator gates but held only
+    /// for lack of an existing fix site (`fix_site_not_established`, or an
+    /// existing test off a test surface) is promoted, with the proposal as its
+    /// fix site, which is the file the CLI edit cage allows
+    /// (`selected_target.path`). A ready item takes the same proposal fix site
+    /// so MCP never names a different file than the cage. An item held by any
+    /// other gate is untouched and names no proposal, and a proposal that
+    /// cannot take a fix-site shape (see [`RepairFixSite::from_proposal`])
+    /// stays held.
+    pub(crate) fn with_selected_proposal(mut self, verdict: Option<&SeamVerdict>) -> Self {
+        let Some(SeamVerdict::AdmittedProposed(selected)) = verdict else {
+            return self;
+        };
+        if !(self.ready
+            || matches!(
+                self.ineligibility,
+                Some("fix_site_not_established" | "fix_site_not_test_surface")
+            ))
+        {
+            return self;
+        }
+        self.proposed_new_test = Some(selected.clone());
+        if let Some(site) = RepairFixSite::from_proposal(selected) {
+            self.ready = true;
+            self.fix_site = Some(site);
+            self.ineligibility = None;
+            self.seam_detail = None;
+        } else if self.ready {
+            // The shared gate's target is the proposal, but it cannot take a
+            // fix-site shape: the existing-test fix site would name a file the
+            // CLI cage does not allow, so hold the item instead.
+            self.ready = false;
+            self.fix_site = None;
+            self.ineligibility = Some("fix_site_not_established");
+            self.seam_detail = Some(format!(
+                "the shared repair gate (`ripr repair`) targets the new-test proposal `{}`, which cannot be confined as a fix site here, so no matching fix site is established",
+                selected.file
+            ));
         }
         self
     }
@@ -196,6 +288,7 @@ impl RepairReadiness {
                 fix_site: None,
                 ineligibility: Some("not_candidate_actionable"),
                 seam_detail: None,
+                proposed_new_test: None,
             };
         }
         let producer_named_missing_discriminator =
@@ -218,6 +311,7 @@ impl RepairReadiness {
                 fix_site: None,
                 ineligibility: Some("missing_discriminator"),
                 seam_detail: None,
+                proposed_new_test: None,
             };
         }
         let discriminator_unpopulated = finding
@@ -241,6 +335,7 @@ impl RepairReadiness {
                 fix_site: None,
                 ineligibility: Some(ineligibility),
                 seam_detail: None,
+                proposed_new_test: None,
             };
         }
         // The gate contract is "a strong, high-confidence directly-related
@@ -262,6 +357,7 @@ impl RepairReadiness {
                 fix_site: None,
                 ineligibility: Some("fix_site_not_established"),
                 seam_detail: None,
+                proposed_new_test: None,
             };
         };
         let Some(fix_site) = candidates
@@ -273,6 +369,7 @@ impl RepairReadiness {
                 fix_site: Some(first),
                 ineligibility: Some("fix_site_not_test_surface"),
                 seam_detail: None,
+                proposed_new_test: None,
             };
         };
         Self {
@@ -280,6 +377,7 @@ impl RepairReadiness {
             fix_site: Some(fix_site),
             ineligibility: None,
             seam_detail: None,
+            proposed_new_test: None,
         }
     }
 
@@ -314,6 +412,13 @@ impl RepairReadiness {
                 "the shared seam-level repair validator behind `ripr repair` does not admit this item"
             }
             Some(_other) => "the producer did not establish every repair-readiness fact",
+            None if self
+                .fix_site
+                .as_ref()
+                .is_some_and(|site| site.new_test_kind.is_some()) =>
+            {
+                "every evaluated producer fact is established: candidate-current source, an established discriminator, and a producer-owned new-test proposal that the shared repair gate admitted as the seam's one repair target; no existing test is extended"
+            }
             None if self
                 .fix_site
                 .as_ref()
@@ -369,6 +474,7 @@ fn fix_site_candidates(
             oracle_kind: test.oracle_kind.as_str(),
             oracle_strength: test.oracle_strength.as_str(),
             inline_test_module: None,
+            new_test_kind: None,
         })
         .collect()
 }
@@ -438,6 +544,22 @@ fn static_limit_token(kind: crate::domain::StaticLimitKind) -> String {
         .unwrap_or_else(|| "static_limitation".to_string())
 }
 
+/// The wire shape of the shared proposal projection on a gap item: snake_case
+/// kind, file, the inline module only when one exists, and a plain statement.
+pub(crate) fn proposed_new_test_json(
+    selected: &crate::analysis::new_test_target::SelectedProposal,
+) -> serde_json::Value {
+    let mut value = json!({
+        "kind": selected.kind,
+        "file": selected.file,
+        "summary": selected.statement(),
+    });
+    if let Some(module) = &selected.module {
+        value["module"] = json!(module);
+    }
+    value
+}
+
 impl GapItem {
     /// `root` is the analyzed workspace root: item locations render through
     /// the shared finding-location owner (#5996), so an MCP item names the
@@ -474,7 +596,8 @@ impl GapItem {
 
         let repair_readiness = RepairReadiness::from_finding(finding, root)
             .with_seam_verdict(admission.verdict(&finding.id).as_ref())
-            .with_recommended_target(finding, root, admission.verdict(&finding.id).as_ref());
+            .with_recommended_target(finding, root, admission.verdict(&finding.id).as_ref())
+            .with_selected_proposal(admission.verdict(&finding.id).as_ref());
         let mut list_summary = json!({
             "canonical_id": canonical_id,
             "class": class,
@@ -484,6 +607,12 @@ impl GapItem {
             "repair_packet_ready": repair_readiness.ready,
             "repair_ineligibility": repair_readiness.ineligibility,
         });
+        // Additive (#13204): present only when the shared gate's target is the
+        // producer-owned new-test proposal; the same projection the repair
+        // card and packet read.
+        if let Some(selected) = &repair_readiness.proposed_new_test {
+            list_summary["proposed_new_test"] = proposed_new_test_json(selected);
+        }
         // Additive (#12921): present only for a `no_static_path` item reached
         // solely by a proof harness ripr does not evaluate. It is a disclosure,
         // never test coverage; the class above is unchanged.
@@ -1414,6 +1543,7 @@ mod tests {
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
+            owner_opt_outs: Vec::new(),
             suppression: None,
             partial_scope: None,
             analyzed_revisions: None,
@@ -1666,6 +1796,8 @@ mod tests {
                 value: "total == 10000".to_string(),
                 reason: "boundary not asserted".to_string(),
                 flow_sink: None,
+                shape: crate::domain::DiscriminatorShape::Boundary,
+                drafted_boundary: None,
             },
         );
         // #8717: on a weakly exposed finding the named value is the repair
@@ -1768,6 +1900,8 @@ mod tests {
                 value: "total == 10000".to_string(),
                 reason: "boundary not asserted".to_string(),
                 flow_sink: None,
+                shape: crate::domain::DiscriminatorShape::Boundary,
+                drafted_boundary: None,
             });
         for test in &mut weak.related_tests {
             test.oracle_strength = crate::domain::OracleStrength::Weak;
@@ -1855,6 +1989,8 @@ mod tests {
                 value: "total == 10000".to_string(),
                 reason: "boundary not asserted".to_string(),
                 flow_sink: None,
+                shape: crate::domain::DiscriminatorShape::Boundary,
+                drafted_boundary: None,
             });
         let mut second = weak.related_tests[0].clone();
         second.name = "second".to_string();
@@ -1991,9 +2127,11 @@ mod tests {
                 oracle_kind: "exact_value",
                 oracle_strength: "strong",
                 inline_test_module: None,
+                new_test_kind: None,
             }),
             ineligibility: None,
             seam_detail: None,
+            proposed_new_test: None,
         }
     }
 
@@ -2016,7 +2154,216 @@ mod tests {
         {
             return Err(format!("refused verdict must block readiness: {blocked:?}"));
         }
-        for verdict in [Some(&SeamVerdict::Admitted), None] {
+        let proposed =
+            SeamVerdict::AdmittedProposed(crate::analysis::new_test_target::SelectedProposal {
+                kind: crate::analysis::new_test_target::NewTestKind::Integration,
+                file: "tests/new.rs".to_string(),
+                module: None,
+            });
+        // The proposal disclosure never changes the admission decision: the
+        // proposed verdict keeps readiness exactly as `Admitted` does.
+        let admitted_same = ready_readiness().with_seam_verdict(Some(&SeamVerdict::Admitted));
+        let proposed_same = ready_readiness().with_seam_verdict(Some(&proposed));
+        if (
+            admitted_same.ready,
+            admitted_same.ineligibility,
+            admitted_same.fix_site.is_some(),
+        ) != (
+            proposed_same.ready,
+            proposed_same.ineligibility,
+            proposed_same.fix_site.is_some(),
+        ) {
+            return Err(
+                "a proposed verdict must decide readiness exactly like Admitted".to_string(),
+            );
+        }
+        let disclosed = ready_readiness().with_selected_proposal(Some(&proposed));
+        let undisclosed = ready_readiness().with_selected_proposal(Some(&SeamVerdict::Admitted));
+        if disclosed.proposed_new_test.is_none() || undisclosed.proposed_new_test.is_some() {
+            return Err("only a proposed verdict discloses the proposal".to_string());
+        }
+        // The proposal-only case (#13538): no existing fix site is the finding
+        // gate's refusal, and the shared verdict's proposal is the fix site, so
+        // the item is ready and names the proposal file as its edit target.
+        let mut proposal_only = ready_readiness();
+        proposal_only.ready = false;
+        proposal_only.fix_site = None;
+        proposal_only.ineligibility = Some("fix_site_not_established");
+        let promoted = proposal_only
+            .clone()
+            .with_selected_proposal(Some(&proposed));
+        if promoted.proposed_new_test.is_none()
+            || !promoted.ready
+            || promoted.ineligibility.is_some()
+            || promoted.fix_site.as_ref().map(|site| site.file.as_str()) != Some("tests/new.rs")
+            || promoted
+                .fix_site
+                .as_ref()
+                .and_then(|site| site.new_test_kind)
+                != Some("integration")
+        {
+            return Err(format!(
+                "a proposal-only item is ready on the proposal file: {promoted:?}"
+            ));
+        }
+        // Fail-closed: a proposal that cannot take a fix-site shape (an
+        // off-test-surface integration file, or an inline proposal naming no
+        // module) is disclosed but never lifts the hold.
+        for bad in [
+            crate::analysis::new_test_target::SelectedProposal {
+                kind: crate::analysis::new_test_target::NewTestKind::Integration,
+                file: "src/lib.rs".to_string(),
+                module: None,
+            },
+            crate::analysis::new_test_target::SelectedProposal {
+                kind: crate::analysis::new_test_target::NewTestKind::InlineUnit,
+                file: "src/lib.rs".to_string(),
+                module: None,
+            },
+        ] {
+            let held = proposal_only
+                .clone()
+                .with_selected_proposal(Some(&SeamVerdict::AdmittedProposed(bad)));
+            if held.ready || held.ineligibility != Some("fix_site_not_established") {
+                return Err(format!("an unshapeable proposal must stay held: {held:?}"));
+            }
+        }
+        // Path-shape defense in depth (shared preflight helpers).
+        for bad_file in [
+            "../x/tests/a.rs",
+            "/abs/tests/a.rs",
+            "tests/sub/dir/a.rs",
+            "tests/.rs",
+            "tests/a.txt",
+        ] {
+            let bad = crate::analysis::new_test_target::SelectedProposal {
+                kind: crate::analysis::new_test_target::NewTestKind::Integration,
+                file: bad_file.to_string(),
+                module: None,
+            };
+            if RepairFixSite::from_proposal(&bad).is_some() {
+                return Err(format!("`{bad_file}` must not take a fix-site shape"));
+            }
+        }
+        // A READY item whose proposal cannot take a fix-site shape must be
+        // held, never keep the stale existing-test fix site.
+        for bad in [
+            crate::analysis::new_test_target::SelectedProposal {
+                kind: crate::analysis::new_test_target::NewTestKind::Integration,
+                file: "src/lib.rs".to_string(),
+                module: None,
+            },
+            crate::analysis::new_test_target::SelectedProposal {
+                kind: crate::analysis::new_test_target::NewTestKind::InlineUnit,
+                file: "src/lib.rs".to_string(),
+                module: None,
+            },
+        ] {
+            let held =
+                ready_readiness().with_selected_proposal(Some(&SeamVerdict::AdmittedProposed(bad)));
+            if held.ready
+                || held.fix_site.is_some()
+                || held.ineligibility != Some("fix_site_not_established")
+                || held.seam_detail.is_none()
+            {
+                return Err(format!("a ready unshapeable proposal must hold: {held:?}"));
+            }
+        }
+        // A ready item with an existing fix site takes the proposal fix site.
+        let swapped = ready_readiness().with_selected_proposal(Some(&proposed));
+        if !swapped.ready
+            || swapped.fix_site.as_ref().map(|site| site.file.as_str()) != Some("tests/new.rs")
+            || swapped
+                .fix_site
+                .as_ref()
+                .and_then(|site| site.new_test_kind)
+                != Some("integration")
+        {
+            return Err(format!("the ready existing site must swap: {swapped:?}"));
+        }
+        // fix_site_not_test_surface lifts on a shapeable proposal.
+        let mut off_surface = ready_readiness();
+        off_surface.ready = false;
+        off_surface.ineligibility = Some("fix_site_not_test_surface");
+        let lifted = off_surface.with_selected_proposal(Some(&proposed));
+        if !lifted.ready || lifted.ineligibility.is_some() {
+            return Err(format!("not_test_surface must lift: {lifted:?}"));
+        }
+        // An inline proposal naming its module lifts, confined to that module.
+        let inline =
+            SeamVerdict::AdmittedProposed(crate::analysis::new_test_target::SelectedProposal {
+                kind: crate::analysis::new_test_target::NewTestKind::InlineUnit,
+                file: "src/lib.rs".to_string(),
+                module: Some("tests".to_string()),
+            });
+        let inline_lifted = proposal_only.clone().with_selected_proposal(Some(&inline));
+        let inline_site = inline_lifted.fix_site.as_ref();
+        if !inline_lifted.ready
+            || inline_site.map(|site| site.file.as_str()) != Some("src/lib.rs")
+            || inline_site.and_then(|site| site.inline_test_module.as_deref()) != Some("tests")
+            || inline_site.and_then(|site| site.new_test_kind) != Some("inline_unit")
+        {
+            return Err(format!("an inline proposal must lift: {inline_lifted:?}"));
+        }
+        // No verdict, or an Admitted verdict, never lifts the hold.
+        for verdict in [None, Some(&SeamVerdict::Admitted)] {
+            let held = proposal_only.clone().with_selected_proposal(verdict);
+            if held.ready || held.ineligibility != Some("fix_site_not_established") {
+                return Err(format!("no proposal verdict must stay held: {held:?}"));
+            }
+        }
+        // Negative: an item held by any other gate, or a refused verdict, names
+        // no proposal.
+        for gate in [
+            "not_candidate_actionable",
+            "missing_discriminator",
+            "static_limitation",
+        ] {
+            let mut not_ready = ready_readiness();
+            not_ready.ready = false;
+            not_ready.ineligibility = Some(gate);
+            if not_ready
+                .with_selected_proposal(Some(&proposed))
+                .proposed_new_test
+                .is_some()
+            {
+                return Err(format!(
+                    "an item held by `{gate}` must not disclose a proposal"
+                ));
+            }
+        }
+        let refused_here = SeamVerdict::Refused {
+            code: crate::mcp::repair_admission::SEAM_ALREADY_GRIPPED,
+            detail: "refused".to_string(),
+        };
+        if ready_readiness()
+            .with_selected_proposal(Some(&refused_here))
+            .proposed_new_test
+            .is_some()
+        {
+            return Err("a refused verdict must not disclose a proposal".to_string());
+        }
+        // The wire shape: snake_case kind, no null module.
+        let wire = proposed_new_test_json(&crate::analysis::new_test_target::SelectedProposal {
+            kind: crate::analysis::new_test_target::NewTestKind::Integration,
+            file: "tests/new.rs".to_string(),
+            module: None,
+        });
+        if wire
+            != json!({"kind": "integration", "file": "tests/new.rs", "summary": "add a new integration test file `tests/new.rs`"})
+        {
+            return Err(format!("unexpected proposed_new_test shape: {wire}"));
+        }
+        let inline_wire =
+            proposed_new_test_json(&crate::analysis::new_test_target::SelectedProposal {
+                kind: crate::analysis::new_test_target::NewTestKind::InlineUnit,
+                file: "src/lib.rs".to_string(),
+                module: Some("tests".to_string()),
+            });
+        if inline_wire["kind"] != "inline_unit" || inline_wire["module"] != "tests" {
+            return Err(format!("unexpected inline shape: {inline_wire}"));
+        }
+        for verdict in [Some(&SeamVerdict::Admitted), Some(&proposed), None] {
             let kept = ready_readiness().with_seam_verdict(verdict);
             if !kept.ready || kept.ineligibility.is_some() || kept.fix_site.is_none() {
                 return Err(format!("admitted/unevaluated must keep ready: {kept:?}"));
@@ -2027,6 +2374,7 @@ mod tests {
             fix_site: None,
             ineligibility: Some("missing_discriminator"),
             seam_detail: None,
+            proposed_new_test: None,
         }
         .with_seam_verdict(Some(&refused));
         // #10718: the shared validator is the one authority for the cause, so
@@ -2051,6 +2399,7 @@ mod tests {
             fix_site: None,
             ineligibility: Some("missing_discriminator"),
             seam_detail: None,
+            proposed_new_test: None,
         }
         .with_seam_verdict(Some(&withheld));
         if worktree.ineligibility != Some("missing_discriminator") || worktree.seam_detail.is_some()
@@ -2148,6 +2497,7 @@ mod tests {
             fix_site: None,
             ineligibility: Some("discriminator_not_populated_for_language"),
             seam_detail: None,
+            proposed_new_test: None,
         };
         let truncated = unready.clone().with_seam_verdict(Some(&refused));
         if truncated.ineligibility != Some(SEAM_INVENTORY_TRUNCATED)
@@ -2226,6 +2576,7 @@ mod tests {
             fix_site: None,
             ineligibility: Some("fix_site_not_test_surface"),
             seam_detail: None,
+            proposed_new_test: None,
         };
         let reason = readiness.reason();
         for needle in [
@@ -2582,6 +2933,8 @@ mod tests {
                 value: "total == 100".to_string(),
                 reason: "no test call pins the equality boundary".to_string(),
                 flow_sink: None,
+                shape: crate::domain::DiscriminatorShape::Boundary,
+                drafted_boundary: None,
             });
         // Weak + named missing discriminator + populated gap: the repair
         // target, ready at the finding level (#8717).

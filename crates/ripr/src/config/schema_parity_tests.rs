@@ -1,0 +1,396 @@
+//! Binds the parser's accepted keys, the published JSON schema, and the
+//! `ripr.toml` reference in `docs/CONFIGURATION.md` to one another, so none of
+//! them can drift (every config key documented, docs match code).
+
+use super::*;
+use serde_json::Value;
+use std::collections::BTreeSet;
+
+const SCHEMA: &str = include_str!("../../../../schemas/config/ripr-toml.schema.json");
+const CONFIG_DOC: &str = include_str!("../../../../docs/CONFIGURATION.md");
+
+fn schema() -> Result<Value, String> {
+    serde_json::from_str(SCHEMA).map_err(|err| format!("schema is not JSON: {err}"))
+}
+
+/// Every table in the schema as (TOML header, schema node). Array-of-tables
+/// headers are written `[[name]]`.
+fn tables<'a>(
+    header: &str,
+    node: &'a Value,
+    out: &mut Vec<(String, &'a Value)>,
+) -> Result<(), String> {
+    out.push((header.to_string(), node));
+    let properties = node
+        .get("properties")
+        .and_then(Value::as_object)
+        .ok_or_else(|| format!("{header} has no properties"))?;
+    for (key, child) in properties {
+        let child_header = if header.is_empty() {
+            key.clone()
+        } else {
+            format!("{header}.{key}")
+        };
+        match child.get("type").and_then(Value::as_str) {
+            Some("object") => tables(&child_header, child, out)?,
+            Some("array") if child["items"]["type"] == "object" => {
+                tables(&format!("{child_header}[]"), &child["items"], out)?;
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+/// A TOML document that places `key = 1` inside the table.
+fn document_with_key(header: &str, key: &str) -> String {
+    match header {
+        "" => format!("{key} = 1\n"),
+        _ if header.ends_with("[]") => {
+            format!("[[{}]]\n{key} = 1\n", header.trim_end_matches("[]"))
+        }
+        _ if header.contains("[]") => {
+            // Nested under an array of tables: open the array row first.
+            let (outer, inner) = header.split_once("[].").unwrap_or((header, ""));
+            format!("[[{outer}]]\n[{outer}.{inner}]\n{key} = 1\n")
+        }
+        _ => format!("[{header}]\n{key} = 1\n"),
+    }
+}
+
+fn parser_keys(header: &str) -> Result<BTreeSet<String>, String> {
+    let error = match parse_config_diagnostic(&document_with_key(header, "zz_probe")) {
+        Ok(_) => return Err(format!("{header}: probe key was accepted")),
+        Err(diagnostic) => diagnostic.message,
+    };
+    // The structural message embeds the parser reason after the excerpt.
+    let reason = error
+        .lines()
+        .find(|line| line.starts_with("unknown field `zz_probe`"))
+        .ok_or_else(|| format!("{header}: no unknown-field reason in {error}"))?;
+    Ok(suggest::expected_fields(reason)
+        .into_iter()
+        .map(str::to_string)
+        .collect())
+}
+
+#[test]
+fn schema_properties_equal_parser_accepted_keys_for_every_table() -> Result<(), String> {
+    let schema = schema()?;
+    let mut all = Vec::new();
+    tables("", &schema, &mut all)?;
+    assert!(
+        all.len() >= 17,
+        "schema walk found only {} tables",
+        all.len()
+    );
+    for (header, node) in all {
+        assert_eq!(
+            node["additionalProperties"],
+            Value::Bool(false),
+            "{header} must reject unknown keys in the schema"
+        );
+        let declared: BTreeSet<String> = node["properties"]
+            .as_object()
+            .ok_or_else(|| format!("{header} has no properties"))?
+            .keys()
+            .cloned()
+            .collect();
+        assert_eq!(
+            declared,
+            parser_keys(&header)?,
+            "schema and parser disagree on keys in table `{header}`"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn known_keys_list_equals_every_key_name_in_the_schema() -> Result<(), String> {
+    let schema = schema()?;
+    let mut all = Vec::new();
+    tables("", &schema, &mut all)?;
+    let mut names = BTreeSet::new();
+    for (_, node) in all {
+        if let Some(properties) = node["properties"].as_object() {
+            names.extend(properties.keys().cloned());
+        }
+    }
+    let known: BTreeSet<String> = suggest::KNOWN_KEYS.iter().map(|k| k.to_string()).collect();
+    assert_eq!(known, names, "suggest::KNOWN_KEYS drifted from the schema");
+    Ok(())
+}
+
+#[test]
+fn every_schema_leaf_key_is_documented_with_its_full_path() -> Result<(), String> {
+    let schema = schema()?;
+    let mut all = Vec::new();
+    tables("", &schema, &mut all)?;
+    let mut checked = 0;
+    for (header, node) in all {
+        for (key, child) in node["properties"].as_object().into_iter().flatten() {
+            if child["type"] == "object" {
+                continue;
+            }
+            let suffix = if child["items"]["type"] == "object" {
+                "[]"
+            } else {
+                ""
+            };
+            let path = if header.is_empty() {
+                format!("{key}{suffix}")
+            } else {
+                format!("{header}.{key}{suffix}")
+            };
+            assert!(
+                CONFIG_DOC.contains(&format!("| `{path}` |")),
+                "docs/CONFIGURATION.md has no reference row for `{path}`"
+            );
+            checked += 1;
+        }
+    }
+    assert!(checked >= 60, "only {checked} keys checked");
+    Ok(())
+}
+
+#[test]
+fn documented_reference_rows_are_all_in_the_schema() -> Result<(), String> {
+    let schema = schema()?;
+    let mut all = Vec::new();
+    tables("", &schema, &mut all)?;
+    let mut paths = BTreeSet::new();
+    for (header, node) in all {
+        if !header.is_empty() {
+            paths.insert(header.clone());
+        }
+        for key in node["properties"]
+            .as_object()
+            .into_iter()
+            .flatten()
+            .map(|(k, _)| k)
+        {
+            paths.insert(if header.is_empty() {
+                key.clone()
+            } else {
+                format!("{header}.{key}")
+            });
+        }
+    }
+    let section = CONFIG_DOC
+        .split("## `ripr.toml` reference")
+        .nth(1)
+        .and_then(|rest| rest.split("\n## ").next())
+        .ok_or("reference section missing")?;
+    for line in section.lines().filter(|line| line.starts_with("| `")) {
+        let path = line
+            .trim_start_matches("| `")
+            .split('`')
+            .next()
+            .unwrap_or_default();
+        assert!(
+            paths.contains(path),
+            "docs row `{path}` is not a key in the schema"
+        );
+    }
+    Ok(())
+}
+
+/// Every closed value set and integer floor the schema declares, outside
+/// array-of-tables rows (whose required fields make single-key probes
+/// meaningless), as (TOML table header, key, schema node).
+fn constrained_leaves(schema: &Value) -> Result<Vec<(String, String, &Value)>, String> {
+    let mut all = Vec::new();
+    tables("", schema, &mut all)?;
+    let mut leaves = Vec::new();
+    for (header, node) in all {
+        if header.is_empty() || header.contains("[]") {
+            continue;
+        }
+        for (key, child) in node["properties"].as_object().into_iter().flatten() {
+            if child.get("enum").is_some()
+                || child["items"].get("enum").is_some()
+                || child.get("minimum").is_some()
+            {
+                leaves.push((header.clone(), key.clone(), child));
+            }
+        }
+    }
+    Ok(leaves)
+}
+
+#[test]
+fn schema_value_constraints_match_what_the_parser_accepts() -> Result<(), String> {
+    let schema = schema()?;
+    let leaves = constrained_leaves(&schema)?;
+    assert!(
+        leaves.len() >= 27,
+        "only {} constrained keys found",
+        leaves.len()
+    );
+    for (table, key, node) in leaves {
+        let (values, wrap) = match (node.get("enum"), node["items"].get("enum")) {
+            (Some(values), _) => (values.as_array(), false),
+            (None, Some(values)) => (values.as_array(), true),
+            (None, None) => (None, false),
+        };
+        for value in values.into_iter().flatten() {
+            let text = value.as_str().ok_or("enum value is not a string")?;
+            let literal = if wrap {
+                format!("[\"{text}\"]")
+            } else {
+                format!("\"{text}\"")
+            };
+            // A language this binary was built without is still a recognized
+            // value: the parser names the missing Cargo feature, not a typo.
+            match parse_config(&format!("[{table}]\n{key} = {literal}\n")) {
+                Ok(_) => {}
+                Err(err) if err.contains("built without Cargo feature") => {}
+                Err(err) => return Err(format!("{table}.{key} = {literal} rejected: {err}")),
+            }
+        }
+        if values.is_some() {
+            let literal = if wrap {
+                "[\"zz_not_a_value\"]"
+            } else {
+                "\"zz_not_a_value\""
+            };
+            assert!(
+                parse_config(&format!("[{table}]\n{key} = {literal}\n")).is_err(),
+                "{table}.{key} accepted a value outside the schema enum"
+            );
+        }
+        if let Some(minimum) = node.get("minimum").and_then(Value::as_u64) {
+            parse_config(&format!("[{table}]\n{key} = {minimum}\n"))
+                .map_err(|err| format!("{table}.{key} = {minimum} rejected: {err}"))?;
+            if let Some(below) = minimum.checked_sub(1) {
+                assert!(
+                    parse_config(&format!("[{table}]\n{key} = {below}\n")).is_err(),
+                    "{table}.{key} accepted {below}, below the schema minimum {minimum}"
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn typo_in_a_key_suggests_the_nearest_key_in_the_same_table() {
+    let error = parse_config("[analysis]\nmodee = \"draft\"\n")
+        .err()
+        .unwrap_or_default();
+    assert!(error.contains("did you mean `mode`?"), "{error}");
+    let error = parse_config("[severity.findings]\nweakly_expose = \"info\"\n")
+        .err()
+        .unwrap_or_default();
+    assert!(error.contains("did you mean `weakly_exposed`?"), "{error}");
+    let error = parse_config("[analysis]\nmdoe = \"draft\"\n")
+        .err()
+        .unwrap_or_default();
+    assert!(error.contains("did you mean `mode`?"), "{error}");
+}
+
+#[test]
+fn transposition_counts_as_one_edit() {
+    assert_eq!(
+        suggest::did_you_mean("mdoe", &["mode", "zzzz"]),
+        Some("mode")
+    );
+    assert_eq!(suggest::did_you_mean("pahts", &["path"]), None);
+}
+
+/// Each leaf's schema `type` agrees with the parser: a value of a different
+/// TOML type is rejected as an invalid type.
+#[test]
+fn schema_types_match_the_parser_for_every_leaf() -> Result<(), String> {
+    let schema = schema()?;
+    let mut all = Vec::new();
+    tables("", &schema, &mut all)?;
+    let mut checked = 0;
+    for (header, node) in all {
+        if header.is_empty() || header.contains("[]") {
+            continue;
+        }
+        for (key, child) in node["properties"].as_object().into_iter().flatten() {
+            let wrong = match child["type"].as_str() {
+                Some("string" | "boolean") => "[1]",
+                Some("integer") => "\"zz\"",
+                Some("array") if child["items"]["type"] == "string" => "true",
+                _ => continue,
+            };
+            let error = parse_config(&format!("[{header}]\n{key} = {wrong}\n"))
+                .err()
+                .unwrap_or_default();
+            assert!(
+                error.contains("invalid type"),
+                "{header}.{key} = {wrong} was not rejected as an invalid type: {error}"
+            );
+            checked += 1;
+        }
+    }
+    assert!(checked >= 42, "only {checked} leaf types checked");
+    Ok(())
+}
+
+/// The schema's cross-field rules describe documents the parser rejects.
+#[test]
+fn schema_cross_field_rules_mirror_parser_refusals() -> Result<(), String> {
+    let schema = schema()?;
+    let overrides = &schema["properties"]["overrides"]["items"];
+    assert!(overrides["oneOf"].is_array() && overrides["anyOf"].is_array());
+    let bun = &schema["properties"]["profiles"]["properties"]["bun_ub"];
+    assert_eq!(
+        bun["required"],
+        serde_json::json!(["test_roots", "bridge_hints"])
+    );
+    let harness = &schema["properties"]["analysis"]["properties"]["test_harnesses"]["items"];
+    assert_eq!(harness["oneOf"].as_array().map(Vec::len), Some(2));
+    for refused in [
+        "[[overrides]]\n[overrides.oracles]\nsnapshot_strength = \"weak\"\n",
+        "[[overrides]]\ncrate = \"a\"\npath = \"b/**\"\n[overrides.oracles]\nsnapshot_strength = \"weak\"\n",
+        "[[overrides]]\ncrate = \"a\"\n",
+        "[profiles.bun_ub]\nbridge_hints = \"h.toml\"\n",
+        "[profiles.bun_ub]\ntest_roots = [\"t/**\"]\n",
+        "[[analysis.test_harnesses]]\nregistration_id = \"r\"\ntarget = \"tests/a.rs\"\nkind = \"custom_harness\"\nadapter = \"exact_attribute_v1\"\nmarker = \"m\"\n",
+    ] {
+        assert!(
+            parse_config(refused).is_err(),
+            "parser accepted:\n{refused}"
+        );
+    }
+    let accepted = "[[analysis.test_harnesses]]\nregistration_id = \"r\"\ntarget = \"tests/a.rs\"\nkind = \"custom_harness\"\nadapter = \"libtest_mimic_v1\"\nmarker = \"m\"\n";
+    parse_config(accepted).map(|_| ())
+}
+
+#[test]
+fn unrelated_unknown_key_gets_no_suggestion() {
+    let error = parse_config("[analysis]\nzzzzzzzz = 1\n")
+        .err()
+        .unwrap_or_default();
+    assert!(error.contains("unknown field `zzzzzzzz`"), "{error}");
+    assert!(!error.contains("did you mean"), "{error}");
+}
+
+#[test]
+fn suggestion_survives_the_source_free_summary_but_a_forged_one_does_not() {
+    let error = parse_config("[analysis]\nmodee = \"draft\"\n")
+        .err()
+        .unwrap_or_default();
+    assert!(config_error_summary(&error).contains("did you mean `mode`?"));
+    let forged = "invalid ripr.toml: bad\ndid you mean `secret_value`?";
+    assert!(!config_error_summary(forged).contains("secret_value"));
+}
+
+#[test]
+fn wrong_type_names_the_key_and_the_expected_type() {
+    let error = parse_config("[analysis]\ninclude_unchanged_tests = \"yes\"\n")
+        .err()
+        .unwrap_or_default();
+    assert!(error.contains("include_unchanged_tests"), "{error}");
+    assert!(error.contains("invalid type"), "{error}");
+}
+
+#[test]
+fn shipped_example_config_parses() -> Result<(), String> {
+    let example = include_str!("../../../../ripr.toml.example");
+    parse_config(example).map(|_| ())
+}

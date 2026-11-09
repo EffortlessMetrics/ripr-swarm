@@ -157,7 +157,11 @@ When a committed refresh analyzed nothing (`no_scope`, `no_changed_lines` or
 `empty_scope_hint` (`why`, `pass_base`, `pass_source`, #11213): the default base
 may have resolved to the analyzed commit (detached HEAD, `origin/HEAD` at HEAD),
 and `base` or `source: "worktree"` widen the diff. The hint never changes the
-outcome kind and an empty result is not an all-clear.
+outcome kind and an empty result is not an all-clear. For a base-less
+`no_scope` or `no_changed_lines` snapshot the hint also carries
+`pass_base_last_commit`, which names `{"base": "HEAD~1"}` as the retry when the
+change under review is the last commit (#13096); the server names it but never
+infers it.
 
 `ripr_refresh` is read-only with respect to source, but the shared analysis
 writes its warm cache under the root's `target/ripr/`. Cargo projects normally
@@ -395,7 +399,8 @@ or `no_behavioral_candidates` snapshot, so zero items from an unexamined scope
 never read as a clean result (a complete-clean snapshot and a worktree snapshot never carry them;
 the fields describe the snapshot, so they appear regardless of filter or offset). Strict v1
 readers must rediscover `tools/list`, accept v5 explicitly and validate
-against the advertised `outputSchema`; callers may still omit all filter
+against the `outputSchema` advertised under `RIPR_MCP_TOOLS_LIST=full`
+(see Slim `tools/list`); callers may still omit all filter
 arguments.
 
 All MCP document `schema_version` identifiers, so a client can route and
@@ -505,9 +510,9 @@ schema or default behavior. In every text-content mode, use each route's complet
 with `result_too_large` naming `ripr://snapshot/{snapshot_id}` as the
 identity route. Other tool responses carry the document once at full fidelity:
 by default `content[0].text` is the compact JSON serialization, and
-`structuredContent` repeats it in every successful response. Each tool
-advertises an `outputSchema`, so a success never ships without its
-structured copy: when the complete double-carry envelope does not fit the
+`structuredContent` repeats it in every successful response. Each tool has an
+`outputSchema` (advertised under `RIPR_MCP_TOOLS_LIST=full`), so a success
+never ships without its structured copy, whatever the listing mode: when the complete double-carry envelope does not fit the
 id-aware response budget, the call fails closed with the typed
 `result_too_large` refusal and that tool's recovery route (#7768) instead
 of silently dropping `structuredContent`.
@@ -592,21 +597,25 @@ The field set and meanings are in
 
 ### Slim `tools/list`
 
-`tools/list` is paid at every session start. About two thirds of it is the ten
-`outputSchema` documents, which most coding agents never read. By default they
-stay, because a host that validates results against them would lose its
-contract. `RIPR_MCP_TOOLS_LIST=slim` (ASCII case-insensitive, surrounding whitespace
-ignored; any other value keeps the default) omits every `outputSchema` and
-changes nothing else: results still carry `structuredContent` with a
-`schema_version`, and the document shapes are the ones this page and
-`docs/OUTPUT_SCHEMA.md` describe. Measured over stdio (whole `tools/list`
-response line, before adding the independent-pages input): 45,526 bytes with
-schemas, 16,710 with `slim`. Set it in the
-host's server `env` beside
-`RIPR_MCP_TEXT_CONTENT` — for example
-`"env": {"RIPR_MCP_TOOLS_LIST": "slim"}`. Independent of the mode, the
-repair-card description no longer repeats the failure-code list that the
-failure `code` enum already carries.
+`tools/list` is paid at every session start. Since #13803 the default listing
+is slim. In the full listing, about two thirds of it is the ten
+`outputSchema` documents, which coding agents do not read; slim omits them.
+Nothing else changes:
+results still carry `structuredContent` with a `schema_version`, and the
+document shapes are the ones this page and `docs/OUTPUT_SCHEMA.md` describe.
+MCP makes `outputSchema` optional, so a host that gets none accepts the result
+without validating it. A host that does validate results against the schemas
+sets `RIPR_MCP_TOOLS_LIST=full` (ASCII case-insensitive, surrounding whitespace
+ignored) in the server `env` beside `RIPR_MCP_TEXT_CONTENT`. Any other value,
+including the older explicit `slim`, keeps the slim default. The tool
+descriptions were also cut to purpose, when to call, safety boundary and
+failure codes. Measured over stdio (whole `tools/list` response line):
+45,938 bytes before #13803 with schemas, 11,884 by default now, and
+40,955 with `full`. With the schemas gone by default, each description names
+the failure codes an agent most needs before calling; the complete `code`
+enum stays in the full listing's `outputSchema`. An unrecognized value
+(for example a misspelled `full`) is not diagnosed: it serves the slim
+listing, so a validating host should check that `outputSchema` is present.
 
 Single-item gap overflow uses one captured-input recovery across the raw
 document, tool envelope and resource envelope. Its CLI command retains the
@@ -646,15 +655,21 @@ from prose.
 readiness facts for one canonical item and, only when every gate is
 established, creates — or replays — one bounded in-memory repair transaction
 bound to the current snapshot, the item, and the root identity. The packet
-carries a deterministic `repair-attempt-` identity, the fix site (test file,
-line, oracle), an `allowed_edit_surface` limited to that test file, the
-edit-cage `must_not_change` statements, stop conditions, the before-evidence
-identity, an empty `command_routes` list with the typed limitation (concrete
-typed `CommandSpec` routes are published only by the durable CLI before
-phase), the shared non-claims, and the resource links. An ineligible item
-returns `isError: true` with `repair_packet_ready: false`, the typed
-ineligibility reason, `attempt: null` and a machine-readable `next` object
-(`kind` one of `nothing_to_do`, `write_test_by_hand`, `change_policy`,
+carries a deterministic `repair-attempt-` identity, the fix site (file, line,
+oracle), and its `allowed_edit_surface`. For an external test file,
+`inline_test_module` is `null`. For an admitted inline test module, it is an
+object with string `file`, `module`, and `boundary` fields: only new test
+functions inside that module may be added; production code, the module
+declaration, and existing tests stay unchanged. The advertised output schema
+admits both forms while keeping the packet's top level closed. The packet also
+carries the edit-cage `must_not_change` statements, stop conditions, the
+before-evidence identity, an empty `command_routes` list with the typed
+limitation (concrete typed `CommandSpec` routes are published only by the
+durable CLI before phase), the shared non-claims, and the resource links. `inline_test_module`
+remains optional in the output schema because an ineligible packet omits it.
+An ineligible item returns `isError: true` with `repair_packet_ready: false`,
+the typed ineligibility reason, `attempt: null` and a machine-readable `next`
+object (`kind` one of `nothing_to_do`, `write_test_by_hand`, `change_policy`,
 `commit_then_refresh`, `await_producer_fact`, or `terminal_static_limit`; the
 `reason`; an `mcp` route or `null`; and, only for `write_test_by_hand`,
 `after_editing_tests`; a
@@ -690,7 +705,7 @@ refusal; refresh only after the committed code or tests change. A gate-admitted
 weakly exposed item that names its missing discriminator is ready on every
 route, and `ripr_list_gaps`, `ripr_prepare_repair`, `ripr_get_repair_card` and
 `ripr repair` name the same single test file (the packet's `fix_site` carries
-`oracle_strength`). When several related tests qualify, the fix site is the existing test the shared repair gate recommends (`ripr repair`'s "test to extend"); a recommendation outside the item's own high-confidence related tests refuses as `fix_site_not_established` naming that file, and with no recommendation the strongest candidate leads.
+`oracle_strength`). When several related tests qualify, the fix site is the existing test the shared repair gate recommends (`ripr repair`'s "test to extend"); a recommendation outside the item's own high-confidence related tests refuses as `fix_site_not_established` naming that file, and with no recommendation the strongest candidate leads. When the shared gate's only target is a producer-owned new-test proposal (`SeamVerdict::AdmittedProposed`, the target `ripr agent repair --phase before` starts from), the item is ready with that proposal as its fix site: `fix_site.file` and `allowed_edit_surface` name the proposal file the CLI edit cage allows (`selected_target.path`), `fix_site.new_test_kind` is `integration` or `inline_unit`, and `test_name`, `line` and `oracle` are empty (an inline proposal also carries `inline_test_module`). A seam the producer admits no proposal for stays not ready. Prepare packets carry `fix_site.new_test_kind: null` for an existing-test fix site. The proposal path must pass the filesystem-free part of the CLI preflight (plain relative path, `<dir>/tests/<name>.rs` for integration); the file-exists, symlink and owning-manifest checks stay at the CLI start preflight, not at MCP prepare.
 
 The truncation refusal covers repair readiness (`ripr_list_gaps`,
 `ripr_get_gap`, `ripr_prepare_repair`). `ripr_get_repair_card` reads the same

@@ -60,6 +60,8 @@ fn run_mcp_with_input_custody(
     let mut child = worktree_ripr()
         .args(["mcp", "--stdio", "--root"])
         .arg(root)
+        // The default listing must not depend on the caller's environment.
+        .env_remove("RIPR_MCP_TOOLS_LIST")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -1051,6 +1053,70 @@ fn oversized_request_id_is_rejected_with_null_id_and_the_session_survives() -> R
         if reply.get("id") != Some(&json!(id)) || reply.get("result") != Some(&json!({})) {
             return Err(format!("ping {} was not answered: {reply}", id.len()));
         }
+    }
+    Ok(())
+}
+
+/// #13803: the listing every session pays at start is slim by default: no
+/// tool advertises an `outputSchema`, and the whole `tools/list` reply line
+/// stays under the pinned wire budget (45,938 bytes before the cut).
+/// `RIPR_MCP_TOOLS_LIST=full` restores a schema on every tool.
+#[test]
+fn default_tools_list_is_slim_and_full_is_the_opt_in() -> Result<(), String> {
+    const DEFAULT_TOOLS_LIST_WIRE_BUDGET: usize = 12_500;
+    let root = workspace_root()?;
+    let requests = [
+        line(json!({
+            "jsonrpc": "2.0", "id": 1, "method": "initialize",
+            "params": { "protocolVersion": "2025-11-25", "capabilities": {},
+                "clientInfo": { "name": "slim-default-test", "version": "1" } }
+        }))?,
+        line(json!({ "jsonrpc": "2.0", "method": "notifications/initialized" }))?,
+        line(json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {} }))?,
+    ]
+    .concat();
+    let output = run_mcp(&root, &[&requests])?;
+    let stdout = String::from_utf8(output.stdout).map_err(|error| error.to_string())?;
+    let wire = stdout
+        .lines()
+        .find(|line| line.contains("\"id\":2"))
+        .ok_or_else(|| format!("no tools/list reply: {stdout}"))?;
+    let reply: Value = serde_json::from_str(wire).map_err(|error| error.to_string())?;
+    let tools = reply
+        .pointer("/result/tools")
+        .and_then(Value::as_array)
+        .ok_or_else(|| format!("tools/list omitted tools: {reply}"))?;
+    if tools.len() != 10 {
+        return Err(format!("expected ten tools, got {}", tools.len()));
+    }
+    if let Some(tool) = tools.iter().find(|tool| tool.get("outputSchema").is_some()) {
+        return Err(format!(
+            "default listing advertised an outputSchema: {}",
+            tool["name"]
+        ));
+    }
+    if wire.len() > DEFAULT_TOOLS_LIST_WIRE_BUDGET {
+        return Err(format!(
+            "default tools/list line is {} bytes, over {DEFAULT_TOOLS_LIST_WIRE_BUDGET}",
+            wire.len()
+        ));
+    }
+    let mut session = SequentialStdio::spawn_with_env(&root, &[("RIPR_MCP_TOOLS_LIST", "full")])?;
+    let timeout = Duration::from_mins(1);
+    session.call("discover", "server/discover", json!({}), timeout)?;
+    let full = session.call("tools", "tools/list", json!({}), timeout)?;
+    let full_tools = full
+        .pointer("/result/tools")
+        .and_then(Value::as_array)
+        .ok_or_else(|| format!("full tools/list omitted tools: {full}"))?;
+    if full_tools.len() != 10
+        || full_tools
+            .iter()
+            .any(|tool| tool.get("outputSchema").is_none())
+    {
+        return Err(format!(
+            "the full listing must carry every outputSchema: {full}"
+        ));
     }
     Ok(())
 }
@@ -2798,6 +2864,9 @@ impl SequentialStdio {
         // An ambient text-content mode must not leak into a session that
         // does not ask for one (#9360).
         command.env_remove("RIPR_MCP_TEXT_CONTENT");
+        // These sessions check results against the advertised `outputSchema`
+        // contracts, which only the opt-in full listing carries (#13803).
+        command.env("RIPR_MCP_TOOLS_LIST", "full");
         for (key, value) in env {
             command.env(key, value);
         }
@@ -3784,6 +3853,106 @@ fn structured_prepare_document(reply: &Value, context: &str) -> Result<Value, St
         ));
     }
     Ok(document)
+}
+
+#[cfg(feature = "lang-rust")]
+fn advertised_prepare_schema(catalog: &Value) -> Result<Value, String> {
+    catalog
+        .pointer("/result/tools")
+        .and_then(Value::as_array)
+        .and_then(|tools| {
+            tools
+                .iter()
+                .find(|tool| tool["name"] == "ripr_prepare_repair")
+        })
+        .and_then(|tool| tool.get("outputSchema"))
+        .cloned()
+        .ok_or_else(|| format!("tools/list omitted the prepare output schema: {catalog}"))
+}
+
+/// #13351: inspect the advertised closed top-level fields and the nullable
+/// inline-module boundary against real producer documents. This targeted
+/// contract oracle is not a general JSON Schema validator.
+#[cfg(feature = "lang-rust")]
+fn check_prepare_schema_fields(schema: &Value, document: &Value) -> Result<(), String> {
+    let branches = schema["oneOf"]
+        .as_array()
+        .filter(|branches| branches.len() == 2)
+        .ok_or("prepare schema must retain packet and typed-failure branches")?;
+    let failure = document.get("failure").is_some();
+    let branch = &branches[if failure { 1 } else { 0 }];
+    if branch["type"] != "object" || branch["additionalProperties"] != false {
+        return Err("prepare output branches must remain closed objects".into());
+    }
+    let properties = branch["properties"]
+        .as_object()
+        .ok_or("prepare schema omitted properties")?;
+    let required = branch["required"]
+        .as_array()
+        .ok_or("prepare schema omitted required fields")?;
+    let object = document
+        .as_object()
+        .ok_or("prepare document is not an object")?;
+    let closed_shape = |declared: &serde_json::Map<String, Value>| {
+        object.keys().all(|key| declared.contains_key(key))
+            && required
+                .iter()
+                .all(|key| key.as_str().is_some_and(|key| object.contains_key(key)))
+    };
+    if !closed_shape(properties)
+        || branch.pointer("/properties/schema_version/const") != document.get("schema_version")
+    {
+        return Err(format!(
+            "prepare output schema does not admit the emitted fields/version: {document}"
+        ));
+    }
+    if failure {
+        return Ok(());
+    }
+    let expected_inline = json!({
+        "type": ["object", "null"],
+        "properties": {
+            "file": { "type": "string" },
+            "module": { "type": "string" },
+            "boundary": { "type": "string" }
+        },
+        "required": ["file", "module", "boundary"],
+        "additionalProperties": false
+    });
+    if properties.get("inline_test_module") != Some(&expected_inline)
+        || required.iter().any(|key| key == "inline_test_module")
+    {
+        return Err("inline_test_module must be an optional nullable closed object".into());
+    }
+    let boundary = document.get("inline_test_module");
+    if boundary.is_none() && document["repair_packet_ready"] == true {
+        return Err("a ready packet must retain its emitted inline_test_module field".into());
+    }
+    if let Some(module) = boundary.and_then(Value::as_object) {
+        if module.len() != 3
+            || ["file", "module", "boundary"]
+                .iter()
+                .any(|key| module.get(*key).and_then(Value::as_str).is_none())
+        {
+            return Err(format!(
+                "inline module boundary lost its three string fields: {document}"
+            ));
+        }
+    } else if boundary.is_some_and(|value| !value.is_null()) {
+        return Err(format!(
+            "inline module boundary must be null or an object: {document}"
+        ));
+    }
+    if boundary.is_some() {
+        // Removing only the declaration reproduces the observed bad
+        // advertisement while preserving this actual null/object packet.
+        let mut undeclared = properties.clone();
+        undeclared.remove("inline_test_module");
+        if closed_shape(&undeclared) {
+            return Err("the undeclared-field control accepted a real prepared packet".into());
+        }
+    }
+    Ok(())
 }
 
 /// Keep the wording tied to actual input selection: the same dirty fixture
@@ -5913,8 +6082,28 @@ fn mcp_ready_item_is_the_item_the_cli_repair_gate_admits() -> Result<(), String>
     // admission this control compares is the resolver's, which runs first.
     std::fs::write(root.join(".gitignore"), "/target\n").map_err(|error| error.to_string())?;
     commit_fixture(&root, "ignore target")?;
-    let mut session = SequentialStdio::spawn(&root)?;
+    let mut session = SequentialStdio::spawn_with_env(&root, &[("RIPR_MCP_TOOLS_LIST", "full")])?;
     session.call("discover", "server/discover", json!({}), REPLY_TIMEOUT)?;
+    let catalog = session.call("catalog", "tools/list", json!({}), REPLY_TIMEOUT)?;
+    let schema = advertised_prepare_schema(&catalog)?;
+    let before_refresh = session.call_tool(
+        "before-refresh",
+        "ripr_prepare_repair",
+        json!({ "canonical_id": "gap:before-first-refresh" }),
+        REPLY_TIMEOUT,
+    )?;
+    if before_refresh.pointer("/result/isError") != Some(&json!(true))
+        || before_refresh.pointer("/result/structuredContent/failure/code")
+            != Some(&json!("no_snapshot"))
+    {
+        return Err(format!(
+            "prepare before refresh lost its typed failure: {before_refresh}"
+        ));
+    }
+    let failure = before_refresh
+        .pointer("/result/structuredContent")
+        .ok_or("prepare failure omitted structuredContent")?;
+    check_prepare_schema_fields(&schema, failure)?;
     let refresh = session.call_tool("refresh", "ripr_refresh", json!({}), REFRESH_TIMEOUT)?;
     structured_tool_success(&refresh, "ripr_refresh")?;
     let list = session.call_tool("list", "ripr_list_gaps", json!({}), REPLY_TIMEOUT)?;
@@ -5937,6 +6126,25 @@ fn mcp_ready_item_is_the_item_the_cli_repair_gate_admits() -> Result<(), String>
             REPLY_TIMEOUT,
         )?;
         let prepare = structured_prepare_document(&prepare, "ripr_prepare_repair")?;
+        check_prepare_schema_fields(&schema, &prepare)?;
+        if prepare.get("inline_test_module") != Some(&Value::Null) {
+            return Err(format!(
+                "external-test packet must emit inline_test_module: null: {prepare}"
+            ));
+        }
+        let replay = session.call_tool(
+            "prepare-replay",
+            "ripr_prepare_repair",
+            json!({ "canonical_id": id }),
+            REPLY_TIMEOUT,
+        )?;
+        let replay = structured_prepare_document(&replay, "prepare replay")?;
+        if replay != prepare {
+            return Err(format!(
+                "prepare replay changed the stored packet: {replay}"
+            ));
+        }
+        check_prepare_schema_fields(&schema, &replay)?;
         let finding_id = prepare["attempt"]["finding_id"]
             .as_str()
             .ok_or_else(|| format!("ready prepare lost its finding id: {prepare}"))?;
@@ -6029,6 +6237,14 @@ fn failed_refresh_is_an_error_and_refresh_states_freshness_and_verify_route() ->
         return Err(format!(
             "default-base hint must name the default base, not a requested one: {good_hint}"
         ));
+    }
+    // #13096: a default-base no_scope snapshot names the last-commit retry.
+    if !good
+        .pointer("/empty_scope_hint/pass_base_last_commit")
+        .and_then(Value::as_str)
+        .is_some_and(|route| route.contains("HEAD~1"))
+    {
+        return Err(format!("default-base hint must name HEAD~1: {good}"));
     }
     let snapshot_id = good["snapshot"]["snapshot_id"].clone();
     let good_snapshot = good["snapshot"].clone();
@@ -6137,8 +6353,11 @@ fn mcp_prepare_repair_agrees_with_the_cli_on_inline_test_seams() -> Result<(), S
     for (second_module, expect_ready) in [(false, true), (true, false)] {
         let root = install_inline_test_fixture(second_module)?;
         let _guard = FixtureGuard { root: root.clone() };
-        let mut session = SequentialStdio::spawn(&root)?;
+        let mut session =
+            SequentialStdio::spawn_with_env(&root, &[("RIPR_MCP_TOOLS_LIST", "full")])?;
         session.call("discover", "server/discover", json!({}), REPLY_TIMEOUT)?;
+        let catalog = session.call("catalog", "tools/list", json!({}), REPLY_TIMEOUT)?;
+        let schema = advertised_prepare_schema(&catalog)?;
         let refresh = session.call_tool("refresh", "ripr_refresh", json!({}), REFRESH_TIMEOUT)?;
         structured_tool_success(&refresh, "ripr_refresh")?;
         let list = session.call_tool("list", "ripr_list_gaps", json!({}), REPLY_TIMEOUT)?;
@@ -6157,6 +6376,7 @@ fn mcp_prepare_repair_agrees_with_the_cli_on_inline_test_seams() -> Result<(), S
                 REPLY_TIMEOUT,
             )?;
             let prepare = structured_prepare_document(&prepare, "ripr_prepare_repair")?;
+            check_prepare_schema_fields(&schema, &prepare)?;
             let gap = session.call_tool(
                 "gap",
                 "ripr_get_gap",
@@ -6181,6 +6401,7 @@ fn mcp_prepare_repair_agrees_with_the_cli_on_inline_test_seams() -> Result<(), S
             if ready {
                 ready_count += 1;
                 if prepare["allowed_edit_surface"] != json!(["src/lib.rs"])
+                    || prepare["inline_test_module"]["file"] != "src/lib.rs"
                     || prepare["inline_test_module"]["module"] != "tests"
                     || !prepare["must_not_change"][0]
                         .as_str()
@@ -6189,6 +6410,23 @@ fn mcp_prepare_repair_agrees_with_the_cli_on_inline_test_seams() -> Result<(), S
                 {
                     return Err(format!("inline boundary not stated: {prepare}"));
                 }
+                let replay = session.call_tool(
+                    "prepare-replay",
+                    "ripr_prepare_repair",
+                    json!({ "canonical_id": id }),
+                    REPLY_TIMEOUT,
+                )?;
+                let replay = structured_prepare_document(&replay, "inline prepare replay")?;
+                if replay != prepare {
+                    return Err(format!(
+                        "inline prepare replay changed the packet: {replay}"
+                    ));
+                }
+                check_prepare_schema_fields(&schema, &replay)?;
+            } else if prepare.get("inline_test_module").is_some() {
+                return Err(format!(
+                    "ineligible packet must omit its inline boundary: {prepare}"
+                ));
             }
         }
         if (ready_count > 0) != expect_ready {
@@ -6216,9 +6454,12 @@ fn truncated_seam_inventory_refuses_repair_readiness_over_stdio() -> Result<(), 
     let _guard = FixtureGuard { root: root.clone() };
     std::fs::write(root.join(".gitignore"), "/target\n").map_err(|error| error.to_string())?;
     // A second seam makes `limit=1` a real truncation (analyzed 1 < total 2).
+    // It is private so the producer admits it no new-test proposal (#13538: a
+    // public proposal-only seam is now ready on a complete inventory), keeping
+    // the control's finding-level-unready item.
     let mut source =
         std::fs::read_to_string(root.join("src/lib.rs")).map_err(|error| error.to_string())?;
-    source.push_str("\npub fn sign(x: i32) -> i32 {\n    if x > 0 { 1 } else { 2 }\n}\n");
+    source.push_str("\nfn sign(x: i32) -> i32 {\n    if x > 0 { 1 } else { 2 }\n}\n");
     std::fs::write(root.join("src/lib.rs"), source).map_err(|error| error.to_string())?;
     commit_fixture(&root, "add a second seam")?;
 
