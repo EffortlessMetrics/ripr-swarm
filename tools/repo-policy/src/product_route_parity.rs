@@ -535,6 +535,28 @@ pub(crate) fn run_product_route_parity_check(
     })
 }
 
+/// Standalone default input belongs to the invoking checkout, never the build
+/// checkout. Explicit corpus paths retain their invocation-relative meaning.
+pub fn standalone(args: &[String]) -> Result<(), String> {
+    let current = std::env::current_dir().map_err(|e| e.to_string())?;
+    let root = if args.iter().any(|arg| arg == "--corpus") {
+        current.as_path()
+    } else {
+        current
+            .ancestors()
+            .find(|root| {
+                root.join(".git").exists()
+                    || root.join("tools/repo-policy").is_dir()
+                    || (root.join("Cargo.lock").is_file()
+                        && root.join("rust-toolchain.toml").is_file())
+            })
+            .ok_or("product route parity: no current repository root; pass --corpus <path>")?
+    };
+    // Do not chdir: relative explicit inputs and the report retain the caller's
+    // working directory. A missing nearest-root corpus fails without fallback.
+    check_product_route_parity(args, root)
+}
+
 pub fn check_product_route_parity(args: &[String], workspace: &Path) -> Result<(), String> {
     const USAGE: &str = "usage: cargo xtask check-product-route-parity [--corpus <path>] [--json]";
     let mut corpus = workspace.join(DEFAULT_PRODUCT_ROUTE_PARITY_CORPUS);

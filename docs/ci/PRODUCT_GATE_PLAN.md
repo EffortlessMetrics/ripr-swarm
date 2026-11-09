@@ -495,8 +495,11 @@ reuse authority and does not prove complete hosted latency below twenty minutes.
 `cargo policy check-product-route-parity [--corpus <path>] [--json]` runs the
 existing ordinary/reusable proposition comparator in `repo-policy`. The xtask
 command and fixture-provenance validator delegate to that same implementation.
-Default corpus lookup stays bound to the source workspace; explicit relative
-corpus paths and `target/ripr/reports/product-route-parity.json` stay relative to
+Standalone default corpus lookup uses the nearest invoking checkout boundary
+(Git marker, repo-policy directory, or lockfile plus pinned toolchain); missing or
+invalid corpus inputs at that boundary fail without falling back to the build
+checkout. The xtask delegate retains its existing source-workspace convention.
+Explicit relative corpus paths and `target/ripr/reports/product-route-parity.json` stay relative to
 the invoking working directory, as before. No corpus schema or gate selection
 semantics change. This compares the ordinary 13-row plan on the committed
 corpus; it does not execute either route or qualify the 24-obligation DAG.

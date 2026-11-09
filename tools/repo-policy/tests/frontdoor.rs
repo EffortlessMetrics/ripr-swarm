@@ -966,6 +966,7 @@ fn lightweight_product_route_parity_preserves_cli_and_provenance() -> Result<(),
         test_support::scratch("product-route-parity-frontdoor")?,
         &["fixtures/product-route-parity"],
     )?;
+    std::fs::create_dir(fixture.0.join(".git")).map_err(|e| e.to_string())?;
     let run = |cwd: &Path, args: &[&str]| -> Result<Output, String> {
         Command::new(env!("CARGO_BIN_EXE_repo-policy"))
             .current_dir(cwd)
@@ -1025,6 +1026,14 @@ fn lightweight_product_route_parity_preserves_cli_and_provenance() -> Result<(),
     ];
     std::fs::write(&corpus_path, b"{").map_err(|e| e.to_string())?;
     assert!(!run(&fixture.0, &selected)?.status.success());
+    assert!(
+        !run(&fixture.0, &["--json"])?.status.success(),
+        "default must read this checkout corpus, not build checkout"
+    );
+    assert!(
+        !run(&subdir, &["--json"])?.status.success(),
+        "subdirectory must read nearest checkout corpus"
+    );
     for mutation in 0..3 {
         let mut changed = original_json.clone();
         if mutation == 0 {
@@ -1076,5 +1085,21 @@ fn lightweight_product_route_parity_preserves_cli_and_provenance() -> Result<(),
     manifest["files"] = serde_json::json!([]);
     std::fs::write(&provenance, manifest.to_string()).map_err(|e| e.to_string())?;
     assert!(validate().iter().any(|v| v.contains("must bind")));
+    // A nearer checkout with no corpus must not borrow the parent's corpus.
+    std::fs::create_dir(subdir.join(".git")).map_err(|e| e.to_string())?;
+    assert!(!run(&subdir, &["--json"])?.status.success());
+    assert!(
+        run(
+            &subdir,
+            &[
+                "--corpus",
+                "../fixtures/product-route-parity/corpus.json",
+                "--json"
+            ]
+        )?
+        .status
+        .success()
+    );
+
     Ok(())
 }

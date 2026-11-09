@@ -25,9 +25,8 @@ fn main() {
         _ => None,
     };
     let result = match (name.as_deref(), command) {
-        (Some("check-product-route-parity"), _) => repo_policy::product_route_parity::check_product_route_parity(
+        (Some("check-product-route-parity"), _) => repo_policy::product_route_parity::standalone(
             &std::env::args().skip(2).collect::<Vec<_>>(),
-            &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."),
         ).map(|()| 0),
         (Some("product-gate-dag"), _) => repo_policy::product_gate_plan::dag::run(&std::env::args().skip(2).collect::<Vec<_>>()).map(|()| 0),
         (Some("run-coverage"), _) => repo_policy::enter_workspace_root()
