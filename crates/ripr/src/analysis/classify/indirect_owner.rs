@@ -342,17 +342,17 @@ pub(in crate::analysis) fn oracle_owner_call_is_shadowed(
                 ITEM_BINDING_READS.with(|reads| reads.set(reads.get() + 1));
                 ItemBindings::read(source, name, import_is_other)
             });
-            return finish_shadow_scan(&shared, source, oracle_text, name);
+            return finish_shadow_scan(&shared, source, name, (at, span, partial));
         }
     };
-    finish_shadow_scan(&items, source, oracle_text, name)
+    finish_shadow_scan(&items, source, name, (at, span, partial))
 }
 
 fn finish_shadow_scan(
     items: &ItemBindings,
     source: &str,
-    oracle_text: &str,
     name: &str,
+    (at, span, partial): (usize, &str, bool),
 ) -> Option<bool> {
     if items.unreadable {
         return None;
