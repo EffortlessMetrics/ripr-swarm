@@ -1164,6 +1164,16 @@ fn shell_split_reads_both_bound_root_quoting_forms() -> Result<(), String> {
         r#"--root "C:\work dir\sub""#,
         &["--root", r"C:\work dir\sub"],
     )?;
+    // `windows_console_quote` doubles only the trailing run, so the halving
+    // applies only before the closing quote: an interior run, a run before a
+    // doubled (literal) quote, and an odd trailing run all keep their count.
+    expect(
+        r#"--root "\\server\share dir\\""#,
+        &["--root", r"\\server\share dir\"],
+    )?;
+    expect(r#"--root "a\""b c""#, &["--root", r#"a\"b c"#])?;
+    expect(r#"--root "x y\\\\\\""#, &["--root", r"x y\\\"])?;
+    expect(r#"--root "a""" next"#, &["--root", r#"a""#, "next"])?;
     if shell_split(r#"--root "unterminated"#).is_ok() {
         return Err("an unterminated double quote must be refused".to_string());
     }
