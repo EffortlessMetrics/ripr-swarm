@@ -5,6 +5,11 @@
   "description": "Cross-language pinned adversarial corpus: evidence may not promote to exposed/strong unless it structurally matches the seam.",
   "report_cache_schema_pins": [
     {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-local-closure-named-like-owner-map.json",
+      "cache_schema_version": "1.175",
+      "reason": "cache schema bumped to 1.177 after this capture; its judged seams (files_content_hash, grip classes) are unchanged at the new generation, verified by a sanctioned recapture whose only diffs were the artifact header and schema fields, so the capture is held at its recorded generation until the next corpus recapture"
+    },
+    {
       "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-closure-callback-benign-macro-operand.json",
       "cache_schema_version": "1.167",
       "reason": "the typed missing-discriminator shape (#12414) adds a field the regeneration guard does not judge; this capture's judged seams are unchanged and are held at its recorded generation until the next corpus recapture"
