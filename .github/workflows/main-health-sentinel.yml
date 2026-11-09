@@ -196,7 +196,7 @@ jobs:
           fi
           if [ "$gates_red" -ne 0 ]; then
             verdict=red
-            echo "::error title=Main is red::the latest completed main push gate run failed; see the step summary and the main-red tracker"
+            echo "::error title=Historical main-push gate failed::the latest completed main push gate run failed; see its commit and run in the step summary and the main-red tracker"
           fi
           echo "verdict=$verdict" >> "$GITHUB_OUTPUT"
           [ "$verdict" = green ] || exit 1
@@ -230,7 +230,7 @@ jobs:
             [ "$check_status" != 0 ] || [ "$smoke_status" != 0 ] || ! grep -Eq '^test result: [a-z]+\. [1-9]' "$RUNNER_TEMP/main-health-sentinel/smoke.log" 2>/dev/null || probe_fp=green
             fingerprint="fingerprint: probe=$probe_fp gates=$(cat "$RUNNER_TEMP/main-health-sentinel/gates.fp" 2>/dev/null || true)"
             body="$marker
-          The explicitly requested main-health probe found main red at \`${GITHUB_SHA::7}\`.
+          The explicitly requested main-health probe at \`${GITHUB_SHA::7}\` observed red evidence. Current probe statuses and historical main-push gate results follow.
 
           - probe run: $run_url
           - \`cargo check --locked -p ripr\` exit $check_status; focused smoke exit $smoke_status
@@ -250,6 +250,6 @@ jobs:
               fi
             fi
           elif [ -n "$number" ] && [ "$(cat "$RUNNER_TEMP/main-health-sentinel/gates.unknown" 2>/dev/null || echo 1)" = 0 ]; then
-            gh api "repos/$REPOSITORY/issues/$number/comments" -f body="Recovered: the probe and the latest completed main push gates passed on main at \`${GITHUB_SHA::7}\` ($run_url). Closing the tracker." > /dev/null
+            gh api "repos/$REPOSITORY/issues/$number/comments" -f body="Recovered: the current probe passed at \`${GITHUB_SHA::7}\` ($run_url), and the latest completed historical main-push gate results were successful. Closing the tracker." > /dev/null
             gh api -X PATCH "repos/$REPOSITORY/issues/$number" -f state=closed > /dev/null
           fi
