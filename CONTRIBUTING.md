@@ -208,9 +208,15 @@ stable. Only the helper's eight activation fields are returned to the coordinato
 and merged into its child environment. The parent shell is unchanged.
 
 Before broad Cargo work, the preset checks source/runtime/dependency facts and
-writable work paths, observes actual tool versions, runs the small selected-compiler
-real-profile control, then invokes `setup:verify-editor`. It next runs `cargo policy
-preflight`, `cargo xtask ci-full`, one `npm run test:e2e`, and `npm run package`.
+writable work paths and observes actual tool versions. Before its first compilation,
+the selected Cargo resolves the final and intermediate build directories through
+offline, locked metadata. The preset checks that metadata belongs to this checkout,
+prepares and probes both directories, and records available bytes for each distinct
+physical directory. Invalid metadata or an unusable directory stops validation.
+These observations do not establish a quota or that the full-build resource budget
+fits. It then runs the small selected-compiler real-profile control and invokes
+`setup:verify-editor`. It next runs `cargo policy preflight`, `cargo xtask ci-full`,
+one `npm run test:e2e`, and `npm run package`.
 Cargo work is serial. The canonical editor owner performs its normal server
 build/archive checks and required TypeScript compile, so a separate `npm run
 compile` is unnecessary; packaging uses those compiled outputs. Its later fresh
@@ -232,9 +238,11 @@ Each explicit attempt first invalidates only
 selected), then writes a new bounded result and a unique `setup-full-*` evidence
 directory. Completed stage logs and the separate early/canonical host receipts
 survive a later failure. Stage transcripts merge stdout and stderr through a
-fixed literal-argv capture wrapper; activation metadata uses a separate
-allowlisted channel and is not retained wholesale. Logs are capped at 64 KiB per
-stage; failures retain a redacted error summary and the terminal output tail so
+fixed literal-argv capture wrapper. Activation and Cargo metadata use stdout
+separate from stderr; successful calls retain only their selected fields.
+Activation transfers its eight allowlisted fields; Cargo metadata contributes
+the validated build paths. Logs are capped at 64 KiB per stage; failures retain a
+redacted error summary and the terminal output tail so
 build progress cannot displace the useful native error. Each native command has
 a 16 MiB output cap, and the result is capped at
 128 KiB. The attempt deadline defaults to two hours; use `--timeout-ms N` for an

@@ -3497,6 +3497,7 @@ const CARGO_CONFIG_MAX_BYTES: u64 = 1024 * 1024;
 struct LinkerTempRedirect {
     vars: Vec<&'static str>,
     dirs: Vec<String>,
+    tmp_dir: Option<String>,
     all_forced: bool,
 }
 
@@ -3541,6 +3542,7 @@ fn linker_temp_redirect_with_env(
     let mut redirect = LinkerTempRedirect {
         vars: Vec::new(),
         dirs: Vec::new(),
+        tmp_dir: None,
         all_forced: true,
     };
     for var in LINKER_TEMP_VARS {
@@ -3582,6 +3584,9 @@ fn linker_temp_redirect_with_env(
         }
         if !redirect.dirs.iter().any(|known| known == dir) {
             redirect.dirs.push(dir.to_string());
+        }
+        if var == "TMP" {
+            redirect.tmp_dir = Some(dir.to_string());
         }
         if !forced {
             redirect.all_forced = false;
@@ -3669,18 +3674,29 @@ fn linker_temp_redirect_advisory_with_env(
             format!("Create each before building from source (for example `mkdir {repair_paths}`)"),
         )
     };
+    let variables = redirect.vars.join("/");
     let override_note = if redirect.all_forced {
-        "exported TEMP/TMP cannot override it (force = true)"
+        format!("exported {variables} cannot override these entries (force = true)")
     } else {
-        "an exported TEMP/TMP overrides entries without force = true"
+        format!("exported {variables} values override entries without force = true")
     };
+    let linker_note = redirect
+        .tmp_dir
+        .as_deref()
+        .filter(|dir| absent.contains(dir))
+        .map(|dir| {
+            format!(
+                " MSVC linking can fail with LNK1104 naming {}/lnk*.tmp when TMP selects this missing directory.",
+                output::path::human_path(&root.join(dir))
+            )
+        })
+        .unwrap_or_default();
     Some(format!(
         "{relative_path} redirects linker temp variables ({}) into workspace-relative \
-         {dirs_phrase}, which {existence}; building with an isolated CARGO_TARGET_DIR fails \
-         MSVC linking (LNK1104 naming {}/lnk*.tmp) until {persistence}. {repair}; \
+         {dirs_phrase}, which {existence}; processes using these temp paths can fail \
+         until {persistence}, even with an isolated CARGO_TARGET_DIR.{linker_note} {repair}; \
          {override_note}",
         redirect.vars.join(", "),
-        output::path::human_path(&root.join(absent[0])),
     ))
 }
 
@@ -6338,7 +6354,8 @@ mod tests {
             "a root with spaces must get a quoted repair argument: {spaced}"
         );
         assert!(
-            absent.contains("exported TEMP/TMP cannot override it (force = true)"),
+            absent
+                .contains("exported TEMP/TMP/TMPDIR cannot override these entries (force = true)"),
             "{absent}"
         );
         assert_eq!(present, None);
@@ -6487,9 +6504,8 @@ mod tests {
             .map_err(|err| format!("create .cargo: {err}"))?;
         let fallback = REPO_SHAPED_CARGO_CONFIG.replace("force = true", "force = false");
         let cwd = std::env::current_dir().map_err(|err| format!("read cwd: {err}"))?;
-        let default_root = linker_temp_redirect_with_env(&fallback, Path::new("."), |_| {
-            Some(cwd.join("target"))
-        });
+        let default_root =
+            linker_temp_redirect_with_env(&fallback, Path::new("."), |_| Some(cwd.join("target")));
         std::fs::write(root.join(".cargo/config.toml"), &fallback)
             .map_err(|err| format!("write config: {err}"))?;
         let absent = linker_temp_redirect_advisory_with_env(&root, |_| None);
@@ -6499,6 +6515,9 @@ mod tests {
             linker_temp_redirect_advisory_with_env(&root, |_| Some(root.join("managed-temp")));
         let partial = linker_temp_redirect_advisory_with_env(&root, |name| {
             (name == "TMPDIR").then(|| root.join("managed-temp"))
+        });
+        let tmpdir_only = linker_temp_redirect_advisory_with_env(&root, |name| {
+            (name != "TMPDIR").then(|| root.join("managed-temp"))
         });
         std::fs::write(
             root.join(".cargo/config.toml"),
@@ -6529,17 +6548,59 @@ mod tests {
         assert!(
             partial
                 .as_deref()
-                .is_some_and(|text| text.contains("(TEMP, TMP)")),
+                .is_some_and(|text| text.contains("(TEMP, TMP)") && text.contains("LNK1104")),
             "only absent variables select the fallback: {partial:?}"
         );
         assert!(
+            tmpdir_only.as_deref().is_some_and(|text| {
+                text.contains("(TMPDIR)")
+                    && text.contains("exported TMPDIR values override")
+                    && !text.contains("MSVC")
+                    && !text.contains("LNK1104")
+            }),
+            "a TMPDIR-only fallback does not select the MSVC linker's TMP path: {tmpdir_only:?}"
+        );
+        assert!(
             forced.as_deref().is_some_and(|text| {
-                text.contains("(TEMP)")
-                    && text.contains("force = true")
-                    && !text.contains("unused")
+                text.contains("(TEMP)") && text.contains("force = true") && !text.contains("unused")
             }),
             "a forced entry still wins over the environment: {forced:?}"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn linker_temp_advisory_attributes_msvc_only_to_the_missing_tmp_path() -> Result<(), String> {
+        let root = unique_command_test_dir("linker-temp-attribution");
+        std::fs::create_dir_all(root.join(".cargo"))
+            .map_err(|err| format!("create .cargo: {err}"))?;
+        std::fs::write(
+            root.join(".cargo/config.toml"),
+            "[env]\nTMP = { value = \"linker-temp\", relative = true }\n\
+             TMPDIR = { value = \"other-temp\", relative = true }\n",
+        )
+        .map_err(|err| format!("write config: {err}"))?;
+        std::fs::create_dir(root.join("linker-temp"))
+            .map_err(|err| format!("create linker temp: {err}"))?;
+        let present_tmp = linker_temp_redirect_advisory_with_env(&root, |_| None)
+            .ok_or("the missing TMPDIR path must remain actionable")?;
+        assert!(present_tmp.contains("other-temp/"), "{present_tmp}");
+        assert!(!present_tmp.contains("LNK1104"), "{present_tmp}");
+        std::fs::remove_dir(root.join("linker-temp"))
+            .map_err(|err| format!("remove linker temp: {err}"))?;
+        let absent_tmp = linker_temp_redirect_advisory_with_env(&root, |_| None)
+            .ok_or("the missing TMP path must remain actionable")?;
+        let linker_path = output::path::human_path(&root.join("linker-temp"));
+        let other_path = output::path::human_path(&root.join("other-temp"));
+        assert!(
+            absent_tmp.contains(&format!("LNK1104 naming {linker_path}/lnk*.tmp")),
+            "{absent_tmp}"
+        );
+        assert!(
+            !absent_tmp.contains(&format!("LNK1104 naming {other_path}/lnk*.tmp")),
+            "{absent_tmp}"
+        );
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
         Ok(())
     }
 

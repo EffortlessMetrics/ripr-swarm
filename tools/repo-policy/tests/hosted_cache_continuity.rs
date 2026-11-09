@@ -56,7 +56,10 @@ fn incremental_setting_must_apply_to_the_reusable_job() {
         "      - name: Restore hosted Rust cache\n        env:\n          CARGO_INCREMENTAL: \"0\"\n",
         1,
     );
-    assert_ne!(hosted_only, missing, "hosted-step control must change scope");
+    assert_ne!(
+        hosted_only, missing,
+        "hosted-step control must change scope"
+    );
     for changed in [
         missing,
         PRODUCER.replacen(setting, "      CARGO_INCREMENTAL: \"1\"\n", 1),

@@ -18,12 +18,15 @@ interface FullResult {
   tools: Record<string, string>;
   source: { head: string; cleanliness: string };
   compiler_selection: { selector: string; source: string };
-  failure?: { stage_id: string; kind: string; native_status: number | null; native_signal: string | null };
+  failure?: { stage_id: string; kind: string; message: string; native_status: number | null; native_signal: string | null };
   stages: Array<{ stage_id: string; status: string; commands: Array<{ argv: string[]; cwd: string; native_status: number | null }>;
     log?: string; counts?: unknown; canonical_invocations?: number;
+    cargo_directories?: { target: string; build: string };
+    storage_locations?: Array<{ path: string; roles: string[]; available_bytes: number }>;
     profile_association?: { raw_version: string; layout: string; build_id: string; retained_bytes: string } }>;
 }
-interface Call { tool: string; args: string[]; cwd: string; selected: boolean; proxy_preserved: boolean; cargo_target: string }
+interface Call { tool: string; args: string[]; cwd: string; selected: boolean; proxy_preserved: boolean;
+  cargo_target: string; cargo_build?: string }
 
 suite('Explicit full-development coordinator', function () {
   this.timeout(60_000);
@@ -82,6 +85,7 @@ if (process.env.RIPR_FULL_CONTROL_FAIL === 'distributed-delay') {
 fs.appendFileSync(trace, JSON.stringify({ tool, args, cwd: process.cwd(),
   selected: process.env.RUSTC === path.join(root, 'tool bin/rustc'),
   cargo_target: process.env.CARGO_TARGET_DIR,
+  cargo_build: process.env.CARGO_BUILD_BUILD_DIR,
   proxy_preserved: process.env.HTTPS_PROXY === 'https://private-user:private-password@example.invalid' }) + '\\n');
 const receipt = () => fs.writeFileSync(path.join(process.env.RIPR_TEST_ARTIFACT_ROOT, 'setup-editor-host.json'),
   JSON.stringify({ schema_version:1,check_id:'editor_native_host',status:'pass',nonce:crypto.randomBytes(16).toString('hex'),
@@ -100,6 +104,28 @@ else if (tool === 'compiler') {
   receipt();
 } else if (tool === 'cargo') {
   if (args[0] === '-vV') process.stdout.write('cargo 1.95.0\\n');
+  else if (args[0] === 'metadata') {
+    const shape = process.env.RIPR_FULL_CONTROL_METADATA;
+    if (shape === 'failure') {
+      process.stderr.write('selected Cargo metadata configuration cannot be read\\n'); process.exit(47);
+    }
+    if (shape === 'malformed') { process.stdout.write('not metadata JSON'); return; }
+    const metadata = { version: 1, workspace_root: root, target_directory: process.env.CARGO_TARGET_DIR,
+      build_directory: process.env.CARGO_BUILD_BUILD_DIR || process.env.CARGO_TARGET_DIR };
+    if (shape === 'missing-build') delete metadata.build_directory;
+    if (shape === 'missing-target') delete metadata.target_directory;
+    if (shape === 'wrong-root') metadata.workspace_root = path.dirname(root);
+    if (shape === 'absent-root') metadata.workspace_root = path.join(root, 'absent checkout');
+    if (shape === 'relative-root') metadata.workspace_root = '.';
+    if (shape === 'relative-build') metadata.build_directory = 'relative/intermediates';
+    if (shape === 'relative-target') metadata.target_directory = 'relative/final';
+    if (shape === 'wrong-version') metadata.version = 2;
+    if (shape === 'control-character') metadata.build_directory += '\\n';
+    if (shape === 'oversized-path') metadata.build_directory = '/' + 'x'.repeat(512);
+    // Successful diagnostics must not corrupt the separately captured JSON.
+    process.stderr.write('Cargo metadata diagnostic on stderr\\n');
+    process.stdout.write(JSON.stringify(metadata));
+  }
   else if (args[0] === 'nextest') process.stdout.write('cargo-nextest 0.9.100\\n');
   else if (args[0] === 'clippy') process.stdout.write('clippy 0.1.95\\n');
   else if (args[0] === 'test') {
@@ -184,7 +210,8 @@ else if (tool === 'compiler') {
     ].join('\n'));
     env = { ...process.env };
     for (const name of Object.keys(env)) {
-      if (name.startsWith('RIPR_TEST_') || ['RUSTC', 'CARGO_BUILD_RUSTC', 'RUSTC_WRAPPER', 'RUSTC_WORKSPACE_WRAPPER'].includes(name)) delete env[name];
+      if (name.startsWith('RIPR_TEST_') || ['RUSTC', 'CARGO_BUILD_RUSTC', 'RUSTC_WRAPPER', 'RUSTC_WORKSPACE_WRAPPER',
+        'CARGO_TARGET_DIR', 'CARGO_BUILD_TARGET_DIR', 'CARGO_BUILD_BUILD_DIR'].includes(name)) delete env[name];
     }
     Object.assign(env, { DISPLAY: ':controlled-display', ELECTRON_RUN_AS_NODE: '1',
       PATH: path.join(root, 'tool bin') + path.delimiter + process.env.PATH,
@@ -223,6 +250,7 @@ else if (tool === 'compiler') {
     assert.ok(native.filter(call => call.tool !== 'git').every(call => call.selected && call.proxy_preserved));
     const selectedCargo = native.filter(call => call.tool === 'cargo').map(call => call.args);
     assert.deepStrictEqual(selectedCargo, [['-vV'], ['nextest', '--version'],
+      ['metadata', '--no-deps', '--format-version', '1', '--offline', '--locked'],
       ['test', '--locked', '-p', 'repo-policy', '--lib', profileTest, '--', '--exact', '--nocapture'],
       ['policy', 'preflight'], ['xtask', 'ci-full'], ['xtask', 'vscode-test-e2e'], ['xtask', 'vscode-package']]);
     assert.ok(native.findIndex(call => call.tool === 'host') < native.findIndex(call => call.args.join(' ') === 'xtask ci-full'));
@@ -285,6 +313,116 @@ else if (tool === 'compiler') {
     assert.ok(!fs.existsSync(path.join(root, relative)));
     assert.ok(calls().length > 0);
     assert.ok(calls().every(call => call.cargo_target === expected));
+  });
+
+  test('storage preflight prepares and reports distinct effective Cargo directories before compilation', async () => {
+    const target = path.join(root, 'selected final output');
+    const build = path.join(root, 'selected intermediate output');
+    const { report, status } = await invoke({ CARGO_TARGET_DIR: target, CARGO_BUILD_BUILD_DIR: build });
+    assert.strictEqual(status, 0, report.failure?.message);
+    const storage = report.stages.find(stage => stage.stage_id === 'build_storage');
+    assert.strictEqual(storage?.status, 'pass');
+    assert.deepStrictEqual(storage?.cargo_directories, { target, build });
+    assert.deepStrictEqual(storage?.storage_locations?.map(location => ({ path: location.path, roles: location.roles })),
+      [{ path: fs.realpathSync(target), roles: ['target'] }, { path: fs.realpathSync(build), roles: ['build'] }]);
+    for (const location of storage?.storage_locations ?? []) {
+      assert.ok(Number.isSafeInteger(location.available_bytes) && location.available_bytes > 0);
+      assert.ok(!fs.readdirSync(location.path).some(name => name.startsWith('.ripr-setup-')));
+    }
+    const native = calls();
+    const metadata = native.findIndex(call => call.tool === 'cargo' && call.args[0] === 'metadata');
+    assert.ok(metadata >= 0);
+    assert.ok(metadata < native.findIndex(call => call.args[0] === 'test'));
+    assert.ok(native.filter(call => call.tool === 'cargo').every(call =>
+      call.cargo_target === target && call.cargo_build === build));
+  });
+
+  test('storage preflight deduplicates final and intermediate aliases to the same directory', async () => {
+    const target = path.join(root, 'target');
+    const build = path.join(root, 'intermediate alias');
+    fs.mkdirSync(target);
+    fs.symlinkSync(target, build);
+    const { report, status } = await invoke({ CARGO_BUILD_BUILD_DIR: build });
+    assert.strictEqual(status, 0, report.failure?.message);
+    const storage = report.stages.find(stage => stage.stage_id === 'build_storage');
+    assert.deepStrictEqual(storage?.cargo_directories, { target, build });
+    assert.strictEqual(storage?.storage_locations?.length, 1);
+    assert.strictEqual(storage?.storage_locations?.[0].path, fs.realpathSync(target));
+    assert.deepStrictEqual(storage?.storage_locations?.[0].roles, ['target', 'build']);
+  });
+
+  test('an unusable intermediate directory stops the preset before compilation', async () => {
+    const build = path.join(root, 'blocked intermediate output');
+    fs.writeFileSync(build, 'owned file must remain');
+    const { report, status } = await invoke({ CARGO_BUILD_BUILD_DIR: build });
+    assert.strictEqual(status, 1);
+    assert.strictEqual(report.full_development_ready, false);
+    assert.strictEqual(report.failure?.stage_id, 'build_storage');
+    assert.ok(report.failure?.message.includes('build directory'), report.failure?.message);
+    assert.ok(report.failure?.message.includes(build), report.failure?.message);
+    assert.strictEqual(fs.readFileSync(build, 'utf8'), 'owned file must remain');
+    assert.ok(!calls().some(call => call.args[0] === 'test' || call.args[0] === 'xtask' || call.tool === 'compiler'));
+  });
+
+  for (const shape of ['failure', 'malformed', 'missing-build', 'missing-target', 'wrong-root', 'absent-root', 'relative-root',
+    'relative-build', 'relative-target', 'wrong-version', 'control-character', 'oversized-path']) {
+    test('storage preflight refuses ' + shape + ' Cargo metadata before compilation', async () => {
+      const { report, status } = await invoke({ RIPR_FULL_CONTROL_METADATA: shape });
+      assert.strictEqual(status, shape === 'failure' ? 47 : 1);
+      assert.strictEqual(report.full_development_ready, false);
+      assert.strictEqual(report.failure?.stage_id, 'build_storage');
+      const stage = report.stages.find(candidate => candidate.stage_id === 'build_storage');
+      assert.strictEqual(stage?.commands[0]?.native_status, shape === 'failure' ? 47 : 0);
+      assert.ok(report.failure?.message.includes('metadata'), report.failure?.message);
+      if (shape === 'failure') {
+        assert.strictEqual(report.failure?.native_status, 47);
+        assert.ok(stage?.log);
+        assert.ok(fs.readFileSync(stage.log, 'utf8').includes('selected Cargo metadata configuration cannot be read'));
+      }
+      const failed = report.stages.findIndex(candidate => candidate.stage_id === 'build_storage');
+      assert.ok(report.stages.slice(failed + 1).every(candidate => candidate.status === 'not_run'));
+      assert.ok(!calls().some(call => call.args[0] === 'test' || call.args[0] === 'xtask' || call.tool === 'compiler'));
+    });
+  }
+
+  test('native Cargo metadata resolves the configured intermediate pool and explicit override without compiling', async () => {
+    fs.mkdirSync(path.join(root, 'src'));
+    fs.writeFileSync(path.join(root, 'src/lib.rs'), 'pub fn ready() -> bool { true }\n');
+    fs.writeFileSync(path.join(root, 'Cargo.toml'),
+      '[workspace]\n[package]\nname = "storage-metadata-control"\nversion = "0.1.0"\nedition = "2024"\n');
+    fs.writeFileSync(path.join(root, 'Cargo.lock'),
+      'version = 4\n\n[[package]]\nname = "storage-metadata-control"\nversion = "0.1.0"\n');
+    const pool = path.join(root, 'native intermediate pool');
+    fs.writeFileSync(path.join(root, '.cargo/config.toml'),
+      '[build]\nbuild-dir = "native intermediate pool/{workspace-path-hash}"\n');
+    const target = path.join(root, 'native final output');
+    const build = path.join(root, 'native selected intermediate');
+    const cargoHome = path.join(root, 'native cargo home');
+    const nativeEnv: NodeJS.ProcessEnv = { ...process.env, CARGO_HOME: cargoHome,
+      RUSTUP_TOOLCHAIN: '1.95.0', CARGO_TARGET_DIR: target };
+    for (const name of ['CARGO_BUILD_BUILD_DIR', 'CARGO_BUILD_TARGET_DIR', 'RUSTC', 'CARGO_BUILD_RUSTC',
+      'RUSTC_WRAPPER', 'RUSTC_WORKSPACE_WRAPPER', 'CARGO_BUILD_RUSTC_WRAPPER', 'CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER']) {
+      delete nativeEnv[name];
+    }
+    fs.mkdirSync(cargoHome);
+    for (const selected of [undefined, build]) {
+      const output = await runFixtureProducer('cargo',
+        ['metadata', '--no-deps', '--format-version', '1', '--offline', '--locked'], {
+          cwd: root, env: { ...nativeEnv, ...(selected === undefined ? {} : { CARGO_BUILD_BUILD_DIR: selected }) },
+          timeoutMs: 10_000
+        });
+      const metadata = JSON.parse(output);
+      assert.strictEqual(metadata.version, 1);
+      assert.strictEqual(fs.realpathSync(metadata.workspace_root), fs.realpathSync(root));
+      assert.strictEqual(metadata.target_directory, target);
+      if (selected === undefined) {
+        assert.ok(metadata.build_directory.startsWith(pool + path.sep), metadata.build_directory);
+        assert.ok(!metadata.build_directory.includes('{workspace-path-hash}'));
+      } else assert.strictEqual(metadata.build_directory, selected);
+      assert.ok(!fs.existsSync(metadata.target_directory));
+      assert.ok(!fs.existsSync(metadata.build_directory));
+    }
+    assert.strictEqual(calls().length, 0, 'the native metadata control must not call a controlled Cargo substitute');
   });
 
   test('scope-changing inherited editor selections refuse the actual public preset before native work', async () => {

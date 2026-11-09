@@ -157,7 +157,9 @@ impl Fixture {
                 "--target-dir",
             ])
             .arg(target);
-        command.output().map_err(|e| format!("fixture Cargo spawn: {e}"))
+        command
+            .output()
+            .map_err(|e| format!("fixture Cargo spawn: {e}"))
     }
 
     fn verify(&self, stage: &str, output: &Output, expected: &[PathBuf; 3]) -> Result<(), String> {
@@ -197,8 +199,10 @@ impl Fixture {
             for (name, path) in TEMP_NAMES.iter().zip(expected) {
                 let artifact = path.join(format!("{stage}-{kind}-{name}.tmp"));
                 assert_eq!(
-                    fs::read_to_string(&artifact)
-                        .map_err(|e| format!("missing temp artifact {}: {e}", artifact.display()))?,
+                    fs::read_to_string(&artifact).map_err(|e| format!(
+                        "missing temp artifact {}: {e}",
+                        artifact.display()
+                    ))?,
                     *name
                 );
             }
@@ -248,6 +252,10 @@ fn absent_temp_variables_use_the_prepared_checkout_fallback() -> Result<(), Stri
     let fallback = fixture.checkout.join("target");
     fs::create_dir(&fallback).map_err(|e| e.to_string())?;
     let output = fixture.cargo("fallback", false, false)?;
-    fixture.verify("fallback", &output, &std::array::from_fn(|_| fallback.clone()))?;
+    fixture.verify(
+        "fallback",
+        &output,
+        &std::array::from_fn(|_| fallback.clone()),
+    )?;
     Ok(())
 }

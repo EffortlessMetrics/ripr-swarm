@@ -198,7 +198,7 @@ function renderDeveloperSetup(report) {
 }
 
 const FULL_STAGES = ['preflight', 'source_identity', 'activation', 'tool_versions',
-  'profile_diagnostic', 'editor_prerequisites', 'repository_policy', 'rust_full',
+  'build_storage', 'profile_diagnostic', 'editor_prerequisites', 'repository_policy', 'rust_full',
   'editor_suite', 'editor_package'];
 const ACTIVATION_FIELDS = ['CARGO_HOME', 'RUSTUP_HOME', 'RUSTUP_TOOLCHAIN',
   'RUSTUP_AUTO_INSTALL', 'RUSTC', 'PATH', 'LLVM_COV', 'LLVM_PROFDATA'];
@@ -306,29 +306,30 @@ async function runFullDevelopment(options = {}) {
     current.log_bytes = bytes.length;
     current.log_capture = summary === undefined ? 'output_prefix' : 'error_summary_and_output_tail';
   }
-  async function command(executable, args, cwd, structured = false) {
+  async function command(executable, args, cwd, capture = 'merged_stdout_stderr') {
     const remaining = timeoutMs - (Date.now() - started);
     if (remaining < 1) throw new Error('Full validation attempt deadline reached before the next command');
+    const separate = capture !== 'merged_stdout_stderr';
+    const activation = capture === 'activation_allowlist_stdout';
     const record = { argv: [executable, ...args].map(bounded), cwd: bounded(cwd),
-      capture: structured ? 'activation_allowlist_stdout' : 'merged_stdout_stderr',
-      native_status: null, native_signal: null };
+      capture, native_status: null, native_signal: null };
     // The activation script/emitter are fixed source, not environment data.
-    if (structured) record.argv = ['bash', '--noprofile', '--norc', '<sourced activation helper>', selection];
+    if (activation) record.argv = ['bash', '--noprofile', '--norc', '<sourced activation helper>', selection];
     current.commands.push(record);
     try {
-      const text = await runner(structured ? executable : 'bash', structured ? args
+      const text = await runner(separate ? executable : 'bash', separate ? args
         : ['--noprofile', '--norc', '-c', FULL_CAPTURE, 'ripr-full-stage', executable, ...args], {
-        cwd, env: { ...env, BASH_ENV: '', ...(structured ? { ELECTRON_RUN_AS_NODE: '1' } : {}) },
+        cwd, env: { ...env, BASH_ENV: '', ...(activation ? { ELECTRON_RUN_AS_NODE: '1' } : {}) },
         timeoutMs: remaining, signal: cancellation.signal,
         onProgress: () => process.stderr.write(`Full validation: ${current.stage_id} (${Math.floor((Date.now() - started) / 1000)}s)\n`)
       });
       record.native_status = 0;
-      if (!structured) retain(text);
+      if (!separate) retain(text);
       return text;
     } catch (error) {
       record.native_status = Number.isInteger(error?.status) ? error.status : null;
       record.native_signal = error?.signal ?? null;
-      try { retain(`${structured ? '' : error?.stdout ?? ''}\n${error?.stderr ?? ''}`, String(error)); }
+      try { retain(`${activation ? '' : error?.stdout ?? ''}\n${error?.stderr ?? ''}`, String(error)); }
       catch (diagnosticError) { record.log_error = bounded(String(diagnosticError)); }
       throw error;
     }
@@ -390,10 +391,6 @@ async function runFullDevelopment(options = {}) {
         fs.closeSync(descriptor);
         fs.unlinkSync(probe);
       }
-      const space = fs.statfsSync(env.CARGO_TARGET_DIR);
-      current.cargo_target_directory = bounded(env.CARGO_TARGET_DIR);
-      current.cargo_target_available_bytes = space.bavail * space.bsize;
-      current.resource_limit = 'Writable paths and free bytes do not establish the full-build memory/storage envelope.';
     });
     process.once('SIGINT', onInterrupt);
     process.once('SIGTERM', onTerminate);
@@ -411,7 +408,7 @@ async function runFullDevelopment(options = {}) {
     await stage('activation', async () => {
       const text = await command('bash', ['--noprofile', '--norc', '-c', ACTIVATE,
         'ripr-full-activation', path.join(root, 'tools/activate-rust.sh'), selection,
-        process.execPath, EMIT_ACTIVATION], root, true);
+        process.execPath, EMIT_ACTIVATION], root, 'activation_allowlist_stdout');
       if (Buffer.byteLength(text) > 64 * 1024) throw new Error('Activation metadata exceeded its byte budget');
       const selected = JSON.parse(text);
       if (!selected || Object.keys(selected).length !== ACTIVATION_FIELDS.length
@@ -440,6 +437,71 @@ async function runFullDevelopment(options = {}) {
       }
       report.tools.vsce = redact(await command(path.join(root, 'editors/vscode/node_modules/.bin/vsce'),
         ['--version'], path.join(root, 'editors/vscode')), 4096).toString('utf8').trim();
+    });
+    await stage('build_storage', async () => {
+      let text;
+      try {
+        text = await command('cargo', ['metadata', '--no-deps', '--format-version', '1', '--offline', '--locked'],
+          root, 'cargo_metadata_stdout');
+      } catch (error) {
+        error.message = `Cargo metadata failed before compilation; inspect this stage's log and repair the selected Cargo configuration: ${error.message}`;
+        throw error;
+      }
+      let metadata;
+      try { metadata = JSON.parse(text); }
+      catch { throw new Error('Cargo metadata did not return valid JSON; repair the selected Cargo command before full validation.'); }
+      if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata) || metadata.version !== 1) {
+        throw new Error('Cargo metadata did not return format version 1; use the selected supported Cargo toolchain.');
+      }
+      const metadataPath = field => {
+        const value = metadata[field];
+        if (typeof value !== 'string' || value.length === 0 || value.length >= MAX_TEXT
+          || /[\x00-\x1f\x7f]/.test(value) || !path.isAbsolute(value)) {
+          throw new Error(`Cargo metadata ${field} must be an absolute, non-empty path without control characters (under ${MAX_TEXT} characters); inspect the selected toolchain and Cargo configuration.`);
+        }
+        return value;
+      };
+      const workspaceRoot = metadataPath('workspace_root');
+      let sameRoot;
+      try { sameRoot = fs.realpathSync(workspaceRoot) === fs.realpathSync(root); }
+      catch (error) { throw new Error(`Cannot verify Cargo metadata workspace_root: ${error.message}. Repair the selected workspace before retrying.`); }
+      if (!sameRoot) {
+        throw new Error('Cargo metadata workspace_root does not identify this checkout; repair the selected Cargo command or workspace configuration.');
+      }
+      current.cargo_directories = { target: metadataPath('target_directory'), build: metadataPath('build_directory') };
+      current.storage_locations = [];
+      current.resource_limit = 'Writable directories and available bytes are observations, not a quota or proof that the full-build memory/storage budget fits.';
+      const observed = new Map();
+      for (const [role, directory] of Object.entries(current.cargo_directories)) {
+        try {
+          fs.mkdirSync(directory, { recursive: true });
+          const resolved = fs.realpathSync(directory);
+          if (resolved.length >= MAX_TEXT) throw new Error('The resolved directory exceeds the supported path-report budget');
+          let location = observed.get(resolved);
+          if (!location) {
+            const probe = path.join(resolved, `.ripr-setup-${report.run_id}`);
+            const descriptor = fs.openSync(probe, 'wx');
+            try {
+              // Allocate a block: an empty file alone can succeed on a full volume.
+              fs.writeFileSync(descriptor, Buffer.alloc(4096));
+              fs.fsyncSync(descriptor);
+            } finally {
+              try { fs.closeSync(descriptor); }
+              finally { fs.unlinkSync(probe); }
+            }
+            const space = fs.statfsSync(resolved);
+            const available = space.bavail * space.bsize;
+            if (!Number.isSafeInteger(available) || available < 0) throw new Error('Available bytes could not be represented exactly');
+            location = { path: resolved, roles: [], available_bytes: available };
+            observed.set(resolved, location);
+            current.storage_locations.push(location);
+          }
+          location.roles.push(role);
+        } catch (error) {
+          throw new Error(`Cannot prepare writable Cargo ${role} directory ${directory}: ${error.message}. Prepare this owned directory or repair its Cargo configuration before retrying.`);
+        }
+      }
+      retain('Selected Cargo metadata resolved both build directories; writable probes and available bytes were observed before compilation.\n');
     });
     await stage('profile_diagnostic', async () => {
       const output = await command('cargo', ['test', '--locked', '-p', 'repo-policy', '--lib', PROFILE_TEST,
