@@ -948,7 +948,11 @@ impl PartialDiffScope {
                 .fold((0usize, 0usize), |(count, largest), file| {
                     (count + 1, largest.max(file.changed_lines))
                 });
-            let minimum = largest.max(clamp_minimum(env));
+            // The over-limit env caps the line budget too (its limit is below
+            // its largest file, so below `line_min`): it must reach the whole
+            // line minimum, not just that file, or the clamp re-selects a
+            // partition that trades an analyzed file for it (#13641 review).
+            let minimum = largest.max(line_min).max(clamp_minimum(env));
             format!("{env} to at least {minimum} ({count} file(s) exceed it on their own)")
         });
         let clamp_raises: Vec<String> = self
