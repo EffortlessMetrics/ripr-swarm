@@ -1109,6 +1109,7 @@ mod tests {
                 analysis_outcome: None,
                 partial_scope: None,
                 unlinked_python_tests: None,
+                owner_opt_outs: Vec::new(),
                 analyzed_revisions: None,
             }
         }
@@ -1363,6 +1364,7 @@ mod tests {
                 analysis_outcome: None,
                 partial_scope: None,
                 unlinked_python_tests: None,
+                owner_opt_outs: Vec::new(),
                 analyzed_revisions: None,
             }
         }

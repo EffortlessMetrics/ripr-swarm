@@ -1451,6 +1451,63 @@ fn classify_probe_shape_recognizes_python_field_and_call_shapes() {
     assert_eq!(delta, DeltaKind::Effect);
 }
 
+// #13630: the field-value missing check localizes a `return {...}` change
+// against the paired old line; without one the unlocalized pick stands.
+#[test]
+fn return_dict_missing_check_localizes_changed_entry_from_old_line() -> Result<(), String> {
+    let source = "class Item:\n    def to_dict(self):\n        return {\"sku\": self.sku, \"qty\": self.quantity}\n";
+    let owners = extract_owners(Path::new("src/fx/core.py"), source);
+    let owner = owners
+        .iter()
+        .find(|owner| owner.name.ends_with("to_dict"))
+        .ok_or_else(|| "to_dict owner must be extracted".to_string())?;
+    let new = "        return {\"sku\": self.sku, \"qty\": self.quantity}";
+    let values = |old: Option<&str>| -> Vec<String> {
+        super::discriminators::python_missing_discriminators(
+            &ProbeFamily::FieldConstruction,
+            3,
+            new,
+            old,
+            owner,
+            None,
+        )
+        .into_iter()
+        .map(|missing| missing.value)
+        .collect()
+    };
+    // Renamed key: the new key, not the unchanged first entry.
+    assert_eq!(
+        values(Some(
+            "        return {\"sku\": self.sku, \"quantity\": self.quantity}"
+        )),
+        vec!["qty == <expected value>"]
+    );
+    // Re-valued single entry.
+    assert_eq!(
+        values(Some(
+            "        return {\"sku\": self.sku, \"qty\": self.count}"
+        )),
+        vec!["qty == <expected value>"]
+    );
+    // Several entries changed: the whole dict, no single key.
+    assert_eq!(
+        values(Some(
+            "        return {\"id\": self.sku, \"quantity\": self.quantity}"
+        )),
+        vec!["return value == <expected value>"]
+    );
+    // No paired old line, an old line that is not a dict, or an old line
+    // whose entries are unchanged (reorder): the unlocalized pick stands.
+    for old in [
+        None,
+        Some("        return self.legacy_dict()"),
+        Some("        return {\"qty\": self.quantity, \"sku\": self.sku}"),
+    ] {
+        assert_eq!(values(old), vec!["sku == <expected value>"], "{old:?}");
+    }
+    Ok(())
+}
+
 #[test]
 fn return_dict_field_parts_prefer_literal_changed_value_candidates() {
     assert_eq!(
@@ -6451,7 +6508,8 @@ fn transitive_reach_witness_silences_with_no_link_guidance() -> Result<(), Strin
         .position(|line| line == changed)
         .ok_or_else(|| "fixture source must contain the changed line".to_string())?
         + 1;
-    let owners = extract_owners(Path::new("src/table.py"), source);
+    let mut owners = extract_owners(Path::new("src/table.py"), source);
+    super::related_tests::apply_class_facts(&mut owners);
     let tests = extract_tests(
         Path::new("tests/test_table.py"),
         "from src.table import Table\n\ndef test_print_table():\n    table = Table()\n    assert table is not None\n",

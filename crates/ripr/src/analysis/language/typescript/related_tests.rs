@@ -1719,7 +1719,10 @@ pub(crate) fn module_export_facts(
             facts.enum_bindings.push((name, members));
         }
     }
-    let code = enum_member_guard::enum_member_use_code(body, source);
+    // Built only when the module has a root to check: the mask re-parses the
+    // whole module, which a module with no import and no readable enum
+    // never needs.
+    let mut enum_use: Option<enum_member_guard::EnumMemberUse> = None;
     for name in facts
         .enum_imports
         .iter()
@@ -1730,7 +1733,9 @@ pub(crate) fn module_export_facts(
             .enum_imports
             .iter()
             .any(|import| import.local == *name && import.namespace);
-        if !enum_member_guard::enum_member_root_is_read_only(&code, name, namespace) {
+        let enum_use =
+            enum_use.get_or_insert_with(|| enum_member_guard::EnumMemberUse::new(body, source));
+        if !enum_use.root_is_read_only(name, namespace) {
             facts.unstable_enum_roots.push(name.clone());
         }
     }
@@ -2214,6 +2219,9 @@ pub(crate) fn owner_call_relation(
         {
             return false;
         }
+        if default_object_second_binding(import, test, owner, alias_map, workspace_root) {
+            return false;
+        }
         import_references_owner_call(import, test, owner)
     }) {
         // A namespace import synthesized from `export * as ns from` reached
@@ -2514,6 +2522,7 @@ pub(crate) fn module_entry_owner(
             class_default_export: decorated.default_export,
             exported_as_default: false,
             default_object_member: false,
+            default_object_unsafe_siblings: Vec::new(),
             method_kind: TypeScriptMethodKind::Ordinary,
             module_entries: Vec::new(),
             params: Vec::new(),
@@ -2530,6 +2539,7 @@ pub(crate) fn module_entry_owner(
             owner_kind: OwnerKind::Method,
             exported_as_default: false,
             default_object_member: false,
+            default_object_unsafe_siblings: Vec::new(),
             method_kind,
             module_entries: Vec::new(),
             params: Vec::new(),
@@ -2550,6 +2560,7 @@ pub(crate) fn module_entry_owner(
         exported_as_default: entry.exported_as_default,
         class_default_export: false,
         default_object_member: false,
+        default_object_unsafe_siblings: Vec::new(),
         commonjs_default_export: false,
         commonjs_whole_function: false,
         constructor_callback: false,
@@ -4643,6 +4654,28 @@ fn owner_export_imported_from_unrelated_source(
     })
 }
 
+/// RIPR-SPEC-0243 rule 5 (#13694 review, #13750): when the owner's default
+/// object has a sibling that could replace it, any second binding of the
+/// owner's module in the test file (another import local, a named or
+/// namespace import, a `require()`) could reach that sibling outside the
+/// `local.member(` calls rule 5 checks, so the rule-5 relation is withheld.
+pub(crate) fn default_object_second_binding(
+    import: &TypeScriptImport,
+    test: &TypeScriptTest,
+    owner: &TypeScriptOwner,
+    alias_map: Option<&TsAliasMap>,
+    workspace_root: Option<&Path>,
+) -> bool {
+    owner.default_object_member
+        && !owner.default_object_unsafe_siblings.is_empty()
+        && import.imported.as_deref() == Some("default")
+        && !import.namespace
+        && test.imports_in_file.iter().any(|other| {
+            !std::ptr::eq(other, import)
+                && import_source_matches_owner(other, &test.file, owner, alias_map, workspace_root)
+        })
+}
+
 /// A literal `require()` binding (recorded as a default-named namespace
 /// binding) of a module whose whole export is the owner function
 /// (`module.exports = <function>`, RIPR-SPEC-0243 rule 19).
@@ -4681,6 +4714,12 @@ fn import_references_owner_call(
             .default_member_only_locals_in_file
             .iter()
             .any(|(local, member)| *local == import.local && *member == owner.name)
+            && !test
+                .default_member_only_locals_in_file
+                .iter()
+                .any(|(local, member)| {
+                    *local == import.local && owner.default_object_unsafe_siblings.contains(member)
+                })
             && contains_member_call_name(body_text, &import.local, &owner.name);
     }
     // A default import (`import local from './owner'`) binds the owner
@@ -4761,8 +4800,8 @@ fn nearer_paths_config_dir_uncached(root: &Path, dir: &Path) -> Option<PathBuf> 
     for _ in 0..MAX_NEARER_CONFIG_HOPS {
         let ts_config = dir.join("tsconfig.json");
         let js_config = dir.join("jsconfig.json");
-        let declares = (ts_config.is_file() && config_file_owns_paths(&ts_config))
-            || (js_config.is_file() && config_file_owns_paths(&js_config));
+        let declares = (ts_config.is_file() && config_file_owns_paths(root, &ts_config))
+            || (js_config.is_file() && config_file_owns_paths(root, &js_config));
         if declares {
             return (dir != root).then_some(dir);
         }
@@ -4804,7 +4843,7 @@ pub(crate) fn unavailable_config_claims(
     specifier: &str,
 ) -> bool {
     (root_map.has_tsconfig() && root_map.paths_key_matches(specifier))
-        || super::tsconfig::package_config_claims(config_dir, specifier)
+        || super::tsconfig::package_config_claims(root_map.root(), config_dir, specifier)
 }
 
 /// The alias map that governs `importer`'s non-relative specifiers.
@@ -7085,9 +7124,10 @@ mod nested_config_withhold_tests {
         Ok(())
     }
 
-    /// A package config that inherits `paths` through a same-directory
-    /// `extends` resolves; a cross-directory base, an unparseable config, and
-    /// a directory where both `tsconfig.json` and `jsconfig.json` declare
+    /// A package config that inherits `paths` or `baseUrl` through a relative
+    /// in-workspace `extends` resolves (an inherited `baseUrl` at its
+    /// declaring config); a base outside the workspace, an unparseable config,
+    /// and a directory where both `tsconfig.json` and `jsconfig.json` declare
     /// `paths` stay unresolved rather than guessing.
     #[test]
     fn nested_config_fails_closed_when_it_cannot_be_modeled_exactly() -> Result<(), String> {
@@ -7146,7 +7186,23 @@ mod nested_config_withhold_tests {
                     "packages/tsconfig.base.json",
                     r#"{"compilerOptions":{"baseUrl":"."}}"#,
                 ),
+                ("packages/src/owner.ts", "export function owner() {}"),
             ],
+        )?;
+        // #11204: the inherited `baseUrl` stays anchored at the base that
+        // declares it (`packages/`), as `tsc` resolves it, not at the
+        // extending package directory.
+        if cross.as_deref() != Some("packages/src/owner") {
+            return Err(format!(
+                "cross-directory extends must resolve at the base anchor, got {cross:?}"
+            ));
+        }
+        let escaping = check(
+            "escaping-extends",
+            &[(
+                "packages/a/tsconfig.json",
+                r#"{"extends":"../../../outside.json","compilerOptions":{"paths":{"@/*":["src/*"]}}}"#,
+            )],
         )?;
         let unparseable = check(
             "unparseable",
@@ -7169,7 +7225,7 @@ mod nested_config_withhold_tests {
             ],
         )?;
         for (label, verdict) in [
-            ("cross-directory extends", cross),
+            ("extends base outside the workspace", escaping),
             ("unparseable config", unparseable),
             ("tsconfig.json + jsconfig.json both declaring", both),
         ] {
@@ -7266,6 +7322,33 @@ mod nested_config_withhold_tests {
             ));
         }
         Ok(())
+    }
+
+    /// #11204: the common monorepo layout — a package config that only
+    /// extends a shared base two directories up — resolves through the base's
+    /// own `baseUrl` anchor (the shared root), not the package directory.
+    #[test]
+    fn package_extending_a_shared_base_resolves_at_the_base_anchor() -> Result<(), String> {
+        let root = disagreeing_fixture(r#"{"extends":"../../tsconfig.base.json"}"#)?;
+        write(
+            &root,
+            "tsconfig.base.json",
+            r#"{"compilerOptions":{"baseUrl":".","paths":{"@/*":["packages/a/src/*"]}}}"#,
+        )?;
+        let map = load_alias_map(&root).ok_or("root tsconfig must load")?;
+        let resolved = normalized_relative_import_module(
+            Path::new("packages/a/src/consumer.test.ts"),
+            "@/owner",
+            Some(&map),
+            Some(&root),
+        );
+        cleanup(&root);
+        match resolved.as_deref() {
+            Some("packages/a/src/owner") => Ok(()),
+            other => Err(format!(
+                "expected the base-anchored package owner, got {other:?}"
+            )),
+        }
     }
 
     /// A nested config with `paths` but NO `baseUrl` still declares (TS 4.1+,

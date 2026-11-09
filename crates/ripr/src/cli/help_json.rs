@@ -1009,6 +1009,14 @@ mod tests {
             ));
         }
 
+        // RIPR-SPEC-0435: the one-command gate projects the same contract.
+        let gate_check = command_exit_json("cmd:gate.check")?;
+        if gate_check != gate {
+            return Err(format!(
+                "cmd:gate.check exit must equal cmd:gate.evaluate: {gate_check} vs {gate}"
+            ));
+        }
+
         let verify = command_exit_json("cmd:agent.verify")?;
         if verify["kind"] != "decision_or_refusal"
             || verify["decision_or_refusal"] != EXIT_DECISION_OR_REFUSAL
