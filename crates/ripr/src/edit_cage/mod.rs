@@ -952,6 +952,7 @@ fn capture_repository_state(
     let mut unknown_ignored_write_guards = Vec::new();
     #[cfg(windows)]
     let mut expected_write_authorities = Vec::new();
+    let explicit_store_scopes = explicit_store_pair_scopes(&policy);
     let identity_started = Instant::now();
     for (path, ignored_path) in inventory {
         // The before-phase serialization lock is an authority artifact, not
@@ -980,7 +981,9 @@ fn capture_repository_state(
                 .forbidden_paths
                 .iter()
                 .any(|rule| rule.matches(&path));
-        if writable_surface && !writable_path_components_are_safe(&root, &path)? {
+        if writable_surface
+            && !writable_path_components_are_safe_in(&root, &path, &explicit_store_scopes)?
+        {
             ambiguous = true;
         }
         #[cfg(windows)]
@@ -1926,6 +1929,32 @@ fn canonical_repository_root(root: &Path) -> Result<PathBuf, String> {
 const ATTEMPT_STORE_PREFIX: &str = "target/ripr/repair-attempts/";
 
 fn writable_path_components_are_safe(root: &Path, relative: &str) -> Result<bool, String> {
+    writable_path_components_are_safe_in(root, relative, &[])
+}
+
+/// The explicit attempt store's retained subtree, when the policy carries one.
+/// The only operational write the product declares besides the `target/ripr`
+/// subtree is an explicit `--store` outside `target/ripr`
+/// (`include_explicit_store_operational_write`), so a subtree operational rule
+/// outside `target/ripr` is that store's `<store>/<attempt>` directory. Exact
+/// rules and anything under `target/ripr` never qualify (#13553).
+fn explicit_store_pair_scopes(policy: &EditCagePolicy) -> Vec<&CagePathRule> {
+    policy
+        .expected_operational_writes
+        .iter()
+        .filter(|rule| {
+            rule.scope == CagePathScope::Subtree
+                && rule.path != "target/ripr"
+                && !rule.path.starts_with("target/ripr/")
+        })
+        .collect()
+}
+
+fn writable_path_components_are_safe_in(
+    root: &Path,
+    relative: &str,
+    explicit_store_scopes: &[&CagePathRule],
+) -> Result<bool, String> {
     let mut current = root.to_path_buf();
     for component in relative.split('/') {
         current.push(component);
@@ -1950,7 +1979,10 @@ fn writable_path_components_are_safe(root: &Path, relative: &str) -> Result<bool
             // `<stem>.tmp-<digits>-<digits>` twin is an unaccounted second name
             // and stays refused (#12847).
             if metadata.nlink() != 1
-                && !(relative.starts_with(ATTEMPT_STORE_PREFIX)
+                && !((relative.starts_with(ATTEMPT_STORE_PREFIX)
+                    || explicit_store_scopes
+                        .iter()
+                        .any(|rule| rule.matches(relative)))
                     && links_are_staged_publication_pair(&current, &metadata)?)
             {
                 return Ok(false);
@@ -5616,6 +5648,127 @@ mod tests {
             &fixture.root,
             "target/ripr/repair-attempts/attempt-1/artifacts/lib.rs"
         )?);
+        Ok(())
+    }
+
+    /// A plain file spelled exactly like the store directory is not the store
+    /// (#13553): the prefix carries its trailing separator, so a staging-shaped
+    /// twin of that file stays refused.
+    #[cfg(unix)]
+    #[test]
+    fn staged_pair_on_a_file_named_like_the_attempt_store_stays_unsafe() -> Result<(), String> {
+        let fixture = git_fixture("staged-pair-store-named-file")?;
+        commit_target_ignore(&fixture)?;
+        let parent = fixture.root.join("target/ripr");
+        fs::create_dir_all(&parent).map_err(|err| format!("create target/ripr: {err}"))?;
+        let file = parent.join("repair-attempts");
+        fs::write(&file, "{}\n").map_err(|err| format!("write store-named file: {err}"))?;
+        fs::hard_link(&file, parent.join("repair-attempts.tmp-1-1"))
+            .map_err(|err| format!("link staging name: {err}"))?;
+        assert!(
+            !writable_path_components_are_safe(&fixture.root, "target/ripr/repair-attempts")?,
+            "a file named like the store must not borrow the store's pair exemption"
+        );
+        Ok(())
+    }
+
+    /// An explicit store outside `target/ripr` accepts the same interrupted
+    /// pair, bound to its own `<store>/<attempt>` subtree and nothing else
+    /// (#13553).
+    #[cfg(unix)]
+    #[test]
+    fn explicit_store_staged_pair_is_scoped_to_its_attempt_subtree() -> Result<(), String> {
+        let fixture = git_fixture("staged-pair-explicit-store")?;
+        commit_target_ignore(&fixture)?;
+        let mut policy = policy()?;
+        policy.expected_operational_writes = vec![
+            CagePathRule::subtree("target/ripr")?,
+            CagePathRule::subtree("stores/one/attempt-1")?,
+            CagePathRule::exact("notes/exact.rs")?,
+        ];
+        let scopes = explicit_store_pair_scopes(&policy);
+        assert_eq!(
+            scopes.iter().map(|rule| rule.path()).collect::<Vec<_>>(),
+            vec!["stores/one/attempt-1"],
+            "only the subtree outside target/ripr is the explicit store"
+        );
+        for (dir_relative, safe) in [
+            ("stores/one/attempt-1/artifacts", true),
+            ("stores/one/attempt-10/artifacts", false),
+            ("stores/one/attempt-1-old", false),
+            ("stores/two/attempt-1/artifacts", false),
+            ("notes", false),
+        ] {
+            let dir = fixture.root.join(dir_relative);
+            fs::create_dir_all(&dir).map_err(|err| format!("create {dir_relative}: {err}"))?;
+            let file_name = if dir_relative == "notes" {
+                "exact.rs"
+            } else {
+                "lib.rs"
+            };
+            let destination = dir.join(file_name);
+            fs::write(&destination, "{}\n")
+                .map_err(|err| format!("write {dir_relative}: {err}"))?;
+            let staging = dir.join(format!("{}.tmp-1-1", file_name.trim_end_matches(".rs")));
+            fs::hard_link(&destination, &staging)
+                .map_err(|err| format!("link staging name in {dir_relative}: {err}"))?;
+            assert_eq!(
+                writable_path_components_are_safe_in(
+                    &fixture.root,
+                    &format!("{dir_relative}/{file_name}"),
+                    &scopes
+                )?,
+                safe,
+                "{dir_relative}: staged pair acceptance"
+            );
+            // Without the explicit-store scope no spelling outside the default
+            // store is accepted.
+            assert!(
+                !writable_path_components_are_safe(
+                    &fixture.root,
+                    &format!("{dir_relative}/{file_name}")
+                )?,
+                "{dir_relative}: default policy must keep refusing"
+            );
+        }
+        Ok(())
+    }
+
+    /// The capture path carries the explicit store's scope into the pair rule
+    /// (#13553): an interrupted pair in the store leaves the baseline
+    /// comparable, while the same pair elsewhere under an operational write
+    /// still marks it ambiguous.
+    #[cfg(unix)]
+    #[test]
+    fn capture_accepts_an_explicit_store_pair_and_still_flags_other_pairs() -> Result<(), String> {
+        let mut outcomes = Vec::new();
+        for dir_relative in ["stores/one/attempt-1/artifacts", "target/ripr/artifacts"] {
+            let fixture = git_fixture("capture-explicit-store-pair")?;
+            commit_target_ignore(&fixture)?;
+            let dir = fixture.root.join(dir_relative);
+            fs::create_dir_all(&dir).map_err(|err| format!("create {dir_relative}: {err}"))?;
+            let destination = dir.join("lib.rs");
+            fs::write(&destination, "{}\n")
+                .map_err(|err| format!("write {dir_relative}: {err}"))?;
+            fs::hard_link(&destination, dir.join("lib.tmp-1-1"))
+                .map_err(|err| format!("link staging name in {dir_relative}: {err}"))?;
+            let mut policy = policy()?;
+            policy
+                .expected_operational_writes
+                .push(CagePathRule::subtree("stores/one/attempt-1")?);
+            let baseline = capture_attempt_baseline(&fixture.root, &policy)?;
+            // The after phase re-captures through the same inventory path.
+            let after = reevaluation_capture(&baseline)?;
+            outcomes.push((dir_relative, baseline.is_ambiguous(), after.is_ambiguous()));
+        }
+        assert_eq!(
+            outcomes,
+            vec![
+                ("stores/one/attempt-1/artifacts", false, false),
+                ("target/ripr/artifacts", true, true)
+            ],
+            "the explicit store's pair is comparable; a pair outside any store is ambiguous"
+        );
         Ok(())
     }
 
