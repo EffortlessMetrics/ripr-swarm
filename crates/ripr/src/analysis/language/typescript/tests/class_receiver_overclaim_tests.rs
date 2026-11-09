@@ -32,12 +32,23 @@ fn test_source(import_line: &str, body: &str) -> String {
 }
 
 fn relation(source: &str, subject: Subject) -> Result<Option<RelationReason>, String> {
+    relation_with(
+        &[
+            ("src/u.ts", URL_CLASS),
+            ("src/other.ts", OTHER_URL_CLASS),
+            ("src/placeholder.ts", "export const placeholder = 1;\n"),
+        ],
+        source,
+        subject,
+    )
+}
+
+fn relation_with(
+    files: &[(&str, &str)],
+    source: &str,
+    subject: Subject,
+) -> Result<Option<RelationReason>, String> {
     let test_file = Path::new("tests/url.test.ts");
-    let files = [
-        ("src/u.ts", URL_CLASS),
-        ("src/other.ts", OTHER_URL_CLASS),
-        ("src/placeholder.ts", "export const placeholder = 1;\n"),
-    ];
     let mut workspace_files: Vec<PathBuf> = files.iter().map(|(p, _)| PathBuf::from(p)).collect();
     workspace_files.push(test_file.to_path_buf());
     let mut sources = std::collections::HashMap::new();
@@ -71,10 +82,18 @@ fn relation(source: &str, subject: Subject) -> Result<Option<RelationReason>, St
             wanted.len()
         ));
     }
-    let tests = extract_tests(test_file, source);
+    let mut tests = extract_tests(test_file, source);
     if tests.len() != 1 {
         return Err(format!("expected one parsed test, got {}", tests.len()));
     }
+    // The production pipeline rewrites a barrel import of a class to the
+    // direct import of the module that declares it before relating tests.
+    index.rewrite_class_barrel_imports(
+        &mut tests,
+        &related_tests::ExportedClasses::from_owners(&owners),
+        None,
+        None,
+    );
     let related = find_related_tests(wanted[0], &tests, None, &index, None);
     Ok(related.first().and_then(|test| test.relation_reason))
 }
@@ -183,6 +202,14 @@ fn a_spied_getter_withholds_observation_credit() -> Result<(), String> {
         Subject::Origin,
         "call-through accessor spy",
     )?;
+    // A call-shaped access of the replaced accessor withholds as well: the
+    // replacement check precedes the member-call needle.
+    let called = "  vi.spyOn(Url.prototype, \"origin\", \"get\").mockReturnValue(() => \"x\");\n  const url = new Url(\"https://x\");\n  expect(url.origin()).toBe(\"x\");";
+    assert_withheld(
+        &test_source(import, called),
+        Subject::Origin,
+        "replaced accessor reached through a call",
+    )?;
     // A spy on an unrelated accessor of another name leaves the credit alone.
     let unrelated = format!("  vi.spyOn(Url.prototype, \"other\", \"get\");\n{GETTER_BODY}");
     assert_credited(
@@ -191,4 +218,126 @@ fn a_spied_getter_withholds_observation_credit() -> Result<(), String> {
         "spy on an unrelated accessor",
     )?;
     Ok(())
+}
+
+const DEFAULT_URL_CLASS: &str = "export default class Url {\n  protocol: string;\n  constructor(input = \"\") {\n    this.protocol = input.split(\":\")[0];\n  }\n}\n";
+const COLLISION_URL_CLASS: &str = "export default class Url {\n  protocol: string;\n  constructor(input = \"\") {\n    this.protocol = input.split(\":\")[0];\n  }\n}\nclass Other {\n  constructor() {}\n}\nexport { Other as Url };\n";
+
+fn default_files(owner_source: &'static str) -> [(&'static str, &'static str); 3] {
+    [
+        ("src/u.ts", owner_source),
+        ("src/other.ts", OTHER_URL_CLASS),
+        ("src/index.ts", "export { Url } from \"./u\";\n"),
+    ]
+}
+
+#[test]
+fn a_local_binding_of_the_class_name_shadows_the_owner() -> Result<(), String> {
+    let import = "import { placeholder } from \"../src/placeholder\";";
+    assert_credited(
+        &test_source(import, CTOR_BODY),
+        Subject::Constructor,
+        "unbound control",
+    )?;
+    let local_const = format!("  const Url = class {{ protocol = \"\"; }};\n{CTOR_BODY}");
+    assert_withheld(
+        &test_source(import, &local_const),
+        Subject::Constructor,
+        "body-local const class",
+    )?;
+    let local_class = format!("  class Url {{ protocol = \"\"; }}\n{CTOR_BODY}");
+    assert_withheld(
+        &test_source(import, &local_class),
+        Subject::Constructor,
+        "body-local class declaration",
+    )?;
+    let file_class = format!(
+        "import {{ expect, it }} from \"vitest\";\nclass Url {{ protocol = \"\"; }}\n\nit(\"x\", () => {{\n{CTOR_BODY}\n}});\n"
+    );
+    assert_withheld(&file_class, Subject::Constructor, "file-level class")?;
+    let param = "import { expect, it } from \"vitest\";\n\nit(\"x\", (Url: any) => {\n  const url = new Url(\"https://x\");\n  expect(url.protocol).toBe(\"https\");\n});\n";
+    assert_withheld(param, Subject::Constructor, "test callback parameter")?;
+    Ok(())
+}
+
+#[test]
+fn a_namespace_import_under_the_class_name_is_withheld() -> Result<(), String> {
+    assert_withheld(
+        &test_source("import * as Url from \"../src/u\";", CTOR_BODY),
+        Subject::Constructor,
+        "namespace import",
+    )?;
+    // Namespace members (`new shop.Url()`) are not constructed-name matches.
+    assert_withheld(
+        &test_source(
+            "import * as shop from \"../src/u\";",
+            &CTOR_BODY.replace("new Url", "new shop.Url"),
+        ),
+        Subject::Constructor,
+        "namespace member",
+    )
+}
+
+#[test]
+fn a_barrel_import_of_the_owner_is_still_credited() -> Result<(), String> {
+    let related = relation_with(
+        &default_files(URL_CLASS),
+        &test_source("import { Url } from \"../src/index\";", CTOR_BODY),
+        Subject::Constructor,
+    )?;
+    if related.is_none() {
+        return Err("barrel re-export of the owner: expected credit".to_string());
+    }
+    Ok(())
+}
+
+#[test]
+fn a_default_exported_owner_is_reached_only_through_the_default_import() -> Result<(), String> {
+    let link_body = CTOR_BODY.replace("Url", "Link");
+    let credited = |import: &str, body: &str| {
+        relation_with(
+            &default_files(DEFAULT_URL_CLASS),
+            &test_source(import, body),
+            Subject::Constructor,
+        )
+    };
+    if credited("import Link from \"../src/u\";", &link_body)?.is_none() {
+        return Err("default import of the default class: expected credit".to_string());
+    }
+    if credited("import Url from \"../src/other\";", CTOR_BODY)?.is_some() {
+        return Err("default import of another module: expected no relation".to_string());
+    }
+    // Collision: the module exports a different class under the name `Url`.
+    let collision = relation_with(
+        &default_files(COLLISION_URL_CLASS),
+        &test_source("import { Url as Link } from \"../src/u\";", &link_body),
+        Subject::Constructor,
+    )?;
+    if collision.is_some() {
+        return Err(format!("named-export collision: got {collision:?}"));
+    }
+    Ok(())
+}
+
+#[test]
+fn a_getter_replaced_at_the_call_site_withholds_observation_credit() -> Result<(), String> {
+    let import = "import { Url } from \"../src/u\";";
+    let define = format!(
+        "  Object.defineProperty(Url.prototype, \"origin\", {{ get: () => \"x\" }});\n{}",
+        GETTER_BODY.replace("https://host", "x")
+    );
+    assert_withheld(
+        &test_source(import, &define),
+        Subject::Origin,
+        "Object.defineProperty",
+    )?;
+    let assign = format!(
+        "  Url.prototype.origin = \"x\";\n{}",
+        GETTER_BODY.replace("https://host", "x")
+    );
+    assert_withheld(
+        &test_source(import, &assign),
+        Subject::Origin,
+        "prototype assignment",
+    )
 }

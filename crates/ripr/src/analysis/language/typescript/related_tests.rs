@@ -2655,8 +2655,9 @@ fn module_value_use_relation(
 
 /// `true` when the test imports a binding whose local name is `class_name`
 /// and that binding is not the owner's own class: a namespace import, a
-/// source that does not resolve to the owner's module, or a name imported
-/// from the owner's module under a different exported name.
+/// source that does not resolve to the owner's module, a name imported from
+/// the owner's module under a different exported name, or a default import of
+/// the owner's module when the owner is not its default export.
 fn class_name_bound_to_other_import(
     test: &TypeScriptTest,
     owner: &TypeScriptOwner,
@@ -2665,19 +2666,49 @@ fn class_name_bound_to_other_import(
     workspace_root: Option<&Path>,
 ) -> bool {
     test.imports_in_file.iter().any(|import| {
-        import.local == class_name
-            && !(!import.namespace
-                && import_source_matches_owner(
-                    import,
-                    &test.file,
-                    owner,
-                    alias_map,
-                    workspace_root,
-                )
-                && (import.imported.as_deref() == Some(class_name)
-                    || (owner.class_default_export
-                        && import.imported.as_deref() == Some("default"))))
+        if import.local != class_name {
+            return false;
+        }
+        let is_owner_import = !import.namespace
+            && import_source_matches_owner(import, &test.file, owner, alias_map, workspace_root)
+            && ((!owner.class_default_export && import.imported.as_deref() == Some(class_name))
+                || (owner.class_default_export && import.imported.as_deref() == Some("default")));
+        !is_owner_import
     })
+}
+
+/// `true` when the body declares `class <name>` (the lexical shadow scan
+/// recognizes `const|let|var|function` declarators, not class declarations).
+fn body_declares_class_named(body_text: &str, name: &str) -> bool {
+    let masked = super::classifier::ts_mask_literals_and_comments(body_text);
+    masked.match_indices("class").any(|(at, keyword)| {
+        let is_ident = |c: char| c.is_alphanumeric() || c == '_' || c == '$';
+        let before_ok = masked
+            .get(..at)
+            .and_then(|before| before.chars().next_back())
+            .is_none_or(|c| !is_ident(c));
+        let rest = &masked[at + keyword.len()..];
+        let trimmed = rest.trim_start();
+        before_ok
+            && trimmed.len() < rest.len()
+            && trimmed.starts_with(name)
+            && trimmed[name.len()..]
+                .chars()
+                .next()
+                .is_none_or(|c| !is_ident(c))
+    })
+}
+
+/// `true` when the test body or an enclosing scope declares its own binding
+/// named `class_name` (a local `class`/`const`, a parameter), so a bare
+/// `new <name>()` reaches that binding and not the owner's class.
+fn class_name_shadowed_in_test(test: &TypeScriptTest, class_name: &str) -> bool {
+    local_identifier_declared_in_test_body(&test.body_text, class_name)
+        || body_declares_class_named(&test.body_text, class_name)
+        || test
+            .scope_bindings
+            .iter()
+            .any(|binding| binding.name == class_name)
 }
 
 pub(crate) fn receiver_owner_call_relation(
@@ -2715,12 +2746,15 @@ pub(crate) fn receiver_owner_call_relation(
         // (#13726). Unbound and same-file names keep the bare-name fallback.
         if let Some(class_name) = owner.class_name.as_deref()
             && !class_name_bound_to_other_import(test, owner, class_name, alias_map, workspace_root)
+            && !class_name_shadowed_in_test(test, class_name)
         {
             constructor_names.push(class_name.to_string());
         }
-        // Named-import aliases (`import { Url as Link }`), namespace members
-        // and resolved default imports, exactly as the cross-package branch
-        // reads them (#13726).
+        // Named-import aliases (`import { Url as Link }`) and resolved default
+        // imports, exactly as the cross-package branch reads them (#13726).
+        // Namespace members (`new shop.Url()`) are named there too but
+        // `contains_new_expression_call` never matches a dotted name, so they
+        // stay uncredited.
         for name in constructor_names_for_method_owner(test, owner, alias_map, workspace_root) {
             push_unique_string(&mut constructor_names, name);
         }
@@ -2771,6 +2805,15 @@ pub(crate) fn receiver_owner_call_relation(
             push_unique_string(&mut receiver_names, binding.name.clone());
         }
     }
+    // A spied, mocked or replaced accessor (`vi.spyOn(Url.prototype,
+    // "origin", "get").mockReturnValue(...)`) is not the getter as written,
+    // so neither reading nor calling through it can notice a mutation of the
+    // getter body (#13726). Checked before any call or read needle: fail
+    // closed on any file-wide replacement, spy or member assignment that
+    // names the getter.
+    if owner.method_kind == TypeScriptMethodKind::Getter && getter_replaced_in_test(test, owner) {
+        return false;
+    }
     if receiver_names
         .iter()
         .any(|receiver| contains_member_call_name(&test.body_text, receiver, &owner.name))
@@ -2784,14 +2827,6 @@ pub(crate) fn receiver_owner_call_relation(
     // needle. Ordinary methods keep the call-only requirement: a bare
     // property read does not execute them.
     if owner.method_kind == TypeScriptMethodKind::Getter {
-        // A spied, mocked or replaced accessor (`vi.spyOn(Url.prototype,
-        // "origin", "get").mockReturnValue(...)`) is not the getter as written,
-        // so reading it cannot notice a mutation of the getter body (#13726).
-        // Fail closed on any file-wide replacement, spy or member assignment
-        // that names the getter.
-        if getter_replaced_in_test(test, owner) {
-            return false;
-        }
         return receiver_names
             .iter()
             .any(|receiver| contains_member_read_name(&test.body_text, receiver, &owner.name))
@@ -3278,9 +3313,13 @@ pub(crate) fn constructor_names_for_method_owner(
             if !owner.class_default_export {
                 push_unique_string(&mut names, format!("{}.{class_name}", import.local));
             }
-        } else if import.imported.as_deref() == Some(class_name)
+        } else if (!owner.class_default_export && import.imported.as_deref() == Some(class_name))
             || (owner.class_default_export && import.imported.as_deref() == Some("default"))
         {
+            // A default-exported class is reachable only through the default
+            // import: a named import spelled like the class names a
+            // different export (`export { Other as Url }`), never this
+            // class (#13726).
             // A named import, or a default import of the owner's
             // default-exported class under any local name.
             push_unique_string(&mut names, import.local.clone());
