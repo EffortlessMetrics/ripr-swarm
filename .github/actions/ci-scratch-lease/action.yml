@@ -87,8 +87,7 @@ runs:
           for _ in $(seq 1 100); do
             kill -0 "$holder" 2>/dev/null || break
             if ! flock -n -x "$lease" true 2>/dev/null; then
-              echo "CARGO_BUILD_BUILD_DIR=$root/target/$id" >> "$GITHUB_ENV"
-              { echo "status=leased"; echo "lease=$lease"; echo "holder_pid=$holder"; } >> "$out"
+              echo "CARGO_BUILD_BUILD_DIR=$root/target/$id" >> "$GITHUB_ENV"; { echo "status=leased"; echo "lease=$lease"; echo "holder_pid=$holder"; } >> "$out"
               echo "ci-scratch-lease acquire: holding $lease for $repo (holder pid $holder)"; exit 0
             fi
             sleep 0.1
