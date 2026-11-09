@@ -49,6 +49,13 @@ bound instance (`invoice.status`), the change stays `exposed`. The companion
 `python_adversarial_attribute_sink_other_receiver` pins the different-value
 variant.
 
+The expected static class per finding (machine-checked against
+`expected/check.json` by `check-fixture-contracts`, #12928):
+
+```expected-classes
+probe:src_session.py:python_preview:a8af27c6 -> weakly_exposed
+```
+
 ## Must Not
 
 - Credit `exposed` from value+attribute token matches on a receiver not bound

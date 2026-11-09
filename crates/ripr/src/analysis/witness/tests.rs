@@ -6,11 +6,11 @@ use crate::analysis::seams::{
 };
 use crate::analysis::test_grip_evidence::{RelatedTestGrip, TestGripEvidence, TestTargetEvidence};
 use crate::domain::{
-    ActivationEvidence, Confidence, DeltaKind, ExposureClass, Finding, FindingCanonicalGap,
-    LanguageId, LanguageStatus, MissingDiscriminatorFact, OracleKind, OracleStrength, Probe,
-    ProbeFamily, ProbeId, RelatedTest, RelationReason, RevealEvidence, RiprEvidence,
-    SourceCurrentness, SourceLocation, StageEvidence, StageState, StaticLimitKind, StopReason,
-    SymbolId,
+    ActivationEvidence, Confidence, DeltaKind, DiscriminatorShape, ExposureClass, Finding,
+    FindingCanonicalGap, LanguageId, LanguageStatus, MissingDiscriminatorFact, OracleKind,
+    OracleStrength, Probe, ProbeFamily, ProbeId, RelatedTest, RelationReason, RevealEvidence,
+    RiprEvidence, SourceCurrentness, SourceLocation, StageEvidence, StageState, StaticLimitKind,
+    StopReason, SymbolId,
 };
 
 use super::{
@@ -160,10 +160,12 @@ impl FindingSpec {
                 missing_discriminators: self
                     .missing
                     .iter()
-                    .map(|value| MissingDiscriminatorFact {
-                        value: (*value).to_string(),
-                        reason: "fixture".to_string(),
-                        flow_sink: None,
+                    .map(|value| {
+                        MissingDiscriminatorFact::equality_spelled(
+                            (*value).to_string(),
+                            "fixture".to_string(),
+                            None,
+                        )
                     })
                     .collect(),
             },
@@ -283,10 +285,12 @@ impl SeamSpec {
                 missing_discriminators: self
                     .missing
                     .iter()
-                    .map(|value| MissingDiscriminatorFact {
-                        value: (*value).to_string(),
-                        reason: "fixture".to_string(),
-                        flow_sink: None,
+                    .map(|value| {
+                        MissingDiscriminatorFact::equality_spelled(
+                            (*value).to_string(),
+                            "fixture".to_string(),
+                            None,
+                        )
                     })
                     .collect(),
                 statically_contradicted_related_tests: 0,
@@ -965,6 +969,8 @@ fn reordering_source_facts_is_byte_stable() {
             value: "amount >= threshold".to_string(),
             reason: "duplicate".to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Other,
+            drafted_boundary: None,
         },
     );
     let first = from_finding(&finding);
@@ -1354,4 +1360,16 @@ fn unmatched_repo_witness_stays_in_repo_columns() {
     assert_eq!(row.repo_semantic_digest, repo.semantic_digest);
     assert_eq!(row.diff_target, "absent");
     assert_eq!(row.repo_target, repo.selected_target.kind());
+}
+
+#[test]
+fn rust_shared_witness_authority_uses_existing_adapter() {
+    use super::language_projection::shared_witness_from_rust_finding;
+
+    let finding = FindingSpec::default().build();
+    let input = AdapterInput::diff_current();
+    assert_eq!(
+        from_finding_with_input(&finding, input),
+        shared_witness_from_rust_finding(&finding, input)
+    );
 }

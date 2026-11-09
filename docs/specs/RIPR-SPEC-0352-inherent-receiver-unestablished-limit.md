@@ -119,6 +119,13 @@ cause.
   scope, unnameable-package scope, import-root scan, manifest rename/mismatch
   check and unmatched-name reach-every-package each fail a control, as does the
   `#[ignore]` exclusion.
+- A bare `assert_matches!` (#10666) is no prelude macro, so only the
+  limit-naming pass reads its first operand, and only when no workspace file
+  declares a `macro_rules! assert_matches`. The credit path never admits it: a
+  placed workspace keeps the token-substring gap, and a qualified spelling, a
+  local macro, a wrong receiver and a broad `Err(_)` pattern keep theirs. A
+  placed workspace's gap for an inherent method behind a non-standard assertion
+  macro still reads no named limit; that is tracked separately.
 - Still unexercised: the duplicate-directory clause of the reach-every-package
   rule, crate-local and scoped names under trust, the own-related-tests
   filter (the same-named-type control pins the outcome, not the filter), the

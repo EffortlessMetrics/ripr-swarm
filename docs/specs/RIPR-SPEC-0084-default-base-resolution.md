@@ -174,6 +174,11 @@ without picking one. A nested branch name (`feature/topic`) probes the
 same tracking forms before its first segment is treated as a remote
 qualifier; explicit `refs/...` paths and rev expressions never probe.
 
+In a repository with no commits and no refs at all, no revision can resolve, so
+the repair says the repository has no commits yet and to commit once instead
+of asking for a spelling check or a remote (#13664). A repository that has
+other refs keeps the spelling and remote advice.
+
 Commands that take both revisions (`diff`, `review-comments`) verify the
 head the same way: an unresolvable `--head` fails with ripr's named message
 and a `--head <ref>` repair, never git's `ambiguous argument` advice. They
