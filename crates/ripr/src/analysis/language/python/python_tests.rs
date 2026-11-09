@@ -5899,3 +5899,133 @@ fn test_local_module_shadows_a_bare_owner_import_for_tests_it_precedes() {
     ];
     assert!(!identifies(&packaged, "core", "svc/a/tests/unit/test_x.py"));
 }
+
+/// #13706: the issue's layout (a project with its own `pyproject.toml`, a
+/// project-relative `core` and a helper `tests/core.py`), every import form,
+/// and a `conftest.py` whose basedir pytest also puts on `sys.path`.
+#[test]
+fn test_local_module_shadow_covers_project_names_import_forms_and_conftest_dirs() {
+    let owner = |file: &str, name: &str| PythonOwner {
+        name: name.to_string(),
+        qualified_name: name.to_string(),
+        file: PathBuf::from(file),
+        start_line: 1,
+        end_line: 4,
+        owner_kind: Some(OwnerKind::Function),
+        decorators: Vec::new(),
+        imports: Vec::new(),
+        cli_receiver_names: Vec::new(),
+        route_paths: Vec::new(),
+        route_methods: Vec::new(),
+        route_receivers: Vec::new(),
+        dynamic_route_decorators: Vec::new(),
+        unplain_decorators: Vec::new(),
+        decorator_lines: None,
+        parameters: Vec::new(),
+        reexport_modules: Vec::new(),
+        star_exported: false,
+        ambiguous_src_modules: Vec::new(),
+        test_local_shadows: Vec::new(),
+        rival_definition_modules: Vec::new(),
+        module_constants: Vec::new(),
+        same_class_callees: Vec::new(),
+        module_callees: Vec::new(),
+        class_path: String::new(),
+        term_facts: Default::default(),
+        class_facts: Default::default(),
+        foreign_writes: Default::default(),
+        version_conditional: false,
+        cli_subcommand: None,
+        nested_called_by_parent: false,
+        nested_result_discarded: false,
+        trusted_stdlib_click_alias: false,
+    };
+    // All forms of `core` imported by `test`; true when the owner at
+    // `owner_file` stays the owner.
+    let identifies = |files: &[&str], owner_file: &str, test: &str| {
+        let files = files.iter().map(PathBuf::from).collect::<Vec<_>>();
+        let mut owners = vec![owner(owner_file, "limit")];
+        super::related_tests::apply_src_module_ambiguity(
+            &mut owners,
+            files.iter().filter(|file| !is_test_file(file)),
+        );
+        super::related_tests::apply_project_module_names(
+            &mut owners,
+            files.iter().filter(|file| !is_test_file(file)),
+            |path| files.iter().any(|file| file == path),
+        );
+        super::related_tests::apply_test_local_shadows(&mut owners, files.iter());
+        let from = |module: &str| PythonImport {
+            imported: "limit".to_string(),
+            alias: "limit".to_string(),
+            source_module: module.to_string(),
+        };
+        let bare = PythonImport {
+            imported: "core".to_string(),
+            alias: "core".to_string(),
+            source_module: String::new(),
+        };
+        let from_form =
+            import_source_module_matches_owner(&from("core"), &owners[0], Path::new(test));
+        let dotted_form =
+            import_source_module_matches_owner(&from("core.sub"), &owners[0], Path::new(test));
+        let plain_form =
+            super::related_tests::imported_module_matches_owner(&bare, &owners[0], Path::new(test));
+        (from_form, dotted_form, plain_form)
+    };
+    let test = "svc/a/tests/test_x.py";
+    // The issue's layout: `core` is the project-relative name of
+    // `svc/a/core.py`. Control without the helper identifies the owner.
+    let project = ["svc/a/pyproject.toml", "svc/a/core.py", test];
+    assert!(identifies(&project, "svc/a/core.py", test).0);
+    assert!(identifies(&project, "svc/a/core.py", test).2);
+    // With `svc/a/tests/core.py` the bare `from core import limit` and
+    // `import core` name the helper.
+    let shadowed = [
+        "svc/a/pyproject.toml",
+        "svc/a/core.py",
+        "svc/a/tests/core.py",
+        test,
+    ];
+    let (from_form, _, plain_form) = identifies(&shadowed, "svc/a/core.py", test);
+    assert!(!from_form);
+    assert!(!plain_form);
+    // A dotted `from core.sub import limit` is shadowed by the same helper;
+    // the control without it identifies the submodule owner.
+    let sub = ["svc/a/pyproject.toml", "svc/a/core/sub.py", test];
+    assert!(identifies(&sub, "svc/a/core/sub.py", test).1);
+    let sub_shadowed = [
+        "svc/a/pyproject.toml",
+        "svc/a/core/sub.py",
+        "svc/a/tests/core.py",
+        test,
+    ];
+    assert!(!identifies(&sub_shadowed, "svc/a/core/sub.py", test).1);
+    // A helper beside a test directory that is not `tests/` still shadows
+    // (`e2e/core.py` is not test-flagged by name).
+    let e2e = [
+        "svc/a/pyproject.toml",
+        "svc/a/core.py",
+        "svc/a/e2e/core.py",
+        "svc/a/e2e/test_x.py",
+    ];
+    assert!(!identifies(&e2e, "svc/a/core.py", "svc/a/e2e/test_x.py").0);
+    // A collected conftest inserts its basedir: the helper is ahead for a
+    // test in a non-package subdirectory only when `tests/conftest.py` exists.
+    let nested = [
+        "svc/a/pyproject.toml",
+        "svc/a/core.py",
+        "svc/a/tests/core.py",
+        "svc/a/tests/unit/test_x.py",
+    ];
+    let unit = "svc/a/tests/unit/test_x.py";
+    assert!(identifies(&nested, "svc/a/core.py", unit).0);
+    let with_conftest = [
+        "svc/a/pyproject.toml",
+        "svc/a/core.py",
+        "svc/a/tests/core.py",
+        "svc/a/tests/conftest.py",
+        "svc/a/tests/unit/test_x.py",
+    ];
+    assert!(!identifies(&with_conftest, "svc/a/core.py", unit).0);
+}
