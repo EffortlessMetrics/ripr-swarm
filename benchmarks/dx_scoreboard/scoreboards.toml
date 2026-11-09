@@ -655,17 +655,37 @@ runner_dependent = false
 source = "verdict-corpus:fixtures/rust-verdict-corpus#false_actionable_rate"
 pending_reason = "the rates are derived from fixtures/rust-verdict-corpus/expected/rows; restore the corpus from main; `cargo xtask verdict-corpus check` reports any drift"
 
+# The bar sits on the avoidable rate below (RIPR-SPEC-0219, #12766). This
+# total also counts abstentions a spec's `Reject` example asks for (0.0678 of
+# the corpus when the split landed), so its target is the avoidable bar plus
+# that share; it stays here so the total remains visible and ratcheted.
 [[metric]]
 id = "trust.verdict_corpus_abstention"
 board = "trust"
-title = "Hand-checked edits where ripr gives no specific verdict"
+title = "Hand-checked edits where ripr gives no specific verdict (including abstentions a spec asks for)"
+unit = "ratio"
+direction = "lower_is_better"
+target = 0.27
+regression_pct = 0
+regression_floor = 0.02
+runner_dependent = false
+source = "verdict-corpus:fixtures/rust-verdict-corpus#abstention_rate"
+pending_reason = "the rates are derived from fixtures/rust-verdict-corpus/expected/rows; restore the corpus from main; `cargo xtask verdict-corpus check` reports any drift"
+
+# Abstentions analyzer work can remove: a row whose case cites only spec
+# `Reject` examples and accepts `limited` abstains because its spec asks it
+# to, so it is left out of this numerator (RIPR-SPEC-0219).
+[[metric]]
+id = "trust.verdict_corpus_avoidable_abstention"
+board = "trust"
+title = "Hand-checked edits where ripr gives no specific verdict and no spec asks it to abstain"
 unit = "ratio"
 direction = "lower_is_better"
 target = 0.2
 regression_pct = 0
 regression_floor = 0.02
 runner_dependent = false
-source = "verdict-corpus:fixtures/rust-verdict-corpus#abstention_rate"
+source = "verdict-corpus:fixtures/rust-verdict-corpus#avoidable_abstention_rate"
 pending_reason = "the rates are derived from fixtures/rust-verdict-corpus/expected/rows; restore the corpus from main; `cargo xtask verdict-corpus check` reports any drift"
 
 [[metric]]

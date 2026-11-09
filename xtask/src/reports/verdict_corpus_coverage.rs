@@ -144,6 +144,54 @@ fn is_slug(text: &str) -> bool {
 /// items and ``- example `slug`: `` slug items at the start of a line. Continuation
 /// lines are indented, so they never start an item; fenced code is skipped.
 pub(crate) fn acceptance_items(markdown: &str) -> Vec<ExampleKey> {
+    acceptance_items_with_text(markdown)
+        .into_iter()
+        .map(|(key, _)| key)
+        .collect()
+}
+
+/// The acceptance examples whose item opens with `Reject`: the spec names an
+/// input its rule must not resolve, so the finding keeps its fail-closed
+/// class (RIPR-SPEC-0219 abstention-expected rows).
+pub(crate) fn reject_examples(markdown: &str) -> BTreeSet<ExampleKey> {
+    acceptance_items_with_text(markdown)
+        .into_iter()
+        .filter(|(_, text)| text.trim_start().starts_with("Reject"))
+        .map(|(key, _)| key)
+        .collect()
+}
+
+/// `RIPR-SPEC-NNNN#<key>` for every `Reject` acceptance example in the
+/// specs of the repository that owns `fixtures/<corpus>/`. A corpus with no
+/// such repository (a test tempdir) cites no specs ripr can read, so it has
+/// none.
+pub(crate) fn reject_example_ids_for_corpus(corpus_dir: &Path) -> Result<BTreeSet<String>, String> {
+    let Ok(dir) = specs_dir_for_corpus(corpus_dir) else {
+        return Ok(BTreeSet::new());
+    };
+    let mut ids = BTreeSet::new();
+    let entries =
+        fs::read_dir(&dir).map_err(|err| format!("read {}: {err}", normalize_path(&dir)))?;
+    for entry in entries {
+        let entry = entry.map_err(|err| format!("read {}: {err}", normalize_path(&dir)))?;
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let Some(id) = spec_id_of(&name) else {
+            continue;
+        };
+        let path = entry.path();
+        let text = fs::read_to_string(&path)
+            .map_err(|err| format!("read {}: {err}", normalize_path(&path)))?;
+        ids.extend(
+            reject_examples(&text)
+                .into_iter()
+                .map(|key| format!("{id}#{key}")),
+        );
+    }
+    Ok(ids)
+}
+
+/// [`acceptance_items`] with the rest of each item's first line.
+fn acceptance_items_with_text(markdown: &str) -> Vec<(ExampleKey, String)> {
     let mut found = Vec::new();
     let mut inside = false;
     // The open fence's character and length: Markdown fences use backticks or
@@ -173,23 +221,22 @@ pub(crate) fn acceptance_items(markdown: &str) -> Vec<ExampleKey> {
         if !inside {
             continue;
         }
-        if let Some(slug) = line
+        if let Some((slug, text)) = line
             .strip_prefix("- example `")
             .and_then(|rest| rest.split_once("`:"))
-            .map(|(slug, _)| slug)
-            .filter(|slug| is_slug(slug))
+            .filter(|(slug, _)| is_slug(slug))
         {
-            found.push(ExampleKey::Slug(slug.to_string()));
+            found.push((ExampleKey::Slug(slug.to_string()), text.to_string()));
             continue;
         }
         let digits: String = line.chars().take_while(char::is_ascii_digit).collect();
         if !digits.is_empty()
-            && line
+            && let Some(text) = line
                 .get(digits.len()..)
-                .is_some_and(|rest| rest.starts_with(". "))
+                .and_then(|rest| rest.strip_prefix(". "))
             && let Ok(number) = digits.parse::<usize>()
         {
-            found.push(ExampleKey::Number(number));
+            found.push((ExampleKey::Number(number), text.to_string()));
         }
     }
     found

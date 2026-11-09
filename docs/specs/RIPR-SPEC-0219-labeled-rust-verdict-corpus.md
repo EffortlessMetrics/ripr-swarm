@@ -274,6 +274,23 @@ and contradiction rates as exact fractions, the verdict rates again per
 subject origin, and one row per case with its origin and a
 `changed_since_labeling` flag.
 
+The report splits abstentions into abstention-expected and avoidable
+(#12766). A case expects its abstention when it cites at least one spec
+example, every example it cites is a `Reject` item (its `## Acceptance
+Examples` entry opens with `Reject`), and its `acceptable_verdicts` include
+`limited`. Such a spec names an input its rule must not resolve, so analyzer
+work can only remove that abstention by breaking the spec. The row then
+carries `abstention_expected: true`, and `avoidable_abstention_rate` counts
+the abstained rows without it over all cases. Because the denominator is the
+same, the abstention-expected share is `abstention_rate` minus
+`avoidable_abstention_rate`. Truth labels and scoring do not change: such a
+row still scores `abstained`, and the flag never makes an abstention ideal.
+The dx scoreboard puts the abstention bar on the avoidable rate
+(`trust.verdict_corpus_avoidable_abstention`, target 0.2). It keeps the total
+(`trust.verdict_corpus_abstention`) visible and ratcheted, and its target is
+the avoidable bar plus the abstention-expected share when the split landed
+(0.0678, so 0.27).
+
 The contradiction rate counts candidate-current findings across each case's
 whole `ripr check` run, not only the anchor line, because a
 self-contradicting finding anywhere is an internal inconsistency.
@@ -810,6 +827,10 @@ Oracle-accuracy tests live in
 - `verdict_corpus_false_verdict_rate`
 - `verdict_corpus_false_actionable_rate`
 - `verdict_corpus_contradiction_rate`
+- `verdict_corpus_avoidable_abstention_rate` (dx-scoreboard
+  `trust.verdict_corpus_avoidable_abstention`, target 0.2, lower is better);
+  the total `verdict_corpus_abstention_rate` stays reported
+  (`trust.verdict_corpus_abstention`, target 0.27)
 - `verdict_corpus_spec_example_coverage` (dx-scoreboard
   `trust.verdict_corpus_spec_example_coverage`, target 1.0, regression
   margin 0)

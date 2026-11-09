@@ -976,3 +976,44 @@ fn committed_corpus_tests_do_not_pin_spec_example_counts() -> Result<(), String>
     }
     Ok(())
 }
+
+#[test]
+fn reject_examples_are_the_acceptance_items_that_open_with_reject() {
+    let spec = "## Behavior\n\n1. Reject: not an example.\n\n## Acceptance Examples\n\n1. Accept: a resolved row.\n2. Reject: a computed argument keeps the operand unknown.\n3. A plain item that rejects nothing by keyword.\n\n```text\n4. Reject: inside a fence\n```\n\n- example `shadowed-name`: Reject: a shadowed binding.\n- example `kept-name`: Accept: the plain binding.\n\n## Test Mapping\n\n5. Reject: not an example\n";
+    assert_eq!(
+        reject_examples(spec),
+        [
+            ExampleKey::Number(2),
+            ExampleKey::Slug("shadowed-name".to_string())
+        ]
+        .into_iter()
+        .collect::<BTreeSet<_>>()
+    );
+    // The key parser is shared, so the keys stay exactly the acceptance items.
+    assert_eq!(
+        acceptance_items(spec),
+        vec![
+            ExampleKey::Number(1),
+            ExampleKey::Number(2),
+            ExampleKey::Number(3),
+            ExampleKey::Slug("shadowed-name".to_string()),
+            ExampleKey::Slug("kept-name".to_string()),
+        ]
+    );
+}
+
+#[test]
+fn reject_example_ids_read_the_owning_repository_specs_and_none_for_a_tempdir() -> Result<(), String>
+{
+    let ids = reject_example_ids_for_corpus(&repo_path(CORPUS_DIR))?;
+    // RIPR-SPEC-0163 example 3 reads "Reject: a computed argument ..." and
+    // example 1 reads "Accept: ...".
+    assert!(ids.contains("RIPR-SPEC-0163#3"), "{ids:?}");
+    assert!(!ids.contains("RIPR-SPEC-0163#1"), "{ids:?}");
+    let dir = std::env::temp_dir().join(format!("ripr-reject-ids-{}", std::process::id()));
+    fs::create_dir_all(&dir).map_err(|err| err.to_string())?;
+    let none = reject_example_ids_for_corpus(&dir);
+    let _ = fs::remove_dir_all(&dir);
+    assert_eq!(none?, BTreeSet::new());
+    Ok(())
+}

@@ -755,6 +755,12 @@ pub(crate) struct CaseRow {
     pub(crate) changed_since_labeling: bool,
     pub(crate) observed_classifications: Vec<String>,
     pub(crate) outcome: Outcome,
+    /// Every spec example the case cites is a `Reject` example and the case
+    /// accepts `limited`: its spec asks ripr not to resolve this input, so an
+    /// abstention here is the specified behavior, not a miss analyzer work
+    /// could remove (RIPR-SPEC-0219). Absent when false.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub(crate) abstention_expected: bool,
     pub(crate) contradictions: Vec<String>,
     /// Candidate-current findings anywhere in the case's check.
     pub(crate) findings_scored: usize,
@@ -786,6 +792,11 @@ pub(crate) struct Report {
     pub(crate) false_silent_rate: Ratio,
     pub(crate) ideal_rate: Ratio,
     pub(crate) abstention_rate: Ratio,
+    /// Abstained rows that are not [`CaseRow::abstention_expected`]: the
+    /// abstentions analyzer work could remove without breaking a spec's
+    /// `Reject` example. Same denominator as `abstention_rate`, so the
+    /// abstention-expected share is the difference (RIPR-SPEC-0219).
+    pub(crate) avoidable_abstention_rate: Ratio,
     pub(crate) contradiction_rate: Ratio,
     pub(crate) contradictions_by_code: BTreeMap<String, usize>,
     /// Abstained rows again, by what the abstention missed (`gap_missed` or
@@ -830,8 +841,21 @@ pub(crate) struct OriginRates {
     pub(crate) false_silent_rate: Ratio,
     pub(crate) ideal_rate: Ratio,
     pub(crate) abstention_rate: Ratio,
+    /// Abstained rows that are not [`CaseRow::abstention_expected`]: the
+    /// abstentions analyzer work could remove without breaking a spec's
+    /// `Reject` example. Same denominator as `abstention_rate`, so the
+    /// abstention-expected share is the difference (RIPR-SPEC-0219).
+    pub(crate) avoidable_abstention_rate: Ratio,
     /// [`Report::abstention_by_cause`] for this origin's rows only.
     pub(crate) abstention_by_cause: BTreeMap<String, usize>,
+}
+
+/// Abstained rows whose case does not expect the abstention.
+fn avoidable_abstentions<R: std::borrow::Borrow<CaseRow>>(rows: &[R]) -> usize {
+    rows.iter()
+        .map(std::borrow::Borrow::borrow)
+        .filter(|row| row.outcome == Outcome::Abstained && !row.abstention_expected)
+        .count()
 }
 
 /// Count abstained rows by `<side missed>:<classification>`.
@@ -883,6 +907,7 @@ fn origin_rates(rows: &[&CaseRow]) -> OriginRates {
         false_silent_rate: ratio(false_silent, not_fully),
         ideal_rate: ratio(count(Outcome::Ideal), rows.len()),
         abstention_rate: ratio(count(Outcome::Abstained), rows.len()),
+        avoidable_abstention_rate: ratio(avoidable_abstentions(rows), rows.len()),
         abstention_by_cause: abstention_by_cause(rows),
     }
 }
@@ -896,6 +921,7 @@ pub(crate) fn case_row(
     origin: SubjectOrigin,
     check: &Value,
     anchor_line: Option<&str>,
+    reject_examples: &BTreeSet<String>,
 ) -> Result<CaseRow, String> {
     let packet_driven = case.perl_facts.is_some();
     let anchored = anchored_findings(check, &case.anchor, anchor_line, packet_driven);
@@ -956,6 +982,7 @@ pub(crate) fn case_row(
             || classes != case.labeling_observation.full_checkout_classifications,
         observed_classifications: classes,
         outcome: score(case.truth.state, observed),
+        abstention_expected: abstention_expected(case, reject_examples),
         contradictions: contradictions.into_iter().collect(),
         findings_scored: scored,
         findings_contradicted: contradicted,
@@ -965,12 +992,29 @@ pub(crate) fn case_row(
     })
 }
 
+/// Whether the case's spec asks for the abstention: it cites at least one
+/// spec example, every cited example is a `Reject` example, and the case
+/// lists `limited` among its acceptable verdicts.
+pub(crate) fn abstention_expected(case: &Case, reject_examples: &BTreeSet<String>) -> bool {
+    !case.spec_examples.is_empty()
+        && case
+            .spec_examples
+            .iter()
+            .all(|id| reject_examples.contains(id))
+        && case
+            .expected
+            .acceptable_verdicts
+            .contains(&Verdict::Limited)
+}
+
 /// `anchor_lines` maps a case id to its anchor line's text, read from the
-/// patched run copy.
+/// patched run copy. `reject_examples` holds the `Reject` acceptance
+/// examples of the corpus's specs ([`abstention_expected`]).
 pub(crate) fn build_report(
     corpus: &Corpus,
     checks: &[(String, Value)],
     anchor_lines: &BTreeMap<String, String>,
+    reject_examples: &BTreeSet<String>,
 ) -> Result<Report, String> {
     let by_id: BTreeMap<&str, &Value> = checks.iter().map(|(id, v)| (id.as_str(), v)).collect();
     let origins: BTreeMap<&str, SubjectOrigin> = corpus
@@ -997,6 +1041,7 @@ pub(crate) fn build_report(
             origin,
             check,
             anchor_lines.get(&case.case_id).map(String::as_str),
+            reject_examples,
         )?);
     }
     Ok(summarize(
@@ -1068,6 +1113,7 @@ pub(crate) fn summarize(spec: String, non_claims: Vec<String>, rows: Vec<CaseRow
         false_silent_rate: ratio(false_silent, not_fully),
         ideal_rate: ratio(count(Outcome::Ideal), rows.len()),
         abstention_rate: ratio(count(Outcome::Abstained), rows.len()),
+        avoidable_abstention_rate: ratio(avoidable_abstentions(&rows), rows.len()),
         contradiction_rate: ratio(findings_contradicted, findings_scored),
         contradictions_by_code: by_code,
         abstention_by_cause: abstention_by_cause(&rows),
@@ -1160,6 +1206,10 @@ pub(crate) fn render_report_markdown(report: &Report, language: &str) -> String 
         (
             "Abstained (limited or silent where acceptable)",
             &report.abstention_rate,
+        ),
+        (
+            "Avoidable abstentions (abstained, not asked for by a spec Reject example)",
+            &report.avoidable_abstention_rate,
         ),
         ("Findings with a contradiction", &report.contradiction_rate),
     ] {
@@ -2906,7 +2956,8 @@ fn run_corpus(dir: &Path, corpus: &Corpus, work_root: &Path) -> Result<Report, S
         }
         checks.push((case.case_id.clone(), check));
     }
-    build_report(corpus, &checks, &anchor_lines)
+    let reject_examples = coverage::reject_example_ids_for_corpus(dir)?;
+    build_report(corpus, &checks, &anchor_lines, &reject_examples)
 }
 
 pub(crate) fn validated_corpus(dir: &Path) -> Result<(Corpus, SpecExampleCoverage), String> {

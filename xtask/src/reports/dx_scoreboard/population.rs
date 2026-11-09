@@ -35,6 +35,7 @@ fn projection(rate: &str) -> Result<(Option<PacketProvenance>, &str), String> {
     };
     match leaf {
         "abstention_rate"
+        | "avoidable_abstention_rate"
         | "ideal_rate"
         | "false_verdict_rate"
         | "false_actionable_rate"
@@ -72,7 +73,10 @@ impl Population {
         let (mut numerator, mut denominator) = (0_u64, 0_u64);
         for case in &self.cases {
             let denominator_valid = match leaf {
-                "abstention_rate" | "ideal_rate" | "false_verdict_rate" => {
+                "abstention_rate"
+                | "avoidable_abstention_rate"
+                | "ideal_rate"
+                | "false_verdict_rate" => {
                     case.denominator == 1 || (provenance.is_some() && case.denominator == 0)
                 }
                 "false_actionable_rate"

@@ -1637,3 +1637,27 @@ fn operational_baseline_refreshes_only_the_five_rust_rates_with_provenance() -> 
     );
     Ok(())
 }
+
+#[test]
+fn avoidable_abstention_population_sums_to_the_report_and_stays_under_the_total()
+-> Result<(), String> {
+    let rust = population::Records::load(
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures/rust-verdict-corpus"),
+    )?;
+    let report = crate::reports::verdict_corpus::expected_report(
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures/rust-verdict-corpus"),
+    )?;
+    let avoidable = rust.population("avoidable_abstention_rate")?.totals()?;
+    let total = rust.population("abstention_rate")?.totals()?;
+    assert_eq!(
+        avoidable,
+        (
+            report.avoidable_abstention_rate.numerator as u64,
+            report.avoidable_abstention_rate.denominator as u64
+        )
+    );
+    assert_eq!(avoidable.1, total.1);
+    // The committed corpus has rows a spec Reject example asks to abstain.
+    assert!(avoidable.0 < total.0, "{avoidable:?} vs {total:?}");
+    Ok(())
+}
