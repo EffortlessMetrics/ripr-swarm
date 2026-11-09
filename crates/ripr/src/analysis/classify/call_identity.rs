@@ -176,7 +176,7 @@ pub(crate) struct CallIdentityMemos {
     /// every indexed function and lexes the test file, and depends on the
     /// index, owner and test alone, so the per-(seam, related test) check
     /// pays it once.
-    local_rival_modules: Mutex<BTreeMap<(String, std::path::PathBuf, String, usize), bool>>,
+    local_rival_modules: Mutex<BTreeMap<(String, std::path::PathBuf, String, usize, u64), bool>>,
     /// Per (trait name, receiver head), whether some indexed source may
     /// implement the trait for a std-headed type. The answer reads every
     /// indexed file's syntax and depends on the index alone, so the
@@ -219,7 +219,7 @@ impl CallIdentityMemos {
     /// first use (recomputed, not cached, if the lock is poisoned).
     fn local_rival_module(
         &self,
-        key: (String, std::path::PathBuf, String, usize),
+        key: (String, std::path::PathBuf, String, usize, u64),
         compute: impl FnOnce() -> bool,
     ) -> bool {
         if let Ok(cache) = self.local_rival_modules.lock()
@@ -3328,11 +3328,20 @@ pub(in crate::analysis) fn test_calls_only_through_local_rival_module(
     if test.file == owner.file {
         return false;
     }
+    // Two inline sibling modules can put a same-named test on one physical
+    // line, so the body is part of the test's identity here.
+    let body_hash = {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        test.body.as_str().hash(&mut hasher);
+        hasher.finish()
+    };
     let key = (
         owner.id.0.clone(),
         test.file.clone(),
         test.name.clone(),
         test.start_line,
+        body_hash,
     );
     index
         .call_identity_memos
@@ -3747,6 +3756,55 @@ mod tests {
         assert_eq!(withheld("tests/boundary.rs"), Some(true));
         // `crate::` is the library root elsewhere: the production relation stays.
         assert_eq!(withheld("src/boundary.rs"), Some(false));
+    }
+
+    /// #13868: the memo key names the test body, so two same-named tests that
+    /// share one physical line (inline sibling modules) keep their own answer
+    /// whichever is asked first.
+    #[test]
+    fn same_line_sibling_tests_keep_their_own_local_rival_answer() {
+        let prod = "pub fn score() -> i32 { 1 }\n";
+        let tests = "mod a { pub fn score() -> i32 { 0 } #[test] fn t() { assert_eq!(crate::a::score(), 0); } } mod b { #[test] fn t() { assert_eq!(modules::score(), 1); } }\n";
+        let files = [("src/lib.rs", prod), ("tests/edge.rs", tests)];
+        let answers = |order: [usize; 2]| {
+            let index = index(&files);
+            let owner = index
+                .functions()
+                .iter()
+                .find(|function| function.file == Path::new("src/lib.rs"));
+            let mut found = [None, None];
+            if let Some(owner) = owner {
+                let ts: Vec<&TestSummary> = index
+                    .tests()
+                    .iter()
+                    .filter(|test| test.file == Path::new("tests/edge.rs") && test.name == "t")
+                    .collect();
+                assert_eq!(ts.len(), 2, "both same-line tests are indexed");
+                assert_eq!(ts[0].start_line, ts[1].start_line);
+                for slot in order {
+                    found[slot] = Some(test_calls_only_through_local_rival_module(
+                        &index, owner, ts[slot],
+                    ));
+                }
+            }
+            found
+        };
+        let forward = answers([0, 1]);
+        let reverse = answers([1, 0]);
+        assert_eq!(
+            forward, reverse,
+            "the answer never depends on the ask order"
+        );
+        assert_eq!(
+            forward[0],
+            Some(true),
+            "the first test calls the local rival"
+        );
+        assert_eq!(
+            forward[1],
+            Some(false),
+            "the second test keeps the owner relation"
+        );
     }
 
     fn strings(segments: &[&str]) -> Vec<String> {
