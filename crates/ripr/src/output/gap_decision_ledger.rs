@@ -5709,7 +5709,10 @@ mod tests {
         // #13621: `python_guarded_field_value_untaken` downgrades a guarded
         // field value no test enters; its weak card names the `total < 0`
         // discriminator, one more direct-aligned card.
-        if (direct, no_strong, orthogonal, family_selection) != (23, 38, 31, 1) {
+        // #13622: `python_exception_stale_type_no_credit` downgrades a raised
+        // type change that every strong `pytest.raises` still pins to the old
+        // type; its weak card is direct-aligned, one more.
+        if (direct, no_strong, orthogonal, family_selection) != (24, 38, 31, 1) {
             return Err(format!(
                 "corpus inventory drift: direct={direct}, unknown={no_strong}, orthogonal={orthogonal}, family_selection={family_selection}"
             ));

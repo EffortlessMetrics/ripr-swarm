@@ -1,0 +1,10 @@
+diff --git a/fx/core.py b/fx/core.py
+index 1111111..2222222 100644
+--- a/fx/core.py
++++ b/fx/core.py
+@@ -1,4 +1,4 @@
+ def parse(s):
+     if len(s) > 10:
+-        raise ValueError("m")
++        raise TypeError("m")
+     return len(s)
