@@ -30,6 +30,9 @@
 //! the importer's exports as entries of the imported module's owners, under
 //! the same three-hop total bound and the same weaker-than-direct contract.
 
+use super::module_value_reads::{
+    byte_preserving_mask, never_mutated_in_module, reads_unshadowed_value,
+};
 use super::*;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
@@ -143,7 +146,9 @@ struct CallText<'s> {
 /// entries' code bare-calls. `imports` are the file's ES/CommonJS import
 /// bindings (never re-export hops); only a named, non-namespace binding whose
 /// local name is unique and not a top-level declaration of the module can
-/// become an outbound edge.
+/// become an outbound edge. Also returns the module-level non-function `const`
+/// names that are followable value nodes (#13592 B2); only those may carry
+/// entries for a `ModuleFunction` owner.
 pub(crate) fn module_entries_and_outbound<'a>(
     statements: &'a [Statement<'a>],
     source: &'a str,
@@ -151,13 +156,48 @@ pub(crate) fn module_entries_and_outbound<'a>(
 ) -> (
     BTreeMap<String, Vec<TypeScriptModuleEntry>>,
     Vec<OutboundImportCall>,
+    BTreeSet<String>,
 ) {
     // Node keys and factories are AST atoms or string literals, so the graph
     // borrows them instead of owning a String per node (#10087 follow-up).
     let mut nodes: BTreeMap<&'a str, ModuleNode<'a>> = BTreeMap::new();
     let mut exports: BTreeMap<String, BTreeSet<TypeScriptModuleEntry>> = BTreeMap::new();
+    let mut values: BTreeSet<&'a str> = BTreeSet::new();
+    let mut exported_values: BTreeSet<&'a str> = BTreeSet::new();
+    let mut decl_starts: BTreeMap<&'a str, usize> = BTreeMap::new();
     for statement in statements {
-        collect_statement(statement, source, &mut nodes, &mut exports);
+        collect_statement(
+            statement,
+            source,
+            &mut nodes,
+            &mut exports,
+            &mut values,
+            &mut exported_values,
+            &mut decl_starts,
+        );
+    }
+    // A value is followable only while nothing in the file writes it; a name
+    // that is also a function/factory node keeps its bare-call edges only.
+    // Only values some node's code actually mentions are scanned (the mutation
+    // scan is whole-module), and an exported value is never followed: another
+    // module may import and mutate it.
+    let mentioned: std::collections::HashSet<&str> = nodes
+        .values()
+        .flat_map(|node| node.call_texts.iter().chain(node.returned_texts.iter()))
+        .flat_map(|text| {
+            text.calls
+                .split(|ch: char| !is_javascript_identifier_char(ch))
+                .filter(|token| !token.is_empty())
+        })
+        .collect();
+    values.retain(|name| {
+        !nodes.contains_key(name) && !exported_values.contains(name) && mentioned.contains(name)
+    });
+    if !values.is_empty() {
+        let masked_source = byte_preserving_mask(source, &ts_mask_literals_and_comments(source));
+        values.retain(|name| {
+            never_mutated_in_module(source, &masked_source, name, decl_starts.get(name).copied())
+        });
     }
     // Imported bindings a node may bare-call: named, value, bound once, and
     // not also a top-level declaration of this module.
@@ -184,9 +224,9 @@ pub(crate) fn module_entries_and_outbound<'a>(
     let mut import_callees: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
     for (name, node) in &nodes {
         let (top_level, imported): (BTreeSet<&str>, BTreeSet<&str>) =
-            node_callees(node, &nodes, &names)
+            node_callees(node, &nodes, &names, &values)
                 .into_iter()
-                .partition(|callee| nodes.contains_key(callee));
+                .partition(|callee| nodes.contains_key(callee) || values.contains(callee));
         callees.insert(*name, top_level);
         if !imported.is_empty() {
             import_callees.insert(*name, imported);
@@ -244,7 +284,11 @@ pub(crate) fn module_entries_and_outbound<'a>(
             })
         })
         .collect();
-    (entries, outbound)
+    (
+        entries,
+        outbound,
+        values.into_iter().map(str::to_string).collect(),
+    )
 }
 
 fn collect_statement<'a>(
@@ -252,13 +296,16 @@ fn collect_statement<'a>(
     source: &'a str,
     nodes: &mut BTreeMap<&'a str, ModuleNode<'a>>,
     exports: &mut BTreeMap<String, BTreeSet<TypeScriptModuleEntry>>,
+    values: &mut BTreeSet<&'a str>,
+    exported_values: &mut BTreeSet<&'a str>,
+    decl_starts: &mut BTreeMap<&'a str, usize>,
 ) {
     match statement {
         Statement::FunctionDeclaration(func) => {
             collect_function(func, source, nodes);
         }
         Statement::VariableDeclaration(decl) => {
-            collect_variables(decl, source, nodes);
+            collect_variables(decl, source, nodes, values, decl_starts);
         }
         Statement::ExportNamedDeclaration(export) => {
             if export.export_kind == ImportOrExportKind::Type {
@@ -271,8 +318,15 @@ fn collect_statement<'a>(
                     }
                 }
                 Some(Declaration::VariableDeclaration(decl)) => {
-                    for name in collect_variables(decl, source, nodes) {
+                    for name in collect_variables(decl, source, nodes, values, decl_starts) {
                         record_export(exports, name, name);
+                    }
+                    // An exported value may be imported and mutated by another
+                    // module, which this file cannot see: never followed.
+                    for declarator in &decl.declarations {
+                        if let Some(name) = binding_identifier_name(&declarator.id) {
+                            exported_values.insert(name);
+                        }
                     }
                 }
                 Some(_) => {}
@@ -448,14 +502,29 @@ fn collect_variables<'a>(
     decl: &'a VariableDeclaration<'a>,
     source: &'a str,
     nodes: &mut BTreeMap<&'a str, ModuleNode<'a>>,
+    values: &mut BTreeSet<&'a str>,
+    decl_starts: &mut BTreeMap<&'a str, usize>,
 ) -> Vec<&'a str> {
     let mut names = Vec::new();
+    let is_const = decl.kind == oxc_ast::ast::VariableDeclarationKind::Const;
     for declarator in &decl.declarations {
         let Some(name) = binding_identifier_name(&declarator.id) else {
             continue;
         };
         let Some(init) = declarator.init.as_ref() else {
             continue;
+        };
+        // The parsed binding offset: the declaration is recognised from the
+        // AST, not from the text before it (`const A = 0, TABLE = {}`).
+        let start = match &declarator.id {
+            BindingPattern::BindingIdentifier(identifier) => identifier.span.start as usize,
+            _ => continue,
+        };
+        let mut add_value = |values: &mut BTreeSet<&'a str>| {
+            if is_const {
+                values.insert(name);
+                decl_starts.insert(name, start);
+            }
         };
         match unwrap_type_wrappers(init) {
             Expression::ArrowFunctionExpression(arrow) => {
@@ -467,12 +536,21 @@ fn collect_variables<'a>(
             }
             Expression::CallExpression(call) => {
                 let Expression::Identifier(callee) = unwrap_type_wrappers(&call.callee) else {
+                    add_value(values);
                     continue;
                 };
+                // `Symbol("x")` builds a value, not a factory product.
+                if callee.name == "Symbol" {
+                    add_value(values);
+                    continue;
+                }
                 nodes.entry(name).or_default().factory = Some(callee.name.as_str());
                 names.push(name);
             }
-            _ => {}
+            // A non-function `const` value (regex, string, object, array,
+            // symbol, `new X()`): never an export entry itself, but a node a
+            // reading function can reach (#13592 B2).
+            _ => add_value(values),
         }
     }
     names
@@ -530,6 +608,7 @@ fn node_callees<'n, 'a>(
     node: &ModuleNode<'a>,
     nodes: &BTreeMap<&'a str, ModuleNode<'a>>,
     names: &std::collections::HashSet<&'n str>,
+    values: &BTreeSet<&'n str>,
 ) -> BTreeSet<&'n str> {
     let texts: Vec<&CallText<'_>> = match node.factory {
         Some(factory) => nodes
@@ -545,11 +624,29 @@ fn node_callees<'n, 'a>(
     // on large modules (#10087).
     let mut callees = BTreeSet::new();
     for text in texts {
+        // Masked at most once per function text, not once per value.
+        let mut masked: Option<String> = None;
         let mut checked: std::collections::HashSet<&str> = std::collections::HashSet::new();
         for token in text
             .calls
             .split(|ch: char| !is_javascript_identifier_char(ch))
         {
+            if let Some(&value) = values.get(token) {
+                // Read-only use of a module-level `const` value (#13592 B2).
+                // Comments and literals are masked only for the read-presence
+                // check; the shadow check stays on the raw scope, so a
+                // mis-masked declaration can only remove an edge.
+                if checked.insert(value)
+                    && reads_unshadowed_value(
+                        masked.get_or_insert_with(|| ts_mask_literals_and_comments(&text.calls)),
+                        text.scope,
+                        value,
+                    )
+                {
+                    callees.insert(value);
+                }
+                continue;
+            }
             // Membership first: `checked` then only ever holds top-level
             // binding names, not every distinct keyword/identifier (#10096
             // review).

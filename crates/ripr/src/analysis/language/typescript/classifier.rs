@@ -8515,6 +8515,12 @@ pub(crate) fn classify_resolved_owner(
         _ if !has_oracle_eligible_relation => {
             "TypeScript preview advisory: related-test proximity is heuristic only; add a direct owner call before treating this as an actionable repair target.".to_string()
         }
+        _ if owner.owner_kind == OwnerKind::ModuleFunction && reach_only_through_module_entry => {
+            format!(
+                "TypeScript preview advisory: the related test reaches `{}` only through a same-module caller with a weak oracle; add an exact-value assertion on that caller's result that depends on `{}`, and keep the finding advisory (no repair packet is emitted).",
+                owner.name, owner.name
+            )
+        }
         _ if owner.owner_kind == OwnerKind::ModuleFunction => {
             format!(
                 "TypeScript preview advisory: related module-initializer observer reaches `{}` but no safe target shape is available; add an exact value assertion for the exported value and keep the finding advisory until repair-card fields are complete.",

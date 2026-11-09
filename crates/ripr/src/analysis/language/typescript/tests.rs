@@ -21231,6 +21231,7 @@ mod mock_spread_source_tests;
 mod mocked_callee_tests;
 mod module_const_tests;
 mod module_entry_tests;
+mod module_value_read_tests;
 mod namespace_reexport_tests;
 mod nested_callback_tests;
 mod nullish_chain_tests;

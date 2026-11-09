@@ -130,6 +130,7 @@ mod loop_bound_guard;
 mod match_object_guard;
 mod mock_payload_guard;
 mod module_entries;
+mod module_value_reads;
 #[cfg(test)]
 mod negated_jest_assertion_tests;
 #[cfg(test)]

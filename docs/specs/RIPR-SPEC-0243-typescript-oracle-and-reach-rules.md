@@ -911,6 +911,42 @@ Candidates come from the first non-empty tier:
    a prototype, `defineProperty`; the gate does not track which object a
    receiver names, so an assignment on an unrelated object withholds too) is not related through the chain; a bare
    call-through spy is. The relation stays weak and never reads `exposed`.
+   A module-level non-function `const` (regex, string, symbol, lookup object
+   or array; #13592) is a node of the same graph: an exported function, or a
+   same-module helper it calls within 3 hops, reaches it when every mention of
+   the name in the reading function is a read-only use (`X.test(`, `X.exec(`,
+   `X.source`, `X[key]`, `obj[X]`, or the first argument of `replace`,
+   `replaceAll`, `match`, `matchAll`, `split`, `search`, `includes` and kin).
+   A parameter, local, destructured or callback binding of the name, an
+   alias, a spread, a shorthand property, a returned or passed-along value,
+   an assignment, update or mutating method call (`X.lastIndex = 0`,
+   `X.push(`) in the reader, `let`/`var`, or any assignment, update, `delete`,
+   destructuring-assignment target, `Reflect.set`/`Reflect.deleteProperty`/
+   `Reflect.defineProperty`/`Object.defineProperty`/`Object.assign` first
+   argument, or a navigated call result (`X.get(k).p = 1`) of the name
+   anywhere in the module leaves no edge. Module-wide, every mention of the
+   name outside its own declaration must itself be an allowlisted read, so a
+   module-level alias, a value passed to another function and `export { X }`
+   also leave no edge, and an `export const` value is never followed because
+   another module may mutate it. Limits: an exported value, a value mutated
+   through an alias held by another module, and a keyword-prefixed index
+   (`const[X]`, `for (const[X] of ...)`, which is a pattern, not a read) are
+   not read edges; the scan is textual, so a mutation hidden behind dynamic
+   property names or `eval` is not seen, and an inner object bound to a local
+   inside the module (`const x = X.inner; x.a = 2`) can still be mutated
+   while plain member reads of `X` keep their edge. The resulting relation
+   is advisory (`static_unknown` or non-actionable `weakly_exposed`), so this
+   limit can hide a gap but cannot produce a repair start. Fail-closed misses
+   (no edge): a computed-key write `o[X] = v` elsewhere in the module, a
+   chained call result (`X.map(f).join(...)`, `X.filter(g).length`),
+   optional-chained call results and template-literal interpolation
+   (`${X}`).
+   The relation is the same `ModuleEntryCall` and keeps all its limits: no
+   direct test of the value, never `exposed`, and a test that never calls a
+   reading function stays `no_static_path`. Reach through a factory const's
+   bare-call edges does not extend to its own `ModuleFunction` owner.
+   Module-const (`ModuleFunction` value) reach stays same-module only: it
+   does not continue across an import, and an exported value is not followed.
    **Cross-module continuation (#13592).** The same chain continues across an
    import: an exported function of module X that bare-calls a binding it
    imported from module Y reaches the owner Y declares (or the owner Y's own
@@ -2346,6 +2382,11 @@ keys); do not take the next number.
   (rule 23).
 
 ## Test Mapping
+
+- #13592 (module-level `const` reached through a reader): `tests/module_value_read_tests.rs`
+  pins the read-only allowlist, the shadowed, aliased, passed-along, `let`/`var`,
+  assigned and module-mutated refusals, the unused and uncalled-reader controls
+  (`no_static_path`), and the called-reader `static_unknown` reading.
 
 - #10314 (decorated-method reach, constructor spellings): `crates/ripr/src/analysis/language/typescript/tests/decorated_reach_tests.rs`
   pins `aliased_constructor_import_credits_the_return_edit` (a named-import alias
