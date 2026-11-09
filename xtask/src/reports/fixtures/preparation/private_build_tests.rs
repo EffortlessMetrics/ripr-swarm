@@ -52,10 +52,14 @@ fn fixture(root: &Path, subject: &str, behavior: &str, config: &str) -> Result<(
         .map_err(|error| error.to_string())?;
     write(
         &root.join("build.rs"),
-        "fn main() {\n\
+        "fn main() -> Result<(), String> {\n\
          println!(\"cargo::rerun-if-changed=build.rs\");\n\
-         let out = std::path::PathBuf::from(std::env::var_os(\"OUT_DIR\").unwrap());\n\
-         std::fs::write(out.join(\"owner-marker\"), b\"private build artifact\\n\").unwrap();\n\
+         let out = std::path::PathBuf::from(std::env::var_os(\"OUT_DIR\")\n\
+         .ok_or(\"fixture build script requires OUT_DIR\")?);\n\
+         let marker = out.join(\"owner-marker\");\n\
+         std::fs::write(&marker, b\"private build artifact\\n\")\n\
+         .map_err(|error| format!(\"write private owner marker {}: {error}\", marker.display()))?;\n\
+         Ok(())\n\
          }\n",
     )?;
     write(
@@ -67,9 +71,12 @@ fn fixture(root: &Path, subject: &str, behavior: &str, config: &str) -> Result<(
              cfg!(feature = \"lang-perl\"), env!(\"OUT_DIR\"))\n\
              }}\n\
              #[cfg(test)] mod tests {{\n\
-             #[test] fn private_build_observation() {{\n\
-             let path = std::env::var_os(\"{OBSERVATION}\").unwrap();\n\
-             std::fs::write(path, super::observation()).unwrap();\n\
+             #[test] fn private_build_observation() -> Result<(), String> {{\n\
+             let path = std::path::PathBuf::from(std::env::var_os(\"{OBSERVATION}\")\n\
+             .ok_or(\"fixture test requires {OBSERVATION}\")?);\n\
+             std::fs::write(&path, super::observation())\n\
+             .map_err(|error| format!(\"write private build observation {{}}: {{error}}\", path.display()))?;\n\
+             Ok(())\n\
              }}\n}}\n"
         ),
     )?;
