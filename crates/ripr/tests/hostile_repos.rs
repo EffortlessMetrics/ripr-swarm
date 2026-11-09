@@ -1909,6 +1909,14 @@ fn default_base_equal_to_head_is_called_out() -> Result<(), String> {
             ran.stderr
         ));
     }
+    // `origin/feat` names HEAD here too, but the real base is `origin/main`:
+    // the last-commit fallback (#13644) must leave this to the hedge above.
+    if ran.stderr.contains("analyzed the last commit") {
+        return Err(format!(
+            "a feature-branch clone must not be rescoped to the last commit\n{}",
+            ran.stderr
+        ));
+    }
     // The same repository compared against a real base still finds the change.
     assert_found_change(
         &ripr(&clone, &["check", "--base", "origin/main"], &[])?,

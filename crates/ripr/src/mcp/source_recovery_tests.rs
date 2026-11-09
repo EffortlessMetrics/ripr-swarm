@@ -44,6 +44,7 @@ fn captured_server(
         untracked_working_tree_source_paths: Vec::new(),
         ignored_working_tree_source_paths: Vec::new(),
         unlinked_python_tests: None,
+        owner_opt_outs: Vec::new(),
         suppression: None,
         partial_scope: None,
         analyzed_revisions: None,
