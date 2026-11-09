@@ -14301,6 +14301,65 @@ fn skipped_error_pin_reads_the_same_in_the_stage_and_the_related_test_record() -
     Ok(())
 }
 
+/// #14011: whether an assertion pins another function is decided once per
+/// (owner, test, oracle) for the whole context, not once per ranking. The
+/// owner (`consume`) has proximity-only related tests whose assertions read a
+/// local, so the decision runs, and a second sweep over the same seam reads
+/// the memo instead of rebuilding the assertion text for every oracle.
+#[test]
+fn other_function_pin_decisions_are_computed_once_per_context() -> Result<(), String> {
+    const SWEEPS: usize = 25;
+    let mut extras = String::new();
+    let mut tests = String::from(
+        "#[test] fn consume_and_reduce() { let _ = consume(3); let r = reduce(3); assert_eq!(r, Reduction::Over(3)); }\n",
+    );
+    for i in 0..6 {
+        extras.push_str(&format!("pub fn extra_{i}() -> u64 {{ {i} }}\n"));
+        tests.push_str(&format!(
+            "#[test] fn extra_{i}_pin() {{ let v = extra_{i}(); assert_eq!(v, {i}); }}\n"
+        ));
+    }
+    let prod = format!(
+        "#[derive(Debug, PartialEq)]\npub enum Reduction {{ Failure, Over(u64) }}\n\
+         pub fn reduce(tokens: u64) -> Reduction {{\n    if tokens > 9 {{ Reduction::Failure }} else {{ Reduction::Over(tokens) }}\n}}\n\
+         pub fn consume(tokens: u64) -> bool {{\n    match reduce(tokens) {{\n        Reduction::Failure => false,\n        Reduction::Over(wait) => wait < 5,\n    }}\n}}\n\
+         {extras}\
+         #[cfg(test)]\nmod tests {{\n    use super::*;\n    {tests}\n}}\n"
+    );
+    let files: Vec<(PathBuf, &str)> = vec![(PathBuf::from("src/lib.rs"), prod.as_str())];
+    let index = index_from_files(&files)?;
+    let seams = inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &index);
+    let arm = seams
+        .iter()
+        .find(|s| s.kind() == SeamKind::MatchArm && s.expression().contains("Over"))
+        .ok_or_else(|| "Over arm seam present".to_string())?;
+    let context = CompactGripContext::new(&index);
+    let owner_fn = context.owner_function(arm.file(), arm.display_line());
+    let related = find_related_tests_with_context(arm, &context);
+
+    PIN_DECISIONS_COMPUTED.with(|count| count.set(0));
+    let mut first = related.clone();
+    let first_oracles = sort_related_tests_for_seam(arm, &context, owner_fn, &mut first);
+    let computed = PIN_DECISIONS_COMPUTED.with(|count| count.get());
+    if computed == 0 {
+        return Err("fixture must reach the other-function pin decision".to_string());
+    }
+    for _ in 0..SWEEPS {
+        let mut again = related.clone();
+        let again_oracles = sort_related_tests_for_seam(arm, &context, owner_fn, &mut again);
+        if again_oracles != first_oracles {
+            return Err("a memoized sweep changed the ranked oracles".to_string());
+        }
+    }
+    let after = PIN_DECISIONS_COMPUTED.with(|count| count.get());
+    if after != computed {
+        return Err(format!(
+            "expected {computed} decisions across {SWEEPS} more sweeps, saw {after}"
+        ));
+    }
+    Ok(())
+}
+
 /// #12478: ranking a match-arm seam with many related tests builds owner
 /// reach once, not once per test, and still publishes the #12060 credited
 /// view (other-function `None`, owner+other `Strong`).
