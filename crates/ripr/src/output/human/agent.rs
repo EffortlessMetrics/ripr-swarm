@@ -148,6 +148,7 @@ fn render_report(
         },
     );
     out.push_str(&incomplete_lines);
+    let unanalyzed = render_unanalyzed_changes(&mut out, output);
     let next = next_line(&triage, output, &gaps, drill_in, provenance);
     if output.findings.is_empty() && !output.no_scope_provided {
         // #13658: a `no_scope` outcome (empty or unparseable --diff) read
@@ -156,7 +157,9 @@ fn render_report(
             out.push_str("stop=nothing was in scope; zero findings is not a clean result (nothing was parsed or analyzed)\n");
             return out;
         }
-        out.push_str(if incomplete {
+        out.push_str(if unanalyzed {
+            "stop=changes were not analyzed, so zero findings is not a clean result; see `unanalyzed=`\n"
+        } else if incomplete {
             "stop=analysis incomplete; zero findings is not a clean result\n"
         } else if super::no_source_examined(output) {
             // #13658: an empty diff (or one with no analyzable
@@ -185,7 +188,7 @@ fn render_report(
                 &considered,
                 &limited,
                 drill_in,
-                &terminal_line(&triage, output, drill_in),
+                &guard_clean_claim(terminal_line(&triage, output, drill_in), unanalyzed),
                 repair_start
                     .as_ref()
                     .and_then(|start| start.command.as_deref()),
@@ -196,7 +199,10 @@ fn render_report(
                 "stop=analysis incomplete; retained findings are advisory, not a complete result\n",
             );
         } else {
-            out.push_str(&terminal_line(&triage, output, drill_in));
+            out.push_str(&guard_clean_claim(
+                terminal_line(&triage, output, drill_in),
+                unanalyzed,
+            ));
         }
         push_limits(&mut out, &considered, &[]);
         if let Some(next) = next {
@@ -278,6 +284,62 @@ fn render_incomplete_analysis(out: &mut String, output: &CheckOutput) -> bool {
         }
     }
     true
+}
+
+/// Replace a `done=` terminal with a `stop=` when unread changes exist, so no
+/// `done=` can follow an `unanalyzed=` line.
+fn guard_clean_claim(line: String, blocked: bool) -> String {
+    if blocked && line.starts_with("done=") {
+        "stop=changes were not analyzed, so no clean claim is made; see `unanalyzed=`\n".to_string()
+    } else {
+        line
+    }
+}
+
+/// Name saved edits this run did not read, before any terminal claim. The
+/// human and GitHub surfaces already disclose them; without this line an agent
+/// reading only `--format agent` sees `done=` over files ripr never analyzed.
+/// Paths are escaped like every other agent field. Returns whether the
+/// disclosed state blocks a clean claim: the stop derives from the shared
+/// verification owner's refusals, not from whether a line was written, because
+/// gitignored source is disclosed but deliberately never refuses completion.
+fn render_unanalyzed_changes(out: &mut String, output: &CheckOutput) -> bool {
+    // Same gate as the human render: untracked files matter on a working-tree
+    // read or an unanalyzed-edits run; gitignored files matter on any read.
+    let untracked_relevant = output.unanalyzed_working_tree
+        || crate::output::analyzed_revisions::is_working_tree_read(output);
+    let no_paths: &[String] = &[];
+    let untracked = if untracked_relevant {
+        output.untracked_working_tree_source_paths.as_slice()
+    } else {
+        no_paths
+    };
+    let ignored = &output.ignored_working_tree_source_paths;
+    use crate::app::check_verification::VerificationRefusal::{
+        UnanalyzedWorkingTree, UntrackedSourceExcluded,
+    };
+    let refusals = output.verification().refusals;
+    let mut blocks = false;
+    if output.unanalyzed_working_tree {
+        out.push_str(
+            "unanalyzed=uncommitted_edits|fix=rerun with --worktree to include staged and unstaged tracked edits\n",
+        );
+        blocks |= refusals.contains(&UnanalyzedWorkingTree);
+    }
+    if !untracked.is_empty() {
+        out.push_str(&format!(
+            "unanalyzed=untracked|files={}|fix=git add -N PATH (or stage it), then rerun `ripr check --worktree`\n",
+            field(&crate::output::analyzed_revisions::name_paths(untracked, |path| path.to_string()))
+        ));
+        blocks |= refusals.contains(&UntrackedSourceExcluded);
+    }
+    if !ignored.is_empty() {
+        out.push_str(&format!(
+            "unanalyzed=gitignored|files={}|fix=git add -f -N PATH (or stage it with -f), then rerun `ripr check --worktree`\n",
+            field(&crate::output::analyzed_revisions::name_paths(ignored, |path| path.to_string()))
+        ));
+    }
+    blocks
 }
 
 /// A weakly exposed preview finding whose producer recorded both a missing
