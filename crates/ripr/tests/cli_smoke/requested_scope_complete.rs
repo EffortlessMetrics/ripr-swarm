@@ -160,6 +160,45 @@ fn every_changed_file_matching_a_configured_pattern_is_complete_and_quiet() -> T
         "{value}"
     );
     assert_quiet_missed_txt(&dir, &diff, &[], "all-configured");
+    // #13894 review: every format must agree the requested scope was examined;
+    // none may claim "NOT a clean result" / "nothing was analyzed".
+    for format in ["github", "human", "agent"] {
+        let output = check(&dir, &diff, format, &[]);
+        assert_success(&output);
+        let text = String::from_utf8_lossy(&output.stdout).into_owned();
+        for forbidden in [
+            "NOT a clean result",
+            "not a clean result",
+            "Nothing to check",
+            "nothing was analyzed",
+            "ripr nothing analyzed",
+        ] {
+            assert!(
+                !text.contains(forbidden),
+                "{format}: all-configured run must not say {forbidden:?}: {text}"
+            );
+        }
+    }
+    let _ = fs::remove_dir_all(&dir);
+    Ok(())
+}
+
+/// Negative control: a diff whose only changes are non-source files (nothing
+/// the operator excluded) examined no behavior, so the warning stays.
+#[test]
+fn non_source_only_diff_keeps_the_not_examined_warning() -> TestResult {
+    let (dir, diff) = fixture("scope-docs-only", "docs/notes.md", None)?;
+    // Keep only the docs section of the diff.
+    let patch = fs::read_to_string(&diff)?;
+    let docs_only = patch
+        .split_once("diff --git a/docs/notes.md")
+        .map(|(_, rest)| format!("diff --git a/docs/notes.md{rest}"))
+        .ok_or("docs section missing")?;
+    fs::write(&diff, docs_only)?;
+    let github = check(&dir, &diff, "github", &[]);
+    assert_success(&github);
+    let text = String::from_utf8_lossy(&github.stdout);
+    assert!(text.contains("NOT a clean result"), "{text}");
     let _ = fs::remove_dir_all(&dir);
     Ok(())
 }

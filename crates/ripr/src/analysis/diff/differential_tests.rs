@@ -824,6 +824,17 @@ fn check_invariants(files: &[ChangedFile]) -> Result<(), String> {
         if file.path.as_os_str().is_empty() {
             return Err("empty path in a parsed file".into());
         }
+        if !file.path.is_relative()
+            || file
+                .path
+                .components()
+                .any(|part| !matches!(part, std::path::Component::Normal(_)))
+        {
+            return Err(format!(
+                "{}: parsed path is not a confined relative path",
+                file.path.display()
+            ));
+        }
         for line in &file.added_lines {
             if line.line == 0 || line.line != line.new_side_line {
                 return Err(format!(

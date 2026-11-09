@@ -1013,6 +1013,19 @@ fn is_truncated_diff_stream(truncated_file_sections: usize) -> bool {
     truncated_file_sections > 0
 }
 
+/// #13659: a tracked file that became (or stopped being) a symlink is not
+/// source and is never analyzed; say so instead of leaving only the
+/// deletion-only line for the regular-file half of a type change.
+fn symlink_disclosure_message(symlink_file_count: usize) -> Option<String> {
+    (symlink_file_count > 0).then(|| {
+        format!(
+            "ripr: skipped {symlink_file_count} symlink change(s); a symlink is not source, so \
+             the link itself is never analyzed and an empty result does not mean its behavior \
+             is covered. A regular-file half of a type change is analyzed normally."
+        )
+    })
+}
+
 fn submodule_disclosure_message(submodule_file_count: usize) -> Option<String> {
     (submodule_file_count > 0).then(|| {
         format!(
@@ -1494,6 +1507,7 @@ fn run_pipeline_for_diff_text_with_language_config(
         Vec::new();
     let deleted_file_count = parsed_diff.deleted_file_count;
     let submodule_file_count = parsed_diff.submodule_file_count;
+    let symlink_file_count = parsed_diff.symlink_file_count;
     let renamed_file_count = parsed_diff.renamed_file_count;
     let pure_rename_file_count = parsed_diff.pure_rename_file_count;
     let pure_rename_paths = parsed_diff.pure_rename_paths;
@@ -2110,6 +2124,9 @@ fn run_pipeline_for_diff_text_with_language_config(
     }
 
     emit_submodule_disclosure(submodule_file_count, |message| eprintln!("{message}"));
+    if let Some(message) = symlink_disclosure_message(symlink_file_count) {
+        eprintln!("{message}");
+    }
 
     emit_rename_disclosure(renamed_file_count, pure_rename_file_count, |message| {
         eprintln!("{message}");
@@ -3012,14 +3029,17 @@ where
         {
             continue;
         }
-        let generated_name = preview_skip_generated_name(language, &changed.path);
-        let skip_class = if generated_name {
-            PreviewSkipClass::GeneratedName
-        } else if preview_skip_configured_pattern(language, &changed.path, language_config) {
-            PreviewSkipClass::ConfiguredPattern
-        } else {
-            PreviewSkipClass::ExcludedDirectory
-        };
+        // #13894: an operator-written pattern wins over the built-in generated
+        // NAME convention, matching the Rust branch. A generated-name file no
+        // pattern matches stays `GeneratedName` and incomplete.
+        let skip_class =
+            if preview_skip_configured_pattern(language, &changed.path, language_config) {
+                PreviewSkipClass::ConfiguredPattern
+            } else if preview_skip_generated_name(language, &changed.path) {
+                PreviewSkipClass::GeneratedName
+            } else {
+                PreviewSkipClass::ExcludedDirectory
+            };
         let normalized = changed.path.to_string_lossy().replace('\\', "/");
         match skipped
             .iter_mut()
@@ -5639,6 +5659,143 @@ mod tests {
         Ok(())
     }
 
+    /// #13894 review: run one added preview-language file through the pipeline
+    /// with the given language config and return the projected outcome.
+    fn preview_skip_outcome(
+        label: &str,
+        path: &str,
+        enabled: &[LanguageId],
+        language_config: &crate::config::LanguagesConfig,
+    ) -> Result<crate::analysis_outcome::AnalysisOutcome, String> {
+        let root = temp_root(label)?;
+        let diff = format!(
+            "diff --git a/{path} b/{path}\n--- /dev/null\n+++ b/{path}\n@@ -0,0 +1 @@\n+VALUE = 1\n"
+        );
+        let result = run_pipeline_for_diff_text_with_language_config(
+            &generated_skip_options(root),
+            &OraclePolicy::default(),
+            enabled,
+            &crate::config::RustLanguageConfig::default(),
+            language_config,
+            DiffIntake {
+                perl_cache_dir: None,
+                scope: &DiffScopeFilter::default(),
+            },
+            &diff,
+        )?;
+        result
+            .analysis_outcome
+            .ok_or_else(|| "outcome must be projected".to_string())
+    }
+
+    fn assert_configured_scope_note(
+        outcome: &crate::analysis_outcome::AnalysisOutcome,
+        path: &str,
+    ) -> Result<(), String> {
+        assert!(outcome.kind.is_complete(), "{:?}", outcome.kind);
+        let note = outcome
+            .limitations
+            .iter()
+            .find(|limitation| limitation.kind == AnalysisLimitationKind::RequestedScopeExcluded)
+            .ok_or("a configured pattern must yield a scope note")?;
+        assert!(
+            note.bounded_detail
+                .as_deref()
+                .unwrap_or_default()
+                .contains(path)
+        );
+        assert!(!outcome.limitations.iter().any(|limitation| {
+            limitation.kind == AnalysisLimitationKind::LanguageScopeUnsupported
+        }));
+        Ok(())
+    }
+
+    fn assert_generated_name_stays_partial(outcome: &crate::analysis_outcome::AnalysisOutcome) {
+        assert_eq!(
+            outcome.kind,
+            AnalysisOutcomeKind::PartialWithLimitations,
+            "{:?}",
+            outcome.kind
+        );
+        assert!(outcome.limitations.iter().any(|limitation| {
+            limitation.kind == AnalysisLimitationKind::LanguageScopeUnsupported
+        }));
+        assert!(!outcome.limitations.iter().any(|limitation| {
+            limitation.kind == AnalysisLimitationKind::RequestedScopeExcluded
+        }));
+    }
+
+    /// #13894 review: a configured `excluded_file_patterns` match wins over the
+    /// built-in generated NAME convention (Python), like the Rust branch.
+    #[test]
+    fn configured_pattern_wins_over_generated_name_for_python() -> Result<(), String> {
+        let enabled = [LanguageId::Rust, LanguageId::Python];
+        let configured = crate::config::LanguagesConfig {
+            enabled: enabled.to_vec(),
+            python: crate::config::PythonLanguageConfig {
+                excluded_file_patterns: vec!["src/generated_*.py".to_string()],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let outcome = preview_skip_outcome(
+            "preview-overlap-py",
+            "src/generated_api.py",
+            &enabled,
+            &configured,
+        )?;
+        assert_configured_scope_note(&outcome, "src/generated_api.py")?;
+
+        // Negative control: the same generated name with no matching pattern
+        // is not something the operator asked for and stays incomplete.
+        let unconfigured = crate::config::LanguagesConfig {
+            enabled: enabled.to_vec(),
+            ..Default::default()
+        };
+        let outcome = preview_skip_outcome(
+            "preview-generated-py",
+            "src/generated_api.py",
+            &enabled,
+            &unconfigured,
+        )?;
+        assert_generated_name_stays_partial(&outcome);
+        Ok(())
+    }
+
+    #[cfg(feature = "lang-typescript")]
+    #[test]
+    fn configured_pattern_wins_over_generated_name_for_typescript() -> Result<(), String> {
+        let enabled = [LanguageId::Rust, LanguageId::TypeScript];
+        let configured = crate::config::LanguagesConfig {
+            enabled: enabled.to_vec(),
+            typescript: crate::config::TypescriptLanguageConfig {
+                excluded_file_patterns: vec!["src/**/*.generated.ts".to_string()],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let outcome = preview_skip_outcome(
+            "preview-overlap-ts",
+            "src/api.generated.ts",
+            &enabled,
+            &configured,
+        )?;
+        assert_configured_scope_note(&outcome, "src/api.generated.ts")?;
+
+        let unconfigured = crate::config::LanguagesConfig {
+            enabled: enabled.to_vec(),
+            ..Default::default()
+        };
+        let outcome = preview_skip_outcome(
+            "preview-generated-ts",
+            "src/api.generated.ts",
+            &enabled,
+            &unconfigured,
+        )?;
+        assert_generated_name_stays_partial(&outcome);
+        Ok(())
+    }
+
     #[test]
     fn cargo_vendor_and_generator_header_changes_are_skipped_before_the_line_limit()
     -> Result<(), String> {
@@ -5827,6 +5984,20 @@ mod tests {
         if deletion_disclosure_message(0).is_some() {
             return Err("zero deleted files must not produce a disclosure".to_string());
         }
+        Ok(())
+    }
+
+    #[test]
+    fn symlink_disclosure_names_type_changes_and_non_claim() -> Result<(), String> {
+        let message = symlink_disclosure_message(1)
+            .ok_or_else(|| "a symlink change must produce a disclosure".to_string())?;
+        assert!(
+            message.starts_with("ripr: skipped 1 symlink change(s);"),
+            "{message}"
+        );
+        assert!(message.contains("does not mean"), "{message}");
+        assert!(message.contains("analyzed normally"), "{message}");
+        assert_eq!(symlink_disclosure_message(0), None);
         Ok(())
     }
 

@@ -1842,6 +1842,7 @@ mod tests {
             ignored_build_output: None,
             untracked_build_lockfile: None,
             inline_test_module_target: false,
+            external_test_file_target: false,
             new_test_proposal: None,
         };
         render_record(
@@ -1984,6 +1985,7 @@ mod tests {
             ignored_build_output: None,
             untracked_build_lockfile: None,
             inline_test_module_target: false,
+            external_test_file_target: false,
             new_test_proposal: None,
         };
         // Positive control: with intact values the bounded value stage passes
@@ -2283,6 +2285,7 @@ mod tests {
             ignored_build_output: None,
             untracked_build_lockfile: None,
             inline_test_module_target: false,
+            external_test_file_target: false,
             new_test_proposal: None,
         })
     }

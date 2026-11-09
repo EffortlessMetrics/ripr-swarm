@@ -470,7 +470,8 @@ client supports:
   `stale_snapshot` (stale gap diagnostic),
   `verification_route_unavailable` / `receipt_route_unavailable` (gap
   record without a safe verify/receipt command), and
-  `preview_or_static_limitation` (cross-language unresolved target), and
+  `preview_or_static_limitation` (a static limitation; the human text names a
+  language boundary only for a cross-language unresolved target, #13797), and
   `repair_route_not_ready` (a same-language seam that fails the
   repair-packet flip only because ripr has no complete repair route yet,
   meaning a test target plus the exact discriminator it must check, or an

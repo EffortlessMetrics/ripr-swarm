@@ -274,6 +274,20 @@ pub(crate) fn no_source_examined(output: &CheckOutput) -> bool {
     match outcome.kind {
         NoScope => true,
         NoChangedLines | NoBehavioralCandidates => {
+            // #13894: when the operator's own scope request (`--path`,
+            // `--exclude` or a configured pattern) accounts for every changed
+            // file, the requested scope was examined in full and nothing was
+            // left unexamined unasked. A diff with other, genuinely
+            // non-source files keeps the warning.
+            let left_out: u64 = outcome
+                .limitations
+                .iter()
+                .filter(|limitation| limitation.kind.is_requested_scope_note())
+                .map(|limitation| limitation.affected_items.unwrap_or(0))
+                .sum();
+            if left_out > 0 && left_out >= outcome.counts.changed_file_count {
+                return false;
+            }
             outcome.counts.changed_file_count > 0
                 && output.summary.changed_rust_files == 0
                 && output
@@ -9273,7 +9287,6 @@ mod tests {
                 suppression: None,
                 analysis_outcome: None,
                 partial_scope: None,
-                owner_opt_outs: Vec::new(),
                 analyzed_revisions: None,
             })
         };

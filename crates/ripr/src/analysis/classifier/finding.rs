@@ -88,6 +88,17 @@ pub(in crate::analysis) fn build_finding_with_origins(
     if context.tier_flow.is_some() {
         stop_reasons.retain(|reason| reason.as_str() != StopReason::NoChangedRustLine.as_str());
     }
+    // #12040: a build-time check constrains this line; a violating edit fails
+    // to build. The classifier withholds a ruled-out reach separately.
+    if context.compile_time_guarded
+        && let Some(at) = stop_reasons
+            .iter()
+            .position(|reason| *reason == StopReason::NoChangedRustLine)
+    {
+        stop_reasons[at] = StopReason::CompileTimeInvariant;
+        stop_reasons.sort_by(|a, b| a.as_str().cmp(b.as_str()));
+        stop_reasons.dedup_by(|a, b| a.as_str() == b.as_str());
+    }
     ensure_unknown_stop_reason(&class, &mut stop_reasons);
     // RIPR-SPEC-0263: no related test call enters the guard around the
     // changed line, so the repair is an input, not a stronger assertion.
