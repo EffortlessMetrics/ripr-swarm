@@ -178,6 +178,7 @@ const PYTHON_PREVIEW_AUTHORITY_BOUNDARY: &str = "preview_advisory_only";
 /// Run-level result disclosures carried into the SARIF property bag.
 struct SarifRunDisclosures<'a> {
     omitted_not_current: usize,
+    withheld_by_owner_opt_out: usize,
     folded_same_line: usize,
     results_bound: Option<&'a SarifResultsBound>,
 }
@@ -201,9 +202,25 @@ pub(crate) fn render_findings_sarif_with_budget(
         .iter()
         .filter(|finding| !finding.is_candidate_actionable())
         .count();
+    // #13819: a finding whose changed owner carries `#[mutants::skip]` is
+    // withheld from actionable output, so it opens no code-scanning alert.
+    // Policy suppressions keep their SARIF-native `suppressions` marking
+    // below; only owner opt-outs are dropped, and the run discloses how many.
+    let owner_withheld: std::collections::BTreeSet<&str> = output
+        .owner_opt_outs
+        .iter()
+        .map(|opt_out| opt_out.finding_id.as_str())
+        .collect();
+    let withheld_by_owner_opt_out = output
+        .findings
+        .iter()
+        .filter(|finding| finding.is_candidate_actionable())
+        .filter(|finding| owner_withheld.contains(finding.id.as_str()))
+        .count();
     let results = output
         .findings
         .iter()
+        .filter(|finding| !owner_withheld.contains(finding.id.as_str()))
         // Candidate-actionable eligibility (#3281): a SARIF result is a
         // current diagnostic for CI annotation consumers; base-side
         // evidence and unresolved subjects stay visible on the check JSON
@@ -221,6 +238,7 @@ pub(crate) fn render_findings_sarif_with_budget(
         output.analyzed_revisions.as_ref(),
         SarifRunDisclosures {
             omitted_not_current,
+            withheld_by_owner_opt_out,
             folded_same_line,
             results_bound: results_bound.as_ref(),
         },
@@ -621,6 +639,13 @@ fn sarif_document(
         properties.insert(
             "omitted_not_current".to_string(),
             json!(disclosures.omitted_not_current),
+        );
+    }
+    // Additive and absent when no owner opted out (#13819).
+    if disclosures.withheld_by_owner_opt_out > 0 {
+        properties.insert(
+            "withheld_by_owner_opt_out".to_string(),
+            json!(disclosures.withheld_by_owner_opt_out),
         );
     }
     if disclosures.folded_same_line > 0 {
@@ -1991,6 +2016,7 @@ mod tests {
                 None,
                 SarifRunDisclosures {
                     omitted_not_current: 0,
+                    withheld_by_owner_opt_out: 0,
                     folded_same_line: 0,
                     results_bound: None,
                 },
@@ -3635,6 +3661,7 @@ weakly_gripped = "note"
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
+            owner_opt_outs: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,

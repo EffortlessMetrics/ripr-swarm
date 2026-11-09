@@ -1707,6 +1707,15 @@ impl PythonAdapter {
                 .iter()
                 .filter(|file| !is_test_file(file)),
         );
+        related_tests::apply_project_module_names(
+            &mut all_owners,
+            reach
+                .as_ref()
+                .map_or(&workspace_files, |admission| &admission.discovered)
+                .iter()
+                .filter(|file| !is_test_file(file)),
+            |path| options.root.join(path).exists(),
+        );
         related_tests::apply_rival_definition_modules(&mut all_owners);
         related_tests::apply_class_facts(&mut all_owners);
 
@@ -2301,6 +2310,7 @@ impl PythonAdapter {
             rust_diagnostic_origins: Default::default(),
             rust_consumed_sources: Default::default(),
             preview_fact_cache: fact_cache_stats,
+            owner_opt_outs: Vec::new(),
         })
     }
 
@@ -2483,6 +2493,8 @@ mod cli_runner_tests;
 #[cfg(test)]
 mod cli_subcommand_tests;
 #[cfg(test)]
+mod dunder_helper_reach_tests;
+#[cfg(test)]
 mod helper_owner_call_tests;
 #[cfg(test)]
 mod imported_literal_tests;
@@ -2511,6 +2523,8 @@ mod new_declaration_tests;
 #[cfg(test)]
 mod python_tests;
 
+#[cfg(test)]
+mod layout_tests;
 #[cfg(test)]
 mod reexport_tests;
 
