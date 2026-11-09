@@ -16,7 +16,8 @@ use super::super::rust_index::{
 use super::text::is_rust_whitespace;
 use crate::analysis::extract::{
     ShadowAuthority, fact_body_defines_callee_fn, fact_body_let_shadow_line,
-    mask_comments_and_strings, test_body_defines_callee_fn, test_body_let_shadow_line,
+    mask_comments_and_strings, string_literal_spans, test_body_defines_callee_fn,
+    test_body_let_shadow_line,
 };
 use crate::analysis::facts::{FunctionContainer, FunctionImplContext, OracleFact};
 use crate::analysis::seam_cache::path_dependencies::PathDependencySection;
@@ -1047,8 +1048,12 @@ fn find_related_tests_with_candidates<'a>(
     // for an owner that may be reached unseen (trait method, named caller).
     let mut substring_only_fallback = Vec::new();
     let owner_name_lc = owner_name.to_ascii_lowercase();
+    // #13843: for a module-level probe (no named owner), a word found only
+    // inside a string literal is prose; a test name that shares it (`status`,
+    // `language`) is no tie, so it does not seed the name-token relation.
     let test_name_words: Vec<String> = probe_tokens
         .iter()
+        .filter(|token| owner_fn.is_some() || probe_literals.code_tokens.contains(token.as_str()))
         .filter_map(|token| test_name_word_token(token, common_words))
         .collect();
     // #9260: the context depends only on (index, owner); the run-level memo
@@ -3792,17 +3797,13 @@ fn literal_ids(masked: &str) -> impl Iterator<Item = usize> + '_ {
         .filter_map(|id| id.parse().ok())
 }
 
-/// Weak declaration introducers that are not reserved words: `union` and
-/// `macro_rules` are legal identifiers outside a declaration, so they cannot
-/// live in `RUST_KEYWORDS`. A token whose every occurrence in `text` is the
-/// declaration form (`union Name {`, `union Name<T>`, `macro_rules!`) is syntax
-/// shared by unrelated code and must not seed assertion-target affinity
-/// (#9171); an occurrence used as an identifier (`a.union(b)`, `let union`)
-/// keeps the token.
 /// The string literals of a probe expression, split from its code (#13843).
 ///
 /// `code_tokens` are the identifier tokens outside every string literal and
-/// comment; `literals` are the trimmed contents of each string literal.
+/// comment, plus the `{name}` captures of format strings; `literals` are the
+/// contents of each terminated string literal, read by the shared lexical
+/// scan ([`string_literal_spans`]), so a quote in a comment, a character
+/// literal or an escape never opens one.
 struct ProbeLiterals {
     code_tokens: BTreeSet<String>,
     literals: Vec<String>,
@@ -3811,31 +3812,13 @@ struct ProbeLiterals {
 impl ProbeLiterals {
     fn new(expression: &str) -> Self {
         let masked = mask_comments_and_strings(expression);
-        let code_tokens = extract_identifier_tokens(&masked).into_iter().collect();
-        let mut literals = Vec::new();
-        let mut current: Option<String> = None;
-        let mut chars = expression.chars();
-        // Plain `"…"` literals only; a raw string or a comment adds no
-        // literal, so its words fall back to the stricter code-token test.
-        while let Some(ch) = chars.next() {
-            match (&mut current, ch) {
-                (None, '"') => current = Some(String::new()),
-                (Some(text), '"') => {
-                    let trimmed = text.trim();
-                    if !trimmed.is_empty() {
-                        literals.push(trimmed.to_string());
-                    }
-                    current = None;
-                }
-                (Some(text), '\\') => {
-                    text.push(ch);
-                    if let Some(escaped) = chars.next() {
-                        text.push(escaped);
-                    }
-                }
-                (Some(text), _) => text.push(ch),
-                (None, _) => {}
-            }
+        let mut code_tokens: BTreeSet<String> =
+            extract_identifier_tokens(&masked).into_iter().collect();
+        let literals = literal_contents(expression);
+        // A `{name}` or `{name:…}` capture in a format string names a live
+        // binding, so it stays a code token (Rust 2021 inline arguments).
+        for literal in &literals {
+            code_tokens.extend(format_captures(literal));
         }
         Self {
             code_tokens,
@@ -3844,17 +3827,68 @@ impl ProbeLiterals {
     }
 
     /// Whether `token` may tie an assertion with `oracle_text` to the probe:
-    /// always for a code token, and for a literal-only word only when the
-    /// assertion quotes one of the probe's literals whole.
+    /// always for a code token, and for a literal-only word only when one of
+    /// the assertion's own string literals equals a probe literal holding
+    /// that word. Substring containment is not enough: a one-word literal
+    /// (`name: "status"`) must not relate every assertion naming `status`.
     fn admits(&self, token: &str, oracle_text: &str) -> bool {
-        self.code_tokens.contains(token)
-            || self
-                .literals
+        if self.code_tokens.contains(token) {
+            return true;
+        }
+        let quoted = literal_contents(oracle_text);
+        self.literals.iter().any(|literal| {
+            extract_identifier_tokens(literal)
                 .iter()
-                .any(|literal| literal.contains(token) && oracle_text.contains(literal.as_str()))
+                .any(|word| word == token)
+                && quoted.iter().any(|candidate| candidate == literal)
+        })
     }
 }
 
+/// The unprocessed contents of every terminated string literal in `text`.
+fn literal_contents(text: &str) -> Vec<String> {
+    string_literal_spans(text)
+        .into_iter()
+        .filter_map(|(open, close, _)| text.get(open + 1..close))
+        .filter(|contents| !contents.trim().is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+/// Identifier captures in a format string: `{name}`, `{name:?}`, `{name:>8}`.
+/// Escaped `{{` and positional or empty captures yield nothing.
+fn format_captures(literal: &str) -> Vec<String> {
+    let mut captures = Vec::new();
+    let mut rest = literal;
+    while let Some(open) = rest.find('{') {
+        let after = &rest[open + 1..];
+        if let Some(escaped) = after.strip_prefix('{') {
+            rest = escaped;
+            continue;
+        }
+        let name: String = after
+            .chars()
+            .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '_')
+            .collect();
+        let tail = &after[name.len()..];
+        if !name.is_empty()
+            && !name.starts_with(|ch: char| ch.is_ascii_digit())
+            && (tail.starts_with('}') || tail.starts_with(':'))
+        {
+            captures.push(name);
+        }
+        rest = after;
+    }
+    captures
+}
+
+/// Weak declaration introducers that are not reserved words: `union` and
+/// `macro_rules` are legal identifiers outside a declaration, so they cannot
+/// live in `RUST_KEYWORDS`. A token whose every occurrence in `text` is the
+/// declaration form (`union Name {`, `union Name<T>`, `macro_rules!`) is syntax
+/// shared by unrelated code and must not seed assertion-target affinity
+/// (#9171); an occurrence used as an identifier (`a.union(b)`, `let union`)
+/// keeps the token.
 fn is_declaration_only_token(text: &str, token: &str) -> bool {
     if token != "union" && token != "macro_rules" {
         return false;
@@ -15617,6 +15651,19 @@ try_parse_summary(raw).map_err(Into::into)"
             )],
             "an assertion quoting the literal whole still relates"
         );
+        let capture = ProbeLiterals::new("error: format!(\"missing manifest {manifest_path:?}\")");
+        assert!(
+            capture.admits("manifest_path", "assert_eq!(err.manifest_path, expected);"),
+            "a format-string capture is a live binding, not prose"
+        );
+        let raw = ProbeLiterals::new("summary: r#\"Show \"capability\" status\"#, // \"status\"");
+        assert_eq!(raw.literals, vec!["Show \"capability\" status".to_string()]);
+        let one_word = ProbeLiterals::new("name: \"status\",");
+        assert!(!one_word.admits("status", "assert_eq!(report.status, Status::Ok);"));
+        assert!(one_word.admits("status", "assert_eq!(row.name, \"status\");"));
+        let quote_char = ProbeLiterals::new("sep: '\"', label: \"Show status\"");
+        assert_eq!(quote_char.literals, vec!["Show status".to_string()]);
+        assert!(!raw.admits("status", "assert!(report.status.is_ok());"));
     }
 
     /// #9173: a package's root `build.rs` runs under Cargo before the package
