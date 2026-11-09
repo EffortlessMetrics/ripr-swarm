@@ -267,7 +267,18 @@ pub(super) fn normalize_absolute(path: &Path) -> Result<PathBuf> {
 
 #[cfg(windows)]
 pub(super) fn same_path(left: &Path, right: &Path) -> bool {
-    windows_path_key(left) == windows_path_key(right)
+    let left_key = windows_path_key(left);
+    let right_key = windows_path_key(right);
+    if left_key == right_key {
+        return true;
+    }
+
+    match (left.canonicalize(), right.canonicalize()) {
+        (Ok(left_canonical), Ok(right_canonical)) => {
+            windows_path_key(&left_canonical) == windows_path_key(&right_canonical)
+        }
+        _ => false,
+    }
 }
 
 #[cfg(windows)]
@@ -281,7 +292,7 @@ fn windows_path_key(path: &Path) -> String {
     while value.len() > 3 && value.ends_with('\\') {
         value.pop();
     }
-    value.to_ascii_lowercase()
+    value
 }
 
 #[cfg(not(windows))]

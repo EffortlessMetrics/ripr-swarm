@@ -1,5 +1,7 @@
 use super::*;
 
+const RECEIPT_PATH_ATTEMPTS: u64 = 64;
+
 pub(super) fn build_plan(target_directory: &Path, max_size_bytes: u64) -> Result<CleanupPlan> {
     let mut selected = Vec::new();
     let mut selected_measurement = Measurement::default();
@@ -257,11 +259,25 @@ pub(super) fn write_receipts(
     state: &ApplyState,
 ) -> Result<()> {
     let reports = ensure_report_directory(target_directory)?;
-    write_plain_file(&reports.join(REPORT_JSON), &render_json(options, plan, state))?;
+    let json_path = reports.join(REPORT_JSON);
+    let markdown_path = reports.join(REPORT_MARKDOWN);
+    write_plain_file(&json_path, &render_json(options, plan, state)).map_err(|error| {
+        ArtifactError::new(format!(
+            "publish authoritative JSON receipt {}: {error}",
+            json_path.display()
+        ))
+    })?;
     write_plain_file(
-        &reports.join(REPORT_MARKDOWN),
+        &markdown_path,
         &render_markdown(options, plan, state),
     )
+    .map_err(|error| {
+        ArtifactError::new(format!(
+            "publish Markdown projection {} after authoritative JSON {}: {error}",
+            markdown_path.display(),
+            json_path.display()
+        ))
+    })
 }
 
 pub(super) fn ensure_report_directory(target_directory: &Path) -> Result<PathBuf> {
@@ -296,6 +312,38 @@ pub(super) fn ensure_plain_directory(path: &Path) -> Result<()> {
 }
 
 pub(super) fn write_plain_file(path: &Path, content: &str) -> Result<()> {
+    write_plain_file_with_rename(path, content, |from, to| fs::rename(from, to))
+}
+
+pub(super) fn write_plain_file_with_rename<F>(
+    path: &Path,
+    content: &str,
+    mut rename: F,
+) -> Result<()>
+where
+    F: FnMut(&Path, &Path) -> std::io::Result<()>,
+{
+    let parent = path.parent().ok_or_else(|| {
+        ArtifactError::new(format!("receipt path has no parent: {}", path.display()))
+    })?;
+    let parent_metadata = fs::symlink_metadata(parent).map_err(|error| {
+        ArtifactError::new(format!(
+            "inspect receipt directory {}: {error}",
+            parent.display()
+        ))
+    })?;
+    require_plain_directory(parent, &parent_metadata)?;
+    validate_receipt_destination(path)?;
+
+    let temporary = write_temporary_receipt(path, content)?;
+    let result = replace_receipt_file(path, &temporary, &mut rename);
+    if temporary.exists() {
+        let _ = fs::remove_file(&temporary);
+    }
+    result
+}
+
+fn validate_receipt_destination(path: &Path) -> Result<()> {
     match fs::symlink_metadata(path) {
         Ok(metadata) => {
             require_plain_path(path, &metadata)?;
@@ -305,22 +353,188 @@ pub(super) fn write_plain_file(path: &Path, content: &str) -> Result<()> {
                     path.display()
                 )));
             }
+            Ok(())
         }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => {
-            return Err(ArtifactError::new(format!(
-                "inspect receipt path {}: {error}",
-                path.display()
-            )))
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(ArtifactError::new(format!(
+            "inspect receipt path {}: {error}",
+            path.display()
+        ))),
+    }
+}
+
+fn write_temporary_receipt(path: &Path, content: &str) -> Result<PathBuf> {
+    let parent = path.parent().ok_or_else(|| {
+        ArtifactError::new(format!("receipt path has no parent: {}", path.display()))
+    })?;
+    let file_name = path
+        .file_name()
+        .ok_or_else(|| ArtifactError::new(format!("receipt path has no file name: {}", path.display())))?
+        .to_string_lossy();
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_nanos());
+
+    for attempt in 0..RECEIPT_PATH_ATTEMPTS {
+        let candidate = parent.join(format!(
+            ".{file_name}.tmp-{}-{nonce}-{attempt}",
+            process::id()
+        ));
+        match OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&candidate)
+        {
+            Ok(mut file) => {
+                let write_result = file
+                    .write_all(content.as_bytes())
+                    .and_then(|()| file.sync_all());
+                drop(file);
+                if let Err(error) = write_result {
+                    let _ = fs::remove_file(&candidate);
+                    return Err(ArtifactError::new(format!(
+                        "write temporary receipt {}: {error}",
+                        candidate.display()
+                    )));
+                }
+                return Ok(candidate);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => {
+                return Err(ArtifactError::new(format!(
+                    "create temporary receipt {}: {error}",
+                    candidate.display()
+                )))
+            }
         }
     }
-    let mut file = OpenOptions::new()
-        .create(true)
-        .truncate(true)
-        .write(true)
-        .open(path)
-        .map_err(|error| ArtifactError::new(format!("open receipt {}: {error}", path.display())))?;
-    file.write_all(content.as_bytes())
-        .and_then(|()| file.sync_all())
-        .map_err(|error| ArtifactError::new(format!("write receipt {}: {error}", path.display())))
+    Err(ArtifactError::new(format!(
+        "could not allocate a unique temporary receipt beside {}",
+        path.display()
+    )))
+}
+
+fn replace_receipt_file<F>(path: &Path, temporary: &Path, rename: &mut F) -> Result<()>
+where
+    F: FnMut(&Path, &Path) -> std::io::Result<()>,
+{
+    match fs::symlink_metadata(path) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            rename(temporary, path).map_err(|rename_error| {
+                ArtifactError::new(format!(
+                    "publish new receipt {} from {}: {rename_error}",
+                    path.display(),
+                    temporary.display()
+                ))
+            })?;
+            validate_receipt_destination(path)
+        }
+        Ok(metadata) => {
+            require_plain_path(path, &metadata)?;
+            if !metadata.is_file() {
+                return Err(ArtifactError::new(format!(
+                    "refusing non-regular receipt path {}",
+                    path.display()
+                )));
+            }
+
+            let backup = vacant_receipt_peer(path, "previous")?;
+            rename(path, &backup).map_err(|error| {
+                ArtifactError::new(format!(
+                    "preserve previous receipt {} as {}: {error}",
+                    path.display(),
+                    backup.display()
+                ))
+            })?;
+            let backup_metadata = fs::symlink_metadata(&backup).map_err(|error| {
+                ArtifactError::new(format!(
+                    "inspect preserved receipt {}: {error}",
+                    backup.display()
+                ))
+            })?;
+            require_plain_path(&backup, &backup_metadata)?;
+            if !backup_metadata.is_file() {
+                return Err(ArtifactError::new(format!(
+                    "preserved receipt is not a regular file: {}",
+                    backup.display()
+                )));
+            }
+
+            if let Err(publish_error) = rename(temporary, path) {
+                return match rename(&backup, path) {
+                    Ok(()) => Err(ArtifactError::new(format!(
+                        "publish receipt {} from {}: {publish_error}; previous receipt restored",
+                        path.display(),
+                        temporary.display()
+                    ))),
+                    Err(restore_error) => Err(ArtifactError::new(format!(
+                        "publish receipt {} from {}: {publish_error}; previous receipt remains at {} because restoration failed: {restore_error}",
+                        path.display(),
+                        temporary.display(),
+                        backup.display()
+                    ))),
+                };
+            }
+
+            validate_receipt_destination(path)?;
+            let backup_metadata = fs::symlink_metadata(&backup).map_err(|error| {
+                ArtifactError::new(format!(
+                    "inspect obsolete receipt {}: {error}",
+                    backup.display()
+                ))
+            })?;
+            require_plain_path(&backup, &backup_metadata)?;
+            if !backup_metadata.is_file() {
+                return Err(ArtifactError::new(format!(
+                    "obsolete receipt is not a regular file: {}",
+                    backup.display()
+                )));
+            }
+            fs::remove_file(&backup).map_err(|error| {
+                ArtifactError::new(format!(
+                    "remove obsolete receipt {} after publishing {}: {error}",
+                    backup.display(),
+                    path.display()
+                ))
+            })
+        }
+        Err(error) => Err(ArtifactError::new(format!(
+            "reinspect receipt path {}: {error}",
+            path.display()
+        ))),
+    }
+}
+
+fn vacant_receipt_peer(path: &Path, role: &str) -> Result<PathBuf> {
+    let parent = path.parent().ok_or_else(|| {
+        ArtifactError::new(format!("receipt path has no parent: {}", path.display()))
+    })?;
+    let file_name = path
+        .file_name()
+        .ok_or_else(|| ArtifactError::new(format!("receipt path has no file name: {}", path.display())))?
+        .to_string_lossy();
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_nanos());
+
+    for attempt in 0..RECEIPT_PATH_ATTEMPTS {
+        let candidate = parent.join(format!(
+            ".{file_name}.{role}-{}-{nonce}-{attempt}",
+            process::id()
+        ));
+        match fs::symlink_metadata(&candidate) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(candidate),
+            Ok(_) => continue,
+            Err(error) => {
+                return Err(ArtifactError::new(format!(
+                    "inspect candidate receipt peer {}: {error}",
+                    candidate.display()
+                )))
+            }
+        }
+    }
+    Err(ArtifactError::new(format!(
+        "could not allocate a unique {role} receipt path beside {}",
+        path.display()
+    )))
 }

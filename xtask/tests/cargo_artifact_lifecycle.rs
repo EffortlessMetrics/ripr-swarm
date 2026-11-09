@@ -2,9 +2,31 @@
 
 use std::env;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
+
+struct ScratchDirectory {
+    path: PathBuf,
+}
+
+impl ScratchDirectory {
+    fn create(path: PathBuf) -> Result<Self, String> {
+        fs::create_dir_all(&path)
+            .map_err(|error| format!("create {}: {error}", path.display()))?;
+        Ok(Self { path })
+    }
+
+    fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl Drop for ScratchDirectory {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.path);
+    }
+}
 
 #[test]
 fn standalone_cargo_artifact_lifecycle_tests_pass() -> Result<(), String> {
@@ -14,13 +36,11 @@ fn standalone_cargo_artifact_lifecycle_tests_pass() -> Result<(), String> {
         .duration_since(UNIX_EPOCH)
         .map_err(|error| format!("clock before Unix epoch: {error}"))?
         .as_nanos();
-    let scratch = env::temp_dir().join(format!(
+    let scratch = ScratchDirectory::create(env::temp_dir().join(format!(
         "ripr-cargo-artifact-selftest-{}-{nonce}",
         std::process::id()
-    ));
-    fs::create_dir_all(&scratch)
-        .map_err(|error| format!("create {}: {error}", scratch.display()))?;
-    let executable = scratch.join(if cfg!(windows) {
+    )))?;
+    let executable = scratch.path().join(if cfg!(windows) {
         "cargo-artifacts-selftest.exe"
     } else {
         "cargo-artifacts-selftest"
@@ -34,7 +54,6 @@ fn standalone_cargo_artifact_lifecycle_tests_pass() -> Result<(), String> {
         .output()
         .map_err(|error| format!("compile {}: {error}", source.display()))?;
     if !compile.status.success() {
-        let _ = fs::remove_dir_all(&scratch);
         return Err(format!(
             "standalone cargo-artifacts test compile failed with {}\nstdout:\n{}\nstderr:\n{}",
             compile.status,
@@ -47,7 +66,6 @@ fn standalone_cargo_artifact_lifecycle_tests_pass() -> Result<(), String> {
         .arg("--test-threads=1")
         .output()
         .map_err(|error| format!("run {}: {error}", executable.display()))?;
-    let cleanup = fs::remove_dir_all(&scratch);
     if !tests.status.success() {
         return Err(format!(
             "standalone cargo-artifacts tests failed with {}\nstdout:\n{}\nstderr:\n{}",
@@ -56,6 +74,5 @@ fn standalone_cargo_artifact_lifecycle_tests_pass() -> Result<(), String> {
             String::from_utf8_lossy(&tests.stderr)
         ));
     }
-    cleanup.map_err(|error| format!("remove {}: {error}", scratch.display()))?;
     Ok(())
 }

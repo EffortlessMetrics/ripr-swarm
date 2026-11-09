@@ -1,4 +1,4 @@
 tools/cargo-artifacts/metadata.rs|Command::new|1|rust/build|#13965: resolve locked offline Cargo metadata before exact current-checkout target inventory or deletion.
-tools/cargo-artifacts/main.rs|use std::process::{self, Command}|1|rust/build|#13965: import the bounded Cargo metadata process and CLI exit authority.
+tools/cargo-artifacts/main.rs|use std::process::{self, Command}|1|rust/build|#13965: import Cargo metadata process execution and CLI exit authority.
 xtask/tests/cargo_artifact_lifecycle.rs|Command::new|2|rust/test|#13965: compile and execute the dependency-free standalone artifact lifecycle self-tests with the pinned Rust compiler.
-xtask/tests/cargo_artifact_lifecycle.rs|use std::process::Command|1|rust/test|#13965: import the bounded standalone-tool test process authority.
+xtask/tests/cargo_artifact_lifecycle.rs|use std::process::Command|1|rust/test|#13965: import standalone-tool test process execution.

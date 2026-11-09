@@ -38,7 +38,7 @@ pub(super) fn render_json(options: &Options, plan: &CleanupPlan, state: &ApplySt
     );
     format!(
         concat!(
-            "{\n",
+            "{{\n",
             "  \"schema_version\": 1,\n",
             "  \"generated_at_unix_seconds\": {},\n",
             "  \"operation\": \"{}\",\n",
@@ -56,7 +56,7 @@ pub(super) fn render_json(options: &Options, plan: &CleanupPlan, state: &ApplySt
             "  \"deleted\": [{}],\n",
             "  \"pending\": {},\n",
             "  \"failure\": {}\n",
-            "}\n"
+            "}}\n"
         ),
         unix_seconds(),
         options.operation.as_str(),

@@ -1,4 +1,5 @@
 use super::*;
+use std::io;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
@@ -108,15 +109,38 @@ fn validation_requires_exact_target_and_build_directory() {
 
 #[cfg(windows)]
 #[test]
-fn windows_path_comparison_accepts_verbatim_prefix_and_case() {
+fn windows_path_comparison_accepts_verbatim_prefix_with_exact_spelling() {
     assert!(same_path(
         Path::new(r"\\?\C:\Code\ripr-swarm\target"),
-        Path::new(r"c:\code\RIPR-SWARM\target")
+        Path::new(r"C:\Code\ripr-swarm\target")
     ));
     assert!(same_path(
         Path::new(r"\\?\UNC\server\share\ripr\target"),
-        Path::new(r"\\server\share\RIPR\target")
+        Path::new(r"\\server\share\ripr\target")
     ));
+}
+
+#[cfg(windows)]
+#[test]
+fn windows_path_comparison_refuses_unresolved_case_difference() {
+    assert!(!same_path(
+        Path::new(r"C:\ripr-artifact-case-probe\Target"),
+        Path::new(r"c:\ripr-artifact-case-probe\target")
+    ));
+}
+
+#[cfg(windows)]
+#[test]
+fn validation_refuses_unresolved_target_case_difference() {
+    let root = TempDirectory::new("case-sensitive-target");
+    let repository = root.path.canonicalize().expect("canonical repo");
+    let paths = CargoPaths {
+        workspace_root: repository.clone(),
+        target_directory: repository.join("TARGET"),
+        build_directory: repository.join("TARGET"),
+    };
+    let error = validate_cargo_paths(&repository, &paths).expect_err("case difference refused");
+    assert!(error.to_string().contains("owns only"));
 }
 
 #[test]
@@ -225,6 +249,101 @@ fn destructive_mode_requires_receipt() {
     ])
     .expect_err("destructive no-receipt refused");
     assert!(error.to_string().contains("refuses --no-receipt"));
+}
+
+#[test]
+fn rendered_json_has_literal_outer_braces() {
+    let root = TempDirectory::new("json-braces");
+    let target = root.path.join("target");
+    fs::create_dir_all(&target).expect("target");
+    let plan = build_plan(&target, 1).expect("plan");
+    let options = Options {
+        operation: Operation::Report,
+        apply: false,
+        max_size_bytes: 1,
+        no_receipt: false,
+    };
+    let rendered = render_json(&options, &plan, &ApplyState::planned());
+    assert!(rendered.starts_with("{\n"));
+    assert!(rendered.ends_with("}\n"));
+    assert!(rendered.contains("\"schema_version\": 1"));
+}
+
+#[test]
+fn receipt_publication_does_not_mutate_an_external_hard_link() {
+    let root = TempDirectory::new("receipt-hardlink");
+    let reports = root.path.join("target/ripr/reports");
+    fs::create_dir_all(&reports).expect("reports");
+    let outside = root.path.join("outside-receipt.json");
+    let receipt = reports.join(REPORT_JSON);
+    fs::write(&outside, b"outside-old").expect("outside receipt");
+    fs::hard_link(&outside, &receipt).expect("hard-link receipt");
+
+    write_plain_file(&receipt, "new receipt\n").expect("replace receipt entry");
+
+    assert_eq!(
+        fs::read_to_string(&outside).expect("read outside receipt"),
+        "outside-old"
+    );
+    assert_eq!(
+        fs::read_to_string(&receipt).expect("read published receipt"),
+        "new receipt\n"
+    );
+}
+
+#[test]
+fn failed_receipt_replacement_restores_previous_content() {
+    let root = TempDirectory::new("receipt-restore");
+    let reports = root.path.join("target/ripr/reports");
+    fs::create_dir_all(&reports).expect("reports");
+    let receipt = reports.join(REPORT_JSON);
+    fs::write(&receipt, b"previous receipt\n").expect("previous receipt");
+    let mut rename_calls = 0usize;
+
+    let error = write_plain_file_with_rename(&receipt, "next receipt\n", |from, to| {
+        rename_calls += 1;
+        if rename_calls == 2 {
+            Err(io::Error::other("injected publish failure"))
+        } else {
+            fs::rename(from, to)
+        }
+    })
+    .expect_err("publish failure");
+
+    assert!(error.to_string().contains("previous receipt restored"));
+    assert_eq!(rename_calls, 3);
+    assert_eq!(
+        fs::read_to_string(&receipt).expect("restored receipt"),
+        "previous receipt\n"
+    );
+    let leftovers = fs::read_dir(&reports)
+        .expect("read reports")
+        .map(|entry| entry.expect("report entry").file_name())
+        .collect::<Vec<_>>();
+    assert_eq!(leftovers, vec![OsStr::new(REPORT_JSON).to_os_string()]);
+}
+
+#[test]
+fn json_receipt_remains_authoritative_when_markdown_publication_fails() {
+    let root = TempDirectory::new("json-authority");
+    let target = root.path.join("target");
+    let markdown_path = target.join("ripr/reports").join(REPORT_MARKDOWN);
+    fs::create_dir_all(&markdown_path).expect("blocking markdown directory");
+    let plan = build_plan(&target, 1).expect("plan");
+    let options = Options {
+        operation: Operation::Report,
+        apply: false,
+        max_size_bytes: 1,
+        no_receipt: false,
+    };
+    let state = ApplyState::planned();
+
+    let error = write_receipts(&target, &options, &plan, &state)
+        .expect_err("markdown publication failure");
+    assert!(error.to_string().contains("after authoritative JSON"));
+    let json = fs::read_to_string(target.join("ripr/reports").join(REPORT_JSON))
+        .expect("authoritative JSON");
+    assert!(json.contains("\"status\": \"planned\""));
 }
 
 #[test]

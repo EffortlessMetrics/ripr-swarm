@@ -63,6 +63,8 @@ The utility writes:
 - `target/ripr/reports/cargo-artifacts.json`
 - `target/ripr/reports/cargo-artifacts.md`
 
+The JSON receipt is authoritative. Markdown is a human-readable projection written only after the corresponding JSON publication succeeds; the two files are not claimed to be an atomic pair. Each file is first written and synced to an exclusively created same-directory temporary file. Replacing an existing receipt preserves the previous directory entry under a unique backup name until the new entry is published, so a failed publication restores or visibly retains the previous record instead of truncating it. A pre-existing hard link is replaced as a directory entry and its other links are not modified.
+
 `--no-receipt` is available only for isolated dry-run diagnostics and tests. Destructive cleanup always retains a receipt.
 
 ### `report`
@@ -82,11 +84,11 @@ Before selecting or deleting, it refuses:
 - a `build_directory` that is not exactly the same path as that target;
 - symlinks, Windows reparse points, special files, unreadable paths, and non-direct deletion candidates.
 
-The exact-equality rule matters: containment is not ownership. A nested Cargo build path never authorizes deletion of its ancestor hash tree or siblings.
+The exact-equality rule matters: containment is not ownership. A nested Cargo build path never authorizes deletion of its ancestor hash tree or siblings. On Windows, a verbatim path prefix may be normalized, but case differences are accepted only when both existing paths canonicalize to the same filesystem object. An unresolved case-only difference is refused because a case-sensitive directory can contain distinct `target` and `TARGET` entries.
 
-Apply mode writes the initial receipt before mutation. Before each deletion it records that entry as `pending`, rechecks it, and renames the direct child to a unique `.cargo-artifacts-delete-*` direct child inside the same target. Recursive removal starts only after that same-filesystem quarantine succeeds and is revalidated. A locked tree, mount point, disappearing source, newly detected link/reparse point, or rename failure therefore stops before recursive removal. A writer that incorrectly recreates the original Cargo path is not writing inside the quarantined tree being removed.
+Apply mode writes the initial authoritative JSON receipt before mutation. Before each deletion it records that entry as `pending`, rechecks it, and renames the direct child to a unique `.cargo-artifacts-delete-*` direct child inside the same target. Recursive removal starts only after that same-filesystem quarantine succeeds and is revalidated. A locked tree, mount point, disappearing source, newly detected link/reparse point, or rename failure therefore stops before recursive removal. A writer that incorrectly recreates the original Cargo path is not writing inside the quarantined tree being removed.
 
-A successful removal is confirmed in the next receipt. If that receipt update itself fails, the last durable record says the entry's outcome is unknown instead of falsely claiming it remains. If recursive removal fails, the quarantined direct child remains visible and eligible for a later receipted pass. The receipt retains prior deletions plus the pending/failing entry without a traceback.
+A successful removal is confirmed in the next JSON receipt. If that publication fails, the previous synced JSON remains authoritative and still marks the entry pending; if restoration itself fails, the error names the visible backup path containing that prior record. If recursive removal fails, the quarantined direct child remains visible and eligible for a later receipted pass. Markdown publication failure cannot erase or invalidate the authoritative JSON state.
 
 This transaction boundary still assumes the required quiescent-checkout precondition. The tool does not claim atomic exclusion against an adversarial actor that discovers and mutates the unique quarantine after release was asserted.
 
@@ -116,4 +118,4 @@ The standalone source set carries its own standard-library unit tests. Repositor
 cargo test -p xtask --test cargo_artifact_lifecycle
 ```
 
-The suite covers Git-checkout-root discrimination, Windows JSON paths and verbatim-prefix equality, top-level metadata discrimination, exact target/build ownership, direct-child selection, quarantine-before-removal, budget reporting, `target/ripr` case preservation and aggregate measurement, destructive receipt requirements, pending/partial-failure receipts, and symlink non-traversal.
+The suite covers Git-checkout-root discrimination, Windows JSON paths, verbatim-prefix handling and unresolved case refusal, top-level metadata discrimination, exact target/build ownership, direct-child selection, quarantine-before-removal, budget reporting, `target/ripr` case preservation and aggregate measurement, destructive receipt requirements, literal JSON rendering, hard-link-safe receipt replacement, failed-publication restoration, JSON authority when Markdown publication fails, pending/partial-failure receipts, and symlink non-traversal.
