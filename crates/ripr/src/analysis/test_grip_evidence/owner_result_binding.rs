@@ -226,8 +226,8 @@ fn owner_result_field_observation(
         && let Some(reads) = binding_never_reads_field(&function, binding, owner_name, field_name)
         && !file_renames_owner(&parsed.parse, owner_name)
         // The owner result must reach an oracle: one accepted
-        // `binding.<other_field>` read sits in the discriminating argument of
-        // an assertion after the binding. A raw word (a string literal, a
+        // `binding.<other_field>` read appears in an assertion's condition or
+        // compared operands after the binding. A raw word (a string literal, a
         // comment, another value's `.c`) is not a read, and a binding no
         // assertion reads (`let _c = owner(); assert!(1 > 0);`) observes
         // nothing, so it stays non-ready.
@@ -243,9 +243,12 @@ fn owner_result_field_observation(
 /// #13700: whether the test never reads `field` through `binding` or any other
 /// way the token stream can spell. Fail-closed token reading over the test
 /// function's own tokens, macro bodies included: `binding` is declared once
-/// (never shadowed); every other mention of it is `binding.<other_field>` with
-/// no call or turbofish after it (never passed, matched, compared whole or
-/// method-called); the owner's name appears nowhere outside the one binding
+/// (never shadowed); every other mention of it is a clean
+/// `binding.<other_field>` read whose next token is a terminator from
+/// [`clean_read_terminator`] (so never passed, matched, compared whole,
+/// spread as `..binding`, method-called, turbofished, indexed, assigned or
+/// chained into a sub-field such as `binding.inner.x`, which refuses
+/// fail-closed); the owner's name appears nowhere outside the one binding
 /// initializer (a second call, path or reference could observe the field
 /// through whole-value equality or a snapshot); `field` is never named as an
 /// identifier; and no string literal names `field` or captures `binding` in a
@@ -312,19 +315,24 @@ fn binding_never_reads_field(
                 if text != binding.name || token.text_range() == binding.name_range {
                     continue;
                 }
-                let previous = at.checked_sub(1).and_then(|index| tokens.get(index));
-                if previous.is_some_and(|token| token.kind() == SyntaxKind::DOT) {
-                    // `other.<name>`: a field of something else.
+                let kind_at = |index: Option<usize>| {
+                    index
+                        .and_then(|index| tokens.get(index))
+                        .map(|token| token.kind())
+                };
+                if kind_at(at.checked_sub(1)) == Some(SyntaxKind::DOT) {
+                    // Inside a macro token tree `..` is `DOT DOT`, so
+                    // `..binding` (a struct-update base carrying the whole
+                    // value) refuses; a single dot is `other.<name>`, a
+                    // field of something else.
+                    if kind_at(at.checked_sub(2)) == Some(SyntaxKind::DOT) {
+                        return None;
+                    }
                     continue;
                 }
-                let dot = tokens.get(at + 1);
-                let name = tokens.get(at + 2);
-                let after = tokens.get(at + 3);
-                let other_field_read = dot.is_some_and(|token| token.kind() == SyntaxKind::DOT)
-                    && name.is_some_and(|token| token.kind() == SyntaxKind::IDENT)
-                    && !after.is_some_and(|token| {
-                        matches!(token.kind(), SyntaxKind::L_PAREN | SyntaxKind::COLON2)
-                    });
+                let other_field_read = kind_at(Some(at + 1)) == Some(SyntaxKind::DOT)
+                    && kind_at(Some(at + 2)) == Some(SyntaxKind::IDENT)
+                    && clean_read_terminator(kind_at(Some(at + 3)), kind_at(Some(at + 4)));
                 if !other_field_read {
                     return None;
                 }
@@ -336,9 +344,53 @@ fn binding_never_reads_field(
     Some(reads)
 }
 
-/// #13700: whether the accepted binding read at `read` lies in the
-/// discriminating argument of an `assert!` (its condition) or an
-/// `assert_eq!`/`assert_ne!` (its two compared operands) whose macro call
+/// #13700: whether the token after a `binding.<name>` read (`next`, with
+/// `after` the one following it) ends a plain field read. Inside a macro
+/// token tree compound punctuation is split (`==` is `EQ EQ`, `::` is
+/// `COLON COLON`), so both spellings are listed. Everything else refuses:
+/// a call or turbofish (`(`, `::`, `:`), an index (`[`), a further
+/// `.`, an assignment (`=` alone or a compound `+=`), a shift, a cast or
+/// a `?`.
+fn clean_read_terminator(
+    next: Option<ra_ap_syntax::SyntaxKind>,
+    after: Option<ra_ap_syntax::SyntaxKind>,
+) -> bool {
+    use ra_ap_syntax::SyntaxKind;
+    let Some(next) = next else {
+        return false;
+    };
+    match next {
+        SyntaxKind::R_PAREN
+        | SyntaxKind::R_BRACK
+        | SyntaxKind::R_CURLY
+        | SyntaxKind::COMMA
+        | SyntaxKind::SEMICOLON
+        | SyntaxKind::EQ2
+        | SyntaxKind::NEQ
+        | SyntaxKind::LTEQ
+        | SyntaxKind::GTEQ
+        | SyntaxKind::AMP2
+        | SyntaxKind::PIPE2 => true,
+        // Split `==` / `!=` inside a token tree; a lone `=` assigns.
+        SyntaxKind::EQ | SyntaxKind::BANG => after == Some(SyntaxKind::EQ),
+        SyntaxKind::AMP => after == Some(SyntaxKind::AMP),
+        SyntaxKind::PIPE => after == Some(SyntaxKind::PIPE),
+        // `<`, `>`, `<=`, `>=`; a doubled angle is a shift (or `<<=`).
+        SyntaxKind::L_ANGLE | SyntaxKind::R_ANGLE => after != Some(next),
+        // Arithmetic, but not a split compound assignment (`+ =`).
+        SyntaxKind::PLUS
+        | SyntaxKind::MINUS
+        | SyntaxKind::STAR
+        | SyntaxKind::SLASH
+        | SyntaxKind::PERCENT => after != Some(SyntaxKind::EQ),
+        _ => false,
+    }
+}
+
+/// #13700: whether the accepted binding read at `read` appears in the
+/// condition of an `assert!` or in the two compared operands of an
+/// `assert_eq!`/`assert_ne!` (not that it decides the assertion), whose
+/// macro call
 /// starts on an indexed assertion line after the binding. Format arguments,
 /// other macros and reads outside any assertion do not count.
 fn read_in_assertion_after_binding(

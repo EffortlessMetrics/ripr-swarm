@@ -552,6 +552,9 @@ fn default_config_is_quiet() {
 
 #[test]
 fn binding_no_assertion_reads_is_not_unread() -> Result<(), String> {
+    // Every label is checked and every failure reported, so a red run names
+    // each shape the gate under test lets through.
+    let mut failures = Vec::new();
     for (label, body) in [
         (
             "discarded binding",
@@ -585,16 +588,47 @@ fn binding_no_assertion_reads_is_not_unread() -> Result<(), String> {
             "binding read only in a format argument",
             "let c = default_config();\n    assert!(true, \"{}\", c.verbose);",
         ),
+        (
+            "turbofish method call through the binding (macro-split `::`)",
+            "let c = default_config();\n    assert_eq!(c.get::<u64>(), 5);",
+        ),
+        (
+            "struct-update base `..c` inside an assertion (macro-split `..`)",
+            "let c = default_config();\n    assert!(!c.verbose);\n    assert_eq!(Config { verbose: true, ..c }, expected());",
+        ),
+        (
+            "binding read only in an assert_eq message argument",
+            "let c = default_config();\n    assert_eq!(1, 1, \"{}\", c.verbose);",
+        ),
+        (
+            "binding and assertion on the same line",
+            "let c = default_config(); assert!(!c.verbose);",
+        ),
+        (
+            "binding read only in debug_assert",
+            "let c = default_config();\n    debug_assert!(!c.verbose);",
+        ),
+        (
+            "sub-field chain through a sibling field",
+            "let c = default_config();\n    assert!(c.verbose.then_some(1).is_none());",
+        ),
     ] {
         let case = integration_case(
             PUBLIC_CONFIG,
             &format!("\n#[test]\nfn default_config_is_quiet() {{\n    {body}\n}}\n"),
         )?;
-        setup_must_reach_gate(&case, "default_config_is_quiet")
-            .map_err(|error| format!("{label}: {error}"))?;
-        no_unread_fact(&case, label)?;
+        if let Err(error) = setup_must_reach_gate(&case, "default_config_is_quiet")
+            .map_err(|error| format!("{label}: {error}"))
+            .and_then(|()| no_unread_fact(&case, label))
+        {
+            failures.push(error);
+        }
     }
-    Ok(())
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join("\n"))
+    }
 }
 
 #[test]
@@ -609,6 +643,21 @@ fn default_config_is_quiet() {
         c.verbose,
         false
     );
+}
+"#,
+    )?;
+    unread_route_must_be_ready(&case, "default_config_is_quiet")
+}
+
+#[test]
+fn sibling_read_in_the_second_assert_eq_operand_starts_repair() -> Result<(), String> {
+    let case = integration_case(
+        PUBLIC_CONFIG,
+        r#"
+#[test]
+fn default_config_is_quiet() {
+    let c = default_config();
+    assert_eq!(false, c.verbose);
 }
 "#,
     )?;

@@ -607,14 +607,19 @@ against fixture repos.
   refused DirectOwnerCall related test does not fall through to a Proposed
   target; an advisory related observer does not block an independently
   admitted proposal.
-  When the only related test binds the direct owner result once, reads it
-  as `binding.<other_field>` (no call or turbofish after it) inside the
-  condition of an `assert!` or a compared operand of an `assert_eq!` or
-  `assert_ne!` after the binding, and never reads the changed field
-  (#13700), the same fact completes the route if the field's declared
-  visibility reaches that test file (the binding's name in a string
-  literal, a comment, a format argument or another value's field is not
-  such a read; a sibling-field-only
+  When the only related test binds the direct owner result once, every
+  other mention of the binding is a plain `binding.<other_field>` read
+  ended by a closing delimiter, a separator or a comparison, logical or
+  arithmetic operator (a call, turbofish, index, assignment, cast, further
+  `.` chain or `..binding` struct-update base refuses), at least one such
+  read appears in the condition of an `assert!` or in the compared
+  operands of an `assert_eq!` or `assert_ne!` that starts on a line after
+  the binding (appearing there, not deciding the assertion), and the test
+  never reads the changed field (#13700), the same fact completes the
+  route if the field's declared visibility reaches that test file (the
+  binding's name in a string literal, a comment, a format or message
+  argument, a `debug_assert!` or another value's field is not such a read;
+  a sibling-field-only
   assertion is such a test, and an integration test's `use package::owner`
   import counts when the shared call-identity authority settles it on the
   owner); a strong or aliased read, a second candidate test, a binding passed
