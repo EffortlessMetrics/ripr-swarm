@@ -568,6 +568,64 @@ fn owned_profile_requires_exact_native_group_heavy_route_and_private_execution()
 }
 
 #[test]
+fn owned_workspace_guard_binds_runner_context_and_refuses_unsafe_paths() -> TestResult {
+    let fixture = Fixture::new()?;
+    let workspace = fixture.root.join("runner workspace");
+    fs::create_dir(&workspace)?;
+    let step = rust_step("Configure owned JIT environment")?;
+    let guard = step
+        .lines()
+        .map(str::trim)
+        .find(|line| line.starts_with("[[ \"$GITHUB_WORKSPACE\""))
+        .ok_or("owned workspace guard")?;
+    let script = format!("set -euo pipefail\n{guard}\n");
+    let mut env = fixture.env();
+    let expected = workspace.to_string_lossy().into_owned();
+    env.insert("GITHUB_WORKSPACE".into(), expected.clone());
+    env.insert("EXPECTED_WORKSPACE".into(), expected.clone());
+    assert!(
+        fixture
+            .command("bash", &["-c", &script], &env)?
+            .status
+            .success()
+    );
+    assert!(step.contains("EXPECTED_WORKSPACE: ${{ github.workspace }}"));
+
+    let link = fixture.root.join("workspace-link");
+    std::os::unix::fs::symlink(&workspace, &link)?;
+    for candidate in [
+        "/".to_string(),
+        "runner workspace".to_string(),
+        fixture.root.join("missing").to_string_lossy().into_owned(),
+        link.to_string_lossy().into_owned(),
+        format!("{expected}/../runner workspace"),
+        format!("{expected}\n"),
+    ] {
+        let mut wrong = env.clone();
+        wrong.insert("GITHUB_WORKSPACE".into(), candidate.clone());
+        wrong.insert("EXPECTED_WORKSPACE".into(), candidate.clone());
+        assert!(
+            !fixture
+                .command("bash", &["-c", &script], &wrong)?
+                .status
+                .success(),
+            "unsafe workspace accepted: {candidate:?}"
+        );
+    }
+    env.insert(
+        "EXPECTED_WORKSPACE".into(),
+        fixture.root.to_string_lossy().into_owned(),
+    );
+    assert!(
+        !fixture
+            .command("bash", &["-c", &script], &env)?
+            .status
+            .success()
+    );
+    Ok(())
+}
+
+#[test]
 fn owned_profile_cannot_touch_legacy_mounts_or_the_hosted_cache_writer() -> TestResult {
     for name in [
         "Acquire scratch lease",

@@ -241,13 +241,15 @@ jobs:
       - name: Configure owned JIT environment
         id: owned
         if: inputs.execution-profile == 'owned-jit'
+        env:
+          EXPECTED_WORKSPACE: ${{ github.workspace }}
         run: |
           set -euo pipefail
           [[ "$RUNNER_ENVIRONMENT" == self-hosted && "$RUNNER_OS" == Linux && "$RUNNER_ARCH" == X64 ]]
           [[ "$CARGO_HOME" == /cache/cargo && "$SCCACHE_DIR" == /cache/sccache && "$RUSTC_WRAPPER" == sccache && "$CARGO_INCREMENTAL" == 0 ]]
           [[ "$CARGO_BUILD_JOBS" == 8 && "$NEXTEST_TEST_THREADS" == 8 && "$RUST_TEST_THREADS" == 8 ]]
           [[ "$SCCACHE_CACHE_SIZE" =~ ^[1-9][0-9]*[KMGT]?$ ]]
-          [[ "$GITHUB_WORKSPACE" == /home/runner/_work/* && "$(realpath "$GITHUB_WORKSPACE")" == "$GITHUB_WORKSPACE" ]]
+          [[ "$GITHUB_WORKSPACE" == "$EXPECTED_WORKSPACE" && "$GITHUB_WORKSPACE" == /* && "$GITHUB_WORKSPACE" != / && "$GITHUB_WORKSPACE" != *$'\n'* && "$GITHUB_WORKSPACE" != *$'\r'* && -d "$GITHUB_WORKSPACE" && -w "$GITHUB_WORKSPACE" && ! -L "$GITHUB_WORKSPACE" && "$(realpath "$GITHUB_WORKSPACE")" == "$GITHUB_WORKSPACE" ]]
           for path in /cache/cargo /cache/cargo/registry /cache/cargo/git /cache/sccache; do
             [[ -d "$path" && -w "$path" && ! -L "$path" ]]
           done
