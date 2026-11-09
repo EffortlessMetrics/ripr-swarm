@@ -236,11 +236,16 @@ pub(super) fn resolve_repository_local_includes(root: &Path, index: &mut RustInd
 /// to fall back to a full rebuild for every added file whose bytes merely
 /// contained `include!`). A file the parser refuses, or one over the
 /// directive budget, reports `true`: its directives are unknown, so the
-/// caller fails closed to a fresh build.
+/// caller fails closed to a fresh build. The edge budget is shared by the
+/// whole index and is spent on inert directives too, so once the cached
+/// index already holds rebased include edges (`core_has_include_edges`) any
+/// directive in an added file could push the merged total over the budget,
+/// which clears the edges without undoing the rebased identities: it counts.
 pub(super) fn added_file_may_rebase_includes(
     path: &Path,
     source: &str,
     kept: &BTreeSet<&Path>,
+    core_has_include_edges: bool,
 ) -> bool {
     if !might_contain_include_macro(source) {
         return false;
@@ -249,6 +254,7 @@ pub(super) fn added_file_may_rebase_includes(
         return true;
     };
     directives.len() > MAX_INCLUDE_EDGES
+        || (core_has_include_edges && !directives.is_empty())
         || directives.iter().any(|directive| {
             directive.is_file_level
                 && directive
@@ -884,7 +890,7 @@ mod tests {
             "macro_rules! m { () => { include!(\"x.rs\") } }\npub fn a() {}\n",
         ] {
             assert!(
-                !added_file_may_rebase_includes(path, mention, &kept),
+                !added_file_may_rebase_includes(path, mention, &kept, false),
                 "mention must not count: {mention}"
             );
         }
@@ -897,10 +903,24 @@ mod tests {
             "include!(\"x.rs\"); fn broken( {\n",
         ] {
             assert!(
-                added_file_may_rebase_includes(path, directive, &kept),
+                added_file_may_rebase_includes(path, directive, &kept, false),
                 "directive must count: {directive}"
             );
         }
+        // With rebased edges already in the core, even an inert directive
+        // counts toward the shared edge budget.
+        assert!(added_file_may_rebase_includes(
+            path,
+            "mod m { include!(\"x.rs\"); }\n",
+            &kept,
+            true
+        ));
+        assert!(!added_file_may_rebase_includes(
+            path,
+            "// include!(\"x.rs\")\n",
+            &kept,
+            true
+        ));
         // An invocation that cannot become an edge only records a limitation.
         for inert in [
             "include!(\"missing.rs\");\n",
@@ -909,7 +929,7 @@ mod tests {
             "include!(\"../../escaped.rs\");\n",
         ] {
             assert!(
-                !added_file_may_rebase_includes(path, inert, &kept),
+                !added_file_may_rebase_includes(path, inert, &kept, false),
                 "inert directive must not count: {inert}"
             );
         }
@@ -929,12 +949,20 @@ mod tests {
             std::process::id(),
             NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed)
         ));
-        let core_sources = [
+        let plain_core = [
             ("Cargo.toml", "[package]\nname='demo'\nversion='0.0.0'\n"),
             ("src/lib.rs", "pub fn base() -> u8 { 1 }\n"),
             ("src/frag.rs", "pub fn fragment() -> u8 { 2 }\n"),
         ];
-        write_fixture(&root, &core_sources).map_err(|error| error.to_string())?;
+        // A core that already rebased `frag.rs` through a real edge.
+        let edge_core = [
+            ("Cargo.toml", "[package]\nname='demo'\nversion='0.0.0'\n"),
+            (
+                "src/lib.rs",
+                "include!(\"frag.rs\");\npub fn base() -> u8 { 1 }\n",
+            ),
+            ("src/frag.rs", "pub fn fragment() -> u8 { 2 }\n"),
+        ];
         let load = |names: &[(&str, &str)]| -> Vec<(PathBuf, Vec<u8>)> {
             names
                 .iter()
@@ -956,22 +984,39 @@ mod tests {
                     .join(",")
             ))
         };
-        for (added_source, expect_rebuild) in [
+        for (core_sources, added_source, expect_rebuild) in [
             (
+                plain_core,
                 "// include!(\"frag.rs\")\npub fn added() -> &'static str { \"include!\" }\n",
                 0usize,
             ),
             // An include whose target the merged index does not hold records
             // a limitation only; it is not an edge.
             (
+                plain_core,
                 "include!(\"nope.rs\");\npub fn added() -> u8 { 3 }\n",
                 0usize,
             ),
             (
+                plain_core,
                 "include!(\"frag.rs\");\npub fn added() -> u8 { 3 }\n",
                 1usize,
             ),
+            // The shared edge budget: with a rebased edge in the core, even an
+            // inert directive or a mention-free file with one must rebuild,
+            // while a plain mention still extends in place.
+            (
+                edge_core,
+                "mod m { include!(\"nope.rs\"); }\npub fn added() -> u8 { 3 }\n",
+                1usize,
+            ),
+            (
+                edge_core,
+                "// include!(\"nope.rs\")\npub fn added() -> u8 { 3 }\n",
+                0usize,
+            ),
         ] {
+            write_fixture(&root, &core_sources).map_err(|error| error.to_string())?;
             let mut target_sources = core_sources.to_vec();
             target_sources.push(("src/added.rs", added_source));
             write_fixture(&root, &[("src/added.rs", added_source)])

@@ -375,7 +375,12 @@ fn reuse_cached_index(
             .iter()
             .any(|(path, _)| cached.index.files().get(path).is_some());
     let rebases_includes = extras.iter().any(|(path, bytes)| {
-        includes::added_file_may_rebase_includes(path, &build::rust_source_text(bytes).text, &kept)
+        includes::added_file_may_rebase_includes(
+            path,
+            &build::rust_source_text(bytes).text,
+            &kept,
+            !cached.index.include_parents.is_empty(),
+        )
     });
     if retracts || rebases_includes {
         #[cfg(test)]
