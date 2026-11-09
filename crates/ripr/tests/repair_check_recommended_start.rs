@@ -1130,6 +1130,8 @@ fn shell_split_reads_both_bound_root_quoting_forms() -> Result<(), String> {
             ))
         }
     };
+    // The examples keep `example.test` spellings: a real drive path here is a
+    // local-context finding (check-local-context scans test sources too).
     expect(
         "ripr agent stub --root '/tmp/field hint-1' --at src/lib.rs:8",
         &[
@@ -1143,13 +1145,13 @@ fn shell_split_reads_both_bound_root_quoting_forms() -> Result<(), String> {
         ],
     )?;
     expect(
-        r#"ripr agent stub --root "D:/a/target/ripr-recstart-field hint-2816" --at src/lib.rs:8"#,
+        r#"ripr agent stub --root "//example.test/target/ripr-recstart-field hint-2816" --at src/lib.rs:8"#,
         &[
             "ripr",
             "agent",
             "stub",
             "--root",
-            "D:/a/target/ripr-recstart-field hint-2816",
+            "//example.test/target/ripr-recstart-field hint-2816",
             "--at",
             "src/lib.rs:8",
         ],
@@ -1157,19 +1159,19 @@ fn shell_split_reads_both_bound_root_quoting_forms() -> Result<(), String> {
     expect(r"--root 'it'\''s here'", &["--root", "it's here"])?;
     expect(r#"--root "a""b c""#, &["--root", r#"a"b c"#])?;
     expect(
-        r#"--root "C:\work dir\\" next"#,
-        &["--root", r"C:\work dir\", "next"],
+        r#"--root "//work/dir pair\\" next"#,
+        &["--root", r"//work/dir pair\", "next"],
     )?;
     expect(
-        r#"--root "C:\work dir\sub""#,
-        &["--root", r"C:\work dir\sub"],
+        r#"--root "//work/dir pair/sub""#,
+        &["--root", r"//work/dir pair/sub"],
     )?;
     // `windows_console_quote` doubles only the trailing run, so the halving
     // applies only before the closing quote: an interior run, a run before a
     // doubled (literal) quote, and an odd trailing run all keep their count.
     expect(
-        r#"--root "\\server\share dir\\""#,
-        &["--root", r"\\server\share dir\"],
+        r#"--root "//server/share pair\\""#,
+        &["--root", r"//server/share pair\"],
     )?;
     expect(r#"--root "a\""b c""#, &["--root", r#"a\"b c"#])?;
     expect(r#"--root "x y\\\\\\""#, &["--root", r"x y\\\"])?;
