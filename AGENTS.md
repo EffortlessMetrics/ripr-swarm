@@ -367,6 +367,16 @@ merely because its full hosted matrix cannot run locally.
 
 ### Local proof versus hosted merge proof
 
+Before a candidate's first build, use the process-local build environment in
+[focused local iteration](docs/TESTING.md#focused-local-iteration): one stable
+private Cargo target, a prepared owned temp directory, non-incremental mode for
+disposable or sccache-backed builds, and host-budgeted compiler concurrency.
+Reuse that target through focused proof; do not create another for each command
+or phase. Inspect independent intermediate-directory overrides and keep nested
+private builds isolated. At closeout, release only the owned build output after
+its consumers end and required witnesses are retained; preserve `target/ripr`
+evidence. The existing bounded-storage procedure remains the admission authority.
+
 Use focused tests, a narrow compile, `cargo xtask check-fast` and
 `cargo xtask precommit` for candidate shaping. Read the emitted reports and
 independently verify `check-fast`'s base/diff selector; zero selected paths after
@@ -633,3 +643,4 @@ resurrect deleted active-goal manifests or store global writer/lifecycle state.
 does not enumerate newly added tests or prove `::symbol` identity. During review,
 map behavior-discriminating tests to the relevant spec and explain intentional
 omissions. Symbol/test-role verification remains owned by #2345.
+

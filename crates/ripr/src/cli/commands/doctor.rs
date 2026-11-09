@@ -3526,7 +3526,16 @@ fn is_workspace_relative_value(dir: &str) -> bool {
 /// are not reported — an over-broad match would warn on workspaces the
 /// failure cannot hit, and a missing directory is only a defect while it is
 /// the linker's temp directory.
+#[cfg(test)]
 fn linker_temp_redirect(config_text: &str) -> Option<LinkerTempRedirect> {
+    linker_temp_redirect_with_env(config_text, Path::new("."), |_| None)
+}
+
+fn linker_temp_redirect_with_env(
+    config_text: &str,
+    root: &Path,
+    environment_value: impl Fn(&str) -> Option<PathBuf>,
+) -> Option<LinkerTempRedirect> {
     let config = toml::from_str::<toml::Value>(config_text).ok()?;
     let env = config.get("env")?.as_table()?;
     let mut redirect = LinkerTempRedirect {
@@ -3538,6 +3547,10 @@ fn linker_temp_redirect(config_text: &str) -> Option<LinkerTempRedirect> {
         let Some(entry) = env.get(var) else {
             continue;
         };
+        let forced = entry
+            .get("force")
+            .and_then(|force| force.as_bool())
+            .unwrap_or(false);
         if !entry
             .get("relative")
             .and_then(|relative| relative.as_bool())
@@ -3551,17 +3564,26 @@ fn linker_temp_redirect(config_text: &str) -> Option<LinkerTempRedirect> {
         if !is_workspace_relative_value(dir) {
             continue;
         }
+        // A caller-supplied value may select this same missing path (including
+        // a fallback populated by a parent Cargo process). Only a different
+        // path makes the workspace-relative default irrelevant. An empty
+        // supplied value is invalid, but does not select this fallback.
+        if !forced
+            && environment_value(var).is_some_and(|path| {
+                let selected = std::path::absolute(path).ok();
+                let configured = std::path::absolute(root.join(dir)).ok();
+                selected.is_none() || selected != configured
+            })
+        {
+            continue;
+        }
         if !redirect.vars.contains(&var) {
             redirect.vars.push(var);
         }
         if !redirect.dirs.iter().any(|known| known == dir) {
             redirect.dirs.push(dir.to_string());
         }
-        if !entry
-            .get("force")
-            .and_then(|force| force.as_bool())
-            .unwrap_or(false)
-        {
+        if !forced {
             redirect.all_forced = false;
         }
     }
@@ -3589,20 +3611,22 @@ fn read_workspace_cargo_config(root: &Path) -> Option<(&'static str, String)> {
 
 /// Preflight for the workspace-relative linker-temp redirect (#5280).
 ///
-/// ripr's own `.cargo/config.toml` force-sets `TEMP`/`TMP`/`TMPDIR` to
-/// workspace-relative `target/` so MSVC `link.exe` never writes its temp
-/// files to a full system temp drive (PR #397). The redirect is deliberate
-/// and stays; the cost is that a checkout where the workspace-local
-/// directory does not exist — a fresh `git worktree add` building with an
-/// isolated `CARGO_TARGET_DIR` — fails linking with an opaque
-/// `LNK1104 ... <workspace>\target\lnk{GUID}.tmp` even though objects and
-/// `/OUT` land in the isolated target. This surfaces the constraint and the
-/// one-line repair before the build hits it. Advisory only: a normal
-/// workspace build creates `target/` itself, and a present directory means
-/// the failure cannot occur.
+/// A workspace can redirect `TEMP`/`TMP`/`TMPDIR` to a local directory even
+/// while Cargo outputs go to an external target. When that effective temp
+/// directory is absent, MSVC can fail with LNK1104. A caller's different temp
+/// path overrides non-forced defaults; forced entries still select the default.
+/// This only diagnoses the selected workspace-relative path, not the health
+/// of an external temp directory or the build volume's available capacity.
 fn linker_temp_redirect_advisory(root: &Path) -> Option<String> {
+    linker_temp_redirect_advisory_with_env(root, |name| std::env::var_os(name).map(PathBuf::from))
+}
+
+fn linker_temp_redirect_advisory_with_env(
+    root: &Path,
+    environment_value: impl Fn(&str) -> Option<PathBuf>,
+) -> Option<String> {
     let (relative_path, config_text) = read_workspace_cargo_config(root)?;
-    let redirect = linker_temp_redirect(&config_text)?;
+    let redirect = linker_temp_redirect_with_env(&config_text, root, environment_value)?;
     let absent: Vec<&str> = redirect
         .dirs
         .iter()
@@ -6164,7 +6188,7 @@ mod tests {
         Ok(())
     }
 
-    /// The exact `[env]` shape ripr's own `.cargo/config.toml` ships.
+    /// Historical forced redirect; other workspaces may still use this shape.
     const REPO_SHAPED_CARGO_CONFIG: &str = "[env]\n\
         TEMP = { value = \"target\", relative = true, force = true }\n\
         TMP = { value = \"target\", relative = true, force = true }\n\
@@ -6172,7 +6196,7 @@ mod tests {
 
     #[test]
     fn linker_temp_redirect_parses_only_relative_table_entries() {
-        // The repo shape: three variables, one distinct directory, all forced.
+        // The historical shape: three variables, one distinct directory, all forced.
         let redirect = linker_temp_redirect(REPO_SHAPED_CARGO_CONFIG);
         assert!(
             redirect.as_ref().is_some_and(|redirect| {
@@ -6180,7 +6204,7 @@ mod tests {
                     && redirect.dirs == ["target"]
                     && redirect.all_forced
             }),
-            "ripr's own [env] shape must parse as a redirect: {redirect:?}"
+            "the forced [env] shape must parse as a redirect: {redirect:?}"
         );
 
         // Plain-string entries (never tables, so never `relative`) do not
@@ -6457,6 +6481,69 @@ mod tests {
     }
 
     #[test]
+    fn linker_temp_advisory_uses_effective_environment_overrides() -> Result<(), String> {
+        let root = unique_command_test_dir("linker-temp-environment");
+        std::fs::create_dir_all(root.join(".cargo"))
+            .map_err(|err| format!("create .cargo: {err}"))?;
+        let fallback = REPO_SHAPED_CARGO_CONFIG.replace("force = true", "force = false");
+        let cwd = std::env::current_dir().map_err(|err| format!("read cwd: {err}"))?;
+        let default_root = linker_temp_redirect_with_env(&fallback, Path::new("."), |_| {
+            Some(cwd.join("target"))
+        });
+        std::fs::write(root.join(".cargo/config.toml"), &fallback)
+            .map_err(|err| format!("write config: {err}"))?;
+        let absent = linker_temp_redirect_advisory_with_env(&root, |_| None);
+        let same_path =
+            linker_temp_redirect_advisory_with_env(&root, |_| Some(root.join("target")));
+        let overridden =
+            linker_temp_redirect_advisory_with_env(&root, |_| Some(root.join("managed-temp")));
+        let partial = linker_temp_redirect_advisory_with_env(&root, |name| {
+            (name == "TMPDIR").then(|| root.join("managed-temp"))
+        });
+        std::fs::write(
+            root.join(".cargo/config.toml"),
+            "[env]\nTEMP = { value = \"target\", relative = true, force = true }\n\
+             TMP = { value = \"unused\", relative = true, force = false }\n",
+        )
+        .map_err(|err| format!("write mixed config: {err}"))?;
+        let forced =
+            linker_temp_redirect_advisory_with_env(&root, |_| Some(root.join("managed-temp")));
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+
+        assert!(
+            absent
+                .as_deref()
+                .is_some_and(|text| text.contains("(TEMP, TMP, TMPDIR)")),
+            "missing fallback must remain actionable: {absent:?}"
+        );
+        assert_eq!(
+            same_path, absent,
+            "the same selected missing path still needs repair"
+        );
+        assert_eq!(
+            default_root,
+            linker_temp_redirect(&fallback),
+            "the default relative root must recognize the same absolute temp path"
+        );
+        assert_eq!(overridden, None, "caller-owned temp never selects target/");
+        assert!(
+            partial
+                .as_deref()
+                .is_some_and(|text| text.contains("(TEMP, TMP)")),
+            "only absent variables select the fallback: {partial:?}"
+        );
+        assert!(
+            forced.as_deref().is_some_and(|text| {
+                text.contains("(TEMP)")
+                    && text.contains("force = true")
+                    && !text.contains("unused")
+            }),
+            "a forced entry still wins over the environment: {forced:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn linker_temp_redirect_advisory_pluralizes_multiple_absent_dirs() -> Result<(), String> {
         // Two variables redirected into two distinct absent directories:
         // the evidence must read as plural and the repair must name every
@@ -6476,7 +6563,7 @@ mod tests {
             .map_err(|err| format!("create .cargo: {err}"))?;
         std::fs::write(root.join(".cargo/config.toml"), config_text)
             .map_err(|err| format!("write config: {err}"))?;
-        let advisory = linker_temp_redirect_advisory(&root).unwrap_or_default();
+        let advisory = linker_temp_redirect_advisory_with_env(&root, |_| None).unwrap_or_default();
         // Compute both rooted-repair expectations before the tree is removed.
         let target_arg =
             crate::agent::loop_commands::shell_arg(&output::path::human_path(&root.join("target")));
@@ -8746,3 +8833,4 @@ mod tests {
         assert!(!is_workspace_relative_value("/var/tmp"));
     }
 }
+

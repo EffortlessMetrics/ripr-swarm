@@ -4,6 +4,8 @@
 //! main-push qualification, replace this temporary contract with the reviewed
 //! selected-route lifecycle proof; do not retain full qualification just to warm
 //! a cache. The archive-boundary contract (#7685) remains independent.
+//! The reusable producer also disables incremental compilation for every route:
+//! the self-hosted scratch route does not run rust-cache's environment setup.
 const CALLER: &str = include_str!("../../../.github/workflows/routed-rust.yml");
 const PRODUCER: &str = include_str!("../../../.github/workflows/rust-gates.yml");
 
@@ -25,6 +27,48 @@ fn block<'a>(source: &'a str, name: &str, indent: usize) -> Option<&'a str> {
     }
     Some(tail)
 }
+
+fn producer_disables_incremental_compilation(producer: &str) -> bool {
+    block(producer, "jobs", 0)
+        .and_then(|jobs| block(jobs, "rust-gates", 2))
+        .and_then(|job| block(job, "env", 4))
+        .is_some_and(|env| {
+            env.lines()
+                .any(|line| line.trim() == "CARGO_INCREMENTAL: \"0\"")
+        })
+}
+
+#[test]
+fn reusable_gate_disables_incremental_compilation_for_every_route() {
+    assert!(
+        producer_disables_incremental_compilation(PRODUCER),
+        "the reusable gate must disable incremental compilation before either cache route"
+    );
+}
+
+#[test]
+fn incremental_setting_must_apply_to_the_reusable_job() {
+    let setting = "      CARGO_INCREMENTAL: \"0\"\n";
+    let missing = PRODUCER.replacen(setting, "", 1);
+    assert_ne!(missing, PRODUCER, "control must remove the actual setting");
+    let hosted_only = missing.replacen(
+        "      - name: Restore hosted Rust cache\n",
+        "      - name: Restore hosted Rust cache\n        env:\n          CARGO_INCREMENTAL: \"0\"\n",
+        1,
+    );
+    assert_ne!(hosted_only, missing, "hosted-step control must change scope");
+    for changed in [
+        missing,
+        PRODUCER.replacen(setting, "      CARGO_INCREMENTAL: \"1\"\n", 1),
+        hosted_only,
+    ] {
+        assert!(
+            !producer_disables_incremental_compilation(&changed),
+            "missing, enabled, or hosted-step-only settings must not cover the scratch route"
+        );
+    }
+}
+
 fn continuity_findings(caller: &str, producer: &str) -> Vec<&'static str> {
     let mut findings = Vec::new();
     let events = block(caller, "on", 0).unwrap_or("");

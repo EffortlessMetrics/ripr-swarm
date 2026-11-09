@@ -10,6 +10,10 @@ xtask = "run -p xtask --"
 policy = "run --locked -p repo-policy --"
 
 [env]
-TEMP = { value = "target", relative = true, force = true }
-TMP = { value = "target", relative = true, force = true }
-TMPDIR = { value = "target", relative = true, force = true }
+# A job or agent owns its prepared temp directory. Do not override it with a
+# second scratch tree in the checkout. Raw Cargo uses this local fallback only
+# when the variable is absent; see docs/TESTING.md for the managed build setup.
+TEMP = { value = "target", relative = true, force = false }
+TMP = { value = "target", relative = true, force = false }
+TMPDIR = { value = "target", relative = true, force = false }
+

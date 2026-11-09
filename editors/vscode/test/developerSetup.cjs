@@ -88,8 +88,19 @@ function collectDeveloperSetup(options = {}) {
       throw new Error('The current requirement source shape is unsupported; inspect the named authorities.');
     }
     const linkerTemp = ['TEMP', 'TMP', 'TMPDIR'].map(name => {
-      const match = new RegExp(`^${name}\\s*=\\s*\\{\\s*value\\s*=\\s*"([^"\\r\\n]+)",\\s*relative\\s*=\\s*true,\\s*force\\s*=\\s*true\\s*\\}\\s*$`, 'm').exec(cargoConfig);
+      const match = new RegExp(`^${name}\\s*=\\s*\\{\\s*value\\s*=\\s*"([^"\\r\\n]+)",\\s*relative\\s*=\\s*true,\\s*force\\s*=\\s*(true|false)\\s*\\}\\s*$`, 'm').exec(cargoConfig);
       if (!match) throw new Error(`Cannot derive ${name} from .cargo/config.toml`);
+      // Cargo preserves a caller's variable when force=false, even if its
+      // value is empty. Do not silently substitute the checkout fallback or
+      // hand provisioning a truncated/relative path for an unusable value.
+      if (match[2] === 'false' && env[name] !== undefined) {
+        const selected = env[name];
+        if (typeof selected !== 'string' || selected.length === 0 || selected.length >= MAX_TEXT
+          || /[\x00-\x1f\x7f]/.test(selected) || !path.isAbsolute(selected)) {
+          throw new Error(`${name} must name an absolute, non-empty temporary directory without control characters (under ${MAX_TEXT} characters); set it to a prepared owned directory or unset it to use the Cargo fallback.`);
+        }
+        return { variable: name, path: selected };
+      }
       return { variable: name, path: path.resolve(root, match[1]) };
     });
     const rustComponents = JSON.parse(components);
@@ -154,7 +165,7 @@ function collectDeveloperSetup(options = {}) {
   locations.workspace_linker_temp = linkerTempPaths.map(entry => ({ variable: entry.variable,
     path: bounded(entry.path), observation: directoryObservation(entry.path) }));
   add('work_locations', 'not_proven', locations,
-    { instruction: 'Prepare the observed Cargo target and each TEMP/TMP/TMPDIR directory derived from .cargo/config.toml before Cargo work. Access checks do not prove writes or a full-build resource budget.' });
+    { instruction: 'Prepare the observed Cargo target and each effective TEMP/TMP/TMPDIR directory selected by the environment and .cargo/config.toml before Cargo work. Access checks do not prove writes or a full-build resource budget.' });
   add('editor_host_acquisition', 'not_run', { proxy_configured: Boolean(env.HTTPS_PROXY || env.HTTP_PROXY || env.https_proxy || env.http_proxy),
     extra_ca_configured: Boolean(env.NODE_EXTRA_CA_CERTS),
     limitation: 'No network request, policy permission, proxy/CA validation or host download was performed.' },
@@ -545,3 +556,4 @@ if (require.main === module) {
     process.stderr.write(bounded(String(error)) + '\n'); process.exitCode = 1;
   });
 }
+

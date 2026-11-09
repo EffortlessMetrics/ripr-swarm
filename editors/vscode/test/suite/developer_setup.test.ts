@@ -8,7 +8,8 @@ import { verifyEditorSetup, type EditorSetupRuntime } from '../verifySetup';
 
 interface SetupReport {
   requirement_sources: Array<{ path: string; sha256: string }>;
-  requirements: { rust_channel: string; node_major: number; typescript: string };
+  requirements: { rust_channel: string; node_major: number; typescript: string;
+    linker_temp: Array<{ variable: string; path: string }> };
   checks: Array<{ check_id: string; status: string; observed_fact: unknown;
     next_action: { instruction?: string; cwd?: string; command?: string[] } }>;
   known_blockers: string[];
@@ -134,6 +135,70 @@ suite('Developer setup capability boundary', function () {
     assert.ok(wrongNode.known_blockers.includes('node_runtime'));
     const human = diagnostic.renderDeveloperSetup(report);
     for (const check of report.checks) assert.ok(human.includes(check.check_id + ': ' + check.status));
+  });
+
+  test('non-forcing Cargo defaults preserve the owned temporary directories including spaces', () => {
+    const names = ['TEMP', 'TMP', 'TMPDIR'];
+    fs.writeFileSync(path.join(root, '.cargo/config.toml'), names
+      .map(name => name + ' = { value = "target", relative = true, force = false }\n').join(''));
+    const selected = names.map(name => ({ variable: name, path: path.join(root, 'owned build', name) }));
+    for (const entry of selected) fs.mkdirSync(entry.path, { recursive: true });
+    const report = collect(Object.fromEntries(selected.map(entry => [entry.variable, entry.path])));
+    assert.strictEqual(report.checks.find(check => check.check_id === 'source_requirements')?.status, 'pass');
+    assert.deepStrictEqual(report.requirements.linker_temp, selected);
+    const locations = report.checks.find(check => check.check_id === 'work_locations')
+      ?.observed_fact as { workspace_linker_temp: unknown };
+    assert.deepStrictEqual(locations.workspace_linker_temp,
+      selected.map(entry => ({ ...entry, observation: 'access_check_passed' })));
+    assert.strictEqual(fs.existsSync(path.join(root, 'target')), false,
+      'observing managed temp must not create the unused checkout fallback');
+  });
+
+  test('non-forcing Cargo defaults retain the checkout fallback only for absent variables', () => {
+    const names = ['TEMP', 'TMP', 'TMPDIR'];
+    fs.writeFileSync(path.join(root, '.cargo/config.toml'), names
+      .map(name => name + ' = { value = "target", relative = true, force = false }\n').join(''));
+    const report = collect({ TEMP: undefined });
+    assert.strictEqual(report.checks.find(check => check.check_id === 'source_requirements')?.status, 'pass');
+    assert.deepStrictEqual(report.requirements.linker_temp,
+      names.map(variable => ({ variable, path: path.join(root, 'target') })));
+    assert.strictEqual(fs.existsSync(path.join(root, 'target')), false);
+  });
+
+  test('temporary directory precedence is evaluated independently for each Cargo variable', () => {
+    fs.writeFileSync(path.join(root, '.cargo/config.toml'), [
+      'TEMP = { value = "target", relative = true, force = true }',
+      'TMP = { value = "target", relative = true, force = false }',
+      'TMPDIR = { value = "target", relative = true, force = false }'
+    ].join('\n'));
+    const managed = path.join(root, 'managed temp with spaces');
+    const report = collect({ TEMP: '', TMP: managed });
+    assert.strictEqual(report.checks.find(check => check.check_id === 'source_requirements')?.status, 'pass');
+    assert.deepStrictEqual(report.requirements.linker_temp, [
+      { variable: 'TEMP', path: path.join(root, 'target') },
+      { variable: 'TMP', path: managed },
+      { variable: 'TMPDIR', path: path.join(root, 'target') }
+    ]);
+  });
+
+  test('unusable inherited temporary paths fail visibly instead of selecting another directory', () => {
+    const names = ['TEMP', 'TMP', 'TMPDIR'];
+    fs.writeFileSync(path.join(root, '.cargo/config.toml'), names
+      .map(name => name + ' = { value = "target", relative = true, force = false }\n').join(''));
+    for (const name of names) {
+      for (const value of ['', 'relative-temp', '../other-temp', path.join(root, 'bad\0path'),
+        path.join(root, 'bad\npath'), path.join(root, 'x'.repeat(512))]) {
+        const report = collect({ [name]: value });
+        const check = report.checks.find(item => item.check_id === 'source_requirements');
+        assert.strictEqual(check?.status, 'fail', name + ': ' + JSON.stringify(value));
+        assert.ok(String(check?.observed_fact).includes(name + ' must name an absolute, non-empty temporary directory'));
+        assert.ok(String(check?.observed_fact).includes('set it to a prepared owned directory or unset it'));
+        assert.strictEqual(report.requirements, null, 'unusable paths cannot reach provisioning');
+        const locations = report.checks.find(item => item.check_id === 'work_locations')
+          ?.observed_fact as { workspace_linker_temp: unknown };
+        assert.deepStrictEqual(locations.workspace_linker_temp, []);
+      }
+    }
   });
 
   test('human guidance preserves every instruction alongside its command', () => {
@@ -468,3 +533,4 @@ suite('Developer setup capability boundary', function () {
     });
   }
 });
+
