@@ -148,7 +148,7 @@ retains its run and evidence identities in the report.
 
 ## Resource observations, not efficiency conclusions
 
-`observations.usage` accepts optional `model_calls`, `tool_calls`, `elapsed_ms`,
+The `usage` object (`observations.usage`) accepts optional `model_calls`, `tool_calls`, `elapsed_ms`,
 `peak_rss_bytes` and a token block. It needs a usage-report evidence reference
 and `complete`, which describes accounting completeness, not repair success.
 Partial observed totals retain their numbers as incomplete samples, so smaller
