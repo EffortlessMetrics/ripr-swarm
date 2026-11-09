@@ -1709,6 +1709,13 @@ fn top_issue_from_gate_decision(
         .iter()
         .find(|item| string_path(item, &["decision"]).as_deref() == Some(decision))?;
     let seam_id = string_path(item, &["seam_id"]);
+    // A suppressed entry reports its own class in public exposure words (a
+    // withheld static limitation is not a weak exposure); others keep the
+    // gate's weak-exposure claim.
+    let suppressed_class = (decision == "suppressed")
+        .then(|| string_path(item, &["static_class"]))
+        .flatten()
+        .map(normalize_class);
     // Only an acknowledged decision keeps a repair handoff; suppressed and
     // other decisions name none. The command is carried from the gate route.
     let repair_command = (decision == "acknowledged")
@@ -1730,14 +1737,12 @@ fn top_issue_from_gate_decision(
             (Some(item), &["placement", "line"]),
             (Some(item), &["line"]),
         ]),
-        // A suppressed entry reports its own class (a withheld static
-        // limitation is not a weak exposure); others keep the gate's claim.
-        classification: (decision == "suppressed")
-            .then(|| string_path(item, &["static_class"]))
-            .flatten()
+        classification: suppressed_class
+            .clone()
             .or_else(|| Some("weakly_exposed".to_string())),
         changed_behavior: string_path(item, &["evidence", "changed_behavior"]),
-        current_evidence_strength: current_evidence_strength_from_sources(&[Some(item)])
+        current_evidence_strength: suppressed_class
+            .or_else(|| current_evidence_strength_from_sources(&[Some(item)]))
             .or_else(|| Some("weakly_exposed".to_string())),
         missing_discriminator: string_path(item, &["evidence", "missing_discriminator"]),
         no_action_reason: None,
@@ -2565,7 +2570,7 @@ mod tests {
                 "id": "gate-1",
                 "decision": "suppressed",
                 "seam_id": "withheld-seam",
-                "static_class": "infection_unknown",
+                "static_class": "ungripped",
                 "placement": { "path": "src/lib.rs", "line": 6 }
             }]
         });
@@ -2627,11 +2632,17 @@ mod tests {
     fn suppressed_top_issue_reports_the_decision_static_class() {
         let report = build_pr_review_front_panel_report(suppressed_panel_input(None));
         assert_eq!(report.summary.top_issue_state, "baseline_only");
-        let class = report
-            .top_issue
-            .as_ref()
-            .and_then(|issue| issue.classification.clone());
-        assert_eq!(class.as_deref(), Some("infection_unknown"));
+        let issue = report.top_issue.as_ref();
+        // The internal grip word is presented in exposure vocabulary, and the
+        // evidence-strength line agrees with the class line.
+        assert_eq!(
+            issue.and_then(|issue| issue.classification.as_deref()),
+            Some("no_static_path")
+        );
+        assert_eq!(
+            issue.and_then(|issue| issue.current_evidence_strength.as_deref()),
+            Some("no_static_path")
+        );
     }
 
     #[test]

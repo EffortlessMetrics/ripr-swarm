@@ -677,7 +677,8 @@ fn candidate_from_guidance_item(
     let placement = GatePlacement {
         path: string_field(item.pointer("/placement/path"))
             .or_else(|| string_field(item.pointer("/seam/file")))
-            // Withheld changed-gap entries (#13892) carry a flat file/line.
+            // Flat suppressed entries (withheld changed gaps #13892, summary-cap
+            // and nearby-test entries) carry a flat file/line.
             .or_else(|| string_field(item.get("file"))),
         line: item
             .pointer("/placement/line")

@@ -270,6 +270,12 @@ fn every_check_listed_gap_on_an_uncalled_changed_fn_reaches_guidance() -> Result
         return Err(format!("withheld seam must name its reason: {withheld}"));
     }
     let message = withheld["message"].as_str().unwrap_or_default();
+    let class = withheld["class"].as_str().unwrap_or_default();
+    if class.is_empty() || !message.contains(&format!("Changed {class} seam")) {
+        return Err(format!(
+            "withheld seam must carry the static class its message names: {withheld}"
+        ));
+    }
     if !message.contains("activation_boundary_input_unresolved")
         || !message.contains("not evidence")
     {
@@ -318,6 +324,17 @@ fn gate_evaluates_the_withheld_uncalled_gap_with_its_named_reason() -> Result<()
     if decision["decision"] != "suppressed" {
         return Err(format!(
             "withheld seam must evaluate as suppressed: {decision:#}"
+        ));
+    }
+    let withheld_class = comments["suppressed"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|item| item["seam_id"] == seam_id.as_str())
+        .map(|item| item["class"].clone());
+    if withheld_class.is_none() || Some(decision["static_class"].clone()) != withheld_class {
+        return Err(format!(
+            "gate decision must carry the withheld seam's class: {decision:#}"
         ));
     }
     let reason = decision["gate_reason"].to_string();
