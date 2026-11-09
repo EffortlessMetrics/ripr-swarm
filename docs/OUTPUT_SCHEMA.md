@@ -118,7 +118,7 @@ map is:
 | `ripr check --format repo-exposure-json` | `schema_version` | `0.5` |
 | `ripr rerun --json` | `schema_version` | `ripr-targeted-rerun-v1` |
 | `ripr agent packet` and `ripr check --format agent-seam-packets-json` | `schema_version` | `0.5` |
-| `ripr agent brief` | `schema_version` | `0.1` |
+| `ripr agent brief` | `schema_version` | `0.2` |
 | `ripr agent receipt` | `schema_version` | `0.5` |
 | `ripr agent verify` | `schema_version` | `0.3` |
 | `ripr agent repair --phase before --json` and `ripr repair --json` (#11584) start stdout | `schema_version` | `0.5` |
@@ -1679,7 +1679,7 @@ The same envelope covers the other `--json` commands (#7331): `ripr diff
 --json`, `ripr rerun --json`, `ripr context` (which emits JSON only), `ripr
 agent brief --json`, and `ripr agent packet --json` write this document for
 every post-argv-parse failure, keyed with the refusing command's own
-`schema_version` (`"0.1"` for diff and agent brief, `"ripr-targeted-rerun-v1"`
+`schema_version` (`"0.1"` for diff, `"0.2"` for agent brief, `"ripr-targeted-rerun-v1"`
 for rerun, `"1.1"` for context, `"0.5"` for agent packet). `mode` appears only
 on commands that accept `--mode` (check, diff, context); `scope` is `"diff"`
 for diff-scoped commands and `"repo"` for agent brief and agent packet; agent

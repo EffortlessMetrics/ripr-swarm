@@ -5,7 +5,7 @@
 //! any of these outputs fails here instead of silently taxing every agent turn.
 //! A deliberate cut lowers the ceiling in the same change; a deliberate
 //! addition must justify raising it.
-use super::{run_command, unique_external_workspace};
+use super::{printed_path, run_command, unique_external_workspace};
 use std::fs;
 use std::path::Path;
 
@@ -60,7 +60,9 @@ fn run(project: &Path, args: &[&str]) -> TestResult<String> {
     );
     // Measure with the absolute root replaced by a fixed token, so the
     // budget does not depend on how long the checkout path is.
-    let root = project.to_string_lossy().into_owned();
+    // `printed_path` is the spelling the binary prints (verbatim prefix folded,
+    // `/` separators on Windows), so the measurement is host-path independent.
+    let root = printed_path(project);
     Ok(String::from_utf8(output.stdout)?.replace(&root, "<root>"))
 }
 
@@ -132,6 +134,27 @@ Hidden:
     within("check (default human)", &human, 3_900);
     within("check --format json", &json, 88_000);
     within("check --format github", &github, 3_300);
+    Ok(())
+}
+
+/// #13673: the brief states the before/after snapshot and verify commands once
+/// under `next`; per-seam `verification` carries only the suggested test.
+#[test]
+fn agent_brief_states_workflow_commands_once() -> TestResult {
+    let project = workspace("agent-brief-budget")?;
+    let brief = run(
+        &project,
+        &["agent", "brief", "--diff", "change.diff", "--json"],
+    )?;
+    for command in ["before_snapshot_command", "after_snapshot_command"] {
+        assert_eq!(
+            brief.matches(command).count(),
+            1,
+            "{command} must appear once, not per seam:\n{brief}"
+        );
+    }
+    assert!(!brief.contains("\"verify_command\""), "{brief}");
+    within("agent brief --json", &brief, 8_900);
     Ok(())
 }
 
