@@ -315,7 +315,11 @@ fn user_text_summary_scratch_cleans_up_on_success_error_and_unwind()
         std::process::id()
     ));
     let error = (|| -> std::io::Result<()> {
-        let _scratch = SummaryScratch::new("error")?;
+        let scratch = SummaryScratch::new("error")?;
+        // Pin the exact scratch path so a naming-scheme change cannot let the
+        // error and unwind arms inspect an unrelated path.
+        assert_eq!(scratch.0, error_path);
+        assert!(error_path.exists());
         Err(std::io::Error::other("injected error"))
     })();
     assert!(matches!(error, Err(ref error) if error.to_string() == "injected error"));
@@ -326,15 +330,16 @@ fn user_text_summary_scratch_cleans_up_on_success_error_and_unwind()
         std::process::id()
     ));
     let unwind = std::panic::catch_unwind(|| -> std::io::Result<()> {
-        let _scratch = SummaryScratch::new("unwind")?;
+        let scratch = SummaryScratch::new("unwind")?;
+        assert_eq!(scratch.0, unwind_path);
+        assert!(unwind_path.exists());
         std::panic::resume_unwind(Box::new("injected unwind"));
     });
     // `assert!(x.is_err())` trips clippy::assertions_on_result_states and
-    // `unwrap_err` trips clippy::unwrap_used; the helper keeps the intent.
-    fn unwound<T, E>(result: Result<T, E>) -> bool {
-        result.is_err()
-    }
-    assert!(unwound(unwind));
+    // `unwrap_err` trips clippy::unwrap_used; `matches!` keeps the intent and
+    // pins the injected payload so an unrelated panic cannot pass as it.
+    assert!(matches!(unwind, Err(ref payload)
+        if payload.downcast_ref::<&str>() == Some(&"injected unwind")));
     assert!(!unwind_path.exists());
     Ok(())
 }
