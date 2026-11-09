@@ -2230,6 +2230,7 @@ mod row_sink_alignment_tests {
             reexport_modules: Vec::new(),
             star_exported: false,
             ambiguous_src_modules: Vec::new(),
+            test_local_shadows: Vec::new(),
             rival_definition_modules: Vec::new(),
             module_constants: Vec::new(),
             same_class_callees: Vec::new(),

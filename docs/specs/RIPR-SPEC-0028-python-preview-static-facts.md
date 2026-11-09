@@ -373,6 +373,11 @@ identity.
 A src-layout short name that a plain module of the same project also produces
 (a repository-root `core.py`, or `<project>/core.py` beside `<project>/src/`)
 identifies neither module from any test (#13745).
+A test-local module of the same top-level name in a directory pytest's prepend
+import mode puts ahead on `sys.path` for that test (its own directory and, while
+directories are packages, each parent up to the first non-package directory, or
+the repository root) means a bare import of that name is not the owner's for that
+test (#13706).
 A test that imports a free-function owner's name from a workspace module that
 defines its own function of that name, when no import reaches the owner's module,
 is not related to the owner even if its call text matches the name (#8759). The

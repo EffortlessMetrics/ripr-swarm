@@ -19,11 +19,14 @@ mod verify_command_tests;
 mod dunder_entries;
 mod dunder_protocol;
 mod project_names;
+mod test_local_shadow;
 pub(super) use dunder_entries::{
     PythonClassFacts, apply_class_facts, operator_entry_in_text, with_entry,
 };
 pub(super) use dunder_protocol::body_exercises_dunder_protocol;
 pub(super) use project_names::{apply_project_module_names, owner_import_modules_for};
+use test_local_shadow::test_local_module_shadows;
+pub(super) use test_local_shadow::{TestLocalShadow, apply_test_local_shadows};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum PythonRelationKind {
@@ -2300,7 +2303,7 @@ pub(super) fn import_module_may_be_owners(
 ) -> bool {
     // Without an ambiguous src-layout name every module identifies the owner;
     // answer before formatting the dotted submodule name.
-    if owner.ambiguous_src_modules.is_empty() {
+    if owner.ambiguous_src_modules.is_empty() && owner.test_local_shadows.is_empty() {
         return true;
     }
     if import.source_module.is_empty() {
@@ -2564,6 +2567,10 @@ fn path_is_under(file: &Path, root: &Path) -> bool {
 /// is not inside a rival's (deeper) project root; anywhere else the import is
 /// as likely to be the rival's module, so it fails closed.
 fn module_name_identifies_owner_for(owner: &PythonOwner, module: &str, test_file: &Path) -> bool {
+    // A test-local module of the same name is ahead on `sys.path` (#13706).
+    if test_local_module_shadows(owner, module, test_file) {
+        return false;
+    }
     let Some(ambiguous) = owner
         .ambiguous_src_modules
         .iter()
