@@ -688,6 +688,7 @@ fn field_collection_observer_confirms(
             assertion.line,
             read.getter.as_deref(),
             path,
+            owner.impl_type(),
         ) && read.getter.as_deref().is_none_or(|getter| {
             owner
                 .impl_type()
@@ -728,6 +729,7 @@ fn field_collection_observer_confirms(
                 assertion.line,
                 read.getter.as_deref(),
                 path,
+                owner.impl_type(),
             )
             && read.getter.as_deref().is_none_or(|getter| {
                 owner
@@ -996,6 +998,7 @@ fn insert_count_may_overwrite(
         binding,
         owner.name(),
         read_line,
+        owner.impl_type(),
     )
     .into_iter()
     .any(|at| {
@@ -1124,6 +1127,7 @@ fn owner_call_reaches_read_unrewritten(
     read_line: usize,
     getter: Option<&str>,
     path: &str,
+    impl_type: Option<&str>,
 ) -> bool {
     let masked = mask_comments_and_strings(&test.body);
     let Some(skipped_lines) = read_line.checked_sub(test.start_line) else {
@@ -1145,19 +1149,26 @@ fn owner_call_reaches_read_unrewritten(
         .rfind("assert")
         .map_or(line_end, |found| read_at + found);
     let call = format!("{binding}.{method}(");
-    owner_calls_before_read(&test.body, test.start_line, binding, method, read_line)
-        .into_iter()
-        .any(|at| {
-            // A bare call statement only: a chained or bound result
-            // (`o.add(4).clear_log()`, `let r = o.add(4)`) may be `&mut Self`
-            // and rewrite the field without naming `binding`. `.unwrap()`,
-            // `.expect(..)` and `?` consume the result and are allowed.
-            let statement_start = masked[..at].rfind([';', '{', '}']).map_or(0, |i| i + 1);
-            masked[statement_start..at].trim().is_empty()
-                && bare_call_end(&masked, at, call.len()).is_some_and(|end| {
-                    only_field_reads_between(&masked, end, read_end, binding, getter, path)
-                })
-        })
+    owner_calls_before_read(
+        &test.body,
+        test.start_line,
+        binding,
+        method,
+        read_line,
+        impl_type,
+    )
+    .into_iter()
+    .any(|at| {
+        // A bare call statement only: a chained or bound result
+        // (`o.add(4).clear_log()`, `let r = o.add(4)`) may be `&mut Self`
+        // and rewrite the field without naming `binding`. `.unwrap()`,
+        // `.expect(..)` and `?` consume the result and are allowed.
+        let statement_start = masked[..at].rfind([';', '{', '}']).map_or(0, |i| i + 1);
+        masked[statement_start..at].trim().is_empty()
+            && bare_call_end(&masked, at, call.len()).is_some_and(|end| {
+                only_field_reads_between(&masked, end, read_end, binding, getter, path)
+            })
+    })
 }
 
 /// Whether the masked `code` between `from` and `to` mentions `binding`
@@ -1314,8 +1325,72 @@ pub(in crate::analysis) fn owner_call_precedes_read(
     binding: &str,
     method: &str,
     read_line: usize,
+    impl_type: Option<&str>,
 ) -> bool {
-    !owner_calls_before_read(body, start_line, binding, method, read_line).is_empty()
+    !owner_calls_before_read(body, start_line, binding, method, read_line, impl_type).is_empty()
+}
+
+/// Whether `binding` at byte `call_at` in `body` names the owner's impl type
+/// (`let x: Inventory = ..`, `Inventory::new()`, ...). Fails closed when the
+/// binding's type cannot be read from the prefix before the call (#7683).
+fn owner_call_binding_matches_impl_type(
+    body: &str,
+    call_at: usize,
+    binding: &str,
+    impl_type: &str,
+) -> bool {
+    let Some(prefix) = body.get(..call_at) else {
+        return false;
+    };
+    let prefix = mask_comments_and_strings(prefix);
+    if super::related_tests::let_binding_mentions_type(&prefix, binding, impl_type) {
+        return true;
+    }
+    match super::related_tests::let_binding_certain_type_head(&prefix, binding) {
+        Some(head) => head == impl_type,
+        None => owner_call_binding_init_names_impl_type(&prefix, binding, impl_type),
+    }
+}
+
+/// Whether the binding's latest `let` initializer begins with `impl_type::`
+/// (for example `Ledger::seeded()`), when no compact type head was read.
+fn owner_call_binding_init_names_impl_type(body: &str, binding: &str, impl_type: &str) -> bool {
+    let head = format!("{impl_type}::");
+    owner_call_binding_let_initializer(body, binding)
+        .is_some_and(|init| init.trim().starts_with(&head))
+}
+
+/// The initializer expression of the latest `let [mut] binding = ..` in `body`.
+fn owner_call_binding_let_initializer<'a>(body: &'a str, binding: &str) -> Option<&'a str> {
+    if binding.is_empty() {
+        return None;
+    }
+    let ident = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
+    let mut last = None;
+    let mut search = 0usize;
+    while let Some(relative) = body[search..].find("let ") {
+        let let_at = search + relative;
+        let mut rest = body[let_at + 4..].trim_start();
+        rest = rest.strip_prefix("mut ").map_or(rest, str::trim_start);
+        let Some(after) = rest.strip_prefix(binding) else {
+            search = let_at + 1;
+            continue;
+        };
+        if after.starts_with(ident) {
+            search = let_at + 1;
+            continue;
+        }
+        let stmt_end = rest
+            .find(';')
+            .map(|offset| let_at + 4 + (body[let_at + 4..].len() - rest.len()) + offset)
+            .unwrap_or(body.len());
+        let stmt = &body[let_at..stmt_end];
+        if let Some(eq) = stmt.find('=') {
+            last = Some(stmt[eq + 1..].trim());
+        }
+        search = let_at + 1;
+    }
+    last
 }
 
 /// Whether `binding.method(..)` ran before `read_line` but a rebinding or
@@ -1329,7 +1404,7 @@ pub(in crate::analysis) fn owner_call_preceded_but_rebound_before_read(
     read_line: usize,
 ) -> bool {
     !owner_call_sites_before_read(body, start_line, binding, method, read_line).is_empty()
-        && owner_calls_before_read(body, start_line, binding, method, read_line).is_empty()
+        && owner_calls_before_read(body, start_line, binding, method, read_line, None).is_empty()
 }
 
 /// The offsets in `body` of the `binding.method(..)` calls that
@@ -1340,6 +1415,7 @@ fn owner_calls_before_read(
     binding: &str,
     method: &str,
     read_line: usize,
+    impl_type: Option<&str>,
 ) -> Vec<usize> {
     let context = OwnerCallRebindingContext::new(body, start_line, binding);
     context
@@ -1350,6 +1426,8 @@ fn owner_calls_before_read(
                 .rebindings
                 .iter()
                 .any(|rebound| *rebound > *at && context.line_at(*rebound) <= read_line)
+                && impl_type
+                    .is_none_or(|ty| owner_call_binding_matches_impl_type(body, *at, binding, ty))
         })
         .collect()
 }
@@ -1498,24 +1576,30 @@ fn owner_call_passes_key(
     {
         return false;
     }
-    owner_calls_before_read(body, start_line, call.binding, call.method, read_line)
-        .into_iter()
-        .any(|at| {
-            let statement_start = masked[..at].rfind([';', '{', '}']).map_or(0, |i| i + 1);
-            let Some((end, consumed)) = call_statement_tail(&masked, at, name.len() + 1) else {
-                return false;
-            };
-            let prefix = masked[statement_start..at].trim();
-            let shape = if prefix.is_empty() {
-                consumed || !call.returns_value
-            } else {
-                consumed
-                    && plain_let_binding_name(prefix).is_some_and(|bound| {
-                        bound_result_only_compared(&masked, end, read_at, bound)
-                    })
-            };
-            // Cheap checks first: the constructor check may scan the index.
-            shape
+    owner_calls_before_read(
+        body,
+        start_line,
+        call.binding,
+        call.method,
+        read_line,
+        Some(call.impl_type),
+    )
+    .into_iter()
+    .any(|at| {
+        let statement_start = masked[..at].rfind([';', '{', '}']).map_or(0, |i| i + 1);
+        let Some((end, consumed)) = call_statement_tail(&masked, at, name.len() + 1) else {
+            return false;
+        };
+        let prefix = masked[statement_start..at].trim();
+        let shape = if prefix.is_empty() {
+            consumed || !call.returns_value
+        } else {
+            consumed
+                && plain_let_binding_name(prefix)
+                    .is_some_and(|bound| bound_result_only_compared(&masked, end, read_at, bound))
+        };
+        // Cheap checks first: the constructor check may scan the index.
+        shape
                 && body
                     .get(at..)
                     .and_then(|text| super::activation::call_arguments(text, &name))
@@ -1533,7 +1617,7 @@ fn owner_call_passes_key(
                     .is_none_or(|window| contains_as_whole_word(window, "return"))
                 && only_getter_reads_between(&masked, end, read_at, call.binding, call.getter)
                 && binding_starts_without_expected(body, &masked, statement_start, call)
-        })
+    })
 }
 
 /// RIPR-SPEC-0228 rule 3 for keyed reads: between the owner call (ending
@@ -2499,8 +2583,10 @@ fn analyze_related_assertions(
         // standard-method dispatch is not an observation witness. Indexed
         // implicit trait dispatch in this test retains its authority (#7820). Keep
         // token/collection confirmation and opaque macro allowances.
-        let claims_candidates: Vec<OracleFact> = if matches!(probe.family, ProbeFamily::ReturnValue)
-        {
+        let claims_candidates: Vec<OracleFact> = if matches!(
+            probe.family,
+            ProbeFamily::ReturnValue | ProbeFamily::FieldConstruction
+        ) {
             super::owner_pin::claims_payload_eq_candidates(test)
                 .into_iter()
                 .filter(|candidate| (return_admission.owner_return_pin)(test, candidate))
@@ -2625,8 +2711,10 @@ fn analyze_related_assertions(
             // direction, a non-literal expected operand or an unestablished
             // owner call leaves the oracle `unknown`.
             let claims_graded;
-            let assertion = if matches!(probe.family, ProbeFamily::ReturnValue)
-                && assertion.kind == OracleKind::Unknown
+            let assertion = if matches!(
+                probe.family,
+                ProbeFamily::ReturnValue | ProbeFamily::FieldConstruction
+            ) && assertion.kind == OracleKind::Unknown
                 && assertion.strength == OracleStrength::None
                 && super::owner_pin::is_claims_payload_eq_text(&assertion.text)
                 && (return_admission.owner_return_pin)(test, assertion)
@@ -6407,7 +6495,7 @@ mod tests {
             let line = 2 + lines.lines().count();
             let test = TestSummary {
                 start_line: 1,
-                attrs,
+                attrs: attrs.into(),
                 ..test_with_body_assertions(
                     "t",
                     &body,
@@ -6491,7 +6579,8 @@ mod tests {
             "add",
             4,
             Some("entries"),
-            "log"
+            "log",
+            Some("Ob"),
         ));
         assert!(confirms(
             Vec::new(),
@@ -6512,7 +6601,15 @@ mod tests {
                     Vec::new(),
                 )
             };
-            owner_call_reaches_read_unrewritten(&test, "o", "add", 2, Some("entries"), "log")
+            owner_call_reaches_read_unrewritten(
+                &test,
+                "o",
+                "add",
+                2,
+                Some("entries"),
+                "log",
+                Some("Ob"),
+            )
         };
         assert!(!on_line(""));
         assert!(!on_line("o.reset_to(&[4]); "));
@@ -6586,7 +6683,7 @@ mod tests {
         };
         assert!(confirms(&test));
         let panicking = TestSummary {
-            attrs: vec!["#[should_panic]".to_string()],
+            attrs: vec!["#[should_panic]".to_string()].into(),
             ..test.clone()
         };
         assert!(!confirms(&panicking));
@@ -6842,7 +6939,9 @@ mod tests {
     fn owner_call_precedes_read_needs_an_earlier_call_on_the_same_binding() {
         // The body starts at file line 10; the read sits on line 13.
         let body = |lines: &str| format!("fn case() {{\n{lines}\n}}");
-        let precedes = |lines: &str| owner_call_precedes_read(&body(lines), 10, "order", "add", 13);
+        let precedes = |lines: &str| {
+            owner_call_precedes_read(&body(lines), 10, "order", "add", 13, Some("Order"))
+        };
         assert!(precedes(
             "    let mut order = Order::new();\n    order.add(4);\n    assert_eq!(order.entries(), &[4]);"
         ));
@@ -6868,11 +6967,65 @@ mod tests {
         }
         // A comparison of the binding is not an assignment.
         assert!(precedes(
-            "    order.add(4);\n    let same = order == Order::new();\n    assert_eq!(order.entries(), &[4]);"
+            "    let mut order = Order::new();\n    order.add(4);\n    let same = order == Order::new();\n    assert_eq!(order.entries(), &[4]);"
         ));
         // Rebinding another name between the call and the read is fine.
         assert!(precedes(
-            "    order.add(4);\n    let orders = Order::new();\n    assert_eq!(order.entries(), &[4]);"
+            "    let mut order = Order::new();\n    order.add(4);\n    let orders = Order::new();\n    assert_eq!(order.entries(), &[4]);"
+        ));
+    }
+
+    /// #7683: a same-named method on another type must not stand in for the
+    /// owner's call when crediting a field-collection read.
+    #[test]
+    fn owner_call_precedes_read_refuses_a_homonym_method_on_another_type() {
+        let body = |lines: &str| format!("fn case() {{\n{lines}\n}}");
+        let precedes = |lines: &str, impl_type: &str| {
+            owner_call_precedes_read(&body(lines), 10, "other", "add", 13, Some(impl_type))
+        };
+        assert!(precedes(
+            "    let mut other = Inventory::new();\n    other.add(4);\n    assert_eq!(other.log, vec![4]);",
+            "Inventory",
+        ));
+        for refused in [
+            "    let mut other = OtherInventory::default();\n    other.add(4);\n    assert_eq!(other.log, vec![4]);",
+            "    let mut other: OtherInventory = Default::default();\n    other.add(4);\n    assert_eq!(other.log, vec![4]);",
+            "    // let other = Inventory::new();\n    let mut other = OtherInventory::default();\n    other.add(4);\n    assert_eq!(other.log, vec![4]);",
+        ] {
+            assert!(!precedes(refused, "Inventory"), "{refused}");
+        }
+        let confirms = |lines: &str| {
+            let test = TestSummary {
+                start_line: 10,
+                ..test_with_body_assertions(
+                    "case",
+                    &body(lines),
+                    vec![OracleFact {
+                        line: 13,
+                        ..oracle(
+                            "assert_eq!(other.log, vec![4]);",
+                            OracleKind::ExactValue,
+                            OracleStrength::Strong,
+                        )
+                    }],
+                )
+            };
+            field_collection_observer_confirms(
+                "log",
+                false,
+                true,
+                None,
+                OwnerCall::from_symbol("src/lib.rs::impl Inventory::add"),
+                &test,
+                &test.assertions[0],
+                &|_, _, _| true,
+            )
+        };
+        assert!(!confirms(
+            "    let mut other = OtherInventory::default();\n    other.add(4);"
+        ));
+        assert!(confirms(
+            "    let mut other = Inventory::new();\n    other.add(4);"
         ));
     }
     use std::path::PathBuf;
@@ -7176,12 +7329,12 @@ mod tests {
             start_line: 19,
             end_line: 25,
             body: Default::default(),
-            calls: Vec::new(),
+            calls: crate::analysis::facts::SharedFactSlice::empty(),
             assertions: Vec::new(),
-            literals: Vec::new(),
-            attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             generated: None,
         }];
         let touched =
@@ -7728,12 +7881,12 @@ mod tests {
             start_line: line,
             end_line: line + 3,
             body: Default::default(),
-            calls,
+            calls: calls.into(),
             assertions: Vec::new(),
-            literals: Vec::new(),
-            attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             generated: None,
         };
         let calling = test("calls_owner", 1, vec![call("truncate")]);
@@ -10302,12 +10455,12 @@ return Err(\"typed pin\".into());
             start_line: 1,
             end_line: 3,
             body: "score();".into(),
-            calls: Vec::new(),
+            calls: crate::analysis::facts::SharedFactSlice::empty(),
             assertions,
-            literals: Vec::new(),
-            attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             generated: None,
         }
     }
@@ -13973,5 +14126,26 @@ return Err(\"typed pin\".into());
                 (Some("Money".to_string()), "new".to_string()),
             ]
         );
+    }
+
+    /// An unrelated `let` before the binding's own `let` must not stop the
+    /// initializer scan (#7683 review).
+    #[test]
+    fn binding_initializer_scan_skips_unrelated_lets() {
+        let body =
+            "let x = 1; let mut other = Inventory::seeded(); let mut stock = Ledger::seeded();";
+        assert!(owner_call_binding_init_names_impl_type(
+            body, "stock", "Ledger"
+        ));
+        assert!(!owner_call_binding_init_names_impl_type(
+            body,
+            "stock",
+            "Inventory"
+        ));
+        assert!(owner_call_binding_init_names_impl_type(
+            body,
+            "other",
+            "Inventory"
+        ));
     }
 }

@@ -237,6 +237,21 @@ official SDK transport:
     "not_analyzed"` and `clean: false` beside `finding_count: 0`, using the
     same predicate as `ripr_refresh` and `ripr_list_gaps`. Complete runs omit
     both fields.
+  - `empty_scope_hint.pass_base_last_commit` (#13096) names the concrete
+    last-commit retry (`{"base": "HEAD~1"}`) beside `pass_base` and
+    `pass_source`. It is present only when the committed zero-item snapshot
+    was captured with no explicit base (`snapshot.base` is absent) and its
+    kind is `no_scope` or `no_changed_lines`, where the default base most
+    often resolved to the analyzed commit. It is omitted for
+    `no_behavioral_candidates` (the diff was non-empty, so a different base is
+    not the likely cause), for a snapshot analyzed against an explicit base
+    (including a retained one after a later failed request), and for a
+    worktree-source snapshot, which carries no `empty_scope_hint` at all. The
+    field is a named suggestion, not an inference: the server does not detect
+    whether the change under review is the last commit, does not run or
+    resolve `HEAD~1`, and never widens the base on its own. A `HEAD~1` that
+    does not exist fails closed with the typed base failure. It changes no
+    outcome kind, verdict or identity.
   - The source kind is part of a worktree snapshot's identity (the committed
     identity payload is unchanged, so existing committed identities do not
     move). Equal findings captured under a committed and a worktree source
@@ -414,8 +429,9 @@ official SDK transport:
 - The tool envelope carries the document once at full fidelity (#6021):
   by default `content[0].text` is the compact JSON serialization of the
   structured document (no pretty-print inflation), and `structuredContent` repeats
-  the same document in every successful response. Every tool advertises an
-  `outputSchema`, so a success whose structured copy is absent is an
+  the same document in every successful response. Every tool has an
+  `outputSchema` (advertised under `RIPR_MCP_TOOLS_LIST=full`; the default
+  listing omits it since #13803), so a success whose structured copy is absent is an
   undeclared contract break: when the complete double-carry envelope does
   not measure under the id-aware response budget, the call fails closed
   with `result_too_large` naming both sizes and the caller's recovery
@@ -463,8 +479,7 @@ official SDK transport:
   `returned`, `has_more`, `next_offset`); walking `next_offset` covers the
   narrowed set exactly once. Pages are sized so the complete double-carry
   envelope measures under the response bound: a paged success always
-  carries `structuredContent`, as the tool's advertised `outputSchema`
-  requires. Empty pages obey the same structured-envelope bound: echoed
+  carries `structuredContent`, as the tool's `outputSchema` requires. Empty pages obey the same structured-envelope bound: echoed
   filters can exceed it even when the raw document fits. Such a page fails
   closed with the existing typed `result_too_large` refusal and current
   snapshot identity instead of a text-only success. The generated `next_page`

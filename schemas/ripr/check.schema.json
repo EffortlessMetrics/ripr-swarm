@@ -16,6 +16,11 @@
   "properties": {
     "schema_version": { "const": "0.2" },
     "tool": { "const": "ripr" },
+    "status": {
+      "const": "refused",
+      "description": "Present only on a refusal document (#11584); a completed run, including a bounded partial run (analysis_scope.run_status limited_partial_scope), carries neither `status` nor `error`. The producer guarantees this; the schema keeps both optional so schema 0.2 stays compatible, and the pairing becomes a schema rule at the next schema_version bump."
+    },
+    "error": { "$ref": "#/$defs/refusal_error" },
     "mode": { "enum": ["instant", "draft", "fast", "deep", "ready"] },
     "root": { "type": "string", "minLength": 1 },
     "config_path": { "type": "string", "minLength": 1 },
@@ -39,6 +44,15 @@
       "items": { "$ref": "#/$defs/finding" }
     },
     "suppression_policy": { "type": "object" },
+    "owner_opt_outs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["withheld", "reason"],
+      "properties": {
+        "withheld": { "type": "integer", "minimum": 1 },
+        "reason": { "enum": ["owner_mutants_skip"] }
+      }
+    },
     "language_runs": {
       "type": "array",
       "items": { "$ref": "#/$defs/language_run" }
@@ -116,11 +130,11 @@
       "additionalProperties": { "type": "string", "minLength": 1 }
     },
     "dropped_aliases": {
-      "description": "json-terse only: the known suggested_next_action alias, recorded once when omitted from any finding. Its exact value remains in that finding's recommended_next_step. No other field may be omitted as an alias.",
+      "description": "json-terse only: each known alias, recorded once when omitted from any finding. suggested_next_action keeps its exact value in that finding's recommended_next_step; observed_values and missing_discriminators keep theirs in that finding's activation block. No other field may be omitted as an alias.",
       "type": "array",
       "minItems": 1,
-      "maxItems": 1,
-      "items": { "const": "suggested_next_action" }
+      "maxItems": 3,
+      "items": { "enum": ["suggested_next_action", "observed_values", "missing_discriminators"] }
     }
   },
   "if": { "required": ["rendering", "dropped_aliases"] },
@@ -130,6 +144,25 @@
     }
   },
   "$defs": {
+    "refusal_error": {
+      "description": "The shared refusal block (#11584): machine-readable code and message, plus the one runnable step the refusal prose already states (null when none is stated unconditionally).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "message", "next"],
+      "properties": {
+        "code": { "type": "string", "minLength": 1 },
+        "message": { "type": "string", "minLength": 1 },
+        "next": {
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "required": ["purpose", "command"],
+          "properties": {
+            "purpose": { "const": "follow_stated_step" },
+            "command": { "type": "string", "minLength": 1 }
+          }
+        }
+      }
+    },
     "nullable_string": { "type": ["string", "null"] },
     "finding_route": {
       "type": "object",
@@ -293,6 +326,7 @@
           }
         },
         "suppressed_by_policy": { "type": "integer", "minimum": 0 },
+        "withheld_by_owner_opt_out": { "type": "integer", "minimum": 1 },
         "conflicting_expressions": { "type": "integer", "minimum": 1 },
         "proof_harness_only": { "type": "integer", "minimum": 1 }
       }
@@ -441,8 +475,6 @@
         "missing",
         "assertion_texts",
         "activation",
-        "observed_values",
-        "missing_discriminators",
         "related_tests_total",
         "related_tests",
         "stop_reasons",
@@ -455,6 +487,7 @@
         "id": { "type": "string", "minLength": 1 },
         "suppressed": { "type": "boolean" },
         "suppressed_by": { "type": "string", "minLength": 1 },
+        "withheld_by": { "enum": ["owner_mutants_skip"] },
         "analysis_scope": { "const": "repo" },
         "canonical_gap_id": { "type": "string", "minLength": 1 },
         "canonical_gap_group_size": { "type": "integer", "minimum": 1 },
@@ -476,6 +509,13 @@
           }
         },
         "confidence_why_capped": { "type": "string", "minLength": 1 },
+        "evidence_stages": {
+          "description": "Additive (RIPR-SPEC-0423, schema 0.2): the staged-evidence row form — one row per ripr stage in Evidence-block order. `basis` is present only when the finding's confidence_basis names that stage. No row carries test or assertion references (producer-backed stage attribution is #13453).",
+          "type": "array",
+          "minItems": 5,
+          "maxItems": 5,
+          "items": { "$ref": "#/$defs/evidence_stage_row" }
+        },
         "probe": { "$ref": "#/$defs/probe" },
         "ripr": { "$ref": "#/$defs/ripr" },
         "evidence_path": { "type": "array", "items": { "type": "string" } },
@@ -607,6 +647,29 @@
         "state": { "type": "string", "minLength": 1 },
         "confidence": { "type": "string", "minLength": 1 },
         "summary": { "type": "string", "minLength": 1 }
+      }
+    },
+    "evidence_stage_row": {
+      "description": "One staged-evidence row (RIPR-SPEC-0423): `stage` reuses the ripr object's key, `state`/`confidence` repeat that stage's wire tokens.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["stage", "state", "confidence"],
+      "properties": {
+        "stage": { "type": "string", "minLength": 1 },
+        "state": { "type": "string", "minLength": 1 },
+        "confidence": { "type": "string", "minLength": 1 },
+        "basis": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["code", "summary"],
+            "additionalProperties": false,
+            "properties": {
+              "code": { "type": "string", "minLength": 1 },
+              "summary": { "type": "string", "minLength": 1 }
+            }
+          }
+        }
       }
     },
     "activation": {

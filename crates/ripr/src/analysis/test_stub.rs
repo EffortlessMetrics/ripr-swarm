@@ -993,12 +993,6 @@ fn stub_body(
         ),
         (None, None, None) => format!("{}({})", signature.name, arguments.join(", ")),
     };
-    if return_type.trim() == "()" {
-        lines.push(format!("{call};"));
-    } else {
-        lines.push(format!("let actual = {call};"));
-    }
-
     let asserts_return = return_type.trim() != "()";
     let variant = match seam.required_discriminator() {
         RequiredDiscriminator::ErrorVariant { variant }
@@ -1009,6 +1003,31 @@ fn stub_body(
         }
         _ => None,
     };
+    // #13602: a whole-value comparison asserts the owner call inline
+    // (`assert_eq!(owner(..), expected)`), the shape the reveal stage ties to
+    // the changed line; `let actual = owner(..); assert_eq!(actual, expected)`
+    // left the stub's own gap open with `observation_unconfirmed`.
+    //
+    // Inlining moves the call after the `expected` initializer, so an owner
+    // that can mutate its inputs (`&mut self` or a `&mut` argument) keeps the
+    // binding: an `expected` the developer derives from post-call state must
+    // still read it after the call (#13861 review).
+    let mutates_inputs = matches!(signature.receiver, Some(OwnerReceiver::RefMut))
+        || arguments
+            .iter()
+            .any(|argument| argument.starts_with("&mut "));
+    let inline_call = asserts_return
+        && variant.is_none()
+        && !mutates_inputs
+        && matches!(
+            value_traits(&return_type, source),
+            ValueTraits::PartialEqAndDebug
+        );
+    if !asserts_return {
+        lines.push(format!("{call};"));
+    } else if !inline_call {
+        lines.push(format!("let actual = {call};"));
+    }
     match variant {
         _ if !asserts_return => {}
         Some(pattern) => {
@@ -1042,7 +1061,8 @@ fn stub_body(
                         "let expected: {return_type} = todo!(\"{}\");",
                         escape(&label)
                     ));
-                    lines.push("assert_eq!(actual, expected);".to_string());
+                    let observed = if inline_call { call.as_str() } else { "actual" };
+                    lines.push(format!("assert_eq!({observed}, expected);"));
                 }
                 // `PartialEq` or `Debug` is not visible for the return
                 // type, so no generated comparison is sure to compile (a

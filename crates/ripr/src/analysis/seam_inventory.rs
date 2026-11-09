@@ -4695,7 +4695,16 @@ fn build_seam_from_shape(
         Some(field) => RequiredDiscriminator::FieldValue { field },
         None => required_discriminator_for(kind, &expression),
     };
-    let expected_sink = expected_sink_for(kind);
+    let expected_sink = if kind == SeamKind::PredicateBoundary
+        && crate::analysis::classify::predicate_branch_side_effect_only_in_body(
+            owner_fact.body.as_str(),
+            owner_fact.start_line,
+            shape.start_line,
+        ) {
+        ExpectedSink::SideEffect
+    } else {
+        expected_sink_for(kind)
+    };
     let owner_call = OwnerCallShape::from_function(owner_fact);
     // The ID hashes the line-ending-normalized logical offset (#7203): a
     // CRLF working tree and an LF checkout of the same commit must produce
@@ -8441,14 +8450,14 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
             start_line: 1,
             end_line: 5,
             body: String::new().into(),
-            calls: Vec::new(),
+            calls: crate::analysis::facts::SharedFactSlice::empty(),
             returns: Vec::new(),
-            literals: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
             source_role: FunctionSourceRole::Production,
-            attrs: Vec::new(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
             impl_attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             item: Default::default(),
             impl_context: Default::default(),
         };
@@ -8496,14 +8505,14 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
             start_line: 10,
             end_line: 14,
             body: String::new().into(),
-            calls: Vec::new(),
+            calls: crate::analysis::facts::SharedFactSlice::empty(),
             returns: Vec::new(),
-            literals: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
             source_role: FunctionSourceRole::TestAttribute,
-            attrs: vec!["#[test]".to_string()],
+            attrs: vec!["#[test]".to_string()].into(),
             impl_attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             item: Default::default(),
             impl_context: Default::default(),
         };

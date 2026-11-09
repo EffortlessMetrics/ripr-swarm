@@ -502,6 +502,7 @@ pub(super) fn canonical_group_has_mixed_classes(raw_findings: &[Finding]) -> boo
 /// Profile, encoding, and producer-owned ranges for one finding diagnostic
 /// projection. Bundled so the grouping function stays under the arity gate.
 pub(super) struct FindingDiagnosticProjection<'a> {
+    pub analysis_outcome: Option<&'a AnalysisOutcome>,
     pub profile: LspDiagnosticProfile,
     pub position_encoding: &'a PositionEncodingKind,
     pub origins: &'a crate::analysis::diagnostic_origin::RustDiagnosticOrigins,
@@ -520,12 +521,18 @@ impl<'a> FindingDiagnosticProjection<'a> {
         origins: &'a crate::analysis::diagnostic_origin::RustDiagnosticOrigins,
     ) -> Self {
         Self {
+            analysis_outcome: None,
             profile,
             position_encoding,
             origins,
             causal_projection: None,
             navigation: None,
         }
+    }
+
+    pub(super) fn with_analysis_outcome(mut self, outcome: Option<&'a AnalysisOutcome>) -> Self {
+        self.analysis_outcome = outcome;
+        self
     }
 
     fn with_causal(mut self, causal_projection: Option<&'a CausalDeltaArtifact>) -> Self {
@@ -573,7 +580,13 @@ pub(super) fn finding_diagnostics_by_uri_with_profile(
 ) -> Result<BTreeMap<Uri, Vec<Diagnostic>>, String> {
     let mut grouped = BTreeMap::<Uri, Vec<Diagnostic>>::new();
     for (primary, raw_findings) in canonical_finding_groups(findings) {
-        if !finding_is_visible_in_profile(projection.profile, &primary) {
+        if !finding_is_visible_in_profile(projection.profile, &primary)
+            || file_has_parse_failure(
+                root,
+                &primary.probe.location.file,
+                projection.analysis_outcome,
+            )
+        {
             continue;
         }
         let path = absolute_finding_path(root, &primary);
@@ -611,7 +624,7 @@ pub(super) fn finding_diagnostics_by_uri_with_profile(
             if canonical_group_has_mixed_classes(&raw_findings) {
                 diagnostic.severity = Some(DiagnosticSeverity::INFORMATION);
                 diagnostic.message = format!(
-                    "{}; canonical group contains mixed static classes; inspect raw findings",
+                    "{}; findings for this change disagree about test evidence; inspect the individual findings",
                     diagnostic.message
                 );
                 if let Some(data) = diagnostic
@@ -873,12 +886,15 @@ fn push_empty_scope_marker(
         && snapshot_serves_empty_scope_marker(snapshot)
         && super::uri::file_uri_relative_to_root(&snapshot.root, uri).is_some()
     {
-        diagnostics.push(empty_scope_diagnostic(snapshot));
+        diagnostics.extend(empty_scope_marker_payload(snapshot));
     }
 }
 
-/// True when the snapshot is an empty-scope outcome with no row of any kind,
-/// the one state in which its documents carry the empty-scope marker.
+/// True when the snapshot's outcome is an empty scope (#13441) or incomplete
+/// (#13562) and the snapshot holds no row of any kind, the one state in which
+/// its documents carry a scope marker. A complete outcome, a snapshot with a
+/// finding, gap row or stored marker, and a snapshot with no typed outcome
+/// never carry one, so the scope markers and the stored markers cannot stack.
 pub(super) fn snapshot_serves_empty_scope_marker(snapshot: &AnalysisSnapshot) -> bool {
     snapshot.diagnostic_count() == 0
         && snapshot.findings.is_empty()
@@ -886,16 +902,17 @@ pub(super) fn snapshot_serves_empty_scope_marker(snapshot: &AnalysisSnapshot) ->
         && snapshot
             .analysis_outcome
             .as_ref()
-            .is_some_and(|outcome| outcome.kind.is_empty_scope())
+            .is_some_and(|outcome| outcome.kind.is_empty_scope() || !outcome.kind.is_complete())
 }
 
-/// True for the served-not-stored empty-scope marker (#13441). It is never
-/// line-local evidence and never part of the committed baseline.
+/// True for a served-not-stored scope marker: the empty-scope marker (#13441)
+/// or the incomplete-analysis marker (#13562, `data.kind` `incomplete_analysis`).
+/// It is never line-local evidence and never part of the committed baseline.
 pub(super) fn is_empty_scope_marker(diagnostic: &Diagnostic) -> bool {
     diagnostic
         .data
         .as_ref()
-        .is_some_and(|data| data["kind"] == "empty_scope")
+        .is_some_and(|data| data["kind"] == "empty_scope" || data["kind"] == "incomplete_analysis")
         && diagnostic.code
             == Some(NumberOrString::String(
                 super::diagnostic_catalog::DIAGNOSTIC_LANGUAGE_NOT_ANALYZED_CODE.to_string(),
@@ -906,7 +923,45 @@ pub(super) fn is_empty_scope_marker(diagnostic: &Diagnostic) -> bool {
 /// (not just presence) lets a committed snapshot whose marker text changed
 /// (a different base or empty-scope cause) be re-served.
 pub(super) fn empty_scope_marker_payload(snapshot: &AnalysisSnapshot) -> Option<Diagnostic> {
-    snapshot_serves_empty_scope_marker(snapshot).then(|| empty_scope_diagnostic(snapshot))
+    if !snapshot_serves_empty_scope_marker(snapshot) {
+        return None;
+    }
+    let outcome = snapshot.analysis_outcome.as_ref()?;
+    if outcome.kind.is_empty_scope() {
+        return Some(empty_scope_diagnostic(snapshot));
+    }
+    // The incomplete-analysis marker (#13562) shares the governed
+    // `ripr-diagnostic-language-not-analyzed` code (the analysis did not cover
+    // its scope, so an empty list is not a clean result). The wording reuses the
+    // plain labels and producer-owned recovery text the human `check`
+    // limitation lines print, so the marker cannot drift from `ripr check`. The
+    // scoping decision and wording are owned by
+    // `AnalysisOutcome::incomplete_scope_sentence`; this only frames it as the
+    // Information marker.
+    let sentence = outcome.incomplete_scope_sentence()?;
+    let limitations = outcome
+        .limitations
+        .iter()
+        .filter(|limitation| !limitation.kind.is_advisory_disclosure())
+        .map(|limitation| limitation.kind.as_str())
+        .collect::<Vec<_>>();
+    Some(Diagnostic {
+        range: Range::default(),
+        severity: Some(DiagnosticSeverity::INFORMATION),
+        code: Some(NumberOrString::String(
+            super::diagnostic_catalog::DIAGNOSTIC_LANGUAGE_NOT_ANALYZED_CODE.to_string(),
+        )),
+        source: Some("ripr".to_string()),
+        message: format!("ripr: {sentence} This is a static advisory, not runtime evidence."),
+        data: Some(serde_json::json!({
+            "delivery_eligible": true,
+            "kind": "incomplete_analysis",
+            "not_analyzed_reason": "analysis_incomplete",
+            "outcome_kind": outcome.kind.as_str(),
+            "limitations": limitations,
+        })),
+        ..Default::default()
+    })
 }
 
 /// The marker for an empty analysis scope. Shares the governed
@@ -1016,6 +1071,10 @@ pub(super) fn quarantine_withdrawal_diagnostic(reason: DocumentStalenessReason) 
         DocumentStalenessReason::InvalidIncrementalChange => (
             "undo_or_revert",
             "Undo the edit or revert the file so ripr receives the full document again.",
+        ),
+        DocumentStalenessReason::DocumentStoreLimitReached => (
+            "close_other_documents_then_reopen",
+            "Close other open files, then reopen this file so ripr can track it.",
         ),
         DocumentStalenessReason::NoAnalyzedSavedContent => (
             "save_then_refresh",
@@ -1226,11 +1285,15 @@ pub(super) fn workspace_diagnostic_result_id(snapshot: &AnalysisSnapshot) -> Str
             .unwrap_or_else(|| "no-base".to_string()),
     ];
     // #13441: the served empty-scope marker is not a stored document, so its
-    // payload joins the workspace identity directly; otherwise a marker, a
+    // complete normalized diagnostic (message, severity, code and `data`, as
+    // document ids fold theirs) joins the workspace identity directly; otherwise a marker, a
     // changed marker and no marker could share one identity.
     if let Some(marker) = empty_scope_marker_payload(snapshot) {
         parts.push("empty-scope-marker".to_string());
-        parts.push(marker.message);
+        parts.push(normalized_diagnostic_payload_digest(
+            &snapshot.root,
+            std::slice::from_ref(&marker),
+        ));
     }
     for uri in snapshot.diagnostics_by_uri.keys() {
         parts.push(normalized_document_uri(&snapshot.root, uri));
@@ -1722,6 +1785,7 @@ pub(super) fn workspace_diagnostics_with_config_and_open_rust_paths_and_progress
             &origins,
         )
         .with_causal(causal_projection.as_ref())
+        .with_analysis_outcome(analysis_outcome.as_ref())
         .with_navigation(Some(&navigation)),
     )?;
 
@@ -1797,7 +1861,14 @@ pub(super) fn workspace_diagnostics_with_config_and_open_rust_paths_and_progress
         language_view.as_ref(),
         &mut grouped,
     );
-    append_withheld_preview_diagnostics(&root, &findings, config, &origins, &mut grouped);
+    append_withheld_preview_diagnostics(
+        &root,
+        &findings,
+        config,
+        &origins,
+        analysis_outcome.as_ref(),
+        &mut grouped,
+    );
     append_parse_failed_file_diagnostics(&root, analysis_outcome.as_ref(), &mut grouped);
 
     let batches = canonicalize_diagnostic_batches(
@@ -1908,6 +1979,7 @@ fn append_withheld_preview_diagnostics(
     findings: &[Finding],
     config: &LspAnalysisConfig,
     origins: &crate::analysis::diagnostic_origin::RustDiagnosticOrigins,
+    analysis_outcome: Option<&AnalysisOutcome>,
     grouped: &mut BTreeMap<Uri, Vec<Diagnostic>>,
 ) {
     let mut by_file = BTreeMap::<PathBuf, Vec<&Finding>>::new();
@@ -1926,6 +1998,9 @@ fn append_withheld_preview_diagnostics(
             .or_default()
             .push(finding);
     }
+    // Full also withholds parse-failed rows: switching profiles is not their
+    // recovery. The parse-failure marker owns that file's disclosure (#13374).
+    by_file.retain(|file, _| !file_has_parse_failure(root, file, analysis_outcome));
     // One shared bound (#13442): markers are reserved first (one per file, at
     // most the cap), rows only spend what remains, so markers plus rows never
     // exceed `MAX_WITHHELD_PREVIEW_MARKERS`.
@@ -2202,6 +2277,7 @@ pub(super) fn limitation_is_file_parse_failure(
         AnalysisLimitationKind::ProducerFailure => matches!(
             recovery,
             crate::analysis_outcome::RUST_PARSE_FAILURE_RECOVERY
+                | crate::analysis_outcome::RUST_NESTING_BUDGET_RECOVERY
                 | crate::analysis_outcome::RUST_NOT_UTF8_RECOVERY
                 | crate::analysis_outcome::PYTHON_PARSE_FAILURE_RECOVERY
         ),
@@ -2213,6 +2289,56 @@ pub(super) fn limitation_is_file_parse_failure(
         }
         _ => false,
     }
+}
+
+/// The diagnostic, accounting and lens projections share the same file match.
+/// The parse-failure meaning remains owned by the producer predicate above.
+pub(super) fn file_has_parse_failure(
+    root: &Path,
+    file: &Path,
+    outcome: Option<&AnalysisOutcome>,
+) -> bool {
+    file_parse_failure_limitation(root, file, outcome).is_some()
+}
+
+/// True when the file's parse-failure limitation is the
+/// `rust_nesting_budget` decline rather than a syntax error (#13660). A file
+/// that also carries a real parse failure is not a nesting decline.
+pub(super) fn file_parse_failure_is_nesting_budget(
+    root: &Path,
+    file: &Path,
+    outcome: Option<&AnalysisOutcome>,
+) -> bool {
+    file_parse_failure_limitation(root, file, outcome).is_some_and(|limitation| {
+        limitation.recovery.detail == crate::analysis_outcome::RUST_NESTING_BUDGET_RECOVERY
+    })
+}
+
+fn file_parse_failure_limitation<'a>(
+    root: &Path,
+    file: &Path,
+    outcome: Option<&'a AnalysisOutcome>,
+) -> Option<&'a crate::analysis_outcome::AnalysisLimitation> {
+    let relative = if file.is_absolute() {
+        file.strip_prefix(root).ok()?
+    } else {
+        file
+    };
+    let path = crate::analysis_outcome::normalize_portable_analysis_path(
+        relative.to_string_lossy().as_ref(),
+    )
+    .ok()?;
+    // Prefer a real parse failure over a nesting-budget decline for one path.
+    outcome?
+        .limitations
+        .iter()
+        .filter(|limitation| {
+            limitation_is_file_parse_failure(limitation)
+                && limitation.path.as_deref() == Some(path.as_str())
+        })
+        .min_by_key(|limitation| {
+            limitation.recovery.detail == crate::analysis_outcome::RUST_NESTING_BUDGET_RECOVERY
+        })
 }
 
 /// One Information diagnostic on each changed file the language adapter could
@@ -7189,6 +7315,7 @@ mod diagnostic_policy_tests {
             findings,
             &withheld_preview_config(profile),
             &crate::analysis::diagnostic_origin::RustDiagnosticOrigins::default(),
+            None,
             &mut grouped,
         );
         grouped

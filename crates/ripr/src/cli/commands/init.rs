@@ -354,8 +354,25 @@ fn init_plan(options: &InitOptions) -> Result<Vec<InitTarget>, String> {
     if let Some(path) = cursor_mcp_path {
         targets.push(plan_mcp_target(path, options.force)?);
     }
+    // The instructions promise analysis only for languages `ripr check` will
+    // run: the config this run writes, else the one it keeps. A config that
+    // cannot be read enables nothing here (fail closed: no preview promise).
+    let enabled_languages = match targets[0].action {
+        InitAction::LeaveUnchanged => crate::config::load_for_root(&options.root)
+            .map(|config| config.languages().enabled().to_vec())
+            .unwrap_or_default(),
+        _ => crate::config::parse_config_diagnostic(&targets[0].body)
+            .map(|config| config.languages().enabled().to_vec())
+            .unwrap_or_default(),
+    };
+    let agent_languages = init_agents::AgentLanguages::detect(&options.root, &enabled_languages);
     for (agent, path) in options.agents.iter().zip(agent_paths) {
-        targets.push(init_agents::plan_agent_target(*agent, path, options.force)?);
+        targets.push(init_agents::plan_agent_target(
+            *agent,
+            path,
+            options.force,
+            agent_languages,
+        )?);
     }
     Ok(targets)
 }
@@ -367,7 +384,16 @@ const MCP_CONFIG_FILE_NAME: &str = ".mcp.json";
 const MCP_SERVER_NAME: &str = "ripr";
 
 fn ripr_mcp_server_entry() -> serde_json::Value {
-    serde_json::json!({ "command": "ripr", "args": ["mcp", "--stdio"] })
+    // #13050: `tools/list` rides every session start and about two thirds of it
+    // was `outputSchema` documents a coding agent never reads. Slim is the
+    // server default since #13803; the explicit value keeps an older ripr
+    // binary slim too (docs/interop/mcp.md). Results still carry
+    // `structuredContent`; set the value to `full` to get the schemas back.
+    serde_json::json!({
+        "command": "ripr",
+        "args": ["mcp", "--stdio"],
+        "env": { "RIPR_MCP_TOOLS_LIST": "slim" }
+    })
 }
 
 /// Plan the `.mcp.json` write: create it, add the `ripr` server beside the
@@ -679,8 +705,18 @@ fn apply_init_plan(plan: &[InitTarget], root: &Path) -> Result<(), String> {
                 .is_some_and(|name| name == MCP_CONFIG_FILE_NAME)
         }) {
             println!();
+            // Offer the Cursor route only when this run does not already
+            // plan `.cursor/mcp.json` (for example `--agents all`).
+            let cursor_planned = plan
+                .iter()
+                .any(|target| target.path.ends_with(".cursor/mcp.json"));
+            let cursor_hint = if cursor_planned {
+                ""
+            } else {
+                " For Cursor add `--agents cursor --mcp`, which also writes `.cursor/mcp.json`."
+            };
             println!(
-                "Claude Code reads `{MCP_CONFIG_FILE_NAME}` and asks you to approve the project server before its tools appear. For Codex run `codex mcp add {MCP_SERVER_NAME} -- ripr mcp --stdio`. For Cursor add `--agents cursor`, which also writes `.cursor/mcp.json`."
+                "Claude Code reads `{MCP_CONFIG_FILE_NAME}` and asks you to approve the project server before its tools appear. For Codex run `codex mcp add {MCP_SERVER_NAME} -- ripr mcp --stdio`.{cursor_hint}"
             );
         }
         if plan.iter().any(|target| {
@@ -688,7 +724,21 @@ fn apply_init_plan(plan: &[InitTarget], root: &Path) -> Result<(), String> {
                 && target.action != InitAction::LeaveUnchanged
         }) {
             println!();
-            println!("{}", init_agents::FOLLOW_UP);
+            let mcp_planned = plan.iter().any(|target| {
+                target
+                    .path
+                    .file_name()
+                    .is_some_and(|name| name == MCP_CONFIG_FILE_NAME)
+                    && target.action != InitAction::LeaveUnchanged
+            });
+            println!(
+                "{}",
+                if mcp_planned {
+                    init_agents::FOLLOW_UP_WITH_MCP
+                } else {
+                    init_agents::FOLLOW_UP
+                }
+            );
         }
         if let Some((workflow, ci)) = plan.iter().find_map(|target| {
             [InitCi::Github, InitCi::Gitlab]
@@ -1483,7 +1533,8 @@ mod tests {
         serde_json::from_str(body).map_err(|err| format!("body is not JSON: {err}\n{body}"))
     }
 
-    const RIPR_ENTRY: &str = r#"{"command":"ripr","args":["mcp","--stdio"]}"#;
+    const RIPR_ENTRY: &str =
+        r#"{"command":"ripr","args":["mcp","--stdio"],"env":{"RIPR_MCP_TOOLS_LIST":"slim"}}"#;
 
     #[test]
     fn mcp_plan_creates_project_config_and_keeps_an_existing_ripr_toml() -> Result<(), String> {

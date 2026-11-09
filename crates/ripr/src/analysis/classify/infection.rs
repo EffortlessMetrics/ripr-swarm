@@ -698,6 +698,8 @@ pub(in crate::analysis) struct OwnerInputs<'a> {
     pub(in crate::analysis) owner: Option<&'a FunctionSummary>,
     pub(in crate::analysis) literal_length_boundary:
         Option<&'a super::literal_length_boundary::LiteralLengthBoundary>,
+    pub(in crate::analysis) slice_counter_boundary:
+        Option<&'a super::slice_counter_boundary::SliceCounterBoundary>,
 }
 
 /// [`infection_evidence_with_boundary_input`] given the changed owner, which
@@ -721,6 +723,7 @@ pub(in crate::analysis) fn infection_evidence_for_owner(
     let OwnerInputs {
         owner,
         literal_length_boundary,
+        slice_counter_boundary,
     } = owner_inputs;
     // A returned bare comparison with a resolved missing boundary
     // discriminator reads the predicate lens's gap, never a better reading:
@@ -776,6 +779,12 @@ pub(in crate::analysis) fn infection_evidence_for_owner(
         }
     }
     if let Some(evidence) = literal_length_boundary
+        .zip(owner)
+        .and_then(|(boundary, owner)| boundary.infection(probe, owner))
+    {
+        return evidence;
+    }
+    if let Some(evidence) = slice_counter_boundary
         .zip(owner)
         .and_then(|(boundary, owner)| boundary.infection(probe, owner))
     {
@@ -1662,7 +1671,7 @@ mod tests {
             start_line: 1,
             end_line: 3,
             body: "assert_eq!(score(10), 11);".into(),
-            calls: Vec::new(),
+            calls: crate::analysis::facts::SharedFactSlice::empty(),
             assertions: Vec::new(),
             literals: values
                 .iter()
@@ -1671,9 +1680,9 @@ mod tests {
                     value: (*value).to_string(),
                 })
                 .collect(),
-            attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             generated: None,
         }
     }
@@ -1686,14 +1695,14 @@ mod tests {
             start_line: 1,
             end_line: body.lines().count(),
             body: body.into(),
-            calls: Vec::new(),
+            calls: crate::analysis::facts::SharedFactSlice::empty(),
             returns: Vec::new(),
-            literals: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
             source_role: crate::analysis::facts::FunctionSourceRole::Production,
-            attrs: Vec::new(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
             impl_attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             item: Default::default(),
             impl_context: Default::default(),
         }
@@ -1726,6 +1735,7 @@ mod tests {
             OwnerInputs {
                 owner: Some(&owner),
                 literal_length_boundary: None,
+                slice_counter_boundary: None,
             },
             true,
             false,

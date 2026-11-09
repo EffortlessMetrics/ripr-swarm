@@ -521,7 +521,7 @@ and single-platform CI was the root cause enabling both.
   (#5044). A sidecar from another report cannot qualify changed bytes even when
   both reports have valid coverage rows. Uploading
   the path with `if-no-files-found: ignore` is not admission.
-- **`Rust Test Shards`** (`rust-test-shards.yml`, called by `routed-rust.yml`) is the GitHub-hosted route's required test phase (#10507, hash layout #12777): four `cargo nextest run --workspace --profile ci --partition hash:N/4` jobs that start only after the hosted `rust-gates.yml` job (called with `test-shards: 4`) passed every other gate, plus `rust-test-shards-verify`, which runs `cargo xtask verify-test-shards` and fails unless every shard has status 0, a current run context (repository, checkout, run, attempt, profile, partition, exit) and a complete JUnit report whose testcases are exactly its partition list, and the partition lists are a disjoint cover of the workspace list. The verifier parses XML before retaining complete suite elements and anchors each receipt’s four ordered input blobs to `Cargo.lock`, `.config/nextest.toml`, `.github/workflows/rust-gates.yml` and `.github/workflows/rust-test-shards.yml` at the expected checkout commit; malformed or unsupported namespaced XML, unresolved inputs, shared incorrect hashes, duplicate or reserved run-context keys (`shards` and `verified_attempts` are reserved for the combined receipt) and noncanonical artifact attempt suffixes fail closed. It then retains the combined `junit.xml` and `run-context.txt` under the unsharded artifact name. `Ripr Rust Small Result` fails unless it passed; the self-hosted routes keep the single-command step. The shards restore their own `ripr-swarm-rust-shards` cache, written by shard 1 on `main` pushes, so the first run after a cold cache pays the full test build. Shard 1 also uploads the `xtask` binary its warm build produced (debug sections stripped), and the verify job runs that binary instead of installing a toolchain and compiling xtask again, which took about 2.4 minutes after the last shard finished.
+- **`Rust Test Shards`** (`rust-test-shards.yml`, called by `routed-rust.yml`) is the GitHub-hosted route's required test phase (#10507, hash layout #12777): four `cargo nextest run --workspace --profile ci --partition hash:N/4` jobs that start only after the hosted `rust-gates.yml` job (called with `test-shards: 4`) passed every other gate, plus `rust-test-shards-verify`, which runs `cargo xtask verify-test-shards` and fails unless every shard has status 0, a current run context (repository, checkout, run, attempt, profile, partition, exit) and a complete JUnit report whose testcases are exactly its partition list, and the partition lists are a disjoint cover of the workspace list. The verifier parses XML before retaining complete suite elements and anchors each receipt’s four ordered input blobs to `Cargo.lock`, `.config/nextest.toml`, `.github/workflows/rust-gates.yml` and `.github/workflows/rust-test-shards.yml` at the expected checkout commit; malformed or unsupported namespaced XML, unresolved inputs, shared incorrect hashes, duplicate or reserved run-context keys (`shards` and `verified_attempts` are reserved for the combined receipt) and noncanonical artifact attempt suffixes fail closed. It then retains the combined `junit.xml` and `run-context.txt` under the unsharded artifact name. `Ripr Rust Small Result` fails unless it passed; the self-hosted routes keep the single-command step. The shards restore their own `ripr-swarm-rust-shards` cache, written by shard 1 on `main` pushes, so the first run after a cold cache pays the full test build. Shard 1 also uploads the `xtask` binary its workspace test preparation produced (debug sections stripped), and the verify job runs that binary instead of installing a toolchain and compiling xtask again, which took about 2.4 minutes after the last shard finished.
   The existing shard artifact also retains `nextest/ci/build-metrics/` (#12767):
   five-second system-memory samples, sampled minimum available memory and maximum
   swap use, and separate elapsed time, native exit and largest-process RSS for
@@ -1325,17 +1325,25 @@ automation code from obscuring product quality:
 The component split uses Codecov's path-based named statuses. Future coverage
 ratchets should follow the [calibration strategy](IMPLEMENTATION_CAMPAIGNS.md).
 
-The Test Analytics workflow currently runs:
+The Test Analytics workflow currently runs the all-features suite as four
+nextest hash partitions (#12916), mirroring the required shards, plus doctests
+on shard 1 only:
 
 ```bash
-cargo nextest run --workspace --all-features --profile ci
+cargo nextest run --workspace --all-features --profile ci --partition hash:N/4
 cargo test --workspace --doc
 ```
 
-It uploads the JUnit XML as the `rust-junit` GitHub Actions artifact and uploads
-the same file to Codecov Test Analytics only when `CODECOV_TOKEN` is available
-on trusted runs. Fork pull requests still run tests and upload the artifact, but
-skip the Codecov test-results upload because repository secrets are unavailable.
+A combine job verifies the four partitions are a disjoint, complete, green
+cover of the all-features workspace (`cargo xtask verify-test-shards
+--all-features`) and only then uploads the combined JUnit XML as the
+`rust-junit` GitHub Actions artifact, publishes the advisory slow-test report
+(`cargo xtask slow-test-report`), and uploads the same combined file to
+Codecov Test Analytics only when `CODECOV_TOKEN` is available on trusted
+runs. Fork pull requests still run tests and upload the artifact, but skip
+the Codecov test-results upload because repository secrets are unavailable.
+The lane remains advisory; the required shards remain the blocking test
+enforcement.
 
 ### Merge-ready Conflict Notice
 
@@ -1448,11 +1456,27 @@ per-fire audit trail, and the `main-red` tracking issue
 (`main-red: scheduled main-health sentinel found a broken main`) is the
 durable findable record — opened once, appended per confirming probe, and
 closed by the first green probe with the recovering run link. Worst-case
-detection latency is roughly forty minutes (interval plus probe). The
+detection latency is roughly forty minutes (interval plus probe).
+The probe alone misses test-level breaks: a stale generated CLI reference
+(#13793), a Perl unit test (#13639) and the editor smoke (#13783) all sat on
+main under a green sentinel. Main's push gates do finish, because their
+concurrency supersedes only queued runs, so about one run per gate completes
+each hour. Each fire therefore also reads the latest completed, non-cancelled
+main-push run of `Routed Rust Small` (`routed-rust.yml`) and `CI` (`ci.yml`)
+with `actions: read`. It lists their failed jobs in the summary and the tracker
+and turns the verdict red when either failed. It rebuilds, re-runs and
+dispatches nothing, so it adds no runner time beyond a few API reads. An
+unreadable or absent gate run shows as `unknown` and claims neither red nor
+green, so it never closes an open tracker. Each read is bounded and the read
+step cannot block the judge. The probe stays the fail-closed half. A red tracker gets one comment
+per new piece of evidence (a fingerprint of the probe result and the failing
+gate run ids), not one per fire. Gate-level detection latency is the gate
+cadence plus up to thirty minutes. The
 `xtask/tests/main_health_sentinel_contract.rs` contract pins the advisory-only
 shape: scheduled-plus-dispatch triggers, serialization, timeout, repository
 guard, `issues: write` as the only write authority, the exact probe selector,
-zero-executed-test refusal, and the tracker lifecycle.
+zero-executed-test refusal, the read-only push-gate judgement, and the
+tracker lifecycle.
 
 ### Golden Re-bless
 
@@ -1835,7 +1859,9 @@ ripr review-comments \
 ```
 
 That renderer writes JSON and Markdown under `target/ripr/review/` and does
-not post to GitHub by itself. The generated workflow then:
+not post to GitHub by itself. Teams replacing a cargo-mutants exit-`2` CI gate
+can pair it with `ripr gate evaluate --mode acknowledgeable`; see
+[coming from cargo-mutants](FROM_CARGO_MUTANTS.md). The generated workflow then:
 
 - appends the Markdown summary to `$GITHUB_STEP_SUMMARY`;
 - emits check annotations from changed-line entries;
@@ -2738,7 +2764,7 @@ The coverage and Test Analytics workflows run on `ubuntu-latest`. Both lanes
 remain advisory, but release candidates need an observable green boundary; these
 lanes must not depend on self-hosted runner availability just to prove that the
 current workspace can produce coverage and JUnit artifacts. The jobs still run
-only on pull requests, pushes to `main`/`master`, and manual dispatches, and
+only on pull requests, a daily schedule on `main`, and manual dispatches, and
 Codecov upload remains non-blocking.
 
 The `future-clippy` job runs on `ubuntu-latest` with installation and invocation
@@ -2936,17 +2962,44 @@ and is not part of `precommit`. `changelog.d/README.md` has the batch procedure.
 
 ## Install Receipt
 
-`cargo xtask install-receipt [--check] | --cells <dir> [--run-id <id>] [--write]`
-(#13064) records the per-platform, per-channel install seconds behind the R0
-install row in `docs/METRICS.md`. `published-install-matrix.yml` uploads one
-JSON file per cell (`install-cell-<channel>-<os>`); download a run's artifacts
-into a directory and pass it as `--cells`. The command merges them with the
-hand-kept `metrics/install/dispositions.json` (channels outside the matrix:
-archive, binstall, extension, Homebrew), refuses a missing, duplicate or unknown
-cell, derives the R0 verdict (`met`, `not_met`, `not_established`) and writes
-`metrics/install/receipt.json` and `receipt.md` with `--write`. `--check` is the
-default and re-validates the checked-in receipt offline. It is not part of
-`precommit`.
+`cargo xtask install-receipt [--check] | (--cells <dir> --run-id <id>)... [--write]`
+(#13064, #12909) records the per-platform, per-channel install seconds behind the
+R0 install row in `docs/METRICS.md`. `published-install-matrix.yml` (cargo, PyPI,
+npm, binstall) and `first-run-archive.yml` (release archive) upload one JSON file
+per cell (`install-cell-<channel>-<os>`). Download each run's artifacts into its
+own directory and pass one `--cells <dir> --run-id <id>` pair per run; a cell may
+appear in several runs but only once per run. The command merges them with the
+hand-kept `metrics/install/dispositions.json` (channels no workflow installs: the
+editor extension, generated CI and Homebrew) and refuses a missing, repeated or
+unknown cell.
+
+Each cell is judged on all its samples. A failed or broken sample fails it; a
+cell that is a documented gap in every run is `not_established`. A working cell
+is timed by the median of its working samples of the newest version it reports
+(older-release samples stay listed but are not judged): prebuilt channels (archive,
+binstall, PyPI, npm) against the 300 s first-value bar, and `cargo install`,
+which compiles from source on a runner whose speed varies run to run, against
+900 s on the median of at least three samples. The 900 s source-build bar was
+requested by the release ladder owner, who reconciles the R0 row in
+`docs/METRICS.md`. The archive cell records `failed` when the binary does not
+report the resolved release. `--write` writes
+`metrics/install/receipt.json` and `receipt.md`; `--check` is the default and
+re-derives the whole checked-in receipt from its own samples offline. It is not
+part of `precommit`. The binstall cells stay `known_gap` until a release carries
+the binstall metadata (0.11.0); they install only our own release archive, never
+a third-party prebuilt or a source build.
+
+After a publication, dispatch `published-install-matrix.yml` with
+`release_version` set to the exact release (for example `0.11.0`). That pins
+cargo, PyPI and npm to it and fails any non-gap cell whose `ripr --version` is
+not `ripr <release_version>` (an appended build commit, `(<40 hex>[-dirty])`, is
+accepted; a gap cell that installs the wrong version is
+reported with a warning), so one run answers "does every channel serve the
+version we announced". Record it with `cargo xtask install-receipt --cells <matrix-dir> --run-id
+<matrix-run> --cells <archive-dir> --run-id <archive-run> --write`, adding the
+artifacts of a `first-run-archive.yml` run because the receipt needs every
+archive cell too. Set it instead of `cargo_version`; if both are set, `cargo_version`
+wins for the install and the version check then fails the cargo cells. A scheduled run leaves it empty and checks whatever is latest.
 
 ## Capability Registry Docs Block
 

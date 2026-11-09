@@ -12,15 +12,15 @@
   "findings": [
     {
       "id": "probe:src_check.py:python_preview:v1-11825c93",
-      "canonical_gap_id": "gap:python:src/check.py:check:predicate_boundary:predicate:msg=negative_value_must_be_at_most_zero",
+      "canonical_gap_id": "gap:python:src/check.py:check:return_value:return_value:msg=negative_value_must_be_at_most_zero",
       "canonical_gap_group_size": 1,
       "canonical_gap": {
-        "id": "gap:python:src/check.py:check:predicate_boundary:predicate:msg=negative_value_must_be_at_most_zero",
+        "id": "gap:python:src/check.py:check:return_value:return_value:msg=negative_value_must_be_at_most_zero",
         "language": "python",
         "file": "src/check.py",
         "owner": "check",
-        "behavior_kind": "predicate_boundary",
-        "probe_kind": "predicate",
+        "behavior_kind": "return_value",
+        "probe_kind": "return_value",
         "normalized_discriminator": "msg=negative_value_must_be_at_most_zero"
 
       },
@@ -34,8 +34,8 @@
       "confidence_why_capped": "Why capped: preview adapter: infection/propagation not modeled (Python); syntax-first, no type or import resolution. Preview score, not on the same scale as Rust confidence.",
       "probe": {
         "id": "probe:src_check.py:python_preview:v1-11825c93",
-        "family": "predicate",
-        "delta": "control",
+        "family": "return_value",
+        "delta": "value",
         "file": "src/check.py",
         "line": 3,
         "expression": "        msg = \"negative value: must be at most zero\"",
@@ -48,6 +48,13 @@
         "observe": {"state":"yes","confidence":"low","summary":"Strongest extracted Python oracle kind: `exact_error_variant` (rank 5)"},
         "discriminate": {"state":"yes","confidence":"low","summary":"Related Python test uses an `exact_error_variant` oracle; static evidence suggests the changed behavior is discriminated."}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"low"},
+        {"stage":"infect","state":"yes","confidence":"low"},
+        {"stage":"propagate","state":"weak","confidence":"low"},
+        {"stage":"observe","state":"yes","confidence":"low"},
+        {"stage":"discriminate","state":"yes","confidence":"low"}
+      ],
       "evidence_path": ["reach yes: 1 related Python test(s) found for owner `check`", "infection yes: Changed Python expression can alter preview-classified predicate behavior: `msg = \"negative value: must be at most zero\"`", "propagation weak: Changed Python fallback expression can propagate through selected behavior; preview evidence does not prove the concrete downstream sink.", "observation yes: Strongest extracted Python oracle kind: `exact_error_variant` (rank 5)", "discriminator yes: Related Python test uses an `exact_error_variant` oracle; static evidence suggests the changed behavior is discriminated.", "local flow reaches unknown sink: msg = \"negative value: must be at most zero\" (line 3)", "related test tests/test_check.py:6 test_negative_is_rejected uses strong exact error variant oracle: pytest.raises(ValueError, match=\"at most zero\")"],
       "flow_sinks": [
         {"kind":"unknown","text":"msg = \"negative value: must be at most zero\"","line":3}

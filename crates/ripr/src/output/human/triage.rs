@@ -23,6 +23,120 @@ use crate::output::python_repair_card::python_repair_card;
 use crate::output::typescript_packet_projection::typescript_gap_record_for;
 use std::collections::BTreeSet;
 
+/// A changed Python predicate that holds several relational comparisons, as
+/// the boundary analysis names it in the Missing check (`The changed predicate
+/// `rate < 0 or rate >= 1` holds 2 relational comparisons; ...`). #13790 only
+/// names this reason and the by-hand test shape where the shared readiness
+/// owner already declined the gap; it never decides readiness.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct MultiComparisonPredicate {
+    pub(crate) condition: String,
+    pub(crate) comparisons: usize,
+}
+
+impl MultiComparisonPredicate {
+    /// Why no repair target exists, in plain words.
+    pub(crate) fn reason(&self) -> String {
+        format!(
+            "the changed predicate `{}` holds {} comparisons, so static evidence cannot tell which boundary a test pins",
+            self.condition, self.comparisons
+        )
+    }
+
+    /// The by-hand test shape: one row per boundary, naming each boundary
+    /// equality when every comparison is a plain `left OP right` (or a chain
+    /// of them), otherwise the shape alone.
+    pub(crate) fn manual_test_shape(&self) -> String {
+        match self.boundary_equalities() {
+            Some(rows) => format!(
+                "add one test row per boundary ({})",
+                rows.iter()
+                    .map(|row| format!("`{row}`"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+            None => "add one test row per boundary of the predicate".to_string(),
+        }
+    }
+
+    fn boundary_equalities(&self) -> Option<Vec<String>> {
+        const OPERATORS: [&str; 6] = ["<=", ">=", "==", "!=", "<", ">"];
+        let mut rows = Vec::new();
+        let normalized = self.condition.replace(" and ", " or ");
+        for part in normalized.split(" or ") {
+            let part = part.trim().trim_start_matches('(').trim_end_matches(')');
+            let mut operands = Vec::new();
+            let mut rest = part;
+            loop {
+                let next = OPERATORS
+                    .iter()
+                    .filter_map(|op| rest.find(op).map(|at| (at, op.len())))
+                    .min_by_key(|(at, len)| (*at, usize::MAX - len));
+                match next {
+                    Some((at, len)) => {
+                        // The producer counts only relational operators, so
+                        // an equality term would add a row it never counted:
+                        // keep the shape alone for mixed predicates.
+                        if matches!(rest.get(at..at + len)?, "==" | "!=") {
+                            return None;
+                        }
+                        operands.push(rest.get(..at)?.trim());
+                        rest = rest.get(at + len..)?;
+                    }
+                    None => {
+                        operands.push(rest.trim());
+                        break;
+                    }
+                }
+            }
+            if operands.len() < 2 {
+                return None;
+            }
+            for pair in operands.windows(2) {
+                let [left, right] = *pair else {
+                    return None;
+                };
+                let simple = |operand: &str| {
+                    !operand.is_empty()
+                        && operand
+                            .chars()
+                            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '.' | '-'))
+                };
+                if !simple(left) || !simple(right) {
+                    return None;
+                }
+                let literal = |operand: &str| operand.parse::<f64>().is_ok();
+                let row = if literal(left) && !literal(right) {
+                    format!("{right} == {left}")
+                } else {
+                    format!("{left} == {right}")
+                };
+                if !rows.contains(&row) {
+                    rows.push(row);
+                }
+            }
+        }
+        // Name rows only when they match the producer's own count; otherwise
+        // (duplicates, an unparsed term) the shape alone is the honest line.
+        (rows.len() > 1 && rows.len() == self.comparisons).then_some(rows)
+    }
+}
+
+/// The several-comparison predicate the Missing check names, if any (#13790).
+pub(crate) fn multi_comparison_predicate(missing: &[String]) -> Option<MultiComparisonPredicate> {
+    missing.iter().find_map(|line| {
+        let rest = line.split("The changed predicate `").nth(1)?;
+        let (condition, rest) = rest.split_once("` holds ")?;
+        let (count, _) = rest.split_once(" relational comparisons")?;
+        let comparisons = count.trim().parse::<usize>().ok().filter(|n| *n > 1)?;
+        let condition = condition.trim();
+        (!condition.is_empty()).then(|| MultiComparisonPredicate {
+            condition: condition.to_string(),
+            comparisons,
+        })
+    })
+}
+
 /// The operand static evidence cannot bind to a test input when a weakly
 /// exposed Python boundary finding declines its repair card: the Missing check
 /// names the equality (`amount == DISCOUNT_THRESHOLD`) but one side reads
@@ -99,16 +213,8 @@ pub(crate) fn select_human_triage<'a>(
     config: &RiprConfig,
 ) -> HumanTriage<'a> {
     let role_context = triage_role_context(config);
-    let suppressed_ids: BTreeSet<&str> = output
-        .suppression
-        .iter()
-        .flat_map(|outcome| {
-            outcome
-                .suppressed
-                .iter()
-                .map(|entry| entry.finding_id.as_str())
-        })
-        .collect();
+    // #13819: owner opt-outs leave triage exactly like policy suppression.
+    let suppressed_ids: BTreeSet<&str> = output.withheld_finding_ids();
     // #9346 (same-owner): decisive production verdicts. An unknown
     // production probe is shadowed only by a decisive verdict that covers
     // the same changed behavior, or when the unknown carries no distinct
@@ -221,9 +327,19 @@ pub(crate) fn render_human_triage(
             out.push_str(&no_selection_safe_action_line(&triage.omitted));
         }
         NextActionCheckCase::SuppressedByPolicy => {
-            out.push_str(
-                "  Safe next action: all findings are suppressed by policy; review the suppression block before treating this run as actionable\n",
-            );
+            // #13819: a run whose findings an owner opt-out withheld names
+            // that block, not a policy it never loaded.
+            out.push_str(match (output.suppression.is_some(), output.owner_opt_outs.is_empty()) {
+                (false, false) => {
+                    "  Safe next action: all findings are withheld because the changed function carries #[mutants::skip]; review the owner opt-out block before treating this run as actionable\n"
+                }
+                (true, false) => {
+                    "  Safe next action: all findings are suppressed by policy or withheld by #[mutants::skip]; review the suppression and owner opt-out blocks before treating this run as actionable\n"
+                }
+                _ => {
+                    "  Safe next action: all findings are suppressed by policy; review the suppression block before treating this run as actionable\n"
+                }
+            });
         }
         NextActionCheckCase::NoDiffFinding => {
             out.push_str(
@@ -623,13 +739,19 @@ pub(crate) fn render_human_triage(
             }
             categories.len() > 1
         };
+        let mut stub_template: Option<String> = None;
+        // Identical consecutive rows (same location, class, kind and reason)
+        // collapse to one row with a repeat count so a diff with many
+        // equivalent base-side findings stays scannable.
+        let mut previous: Option<(String, usize)> = None;
         for finding in triage.omitted.iter().take(listed) {
             let currentness = if label_currentness {
                 format!(", {}", hidden_bullet_currentness(finding))
             } else {
                 String::new()
             };
-            out.push_str(&format!(
+            let mut row = String::new();
+            row.push_str(&format!(
                 "    - {}:{} ({}{}); kind: {}; reason: {}\n",
                 crate::analysis::finding_location_text(&output.root, &finding.probe.location.file),
                 finding.probe.location.line,
@@ -644,7 +766,7 @@ pub(crate) fn render_human_triage(
                 match navigation.stub_route_for(&finding.id) {
                     Some(StubRouteDecision::Ambiguous { reason, seam_ids }) => {
                         push_ambiguous_stub_choices(
-                            out,
+                            &mut row,
                             navigation,
                             &finding.id,
                             reason,
@@ -653,14 +775,31 @@ pub(crate) fn render_human_triage(
                         );
                     }
                     Some(StubRouteDecision::SeamStub { seam_id }) => {
-                        let command = navigation.stub_seam_command(seam_id);
-                        out.push_str("      Write a test for it:\n");
-                        out.push_str(&format!("        {command}\n"));
-                        super::push_powershell_variant(out, "        ", &command);
+                        // One command template below serves every listed row;
+                        // only the row's id repeats here.
+                        row.push_str(&format!("      Test id: {seam_id}\n"));
+                        stub_template = Some(navigation.stub_seam_command("TEST_ID"));
                     }
                     _ => {}
                 }
             }
+            match previous.as_mut() {
+                Some((prev, count)) if *prev == row => *count += 1,
+                _ => {
+                    if let Some((prev, count)) = previous.take() {
+                        push_hidden_row(out, &prev, count);
+                    }
+                    previous = Some((row, 1));
+                }
+            }
+        }
+        if let Some((prev, count)) = previous.take() {
+            push_hidden_row(out, &prev, count);
+        }
+        if let Some(command) = stub_template {
+            out.push_str("  Write a test for a listed row, replacing TEST_ID with its Test id:\n");
+            out.push_str(&format!("    {command}\n"));
+            super::push_powershell_variant(out, "    ", &command);
         }
         // #9373: gloss each class named by a listed row, once, in the plain
         // vocabulary, so a run with several classes needs no `human-full`
@@ -1031,6 +1170,14 @@ pub(crate) fn canonical_next_action_for_triage(
             ),
         },
         check_case: Some(check_case_for_triage(triage, output)),
+        // #13599: the same validated decision the human `Next` block prints.
+        check_repair_route: if check_case_for_triage(triage, output)
+            == NextActionCheckCase::PreviewAdvisory
+        {
+            gap_repair_start(triage.selected, drill_in).and_then(|start| start.command)
+        } else {
+            None
+        },
         doctor_recovery: None,
         pilot_delegation: None,
         alternatives,
@@ -1387,16 +1534,34 @@ pub(super) fn recommends_gap_repair_start(
     finding: Option<&Finding>,
     drill_in: Option<&FindingDrillIn>,
 ) -> bool {
+    gap_repair_start(finding, drill_in).is_some()
+}
+
+/// The gap-bound `ripr agent repair` start the check pipeline validated for
+/// the selected finding (#13599). The human `Next` block, the compact agent
+/// terminal and the JSON `canonical_next_action` all read this one decision,
+/// so they cannot disagree about whether a guided repair can begin.
+pub(super) struct GapRepairStart {
+    /// The runnable start. `None` while tracked production files differ from
+    /// HEAD: the start refuses until they are committed.
+    pub(super) command: Option<String>,
+}
+
+pub(super) fn gap_repair_start(
+    finding: Option<&Finding>,
+    drill_in: Option<&FindingDrillIn>,
+) -> Option<GapRepairStart> {
     let (Some(finding), Some(FindingDrillIn::Commands(navigation))) = (finding, drill_in) else {
-        return false;
+        return None;
     };
-    if is_static_limited(finding) || navigation.gap_repair_route_for(&finding.id).is_none() {
-        return false;
+    let route = navigation.gap_repair_route_for(&finding.id)?;
+    if is_static_limited(finding) {
+        return None;
     }
     // Only the findings whose Safe next action line names the start: a ready
     // TypeScript/JavaScript preview packet (the shared validator's verdict) or
     // a Python finding with a repair card.
-    match finding.language {
+    let eligible = match finding.language {
         Some(LanguageId::Python) => {
             finding.class != ExposureClass::Exposed && python_repair_card(finding).is_some()
         }
@@ -1404,7 +1569,16 @@ pub(super) fn recommends_gap_repair_start(
             preview_actionability_for(finding).is_some_and(|a| a.repair_packet_ready)
         }
         _ => false,
+    };
+    if !eligible {
+        return None;
     }
+    Some(GapRepairStart {
+        command: navigation
+            .gap_repair_prerequisite(route)
+            .is_none()
+            .then(|| navigation.gap_repair_command(route)),
+    })
 }
 
 /// An exposed preview finding has nothing to repair, in any preview language.
@@ -1516,7 +1690,12 @@ fn python_preview_safe_action(finding: &Finding, recommend_repair_start: bool) -
         // Missing check but cannot bind one operand to a test input, so no
         // repair card exists. Name that operand instead of the generic line;
         // routing stays fail-closed (no gap id, no card).
-        if let Some(operand) = unresolved_boundary_operand(&finding.missing) {
+        if let Some(predicate) = multi_comparison_predicate(&finding.missing) {
+            // #13790: several comparisons in one predicate: name that reason
+            // here; the per-boundary rows ride the `agent repair` refusal.
+            // Routing stays closed.
+            (predicate.reason(), "add or strengthen a test by hand")
+        } else if let Some(operand) = unresolved_boundary_operand(&finding.missing) {
             (
                 format!(
                     "static evidence cannot bind `{operand}` to a test input, so the boundary equality cannot become a repair target"
@@ -1934,6 +2113,19 @@ pub(super) fn is_preview_limited(finding: &Finding) -> bool {
         .is_some_and(|status| status.as_str() == "preview")
 }
 
+/// Append a hidden-finding block, annotating its first line with a repeat
+/// count when identical consecutive rows were collapsed.
+fn push_hidden_row(out: &mut String, row: &str, count: usize) {
+    if count <= 1 {
+        out.push_str(row);
+        return;
+    }
+    match row.split_once('\n') {
+        Some((first, rest)) => out.push_str(&format!("{first} (x{count})\n{rest}")),
+        None => out.push_str(&format!("{row} (x{count})")),
+    }
+}
+
 #[cfg(test)]
 mod tests {
 
@@ -2038,6 +2230,7 @@ mod tests {
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
+            owner_opt_outs: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -2494,9 +2687,9 @@ mod tests {
             return Err("omitted alternative lost its identity".to_string());
         }
         match action.stop() {
-            Some(NextActionStop::CheckTriage { case, detail_route })
-                if *case == NextActionCheckCase::TopGap =>
-            {
+            Some(NextActionStop::CheckTriage {
+                case, detail_route, ..
+            }) if *case == NextActionCheckCase::TopGap => {
                 if !detail_route.contains("finding:top") {
                     return Err(format!(
                         "top gap must carry the selected inspect route, got {detail_route}"
@@ -2576,9 +2769,9 @@ mod tests {
         }
         // No navigation: the restart route replays the bound root.
         match action.stop() {
-            Some(NextActionStop::CheckTriage { case, detail_route })
-                if *case == NextActionCheckCase::ScopeMissing =>
-            {
+            Some(NextActionStop::CheckTriage {
+                case, detail_route, ..
+            }) if *case == NextActionCheckCase::ScopeMissing => {
                 if !detail_route.is_empty() {
                     return Err(format!(
                         "missing scope must not publish a scope label as an inspect route, got {detail_route}"
@@ -3603,6 +3796,77 @@ mod tests {
             !rendered.contains("(weak, unresolved currentness)"),
             "{rendered}"
         );
+    }
+
+    #[test]
+    fn multi_comparison_predicate_names_the_condition_and_boundary_rows() {
+        // #13790: the Missing check names a several-comparison predicate.
+        let missing = ["A strong Python oracle reaches `discount`, but static evidence does not place a related test input at the changed predicate boundary. The changed predicate `rate < 0 or rate >= 1` holds 2 relational comparisons; static evidence cannot establish which boundary a related test call pins.".to_string()];
+        let predicate = multi_comparison_predicate(&missing);
+        assert_eq!(
+            predicate,
+            Some(MultiComparisonPredicate {
+                condition: "rate < 0 or rate >= 1".to_string(),
+                comparisons: 2,
+            })
+        );
+        let Some(predicate) = predicate else {
+            return;
+        };
+        assert_eq!(
+            predicate.manual_test_shape(),
+            "add one test row per boundary (`rate == 0`, `rate == 1`)"
+        );
+        // A chained comparison yields both boundaries, literal on the right.
+        let chained = MultiComparisonPredicate {
+            condition: "0 <= rate < 1".to_string(),
+            comparisons: 2,
+        };
+        assert_eq!(
+            chained.manual_test_shape(),
+            "add one test row per boundary (`rate == 0`, `rate == 1`)"
+        );
+        // An operand that is not a plain name or literal keeps the shape only.
+        let computed = MultiComparisonPredicate {
+            condition: "len(xs) > 0 and x < limit(y)".to_string(),
+            comparisons: 2,
+        };
+        assert_eq!(
+            computed.manual_test_shape(),
+            "add one test row per boundary of the predicate"
+        );
+        // A mixed predicate with an equality term the producer did not
+        // count keeps the shape only (no extra `x == 1` row).
+        let mixed = MultiComparisonPredicate {
+            condition: "x < 0 or x != 1 or x >= 2".to_string(),
+            comparisons: 2,
+        };
+        assert_eq!(
+            mixed.manual_test_shape(),
+            "add one test row per boundary of the predicate"
+        );
+        // Rows that disagree with the counted comparisons keep the shape only.
+        let miscounted = MultiComparisonPredicate {
+            condition: "rate < 0 or rate >= 1".to_string(),
+            comparisons: 3,
+        };
+        assert_eq!(
+            miscounted.manual_test_shape(),
+            "add one test row per boundary of the predicate"
+        );
+        // Other Missing checks, a single comparison and a computed operand
+        // are not this shape.
+        assert_eq!(
+            multi_comparison_predicate(&["The changed predicate `x < limit(y)` compares a computed operand; static evidence cannot establish that a related test call pins its boundary".to_string()]),
+            None
+        );
+        assert_eq!(
+            multi_comparison_predicate(&[
+                "The changed predicate `x < 1` holds 1 relational comparisons".to_string()
+            ]),
+            None
+        );
+        assert_eq!(multi_comparison_predicate(&[]), None);
     }
 
     #[test]

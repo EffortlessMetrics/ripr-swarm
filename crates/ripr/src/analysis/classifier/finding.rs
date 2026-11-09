@@ -88,6 +88,17 @@ pub(in crate::analysis) fn build_finding_with_origins(
     if context.tier_flow.is_some() {
         stop_reasons.retain(|reason| reason.as_str() != StopReason::NoChangedRustLine.as_str());
     }
+    // #12040: a build-time check constrains this line; a violating edit fails
+    // to build. The classifier withholds a ruled-out reach separately.
+    if context.compile_time_guarded
+        && let Some(at) = stop_reasons
+            .iter()
+            .position(|reason| *reason == StopReason::NoChangedRustLine)
+    {
+        stop_reasons[at] = StopReason::CompileTimeInvariant;
+        stop_reasons.sort_by(|a, b| a.as_str().cmp(b.as_str()));
+        stop_reasons.dedup_by(|a, b| a.as_str() == b.as_str());
+    }
     ensure_unknown_stop_reason(&class, &mut stop_reasons);
     // RIPR-SPEC-0263: no related test call enters the guard around the
     // changed line, so the repair is an input, not a stronger assertion.
@@ -1266,6 +1277,7 @@ mod tests {
             observe: yes.clone(),
             discriminate: yes,
             reach_ruled_out: true,
+            proximity_reach_of_named_owner: false,
             assigned_field_weakly_read: false,
             assertion_refusal: None,
             refusals_are_analyzer_limits: false,
@@ -1283,12 +1295,12 @@ mod tests {
             start_line: 1,
             end_line: 6,
             body: body.into(),
-            calls: Vec::new(),
+            calls: crate::analysis::facts::SharedFactSlice::empty(),
             assertions: Vec::new(),
-            literals: Vec::new(),
-            attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             generated: None,
         }
     }

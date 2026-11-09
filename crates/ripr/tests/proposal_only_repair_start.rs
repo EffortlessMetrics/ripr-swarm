@@ -409,8 +409,8 @@ fn inline_proposal_only_seam_starts_confined_to_its_governed_module() -> Result<
         serde_json::json!({"kind": "inline_unit", "file": "src/lib.rs"}),
         "the attempt records the inline proposal it follows: {policy}"
     );
-    // #13205: the inline module is not a test file that "does not exist"; the
-    // manifest says the module is missing, in the production file.
+    // #13205: the governed module already exists; only the proposed test is
+    // missing. The manifest must distinguish these identities.
     let notes: Vec<String> = manifest(&fixture.root, &attempt)?
         .pointer("/limitations")
         .and_then(Value::as_array)
@@ -425,12 +425,50 @@ fn inline_proposal_only_seam_starts_confined_to_its_governed_module() -> Result<
         .unwrap_or_default();
     assert_eq!(notes.len(), 1, "{notes:?}");
     assert!(
-        notes[0].contains("inline test module in `src/lib.rs`")
+        notes[0].contains("existing inline test module in `src/lib.rs`")
+            && notes[0].contains("at the before phase")
+            && notes[0].contains("had not yet been written")
             && !notes[0].contains("proposed test file")
             && !notes[0].contains("--test-result"),
         "{}",
         notes[0]
     );
+    Ok(())
+}
+
+/// #13205: TOML syntax alone does not establish a Cargo package identity.
+/// A rejected manifest must leave no durable started attempt.
+#[test]
+fn inline_proposal_with_an_invalid_package_identity_leaves_no_attempt() -> Result<(), String> {
+    let source = "fn discounted_total(amount: i32) -> i32 {\n    if amount >= 10 { amount - 1 } else { amount }\n}\n#[cfg(test)]\nmod tests {}\n";
+    for manifest in [
+        "package = 'not-a-table'\n",
+        "[package]\nversion = '0.1.0'\n",
+        "[package]\nname = 42\n",
+        "[package]\nname = ' '\n",
+    ] {
+        let fixture = fixture_with("preflight-invalid-package", source, false)?;
+        write(&fixture.root, "Cargo.toml", manifest)?;
+        commit_all(&fixture.root, "invalid package identity")?;
+        let output = start(&fixture.root)?;
+        let text = combined(&output);
+        assert!(!output.status.success(), "{manifest}\n{text}");
+        assert!(text.contains("fix Cargo.toml"), "{text}");
+        let attempts = fixture.root.join("target/ripr/repair-attempts");
+        if attempts.exists() {
+            for entry in fs::read_dir(&attempts).map_err(|error| error.to_string())? {
+                let entry = entry.map_err(|error| error.to_string())?;
+                assert!(
+                    !entry
+                        .file_name()
+                        .to_string_lossy()
+                        .starts_with("repair-attempt-"),
+                    "a refused preflight left an attempt: {}",
+                    entry.path().display()
+                );
+            }
+        }
+    }
     Ok(())
 }
 
@@ -491,5 +529,94 @@ fn one_existing_integration_file_proposes_the_other_candidate() -> Result<(), St
         Some("tests/discounted_total_boundary.rs"),
         "{policy}"
     );
+    Ok(())
+}
+/// Compare the read-only preflight's name admission with Cargo itself, using
+/// an explicit library name so target-name defaults do not constrain the package.
+#[test]
+fn package_name_preflight_agrees_with_cargo_metadata() -> Result<(), String> {
+    let source = "fn discounted_total(amount: i32) -> i32 { if amount >= 10 { amount - 1 } else { amount } }\n#[cfg(test)]\nmod tests {}\n";
+    for (name, accepted) in [
+        ("a", true),
+        ("_", true),
+        ("a-b_9", true),
+        (
+            "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklm",
+            true,
+        ),
+        ("é", true),
+        ("a\u{301}", true),
+        ("type", true),
+        ("nul", true),
+        ("", false),
+        (" ", false),
+        ("a b", false),
+        ("1a", false),
+        ("-a", false),
+        ("a.b", false),
+        ("a/b", false),
+        ("a::b", false),
+        ("a¼", false),
+        ("Ⓐ", false),
+        ("\u{301}a", false),
+    ] {
+        let fixture = fixture_with("cargo-name-oracle", source, false)?;
+        let manifest = format!(
+            "[package]\nname = {}\nversion = '0.1.0'\nedition = '2024'\n[lib]\nname = 'proposal_fixture'\n[workspace]\n",
+            serde_json::to_string(name).map_err(|e| e.to_string())?
+        );
+        write(&fixture.root, "Cargo.toml", &manifest)?;
+        commit_all(&fixture.root, "name oracle")?;
+        let cargo = Command::new(env!("CARGO"))
+            .current_dir(&fixture.root)
+            .args([
+                "metadata",
+                "--offline",
+                "--no-deps",
+                "--format-version",
+                "1",
+            ])
+            .output()
+            .map_err(|e| e.to_string())?;
+        assert_eq!(
+            cargo.status.success(),
+            accepted,
+            "Cargo oracle for {name:?}: {}",
+            combined(&cargo)
+        );
+        let output = start(&fixture.root)?;
+        assert_eq!(
+            output.status.success(),
+            accepted,
+            "preflight for {name:?}: {}",
+            combined(&output)
+        );
+        let text = combined(&output);
+        if accepted {
+            assert!(
+                !text.contains("must be a valid Cargo package name"),
+                "an accepted name must not print the package refusal: {text}"
+            );
+        } else {
+            assert!(
+                text.contains("`package.name` must be a valid Cargo package name"),
+                "a rejected name must name the package diagnostic: {text}"
+            );
+            let attempts = fixture.root.join("target/ripr/repair-attempts");
+            let published: Vec<String> = fs::read_dir(&attempts)
+                .map(|entries| {
+                    entries
+                        .filter_map(Result::ok)
+                        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+                        .filter(|name| !name.starts_with('.'))
+                        .collect()
+                })
+                .unwrap_or_default();
+            assert!(
+                published.is_empty(),
+                "a rejected name must leave no durable attempt: {published:?}"
+            );
+        }
+    }
     Ok(())
 }

@@ -238,7 +238,7 @@ fn parse_first_action_options(args: &[String]) -> Result<FirstActionOptions, Str
         && coverage_frontier.is_none()
         && editor_context.is_none()
     {
-        return Err("first-action requires at least one explicit artifact input".to_string());
+        return Err("first-action requires at least one explicit artifact input; pass one, for example `--pr-guidance PATH` (run `ripr help first-action` for the list)".to_string());
     }
 
     Ok(FirstActionOptions {
@@ -326,7 +326,7 @@ mod tests {
     fn first_action_requires_input_and_rejects_unknown_args() {
         assert_eq!(
             super::parse_first_action_options(&args(&[])),
-            Err("first-action requires at least one explicit artifact input".to_string())
+            Err("first-action requires at least one explicit artifact input; pass one, for example `--pr-guidance PATH` (run `ripr help first-action` for the list)".to_string())
         );
         assert_eq!(
             super::parse_first_action_options(&args(&["--pr-guidance", ""])),
@@ -464,7 +464,7 @@ mod tests {
     fn first_action_dispatch_wiring_requires_input() {
         assert_eq!(
             first_action(&args(&[])),
-            Err("first-action requires at least one explicit artifact input".to_string())
+            Err("first-action requires at least one explicit artifact input; pass one, for example `--pr-guidance PATH` (run `ripr help first-action` for the list)".to_string())
         );
     }
 }

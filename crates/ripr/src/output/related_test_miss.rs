@@ -1109,6 +1109,7 @@ mod tests {
                 analysis_outcome: None,
                 partial_scope: None,
                 unlinked_python_tests: None,
+                owner_opt_outs: Vec::new(),
                 analyzed_revisions: None,
             }
         }
@@ -1198,16 +1199,19 @@ mod tests {
             let (evidence, verdict) = explain
                 .split_once("Why this verdict")
                 .ok_or("explain should add the verdict section")?;
-            for (text, prefix, separator) in [
-                (full.as_str(), "- related test", "; "),
-                (evidence, "- related test", "; "),
-                (verdict, "- t/app.t", ": "),
+            // The verdict block keeps the label and points at the Evidence
+            // rows (which carry the shared sentence) instead of repeating it.
+            for (text, prefix, expected_suffix) in [
+                (full.as_str(), "- related test", format!("; {label}: {why}")),
+                (evidence, "- related test", format!("; {label}: {why}")),
+                (
+                    verdict,
+                    "- t/app.t",
+                    format!(": {label} (see Evidence above)"),
+                ),
             ] {
                 let line = line_naming(text, prefix, &direct.name)?;
-                assert!(
-                    line.ends_with(&format!("{separator}{label}: {why}")),
-                    "{line}"
-                );
+                assert!(line.ends_with(&expected_suffix), "{line}");
                 let line = line_naming(text, prefix, &advisory.name)?;
                 assert!(
                     !line.contains(&why) && !line.contains(&format!("{label}:")),
@@ -1360,6 +1364,7 @@ mod tests {
                 analysis_outcome: None,
                 partial_scope: None,
                 unlinked_python_tests: None,
+                owner_opt_outs: Vec::new(),
                 analyzed_revisions: None,
             }
         }

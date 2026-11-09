@@ -67,6 +67,12 @@
         { "$ref": "#/$defs/after" }
       ]
     },
+    "focused_receipt_evaluation": {
+      "oneOf": [
+        { "type": "object", "additionalProperties": false, "required": ["state"], "properties": { "state": { "const": "started" } } },
+        { "type": "object", "additionalProperties": false, "required": ["state", "receipt_sha256", "verify_sha256"], "properties": { "state": { "const": "accepted" }, "receipt_sha256": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" }, "verify_sha256": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" } } }
+      ]
+    },
     "last_after_refusal": { "$ref": "#/$defs/after_refusal" },
     "after_refusal_count": {
       "description": "Total after-phase refusals recorded for this attempt (monotonic, not capped). Absent when zero; excluded from the before commitment. At 5 the after phase stops and requires a new attempt.",
@@ -155,7 +161,18 @@
           ]
         },
         "packet_sha256": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+        "focused_result": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["record", "custody"],
+          "properties": {
+            "record": { "type": "string", "minLength": 1 },
+            "custody": { "type": "string", "minLength": 1 },
+            "receipt_protocol": { "const": "durable-v1" }
+          }
+        },
         "current": { "type": "boolean" },
+        "line_ending_only_paths": { "type": "array", "items": { "type": "string", "minLength": 1 } },
         "verdict": {
           "type": "object",
           "additionalProperties": false,

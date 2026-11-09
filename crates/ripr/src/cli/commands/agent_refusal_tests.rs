@@ -32,6 +32,7 @@ fn sample_policy(inline_test_module_target: bool) -> Result<EditCagePolicy, Stri
         ignored_build_output: None,
         untracked_build_lockfile: None,
         inline_test_module_target,
+        external_test_file_target: false,
         new_test_proposal: None,
     })
 }
@@ -641,4 +642,78 @@ fn agent_packet_unknown_seam_is_a_decision_not_a_failure() -> Result<(), String>
         Err(CommandError::Decision(message)) if message.contains("0000000000000000") => Ok(()),
         other => Err(format!("an unknown seam id must be a decision: {other:?}")),
     }
+}
+
+/// The cross-namespace seam-id gate: only `probe:`/`repo-probe:`/`gap:` ids and
+/// a `file:line` location (non-empty file, positive decimal line) are
+/// translated; everything else reaches normal seam lookup untouched.
+#[test]
+fn cross_namespace_seam_id_recognizes_only_translatable_shapes() {
+    for translated in [
+        "probe:abc",
+        "repo-probe:abc",
+        "gap:abc",
+        "src/lib.rs:12",
+        "a:1",
+    ] {
+        assert!(
+            names_cross_namespace_id(translated),
+            "{translated} must be translated"
+        );
+    }
+    for passthrough in [
+        "f3c9e4d21a0b7c88",
+        "seam:sample",
+        "src/lib.rs:0",
+        "src/lib.rs:000",
+        ":12",
+        "src/lib.rs:",
+        "src/lib.rs:1x",
+        "src/lib.rs:-1",
+        "",
+    ] {
+        assert!(
+            !names_cross_namespace_id(passthrough),
+            "{passthrough:?} must pass through untouched"
+        );
+    }
+}
+
+/// `agent status --out` lexical equality is only sound when no `..` follows a
+/// symlink (#10624): the helper must flag a symlink popped by `..` and stay
+/// quiet for real directories and for `.` segments.
+#[cfg(unix)]
+#[test]
+fn parent_dir_follows_symlink_flags_only_a_symlink_before_dotdot() -> Result<(), String> {
+    let root = unique_command_test_dir("parent-dir-symlink");
+    let real = root.join("real");
+    std::fs::create_dir_all(real.join("sub")).map_err(|error| format!("create dirs: {error}"))?;
+    // The link targets a nested directory, so filesystem `link/..` (root/real)
+    // differs from the lexical `link/..` (root): the case the guard exists for.
+    std::os::unix::fs::symlink(real.join("sub"), root.join("link"))
+        .map_err(|error| format!("create symlink: {error}"))?;
+    let fs_parent = std::fs::canonicalize(root.join("link/.."))
+        .map_err(|error| format!("canonicalize link/..: {error}"))?;
+    let lexical_parent =
+        std::fs::canonicalize(&root).map_err(|error| format!("canonicalize root: {error}"))?;
+    if fs_parent == lexical_parent {
+        return Err("fixture must make filesystem and lexical `..` differ".to_string());
+    }
+
+    let through_symlink = parent_dir_follows_symlink(&root.join("link/../x"));
+    let through_real_dir = parent_dir_follows_symlink(&root.join("real/sub/../x"));
+    let curdir_only = parent_dir_follows_symlink(&root.join("./real/./sub"));
+    let symlink_leaf_no_dotdot = parent_dir_follows_symlink(&root.join("link/sub"));
+    let leading_relative_dotdot = parent_dir_follows_symlink(Path::new("../x"));
+    let _ = std::fs::remove_dir_all(&root);
+
+    assert!(through_symlink, "`link/..` must be flagged");
+    assert!(!through_real_dir, "`real/sub/..` is a real directory");
+    assert!(!curdir_only, "`.` segments are lexically exact");
+    assert!(!symlink_leaf_no_dotdot, "a symlink without `..` is exact");
+    assert!(
+        leading_relative_dotdot,
+        "an unprovable leading `..` is flagged"
+    );
+    Ok(())
 }
