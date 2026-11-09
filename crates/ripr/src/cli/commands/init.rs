@@ -385,9 +385,10 @@ const MCP_SERVER_NAME: &str = "ripr";
 
 fn ripr_mcp_server_entry() -> serde_json::Value {
     // #13050: `tools/list` rides every session start and about two thirds of it
-    // is `outputSchema` documents a coding agent never reads, so the generated
-    // entry opts into the slim listing (docs/interop/mcp.md). Results still
-    // carry `structuredContent`; delete the `env` line to get the schemas back.
+    // was `outputSchema` documents a coding agent never reads. Slim is the
+    // server default since #13803; the explicit value keeps an older ripr
+    // binary slim too (docs/interop/mcp.md). Results still carry
+    // `structuredContent`; set the value to `full` to get the schemas back.
     serde_json::json!({
         "command": "ripr",
         "args": ["mcp", "--stdio"],
