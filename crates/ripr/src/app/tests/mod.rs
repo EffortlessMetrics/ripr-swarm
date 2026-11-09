@@ -24,6 +24,8 @@ mod python_family_selection_packets;
 mod python_packet_eligibility;
 #[cfg(feature = "lang-python")]
 mod python_repo_mode_repair_failclosed;
+#[cfg(feature = "lang-python")]
+mod python_test_style_matrix;
 mod rendering_contracts;
 #[cfg(feature = "lang-typescript")]
 mod typescript_clause_single_token_packets;

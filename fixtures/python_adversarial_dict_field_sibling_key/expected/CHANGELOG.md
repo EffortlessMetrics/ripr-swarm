@@ -682,3 +682,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — python_adversarial_dict_field_sibling_key (39)
+
+Reason:
+RIPR-SPEC-0238: the field-value missing check names the changed dict key port, not the asserted unchanged sibling host (#13630)
+
+Command:
+`cargo xtask goldens bless python_adversarial_dict_field_sibling_key --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

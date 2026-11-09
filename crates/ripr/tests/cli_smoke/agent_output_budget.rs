@@ -134,3 +134,73 @@ Hidden:
     within("check --format github", &github, 3_300);
     Ok(())
 }
+
+/// #13803: the human `agent repair --phase before` start prints the next
+/// command once (stdout), keeps the fields an agent acts on (target, edit
+/// boundary with its terminality, redirect stop condition), and stays inside
+/// a line ceiling. Stderr repeats none of stdout's result lines.
+#[test]
+fn agent_repair_start_prints_one_next_command_inside_a_line_budget() -> TestResult {
+    let root = super::repair_route_workspace("agent repair start budget")?;
+    let root_arg = root.to_string_lossy().into_owned();
+    let output = super::run_ripr_with_env(
+        &[
+            "agent",
+            "repair",
+            "--root",
+            &root_arg,
+            "--seam-id",
+            super::REPAIR_ROUTE_SEAM,
+            "--phase",
+            "before",
+        ],
+        &[("RIPR_PROGRESS", "1"), ("RIPR_QUIET", "0")],
+    );
+    let stdout = String::from_utf8(output.stdout)?;
+    let stderr = String::from_utf8(output.stderr)?;
+    assert!(output.status.success(), "{stdout}\n{stderr}");
+    let next = stdout
+        .lines()
+        .find_map(|line| line.strip_prefix("Next, after the test edit: "))
+        .ok_or_else(|| format!("stdout must carry the next command:\n{stdout}"))?;
+    assert!(
+        next.starts_with("ripr continue ") && next.contains("--attempt repair-attempt-"),
+        "{next}"
+    );
+    let combined = format!("{stdout}{stderr}");
+    assert_eq!(
+        combined.matches(next).count(),
+        1,
+        "the next command must print exactly once across stdout and stderr:\n{combined}"
+    );
+    for field in [
+        "Repair prepared for seam ",
+        "edit one test file: tests/pricing.rs",
+        "fails the repair attempt terminally",
+        "assertion shape: ",
+    ] {
+        assert!(stdout.contains(field), "stdout lost `{field}`:\n{stdout}");
+    }
+    assert!(
+        stderr.contains("write this command's output outside the repo"),
+        "the redirect stop condition must stay:\n{stderr}"
+    );
+    for repeated in [
+        "repair started. Next:",
+        "is waiting for your test",
+        "attempt manifest: ",
+        "attempt next command",
+    ] {
+        assert!(
+            !stderr.contains(repeated),
+            "stderr must not repeat `{repeated}` from stdout:\n{stderr}"
+        );
+    }
+    let lines = combined.lines().count();
+    eprintln!("agent-output-budget agent repair start: {lines} lines (ceiling 15)");
+    assert!(
+        lines <= 15,
+        "agent repair start grew to {lines} lines, over its 15-line budget:\n{combined}"
+    );
+    Ok(())
+}
