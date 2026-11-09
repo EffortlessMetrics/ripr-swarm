@@ -1024,6 +1024,13 @@ fn lightweight_product_route_parity_preserves_cli_and_provenance() -> Result<(),
         "fixtures/product-route-parity/corpus.json",
         "--json",
     ];
+    let mut distinct = original_json.clone();
+    distinct["subjects"][0]["title"] = "independent checkout input".into();
+    std::fs::write(&corpus_path, distinct.to_string()).map_err(|e| e.to_string())?;
+    let local = decode(run(&fixture.0, &["--json"])?)?;
+    assert_eq!(local["subjects"][0]["title"], "independent checkout input");
+    assert_eq!(local, read_report(&fixture.0)?);
+    assert_eq!(decode(run(&subdir, &["--json"])?)?, local);
     std::fs::write(&corpus_path, b"{").map_err(|e| e.to_string())?;
     assert!(!run(&fixture.0, &selected)?.status.success());
     assert!(
