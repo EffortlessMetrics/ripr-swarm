@@ -329,9 +329,12 @@ fn user_text_summary_scratch_cleans_up_on_success_error_and_unwind()
         let _scratch = SummaryScratch::new("unwind")?;
         std::panic::resume_unwind(Box::new("injected unwind"));
     });
-    let Err(_payload) = unwind else {
-        panic!("scratch unwind injection did not propagate");
-    };
+    // `assert!(x.is_err())` trips clippy::assertions_on_result_states and
+    // `unwrap_err` trips clippy::unwrap_used; the helper keeps the intent.
+    fn unwound<T, E>(result: Result<T, E>) -> bool {
+        result.is_err()
+    }
+    assert!(unwound(unwind));
     assert!(!unwind_path.exists());
     Ok(())
 }
