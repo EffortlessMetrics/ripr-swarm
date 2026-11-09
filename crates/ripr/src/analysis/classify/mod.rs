@@ -141,12 +141,14 @@ pub(in crate::analysis) use hop_polling::{PolledHops, related_through_polled_hop
 pub(in crate::analysis) use implicit_call::{
     pre_cap_syntax_only, withhold_destructor_credit, withhold_implicit_call_gap,
 };
+#[cfg(test)]
+pub(in crate::analysis) use indirect_owner::{
+    item_binding_read_count, owner_item_ask_count, owner_item_scan_count,
+};
 pub(in crate::analysis) use indirect_owner::{
     oracle_owner_call_is_shadowed, related_tests_reach_owner_indirectly,
     withhold_indirect_owner_gap,
 };
-#[cfg(test)]
-pub(in crate::analysis) use indirect_owner::{owner_item_ask_count, owner_item_scan_count};
 pub(in crate::analysis) use infection::{
     OwnerInputs, exercised_bool_chain_return_sink, infection_evidence_for_owner,
 };
