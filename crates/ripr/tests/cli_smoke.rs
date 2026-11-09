@@ -32305,11 +32305,12 @@ fn agent_status_does_not_fall_back_to_another_attempt_when_local_receipt_is_unus
         "before",
     ]);
     assert_success(&second_before);
+    // #13803: a human start prints its one next command on stdout.
     let second = repair_route_attempt_id(
-        String::from_utf8_lossy(&second_before.stderr)
+        String::from_utf8_lossy(&second_before.stdout)
             .lines()
-            .find_map(|line| line.strip_prefix("ripr: attempt next command: "))
-            .ok_or("second before phase printed no attempt command")?,
+            .find_map(|line| line.strip_prefix("Next, after the test edit: "))
+            .ok_or("second before phase printed no next command")?,
     )?;
     let mut shipping = std::fs::read_to_string(root.join("tests/shipping.rs"))?;
     shipping.push_str(
