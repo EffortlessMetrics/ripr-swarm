@@ -649,12 +649,13 @@ pub fn validate_product_route_parity_fixture_corpus(
                 continue;
             }
         };
-        if file.sha256 != format!("{:x}", Sha256::digest(&bytes)) {
+        let actual = format!("{:x}", Sha256::digest(&bytes));
+        if file.sha256 != actual {
             violations.push(format!(
                 "fixtures/product-route-parity: {} digest drifted: recorded `{}`, recomputed `{}`",
                 path.display(),
                 file.sha256,
-                format!("{:x}", Sha256::digest(&bytes))
+                actual
             ));
         }
     }

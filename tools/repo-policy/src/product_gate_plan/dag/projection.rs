@@ -502,18 +502,21 @@ mod tests {
         Ok(())
     }
     #[test]
-    fn pinned_base_recoveries_are_ordered_required_and_guarded() {
+    fn pinned_base_recoveries_are_ordered_required_and_guarded() -> Result<(), String> {
         use ProductGateId::*;
         assert_eq!(BaseCompilerRecovery.predecessors(), &[BasePreparation]);
         assert_eq!(BaseFormatRecovery.predecessors(), &[BaseCompilerRecovery]);
         assert_eq!(BaseUserText.predecessors(), &[BaseFormatRecovery]);
-        let original = blocks(SOURCE_BYTES).unwrap();
+        let original = blocks(SOURCE_BYTES)?;
         for id in [BasePreparation, BaseCompilerRecovery, BaseFormatRecovery] {
             let block = original
                 .iter()
                 .find(|block| name(block) == id.step_name())
-                .unwrap();
-            assert!(render(&SOURCE_BYTES.replace(block, "")).is_err());
+                .ok_or("missing recovery block")?;
+            assert!(
+                render(&SOURCE_BYTES.replace(block, "")).is_err(),
+                "missing recovery must refuse"
+            );
         }
         for pinned in [
             "41ce81981802365b31e5182b7a7a51540ff8d7be",
@@ -522,28 +525,36 @@ mod tests {
             "cf05a4c4a649b292fe0cae25e43f2ce3d28d79b6",
             "grep -vxF -e crates/ripr/src/output/format.rs -e crates/ripr/src/app/test_stub.rs && exit 1",
         ] {
-            assert!(render(&SOURCE_BYTES.replace(pinned, "removed-guard")).is_err());
+            assert!(
+                render(&SOURCE_BYTES.replace(pinned, "removed-guard")).is_err(),
+                "removed guard must refuse"
+            );
         }
         let compiler = original
             .iter()
             .find(|b| name(b) == BaseCompilerRecovery.step_name())
-            .unwrap();
+            .ok_or("missing recovery block")?;
         let format = original
             .iter()
             .find(|b| name(b) == BaseFormatRecovery.step_name())
-            .unwrap();
+            .ok_or("missing recovery block")?;
         let reordered = SOURCE_BYTES
             .replace(compiler, "REPLACE_COMPILER_BLOCK")
             .replace(format, compiler)
             .replace("REPLACE_COMPILER_BLOCK", format);
-        assert!(render(&reordered).is_err());
+        assert!(
+            render(&reordered).is_err(),
+            "reordered recovery must refuse"
+        );
         assert!(
             render(&SOURCE_BYTES.replace(
                 "cargo clippy -p ripr --all-targets --all-features -- -D warnings",
                 "cargo check -p ripr --all-features"
             ))
-            .is_err()
+            .is_err(),
+            "weakened Clippy must refuse"
         );
+        Ok(())
     }
     #[test]
     fn omitted_or_duplicated_required_producer_is_not_projectable() {
