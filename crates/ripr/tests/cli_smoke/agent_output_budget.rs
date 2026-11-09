@@ -88,6 +88,10 @@ fn agent_facing_outputs_stay_inside_their_byte_budgets() -> TestResult {
         &project,
         &["check", "--diff", "change.diff", "--format", "json"],
     )?;
+    let terse = run(
+        &project,
+        &["check", "--diff", "change.diff", "--format", "json-terse"],
+    )?;
     let github = run(
         &project,
         &["check", "--diff", "change.diff", "--format", "github"],
@@ -133,6 +137,7 @@ Hidden:
     );
     within("check (default human)", &human, 3_900);
     within("check --format json", &json, 88_000);
+    within("check --format json-terse", &terse, 49_000);
     within("check --format github", &github, 3_300);
     Ok(())
 }
