@@ -24,3 +24,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — python_guarded_field_value_untaken (3)
+
+Reason:
+RIPR-SPEC-0422: additive evidence_stages rows (#13443); fixture landed after the 905-fixture bless, main-health recovery
+
+Command:
+`cargo xtask goldens bless python_guarded_field_value_untaken --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
