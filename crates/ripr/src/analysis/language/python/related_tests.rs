@@ -1920,9 +1920,13 @@ pub(super) fn module_callees_named(
         {
             callees.push(import.alias.clone());
         }
+        // The package name must still identify the owner's package for this test:
+        // a same-project plain module or a rival root can shadow it (#13745,
+        // #13786), exactly as it gates `submodule_receivers` (#13988).
         let reexporting_package = reexported
             && import.source_module.is_empty()
-            && owner.reexport_modules.contains(&import.imported);
+            && owner.reexport_modules.contains(&import.imported)
+            && module_name_identifies_owner_for(owner, &import.imported, &test.file);
         let receivers = submodule_receivers(import, owner, &test.file)
             .into_iter()
             .chain(reexporting_package.then(|| import.alias.clone()));

@@ -2120,6 +2120,66 @@ fn reexport_package_name_with_a_same_project_plain_module_identifies_neither() {
     assert!(identifies(&[package[0], package[1], "svc/b/core.py"]));
 }
 
+/// #13988: the receiver spelling `core.price(...)` for `import core` is gated
+/// like the `from core import price` form: a same-project plain `core.py`
+/// shadows the re-exporting package, so no owner callee is produced; without
+/// that rival the spelling keeps its credit (discriminating pair).
+#[test]
+fn reexport_package_receiver_spelling_is_withheld_when_the_package_is_shadowed() {
+    let owner = PythonOwner {
+        name: "price".to_string(),
+        qualified_name: "price".to_string(),
+        file: PathBuf::from("svc/a/src/core/impl.py"),
+        start_line: 1,
+        end_line: 4,
+        owner_kind: Some(OwnerKind::Function),
+        decorators: Vec::new(),
+        imports: Vec::new(),
+        cli_receiver_names: Vec::new(),
+        route_paths: Vec::new(),
+        route_methods: Vec::new(),
+        route_receivers: Vec::new(),
+        dynamic_route_decorators: Vec::new(),
+        unplain_decorators: Vec::new(),
+        decorator_lines: None,
+        parameters: Vec::new(),
+        reexport_modules: vec!["core".to_string()],
+        star_exported: false,
+        ambiguous_src_modules: Vec::new(),
+        rival_definition_modules: Vec::new(),
+        module_constants: Vec::new(),
+        same_class_callees: Vec::new(),
+        module_callees: Vec::new(),
+        class_path: String::new(),
+        term_facts: Default::default(),
+        class_facts: Default::default(),
+        foreign_writes: Default::default(),
+        version_conditional: false,
+        cli_subcommand: None,
+        nested_called_by_parent: false,
+        nested_result_discarded: false,
+        trusted_stdlib_click_alias: false,
+    };
+    let mut test = align_importing_test("core", "");
+    test.file = PathBuf::from("svc/a/tests/test_core.py");
+    let callees = |sources: &[&str]| {
+        let sources = sources.iter().map(PathBuf::from).collect::<Vec<_>>();
+        let mut owners = vec![owner.clone()];
+        super::related_tests::apply_src_module_ambiguity(&mut owners, sources.iter());
+        super::related_tests::owner_module_callees(&test, &owners[0])
+    };
+    let package = ["svc/a/src/core/__init__.py", "svc/a/src/core/impl.py"];
+    // Positive control: no rival, `import core` + `core.price(...)` is an owner spelling.
+    assert_eq!(callees(&package), vec!["core.price".to_string()]);
+    // A plain module beside the project's `src/` shadows the package name.
+    assert!(callees(&[package[0], package[1], "svc/a/core.py"]).is_empty());
+    // A plain `core.py` of a different project does not.
+    assert_eq!(
+        callees(&[package[0], package[1], "svc/b/core.py"]),
+        vec!["core.price".to_string()]
+    );
+}
+
 /// #13745: a src short name that a plain module of the same project also
 /// produces identifies neither; the same short name with no such rival keeps
 /// its credit (discriminating pair).
