@@ -109,6 +109,12 @@ completes. Persisting partial classifications is deliberately not built: the
 analyzer does not expose the exact source set one classification read, so a
 stored entry could not be bound to its inputs, and a missed dependency would
 serve stale evidence (#11107; see also #11108).
+The receipt also carries `phase_timings`: one wall-time row per phase in
+transition order, each with `elapsed_ms`, `completed`, and the named steps
+that ran inside it. A phase or step still active at a terminal state is
+recorded with `completed: false` and its partial elapsed time, so a timeout
+shows where the budget went instead of only naming the last active phase.
+Step rows subdivide their phase row; consumers must not add both (#1604).
 The xtask wrapper preserves the named category and incomplete/non-all-clear
 semantics, rather than turning refusal into clean guidance or a real gap. It
 matches the exact colon-terminated error tag line-wise (after removing an

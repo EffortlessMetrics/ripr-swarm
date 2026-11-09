@@ -37,6 +37,26 @@ pub(crate) struct ReviewCommentsReceiptLimitation {
     pub(crate) repair_route: String,
 }
 
+/// Wall time spent in one named pass inside a phase. Step rows subdivide
+/// their phase row, so consumers must not add step and phase elapsed times.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub(crate) struct ReviewCommentsStepTiming {
+    pub(crate) step: String,
+    pub(crate) elapsed_ms: u64,
+    pub(crate) completed: bool,
+}
+
+/// Wall time spent in one review-comments phase (#1604). `completed: false`
+/// means the phase was still active when the run reached a terminal state,
+/// so `elapsed_ms` is the partial time spent there, not a completed duration.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub(crate) struct ReviewCommentsPhaseTiming {
+    pub(crate) phase: String,
+    pub(crate) elapsed_ms: u64,
+    pub(crate) completed: bool,
+    pub(crate) steps: Vec<ReviewCommentsStepTiming>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub(crate) struct ReviewCommentsRunReceipt {
     pub(crate) schema_version: &'static str,
@@ -59,6 +79,10 @@ pub(crate) struct ReviewCommentsRunReceipt {
     /// timeout landed in `canonical_analysis`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) canonical_analysis_evaluated_seams: Option<usize>,
+    /// Per-phase wall-time history in transition order (#1604). Unlike
+    /// `last_completed_phase`/`active_phase`, this survives terminalization,
+    /// so a timeout can show where the elapsed budget went.
+    pub(crate) phase_timings: Vec<ReviewCommentsPhaseTiming>,
     pub(crate) completed_artifacts: Vec<String>,
     pub(crate) missing_artifacts: Vec<String>,
     pub(crate) reusable_cache_identity: String,
