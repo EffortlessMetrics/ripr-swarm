@@ -150,27 +150,48 @@ pub(crate) fn acceptance_items(markdown: &str) -> Vec<ExampleKey> {
         .collect()
 }
 
-/// The acceptance examples whose item opens with the word `Reject` (then `:`,
-/// a space or `(`; `Rejects` does not count): the spec names an
-/// input its rule must not resolve, so the finding keeps its fail-closed
-/// class (RIPR-SPEC-0219 abstention-expected rows).
-pub(crate) fn reject_examples(markdown: &str) -> BTreeSet<ExampleKey> {
+/// Phrases with which a `Reject` example pins the row's outcome as
+/// unresolved, not merely one route to credit as forbidden (#13940 review:
+/// "Reject: the relation through a comment/string-only use" forbids a route,
+/// and a test may still catch the change through another one).
+const UNRESOLVED_OUTCOME_PHRASES: &[&str] = &[
+    "stays unresolved",
+    "stays `infection_unknown`",
+    "stays `propagation_unknown`",
+    "stays `static_unknown`",
+    "keeps the operand unknown",
+    "does not resolve",
+    "earlier stop is kept",
+];
+
+/// The acceptance examples that require an abstention: the item opens with
+/// the word `Reject` (then `:`, a space or `(`; `Rejects` does not count) and
+/// its text, continuation lines included, pins the outcome as unresolved with
+/// one of [`UNRESOLVED_OUTCOME_PHRASES`] (RIPR-SPEC-0219 abstention-expected
+/// rows). A Reject example that only forbids one route to credit is left out.
+pub(crate) fn abstaining_reject_examples(markdown: &str) -> BTreeSet<ExampleKey> {
     acceptance_items_with_text(markdown)
         .into_iter()
         .filter(|(_, text)| {
-            text.trim_start()
-                .strip_prefix("Reject")
+            let text = text.trim_start();
+            let words = text.split_whitespace().collect::<Vec<_>>().join(" ");
+            text.strip_prefix("Reject")
                 .is_some_and(|rest| rest.starts_with([':', ' ', '(']))
+                && UNRESOLVED_OUTCOME_PHRASES
+                    .iter()
+                    .any(|phrase| words.contains(phrase))
         })
         .map(|(key, _)| key)
         .collect()
 }
 
-/// `RIPR-SPEC-NNNN#<key>` for every `Reject` acceptance example in the
+/// `RIPR-SPEC-NNNN#<key>` for every abstaining `Reject` acceptance example in the
 /// specs of the repository that owns `fixtures/<corpus>/`. A corpus with no
 /// such repository (a test tempdir) cites no specs ripr can read, so it has
 /// none.
-pub(crate) fn reject_example_ids_for_corpus(corpus_dir: &Path) -> Result<BTreeSet<String>, String> {
+pub(crate) fn abstaining_reject_example_ids_for_corpus(
+    corpus_dir: &Path,
+) -> Result<BTreeSet<String>, String> {
     let Ok(dir) = specs_dir_for_corpus(corpus_dir) else {
         return Ok(BTreeSet::new());
     };
@@ -187,7 +208,7 @@ pub(crate) fn reject_example_ids_for_corpus(corpus_dir: &Path) -> Result<BTreeSe
         let text = fs::read_to_string(&path)
             .map_err(|err| format!("read {}: {err}", normalize_path(&path)))?;
         ids.extend(
-            reject_examples(&text)
+            abstaining_reject_examples(&text)
                 .into_iter()
                 .map(|key| format!("{id}#{key}")),
         );
@@ -197,11 +218,14 @@ pub(crate) fn reject_example_ids_for_corpus(corpus_dir: &Path) -> Result<BTreeSe
 
 /// [`acceptance_items`] with the rest of each item's first line.
 fn acceptance_items_with_text(markdown: &str) -> Vec<(ExampleKey, String)> {
-    let mut found = Vec::new();
+    let mut found: Vec<(ExampleKey, String)> = Vec::new();
     let mut inside = false;
     // The open fence's character and length: Markdown fences use backticks or
     // tildes, and only a run of the same character at least as long closes one.
     let mut fence: Option<(char, usize)> = None;
+    // Whether the last line belonged to an item, so an indented line after it
+    // is that item's continuation.
+    let mut continuing = false;
     for line in markdown.lines() {
         let trimmed = line.trim_start();
         let run = |c: char| trimmed.chars().take_while(|&x| x == c).count();
@@ -221,17 +245,33 @@ fn acceptance_items_with_text(markdown: &str) -> Vec<(ExampleKey, String)> {
         }
         if line.starts_with("## ") {
             inside = line.trim_end() == EXAMPLES_HEADING;
+            continuing = false;
             continue;
         }
         if !inside {
             continue;
         }
+        // An indented line continues the open item; a blank line ends it.
+        if line.trim().is_empty() {
+            continuing = false;
+            continue;
+        }
+        if continuing
+            && line.starts_with([' ', '\t'])
+            && let Some((_, text)) = found.last_mut()
+        {
+            text.push(' ');
+            text.push_str(line.trim());
+            continue;
+        }
+        continuing = false;
         if let Some((slug, text)) = line
             .strip_prefix("- example `")
             .and_then(|rest| rest.split_once("`:"))
             .filter(|(slug, _)| is_slug(slug))
         {
             found.push((ExampleKey::Slug(slug.to_string()), text.to_string()));
+            continuing = true;
             continue;
         }
         let digits: String = line.chars().take_while(char::is_ascii_digit).collect();
@@ -242,6 +282,7 @@ fn acceptance_items_with_text(markdown: &str) -> Vec<(ExampleKey, String)> {
             && let Ok(number) = digits.parse::<usize>()
         {
             found.push((ExampleKey::Number(number), text.to_string()));
+            continuing = true;
         }
     }
     found

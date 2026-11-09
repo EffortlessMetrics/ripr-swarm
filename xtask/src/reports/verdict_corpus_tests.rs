@@ -2976,7 +2976,7 @@ fn abstention_by_cause_is_kept_per_origin_and_sums_to_each_abstention_count() ->
 }
 
 #[test]
-fn abstention_is_expected_only_for_caught_changes_whose_citations_are_all_reject_examples()
+fn abstention_is_expected_only_for_caught_changes_whose_citations_all_require_it()
 -> Result<(), String> {
     let corpus = load_corpus(&repo_corpus_dir())?;
     let case = corpus

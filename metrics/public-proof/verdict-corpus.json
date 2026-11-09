@@ -48,9 +48,9 @@
     "rate": "0.3708"
   },
   "avoidable_abstention_rate": {
-    "numerator": 283,
+    "numerator": 306,
     "denominator": 855,
-    "rate": "0.3310"
+    "rate": "0.3579"
   },
   "contradiction_rate": {
     "numerator": 0,
@@ -121,9 +121,9 @@
         "rate": "0.3526"
       },
       "avoidable_abstention_rate": {
-        "numerator": 254,
+        "numerator": 277,
         "denominator": 814,
-        "rate": "0.3120"
+        "rate": "0.3403"
       },
       "abstention_by_cause": {
         "credit_missed:infection_unknown": 20,
@@ -7115,7 +7115,6 @@
         "infection_unknown"
       ],
       "outcome": "abstained",
-      "abstention_expected": true,
       "contradictions": [],
       "findings_scored": 1,
       "findings_contradicted": 0,
@@ -7160,7 +7159,6 @@
         "infection_unknown"
       ],
       "outcome": "abstained",
-      "abstention_expected": true,
       "contradictions": [],
       "findings_scored": 1,
       "findings_contradicted": 0,
@@ -10664,7 +10662,6 @@
         "static_unknown"
       ],
       "outcome": "abstained",
-      "abstention_expected": true,
       "contradictions": [],
       "findings_scored": 1,
       "findings_contradicted": 0,
@@ -10687,7 +10684,6 @@
         "static_unknown"
       ],
       "outcome": "abstained",
-      "abstention_expected": true,
       "contradictions": [],
       "findings_scored": 1,
       "findings_contradicted": 0,
@@ -10732,7 +10728,6 @@
         "infection_unknown"
       ],
       "outcome": "abstained",
-      "abstention_expected": true,
       "contradictions": [],
       "findings_scored": 1,
       "findings_contradicted": 0,
@@ -10755,7 +10750,6 @@
         "infection_unknown"
       ],
       "outcome": "abstained",
-      "abstention_expected": true,
       "contradictions": [],
       "findings_scored": 1,
       "findings_contradicted": 0,
@@ -10778,7 +10772,6 @@
         "static_unknown"
       ],
       "outcome": "abstained",
-      "abstention_expected": true,
       "contradictions": [],
       "findings_scored": 1,
       "findings_contradicted": 0,
@@ -10845,7 +10838,6 @@
         "static_unknown"
       ],
       "outcome": "abstained",
-      "abstention_expected": true,
       "contradictions": [],
       "findings_scored": 1,
       "findings_contradicted": 0,
@@ -10868,7 +10860,6 @@
         "propagation_unknown"
       ],
       "outcome": "abstained",
-      "abstention_expected": true,
       "contradictions": [],
       "findings_scored": 1,
       "findings_contradicted": 0,
@@ -11055,7 +11046,6 @@
         "exposed"
       ],
       "outcome": "ideal",
-      "abstention_expected": true,
       "contradictions": [],
       "findings_scored": 1,
       "findings_contradicted": 0,
@@ -11386,7 +11376,6 @@
         "static_unknown"
       ],
       "outcome": "abstained",
-      "abstention_expected": true,
       "contradictions": [],
       "findings_scored": 1,
       "findings_contradicted": 0,
@@ -11409,7 +11398,6 @@
         "infection_unknown"
       ],
       "outcome": "abstained",
-      "abstention_expected": true,
       "contradictions": [],
       "findings_scored": 1,
       "findings_contradicted": 0,
@@ -11432,7 +11420,6 @@
         "static_unknown"
       ],
       "outcome": "abstained",
-      "abstention_expected": true,
       "contradictions": [],
       "findings_scored": 1,
       "findings_contradicted": 0,
@@ -11455,7 +11442,6 @@
         "static_unknown"
       ],
       "outcome": "abstained",
-      "abstention_expected": true,
       "contradictions": [],
       "findings_scored": 1,
       "findings_contradicted": 0,
@@ -11478,7 +11464,6 @@
         "static_unknown"
       ],
       "outcome": "abstained",
-      "abstention_expected": true,
       "contradictions": [],
       "findings_scored": 1,
       "findings_contradicted": 0,
@@ -11501,7 +11486,6 @@
         "static_unknown"
       ],
       "outcome": "abstained",
-      "abstention_expected": true,
       "contradictions": [],
       "findings_scored": 1,
       "findings_contradicted": 0,
@@ -11571,7 +11555,6 @@
         "propagation_unknown"
       ],
       "outcome": "abstained",
-      "abstention_expected": true,
       "contradictions": [],
       "findings_scored": 2,
       "findings_contradicted": 0,
@@ -11595,7 +11578,6 @@
         "propagation_unknown"
       ],
       "outcome": "abstained",
-      "abstention_expected": true,
       "contradictions": [],
       "findings_scored": 2,
       "findings_contradicted": 0,
@@ -11642,7 +11624,6 @@
         "propagation_unknown"
       ],
       "outcome": "abstained",
-      "abstention_expected": true,
       "contradictions": [],
       "findings_scored": 2,
       "findings_contradicted": 0,
@@ -11733,7 +11714,6 @@
         "weakly_exposed"
       ],
       "outcome": "abstained",
-      "abstention_expected": true,
       "contradictions": [],
       "findings_scored": 2,
       "findings_contradicted": 0,
@@ -11757,7 +11737,6 @@
         "weakly_exposed"
       ],
       "outcome": "abstained",
-      "abstention_expected": true,
       "contradictions": [],
       "findings_scored": 2,
       "findings_contradicted": 0,
@@ -11781,7 +11760,6 @@
         "weakly_exposed"
       ],
       "outcome": "abstained",
-      "abstention_expected": true,
       "contradictions": [],
       "findings_scored": 2,
       "findings_contradicted": 0,
@@ -11805,7 +11783,6 @@
         "weakly_exposed"
       ],
       "outcome": "abstained",
-      "abstention_expected": true,
       "contradictions": [],
       "findings_scored": 2,
       "findings_contradicted": 0,
@@ -11829,7 +11806,6 @@
         "weakly_exposed"
       ],
       "outcome": "abstained",
-      "abstention_expected": true,
       "contradictions": [],
       "findings_scored": 2,
       "findings_contradicted": 0,
@@ -11852,7 +11828,6 @@
         "exposed"
       ],
       "outcome": "ideal",
-      "abstention_expected": true,
       "contradictions": [],
       "findings_scored": 1,
       "findings_contradicted": 0,

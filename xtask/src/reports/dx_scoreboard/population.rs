@@ -194,7 +194,8 @@ impl Records {
         // The abstention-expected flag is derived from the case and the specs'
         // `Reject` examples; re-derive it so a committed row cannot carry a
         // flag its definition does not support (RIPR-SPEC-0219).
-        let reject_examples = verdict_corpus::coverage::reject_example_ids_for_corpus(dir)?;
+        let reject_examples =
+            verdict_corpus::coverage::abstaining_reject_example_ids_for_corpus(dir)?;
         let report_json = serde_json::to_value(&report).map_err(|err| err.to_string())?;
         let mut subjects = BTreeMap::new();
         for subject in &corpus.subjects {

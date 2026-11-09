@@ -277,12 +277,19 @@ subject origin, and one row per case with its origin and a
 The report splits abstentions into abstention-expected and avoidable
 (#12766). A case expects its abstention when its tests catch the change
 (truth `discriminated`, ideal `credited`), it cites at least one spec
-example, every example it cites is a `Reject` item (its `## Acceptance
-Examples` entry opens with the word `Reject` followed by `:`, a space or
-`(`), and its `acceptable_verdicts` include `limited`. A Reject example
-withholds the credit that would resolve the row, and with credit ruled out
-only `limited`/`silent` remain, so analyzer work can only remove that
-abstention by breaking the spec. When the tests miss the change, a gap still
+example, every example it cites is an abstaining `Reject` item, and its
+`acceptable_verdicts` include `limited`. An abstaining Reject item's `##
+Acceptance Examples` entry opens with the word `Reject` followed by `:`, a
+space or `(`, and its text (continuation lines included) pins the outcome as
+unresolved with one of a fixed set of phrases: `stays unresolved`, ``stays
+`infection_unknown` ``, ``stays `propagation_unknown` ``, ``stays
+`static_unknown` ``, `keeps the operand unknown`, `does not resolve` or
+`earlier stop is kept`. A Reject item that only forbids one route to credit
+(`the relation through a comment/string-only use`) does not count, because
+the tests may still catch the change through another route (#13940 review).
+An abstaining Reject example withholds the credit that would resolve the
+row, and with credit ruled out only `limited`/`silent` remain, so analyzer
+work can only remove that abstention by breaking the spec. When the tests miss the change, a gap still
 obeys the Reject example, so that abstention stays avoidable. The row then
 carries `abstention_expected: true`, and `avoidable_abstention_rate` counts
 the abstained rows without it over all cases. Because the denominator is the
@@ -297,7 +304,7 @@ The dx scoreboard puts the abstention bar on the avoidable rate
 (`trust.verdict_corpus_avoidable_abstention`, target 0.2). It keeps the total
 (`trust.verdict_corpus_abstention`) visible and ratcheted, and its target is
 the avoidable bar plus the abstention-expected share when the split landed
-(0.0398, so 0.24).
+(0.0129, so 0.21).
 
 The contradiction rate counts candidate-current findings across each case's
 whole `ripr check` run, not only the anchor line, because a
@@ -838,7 +845,7 @@ Oracle-accuracy tests live in
 - `verdict_corpus_avoidable_abstention_rate` (dx-scoreboard
   `trust.verdict_corpus_avoidable_abstention`, target 0.2, lower is better);
   the total `verdict_corpus_abstention_rate` stays reported
-  (`trust.verdict_corpus_abstention`, target 0.24)
+  (`trust.verdict_corpus_abstention`, target 0.21)
 - `verdict_corpus_spec_example_coverage` (dx-scoreboard
   `trust.verdict_corpus_spec_example_coverage`, target 1.0, regression
   margin 0)

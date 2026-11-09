@@ -995,8 +995,10 @@ pub(crate) fn case_row(
 
 /// Whether the case's spec asks for the abstention: the tests catch the
 /// change (ideal `credited`), the case cites at least one spec example, every
-/// cited example is a `Reject` example, and the case lists `limited` among
-/// its acceptable verdicts. A Reject example withholds credit, so with
+/// cited example is an abstaining `Reject` example (one that pins the outcome
+/// as unresolved, not one that only forbids a route to credit; see
+/// [`coverage::abstaining_reject_examples`]), and the case lists `limited`
+/// among its acceptable verdicts. Such an example withholds credit, so with
 /// credit ruled out the only verdicts left are `limited`/`silent`. When the
 /// tests miss the change (ideal `gap`), a gap still obeys the Reject example,
 /// so that abstention stays avoidable.
@@ -1014,8 +1016,8 @@ pub(crate) fn abstention_expected(case: &Case, reject_examples: &BTreeSet<String
 }
 
 /// `anchor_lines` maps a case id to its anchor line's text, read from the
-/// patched run copy. `reject_examples` holds the `Reject` acceptance
-/// examples of the corpus's specs ([`abstention_expected`]).
+/// patched run copy. `reject_examples` holds the abstaining `Reject`
+/// acceptance examples of the corpus's specs ([`abstention_expected`]).
 pub(crate) fn build_report(
     corpus: &Corpus,
     checks: &[(String, Value)],
@@ -2962,7 +2964,7 @@ fn run_corpus(dir: &Path, corpus: &Corpus, work_root: &Path) -> Result<Report, S
         }
         checks.push((case.case_id.clone(), check));
     }
-    let reject_examples = coverage::reject_example_ids_for_corpus(dir)?;
+    let reject_examples = coverage::abstaining_reject_example_ids_for_corpus(dir)?;
     build_report(corpus, &checks, &anchor_lines, &reject_examples)
 }
 

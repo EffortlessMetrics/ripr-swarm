@@ -9360,8 +9360,8 @@
       ],
       "source": "verdict-corpus:fixtures/rust-verdict-corpus#abstention_rate",
       "status": "below_target",
-      "target": 0.2,
-      "title": "Hand-checked edits where ripr gives no specific verdict",
+      "target": 0.21,
+      "title": "Hand-checked edits where ripr gives no specific verdict (including abstentions a spec asks for)",
       "unit": "ratio",
       "value": 0.3711
     },
@@ -9378,7 +9378,7 @@
       "runner_dependent": false,
       "samples": [
         {
-          "detail": "fixtures/rust-verdict-corpus avoidable_abstention_rate: 283/855; committed expected records, not fresh analyzer execution",
+          "detail": "fixtures/rust-verdict-corpus avoidable_abstention_rate: 306/855; committed expected records, not fresh analyzer execution",
           "population": {
             "cases": [
               {
@@ -11243,9 +11243,9 @@
               },
               {
                 "case_id": "method-hop-field-read-second-ctor",
-                "definition_sha256": "0b6df54a7d388485480fef3f9a202ec1484e078e597a6428deb686191debbb48",
+                "definition_sha256": "91a3b5394556abf8030078144dfdd078ef46611737b5737eeae6355055f84a7f",
                 "denominator": 1,
-                "numerator": 0
+                "numerator": 1
               },
               {
                 "case_id": "method-hop-field-read-trap",
@@ -11255,9 +11255,9 @@
               },
               {
                 "case_id": "method-hop-multi-caller-both-reached",
-                "definition_sha256": "fc95d19cf0a7a0e7378e5dbbefbab7ea81e27105b60e8a469261627a3cc41122",
+                "definition_sha256": "07a62eda525fa899826f61cf23e5a1803f9d45b331a9195b2909187f62a292b9",
                 "denominator": 1,
-                "numerator": 0
+                "numerator": 1
               },
               {
                 "case_id": "method-hop-multi-caller-hit",
@@ -12209,15 +12209,15 @@
               },
               {
                 "case_id": "spec-b-0150-comment-only-family",
-                "definition_sha256": "d5fc8b4d1a02053b31fec247ce234e3eaff6801468d240ea99f29f7e98b61d94",
+                "definition_sha256": "aa4a8e0b76f3dbae027d04a2d0461714b6e72a71c9bbf610865821a9d852d60d",
                 "denominator": 1,
-                "numerator": 0
+                "numerator": 1
               },
               {
                 "case_id": "spec-b-0150-destructured-binding",
-                "definition_sha256": "b1d5f63c64678bf3a63076f1e94d9cb0b9848537585fdebeb0a8602e96b98b83",
+                "definition_sha256": "b2c68807cde09a0f1e7c4118fb2e365181c012ccda398a6a89c7fd4243780e50",
                 "denominator": 1,
-                "numerator": 0
+                "numerator": 1
               },
               {
                 "case_id": "spec-b-0150-len-utf8-map-or",
@@ -12227,21 +12227,21 @@
               },
               {
                 "case_id": "spec-b-0150-map-or-else",
-                "definition_sha256": "47ac11a6f96e7bffeff2b48f91434e22341251484e049610fddbf0f783817c0d",
+                "definition_sha256": "a50cc3ad998bd53c7d4e2e979d12152fcce90cb4e809601a72680ab861e96b91",
                 "denominator": 1,
-                "numerator": 0
+                "numerator": 1
               },
               {
                 "case_id": "spec-b-0150-member-lookalike",
-                "definition_sha256": "ee483081dbfb01c35153989cd1912a33fb0185bc93e4d93ade99480bc2fa843c",
+                "definition_sha256": "f1184ddb0cb77575c91cf43045af8dfd5a7b981657ddd8432a644f52d2d7905f",
                 "denominator": 1,
-                "numerator": 0
+                "numerator": 1
               },
               {
                 "case_id": "spec-b-0150-missing-owner",
-                "definition_sha256": "89cc8b45454314a7795ef967c3cd544d0ba2c964e37506b60422ed029269fbbc",
+                "definition_sha256": "126a8f75f31b5672dbc72a7a4e9aa9bd040a8c7035de4e477c21add47e47f0da",
                 "denominator": 1,
-                "numerator": 0
+                "numerator": 1
               },
               {
                 "case_id": "spec-b-0150-no-related-test",
@@ -12257,15 +12257,15 @@
               },
               {
                 "case_id": "spec-b-0150-shadowed-binding",
-                "definition_sha256": "8cf8a7aca5d3c70e992810eab7d025d80c138b5cfca37fe2e00f38372e4fe6da",
+                "definition_sha256": "1ba307f4ae228ba2177b7b01945f2430926c2d9a1127576c468db135ffbd81bc",
                 "denominator": 1,
-                "numerator": 0
+                "numerator": 1
               },
               {
                 "case_id": "spec-b-0150-string-only-family",
-                "definition_sha256": "922bad8df6c8a7d4175fd9058910c2552baae4e526a27ce81ca11e8bca879e00",
+                "definition_sha256": "8056d925121b4af76ed091a51a7df70c60e22cd28ac8a0ec0030466c8bee9d44",
                 "denominator": 1,
-                "numerator": 0
+                "numerator": 1
               },
               {
                 "case_id": "spec-b-0153-bench-common-helper",
@@ -12317,7 +12317,7 @@
               },
               {
                 "case_id": "spec-b-0153-test-prefixed-production-file",
-                "definition_sha256": "63856116270929d8fb22f7ddabbd09f469184a085afc304695300afece136664",
+                "definition_sha256": "fa902724101e9a27eb332975e021f5186aada3ab6b7bac56727a9fa7d402d3af",
                 "denominator": 1,
                 "numerator": 0
               },
@@ -12383,39 +12383,39 @@
               },
               {
                 "case_id": "spec-b-0157-closure-capture",
-                "definition_sha256": "ea0c3de4c1fbc5aa696961b37a73e7439ad42ba9761fa05251978a421e8b72d6",
+                "definition_sha256": "29bd97180500525ab7bf072b40496e5d452419a1daf811b37a21ce7a92c26b36",
                 "denominator": 1,
-                "numerator": 0
+                "numerator": 1
               },
               {
                 "case_id": "spec-b-0157-comment-and-string-mention",
-                "definition_sha256": "21a760a95bac24c9176cbdd557c888ca80d546708a6d5269f92e4dd662ebbce1",
+                "definition_sha256": "214e84b9f1d411b66f050d6f6524615b955c9e4762669c83564bb3dc303da2e4",
                 "denominator": 1,
-                "numerator": 0
+                "numerator": 1
               },
               {
                 "case_id": "spec-b-0157-macro-invocation",
-                "definition_sha256": "001c9a3a5f25c7a75b2fc0996f6059b07aacfe363656de1480ef0cd07d8adb63",
+                "definition_sha256": "b218c721d9a648335daa5cf23dbfa86a2f817d4a9bb7faff0cddaa03f9bdad48",
                 "denominator": 1,
-                "numerator": 0
+                "numerator": 1
               },
               {
                 "case_id": "spec-b-0157-reassigned-binding",
-                "definition_sha256": "076763b9fb300bf4c2d180c0288b7adcc72aad1ed16270ae7e5236cc9f650b8a",
+                "definition_sha256": "9e4ff2d712d462b312e37aa4a5316b6f7a023f72abb752c1045945507f0221dd",
                 "denominator": 1,
-                "numerator": 0
+                "numerator": 1
               },
               {
                 "case_id": "spec-b-0157-shadowed-binding",
-                "definition_sha256": "7fe05fc162868d9656fdb45e90c3f2d48451fb50d9cfb82610f2d3aa3ecbf41a",
+                "definition_sha256": "16f134583ba31a7e52764e7b7d5370af120b9f483b913949bb28a9165a2de31e",
                 "denominator": 1,
-                "numerator": 0
+                "numerator": 1
               },
               {
                 "case_id": "spec-b-0157-sibling-function",
-                "definition_sha256": "0d1ac80613196717c828e0e0f2d810b5616c1e3e5d03824013004a4246dacc93",
+                "definition_sha256": "78c047fc69cd9237cbdbd4d21423186ea8779d0a1694478abf2a0bd012944b76",
                 "denominator": 1,
-                "numerator": 0
+                "numerator": 1
               },
               {
                 "case_id": "spec-b-0157-two-direct-uses",
@@ -12431,15 +12431,15 @@
               },
               {
                 "case_id": "spec-b-0158-method-outside-families",
-                "definition_sha256": "fd4e00071f01c5069f7e35df099ee22c1be496c92faa4f660587787be6090d26",
+                "definition_sha256": "4feaa86e7f65309423b272a956fd7453472ff9768f073855e24d313a14f7241c",
                 "denominator": 1,
-                "numerator": 0
+                "numerator": 1
               },
               {
                 "case_id": "spec-b-0158-non-identity-closure",
-                "definition_sha256": "5228049b8825bb2361569d1f0afcb1c316de4c4d7d9bcbafbb9df055404af00e",
+                "definition_sha256": "bf4b2e7643aa5b4b51b9a1d1b2d3e2efa4a61606c66fcae5287059d8c6337890",
                 "denominator": 1,
-                "numerator": 0
+                "numerator": 1
               },
               {
                 "case_id": "spec-b-0158-rfind-boundary",
@@ -12449,9 +12449,9 @@
               },
               {
                 "case_id": "spec-b-0158-shadowed-binding",
-                "definition_sha256": "a1ab0ff59be3fd7a0dd788d9f746c7203ef4b0748cf15e070fed93decca21b4d",
+                "definition_sha256": "133e22abe7588b644b59050e25a69faba7ff27bb435a9d9f4a7292028e0e49e5",
                 "denominator": 1,
-                "numerator": 0
+                "numerator": 1
               },
               {
                 "case_id": "spec-b-0158-strip-prefix-absent",
@@ -12473,37 +12473,37 @@
               },
               {
                 "case_id": "spec-b-0159-method-call-site",
-                "definition_sha256": "e683f5f780b2d98e11c192f956e01ca5ace135e2309d9dd08657c077c2e68b37",
+                "definition_sha256": "13c00acaeb11a0c419357b4627678aab395c30dffff749ae637356741032144f",
                 "denominator": 1,
-                "numerator": 0
+                "numerator": 1
               },
               {
                 "case_id": "spec-b-0159-multiple-callers",
-                "definition_sha256": "a0437dc32964312ea4b4ef1bf25ef8eb76b84c9dcea89f755bda7031e8ad4623",
+                "definition_sha256": "10a184636752f045c7183e3703e1db467e1bcaab3d8b2b33e383c93027fd9cd7",
                 "denominator": 1,
-                "numerator": 0
+                "numerator": 1
               },
               {
                 "case_id": "spec-b-0159-non-unique-callee",
-                "definition_sha256": "a5206376b6454487839eee64e34fe3c29db3bd2c3ade0fae0718ec53d28d3506",
+                "definition_sha256": "1ac4b44ee836252b6e0eb1042a731b5583a337f65bdb6a447e5f7a89468ea5a8",
                 "denominator": 1,
-                "numerator": 0
+                "numerator": 1
               },
               {
                 "case_id": "spec-b-0159-path-qualified-call-site",
-                "definition_sha256": "2a4597f5bc47c2f0822a1d1a56080741ca7a68094f26bde8c772248a4f66d528",
+                "definition_sha256": "202f23162abf894e362280749a3543a47c28178e8d0770b3b583115d29c8aaa2",
                 "denominator": 1,
-                "numerator": 0
+                "numerator": 1
               },
               {
                 "case_id": "spec-b-0159-path-qualified-imported-module",
-                "definition_sha256": "1234cfdc08bcfc7249785290a9bca7c0ba594963db8e1a93d9631868fcfbec1c",
+                "definition_sha256": "6986480bb8f3cfd62ae30b2483cddc21a6ff2429bda2b70d436cbf251198dd04",
                 "denominator": 1,
-                "numerator": 0
+                "numerator": 1
               },
               {
                 "case_id": "spec-b-0159-recursive-helper",
-                "definition_sha256": "8f35364bc0a99d642ac9339a3a35be8bdb5a33139ee36a18c95cf5f99da421e7",
+                "definition_sha256": "a84edc2817a7791e4c6d36a176aae15b090dd4407f0a939be1862a2ac9749731",
                 "denominator": 1,
                 "numerator": 0
               },
@@ -14517,7 +14517,7 @@
           },
           "repo": null,
           "status": "below_target",
-          "value": 0.331
+          "value": 0.3579
         }
       ],
       "source": "verdict-corpus:fixtures/rust-verdict-corpus#avoidable_abstention_rate",
@@ -14525,7 +14525,7 @@
       "target": 0.2,
       "title": "Hand-checked edits where ripr gives no specific verdict and no spec asks it to abstain",
       "unit": "ratio",
-      "value": 0.331
+      "value": 0.3579
     },
     {
       "baseline": {

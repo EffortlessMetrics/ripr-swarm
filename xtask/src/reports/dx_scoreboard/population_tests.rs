@@ -1399,7 +1399,17 @@ fn operational_baseline_refreshes_only_the_five_rust_rates_with_provenance() -> 
             "8ef7a4bec9b0e6594e676ec9089db205ade40af3"
         );
         assert_eq!(provenance["approved"], "EffortlessMetrics/ripr-swarm#7325");
-        // Only value, status, source and samples moved.
+        // Only value, status, source and samples moved, except that #12766 moved
+        // the total abstention bar (and its title) when the avoidable rate took
+        // the 0.2 bar; scoreboards.toml is the source of both.
+        let config_moved = id == "trust.verdict_corpus_abstention";
+        if config_moved {
+            assert_eq!(metric["target"].as_f64(), Some(0.21), "{id} target");
+            assert_eq!(
+                metric["title"],
+                "Hand-checked edits where ripr gives no specific verdict (including abstentions a spec asks for)"
+            );
+        }
         for key in [
             "board",
             "direction",
@@ -1409,6 +1419,9 @@ fn operational_baseline_refreshes_only_the_five_rust_rates_with_provenance() -> 
             "unit",
             "runner_dependent",
         ] {
+            if config_moved && matches!(key, "target" | "title") {
+                continue;
+            }
             assert_eq!(metric[key], original[key], "{id} {key}");
         }
     }
