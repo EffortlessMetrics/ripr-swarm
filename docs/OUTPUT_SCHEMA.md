@@ -1074,6 +1074,7 @@ and has no legend or repeated disclaimers.
 ```text
 #ripr agent static-advisory base=BASE findings=N gaps=G [unconfirmed_gaps=U] [repairable=1] CLASS=COUNT ...
 CLASS|FILE:LINE|CHANGED EXPRESSION|missing=VALUE|test=tK|id=FINDING_ID
+stages=reach:S,infect:S,propagate:S,observe:S,discriminate:S
 tK=FILE:LINE TEST_NAME ORACLE_KIND `ORACLE TEXT` miss=MISS
 +M more gaps not shown; `--format json` lists all
 limits=CLASS:COUNT,...
@@ -1131,6 +1132,14 @@ verify=complete|outcome=O|findings=N|exposed=N
   Fields are whitespace-collapsed, the changed expression and oracle text are
   clipped to 80 characters, and a literal `|` inside a field is written `\|`.
   `missing=` is the first missing discriminator value, or `-`.
+- `stages=` (RIPR-SPEC-0429) follows each finding record directly — gap,
+  `open=` and limited records alike — and names the five staged-evidence
+  states in the fixed Evidence order with the same closed state vocabulary
+  the JSON rows use, so a consumer of this compact surface sees
+  `reach:unknown` or `discriminate:no` without opening the JSON document. It
+  names states only; the stage summaries and capping basis stay in
+  `--format json` (`evidence_stages`). Records-free terminal runs print no
+  `stages=` line.
 - `tK` rows name the first contributing related test of each listed gap,
   ranked by relation confidence first (a direct owner call ahead of a test
   linked only by file location), then by oracle strength (#13603), written
@@ -1198,6 +1207,7 @@ stderr with empty stdout.
 ```text
 #ripr explain agent static-advisory class=CLASS
 CLASS|FILE:LINE|CHANGED EXPRESSION|missing=VALUE|test=tK|id=FINDING_ID
+stages=reach:S,infect:S,propagate:S,observe:S,discriminate:S
 tK=FILE:LINE TEST_NAME ORACLE_KIND `ORACLE TEXT` miss=MISS
 limit=STATIC_LIMIT_KIND
 done=... | open=... | stop=...
@@ -1210,6 +1220,8 @@ next=ripr context ... --at SELECTOR
   names the strongest-oracle test that notices the change, and the limited
   `open=` case names its weak-assertion row. `tK` is absent when none exists.
   `limit=` appears only when the producer named a static limit.
+  `stages=` follows the record with the same meaning as the `check --format
+  agent` row (RIPR-SPEC-0429).
 - Exactly one terminal line: `open=` for a candidate-current test-side gap
   (`weakly_exposed` or `reachable_unrevealed`, not limited) or for a
   reach-only limit that still carries a weak related test (the `check` `open=`
@@ -2350,7 +2362,9 @@ The evidence-first fields are additive in schema `0.2`:
 
 - `evidence_path` is an ordered, human-readable summary of reachability,
   infection, propagation, observation, discrimination, local flow, related test
-  oracles, source values, and missing discriminator evidence.
+  oracles, source values, and missing discriminator evidence. The same chain
+  also carries the additive machine-readable row form `evidence_stages`
+  (below).
 - `observed_values` retains its historical field name for values found or
   statically derived from test source. A value, its `context`, and retained
   provenance do not establish assertion execution or an admitted oracle. Facts
@@ -3845,6 +3859,40 @@ Scope: the budget applies to the JSON check renderer only. SARIF, GitHub, and
 human formats render from the same full `CheckOutput` through their own
 existing bounds; per-finding caps (`related_tests`, `observed_values`) are
 unchanged and compose underneath (the budget counts already-capped payloads).
+
+### `evidence_stages` (additive finding rows, schema 0.2, RIPR-SPEC-0429)
+
+Every finding carries an additive `evidence_stages` array — the staged
+evidence the human Evidence block renders as prose, in the row form machine
+consumers read instead of parsing `evidence_path` sentences. Exactly five
+rows in Evidence-block order (`reach`, `infect`, `propagate`, `observe`,
+`discriminate`; tokens are the `ripr` object's own keys). Each row carries
+`stage`, `state` and `confidence` — the same wire tokens the matching
+`ripr` stage object holds — plus one optional field:
+
+- `basis` — present only when the finding's `confidence_basis` names that
+  stage, in the shared `{code, summary}` shape. The mapping is owned by
+  `ConfidenceCap::capped_stage` (RIPR-SPEC-0429): `no_related_test`→`reach`,
+  `infection_not_established`→`infect`,
+  `propagation_not_established`→`propagate`,
+  `observation_not_confirmed`→`observe`,
+  `discriminator_not_established`→`discriminate`. The finding-, adapter-,
+  oracle- and activation-level caps (`preview_stages_not_modeled`,
+  `syntax_first_no_type_resolution`, `oracle_below_strong`,
+  `boundary_input_not_matched`) claim no row. Rust findings carry no
+  `confidence_basis`, so no row carries `basis`.
+- No row carries test or assertion references. No producer records which
+  assertion established a stage, and the general `related_tests` role is
+  the legacy decision set, not stage provenance (a row of that set can
+  carry a `no_call_path` miss while the stage reads `yes`), so projecting
+  it onto a row would be a wrong actionable signal. Producer-backed,
+  row-distinct attribution is #13453; consumers read `related_tests` and
+  `assertion_texts` for the test-side facts.
+
+`json-terse` codes nothing in this field, and the `stages=` agent line
+(see the agent grammars above) is the compact projection of the same rows.
+The rows are a pure projection: no classification, ranking or decision, and
+the human rendering stays prose.
 
 ### `confidence_basis` and `confidence_why_capped` (additive, preview findings, #10700)
 
@@ -20204,7 +20252,7 @@ top-level `source_subject`:
 
 - `digest_algorithm`: always `"sha256"`.
 - `corpus` (additive, full Rust inventory only): the analysis-owned
-  `{ "scope": "rust_workspace", "cache_schema_version": "1.177",
+  `{ "scope": "rust_workspace", "cache_schema_version": "1.178",
   "files_content_hash": "<16 lowercase hex digits>" }` from the actual
   classified inventory cache key, including both production and test Rust
   files after the existing generated-file exclusions. Repo-exposure producers
@@ -20989,7 +21037,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.177",
+      "schema_version": "1.178",
       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567+languages:rust=1,typescript=1,python=1,perl=0",
       "workspace_root_hash": "…",
       "files_content_hash": "…",
