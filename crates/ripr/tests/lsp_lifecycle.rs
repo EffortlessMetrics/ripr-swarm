@@ -3141,9 +3141,13 @@ fn real_seam_diagnostic_offers_the_repair_start_on_a_committed_change() -> Resul
         .output()
         .map_err(|err| format!("run agent repair before phase: {err}"))?;
     let stderr = String::from_utf8_lossy(&before.stderr);
-    if !before.status.success() || !stderr.contains("attempt manifest:") {
+    let stdout = String::from_utf8_lossy(&before.stdout);
+    // Since #13803 the human start step reports the started attempt once, in
+    // the stdout summary; stderr no longer repeats the attempt manifest line.
+    if !before.status.success() || !stdout.contains(&format!("Repair prepared for seam {seam_id}"))
+    {
         return Err(format!(
-            "`ripr agent repair --phase before` must accept the offered seam: status {:?}\n{stderr}",
+            "`ripr agent repair --phase before` must accept the offered seam: status {:?}\nstdout:\n{stdout}\nstderr:\n{stderr}",
             before.status.code()
         ));
     }
