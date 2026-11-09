@@ -639,7 +639,9 @@ fn gate_pass_with_gaps_when_missing_evidence_exceeds_half() -> Result<(), String
         false,
     );
     // Only one of three metrics is measured this run: the other two are
-    // not_measured and, holding baseline values, also uncompared, so the
+    // not_measured and, holding baseline values, also uncompared (the per-repository
+    // metric is listed both as uncomparable and for its baseline repository missing
+    // from this run, so the entries count three), so the
     // regression gate passes only with gaps named in the headline.
     let report = build_report(
         &config,
@@ -666,7 +668,7 @@ fn gate_pass_with_gaps_when_missing_evidence_exceeds_half() -> Result<(), String
             "below_target": 0,
             "not_measured": 2,
             "failed": 0,
-            "uncompared": 2,
+            "uncompared": 3,
             "total": 3,
         })
     );
@@ -676,7 +678,7 @@ fn gate_pass_with_gaps_when_missing_evidence_exceeds_half() -> Result<(), String
             && markdown.contains("0 below target")
             && markdown.contains("2 not measured")
             && markdown.contains("0 failed")
-            && markdown.contains("2 not compared")
+            && markdown.contains("3 not compared")
             && markdown.contains("Gate: `pass_with_gaps`"),
         "{markdown}"
     );

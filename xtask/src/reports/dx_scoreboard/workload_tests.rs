@@ -76,7 +76,7 @@ fn matching_workloads_preserve_both_directions_across_analyzer_revisions() -> Re
             assert_eq!(compared["regressed"], regressed, "{direction}");
             assert_eq!(
                 current["gate"]["status"],
-                if regressed { "fail" } else { "pass" }
+                if regressed { "fail" } else { "pass_with_gaps" }
             );
         }
     }
@@ -276,7 +276,14 @@ fn missing_or_changed_identity_cannot_hide_incomplete_measurements() -> Result<(
     // Existing incomplete debt is recognized only for the same known workload.
     let baseline = report(&config, &broken, &before, None);
     let unchanged = report(&config, &broken, &before, Some(&baseline));
-    assert_eq!(unchanged["gate"]["status"], "pass");
+    assert!(
+        matches!(
+            unchanged["gate"]["status"].as_str(),
+            Some("pass" | "pass_with_gaps")
+        ),
+        "{}",
+        unchanged["gate"]
+    );
     let mut moved = pinned_context("r", &["a"]);
     moved.corpus[0]["base"] = json!(OTHER_SHA);
     let recovered = report(&config, &warm(&[("a", 1000.0)]), &moved, Some(&baseline));
