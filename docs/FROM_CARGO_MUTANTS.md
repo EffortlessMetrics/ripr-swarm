@@ -40,7 +40,7 @@ result. See [Why ripr](WHY_RIPR.md).
 
 | cargo-mutants (`.cargo/mutants.toml`) | ripr |
 | --- | --- |
-| `exclude_globs` / `examine_globs` | `--exclude` / `--path` flags ([Configuration](CONFIGURATION.md)) |
+| `exclude_globs` / `examine_globs` | `--exclude` / `--path` flags ([Configuration](CONFIGURATION.md)); the files they leave out count as requested scope, not as an incomplete run |
 | `exclude_re` / `examine_re` | none |
 | `additional_cargo_test_args`, `test_tool` | not applicable |
 | `#[mutants::skip]` | `.ripr/suppressions.toml` ([example](suppressions.example.toml)); applied to findings with `--suppression-policy` |
@@ -98,7 +98,13 @@ Two rules for scripts that read this file:
   `# ripr: ...` comments when the run is incomplete, when sources are
   uncommitted, or when findings were left out. Skip them when listing gaps,
   but do not treat comment-only output as clean: only zero bytes means a
-  fully analyzed run with nothing to list.
+  fully analyzed run with nothing to list. Files you leave out on purpose
+  with `--exclude`/`--path` (or a configured `generated_file_patterns`) are
+  requested scope: they do not add a comment, and an otherwise fully analyzed
+  scoped run still prints zero bytes. The human and JSON reports name them in
+  a scope note. Files ripr skips on its own (built-in generated-file names
+  such as `generated.rs` or a `gen/` directory, unsupported languages, parse
+  failures) are not requested scope and still print a comment.
 - `ripr check` exits `0` whether or not it found gaps. A non-zero exit means
   the analysis did not complete. Do not gate on `check`'s exit code.
 

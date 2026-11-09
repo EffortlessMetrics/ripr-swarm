@@ -139,6 +139,7 @@ fn render_report(
         .is_some_and(|start| start.command.is_some());
     let mut out = header_line(output, &considered, gaps.len(), startable);
     out.push_str(&incomplete_lines);
+    out.push_str(&requested_scope_note_line(output));
     let next = next_line(&triage, output, &gaps, drill_in, provenance);
     if output.findings.is_empty() && !output.no_scope_provided {
         // #13658: a `no_scope` outcome (empty or unparseable --diff) read
@@ -220,6 +221,28 @@ fn render_report(
         out.push('\n');
     }
     out
+}
+
+/// #13894: one informational line for files the operator left out with
+/// `--path`, `--exclude` or a configured pattern. The requested scope was
+/// analyzed in full, so this is a note, not a limitation, and a run with no
+/// such files prints nothing.
+fn requested_scope_note_line(output: &CheckOutput) -> String {
+    let Some(outcome) = output.analysis_outcome.as_ref() else {
+        return String::new();
+    };
+    let left_out: u64 = outcome
+        .limitations
+        .iter()
+        .filter(|limitation| limitation.kind.is_requested_scope_note())
+        .map(|limitation| limitation.affected_items.unwrap_or(0))
+        .sum();
+    if left_out == 0 {
+        return String::new();
+    }
+    format!(
+        "scope_note={left_out} file(s) left out at your request (--path/--exclude or a configured pattern); not a limitation\n"
+    )
 }
 
 /// Project the producer's closed completeness decision, before any terminal

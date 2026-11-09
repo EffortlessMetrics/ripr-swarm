@@ -51,7 +51,11 @@ const INCOMPLETE_KINDS: [&str; 3] = [
 ];
 /// The only typed outcome limitations a complete kind may carry
 /// (`validate_outcome` in `crates/ripr/src/analysis_outcome.rs`).
-const COMPLETE_KIND_ALLOWED_LIMITATIONS: [&str; 2] = ["eol_only_churn", "verification_only_change"];
+const COMPLETE_KIND_ALLOWED_LIMITATIONS: [&str; 3] = [
+    "eol_only_churn",
+    "verification_only_change",
+    "requested_scope_excluded",
+];
 
 /// Identity the measured child was asked to analyze.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -530,8 +534,8 @@ fn encode_expected_root(value: &str) -> String {
     plain_root_text(value).replace('%', "%25")
 }
 
-/// Complete kinds may disclose only `eol_only_churn` and
-/// `verification_only_change`. A missing, non-array,
+/// Complete kinds may disclose only `eol_only_churn`,
+/// `verification_only_change` and `requested_scope_excluded`. A missing, non-array,
 /// or kind-less `limitations` value is not an empty allowlist (#7276).
 fn complete_kind_has_incomplete_limitation(
     outcome: &serde_json::Map<String, Value>,

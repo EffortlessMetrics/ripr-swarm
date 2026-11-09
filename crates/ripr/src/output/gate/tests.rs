@@ -7136,6 +7136,51 @@ fn given_advisory_status_with_benign_warning_when_gate_evaluated_then_not_config
     Ok(())
 }
 
+/// #13894: files the operator left out with `--path`/`--exclude` or a
+/// configured pattern are requested scope. A producer document that reports a
+/// complete outcome with only the `requested_scope_excluded` scope note is a
+/// complete denominator and must not fail the gate closed; the same document
+/// whose outcome is genuinely incomplete (`status: incomplete` with a
+/// `language_scope_unsupported` limitation) still must.
+#[test]
+fn given_complete_outcome_with_only_a_requested_scope_note_when_gate_evaluated_then_not_config_error()
+-> Result<(), String> {
+    let outcome = |kind: &str, limitation_kind: &str| {
+        format!(
+            r#""analysis_outcome":{{"analysis_complete":{complete},"outcome":{{"schema_version":"0.1","kind":"{kind}","identity":{{}},"counts":{{"changed_file_count":1,"changed_line_count":1,"candidate_line_count":1,"probe_count":1,"finding_count":1}},"limitations":[{{"kind":"{limitation_kind}","producer_stage":"diff_load","path":null,"affected_items":1,"bounded_detail":"1 changed file(s) were left out by the requested scope (--exclude src/gen/**) and were not analyzed: src/gen/a.rs","recovery":{{"kind":"retry","detail":"rerun"}}}}],"claim_boundary":"x"}}}}"#,
+            complete = kind != "partial_with_limitations",
+        )
+    };
+    let dir = temp_dir("gate-requested-scope-note")?;
+    let scoped = format!(
+        r#"{{"schema_version":"0.1","tool":"ripr","status":"advisory","comments":[],{}}}"#,
+        outcome("complete_with_findings", "requested_scope_excluded")
+    );
+    let input = guidance_only_input(&dir, "scoped.json", &scoped)?;
+    let report = build_gate_decision_report(&input)?;
+    assert_ne!(report.status, "config_error", "{:?}", report.config_errors);
+    assert!(
+        report.config_errors.is_empty(),
+        "{:?}",
+        report.config_errors
+    );
+    assert!(!gate_decision_should_fail(&report));
+
+    let incomplete = format!(
+        r#"{{"schema_version":"0.1","tool":"ripr","status":"incomplete","comments":[],{}}}"#,
+        outcome("partial_with_limitations", "language_scope_unsupported")
+    );
+    let input = guidance_only_input(&dir, "incomplete.json", &incomplete)?;
+    let report = build_gate_decision_report(&input)?;
+    assert_eq!(
+        report.status, "config_error",
+        "negative control must fail closed"
+    );
+    assert!(gate_decision_should_fail(&report));
+    ignore_remove_dir_all(dir);
+    Ok(())
+}
+
 #[test]
 fn pr_guidance_document_defect_names_every_missing_or_malformed_field() {
     let defect = |value: Value| pr_guidance_document_defect(&value);

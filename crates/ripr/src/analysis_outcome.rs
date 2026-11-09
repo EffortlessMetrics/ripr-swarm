@@ -170,7 +170,19 @@ impl AnalysisLimitationKind {
     /// `VerificationOnlyChange`). Every other kind marks the outcome
     /// incomplete.
     pub(crate) const fn is_advisory_disclosure(self) -> bool {
-        matches!(self, Self::EolOnlyChurn | Self::VerificationOnlyChange)
+        matches!(
+            self,
+            Self::EolOnlyChurn | Self::VerificationOnlyChange | Self::RequestedScopeExcluded
+        )
+    }
+
+    /// #13894: files the operator left out on purpose (`--path`, `--exclude`,
+    /// a configured `generated_file_patterns` or preview `excluded_file_patterns`
+    /// entry). The requested scope was analyzed in full, so this is an
+    /// informational scope note, not a limitation: it rides on a complete
+    /// outcome and the quiet `missed-txt`/`github` streams do not repeat it.
+    pub(crate) const fn is_requested_scope_note(self) -> bool {
+        matches!(self, Self::RequestedScopeExcluded)
     }
 
     pub(crate) const fn as_str(self) -> &'static str {
@@ -187,6 +199,7 @@ impl AnalysisLimitationKind {
             Self::EolOnlyChurn => "eol_only_churn",
             Self::VerificationOnlyChange => "verification_only_change",
             Self::UnevaluatedCondition => "unevaluated_condition",
+            Self::RequestedScopeExcluded => "requested_scope_excluded",
         }
     }
 
@@ -209,6 +222,7 @@ impl AnalysisLimitationKind {
             Self::UnevaluatedCondition => {
                 "a test or credited assertion sits under a condition static analysis cannot evaluate"
             }
+            Self::RequestedScopeExcluded => "files were left out of the analysis at your request",
         }
     }
 }
@@ -316,6 +330,14 @@ pub(crate) enum AnalysisLimitationKind {
     /// runs as partial (#8714 review). Letting it ride a complete outcome is
     /// a separate, consumer-visible design decision.
     UnevaluatedCondition,
+    /// #13894: the operator asked for a narrower scope (`--path`, `--exclude`,
+    /// configured `generated_file_patterns` or preview `excluded_file_patterns`)
+    /// and the files left out are named here. The requested scope was fully
+    /// analyzed, so like `EolOnlyChurn` this is an informational scope note
+    /// that rides on a complete outcome; it is never a limitation. Built-in,
+    /// non-configurable skips and unsupported or failed files keep their own
+    /// incomplete kinds.
+    RequestedScopeExcluded,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
@@ -573,6 +595,15 @@ impl AnalysisOutcome {
             check_findings_inputs: None,
             language_view: None,
         })
+    }
+
+    /// Whether any limitation is more than the requested-scope note (#13894).
+    /// Quiet streams (`missed-txt`, `github`) repeat only these; the note
+    /// itself stays in the JSON and human reports.
+    pub(crate) fn has_advisory_limitations(&self) -> bool {
+        self.limitations
+            .iter()
+            .any(|limitation| !limitation.kind.is_requested_scope_note())
     }
 
     /// Stable semantic commitment over the versioned typed outcome. The DTO
@@ -982,10 +1013,11 @@ mod tests {
             AnalysisLimitationKind::EolOnlyChurn => "eol_only_churn",
             AnalysisLimitationKind::VerificationOnlyChange => "verification_only_change",
             AnalysisLimitationKind::UnevaluatedCondition => "unevaluated_condition",
+            AnalysisLimitationKind::RequestedScopeExcluded => "requested_scope_excluded",
         }
     }
 
-    const ALL_ANALYSIS_LIMITATION_KINDS: [AnalysisLimitationKind; 12] = [
+    const ALL_ANALYSIS_LIMITATION_KINDS: [AnalysisLimitationKind; 13] = [
         AnalysisLimitationKind::CombinedHunkUnsupported,
         AnalysisLimitationKind::UnresolvedConflictMarkers,
         AnalysisLimitationKind::MalformedDiff,
@@ -998,6 +1030,7 @@ mod tests {
         AnalysisLimitationKind::EolOnlyChurn,
         AnalysisLimitationKind::VerificationOnlyChange,
         AnalysisLimitationKind::UnevaluatedCondition,
+        AnalysisLimitationKind::RequestedScopeExcluded,
     ];
 
     fn analysis_limitation_kind_ordinal(kind: AnalysisLimitationKind) -> usize {
@@ -1014,6 +1047,7 @@ mod tests {
             AnalysisLimitationKind::EolOnlyChurn => 9,
             AnalysisLimitationKind::VerificationOnlyChange => 10,
             AnalysisLimitationKind::UnevaluatedCondition => 11,
+            AnalysisLimitationKind::RequestedScopeExcluded => 12,
         }
     }
 
@@ -1021,7 +1055,7 @@ mod tests {
     fn typed_limitation_tokens_match_the_wire_contract() -> Result<(), String> {
         use std::collections::BTreeSet;
 
-        const LIMITATION_KIND_COUNT: usize = 12;
+        const LIMITATION_KIND_COUNT: usize = 13;
         assert_eq!(ALL_ANALYSIS_LIMITATION_KINDS.len(), LIMITATION_KIND_COUNT);
         let ordinals: Vec<usize> = ALL_ANALYSIS_LIMITATION_KINDS
             .iter()
@@ -1089,6 +1123,7 @@ mod tests {
                 kind,
                 AnalysisLimitationKind::EolOnlyChurn
                     | AnalysisLimitationKind::VerificationOnlyChange
+                    | AnalysisLimitationKind::RequestedScopeExcluded
             );
             assert_eq!(kind.is_advisory_disclosure(), advisory, "{kind:?}");
         }

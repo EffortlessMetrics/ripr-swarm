@@ -804,6 +804,18 @@ fn render_analysis_outcome_disclosure(out: &mut String, output: &CheckOutput, pl
             }
             continue;
         }
+        if limitation.kind.is_requested_scope_note() {
+            // #13894: the operator's own scope request, not a limitation.
+            out.push_str(&format!(
+                "  Scope note: {}.\n",
+                limitation
+                    .bounded_detail
+                    .as_deref()
+                    .unwrap_or_else(|| limitation.kind.plain_label())
+                    .trim_end_matches('.')
+            ));
+            continue;
+        }
         if plain {
             out.push_str(&format!(
                 "  Limitation: {} during {}",

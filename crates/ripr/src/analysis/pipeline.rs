@@ -1162,20 +1162,23 @@ fn scope_matched_nothing_error(scope: &DiffScopeFilter, files: &OutOfScopeFiles)
     )
 }
 
-/// #9277: the typed disclosure for files the operator's scope removed.
+/// #9277, #13894: the typed scope note for files the operator's own
+/// `--path`/`--exclude` removed. The operator asked for that scope, so the
+/// requested scope is complete: the note names what was left out but is not a
+/// limitation and never makes the outcome partial.
 fn out_of_scope_limitation(
     diff_scope: &DiffScopeFilter,
     files: &OutOfScopeFiles,
 ) -> Result<AnalysisLimitation, String> {
     let listed = files.listing();
     AnalysisLimitation::new(
-        AnalysisLimitationKind::LanguageScopeUnsupported,
+        AnalysisLimitationKind::RequestedScopeExcluded,
         AnalysisStage::DiffLoad,
         AnalysisRecovery::new(
             AnalysisRecoveryKind::Retry,
             format!(
-                "Files left out by `{}` have no finding. Rerun with a wider --path or without \
-                 --exclude to analyze them: {listed}.",
+                "Files left out by `{}` were excluded at your request and have no finding. \
+                 Rerun with a wider --path or without --exclude to analyze them: {listed}.",
                 diff_scope.flags_bounded()
             ),
         )?,
@@ -1186,6 +1189,34 @@ fn out_of_scope_limitation(
          {listed}",
         files.count,
         diff_scope.flags_bounded()
+    ))
+}
+
+/// #13894: the scope note for changed files a configured pattern in
+/// `ripr.toml` (`generated_file_patterns`, `excluded_file_patterns`) left out.
+/// The operator wrote the pattern, so like `--exclude` it is requested scope.
+fn configured_exclusion_note(
+    setting: &str,
+    files: &[String],
+) -> Result<AnalysisLimitation, String> {
+    let listed = bounded_path_listing(files);
+    AnalysisLimitation::new(
+        AnalysisLimitationKind::RequestedScopeExcluded,
+        AnalysisStage::LanguageAdapter,
+        AnalysisRecovery::new(
+            AnalysisRecoveryKind::Retry,
+            format!(
+                "Files left out by the configured `{setting}` were excluded at your request \
+                 and have no finding. Remove or narrow the pattern in ripr.toml to analyze \
+                 them: {listed}."
+            ),
+        )?,
+    )
+    .with_affected_items(files.len() as u64)?
+    .with_detail(format!(
+        "{} changed file(s) were left out by the configured `{setting}` and were not analyzed: \
+         {listed}",
+        files.len()
     ))
 }
 
@@ -1506,7 +1537,7 @@ fn run_pipeline_for_diff_text_with_language_config(
     // partial_budget_invalid), not a per-language advisory gap.
     if languages.contains(&LanguageId::Rust) {
         cancellation::checkpoint()?;
-        let result = contain_adapter_panic(options, LanguageId::Rust, || {
+        let mut result = contain_adapter_panic(options, LanguageId::Rust, || {
             RustAdapter.analyze_diff_for_languages_with_rust_config(
                 options,
                 oracle_policy,
@@ -1531,35 +1562,55 @@ fn run_pipeline_for_diff_text_with_language_config(
                 .map(|file| file.path.as_path())
                 .filter(|path| route(path) == Some(LanguageId::Rust))
                 .filter(|path| generated_sources.contains(path))
-                .map(|path| path.to_string_lossy().replace('\\', "/"))
+                .map(std::path::Path::to_path_buf)
                 .collect::<Vec<_>>();
-            let listed = bounded_path_listing(&skipped);
-            let skipped_paths = skipped
-                .iter()
-                .map(std::path::PathBuf::from)
-                .collect::<Vec<_>>();
-            let naming_only = skipped_paths
-                .iter()
-                .filter(|path| generated_sources.is_convention_only_exclusion(path))
-                .cloned()
-                .collect::<Vec<_>>();
-            limitations.push(
-                AnalysisLimitation::new(
-                    AnalysisLimitationKind::LanguageScopeUnsupported,
-                    AnalysisStage::LanguageAdapter,
-                    AnalysisRecovery::new(
-                        AnalysisRecoveryKind::Retry,
-                        super::generated_rust_recovery(&skipped_paths, &naming_only),
-                    )?,
-                )
-                .with_affected_items(result.skipped_files as u64)?
-                .with_detail(format!(
-                    "{} generated or vendored Rust file(s) were intentionally skipped by the \
-                     generated-file conventions, generator headers, `cargo vendor` crates or \
-                     configured patterns: {listed}",
-                    result.skipped_files
-                ))?,
-            );
+            // #13894: files the operator's own `generated_file_patterns`
+            // left out are requested scope. They are named in a scope note
+            // and do not count as skipped coverage; every other skip is a
+            // built-in heuristic the operator did not ask for and stays a
+            // fail-closed limitation.
+            let (configured, builtin): (Vec<_>, Vec<_>) = skipped
+                .into_iter()
+                .partition(|path| generated_sources.is_configured_pattern_exclusion(path));
+            let normalized = |paths: &[std::path::PathBuf]| {
+                paths
+                    .iter()
+                    .map(|path| path.to_string_lossy().replace('\\', "/"))
+                    .collect::<Vec<_>>()
+            };
+            if !configured.is_empty() {
+                limitations.push(configured_exclusion_note(
+                    "[languages.rust] generated_file_patterns",
+                    &normalized(&configured),
+                )?);
+            }
+            let builtin_skipped = result.skipped_files.saturating_sub(configured.len());
+            // The language outcome and every projection below count only
+            // the unrequested skips.
+            result.skipped_files = builtin_skipped;
+            if builtin_skipped > 0 {
+                let listed = bounded_path_listing(&normalized(&builtin));
+                let naming_only = builtin
+                    .iter()
+                    .filter(|path| generated_sources.is_convention_only_exclusion(path))
+                    .cloned()
+                    .collect::<Vec<_>>();
+                limitations.push(
+                    AnalysisLimitation::new(
+                        AnalysisLimitationKind::LanguageScopeUnsupported,
+                        AnalysisStage::LanguageAdapter,
+                        AnalysisRecovery::new(
+                            AnalysisRecoveryKind::Retry,
+                            super::generated_rust_recovery(&builtin, &naming_only),
+                        )?,
+                    )
+                    .with_affected_items(builtin_skipped as u64)?
+                    .with_detail(format!(
+                        "{builtin_skipped} generated or vendored Rust file(s) were intentionally skipped by the \
+                         generated-file conventions, generator headers or `cargo vendor` crates: {listed}"
+                    ))?,
+                );
+            }
         }
         diff_outcomes.extend(LanguageAnalysisOutcomeV1::from_diff_result(
             LanguageId::Rust,
@@ -1975,6 +2026,15 @@ fn run_pipeline_for_diff_text_with_language_config(
             LanguageId::Python => "languages.python",
             _ => "languages.typescript",
         };
+        // #13894: paths the operator's own `excluded_file_patterns` left out
+        // are requested scope: a scope note, not an incomplete limitation.
+        if skip_class == PreviewSkipClass::ConfiguredPattern {
+            limitations.push(configured_exclusion_note(
+                &format!("[{config_section}] excluded_file_patterns"),
+                &skipped,
+            )?);
+            continue;
+        }
         let (recovery_kind, recovery) = match skip_class {
             PreviewSkipClass::ExcludedDirectory => (
                 AnalysisRecoveryKind::DeclareHandwrittenFiles,
@@ -5288,63 +5348,154 @@ mod tests {
         Ok(())
     }
 
+    fn generated_skip_options(root: PathBuf) -> AnalysisOptions {
+        AnalysisOptions {
+            root,
+            base: None,
+            diff_file: None,
+            mode: AnalysisMode::Draft,
+            resolved_subject_identity: None,
+            open_rust_index_paths: Default::default(),
+            include_unchanged_tests: false,
+            resolve_tsconfig_paths: false,
+            perl_facts_path: None,
+            perl_producer_failure: None,
+            git_timeout: None,
+            git_candidate: None,
+            production_like_targets: Default::default(),
+            test_harnesses: Vec::new(),
+        }
+    }
+
+    fn skip_added_file_diff(path: &str) -> String {
+        format!(
+            "diff --git a/{path} b/{path}\n--- /dev/null\n+++ b/{path}\n@@ -0,0 +1 @@\n\
+             +pub fn generated_value() -> u32 {{ 1 }}\n"
+        )
+    }
+
+    /// #13894: a file the operator's own `generated_file_patterns` left out
+    /// is requested scope. It is a scope note on a complete outcome, never a
+    /// `language_scope_unsupported` limitation.
     #[test]
-    fn configured_generated_skip_is_a_scope_limitation_not_a_producer_failure() -> Result<(), String>
-    {
+    fn configured_generated_pattern_is_a_scope_note_not_a_limitation() -> Result<(), String> {
         let root = temp_root("analysis-outcome-generated-skip")?;
         let result = run_pipeline_for_diff_text(
-            &AnalysisOptions {
-                root,
-                base: None,
-                diff_file: None,
-                mode: AnalysisMode::Draft,
-                resolved_subject_identity: None,
-                open_rust_index_paths: Default::default(),
-                include_unchanged_tests: false,
-                resolve_tsconfig_paths: false,
-                perl_facts_path: None,
-                perl_producer_failure: None,
-                git_timeout: None,
-                git_candidate: None,
-                production_like_targets: Default::default(),
-                test_harnesses: Vec::new(),
-            },
+            &generated_skip_options(root),
             &OraclePolicy::default(),
             &[LanguageId::Rust],
             &crate::config::RustLanguageConfig {
                 generated_file_patterns: vec!["src/generated_*.rs".to_string()],
                 ..Default::default()
             },
-            "diff --git a/src/generated_values.rs b/src/generated_values.rs\n\
-             --- /dev/null\n\
-             +++ b/src/generated_values.rs\n\
-             @@ -0,0 +1 @@\n\
-             +pub fn generated_value() -> u32 { 1 }\n",
+            &skip_added_file_diff("src/generated_values.rs"),
+        )?;
+        let outcome = result
+            .analysis_outcome
+            .ok_or_else(|| "generated skip must carry an analysis outcome".to_string())?;
+        assert!(outcome.kind.is_complete(), "{:?}", outcome.kind);
+        assert!(!outcome.has_advisory_limitations());
+        assert!(!outcome.limitations.iter().any(|limitation| {
+            limitation.kind == AnalysisLimitationKind::LanguageScopeUnsupported
+        }));
+        let note = outcome
+            .limitations
+            .iter()
+            .find(|limitation| limitation.kind == AnalysisLimitationKind::RequestedScopeExcluded)
+            .ok_or("the configured exclusion must be disclosed as a scope note")?;
+        assert_eq!(note.affected_items, Some(1));
+        let detail = note.bounded_detail.as_deref().unwrap_or_default();
+        assert!(
+            detail.contains("generated_file_patterns")
+                && detail.contains("src/generated_values.rs"),
+            "{detail}"
+        );
+        assert!(
+            !result
+                .language_runs
+                .iter()
+                .any(|run| run.status == LanguageRunStatus::Partial)
+        );
+        Ok(())
+    }
+
+    /// #13894 negative control: the same file excluded only by the built-in
+    /// naming convention (no configured pattern) is not requested scope and
+    /// stays a fail-closed limitation.
+    #[test]
+    fn built_in_generated_name_skip_stays_a_scope_limitation() -> Result<(), String> {
+        let root = temp_root("analysis-outcome-builtin-generated-skip")?;
+        let result = run_pipeline_for_diff_text(
+            &generated_skip_options(root),
+            &OraclePolicy::default(),
+            &[LanguageId::Rust],
+            &crate::config::RustLanguageConfig::default(),
+            &skip_added_file_diff("src/generated_values.rs"),
         )?;
         let outcome = result
             .analysis_outcome
             .ok_or_else(|| "generated skip must carry an analysis outcome".to_string())?;
         assert_eq!(outcome.kind, AnalysisOutcomeKind::PartialWithLimitations);
+        assert!(outcome.has_advisory_limitations());
         assert!(outcome.limitations.iter().any(|limitation| {
             limitation.kind == AnalysisLimitationKind::LanguageScopeUnsupported
                 && limitation.bounded_detail.as_deref().is_some_and(|detail| {
                     detail.contains("intentionally skipped")
                         && detail.contains("src/generated_values.rs")
                 })
-                && limitation
-                    .recovery
-                    .detail
-                    .contains("src/generated_values.rs")
-                && !limitation
-                    .recovery
-                    .detail
-                    .contains("configured generated-file predicate")
         }));
         assert!(
-            !result
-                .language_runs
+            !outcome
+                .limitations
                 .iter()
-                .any(|run| run.status == LanguageRunStatus::Partial)
+                .any(|limitation| limitation.kind == AnalysisLimitationKind::RequestedScopeExcluded)
+        );
+        Ok(())
+    }
+
+    /// #13894: both kinds in one diff. The configured file is a note; the
+    /// built-in skip keeps the outcome partial and is the only limitation.
+    #[test]
+    fn mixed_configured_and_built_in_skips_split_note_from_limitation() -> Result<(), String> {
+        let root = temp_root("analysis-outcome-mixed-generated-skip")?;
+        let diff = format!(
+            "{}{}",
+            skip_added_file_diff("src/generated_values.rs"),
+            skip_added_file_diff("src/ffi.rs")
+        );
+        let result = run_pipeline_for_diff_text(
+            &generated_skip_options(root),
+            &OraclePolicy::default(),
+            &[LanguageId::Rust],
+            &crate::config::RustLanguageConfig {
+                generated_file_patterns: vec!["src/ffi.rs".to_string()],
+                ..Default::default()
+            },
+            &diff,
+        )?;
+        let outcome = result
+            .analysis_outcome
+            .ok_or_else(|| "generated skip must carry an analysis outcome".to_string())?;
+        assert_eq!(outcome.kind, AnalysisOutcomeKind::PartialWithLimitations);
+        let limitation = outcome
+            .limitations
+            .iter()
+            .find(|limitation| limitation.kind == AnalysisLimitationKind::LanguageScopeUnsupported)
+            .ok_or("the built-in skip must stay a limitation")?;
+        assert_eq!(limitation.affected_items, Some(1));
+        let detail = limitation.bounded_detail.as_deref().unwrap_or_default();
+        assert!(detail.contains("src/generated_values.rs"), "{detail}");
+        assert!(!detail.contains("src/ffi.rs"), "{detail}");
+        let note = outcome
+            .limitations
+            .iter()
+            .find(|limitation| limitation.kind == AnalysisLimitationKind::RequestedScopeExcluded)
+            .ok_or("the configured file must be a scope note")?;
+        assert!(
+            note.bounded_detail
+                .as_deref()
+                .unwrap_or_default()
+                .contains("src/ffi.rs")
         );
         Ok(())
     }
@@ -9151,12 +9302,13 @@ index 0000000..1111111 100644
             .map_err(|error| format!("scoped flood must succeed: {error}"))?;
         let outcome = result.analysis_outcome.ok_or("outcome must be projected")?;
         assert_eq!(outcome.counts.changed_file_count, 1);
-        assert_eq!(outcome.kind, AnalysisOutcomeKind::PartialWithLimitations);
+        // #13894: the operator-requested scope is complete.
+        assert!(outcome.kind.is_complete(), "{:?}", outcome.kind);
         let limitation = outcome
             .limitations
             .iter()
-            .find(|limitation| limitation.kind == AnalysisLimitationKind::LanguageScopeUnsupported)
-            .ok_or("skipped-file limitation missing")?;
+            .find(|limitation| limitation.kind == AnalysisLimitationKind::RequestedScopeExcluded)
+            .ok_or("scope note missing")?;
         // The total is exact even though only a few names are kept.
         assert_eq!(limitation.affected_items, Some(FLOODED_VENDOR_FILES as u64));
         let detail = limitation.bounded_detail.as_deref().unwrap_or_default();
@@ -9197,7 +9349,7 @@ index 0000000..1111111 100644
     }
 
     #[test]
-    fn scope_narrows_the_diff_before_the_size_guard_and_discloses_what_it_left_out()
+    fn scope_narrows_the_diff_before_the_size_guard_and_notes_what_it_left_out()
     -> Result<(), String> {
         for (label, include, exclude) in [
             ("scope-path", vec!["src/lib.rs"], vec![]),
@@ -9219,21 +9371,29 @@ index 0000000..1111111 100644
                     .ends_with("src/lib.rs")),
                 "{label}: no finding may come from the skipped file"
             );
-            // The skipped file is disclosed, so the outcome is incomplete:
-            // it can never read as a clean or complete analysis.
+            // #13894: the operator asked for this scope, so the requested
+            // scope is complete; the left-out file is an informational scope
+            // note, never a `language_scope_unsupported` limitation.
             assert_eq!(
                 outcome.kind,
-                AnalysisOutcomeKind::PartialWithLimitations,
+                AnalysisOutcomeKind::CompleteWithFindings,
                 "{label}"
             );
-            assert!(!outcome.kind.is_complete(), "{label}");
+            assert!(outcome.kind.is_complete(), "{label}");
+            assert!(
+                !outcome.limitations.iter().any(|limitation| {
+                    limitation.kind == AnalysisLimitationKind::LanguageScopeUnsupported
+                }),
+                "{label}: a user exclusion must never be language_scope_unsupported"
+            );
+            assert!(!outcome.has_advisory_limitations(), "{label}");
             let limitation = outcome
                 .limitations
                 .iter()
                 .find(|limitation| {
-                    limitation.kind == AnalysisLimitationKind::LanguageScopeUnsupported
+                    limitation.kind == AnalysisLimitationKind::RequestedScopeExcluded
                 })
-                .ok_or_else(|| format!("{label}: skipped-file limitation missing"))?;
+                .ok_or_else(|| format!("{label}: scope note missing"))?;
             assert_eq!(limitation.affected_items, Some(1), "{label}");
             let detail = limitation.bounded_detail.as_deref().unwrap_or_default();
             assert!(detail.contains("src/big.rs"), "{label}: {detail}");
@@ -9868,7 +10028,7 @@ index 0000000..1111111 100644
         );
         assert_eq!(
             kind(&["src/merge.rs"], "scope-conflict-excluded")?,
-            AnalysisOutcomeKind::PartialWithLimitations
+            AnalysisOutcomeKind::CompleteWithFindings
         );
         Ok(())
     }
@@ -9894,14 +10054,14 @@ index 0000000..1111111 100644
         )?
         .map_err(|error| format!("a long pattern list must not abort: {error}"))?;
         let outcome = result.analysis_outcome.ok_or("outcome missing")?;
-        assert_eq!(outcome.kind, AnalysisOutcomeKind::PartialWithLimitations);
+        assert!(outcome.kind.is_complete(), "{:?}", outcome.kind);
         // The 41 patterns would exceed the bound unabridged; the limitation
         // text must stay inside the typed contract's limit.
         let scope_limitation = outcome
             .limitations
             .iter()
-            .find(|limitation| limitation.kind == AnalysisLimitationKind::LanguageScopeUnsupported)
-            .ok_or("the out-of-scope limitation is missing")?;
+            .find(|limitation| limitation.kind == AnalysisLimitationKind::RequestedScopeExcluded)
+            .ok_or("the out-of-scope scope note is missing")?;
         let bound = crate::analysis_outcome::MAX_ANALYSIS_LIMITATION_DETAIL_CHARS;
         let recovery = &scope_limitation.recovery.detail;
         assert!(recovery.chars().count() <= bound, "{recovery}");
