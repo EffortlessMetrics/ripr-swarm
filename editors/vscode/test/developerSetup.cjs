@@ -556,4 +556,3 @@ if (require.main === module) {
     process.stderr.write(bounded(String(error)) + '\n'); process.exitCode = 1;
   });
 }
-

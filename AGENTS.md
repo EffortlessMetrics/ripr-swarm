@@ -643,4 +643,3 @@ resurrect deleted active-goal manifests or store global writer/lifecycle state.
 does not enumerate newly added tests or prove `::symbol` identity. During review,
 map behavior-discriminating tests to the relevant spec and explain intentional
 omissions. Symbol/test-role verification remains owned by #2345.
-

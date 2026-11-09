@@ -630,4 +630,3 @@ cargo test --locked -p ripr --test mcp_sdk
 ```
 
 These tests qualify wire behavior, not installation or every protocol version.
-
