@@ -158,6 +158,28 @@ fn plan_retains_and_counts_multiple_evidence_case_variants() {
 }
 
 #[test]
+fn quarantine_moves_source_to_a_new_direct_child() {
+    let root = TempDirectory::new("quarantine");
+    let target = root.path.join("target");
+    fs::create_dir_all(target.join("debug/deps")).expect("debug tree");
+    fs::write(target.join("debug/deps/a.rlib"), b"artifact").expect("artifact");
+    let plan = build_plan(&target, u64::MAX).expect("plan");
+    let entry = plan.selected.first().expect("selected debug entry");
+
+    let quarantine = quarantine_planned_entry(&target, entry, 0).expect("quarantine entry");
+    assert!(!entry.path.exists());
+    assert!(quarantine.exists());
+    assert_eq!(quarantine.parent(), Some(target.as_path()));
+    assert!(
+        quarantine
+            .file_name()
+            .and_then(OsStr::to_str)
+            .is_some_and(|name| name.starts_with(".cargo-artifacts-delete-"))
+    );
+    fs::remove_dir_all(quarantine).expect("remove quarantine");
+}
+
+#[test]
 fn cleanup_deletes_exact_selection_and_preserves_ripr() {
     let root = TempDirectory::new("delete");
     let target = root.path.join("target");
@@ -168,13 +190,18 @@ fn cleanup_deletes_exact_selection_and_preserves_ripr() {
     fs::write(target.join("ripr/reports/keep.json"), b"retained").expect("receipt");
     let plan = build_plan(&target, u64::MAX).expect("plan");
 
-    for entry in &plan.selected {
-        remove_planned_entry(&target, entry).expect("remove selected entry");
+    for (sequence, entry) in plan.selected.iter().enumerate() {
+        remove_planned_entry(&target, entry, sequence as u64).expect("remove selected entry");
     }
 
     assert!(!target.join("debug").exists());
     assert!(!target.join("leak.tmp").exists());
     assert!(target.join("ripr/reports/keep.json").exists());
+    let remaining = fs::read_dir(&target)
+        .expect("read target")
+        .map(|entry| entry.expect("target entry").file_name())
+        .collect::<Vec<_>>();
+    assert_eq!(remaining, vec![OsStr::new("ripr").to_os_string()]);
 }
 
 #[test]

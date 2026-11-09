@@ -160,24 +160,91 @@ pub(super) fn require_direct_child(target_directory: &Path, path: &Path) -> Resu
     Ok(())
 }
 
-pub(super) fn remove_planned_entry(target_directory: &Path, entry: &PlannedEntry) -> Result<()> {
+pub(super) fn quarantine_planned_entry(
+    target_directory: &Path,
+    entry: &PlannedEntry,
+    sequence: u64,
+) -> Result<PathBuf> {
     require_direct_child(target_directory, &entry.path)?;
     let metadata = fs::symlink_metadata(&entry.path).map_err(|error| {
         ArtifactError::new(format!("recheck {}: {error}", entry.path.display()))
     })?;
     require_plain_path(&entry.path, &metadata)?;
     let _ = measure_path(&entry.path)?;
+
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_nanos());
+    let quarantine = target_directory.join(format!(
+        ".cargo-artifacts-delete-{}-{nonce}-{sequence}",
+        process::id()
+    ));
+    require_direct_child(target_directory, &quarantine)?;
+    match fs::symlink_metadata(&quarantine) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Ok(_) => {
+            return Err(ArtifactError::new(format!(
+                "quarantine path already exists: {}",
+                quarantine.display()
+            )))
+        }
+        Err(error) => {
+            return Err(ArtifactError::new(format!(
+                "inspect quarantine path {}: {error}",
+                quarantine.display()
+            )))
+        }
+    }
+
+    fs::rename(&entry.path, &quarantine).map_err(|error| {
+        ArtifactError::new(format!(
+            "quarantine {} as {}: {error}",
+            entry.path.display(),
+            quarantine.display()
+        ))
+    })?;
+    let quarantined_metadata = fs::symlink_metadata(&quarantine).map_err(|error| {
+        ArtifactError::new(format!(
+            "inspect quarantined {} from {}: {error}",
+            quarantine.display(),
+            entry.path.display()
+        ))
+    })?;
+    require_plain_path(&quarantine, &quarantined_metadata)?;
+    let _ = measure_path(&quarantine)?;
+    Ok(quarantine)
+}
+
+pub(super) fn remove_planned_entry(
+    target_directory: &Path,
+    entry: &PlannedEntry,
+    sequence: u64,
+) -> Result<()> {
+    let quarantine = quarantine_planned_entry(target_directory, entry, sequence)?;
+    let metadata = fs::symlink_metadata(&quarantine).map_err(|error| {
+        ArtifactError::new(format!("recheck quarantine {}: {error}", quarantine.display()))
+    })?;
+    require_plain_path(&quarantine, &metadata)?;
     if metadata.is_dir() {
-        fs::remove_dir_all(&entry.path).map_err(|error| {
-            ArtifactError::new(format!("remove directory {}: {error}", entry.path.display()))
+        fs::remove_dir_all(&quarantine).map_err(|error| {
+            ArtifactError::new(format!(
+                "remove quarantined {} from {}: {error}",
+                quarantine.display(),
+                entry.path.display()
+            ))
         })
     } else if metadata.is_file() {
-        fs::remove_file(&entry.path).map_err(|error| {
-            ArtifactError::new(format!("remove file {}: {error}", entry.path.display()))
+        fs::remove_file(&quarantine).map_err(|error| {
+            ArtifactError::new(format!(
+                "remove quarantined {} from {}: {error}",
+                quarantine.display(),
+                entry.path.display()
+            ))
         })
     } else {
         Err(ArtifactError::new(format!(
-            "refusing special filesystem entry {}",
+            "refusing special quarantined filesystem entry {} from {}",
+            quarantine.display(),
             entry.path.display()
         )))
     }

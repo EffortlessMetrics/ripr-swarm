@@ -256,10 +256,10 @@ fn execute(options: Options) -> Result<()> {
 
     state.status = "applying".to_string();
     write_receipts(&target_directory, &options, &plan, &state)?;
-    for entry in &plan.selected {
+    for (sequence, entry) in plan.selected.iter().enumerate() {
         state.pending = Some(entry.name.clone());
         write_receipts(&target_directory, &options, &plan, &state)?;
-        if let Err(error) = remove_planned_entry(&target_directory, entry) {
+        if let Err(error) = remove_planned_entry(&target_directory, entry, sequence as u64) {
             state.status = "partial_failure".to_string();
             state.failure = Some(Failure {
                 path: entry.path.display().to_string(),

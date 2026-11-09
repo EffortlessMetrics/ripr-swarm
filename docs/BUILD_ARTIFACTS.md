@@ -84,9 +84,11 @@ Before selecting or deleting, it refuses:
 
 The exact-equality rule matters: containment is not ownership. A nested Cargo build path never authorizes deletion of its ancestor hash tree or siblings.
 
-Apply mode writes the initial receipt before mutation. Before each deletion it records that entry as `pending`, then rechecks and removes the direct child. A successful deletion is confirmed in the next receipt. If that receipt update itself fails, the last durable record says the entry's outcome is unknown instead of falsely claiming it remains. A lock, disappearing path, newly detected link/reparse point, or other filesystem error stops cleanup, returns nonzero, and retains the prior deletions plus the pending/failing entry without a traceback.
+Apply mode writes the initial receipt before mutation. Before each deletion it records that entry as `pending`, rechecks it, and renames the direct child to a unique `.cargo-artifacts-delete-*` direct child inside the same target. Recursive removal starts only after that same-filesystem quarantine succeeds and is revalidated. A locked tree, mount point, disappearing source, newly detected link/reparse point, or rename failure therefore stops before recursive removal. A writer that incorrectly recreates the original Cargo path is not writing inside the quarantined tree being removed.
 
-This journal assumes the required quiescent-checkout precondition. The tool does not claim atomic exclusion against an actor that continues replacing ordinary files or directories after release was asserted.
+A successful removal is confirmed in the next receipt. If that receipt update itself fails, the last durable record says the entry's outcome is unknown instead of falsely claiming it remains. If recursive removal fails, the quarantined direct child remains visible and eligible for a later receipted pass. The receipt retains prior deletions plus the pending/failing entry without a traceback.
+
+This transaction boundary still assumes the required quiescent-checkout precondition. The tool does not claim atomic exclusion against an adversarial actor that discovers and mutates the unique quarantine after release was asserted.
 
 ## Agent lifecycle
 
@@ -114,4 +116,4 @@ The standalone source set carries its own standard-library unit tests. Repositor
 cargo test -p xtask --test cargo_artifact_lifecycle
 ```
 
-The suite covers Git-checkout-root discrimination, Windows JSON paths and verbatim-prefix equality, top-level metadata discrimination, exact target/build ownership, direct-child selection, budget reporting, `target/ripr` case preservation and aggregate measurement, destructive receipt requirements, pending/partial-failure receipts, and symlink non-traversal.
+The suite covers Git-checkout-root discrimination, Windows JSON paths and verbatim-prefix equality, top-level metadata discrimination, exact target/build ownership, direct-child selection, quarantine-before-removal, budget reporting, `target/ripr` case preservation and aggregate measurement, destructive receipt requirements, pending/partial-failure receipts, and symlink non-traversal.
