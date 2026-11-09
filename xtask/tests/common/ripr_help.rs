@@ -174,10 +174,10 @@ pub fn candidate_binary() -> Result<PathBuf, String> {
                 let expected_path = guide_candidate_target_dir()
                     .join("debug")
                     .join(format!("ripr{}", std::env::consts::EXE_SUFFIX));
-                let expected = expected_path.canonicalize().map_err(|_| {
+                let expected = expected_path.canonicalize().map_err(|error| {
                     format!(
                         "RIPR_GUIDE_CANDIDATE_BINARY is set to `{}` but the expected candidate \
-                         binary `{}` does not exist; build the candidate binary there first \
+                         binary `{}` does not exist: {error}; build the candidate binary there first \
                          (target/guide-candidate/debug) or unset the variable to build it here",
                         supplied.display(),
                         expected_path.display()
