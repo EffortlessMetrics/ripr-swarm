@@ -40,6 +40,7 @@ pub(crate) mod drop_in;
 mod harness_registry;
 mod includes;
 mod index;
+mod invisible_owners;
 mod local_test_alias;
 mod macro_generated_tests;
 pub(crate) mod macro_visibility;
@@ -534,6 +535,7 @@ pub(crate) fn build_index_from_paths_with_cache_and_test_harnesses_and_consumed(
 // misdeclared registration degrades identically everywhere.
 pub(crate) use harness_registry::validated_file_wide_harness_targets;
 pub(crate) use test_helpers::{expanded_assertion_view, imported_forwarding_calls};
+pub(crate) use test_styles::attributes_define_mutants_skip;
 pub(crate) use test_styles::attributes_define_proof_harness;
 pub(crate) use test_styles::attributes_define_test;
 

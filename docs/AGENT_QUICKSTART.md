@@ -109,8 +109,9 @@ Refresh explicitly after edits. For saved tracked changes, pass
 `source: "worktree"` to `ripr_refresh` and repeat any explicit `base` on each
 refresh. The server does not watch the worktree.
 
-The CLI loop above is cheaper. The default MCP tool list alone costs roughly
-11k tokens. Register it only if your agent prefers tools. `ripr` must be on
+The CLI loop above is cheaper. The default MCP tool list alone is about 12 KB
+(11,884 bytes on the wire) at every session start. Register it only if your
+agent prefers tools. `ripr` must be on
 `PATH`.
 
 | Agent | Register |
@@ -133,7 +134,7 @@ Cursor and Claude Code share one entry shape:
 }
 ```
 
-The `env` line asks for the slim `tools/list` (about 29 KB smaller at every session start; results are unchanged). Delete it if your host validates results against `outputSchema`.
+The slim `tools/list` is the default, and the `env` line keeps older ripr builds slim too (results are unchanged). If your host validates results against `outputSchema`, set the value to `full`.
 
 `ripr init --mcp` and the Cursor file were exercised against the real
 `ripr` binary. The `claude`, `codex` and Cursor clients' own registration and

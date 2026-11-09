@@ -337,3 +337,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — currentness_matrix_move (26)
+
+Reason:
+union-head re-bless after main merge: additive evidence_stages rows (RIPR-SPEC-0429)
+
+Command:
+`cargo xtask goldens bless currentness_matrix_move --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

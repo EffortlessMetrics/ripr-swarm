@@ -127,9 +127,10 @@ command `ripr`, args `mcp`, `--stdio`, and
 `"env": {"RIPR_MCP_TOOLS_LIST": "slim"}`. The slim listing omits only each tool's
 `outputSchema` (docs/interop/mcp.md), cutting the `tools/list` every agent
 session pays at start; results still carry `structuredContent`. An existing
-`ripr` entry is left alone without `--force`, doctor ignores `env`, and a host
-that validates results against `outputSchema` deletes the `env` line to get the
-full listing. Acceptance: the init unit tests compare the written entry with
+`ripr` entry is left alone without `--force`, and doctor ignores `env`. Slim is
+the server default since #13803; the explicit value keeps older ripr builds
+slim, and a host that validates results against `outputSchema` sets it to
+`full`. Acceptance: the init unit tests compare the written entry with
 this value for both files.
 
 ### Suppression manifest declarations

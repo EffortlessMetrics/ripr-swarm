@@ -3163,6 +3163,9 @@ impl RustAdapter {
                 parser_spans: &parser_spans,
             },
         );
+        // #13819: the changed owner's own `#[mutants::skip]` is an explicit
+        // opt-out; the app layer withholds and discloses these findings.
+        let owner_opt_outs = crate::analysis::owner_opt_out::rust_owner_opt_outs(&index, &findings);
 
         Ok(LanguageDiffResult {
             value_origins: value_origins.into_inner().unwrap_or_default(),
@@ -3204,6 +3207,7 @@ impl RustAdapter {
             rust_diagnostic_origins,
             rust_consumed_sources,
             preview_fact_cache: Default::default(),
+            owner_opt_outs,
         })
     }
 }
@@ -10506,6 +10510,8 @@ fn absent_delimiter_boundary_returns_head() {
     }
 }
 
+#[cfg(test)]
+mod cfg_kani_module_tests;
 #[cfg(test)]
 mod classify_panic_tests;
 #[cfg(test)]
