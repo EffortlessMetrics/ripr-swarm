@@ -660,7 +660,10 @@ pub(crate) fn macro_binding_candidates(source: &ast::SourceFile) -> MacroBinding
                 .unwrap_or("")
                 .trim();
             for item in tree.syntax().descendants().filter_map(ast::UseTree::cast) {
-                if item.star_token().is_some() && !matches!(root, "crate" | "self" | "super") {
+                if item.star_token().is_some()
+                    && !matches!(root, "crate" | "self" | "super")
+                    && !glob_is_root_sibling_module(&import, &item, root)
+                {
                     return MacroBindingCandidates::Any;
                 }
                 // As the scan reads it: `as _` binds no name.
@@ -680,6 +683,60 @@ pub(crate) fn macro_binding_candidates(source: &ast::SourceFile) -> MacroBinding
         }
     }
     MacroBindingCandidates::Names(names)
+}
+
+/// Whether `item` is the whole `root::*` glob of a top-level `use` whose
+/// `root` is a module the same file declares at its top level
+/// (`mod global_rng; pub use global_rng::*;`). The glob then reads that
+/// module's own items, as `crate::global_rng::*` does. A macro it re-exports
+/// is defined or imported inside that module, and the workspace scan reports
+/// it at that site, so the glob is not a foreign one. Only the file root
+/// qualifies: in a 2015-edition nested module the same spelling names a
+/// crate-root item. Longer paths (`vstd::prelude::*`), grouped globs and the
+/// standard roots keep their dedicated rules.
+fn glob_is_root_sibling_module(import: &ast::Use, item: &ast::UseTree, root: &str) -> bool {
+    let whole_glob = import
+        .use_tree()
+        .is_some_and(|tree| tree.syntax() == item.syntax())
+        && item.use_tree_list().is_none()
+        && item.path().is_some_and(|path| {
+            let text: String = path.syntax().text().to_string();
+            text.trim() == root
+        });
+    if !whole_glob {
+        return false;
+    }
+    let root = root.trim_start_matches("r#");
+    if root.is_empty() || matches!(root, "std" | "core" | "alloc") {
+        return false;
+    }
+    let Some(parent) = import
+        .syntax()
+        .parent()
+        .filter(|parent| ast::SourceFile::can_cast(parent.kind()))
+    else {
+        return false;
+    };
+    let named_root = |name: Option<ast::Name>| {
+        name.is_some_and(|name| name.text().trim_start_matches("r#") == root)
+    };
+    let mut declared = false;
+    for child in parent.children() {
+        if let Some(module) = ast::Module::cast(child.clone()) {
+            declared |= named_root(module.name());
+        } else if let Some(krate) = ast::ExternCrate::cast(child.clone()) {
+            // An `extern crate` or alias of the same spelling is another item.
+            if krate.name_ref().is_some_and(|name| name.text() == root)
+                || named_root(krate.rename().and_then(|rename| rename.name()))
+            {
+                return false;
+            }
+        } else if ast::MacroCall::can_cast(child.kind()) {
+            // An item-position macro may emit any binding of that name.
+            return false;
+        }
+    }
+    declared
 }
 
 /// An `extern crate other as std;` (or `core`, `alloc`) alias.
@@ -1357,7 +1414,10 @@ fn macro_binding_sites_in_tree(
                 {
                     continue;
                 }
-                if item.star_token().is_some() && !own {
+                if item.star_token().is_some()
+                    && !own
+                    && !glob_is_root_sibling_module(&import, &item, root)
+                {
                     let path = import.syntax().text().to_string();
                     let line = line_of(node);
                     let Some((scope, scope_bytes)) = scope_of(import_scope(&import)) else {
