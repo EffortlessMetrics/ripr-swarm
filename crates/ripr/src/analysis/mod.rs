@@ -1266,8 +1266,10 @@ pub(crate) fn owner_symbols_for_lines(
 /// whether an outer owner's span overlaps the diff even when attribution named
 /// a nested function. A line outside every function span has no entry in
 /// either list. `edited_function_headers` holds the `(file, start_line)` of
-/// each of those enclosing functions, sorted and deduplicated, so a consumer
-/// can tell whether a test (identified by its header line) was edited.
+/// each of those enclosing functions and of each indexed test (including a
+/// macro-generated one, pinned to its invocation) whose span contains a
+/// changed line, sorted and deduplicated, so a consumer can tell whether a
+/// test, identified by its header line, was edited.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ChangedLineOwnership {
     pub(crate) owners: Vec<ChangedLineOwner>,
@@ -1309,11 +1311,22 @@ pub(crate) fn changed_line_ownership_for_lines(
             })
         })
         .collect::<Vec<_>>();
+    // A test produced by a `macro_rules!` expansion is pinned to its
+    // invocation span and has no function fact, so read test spans too.
     let edited_function_headers = lines
         .iter()
         .flat_map(|(file, line)| {
-            rust_index::find_enclosing_functions(&index, file, *line)
-                .map(|function| (file.clone(), function.start_line))
+            let functions = rust_index::find_enclosing_functions(&index, file, *line)
+                .map(|function| (file.clone(), function.start_line));
+            let tests = index
+                .tests()
+                .iter()
+                .filter(|test| {
+                    test.file == *file && test.start_line <= *line && *line <= test.end_line
+                })
+                .map(|test| (file.clone(), test.start_line))
+                .collect::<Vec<_>>();
+            functions.chain(tests).collect::<Vec<_>>()
         })
         .collect::<BTreeSet<_>>()
         .into_iter()
@@ -1934,6 +1947,39 @@ pub fn unrelated() -> i32 {
         {
             return Err(format!("expected unrelated owner, got {owners:?}"));
         }
+        Ok(())
+    }
+
+    #[test]
+    fn edited_headers_name_a_macro_generated_test_edited_past_its_header() -> Result<(), String> {
+        // #12940 review: a `macro_rules!` test has no function fact; it is
+        // pinned to its invocation span, so an edit deep inside that span
+        // must still mark it edited (by the invocation's start line).
+        let root = temp_dir("edited_macro_test_headers");
+        fs::create_dir_all(root.join("src"))
+            .map_err(|e| format!("failed to create src dir: {e}"))?;
+        let source = "pub fn one() -> i32 {\n    1\n}\n\nmacro_rules! suite {\n    ($($t:tt)*) => { $($t)* };\n}\n\nsuite! {\n    #[test]\n    fn made() {\n        let v0 = 0;\n        let v1 = 1;\n        let v2 = 2;\n        let v3 = 3;\n        let v4 = 4;\n        let v5 = 5;\n        let v6 = 6;\n        let v7 = 7;\n        let v8 = 8;\n        let v9 = 9;\n        let v10 = 10;\n        let v11 = 11;\n        let v12 = 12;\n        let v13 = 13;\n        assert_eq!(one(), 1);\n    }\n}\n".to_string();
+        fs::write(root.join("src/lib.rs"), &source)
+            .map_err(|e| format!("failed to write src/lib.rs: {e}"))?;
+        // Line 9 is `suite! {`; line 25 is past the 12-line window.
+        let ownership =
+            changed_line_ownership_for_lines(&root, &[(PathBuf::from("src/lib.rs"), 25)]);
+        fs::remove_dir_all(&root).map_err(|e| format!("failed to remove temp dir: {e}"))?;
+        let ownership = ownership?;
+        assert!(
+            ownership
+                .edited_function_headers
+                .contains(&(PathBuf::from("src/lib.rs"), 9)),
+            "macro test edited past its header must be named: {:?}",
+            ownership.edited_function_headers
+        );
+        assert!(
+            !ownership
+                .edited_function_headers
+                .contains(&(PathBuf::from("src/lib.rs"), 1)),
+            "an untouched function is not edited: {:?}",
+            ownership.edited_function_headers
+        );
         Ok(())
     }
 

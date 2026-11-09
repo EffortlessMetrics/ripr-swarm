@@ -2580,15 +2580,13 @@ pub(crate) fn diff_only_rust_files(
         .collect()
 }
 
-/// A bounded consumer of classified windows. Implementations retain their
-/// result payloads independently from the complete evaluation denominator.
+/// Admits a test by `(file, header line)`; see [`SecondStageScope`].
+pub(crate) type RelationPoolPredicate<'s> = Box<dyn Fn(&Path, usize) -> bool + 's>;
+
 /// How a consumer narrows the second stage (#12940). A remaining seam is
 /// evaluated when `keep_without_relation` accepts it, or when it relates to
 /// a test that `relation_pool` admits. Every other seam must be one the
 /// consumer provably discards whatever its evidence says.
-/// Admits a test by `(file, header line)`; see [`SecondStageScope`].
-pub(crate) type RelationPoolPredicate<'s> = Box<dyn Fn(&Path, usize) -> bool + 's>;
-
 pub(crate) struct SecondStageScope<'s> {
     /// Seam-only predicate, decided without related-test evidence.
     pub(crate) keep_without_relation: Box<dyn Fn(&RepoSeam) -> bool + Sync + 's>,
@@ -2604,6 +2602,8 @@ pub(crate) struct SecondStageScope<'s> {
     pub(crate) relation_lookup: bool,
 }
 
+/// A bounded consumer of classified windows. Implementations retain their
+/// result payloads independently from the complete evaluation denominator.
 pub(crate) trait ScopedEvidenceConsumer {
     fn in_first_stage(&self, seam: &RepoSeam) -> bool;
     fn observe(&mut self, ordinal: usize, entry: ClassifiedSeam) -> Result<(), String>;
