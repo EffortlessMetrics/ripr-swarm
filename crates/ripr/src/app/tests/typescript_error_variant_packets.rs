@@ -40,6 +40,14 @@ const DIVIDE_MOVED_TS: &str = "export function divide(a: number, b: number): num
 
 const DIVIDE_MOVED_DIFF: &str = "diff --git a/src/index.ts b/src/index.ts\nindex 0000000..1111111 100644\n--- a/src/index.ts\n+++ b/src/index.ts\n@@ -1,5 +1,7 @@\n export function divide(a: number, b: number): number {\n-  if (b === 0) throw new Error('division by zero occurred');\n   const q = Math.floor(a / b);\n+  if (b === 0) {\n+    throw new Error('division by zero');\n+  }\n   return q;\n }\n";
 
+const DIVIDE_INLINED_TS: &str = "function checkDivisor(b: number): void {\n  if (b === 0) throw new Error('division by zero occurred');\n}\n\nexport function divide(a: number, b: number): number {\n  if (b === 0) {\n    throw new Error('division by zero');\n  }\n  return Math.floor(a / b);\n}\n";
+
+const DIVIDE_INLINED_DIFF: &str = "diff --git a/src/index.ts b/src/index.ts\nindex 0000000..1111111 100644\n--- a/src/index.ts\n+++ b/src/index.ts\n@@ -1,8 +1,10 @@\n function checkDivisor(b: number): void {\n   if (b === 0) throw new Error('division by zero occurred');\n }\n \n export function divide(a: number, b: number): number {\n-  checkDivisor(b);\n+  if (b === 0) {\n+    throw new Error('division by zero');\n+  }\n   return Math.floor(a / b);\n }\n";
+
+const DIVIDE_EARLIER_THROW_TS: &str = "export function divide(a: number, b: number): number {\n  const q = a / b;\n  if (q === Infinity) {\n    throw new Error('division by zero');\n  }\n  return q;\n}\n";
+
+const DIVIDE_EARLIER_THROW_DIFF: &str = "diff --git a/src/index.ts b/src/index.ts\nindex 0000000..1111111 100644\n--- a/src/index.ts\n+++ b/src/index.ts\n@@ -1,8 +1,7 @@\n export function divide(a: number, b: number): number {\n-  if (b === 0) throw new Error('division by zero occurred');\n   const q = a / b;\n   if (q === Infinity) {\n-    throw new Error('overflow');\n+    throw new Error('division by zero');\n   }\n   return q;\n }\n";
+
 const DIVIDE_TWO_THROWS_TS: &str = "export function divide(a: number, b: number): number {\n  if (a < 0) {\n    throw new Error('negative dividend');\n  }\n  if (b === 0) {\n    throw new Error('division by zero');\n  }\n  return Math.floor(a / b);\n}\n";
 
 const DIVIDE_TWO_THROWS_DIFF: &str = "diff --git a/src/index.ts b/src/index.ts\nindex 0000000..1111111 100644\n--- a/src/index.ts\n+++ b/src/index.ts\n@@ -1,6 +1,9 @@\n export function divide(a: number, b: number): number {\n   if (a < 0) {\n     throw new Error('negative dividend');\n   }\n+  if (b === 0) {\n+    throw new Error('division by zero');\n+  }\n   return Math.floor(a / b);\n }\n";
@@ -358,4 +366,86 @@ fn bare_tothrow_moved_throw_with_contained_message_offers_no_message_packet() ->
         ));
     }
     Ok(())
+}
+
+/// Shared body for the #13827 diff-shape negatives: the fixture's changed
+/// throw at new-side `line` has the expected paired old line (or none) and
+/// still reads the weak message discriminator, yet no message packet is
+/// offered.
+fn assert_no_message_packet(
+    label: &str,
+    source: &str,
+    diff: &str,
+    line: usize,
+    counterpart: Option<&str>,
+) -> Result<(), String> {
+    let changed = crate::analysis::parse_unified_diff(diff);
+    let [file] = changed.as_slice() else {
+        return Err(format!(
+            "{label} fixture: one changed file, got {}",
+            changed.len()
+        ));
+    };
+    let paired = file
+        .aligned_counterparts()
+        .get(&line)
+        .map(|removed| removed.text.trim().to_string());
+    if paired.as_deref() != counterpart {
+        return Err(format!(
+            "{label} fixture: line {line} pairs with {paired:?}, expected {counterpart:?}"
+        ));
+    }
+    let check = check_typescript_with(label, source, diff, DIVIDE_BARE_TEST)?;
+    let discriminator = check
+        .finding
+        .pointer("/activation/missing_discriminators/0/value")
+        .and_then(Value::as_str);
+    if check.class() != Some("weakly_exposed")
+        || discriminator != Some("throws Error matching 'division by zero'")
+    {
+        return Err(format!(
+            "{label} fixture: the throw must still read a missing message discriminator: {}",
+            check.finding
+        ));
+    }
+    if check
+        .assertion_shape()
+        .is_some_and(|shape| shape.contains("toThrow('"))
+        || check.any_agent_packet_eligible()
+    {
+        return Err(format!(
+            "{label}: the old side may satisfy the pin, so no message packet: {}",
+            check.finding
+        ));
+    }
+    Ok(())
+}
+
+/// #13827 negative control: a removed helper call (`checkDivisor(b)`) is
+/// inlined as a shorter throw. The helper threw a message containing the new
+/// one, so the pin would pass on both versions although no removed line
+/// says `throw`.
+#[test]
+fn bare_tothrow_inlined_helper_throw_offers_no_message_packet() -> Result<(), String> {
+    assert_no_message_packet(
+        "divide-inlined",
+        DIVIDE_INLINED_TS,
+        DIVIDE_INLINED_DIFF,
+        7,
+        None,
+    )
+}
+
+/// #13827 negative control: the changed throw pairs with an old throw whose
+/// message (`'overflow'`) does not contain the new one, but a separately
+/// removed earlier throw did, and it fires first on the same input.
+#[test]
+fn bare_tothrow_removed_earlier_throw_offers_no_message_packet() -> Result<(), String> {
+    assert_no_message_packet(
+        "divide-earlier-throw",
+        DIVIDE_EARLIER_THROW_TS,
+        DIVIDE_EARLIER_THROW_DIFF,
+        4,
+        Some("throw new Error('overflow');"),
+    )
 }

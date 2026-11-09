@@ -284,6 +284,24 @@ fn calls_unknown_function_except(masked: &str, params: &[String], pure_math: boo
     false
 }
 
+/// Whether a removed line could have thrown or rejected the old side's
+/// error (#13827): it names `throw`, `reject` or `Promise` anywhere in its
+/// raw text, or calls anything but a pure `Math` method or a non-throwing
+/// built-in construction. Conservative: a removed signature or any call
+/// counts, so the message pin is refused rather than guessed.
+pub(crate) fn removed_line_may_throw(line: &str) -> bool {
+    let names = |word: &str| {
+        line.split(|c: char| !(c.is_alphanumeric() || c == '_' || c == '$'))
+            .any(|token| token == word)
+    };
+    if names("throw") || names("reject") || names("Promise") {
+        return true;
+    }
+    let masked = ts_mask_literals_and_comments(line);
+    // Scan the whole line: the leading `{` stops the signature skip.
+    calls_unknown_function_except(&format!("{{{masked}"), &[], true)
+}
+
 const NON_THROWING_BUILTINS: &[&str] = &[
     "Map", "Set", "WeakMap", "WeakSet", "Date", "Array", "Object", "RegExp",
 ];
@@ -2009,5 +2027,33 @@ mod tests {
         assert_eq!(pin(None, "throw new RangeError('division by zero');"), None);
         assert_eq!(pin(None, "throw new Error(`division by ${b}`);"), None);
         assert_eq!(pin(None, "throw new Error('');"), None);
+    }
+
+    #[test]
+    fn removed_line_may_throw_flags_throws_rejections_and_calls() {
+        for line in [
+            "  if (b === 0) throw new Error('division by zero occurred');",
+            "  return Promise.reject(err);",
+            "  return new Promise((ok) => ok(1));",
+            "  checkDivisor(b);",
+            "  invariant(b !== 0, 'division by zero');",
+            "  return lib.divide(a, b);",
+            "  const c = new Custom(1);",
+            "export function divide(a: number, b: number): number {",
+            "  /* throw */ return a;",
+        ] {
+            assert!(removed_line_may_throw(line), "{line}");
+        }
+        for line in [
+            "  return Math.floor(a / b);",
+            "  if (b === 0) {",
+            "  const q = a / b;",
+            "  const m = new Map();",
+            "  return 'checkDivisor(b)';",
+            "  }",
+            "",
+        ] {
+            assert!(!removed_line_may_throw(line), "{line}");
+        }
     }
 }
