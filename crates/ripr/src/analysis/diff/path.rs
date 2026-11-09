@@ -1501,4 +1501,109 @@ mod tests {
         assert!(!parse_old_path_marker("+++ b/src/lib.rs"));
         assert!(!parse_old_path_marker("regular line"));
     }
+
+    /// Quote `bytes` the way git does under `core.quotePath=true`: octal for
+    /// bytes at or above 0x80 and for control bytes, named escapes for the
+    /// C ones, and a backslash before `\` and `"`.
+    #[cfg(unix)]
+    fn git_c_quote(bytes: &[u8]) -> String {
+        let mut quoted = String::from("\"");
+        for &byte in bytes {
+            match byte {
+                0x07 => quoted.push_str("\\a"),
+                0x08 => quoted.push_str("\\b"),
+                b'\t' => quoted.push_str("\\t"),
+                b'\n' => quoted.push_str("\\n"),
+                0x0b => quoted.push_str("\\v"),
+                0x0c => quoted.push_str("\\f"),
+                b'\r' => quoted.push_str("\\r"),
+                b'"' => quoted.push_str("\\\""),
+                b'\\' => quoted.push_str("\\\\"),
+                0x20..=0x7e => quoted.push(byte as char),
+                other => quoted.push_str(&format!("\\{other:03o}")),
+            }
+        }
+        quoted.push('"');
+        quoted
+    }
+
+    /// What confinement must make of `bytes`, computed without the parser:
+    /// empty and `.` segments vanish, any `..` segment rejects, and nothing
+    /// left rejects.
+    #[cfg(unix)]
+    fn expected_confined(bytes: &[u8]) -> Option<Vec<u8>> {
+        let mut kept: Vec<&[u8]> = Vec::new();
+        for segment in bytes.split(|byte| *byte == b'/') {
+            match segment {
+                b"" | b"." => {}
+                b".." => return None,
+                other => kept.push(other),
+            }
+        }
+        (!kept.is_empty()).then(|| kept.join(&b'/'))
+    }
+
+    #[cfg(unix)]
+    proptest::proptest! {
+        #![proptest_config(proptest::test_runner::Config {
+            cases: std::env::var("PROPTEST_CASES")
+                .ok()
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(256),
+            failure_persistence: None,
+            ..proptest::test_runner::Config::default()
+        })]
+
+        /// #13949: a git C-quoted old-path marker (octal escapes, quotes,
+        /// backslashes, non-UTF-8 bytes) confines to exactly the relative
+        /// path an independent oracle predicts, and an accepted path never
+        /// carries `..`, a root or a prefix.
+        #[test]
+        fn proptest_c_quoted_old_path_confines_like_the_oracle(
+            segments in proptest::collection::vec(
+                proptest::prop_oneof![
+                    2 => proptest::strategy::Just(b"..".to_vec()),
+                    2 => proptest::strategy::Just(b".".to_vec()),
+                    1 => proptest::strategy::Just(Vec::new()),
+                    6 => proptest::collection::vec(
+                        proptest::prop_oneof![
+                            4 => 0x20u8..=0x7e,
+                            1 => 1u8..=0x1f,
+                            2 => 0x80u8..=0xff,
+                            1 => proptest::strategy::Just(b'.'),
+                            1 => proptest::strategy::Just(b'"'),
+                            1 => proptest::strategy::Just(b'\\'),
+                        ],
+                        0..6,
+                    ),
+                ],
+                0..6,
+            ),
+            leading_slash in proptest::bool::ANY,
+        ) {
+            use std::os::unix::ffi::OsStrExt;
+            let mut bytes: Vec<u8> = segments.join(&b'/');
+            if leading_slash {
+                bytes.insert(0, b'/');
+            }
+            let marker = format!("--- {}", git_c_quote(&[b"a/".as_slice(), &bytes].concat()));
+            let confined = parse_old_path_for_confinement(&marker);
+            // `a//x` strips one side prefix and leaves the absolute `/x`.
+            let expected = if bytes.first() == Some(&b'/') {
+                None
+            } else {
+                expected_confined(&bytes)
+            };
+            proptest::prop_assert_eq!(
+                confined.as_ref().map(|path| path.as_os_str().as_bytes().to_vec()),
+                expected
+            );
+            if let Some(path) = confined {
+                proptest::prop_assert!(path.is_relative());
+                proptest::prop_assert!(
+                    path.components().all(|part| matches!(part, Component::Normal(_)))
+                );
+            }
+        }
+    }
 }
