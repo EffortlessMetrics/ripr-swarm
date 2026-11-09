@@ -39,7 +39,9 @@ pub(crate) fn agent_card_plain_lines(
     // A line is only left out when the summary printed that exact text: the
     // card prefers a matched finding's expression and a route-specific
     // assertion, which the packet-derived summary may not carry.
-    let summary_has = |needle: &str| start_summary.is_some_and(|text| text.contains(needle));
+    let summary_has = |needle: &str| {
+        start_summary.is_some_and(|text| text.lines().any(|line| line.trim() == needle))
+    };
     if !(skip_repeats && summary_has(&format!("changed behavior: {}", card.changed_behavior))) {
         lines.push(format!("  Changed behavior: {}", card.changed_behavior));
     }

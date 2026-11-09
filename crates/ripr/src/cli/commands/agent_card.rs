@@ -1143,6 +1143,16 @@ mod tests {
         {
             return Err(format!("card-only facts dropped:\n{differing}"));
         }
+        // A longer summary line that merely starts with the card's text is a
+        // different fact: the card keeps its own line.
+        let prefix_only = render(Some(
+            "  changed behavior: expression changed\n  assertion shape: assert_eq!(f(1), 2) && more\n",
+        ));
+        if !prefix_only.contains("Changed behavior: expr")
+            || !prefix_only.contains("Suggested assertion: assert_eq!(f(1), 2)")
+        {
+            return Err(format!("prefix match dropped card facts:\n{prefix_only}"));
+        }
         let full = render(None);
         if !full.contains("Changed behavior") || !full.contains("Suggested assertion") {
             return Err(format!("full brief lost lines:\n{full}"));
