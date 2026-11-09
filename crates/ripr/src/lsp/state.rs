@@ -2393,8 +2393,8 @@ pub(super) struct DocumentStore {
     /// because [`DocumentStoreLimits::max_overflow_placeholders`] was
     /// reached. While set, every URI without a stored state reads as
     /// withdrawn under `DocumentStoreLimitReached`, so an untracked buffer is
-    /// never served diagnostics. Sticky until the store is empty, because
-    /// the untracked URIs are deliberately not remembered (#11666).
+    /// never served diagnostics. Cleared only by shutdown, because the
+    /// untracked URIs are deliberately not remembered (#11666).
     untracked_overflow: bool,
 }
 
@@ -2958,9 +2958,9 @@ impl DocumentStore {
         Some(std::borrow::Cow::Owned(state))
     }
 
-    /// Workspace-level reset (root transition or shutdown): the only point
-    /// that ends untracked-overflow saturation. Closing documents does not,
-    /// because the untracked buffers may still be open in the client.
+    /// Shutdown only: the one point that ends untracked-overflow saturation.
+    /// Neither closing documents nor a root transition does, because the
+    /// untracked buffers may still be open in the client.
     pub(super) fn clear_untracked_overflow(&mut self) {
         self.untracked_overflow = false;
     }
