@@ -1341,6 +1341,19 @@ fn statement_is_unit_side_effect(stmt: &str) -> bool {
     {
         return false;
     }
+    // Early-exit macros expand to a return or a diverging call, so they are not
+    // discarded unit side effects.
+    let head = lower.split('(').next().unwrap_or("").trim();
+    if let Some(name) = head.strip_suffix('!') {
+        let name = name.trim();
+        let name = name.rsplit("::").next().unwrap_or(name).trim();
+        if matches!(
+            name,
+            "bail" | "ensure" | "return_err" | "panic" | "unreachable" | "todo" | "unimplemented"
+        ) {
+            return false;
+        }
+    }
     for method in [
         ".push(",
         ".push_str(",
@@ -2567,6 +2580,26 @@ mod tests {
         ] {
             assert!(!arm_is_side_effect_only(mutator), "{mutator}");
         }
+    }
+
+    #[test]
+    fn early_exit_macros_keep_the_return_sink() {
+        for stmt in [
+            "bail!(\"invalid\");",
+            "anyhow::bail!(\"invalid\");",
+            "ensure!(ok, \"bad\");",
+            "return_err!(e);",
+            "panic!(\"x\");",
+            "unreachable!();",
+            "todo!();",
+            "unimplemented!();",
+        ] {
+            assert!(!arm_is_side_effect_only(stmt), "{stmt}");
+        }
+        assert!(arm_is_side_effect_only("log_it(1);"));
+        let body = "pub fn run(bad: bool) -> Result<i32, E> {\n    if bad {\n        bail!(\"invalid\");\n    }\n    Ok(42)\n}";
+        let owner = tail_owner(body);
+        assert!(!predicate_branch_side_effect_only(Some(&owner), 2));
     }
 
     #[test]
