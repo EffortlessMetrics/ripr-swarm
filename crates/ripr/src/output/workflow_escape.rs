@@ -48,6 +48,34 @@ pub(crate) fn unplaced_location_prefix(path: &str, line: &str) -> String {
     )
 }
 
+/// True when stable path text carries a `%XX` marker for a non-UTF-8 byte
+/// (any uppercase `%XX` other than the literal-percent `%25`). A property
+/// cannot carry it: GitHub's runner decodes only `%25 %0D %0A %3A %2C`, so
+/// `file=a_%FF.rs` would name a different file than the one on disk (#13961).
+pub(crate) fn stable_path_has_non_utf8_marker(stable: &str) -> bool {
+    let bytes = stable.as_bytes();
+    bytes.windows(3).any(|w| {
+        w[0] == b'%'
+            && (w[1].is_ascii_digit() || (b'A'..=b'F').contains(&w[1]))
+            && (w[2].is_ascii_digit() || (b'A'..=b'F').contains(&w[2]))
+            && &w[1..] != b"25"
+    })
+}
+
+/// Message prefix for an annotation whose path holds non-UTF-8 bytes. The
+/// path keeps its `%XX` notation, which keeps distinct names distinct.
+pub(crate) fn unplaced_non_utf8_location_prefix(path: &str, line: &str) -> String {
+    let location = if line.is_empty() || line == "0" {
+        path.to_string()
+    } else {
+        format!("{path}:{line}")
+    };
+    format!(
+        "Location (file name is not valid UTF-8, so not placed): {}. ",
+        terminal_safe(location)
+    )
+}
+
 /// Escape workflow-command *data* (the message after `::`).
 ///
 /// Control and bidi characters other than the ones GitHub decodes print as
@@ -112,7 +140,7 @@ pub(crate) fn escape_property_pre_encoded(value: &str) -> String {
 mod tests {
     use super::{
         escape_data, escape_property, escape_property_pre_encoded, path_is_unplaceable,
-        unplaced_location_prefix,
+        stable_path_has_non_utf8_marker, unplaced_location_prefix,
     };
 
     #[test]
@@ -123,6 +151,10 @@ mod tests {
         // CR and LF encode as %0D/%0A, which GitHub decodes faithfully.
         assert!(!path_is_unplaceable("a\r\nb"));
         assert!(!path_is_unplaceable("src/a,b:c%dé.rs"));
+        assert!(stable_path_has_non_utf8_marker("a_%FF.rs"));
+        assert!(stable_path_has_non_utf8_marker("a%25_%C3.rs"));
+        assert!(!stable_path_has_non_utf8_marker("a%25FF.rs"));
+        assert!(!stable_path_has_non_utf8_marker("src/a%25.rs"));
     }
 
     #[test]

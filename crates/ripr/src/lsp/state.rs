@@ -1795,7 +1795,7 @@ impl QuarantineLedger {
         uri: &Uri,
     ) -> Option<(PathBuf, DocumentStalenessReason)> {
         let documents = self.documents.lock().ok()?;
-        let state = documents.state_for_uri(uri)?;
+        let state = documents.state_or_untracked(uri)?;
         let quarantine = state.quarantine.as_ref()?;
         Some((state.path.clone(), quarantine.reason))
     }
@@ -1804,7 +1804,7 @@ impl QuarantineLedger {
         self.documents
             .lock()
             .ok()?
-            .state_for_uri(uri)
+            .state_or_untracked(uri)
             .map(|state| state.path.clone())
     }
 
@@ -1844,6 +1844,10 @@ pub(super) enum QuarantineTransition {
         /// caller restores only what it disclosed.
         was_disclosed: bool,
     },
+    /// Still quarantined, under a different reason than before (for example a
+    /// divergent buffer that then loses authority to the store limit). The
+    /// episode and its disclosure continue; only the marker text changes.
+    ReasonChanged,
     Unchanged,
 }
 
@@ -2118,11 +2122,16 @@ pub(super) struct DocumentStoreLimits {
     pub(super) max_open_documents: usize,
     /// Most retained buffer bytes across all open documents.
     pub(super) max_retained_document_bytes: usize,
+    /// Most overflow placeholders (refused URIs held as metadata-only
+    /// unknown-authority entries). Past it a refused URI is not tracked at
+    /// all and the store withdraws instead (#11666).
+    pub(super) max_overflow_placeholders: usize,
 }
 
 pub(super) const DOCUMENT_STORE_LIMITS: DocumentStoreLimits = DocumentStoreLimits {
     max_open_documents: 4_096,
     max_retained_document_bytes: 512 * 1024 * 1024,
+    max_overflow_placeholders: 4_096,
 };
 
 fn apply_document_content_change(
@@ -2214,6 +2223,10 @@ fn apply_document_content_changes_within(
 
 fn invalidate_incremental_document_state(state: &mut DocumentState) -> QuarantineTransition {
     let was_quarantined = state.quarantine.is_some();
+    let prior_reason = state
+        .quarantine
+        .as_ref()
+        .map(|quarantine| quarantine.reason);
     let was_disclosed = state
         .quarantine
         .as_ref()
@@ -2226,10 +2239,12 @@ fn invalidate_incremental_document_state(state: &mut DocumentState) -> Quarantin
         reason: state.authority_loss_reason(),
         withdrawal_disclosed: was_disclosed,
     });
-    if was_quarantined {
-        QuarantineTransition::Unchanged
-    } else {
+    if !was_quarantined {
         QuarantineTransition::Entered
+    } else if prior_reason != Some(state.authority_loss_reason()) {
+        QuarantineTransition::ReasonChanged
+    } else {
+        QuarantineTransition::Unchanged
     }
 }
 
@@ -2374,6 +2389,13 @@ pub(super) struct DocumentStore {
     /// the root differs.
     rust_index_keys: BTreeMap<Uri, (PathBuf, Option<PathBuf>)>,
     limits: DocumentStoreLimits,
+    /// Set once a refused URI could not even be held as a placeholder
+    /// because [`DocumentStoreLimits::max_overflow_placeholders`] was
+    /// reached. While set, every URI without a stored state reads as
+    /// withdrawn under `DocumentStoreLimitReached`, so an untracked buffer is
+    /// never served diagnostics. Cleared only by shutdown, because the
+    /// untracked URIs are deliberately not remembered (#11666).
+    untracked_overflow: bool,
 }
 
 impl Default for DocumentStore {
@@ -2382,6 +2404,7 @@ impl Default for DocumentStore {
             documents: BudgetedDocuments::default(),
             rust_index_keys: BTreeMap::new(),
             limits: DOCUMENT_STORE_LIMITS,
+            untracked_overflow: false,
         }
     }
 }
@@ -2438,6 +2461,23 @@ impl DocumentStore {
         uri: Uri,
         version: Option<i32>,
     ) -> QuarantineTransition {
+        let existing_placeholder = self
+            .documents
+            .get(&uri)
+            .is_some_and(Self::is_store_overflow_placeholder);
+        let placeholders = self
+            .documents
+            .len()
+            .saturating_sub(self.documents.usage.accepted_documents);
+        if !existing_placeholder && placeholders >= self.limits.max_overflow_placeholders {
+            // Metadata-only growth is bounded too: do not track this URI.
+            // Fail closed through the store-wide latch instead of serving
+            // diagnostics for a buffer the store does not hold.
+            self.documents.remove(&uri);
+            self.rust_index_keys.remove(&uri);
+            self.untracked_overflow = true;
+            return QuarantineTransition::Entered;
+        }
         let mut state = DocumentState::new(uri.clone(), version, String::new());
         state.buffer_authority_unknown = true;
         state.store_limit_refused = true;
@@ -2486,6 +2526,7 @@ impl DocumentStore {
             documents,
             rust_index_keys,
             limits: _,
+            untracked_overflow: _,
         } = self;
         // One projector per pass, built on the first cache miss: the root and
         // each directory are resolved once for all misses, not once per
@@ -2764,6 +2805,18 @@ impl DocumentStore {
         let Some(mut state) = self.documents.get_mut(uri) else {
             return QuarantineTransition::Unchanged;
         };
+        if !state.buffer_authority_unknown
+            && text
+                .as_ref()
+                .is_some_and(|incoming| other_bytes.saturating_add(incoming.len()) > max_bytes)
+        {
+            // A healthy document's client save text is retained text too:
+            // refuse it past the store-wide cap exactly as a full-replacement
+            // didChange is refused, lose authority under the store-limit
+            // reason and adopt neither the text nor its digest (#11666).
+            state.store_limit_refused = true;
+            return invalidate_incremental_document_state(&mut state);
+        }
         if state.buffer_authority_unknown {
             if text.is_none() {
                 return state.refresh_quarantine();
@@ -2861,7 +2914,7 @@ impl DocumentStore {
                 QuarantineTransition::Exited { was_disclosed } => {
                     edges.exited.push((uri.clone(), was_disclosed));
                 }
-                QuarantineTransition::Unchanged => {}
+                QuarantineTransition::ReasonChanged | QuarantineTransition::Unchanged => {}
             }
         });
         edges
@@ -2870,6 +2923,46 @@ impl DocumentStore {
     pub(super) fn close(&mut self, params: DidCloseTextDocumentParams) {
         self.rust_index_keys.remove(&params.text_document.uri);
         self.documents.remove(&params.text_document.uri);
+    }
+
+    /// The single accessor for a document's state: the stored state, or, when
+    /// an earlier refused URI could not be tracked, a synthetic unknown-
+    /// authority state under `DocumentStoreLimitReached` for any URI without
+    /// one. Every reader that treats absence as "not quarantined" must go
+    /// through this (#11666).
+    pub(super) fn state_or_untracked(
+        &self,
+        uri: &Uri,
+    ) -> Option<std::borrow::Cow<'_, DocumentState>> {
+        if let Some(state) = self.state_for_uri(uri) {
+            return Some(std::borrow::Cow::Borrowed(state));
+        }
+        if !self.untracked_overflow {
+            return None;
+        }
+        // Built directly: `DocumentState::new` reads and hashes the file,
+        // which must not happen under the documents lock on a read path.
+        let mut state = DocumentState {
+            uri: uri.clone(),
+            path: document_path(uri),
+            version: None,
+            text: String::new(),
+            saved_digest: None,
+            analyzed_saved_digest: None,
+            analyzed_input_identity: None,
+            buffer_authority_unknown: true,
+            store_limit_refused: true,
+            quarantine: None,
+        };
+        state.refresh_quarantine();
+        Some(std::borrow::Cow::Owned(state))
+    }
+
+    /// Shutdown only: the one point that ends untracked-overflow saturation.
+    /// Neither closing documents nor a root transition does, because the
+    /// untracked buffers may still be open in the client.
+    pub(super) fn clear_untracked_overflow(&mut self) {
+        self.untracked_overflow = false;
     }
 
     /// Look up a document by exact URI, tolerating spelling differences the
@@ -3763,6 +3856,7 @@ mod tests {
         let mut store = DocumentStore::with_limits(DocumentStoreLimits {
             max_open_documents: 4,
             max_retained_document_bytes: 128,
+            max_overflow_placeholders: 64,
         });
         let absent = test_uri("untitled:absent")?;
         // Deterministic varied interleavings exercise caps, placeholders, reopen,
@@ -3816,6 +3910,7 @@ mod tests {
         let mut store = DocumentStore::with_limits(DocumentStoreLimits {
             max_open_documents: 1,
             max_retained_document_bytes: 16,
+            max_overflow_placeholders: 64,
         });
         store.open(open_params(uri.clone(), ""));
         store.open(open_params(other.clone(), "x"));
@@ -3838,6 +3933,7 @@ mod tests {
         DocumentStoreLimits {
             max_open_documents: 2,
             max_retained_document_bytes: 1_024,
+            max_overflow_placeholders: 64,
         }
     }
 
@@ -3845,6 +3941,7 @@ mod tests {
         DocumentStoreLimits {
             max_open_documents: 8,
             max_retained_document_bytes: 16,
+            max_overflow_placeholders: 64,
         }
     }
 
