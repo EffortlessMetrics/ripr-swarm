@@ -841,3 +841,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — typescript_strict_actionability (42)
+
+Reason:
+union-head re-bless after main merge: additive evidence_stages rows (RIPR-SPEC-0429)
+
+Command:
+`cargo xtask goldens bless typescript_strict_actionability --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
