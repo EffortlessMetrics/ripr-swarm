@@ -1,5 +1,13 @@
 schema_version = "1.0"
 
+[[artifact]]
+id = "RIPR-SPEC-0437"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0437-managed-server-archive-inspection.md"
+status = "accepted"
+owner = "product / swarm"
+standalone_reason = "Issues #13640 and #13904 define archive member inspection before extracting the managed server download, including unsafe names, links, member limits, and malformed ZIP directories."
+
 # Document artifact ledger for source-of-truth links.
 # The ledger registers the control-plane seed artifacts and product plan
 # artifacts that generated source-of-truth reports and PR bodies should be able
