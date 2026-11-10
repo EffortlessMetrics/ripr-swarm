@@ -233,7 +233,7 @@ jobs:
             gates="$(cat "$RUNNER_TEMP/main-health-sentinel/gates.md" 2>/dev/null || true)"
             # One comment per new piece of evidence, not one per fire.
             probe_fp="$GITHUB_SHA:$check_status:$smoke_status"
-            [ "$check_status" != 0 ] || [ "$smoke_status" != 0 ] || ! grep -Eq '^test result: [a-z]+\. [1-9]' "$RUNNER_TEMP/main-health-sentinel/smoke.log" 2>/dev/null || probe_fp=green
+            [ "$check_status" != 0 ] || [ "$smoke_status" != 0 ] || ! grep -Eq '^test result: [a-z]+\. [1-9]' "$RUNNER_TEMP/main-health-sentinel/smoke.log" 2>/dev/null || probe_fp="$GITHUB_SHA:green"
             fingerprint="fingerprint: probe=$probe_fp gates=$(cat "$RUNNER_TEMP/main-health-sentinel/gates.fp" 2>/dev/null || true)"
             body="$marker
           The explicitly requested main-health probe at \`$GITHUB_SHA\` observed red evidence for the selected commit. Bounded probe statuses and scope-labelled main-push gate observations follow.

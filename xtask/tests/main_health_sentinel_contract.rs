@@ -433,6 +433,18 @@ esac
         probe: &str,
         tracker: &str,
     ) -> Result<Outcome, String> {
+        run_subjects(source, mode, sha, conclusion, probe, tracker, &[CURRENT])
+    }
+
+    fn run_subjects(
+        source: &str,
+        mode: &str,
+        sha: &str,
+        conclusion: &str,
+        probe: &str,
+        tracker: &str,
+        selected_subjects: &[&str],
+    ) -> Result<Outcome, String> {
         static NEXT: AtomicU64 = AtomicU64::new(0);
         let root = std::env::temp_dir();
         fs::create_dir_all(&root).map_err(|e| e.to_string())?;
@@ -475,60 +487,64 @@ esac
             .map_err(|e| e.to_string())?;
         let mut verdict = String::new();
         // Replay tracker twice to prove repeated evidence is deduplicated.
-        for name in [
-            "Read the latest completed main push gates",
-            "Summarize the main push gates",
-            "Judge probe evidence",
-            "Reconcile the main-red tracker",
-            "Reconcile the main-red tracker",
-        ] {
-            if mode == "missing-file" && name == "Read the latest completed main push gates" {
-                continue;
-            }
-            let script = block(source, name)?;
-            let output = Command::new("timeout")
-                .args(["10", "bash", "-c", &script])
-                .env(
-                    "PATH",
-                    format!(
-                        "{}:{}",
-                        dir.0.join("bin").display(),
-                        std::env::var("PATH").unwrap_or_default()
-                    ),
-                )
-                .env("RUNNER_TEMP", &dir.0)
-                .env("FAKE_DIR", &dir.0)
-                .env("FAKE_MODE", mode)
-                .env("FAKE_SHA", sha)
-                .env("FAKE_CONCLUSION", conclusion)
-                .env("FAKE_TRACKER", tracker)
-                .env("GITHUB_SHA", CURRENT)
-                .env("GITHUB_SERVER_URL", "https://github.com")
-                .env("REPOSITORY", "EffortlessMetrics/ripr-swarm")
-                .env("GITHUB_STEP_SUMMARY", dir.0.join("summary"))
-                .env("GITHUB_OUTPUT", dir.0.join("output"))
-                .env("VERDICT", &verdict)
-                .output()
-                .map_err(|e| e.to_string())?;
-            if name == "Judge probe evidence" {
-                verdict = fs::read_to_string(dir.0.join("output"))
-                    .map_err(|e| e.to_string())?
-                    .trim()
-                    .strip_prefix("verdict=")
-                    .ok_or("missing verdict output")?
-                    .to_string();
-                if output.status.code() != Some(if verdict == "green" { 0 } else { 1 }) {
+        for selected_sha in selected_subjects {
+            verdict.clear();
+            fs::write(dir.0.join("output"), "").map_err(|e| e.to_string())?;
+            for name in [
+                "Read the latest completed main push gates",
+                "Summarize the main push gates",
+                "Judge probe evidence",
+                "Reconcile the main-red tracker",
+                "Reconcile the main-red tracker",
+            ] {
+                if mode == "missing-file" && name == "Read the latest completed main push gates" {
+                    continue;
+                }
+                let script = block(source, name)?;
+                let output = Command::new("timeout")
+                    .args(["10", "bash", "-c", &script])
+                    .env(
+                        "PATH",
+                        format!(
+                            "{}:{}",
+                            dir.0.join("bin").display(),
+                            std::env::var("PATH").unwrap_or_default()
+                        ),
+                    )
+                    .env("RUNNER_TEMP", &dir.0)
+                    .env("FAKE_DIR", &dir.0)
+                    .env("FAKE_MODE", mode)
+                    .env("FAKE_SHA", sha)
+                    .env("FAKE_CONCLUSION", conclusion)
+                    .env("FAKE_TRACKER", tracker)
+                    .env("GITHUB_SHA", selected_sha)
+                    .env("GITHUB_SERVER_URL", "https://github.com")
+                    .env("REPOSITORY", "EffortlessMetrics/ripr-swarm")
+                    .env("GITHUB_STEP_SUMMARY", dir.0.join("summary"))
+                    .env("GITHUB_OUTPUT", dir.0.join("output"))
+                    .env("VERDICT", &verdict)
+                    .output()
+                    .map_err(|e| e.to_string())?;
+                if name == "Judge probe evidence" {
+                    verdict = fs::read_to_string(dir.0.join("output"))
+                        .map_err(|e| e.to_string())?
+                        .trim()
+                        .strip_prefix("verdict=")
+                        .ok_or("missing verdict output")?
+                        .to_string();
+                    if output.status.code() != Some(if verdict == "green" { 0 } else { 1 }) {
+                        return Err(format!(
+                            "judge status disagrees with {verdict}: {:?}",
+                            output.status
+                        ));
+                    }
+                } else if !output.status.success() {
                     return Err(format!(
-                        "judge status disagrees with {verdict}: {:?}",
-                        output.status
+                        "{name}: {:?}: {}",
+                        output.status,
+                        String::from_utf8_lossy(&output.stderr)
                     ));
                 }
-            } else if !output.status.success() {
-                return Err(format!(
-                    "{name}: {:?}: {}",
-                    output.status,
-                    String::from_utf8_lossy(&output.stderr)
-                ));
             }
         }
         let read = |path: PathBuf| fs::read_to_string(path).unwrap_or_default();
@@ -608,6 +624,53 @@ esac
             assert!(out.writes.contains(CURRENT), "{probe}");
             assert_eq!(out.writes.matches("body: ").count(), 1, "{probe}");
         }
+        Ok(())
+    }
+
+    #[test]
+    fn missing_log_fingerprints_bind_each_selected_commit() -> Result<(), String> {
+        let source = repo_file(super::WORKFLOW)?;
+        let subjects = [CURRENT, OLD];
+        let out = run_subjects(
+            &source,
+            "normal",
+            OLD,
+            "success",
+            "missing-log",
+            "present",
+            &subjects,
+        )?;
+        assert_eq!(out.verdict, "red");
+        assert_eq!(
+            out.writes.matches("body: ").count(),
+            2,
+            "each selected commit needs durable evidence"
+        );
+        for subject in subjects {
+            assert!(
+                out.writes
+                    .contains(&format!("fingerprint: probe={subject}:green"))
+            );
+        }
+        let mutant = source.replace("probe_fp=\"$GITHUB_SHA:green\"", "probe_fp=green");
+        assert_ne!(
+            mutant, source,
+            "mutation must remove full identity from the real branch"
+        );
+        let wrong = run_subjects(
+            &mutant,
+            "normal",
+            OLD,
+            "success",
+            "missing-log",
+            "present",
+            &subjects,
+        )?;
+        assert_eq!(
+            wrong.writes.matches("body: ").count(),
+            1,
+            "the old fingerprint incorrectly suppresses the second commit"
+        );
         Ok(())
     }
 
