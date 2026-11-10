@@ -3319,9 +3319,8 @@ fn qualified_call_names_owner(
 /// test's file that defines the rival, a bare call bound to it by a simple
 /// `use`, a `use m::*` glob, and the test's own `use` items, which shadow the
 /// module's. Cases that still keep the production relation although Rust
-/// would resolve to the local rival: grouped or chained `use` items, a
-/// top-level rival fn called without a path, and a renamed bare import
-/// (shared call identity, #10240). A wrapper module that delegates to the
+/// would resolve to the local rival: grouped or chained `use` items and a
+/// renamed bare import (shared call identity, #10240). A wrapper module that delegates to the
 /// library is withheld too, because its call names the wrapper.
 pub(in crate::analysis) fn test_calls_only_through_local_rival_module(
     index: &RustIndex,
@@ -3771,13 +3770,16 @@ impl LocalModules {
             .iter()
             .filter(|(module, _)| *module == self.scope)
             .map(|(_, item)| item);
-        // A glob that brings a public rival into scope. A definition of the
-        // name in the test's own module shadows a glob, and two globs
-        // providing one name would not compile, so another glob cannot be
-        // the source of this call.
+        // No `use` binds the name here, so a body-ful definition of it in the
+        // test's own module is what a bare call reaches: an item shadows any
+        // glob import, and the owner in another file is not in scope without
+        // an import (#10855).
         if self.defining.contains(&self.scope) {
-            return false;
+            return true;
         }
+        // A glob that brings a public rival into scope. Two globs providing
+        // one name would not compile, so another glob cannot be the source
+        // of this call.
         self.body_uses.iter().chain(module_uses).any(|item| {
             item.glob
                 && Self::absolute(&self.scope, &item.path, integration_crate)
