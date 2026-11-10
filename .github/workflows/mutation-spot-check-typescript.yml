@@ -10,7 +10,9 @@ name: Mutation spot check (TypeScript)
 # request. Read-only: no secrets, nothing is published or pushed.
 #
 # STATUS: first hosted run 2026-11-08 installed and scored defu and ufo
-# (scule was dropped: its vitest crashes the Stryker runner). The receipt is
+# (scule was dropped: its vitest crashes the Stryker runner); eleven more
+# unjs packages were added for #13592. The raw Stryker reports are uploaded
+# with the receipt. The receipt is
 # advisory and its
 # `synthetic_diff_verdict` figures are never merged with the Rust span-join
 # figures.
@@ -53,7 +55,7 @@ jobs:
           stryker=$(jq -r .stryker.version "$corpus")
           reports="$GITHUB_WORKSPACE/target/ripr/reports"
           status="$reports/typescript-stryker-status.tsv"
-          mkdir -p "$RUNNER_TEMP/corpus" "$reports"
+          mkdir -p "$RUNNER_TEMP/corpus" "$reports/stryker"
           : > "$status"; : > "$RUNNER_TEMP/xtask-args"
           for name in $(jq -r '.packages[].name' "$corpus"); do
             pkg() { jq -r --arg n "$name" ".packages[]|select(.name==\$n).$1" "$corpus"; }
@@ -66,11 +68,11 @@ jobs:
               && [ "$(git rev-parse HEAD)" = "$sha" ] \
               && npm install --ignore-scripts --no-audit --no-fund --no-package-lock --legacy-peer-deps \
               && npm install --no-save --ignore-scripts --no-audit --no-fund --no-package-lock --legacy-peer-deps "@stryker-mutator/core@$stryker" "@stryker-mutator/vitest-runner@$stryker" \
-              && npx stryker run --testRunner vitest --plugins @stryker-mutator/vitest-runner --reporters json --mutate "$glob" --concurrency 2; } || rc=$?
+              && npx stryker run --testRunner vitest --plugins @stryker-mutator/vitest-runner --reporters json --mutate "$glob" --concurrency 4; } || rc=$?
             cd "$GITHUB_WORKSPACE"
             printf '%s\t%s\n' "$name" "$rc" >> "$status"
             if [ -f "$dir/reports/mutation/mutation.json" ]; then
-              printf -- '--repo %s=%s --stryker-report %s=%s/reports/mutation/mutation.json ' "$name" "$dir" "$name" "$dir" >> "$RUNNER_TEMP/xtask-args"
+              cp "$dir/reports/mutation/mutation.json" "$reports/stryker/$name.json" && printf -- '--repo %s=%s --stryker-report %s=%s/reports/mutation/mutation.json ' "$name" "$dir" "$name" "$dir" >> "$RUNNER_TEMP/xtask-args"
             fi
           done
           [ -s "$RUNNER_TEMP/xtask-args" ] || { echo "no Stryker report was produced"; exit 1; }
@@ -91,6 +93,7 @@ jobs:
             target/ripr/reports/mutation-spot-check.json
             target/ripr/reports/mutation-spot-check.md
             target/ripr/reports/typescript-stryker-status.tsv
+            target/ripr/reports/stryker/*.json
           if-no-files-found: error
 
       - name: Fail when the receipt is missing or a package failed

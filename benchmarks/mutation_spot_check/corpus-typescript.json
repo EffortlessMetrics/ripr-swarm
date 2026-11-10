@@ -1,7 +1,7 @@
 {
   "schema_version": "ripr-mutation-spot-check-typescript-corpus-v1",
   "status": "run_once",
-  "note": "Pinned for .github/workflows/mutation-spot-check-typescript.yml. First hosted run 2026-11-08 (Stryker 9.6.1): defu and ufo installed, ran under Stryker and were scored; scule was dropped because its vitest crashes the Stryker 9.6.1 vitest runner (this.ctx.provide is not a function). Revisions are the HEAD commits read with a read-only ls-remote on 2026-11-08.",
+  "note": "Pinned for .github/workflows/mutation-spot-check-typescript.yml. First hosted run 2026-11-08 (Stryker 9.6.1): defu and ufo installed, ran under Stryker and were scored; scule was dropped because its vitest crashes the Stryker 9.6.1 vitest runner (this.ctx.provide is not a function). Revisions are the HEAD commits read with a read-only ls-remote on 2026-11-08. Widened 2026-11-08 (#13592 follow-up) with six more unjs vitest packages at HEAD commits read the same day (destr, hookable, knitwork, cookie-es, ohash, pathe), so missed test paths are measured beyond ufo. citty, mlly, radix3, h3 and unstorage were tried in hosted run 42517544157 and dropped: Stryker 9.6.1 failed on them (tsconfig parse, failing initial test run, missing vitest plugin, SIGABRT), and the job fails on any package failure.",
   "stryker": {
     "version": "9.6.1",
     "packages": [
@@ -21,6 +21,48 @@
       "name": "ufo",
       "url": "https://github.com/unjs/ufo",
       "sha": "f06c800d0c59f2a4a1b9ba65eb6cb61a84419be6",
+      "test_runner": "vitest",
+      "mutate": "src/**/*.ts"
+    },
+    {
+      "name": "destr",
+      "url": "https://github.com/unjs/destr",
+      "sha": "541b6f9aeada9fc30de9c5a7e086dbfc1c6fcdc7",
+      "test_runner": "vitest",
+      "mutate": "src/**/*.ts"
+    },
+    {
+      "name": "hookable",
+      "url": "https://github.com/unjs/hookable",
+      "sha": "6815e4fed0411f3e2f91a31bdb107d8aeac0a266",
+      "test_runner": "vitest",
+      "mutate": "src/**/*.ts"
+    },
+    {
+      "name": "knitwork",
+      "url": "https://github.com/unjs/knitwork",
+      "sha": "a95f4d421ffa602723cb5ac2606bd854e1dfc49a",
+      "test_runner": "vitest",
+      "mutate": "src/**/*.ts"
+    },
+    {
+      "name": "cookie-es",
+      "url": "https://github.com/unjs/cookie-es",
+      "sha": "f89ede8b60204adfa84a97fb833e0cbae75d0478",
+      "test_runner": "vitest",
+      "mutate": "src/**/*.ts"
+    },
+    {
+      "name": "ohash",
+      "url": "https://github.com/unjs/ohash",
+      "sha": "764b0a3203308956ef07597612af5ad59f36c791",
+      "test_runner": "vitest",
+      "mutate": "src/**/*.ts"
+    },
+    {
+      "name": "pathe",
+      "url": "https://github.com/unjs/pathe",
+      "sha": "bc7477a01f0bd60ada017add8142c9f9d69ccdc5",
       "test_runner": "vitest",
       "mutate": "src/**/*.ts"
     }

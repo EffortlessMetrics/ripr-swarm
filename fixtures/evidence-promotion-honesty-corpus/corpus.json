@@ -8803,7 +8803,7 @@
         },
         {
           "type": "expected_class",
-          "class": "no_static_path"
+          "class": "static_unknown"
         },
         {
           "type": "maximum_class",
