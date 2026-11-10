@@ -1502,6 +1502,39 @@ mod tests {
         assert!(!parse_old_path_marker("regular line"));
     }
 
+    /// #13949: on Windows `\` separates components and `C:` is a drive prefix,
+    /// so backslash traversal and drive-letter spellings must confine like
+    /// their `/` forms. Windows-only because `Path` on other hosts reads those
+    /// spellings as one literal file name.
+    #[cfg(windows)]
+    #[test]
+    fn windows_separator_and_drive_spellings_are_confined() {
+        // The drive letter is assembled so the repository's local-path
+        // scanner does not read the fixture as a machine path.
+        let drive = "C";
+        for marker in [
+            "+++ b/..\\..\\evil.rs".to_string(),
+            "+++ b/src\\..\\..\\evil.rs".to_string(),
+            format!("+++ {drive}:/evil.rs"),
+            format!("+++ {drive}:evil.rs"),
+            format!("+++ b/{drive}:/evil.rs"),
+            "+++ \\\\server\\share\\evil.rs".to_string(),
+            "+++ \"b/..\\\\..\\\\evil.rs\"".to_string(),
+        ] {
+            let marker = marker.as_str();
+            assert_eq!(parse_new_path_marker(marker), None, "{marker}");
+            assert!(is_new_path_marker(marker), "{marker} must stay a boundary");
+        }
+        // `Path` equality compares components, so compare the stored spelling
+        // as text: the confined path must keep git's `/`, not the native `\`.
+        assert_eq!(
+            parse_new_path_marker("+++ b/src\\a.rs")
+                .as_deref()
+                .and_then(Path::to_str),
+            Some("src/a.rs")
+        );
+    }
+
     /// Quote `bytes` the way git does under `core.quotePath=true`: octal for
     /// bytes at or above 0x80 and for control bytes, named escapes for the
     /// C ones, and a backslash before `\` and `"`.
@@ -1603,6 +1636,87 @@ mod tests {
                 proptest::prop_assert!(
                     path.components().all(|part| matches!(part, Component::Normal(_)))
                 );
+            }
+        }
+
+        /// #13949: the same oracle holds for the new-path marker when git
+        /// C-quotes it, so the `+++` reader cannot drift from the `---` one.
+        #[test]
+        fn proptest_c_quoted_new_path_confines_like_the_oracle(
+            segments in proptest::collection::vec(
+                proptest::prop_oneof![
+                    2 => proptest::strategy::Just(b"..".to_vec()),
+                    2 => proptest::strategy::Just(b".".to_vec()),
+                    1 => proptest::strategy::Just(Vec::new()),
+                    6 => proptest::collection::vec(
+                        proptest::prop_oneof![
+                            4 => 0x20u8..=0x7e,
+                            1 => 1u8..=0x1f,
+                            2 => 0x80u8..=0xff,
+                            1 => proptest::strategy::Just(b'.'),
+                            1 => proptest::strategy::Just(b'"'),
+                            1 => proptest::strategy::Just(b'\\'),
+                        ],
+                        0..6,
+                    ),
+                ],
+                0..6,
+            ),
+        ) {
+            use std::os::unix::ffi::OsStrExt;
+            let bytes: Vec<u8> = segments.join(&b'/');
+            let marker = format!("+++ {}", git_c_quote(&[b"b/".as_slice(), &bytes].concat()));
+            let confined = parse_new_path_marker(&marker);
+            let expected = if bytes.first() == Some(&b'/') {
+                None
+            } else {
+                expected_confined(&bytes)
+            };
+            proptest::prop_assert_eq!(
+                confined.as_ref().map(|path| path.as_os_str().as_bytes().to_vec()),
+                expected
+            );
+        }
+
+        /// #13949: a non-quoted `+++` marker (git leaves ordinary names
+        /// unquoted) confines like the oracle, strips exactly one `b/`, and is
+        /// always recognized as a file-section boundary even when confinement
+        /// rejects it (#2099): a rejected marker must not leave its hunk as
+        /// payload of the previous file.
+        #[test]
+        fn proptest_unquoted_new_path_marker_confines_and_stays_a_boundary(
+            segments in proptest::collection::vec(
+                proptest::prop_oneof![
+                    2 => proptest::strategy::Just("..".to_string()),
+                    2 => proptest::strategy::Just(".".to_string()),
+                    1 => proptest::strategy::Just(String::new()),
+                    1 => proptest::strategy::Just("b".to_string()),
+                    6 => "[!#-\\[\\]-~]{1,6}",
+                ],
+                0..6,
+            ),
+            with_prefix in proptest::bool::ANY,
+        ) {
+            use std::os::unix::ffi::OsStrExt;
+            let path = segments.join("/");
+            let token = if with_prefix { format!("b/{path}") } else { path };
+            let marker = format!("+++ {token}");
+            // The oracle strips exactly one `b/` and then applies the shared
+            // segment rules; a leading `/` is a root and rejects.
+            let body = token.strip_prefix("b/").unwrap_or(&token);
+            let expected = if body.starts_with('/') {
+                None
+            } else {
+                expected_confined(body.as_bytes())
+            };
+            proptest::prop_assert_eq!(
+                parse_new_path_marker(&marker)
+                    .as_ref()
+                    .map(|path| path.as_os_str().as_bytes().to_vec()),
+                expected
+            );
+            if !token.is_empty() {
+                proptest::prop_assert!(is_new_path_marker(&marker));
             }
         }
     }
