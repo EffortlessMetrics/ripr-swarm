@@ -24,9 +24,14 @@ pub(super) use dunder_entries::{
     PythonClassFacts, apply_class_facts, operator_entry_in_text, with_entry,
 };
 pub(super) use dunder_protocol::body_exercises_dunder_protocol;
-pub(super) use project_names::{apply_project_module_names, owner_import_modules_for};
+pub(super) use project_names::{
+    ProjectNameIndex, apply_project_module_names, apply_project_module_names_with,
+    owner_import_modules_for,
+};
 use test_local_shadow::test_local_module_shadows;
-pub(super) use test_local_shadow::{TestLocalShadow, apply_test_local_shadows};
+pub(super) use test_local_shadow::{
+    TestLocalShadow, TestLocalShadowIndex, apply_test_local_shadows,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum PythonRelationKind {
@@ -848,7 +853,6 @@ fn bare_name_bound_to_other_module(test: &PythonTest, owner: &PythonOwner) -> bo
             // name (#13675) is the owner's only for a test under its project.
             ambiguous.module == module
                 && (owner_paths.contains(&ambiguous.module)
-                    || owner.reexport_modules.contains(&ambiguous.module)
                     || module_name_identifies_owner_for(owner, module, &test.file))
         })
     };
@@ -2527,7 +2531,11 @@ fn path_is_under(file: &Path, root: &Path) -> bool {
 /// identifies the owner only for a test under the owner's project root that
 /// is not inside a rival's (deeper) project root; anywhere else the import is
 /// as likely to be the rival's module, so it fails closed.
-fn module_name_identifies_owner_for(owner: &PythonOwner, module: &str, test_file: &Path) -> bool {
+pub(super) fn module_name_identifies_owner_for(
+    owner: &PythonOwner,
+    module: &str,
+    test_file: &Path,
+) -> bool {
     // A test-local module of the same name is ahead on `sys.path` (#13706).
     if test_local_module_shadows(owner, module, test_file) {
         return false;
