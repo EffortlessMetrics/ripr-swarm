@@ -322,12 +322,7 @@ fn reuse_cached_index(
                     })
             }))
     {
-        return build_cached_index_with_test_harnesses(
-            root,
-            files,
-            registrations,
-            MissAttribution::Skipped,
-        );
+        return fresh_build_keeping_run_stats(cached, root, files, registrations, same_run);
     }
     let kept: std::collections::BTreeSet<&Path> =
         files.iter().map(|(path, _)| path.as_path()).collect();
@@ -385,13 +380,7 @@ fn reuse_cached_index(
     if retracts || rebases_includes {
         #[cfg(test)]
         index_build_probe::record_include_rebase();
-        drop(cached);
-        return build_cached_index_with_test_harnesses(
-            root,
-            files,
-            registrations,
-            MissAttribution::Skipped,
-        );
+        return fresh_build_keeping_run_stats(cached, root, files, registrations, same_run);
     }
     for path in &dropped {
         cached.index.remove_file(path);
@@ -416,13 +405,7 @@ fn reuse_cached_index(
             })
         });
         if unknowable {
-            drop(cached);
-            return build_cached_index_with_test_harnesses(
-                root,
-                files,
-                registrations,
-                MissAttribution::Skipped,
-            );
+            return fresh_build_keeping_run_stats(cached, root, files, registrations, same_run);
         }
     }
     let mut hash = crate::analysis::seam_cache::FilesContentHashBuilder::new();
@@ -431,6 +414,31 @@ fn reuse_cached_index(
     }
     cached.files_content_hash = hash.finish();
     post_process_cached_index(cached, root, registrations)
+}
+
+/// Fresh build over exactly `files` after a reuse that cannot be extended in
+/// place. The discarded same-run core keeps its analysis facts out of the
+/// result, but the file-fact cache work it already did (lookups, stores and
+/// store failures) is real and stays in the receipt (#4975).
+fn fresh_build_keeping_run_stats(
+    cached: build::CachedRustIndex,
+    root: &Path,
+    files: &[(PathBuf, Vec<u8>)],
+    registrations: &[TestHarnessRegistration],
+    same_run: bool,
+) -> Result<build::CachedRustIndex, String> {
+    let prior = same_run.then(|| cached.file_fact_cache.clone());
+    drop(cached);
+    let mut fresh = build_cached_index_with_test_harnesses(
+        root,
+        files,
+        registrations,
+        MissAttribution::Skipped,
+    )?;
+    if let Some(prior) = prior {
+        fresh.file_fact_cache.merge_from(&prior);
+    }
+    Ok(fresh)
 }
 
 fn build_cached_index_with_test_harnesses(

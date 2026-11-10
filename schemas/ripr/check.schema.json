@@ -92,7 +92,7 @@
       }
     },
     "file_fact_cache": {
-      "description": "Verbose-only (`-v`/`--verbose`) bounded Rust file-fact cache receipt (#4975). Names hits (reused), misses (recomputed), corrupt entries ignored, stores, and capped store-failure rows. Absent from default JSON.",
+      "description": "Verbose-only (`-v`/`--verbose`) bounded Rust file-fact cache receipt (#4975). Names hits (reused), misses (missing entries computed), corrupt entries ignored (also recomputed), stores, and capped store-failure rows. Absent from default JSON.",
       "oneOf": [
         { "type": "null" },
         {

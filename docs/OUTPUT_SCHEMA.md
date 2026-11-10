@@ -1467,7 +1467,9 @@ that built the view, as one compact member after the other optional members:
 Verbose JSON carries the same bounded receipt the latency trace uses
 (`schema_version` `0.1`: `hits`, `misses`, `invalidated`, `corrupt_ignored`,
 `stores`, `store_errors`, capped `store_failures`, `store_failures_dropped`).
-`hits`/`misses` are the producer's reused/recomputed file-fact counts; they do
+`hits` counts reused file facts; `misses` counts entries computed because none
+was stored, and a corrupt entry that is rebuilt is counted in `corrupt_ignored`,
+so the recomputed total is `misses + corrupt_ignored`. They do
 not claim semantic seam reuse or wall-clock speed. When the Rust index path did
 not observe cache work, `file_fact_cache` is `null` and
 `file_fact_cache_limitation` is `not_observed`; when the producer reported
