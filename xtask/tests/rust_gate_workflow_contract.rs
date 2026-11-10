@@ -743,13 +743,30 @@ fn shard_contract_violations(shards: &str, routed: &str) -> Vec<String> {
     for required in [
         "      test-shards: 4\n",
         "  rust-github-tests:\n    name: Ripr Rust Small tests on GitHub Hosted\n    needs: [rust-github]\n    if: ${{ !cancelled() && needs.rust-github.result == 'success' }}\n    uses: ./.github/workflows/rust-test-shards.yml\n",
-        "rust-github, rust-github-tests, docs-gate,",
         "GITHUB_TESTS_RESULT: ${{ needs.rust-github-tests.result }}",
         "elif [ \"$GITHUB_TESTS_RESULT\" != \"success\" ]; then status=fail",
     ] {
         if !routed.contains(required) {
             findings.push(format!("routed: lost `{required}`"));
         }
+    }
+    let result = routed
+        .split_once("\n  result:\n")
+        .map(|(_, tail)| tail)
+        .unwrap_or("");
+    let header = result.split("    steps:\n").next().unwrap_or("");
+    let needs = header
+        .lines()
+        .find_map(|line| {
+            line.strip_prefix("    needs: [")
+                .and_then(|v| v.strip_suffix(']'))
+        })
+        .unwrap_or("");
+    if !needs
+        .split(',')
+        .any(|name| name.trim() == "rust-github-tests")
+    {
+        findings.push("routed: result must depend on hosted shards".to_owned());
     }
     if count(
         routed,
@@ -895,10 +912,7 @@ fn routed_result_cannot_pass_without_the_hosted_shards() {
             "elif [ \"$GITHUB_TESTS_RESULT\" != \"success\" ]; then status=fail",
             "elif false; then status=fail",
         ),
-        (
-            "rust-github, rust-github-tests, docs-gate,",
-            "rust-github, docs-gate,",
-        ),
+        ("rust-github, rust-github-tests,", "rust-github,"),
         (
             "needs.rust-github.result == 'success' }}\n    uses: ./.github/workflows/rust-test-shards.yml",
             "needs.rust-github.result != 'cancelled' }}\n    uses: ./.github/workflows/rust-test-shards.yml",

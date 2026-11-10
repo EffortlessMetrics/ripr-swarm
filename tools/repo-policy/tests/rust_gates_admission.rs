@@ -126,7 +126,7 @@ fn legacy_profile_publishes_no_outputs_and_keeps_main_expressions() -> TestResul
         .find("- name: Verify admitted integration before proof")
         .ok_or("verification step exists")?;
     let step = &WORKFLOW[verify..];
-    let step = step.split_once("\n      # #3841").map_or(step, |(s, _)| s);
+    let step = step.split_once("\n      - ").map_or(step, |(s, _)| s);
     // The legacy branch must not write head/base outputs (merge_group would then
     // publish merge_group.head_sha as the summary subject head instead of github.sha).
     let (_, tail) = step

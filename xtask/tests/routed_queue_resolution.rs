@@ -58,6 +58,7 @@ fn resolve_shell(source: &str) -> Result<String, String> {
         .split_once("        run: |\n")
         .ok_or("missing Resolve queued PR shell")?;
     body.lines()
+        .take_while(|line| line.is_empty() || line.starts_with("          "))
         .map(|line| {
             if line.is_empty() {
                 Ok("")
@@ -241,6 +242,15 @@ struct Outcome {
 }
 
 fn run_resolve(world: &World, shell: &str, run: &Run) -> Result<Outcome, String> {
+    run_resolve_with_node(world, shell, run, Some(json!("PR_fixture42")))
+}
+
+fn run_resolve_with_node(
+    world: &World,
+    shell: &str,
+    run: &Run,
+    node: Option<serde_json::Value>,
+) -> Result<Outcome, String> {
     world.publish(&format!("refs/pull/{PR}/head"), &run.pull_ref)?;
     let clone = world.shallow_checkout_of(&run.queued)?;
     let scratch = &world.scratch.0;
@@ -256,7 +266,10 @@ fn run_resolve(world: &World, shell: &str, run: &Run) -> Result<Outcome, String>
         .iter()
         .map(|name| json!({"name": name}))
         .collect::<Vec<_>>();
-    let pr = json!({"head": {"sha": run.api_head}, "labels": labels});
+    let mut pr = json!({"head": {"sha": run.api_head}, "labels": labels});
+    if let Some(node) = node {
+        pr["node_id"] = node;
+    }
     let graphql = json!({"data": {"repository": {"pullRequest": {
         "headRefOid": run.api_head,
         "mergeQueueEntry": {"id": "entry-42"},
@@ -307,6 +320,7 @@ esac
         .env("REPOSITORY", REPOSITORY)
         .env("PR_NUMBER", "")
         .env("PR_HEAD_SHA", "")
+        .env("PR_NODE_ID", "")
         .env("PR_LABELS", "")
         .env("GROUP_HEAD_REF", head_ref)
         .env("GROUP_BASE_SHA", &run.group_base)
@@ -376,6 +390,10 @@ fn queued_squash_of_the_live_head_is_accepted_whether_the_ref_names_head_or_base
             outcome.log
         );
         assert_eq!(outcome.outputs.get("pr").map(String::as_str), Some(PR));
+        assert_eq!(
+            outcome.outputs.get("pr_id").map(String::as_str),
+            Some("PR_fixture42")
+        );
         assert_eq!(
             outcome.outputs.get("head"),
             Some(&world.head),
@@ -586,5 +604,22 @@ fn queued_two_parent_merge_is_refused_even_for_a_history_sync_pr() -> Result<(),
     squash.labels = vec!["merge-ready", "history-sync"];
     let outcome = run_resolve(&world, &shell, &squash)?;
     assert!(outcome.accepted, "{}", outcome.log);
+    Ok(())
+}
+
+#[test]
+fn missing_or_invalid_pr_node_identity_refuses_without_admission_outputs() -> Result<(), String> {
+    let world = World::new()?;
+    let shell = resolve_shell(&workflow()?)?;
+    let run = honest(&world, &world.head, &world.head)?;
+    for node in [None, Some(json!(null)), Some(json!("")), Some(json!(42))] {
+        let outcome = run_resolve_with_node(&world, &shell, &run, node.clone())?;
+        assert!(!outcome.accepted, "invalid node {node:?} was admitted");
+        assert!(
+            outcome.outputs.is_empty(),
+            "refusal published {:?}",
+            outcome.outputs
+        );
+    }
     Ok(())
 }
