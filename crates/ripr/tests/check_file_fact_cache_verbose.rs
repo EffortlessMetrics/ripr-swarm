@@ -46,7 +46,19 @@ fn run_check_json(
     Ok(CheckRun { json, stderr })
 }
 
-fn fixture_root() -> Result<(PathBuf, PathBuf, PathBuf), String> {
+/// Removes the whole disposable workspace (sources, diff and cache) when the
+/// test ends, including on an assertion failure.
+struct Workspace(PathBuf);
+
+impl Drop for Workspace {
+    fn drop(&mut self) {
+        if let Err(error) = fs::remove_dir_all(&self.0) {
+            eprintln!("remove test workspace {}: {error}", self.0.display());
+        }
+    }
+}
+
+fn fixture_root() -> Result<(Workspace, PathBuf, PathBuf, PathBuf), String> {
     let nonce = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|elapsed| elapsed.as_nanos())
@@ -64,12 +76,12 @@ fn fixture_root() -> Result<(PathBuf, PathBuf, PathBuf), String> {
     fs::write(root.join("tests/discount.rs"), TEST_RS).map_err(|error| error.to_string())?;
     let diff = base.join("change.diff");
     fs::write(&diff, DIFF).map_err(|error| error.to_string())?;
-    Ok((root, diff, cache))
+    Ok((Workspace(base), root, diff, cache))
 }
 
 #[test]
 fn default_json_omits_file_fact_cache_verbose_json_names_cold_then_warm() -> Result<(), String> {
-    let (root, diff, cache) = fixture_root()?;
+    let (_workspace, root, diff, cache) = fixture_root()?;
     let cold_cache = cache.join("cold-pass");
     let default_cache = cache.join("default-pass");
 
@@ -128,7 +140,7 @@ fn default_json_omits_file_fact_cache_verbose_json_names_cold_then_warm() -> Res
 
 #[test]
 fn blocked_file_fact_store_still_reports_check_with_failure_fact() -> Result<(), String> {
-    let (root, diff, cache) = fixture_root()?;
+    let (_workspace, root, diff, cache) = fixture_root()?;
     // A file where the layer directory must be: the store fails for every
     // schema version, so a cache bump cannot silently unblock this fixture.
     fs::create_dir_all(&cache).map_err(|error| error.to_string())?;

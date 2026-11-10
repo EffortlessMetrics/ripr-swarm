@@ -435,8 +435,10 @@ fn fresh_build_keeping_run_stats(
         registrations,
         MissAttribution::Skipped,
     )?;
-    if let Some(prior) = prior {
-        fresh.file_fact_cache.merge_from(&prior);
+    if let Some(mut merged) = prior {
+        // Earlier work first, so the capped store-failure rows keep run order.
+        merged.merge_from(&fresh.file_fact_cache);
+        fresh.file_fact_cache = merged;
     }
     Ok(fresh)
 }

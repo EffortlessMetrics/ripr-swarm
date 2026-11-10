@@ -1469,7 +1469,10 @@ Verbose JSON carries the same bounded receipt the latency trace uses
 `stores`, `store_errors`, capped `store_failures`, `store_failures_dropped`).
 `hits` counts reused file facts; `misses` counts entries computed because none
 was stored, and a corrupt entry that is rebuilt is counted in `corrupt_ignored`,
-so the recomputed total is `misses + corrupt_ignored`. They do
+so the recomputed total is `misses + corrupt_ignored`. The receipt covers the
+diff main index and its admission work; `invalidated` is populated only when the
+build attributes misses (diff builds skip attribution, so it can be 0 with
+misses > 0), and later dependent-reach index builds are not included. They do
 not claim semantic seam reuse or wall-clock speed. When the Rust index path did
 not observe cache work, `file_fact_cache` is `null` and
 `file_fact_cache_limitation` is `not_observed`; when the producer reported
