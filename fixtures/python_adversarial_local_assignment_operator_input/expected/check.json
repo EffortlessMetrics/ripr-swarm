@@ -12,15 +12,15 @@
   "findings": [
     {
       "id": "probe:src_calc.py:python_preview:3ddbe784",
-      "canonical_gap_id": "gap:python:src/calc.py:compute:predicate_boundary:predicate:total=base-bonus",
+      "canonical_gap_id": "gap:python:src/calc.py:compute:return_value:return_value:total=base-bonus",
       "canonical_gap_group_size": 1,
       "canonical_gap": {
-        "id": "gap:python:src/calc.py:compute:predicate_boundary:predicate:total=base-bonus",
+        "id": "gap:python:src/calc.py:compute:return_value:return_value:total=base-bonus",
         "language": "python",
         "file": "src/calc.py",
         "owner": "compute",
-        "behavior_kind": "predicate_boundary",
-        "probe_kind": "predicate",
+        "behavior_kind": "return_value",
+        "probe_kind": "return_value",
         "normalized_discriminator": "total=base-bonus"
 
       },
@@ -35,8 +35,8 @@
       "confidence_why_capped": "Why capped: preview adapter: infection/propagation not modeled (Python); syntax-first, no type or import resolution; the assertion is not confirmed to observe the changed value. Preview score, not on the same scale as Rust confidence.",
       "probe": {
         "id": "probe:src_calc.py:python_preview:3ddbe784",
-        "family": "predicate",
-        "delta": "control",
+        "family": "return_value",
+        "delta": "value",
         "file": "src/calc.py",
         "line": 2,
         "expression": "    total = base - bonus",
@@ -49,6 +49,13 @@
         "observe": {"state":"weak","confidence":"low","summary":"Strongest extracted Python oracle kind: `exact_value` (rank 5)"},
         "discriminate": {"state":"weak","confidence":"low","summary":"Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior."}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"low"},
+        {"stage":"infect","state":"yes","confidence":"low"},
+        {"stage":"propagate","state":"weak","confidence":"low"},
+        {"stage":"observe","state":"weak","confidence":"low","basis":[{"code":"observation_not_confirmed","summary":"the assertion is not confirmed to observe the changed value"}]},
+        {"stage":"discriminate","state":"weak","confidence":"low"}
+      ],
       "evidence_path": ["reach yes: 1 related Python test(s) found for owner `compute`", "infection yes: Changed Python expression can alter preview-classified predicate behavior: `total = base - bonus`", "propagation weak: Changed Python fallback expression can propagate through selected behavior; preview evidence does not prove the concrete downstream sink.", "observation weak: Strongest extracted Python oracle kind: `exact_value` (rank 5)", "discriminator weak: Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior.", "local flow reaches unknown sink: total = base - bonus (line 2)", "related test tests/test_calc.py:4 test_base_unchanged uses strong exact value oracle: assert base == 10"],
       "flow_sinks": [
         {"kind":"unknown","text":"total = base - bonus","line":2}
@@ -75,9 +82,7 @@
           "line": 4,
           "oracle_strength": "strong",
           "oracle_kind": "exact_value",
-          "oracle": "assert base == 10",
-          "miss": "observation_unconfirmed",
-          "why": "ripr could not confirm that this assertion observes the changed behavior"
+          "oracle": "assert base == 10"
         }
       ],
       "repair_placement": {

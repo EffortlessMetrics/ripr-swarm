@@ -1,7 +1,7 @@
 use super::super::rust_index::{FunctionSummary, TestSummary, extract_literals};
 use super::activation::{
     boundary_constant_operand_name, comparison_operands, has_observed_boundary_equality,
-    is_computed_value_expression, owner_input_values, returned_comparison_view,
+    is_computed_value_expression, list_or_unknown, owner_input_values, returned_comparison_view,
 };
 use super::owner_pin::short_circuit::ShortCircuitTail;
 use crate::analysis::extract::mask_comments_and_strings;
@@ -10,6 +10,7 @@ use crate::domain::*;
 use crate::value_origins::LocatedActivationEvidence as ActivationEvidence;
 #[cfg(test)]
 use crate::value_origins::LocatedValueFact as ValueFact;
+use ra_ap_syntax::{AstNode, ast};
 use std::collections::BTreeMap;
 
 /// #7970: whether ripr can show that no related test input evaluates the
@@ -697,6 +698,8 @@ pub(in crate::analysis) struct OwnerInputs<'a> {
     pub(in crate::analysis) owner: Option<&'a FunctionSummary>,
     pub(in crate::analysis) literal_length_boundary:
         Option<&'a super::literal_length_boundary::LiteralLengthBoundary>,
+    pub(in crate::analysis) slice_counter_boundary:
+        Option<&'a super::slice_counter_boundary::SliceCounterBoundary>,
 }
 
 /// [`infection_evidence_with_boundary_input`] given the changed owner, which
@@ -720,14 +723,35 @@ pub(in crate::analysis) fn infection_evidence_for_owner(
     let OwnerInputs {
         owner,
         literal_length_boundary,
+        slice_counter_boundary,
     } = owner_inputs;
     // A returned bare comparison with a resolved missing boundary
     // discriminator reads the predicate lens's gap, never a better reading:
     // Weak or unresolved boundary evidence also applies to the returned
     // comparison (#9094, #10046).
-    if let Some(mut predicate) = returned_comparison_view(probe)
-        && (!activation.missing_discriminators.is_empty() || unresolved_boundary.is_some())
-    {
+    // #13040: an unseen input (a plain identifier bound to an env var or a
+    // local helper call) yields neither a missing discriminator nor an
+    // unresolved boundary, because the argument is not a computed
+    // expression ripr flags as unreadable. The predicate lens still reads
+    // `Unknown` there (no comparable literal input), so an `Unknown`
+    // predicate reading applies when no owner input is readable at all
+    // (`owner_input_values` empty: a visible input, even one the literal
+    // reading cannot compare, keeps the return-value reading); a `Weak`
+    // reading (a visible input that merely misses the boundary, including
+    // an intermediate input that separates a multi-value move) keeps the
+    // existing resolved-gap gate, so the return-value lens can still
+    // credit separation the literal reading cannot see. The `Unknown`
+    // delegation only applies when related tests reach the owner
+    // (`related_tests` non-empty): with no related tests the return-value
+    // summary stands, not the predicate one. The empty-input `Unknown`
+    // arm is further scoped to a related test that directly calls the
+    // owner (`test.calls` naming `owner`): a test linked only by a name
+    // token or an unexpanded macro invocation (for example `check_small!`
+    // mentioning `bulk`) does not delegate on that arm, and when the
+    // owner is unknown (`owner` is `None`) that arm does not delegate at
+    // all. The missing-discriminator and unresolved-boundary arms keep
+    // their prior scope.
+    if let Some(mut predicate) = returned_comparison_view(probe) {
         predicate.family = ProbeFamily::Predicate;
         let evidence = infection_evidence_for_owner(
             &predicate,
@@ -738,11 +762,29 @@ pub(in crate::analysis) fn infection_evidence_for_owner(
             owner_has_other_callers,
             assertion_macros_rebound,
         );
-        if matches!(evidence.state, StageState::Weak | StageState::Unknown) {
+        let directly_calls_owner = owner.is_some_and(|owner| {
+            related_tests
+                .iter()
+                .any(|test| test.calls.iter().any(|call| call.name == owner.name))
+        });
+        if (evidence.state == StageState::Unknown
+            && !related_tests.is_empty()
+            && ((owner_input_values(activation).is_empty() && directly_calls_owner)
+                || !activation.missing_discriminators.is_empty()
+                || unresolved_boundary.is_some()))
+            || (matches!(evidence.state, StageState::Weak)
+                && (!activation.missing_discriminators.is_empty() || unresolved_boundary.is_some()))
+        {
             return evidence;
         }
     }
     if let Some(evidence) = literal_length_boundary
+        .zip(owner)
+        .and_then(|(boundary, owner)| boundary.infection(probe, owner))
+    {
+        return evidence;
+    }
+    if let Some(evidence) = slice_counter_boundary
         .zip(owner)
         .and_then(|(boundary, owner)| boundary.infection(probe, owner))
     {
@@ -768,7 +810,7 @@ pub(in crate::analysis) fn infection_evidence_for_owner(
             // mismatch when nothing comparable is left.
             let (test_literals, other_kind_literals): (Vec<_>, Vec<_>) = related_tests
                 .iter()
-                .flat_map(|test| test.literals.iter().map(|literal| literal.value.clone()))
+                .flat_map(|test| test.literals.iter().map(|literal| literal.value.as_str()))
                 .partition(|literal| {
                     probe_literals
                         .iter()
@@ -793,7 +835,7 @@ pub(in crate::analysis) fn infection_evidence_for_owner(
             let boundary_oracle_only_literals = probe_literals
                 .iter()
                 .filter(|literal| {
-                    !input_literals.contains(literal) && test_literals.contains(literal)
+                    !input_literals.contains(literal) && test_literals.contains(&literal.as_str())
                 })
                 .cloned()
                 .collect::<Vec<_>>();
@@ -810,13 +852,22 @@ pub(in crate::analysis) fn infection_evidence_for_owner(
             } else if activation
                 .missing_discriminators
                 .iter()
-                .any(|fact| fact.value.contains("=="))
+                .any(|fact| fact.shape == DiscriminatorShape::Boundary)
             {
                 StageEvidence::new(
                     StageState::Weak,
                     Confidence::Medium,
                     "Related tests contain input values, but the equality-boundary check is missing",
                 )
+            } else if let Some(guard) = activation
+                .missing_discriminators
+                .iter()
+                .find(|fact| fact.shape == DiscriminatorShape::GuardDomain)
+            {
+                // #12414: the inserted guard's domain is the missing input;
+                // the SPEC-0263 wording the guard-entry route already emits
+                // names the values that stay outside it.
+                StageEvidence::new(StageState::Weak, Confidence::Medium, guard.reason.clone())
             } else if !owner_has_other_callers
                 && owner.is_some_and(|owner| {
                     changed_operands_are_never_evaluated(probe, activation, related_tests, owner)
@@ -904,7 +955,7 @@ pub(in crate::analysis) fn infection_evidence_for_owner(
                     Confidence::Medium,
                     format!(
                         "Detected test input literal matching changed boundary: {}",
-                        boundary_input_literals.join(", ")
+                        list_or_unknown(&boundary_input_literals)
                     ),
                 )
             } else if !boundary_oracle_only_literals.is_empty() {
@@ -913,7 +964,7 @@ pub(in crate::analysis) fn infection_evidence_for_owner(
                     Confidence::Medium,
                     format!(
                         "Related tests contain the changed boundary literal [{}] only outside the changed owner's inputs (for example as an expected value); no test input at the changed boundary was detected",
-                        boundary_oracle_only_literals.join(", ")
+                        list_or_unknown(&boundary_oracle_only_literals)
                     ),
                 )
             } else if !test_literals.is_empty() {
@@ -922,8 +973,8 @@ pub(in crate::analysis) fn infection_evidence_for_owner(
                     Confidence::Medium,
                     format!(
                         "Tests have literals [{}], but no detected value matches changed boundary [{}]",
-                        test_literals.join(", "),
-                        probe_literals.join(", ")
+                        list_or_unknown(&test_literals),
+                        list_or_unknown(&probe_literals)
                     ),
                 )
             } else if !other_kind_literals.is_empty() {
@@ -939,9 +990,9 @@ pub(in crate::analysis) fn infection_evidence_for_owner(
                     format!(
                         "The only literals ripr reads in related tests are {} literals [{}], which ripr does not compare with the changed {} boundary [{}]; activation/infection is unknown",
                         literal_kinds_label(&other_kind_literals),
-                        other_kind_literals.join(", "),
+                        list_or_unknown(&other_kind_literals),
                         literal_kinds_label(&probe_literals),
-                        probe_literals.join(", ")
+                        list_or_unknown(&probe_literals)
                     ),
                 )
             } else {
@@ -950,7 +1001,7 @@ pub(in crate::analysis) fn infection_evidence_for_owner(
                     Confidence::Low,
                     format!(
                         "Related tests pass no literal ripr can compare with the changed boundary [{}] (inputs are strings, computed values or fixtures); activation/infection is unknown, and if a test input drives the compared value, one that sits exactly on the boundary would settle it",
-                        probe_literals.join(", ")
+                        list_or_unknown(&probe_literals)
                     ),
                 )
             }
@@ -1039,16 +1090,7 @@ pub(in crate::analysis) fn infection_evidence_for_owner(
     }
 }
 
-/// The literals that can be the changed predicate's boundary value. A
-/// comparison operand that computes its value (`CURRENT - 2`, `2 + 2`)
-/// does not compare against the literal it contains, so its literals are
-/// not the boundary: `CURRENT - 2 > version` never compares against `2`
-/// (#6671). Such an operand contributes nothing and the boundary stays
-/// unknown unless another operand spells it. A compound predicate
-/// (`&&`/`||`) is cut into its top-level conditions and each comparison
-/// is read the same way; a condition that is not a comparison keeps its
-/// literals. A predicate with no computed comparison operand anywhere
-/// keeps every literal it contains.
+/// Resolve literal boundaries from live, non-computed local initializers.
 fn local_initializer_boundary_literals(
     probe: &Probe,
     owner: Option<&FunctionSummary>,
@@ -1060,7 +1102,13 @@ fn local_initializer_boundary_literals(
         if let Some(initializer) =
             super::activation::live_local_initializer(owner, operand.trim(), probe.location.line)
         {
-            literals.extend(boundary_literals(&initializer));
+            if is_conditional_initializer(&initializer)
+                || is_computed_value_expression(&initializer)
+            {
+                literals.extend(conditional_literal_results(&initializer));
+            } else {
+                literals.extend(boundary_literals(&initializer));
+            }
         }
     }
     literals.sort();
@@ -1068,6 +1116,110 @@ fn local_initializer_boundary_literals(
     (!literals.is_empty()).then_some(literals)
 }
 
+// Retain literal result branches when arithmetic appears in a condition or a
+// different branch. The condition's literals and computed tails are not values
+// returned by the conditional. Unreadable or statement-bearing branches abstain.
+fn is_conditional_initializer(initializer: &str) -> bool {
+    let Some(after_if) = initializer.trim_start().strip_prefix("if") else {
+        return false;
+    };
+    !after_if.starts_with(|c: char| c.is_alphanumeric() || c == '_')
+}
+
+fn conditional_literal_results(initializer: &str) -> Vec<String> {
+    if !is_conditional_initializer(initializer) {
+        return Vec::new();
+    }
+    let Some(parse) = crate::analysis::syntax::parse_clean_source_file(&format!(
+        "fn __ripr_boundary() {{ let _ = {initializer}; }}"
+    )) else {
+        return Vec::new();
+    };
+    let Some(ast::Expr::IfExpr(branch)) = parse
+        .tree()
+        .syntax()
+        .descendants()
+        .find_map(ast::LetStmt::cast)
+        .and_then(|binding| binding.initializer())
+    else {
+        return Vec::new();
+    };
+    fn add_block(block: ast::BlockExpr, literals: &mut Vec<String>, depth: usize) {
+        let Some(list) = block.stmt_list() else {
+            return;
+        };
+        if depth == 0 || list.statements().next().is_some() {
+            return;
+        }
+        if let Some(expr) = list.tail_expr() {
+            add_expr(expr, literals, depth - 1);
+        }
+    }
+    fn add_if(branch: ast::IfExpr, literals: &mut Vec<String>, depth: usize) {
+        if depth == 0 {
+            return;
+        }
+        if let Some(block) = branch.then_branch() {
+            add_block(block, literals, depth - 1);
+        }
+        match branch.else_branch() {
+            Some(ast::ElseBranch::Block(block)) => add_block(block, literals, depth - 1),
+            Some(ast::ElseBranch::IfExpr(next)) => add_if(next, literals, depth - 1),
+            None => {}
+        }
+    }
+    fn add_expr(expr: ast::Expr, literals: &mut Vec<String>, depth: usize) {
+        if depth == 0 {
+            return;
+        }
+        match expr {
+            ast::Expr::Literal(literal) => {
+                literals.extend(extract_literals(&literal.syntax().text().to_string()))
+            }
+            ast::Expr::ParenExpr(paren) => {
+                if let Some(inner) = paren.expr() {
+                    add_expr(inner, literals, depth - 1);
+                }
+            }
+            ast::Expr::PrefixExpr(prefix) if prefix.op_kind() == Some(ast::UnaryOp::Neg) => {
+                let mut inner = prefix.expr();
+                for _ in 0..depth {
+                    match inner {
+                        Some(ast::Expr::ParenExpr(paren)) => inner = paren.expr(),
+                        Some(ast::Expr::Literal(literal))
+                            if matches!(
+                                literal.kind(),
+                                ast::LiteralKind::IntNumber(_) | ast::LiteralKind::FloatNumber(_)
+                            ) =>
+                        {
+                            literals
+                                .extend(extract_literals(&format!("-{}", literal.syntax().text())));
+                            break;
+                        }
+                        _ => break,
+                    }
+                }
+            }
+            ast::Expr::BlockExpr(block) => add_block(block, literals, depth - 1),
+            ast::Expr::IfExpr(branch) => add_if(branch, literals, depth - 1),
+            _ => {}
+        }
+    }
+    let mut literals = Vec::new();
+    add_if(branch, &mut literals, 32);
+    literals
+}
+
+/// The literals that can be the changed predicate's boundary value. A
+/// comparison operand that computes its value (`CURRENT - 2`, `2 + 2`)
+/// does not compare against the literal it contains, so its literals are
+/// not the boundary: `CURRENT - 2 > version` never compares against `2`
+/// (#6671). Such an operand contributes nothing and the boundary stays
+/// unknown unless another operand spells it. A compound predicate
+/// (`&&`/`||`) is cut into its top-level conditions and each comparison
+/// is read the same way; a condition that is not a comparison keeps its
+/// literals. A predicate with no computed comparison operand anywhere
+/// keeps every literal it contains.
 fn boundary_literals(expression: &str) -> Vec<String> {
     let mut any_computed = false;
     let mut literals = Vec::new();
@@ -1178,7 +1330,7 @@ fn literal_kind(literal: &str) -> (bool, bool) {
 
 /// The kinds present in `literals`, in a fixed order: `numeric`, `char`,
 /// `byte`, joined with `/`.
-fn literal_kinds_label(literals: &[String]) -> String {
+fn literal_kinds_label<T: AsRef<str>>(literals: &[T]) -> String {
     [
         ((false, false), "numeric"),
         ((true, false), "char"),
@@ -1188,7 +1340,7 @@ fn literal_kinds_label(literals: &[String]) -> String {
     .filter(|(kind, _)| {
         literals
             .iter()
-            .any(|literal| literal_kind(literal) == *kind)
+            .any(|literal| literal_kind(literal.as_ref()) == *kind)
     })
     .map(|(_, label)| *label)
     .collect::<Vec<_>>()
@@ -1278,6 +1430,74 @@ mod tests {
             evidence.summary,
             "Detected test input literal matching changed boundary: 10"
         );
+    }
+
+    #[test]
+    fn predicate_literal_summary_elides_but_matching_uses_all_values() {
+        let values: Vec<String> = (100..140).map(|i| i.to_string()).collect();
+        let refs: Vec<&str> = values.iter().map(String::as_str).collect();
+        let test = test_with_literals(&refs);
+        let missing = probe(ProbeFamily::Predicate, "value > 999");
+        let evidence = infection_evidence(&missing, &[&test], &ActivationEvidence::default());
+        assert_eq!(evidence.state, StageState::Weak);
+        assert!(
+            evidence.summary.contains("24 values elided"),
+            "{}",
+            evidence.summary
+        );
+        assert!(
+            evidence.summary.contains("100, 101"),
+            "{}",
+            evidence.summary
+        );
+        assert!(evidence.summary.len() < 1400, "{}", evidence.summary.len());
+
+        // The boundary literal appears after the displayed window. An oracle
+        // occurrence must still be recognized and must not become an input.
+        let mut with_boundary = refs;
+        with_boundary.push("42");
+        let late = test_with_literals(&with_boundary);
+        let boundary = probe(ProbeFamily::Predicate, "value > 42");
+        let oracle_only = infection_evidence(&boundary, &[&late], &ActivationEvidence::default());
+        assert_eq!(oracle_only.state, StageState::Weak);
+        assert!(
+            oracle_only.summary.contains("only outside"),
+            "{}",
+            oracle_only.summary
+        );
+        let activation = activation_with(&[("value = 42", ValueContext::FunctionArgument)]);
+        let input = infection_evidence(&boundary, &[&late], &activation);
+        assert_eq!(input.state, StageState::Yes);
+        assert!(input.summary.contains("42"), "{}", input.summary);
+    }
+
+    #[test]
+    fn predicate_literal_summary_bounds_unicode_and_counts_unique_other_kinds() {
+        let chars: Vec<String> = ('a'..='t').map(|c| format!("'{c}'")).collect();
+        let mut refs: Vec<&str> = chars.iter().map(String::as_str).collect();
+        refs.push("'a'"); // Other-kind summaries sort and deduplicate first.
+        let test = test_with_literals(&refs);
+        let numeric = probe(ProbeFamily::Predicate, "value > 1");
+        let evidence = infection_evidence(&numeric, &[&test], &ActivationEvidence::default());
+        assert_eq!(evidence.state, StageState::Unknown);
+        assert!(
+            evidence.summary.contains("4 values elided"),
+            "{}",
+            evidence.summary
+        );
+
+        // Directly construct an oversized fact to test the byte boundary and
+        // UTF-8 handling independently of the source parser's literal grammar.
+        let huge = format!("'{}'", "é".repeat(5_000));
+        let test = test_with_literals(&[huge.as_str()]);
+        let evidence = infection_evidence(&numeric, &[&test], &ActivationEvidence::default());
+        assert_eq!(evidence.state, StageState::Unknown);
+        assert!(
+            evidence.summary.contains("1 value elided"),
+            "{}",
+            evidence.summary
+        );
+        assert!(evidence.summary.len() < 1400, "{}", evidence.summary.len());
     }
 
     #[test]
@@ -1519,7 +1739,7 @@ mod tests {
             start_line: 1,
             end_line: 3,
             body: "assert_eq!(score(10), 11);".into(),
-            calls: Vec::new(),
+            calls: crate::analysis::facts::SharedFactSlice::empty(),
             assertions: Vec::new(),
             literals: values
                 .iter()
@@ -1528,9 +1748,9 @@ mod tests {
                     value: (*value).to_string(),
                 })
                 .collect(),
-            attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             generated: None,
         }
     }
@@ -1543,14 +1763,14 @@ mod tests {
             start_line: 1,
             end_line: body.lines().count(),
             body: body.into(),
-            calls: Vec::new(),
+            calls: crate::analysis::facts::SharedFactSlice::empty(),
             returns: Vec::new(),
-            literals: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
             source_role: crate::analysis::facts::FunctionSourceRole::Production,
-            attrs: Vec::new(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
             impl_attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             item: Default::default(),
             impl_context: Default::default(),
         }
@@ -1583,6 +1803,7 @@ mod tests {
             OwnerInputs {
                 owner: Some(&owner),
                 literal_length_boundary: None,
+                slice_counter_boundary: None,
             },
             true,
             false,
@@ -1604,6 +1825,62 @@ mod tests {
         let owner = "fn pick(val: u32) -> bool {\n    let surrogate_start = 0xd800u32;\n    surrogate_start < val\n}\n";
         let evidence = local_predicate_evidence(owner, "surrogate_start < val", 3, "0xd800u32");
         assert_eq!(evidence.state, StageState::Yes, "{}", evidence.summary);
+    }
+
+    #[test]
+    fn computed_local_does_not_contribute_its_operand_literals_as_boundaries() {
+        let owner = "fn pick(low: u32, range: u32) -> bool {\n    let val = draw(0..=range) + low;\n    let surrogate_start = 0xd800u32;\n    val > surrogate_start\n}\n";
+        let evidence = local_predicate_evidence(owner, "val > surrogate_start", 4, "0");
+        assert_ne!(evidence.state, StageState::Yes, "{}", evidence.summary);
+        assert!(evidence.summary.contains("0xd800"), "{}", evidence.summary);
+        assert!(
+            !evidence.summary.contains("boundary [0]"),
+            "{}",
+            evidence.summary
+        );
+        let reversed = local_predicate_evidence(owner, "surrogate_start < val", 4, "0");
+        assert_ne!(reversed.state, StageState::Yes, "{}", reversed.summary);
+        assert!(reversed.summary.contains("0xd800"), "{}", reversed.summary);
+        let positive = local_predicate_evidence(owner, "val > surrogate_start", 4, "0xd800u32");
+        assert_eq!(positive.state, StageState::Yes, "{}", positive.summary);
+        let only_computed =
+            "fn pick(low: u32) -> bool {\n    let val = low + 1;\n    val > other\n}\n";
+        let unknown = local_predicate_evidence(only_computed, "val > other", 3, "1");
+        assert_eq!(unknown.state, StageState::Unknown, "{}", unknown.summary);
+    }
+
+    #[test]
+    fn conditional_initializer_retains_literal_result_not_computed_parts() {
+        let owner = "fn pick(val: u32, si: bool, qty: u32) -> bool {\n    let unit = if si && qty + 1 > 3 { 1000 + 1 } else { 1024 };\n    val < unit\n}\n";
+        let literal = local_predicate_evidence(owner, "val < unit", 3, "1024");
+        assert_eq!(literal.state, StageState::Yes, "{}", literal.summary);
+        for operand in ["1", "3", "1000"] {
+            let evidence = local_predicate_evidence(owner, "val < unit", 3, operand);
+            assert_ne!(evidence.state, StageState::Yes, "{}", evidence.summary);
+            assert!(evidence.summary.contains("1024"), "{}", evidence.summary);
+        }
+        let signed = "fn pick(val: i32, qty: i32) -> bool {\n    let unit = if qty + 1 > 3 { (-5) } else { ((1024)) };\n    val < unit\n}\n";
+        for literal in ["-5", "1024"] {
+            let evidence = local_predicate_evidence(signed, "val < unit", 3, literal);
+            assert_eq!(evidence.state, StageState::Yes, "{}", evidence.summary);
+        }
+        let values = super::conditional_literal_results(
+            "if qty + 1 > 3 { -(5) } else if flag { { 7 } } else { 9 }",
+        );
+        assert_eq!(values, vec!["-5", "7", "9"]);
+        let values =
+            super::conditional_literal_results("if qty + 1 > 3 { let x = 7; x } else { 9 + 1 }");
+        assert!(values.is_empty(), "{values:?}");
+        let guard = "fn pick(val: u32, qty: u32) -> bool {\n    let unit = if qty > 3 { 1 } else { 2 };\n    val < unit\n}\n";
+        let not_boundary = local_predicate_evidence(guard, "val < unit", 3, "3");
+        assert_ne!(
+            not_boundary.state,
+            StageState::Yes,
+            "{}",
+            not_boundary.summary
+        );
+        let boundary = local_predicate_evidence(guard, "val < unit", 3, "2");
+        assert_eq!(boundary.state, StageState::Yes, "{}", boundary.summary);
     }
 
     #[test]

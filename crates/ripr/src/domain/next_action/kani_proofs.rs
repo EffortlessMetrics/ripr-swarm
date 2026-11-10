@@ -7,19 +7,31 @@
 //! and presence/absence are the properties that matter. Booleans, enum
 //! variants and collection sizes are fully symbolic within the stated bounds.
 //!
-//! Not covered (CBMC runs out of memory on these refusal paths, so they stay
-//! guarded by the selector's unit tests): the unsupported/unknown-platform
-//! stop (a `format!` alternative label), the terminal-attempt and
-//! awaiting-edit attempt stops (`format!`), the restart-recommended stop, and
-//! the several-unranked-items stop (candidate `collect`). Each was attempted
-//! as its own harness and ran past 12 minutes and 4 GB or failed with an
-//! out-of-memory error.
+//! Refusal stops whose rendering formats labels or collects candidates (the
+//! unsupported/unknown-platform, terminal-attempt, awaiting-edit,
+//! restart-recommended and several-unranked-items stops) are proved on the
+//! typed gate decision `decide_next_action` returns, not on the rendered
+//! action: CBMC ran past 12 minutes and 4 GB or out of memory on the
+//! `format!` / `collect` rendering when these were proved through
+//! `select_canonical_next_action` (#13707). Each harness asserts that when the
+//! stop condition holds the decision is exactly that typed stop and is not
+//! executable, and that the admitted twin decides `Run` (rendering may still
+//! fail closed at mint, for example with no bound item).
+//!
+//! Not covered by Kani: the rendering step `render_decision` itself (labels,
+//! candidate lists, selector-added alternatives). Its link to the decision is
+//! structural (only `NextActionDecision::Run` reaches `running`; every other
+//! variant mints through `stopped`, which references no command) and is
+//! checked by the selector's unit tests, including the control-10 battery
+//! asserting decision and rendered executability agree for every gate that
+//! battery exercises (the CheckTriage, DoctorRecovery, PilotDelegated and
+//! InspectTarget tails are covered by their own unit tests).
 
-use super::super::command_spec::{
+use super::*;
+use ripr_contract::domain::command_spec::{
     CancellationPolicy, CommandAuthorityBoundary, CommandCostClass, EnvironmentPolicy,
     ExpectedResultParser, NetworkPolicy, StdinPolicy,
 };
-use super::*;
 
 /// `None`, `Some("a")` or `Some("b")`, selected by a symbolic index.
 fn any_opt_text() -> Option<String> {
@@ -147,6 +159,7 @@ fn base_input(spec: Option<&CommandSpec>) -> NextActionInput<'_> {
         transition_to: Some("to".to_string()),
         restart_route: "restart".to_string(),
         check_case: None,
+        check_repair_route: None,
         doctor_recovery: None,
         pilot_delegation: None,
         alternatives: Vec::new(),
@@ -408,4 +421,248 @@ fn unknown_or_stale_head_never_runs_an_admitted_command() {
     kani::cover!(fresh);
     kani::cover!(!fresh && input.currentness.head_expected.is_none());
     kani::cover!(!fresh && input.currentness.head_expected.is_some());
+}
+
+/// `None`, Linux, macOS or Windows, selected by a symbolic index.
+fn any_platform() -> Option<CommandPlatform> {
+    let index: u8 = kani::any();
+    kani::assume(index < 4);
+    match index {
+        0 => None,
+        1 => Some(CommandPlatform::Linux),
+        2 => Some(CommandPlatform::Macos),
+        _ => Some(CommandPlatform::Windows),
+    }
+}
+
+/// `"a"` or `"b"`, selected by a symbolic bool.
+fn any_text() -> String {
+    if kani::any() {
+        "a".to_string()
+    } else {
+        "b".to_string()
+    }
+}
+
+/// One attempt with the given lifecycle flags and fixed identities.
+fn attempt_view(
+    terminal: bool,
+    awaits_edit: bool,
+    restart_recommended: bool,
+) -> NextActionAttemptView {
+    NextActionAttemptView {
+        id: "a".to_string(),
+        terminal,
+        awaits_edit,
+        restart_recommended,
+        restart_route: "r".to_string(),
+        receipt_ref: None,
+    }
+}
+
+fn decided_executable(decision: &Result<NextActionDecision<'_>, &'static str>) -> bool {
+    matches!(decision, Ok(decision) if decision.is_executable())
+}
+
+/// Platform stop. Symbolic: the host platform (unknown / Linux / macOS /
+/// Windows), the spec's supported-platform subset and its role; the mode is
+/// held direct and every other gate admitted. Whenever the host is unknown or
+/// not in the spec's platforms the decision is exactly `PlatformUnavailable`
+/// for the offered spec and is not executable; otherwise the command runs.
+#[kani::proof]
+#[kani::unwind(6)]
+fn platform_stop_decides_unavailable_and_never_runs() {
+    let mut spec = any_spec();
+    spec.execution_mode = CommandExecutionMode::Direct;
+    let mut input = admitted_baseline(&spec);
+    input.platform = any_platform();
+
+    let decision = decide_next_action(&input);
+    let unavailable = input
+        .platform
+        .is_none_or(|platform| !spec.platforms.contains(&platform));
+
+    if unavailable {
+        assert!(matches!(
+            decision,
+            Ok(NextActionDecision::PlatformUnavailable { spec: chosen })
+                if core::ptr::eq(chosen, &spec)
+        ));
+    } else {
+        assert!(matches!(decision, Ok(NextActionDecision::Run { .. })));
+    }
+    assert_eq!(decided_executable(&decision), !unavailable);
+    kani::cover!(unavailable && input.platform.is_none());
+    kani::cover!(unavailable && input.platform.is_some());
+    kani::cover!(!unavailable);
+}
+
+/// The single-attempt gate facts the three attempt-stop harnesses share.
+struct AttemptGates {
+    /// Terminal attempt with a non-read-only offer.
+    terminal_stop: bool,
+    awaits_edit: bool,
+    restart_recommended: bool,
+}
+
+impl AttemptGates {
+    fn of(spec: &CommandSpec, attempt: &NextActionAttemptView) -> Self {
+        let read_only = matches!(spec.role, CommandRole::Inspection | CommandRole::Receipt);
+        Self {
+            terminal_stop: attempt.terminal && !read_only,
+            awaits_edit: attempt.awaits_edit,
+            restart_recommended: attempt.restart_recommended,
+        }
+    }
+
+    fn obligated(&self) -> bool {
+        self.terminal_stop || self.awaits_edit || self.restart_recommended
+    }
+}
+
+/// Whether `attempt` is the input's own single attempt (not a copy).
+fn is_input_attempt(input: &NextActionInput<'_>, attempt: &NextActionAttemptView) -> bool {
+    input
+        .attempts
+        .first()
+        .is_some_and(|first| core::ptr::eq(first, attempt))
+}
+
+/// Terminal-attempt stop. Symbolic: the attempt's terminal / awaits-edit /
+/// restart flags and the offered spec's role, against an otherwise admitted
+/// direct Linux offer. A terminal attempt with a non-read-only offer decides
+/// exactly `TerminalAttempt` for that attempt and never runs; a read-only
+/// (inspection / receipt) offer on a terminal attempt is not this stop. With
+/// no attempt obligation at all the command runs.
+#[kani::proof]
+#[kani::unwind(6)]
+fn terminal_attempt_stop_decides_terminal_and_never_runs() {
+    let spec = any_spec_direct_linux();
+    let mut input = admitted_baseline(&spec);
+    input.attempts = vec![attempt_view(kani::any(), kani::any(), kani::any())];
+    let Some(attempt) = input.attempts.first() else {
+        return;
+    };
+    let gates = AttemptGates::of(&spec, attempt);
+
+    let decision = decide_next_action(&input);
+
+    if gates.terminal_stop {
+        assert!(matches!(
+            decision,
+            Ok(NextActionDecision::TerminalAttempt { attempt: chosen })
+                if is_input_attempt(&input, chosen)
+        ));
+    } else {
+        assert!(!matches!(
+            decision,
+            Ok(NextActionDecision::TerminalAttempt { .. })
+        ));
+    }
+    assert_eq!(decided_executable(&decision), !gates.obligated());
+    kani::cover!(gates.terminal_stop);
+    kani::cover!(attempt.terminal && !gates.terminal_stop);
+    kani::cover!(!gates.obligated());
+}
+
+/// Awaiting-edit stop. Same symbolic space as the terminal harness. When the
+/// terminal stop does not fire and the attempt awaits a focused test edit,
+/// the decision is exactly `AwaitingEdit` for that attempt and never runs.
+#[kani::proof]
+#[kani::unwind(6)]
+fn awaiting_edit_stop_decides_awaiting_and_never_runs() {
+    let spec = any_spec_direct_linux();
+    let mut input = admitted_baseline(&spec);
+    input.attempts = vec![attempt_view(kani::any(), kani::any(), kani::any())];
+    let Some(attempt) = input.attempts.first() else {
+        return;
+    };
+    let gates = AttemptGates::of(&spec, attempt);
+
+    let decision = decide_next_action(&input);
+
+    let awaiting = !gates.terminal_stop && gates.awaits_edit;
+    if awaiting {
+        assert!(matches!(
+            decision,
+            Ok(NextActionDecision::AwaitingEdit { attempt: chosen })
+                if is_input_attempt(&input, chosen)
+        ));
+    } else {
+        assert!(!matches!(
+            decision,
+            Ok(NextActionDecision::AwaitingEdit { .. })
+        ));
+    }
+    assert_eq!(decided_executable(&decision), !gates.obligated());
+    kani::cover!(awaiting);
+    kani::cover!(gates.awaits_edit && !awaiting);
+    kani::cover!(!gates.obligated());
+}
+
+/// Restart-recommended stop. Same symbolic space as the terminal harness.
+/// When neither the terminal nor the awaiting-edit stop fires and the attempt
+/// recommends a restart, the decision is exactly `RestartRecommended` for
+/// that attempt and never runs.
+#[kani::proof]
+#[kani::unwind(6)]
+fn restart_recommended_stop_decides_restart_and_never_runs() {
+    let spec = any_spec_direct_linux();
+    let mut input = admitted_baseline(&spec);
+    input.attempts = vec![attempt_view(kani::any(), kani::any(), kani::any())];
+    let Some(attempt) = input.attempts.first() else {
+        return;
+    };
+    let gates = AttemptGates::of(&spec, attempt);
+
+    let decision = decide_next_action(&input);
+
+    let restart = !gates.terminal_stop && !gates.awaits_edit && gates.restart_recommended;
+    if restart {
+        assert!(matches!(
+            decision,
+            Ok(NextActionDecision::RestartRecommended { attempt: chosen })
+                if is_input_attempt(&input, chosen)
+        ));
+    } else {
+        assert!(!matches!(
+            decision,
+            Ok(NextActionDecision::RestartRecommended { .. })
+        ));
+    }
+    assert_eq!(decided_executable(&decision), !gates.obligated());
+    kani::cover!(restart);
+    kani::cover!(gates.restart_recommended && !restart);
+    kani::cover!(!gates.obligated());
+}
+
+/// Several-unranked-items stop. Symbolic: zero to three item candidates, each
+/// "a" or "b", with no single bound item and an otherwise admitted offer.
+/// More than one candidate decides exactly `SeveralItems` and never runs;
+/// zero or one candidate (one normalizes to the bound item) decides `Run`;
+/// with zero candidates and no item the render then fails closed at mint.
+#[kani::proof]
+#[kani::unwind(6)]
+fn several_items_stop_decides_selection_and_never_runs() {
+    let spec = any_spec_direct_linux();
+    let mut input = admitted_baseline(&spec);
+    input.item_id = String::new();
+    let count: u8 = kani::any();
+    kani::assume(count <= 3);
+    for _ in 0..count {
+        input.item_candidates.push(any_text());
+    }
+
+    let decision = decide_next_action(&input);
+    let several = input.item_candidates.len() > 1;
+
+    if several {
+        assert!(matches!(decision, Ok(NextActionDecision::SeveralItems)));
+    } else {
+        assert!(matches!(decision, Ok(NextActionDecision::Run { .. })));
+    }
+    assert_eq!(decided_executable(&decision), !several);
+    kani::cover!(several);
+    kani::cover!(input.item_candidates.len() == 1);
+    kani::cover!(input.item_candidates.is_empty());
 }

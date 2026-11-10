@@ -378,6 +378,12 @@ shadows and uncalled function values remain separate from runner registrations.
   catches still withholds). The finalizer's own assertions, assertions
   outside the `try`, and benign finalizers keep collection. This is not
   general promise dataflow or runner semantics.
+  In particular, this rule does not detect a finalizer that fails through an
+  expression rather than an explicit jump, such as
+  `finally { await Promise.reject(error); }` or `finally { null.x; }`.
+  Those failures can replace the pending completion at runtime, but do not by
+  themselves trigger this rule's withholding of the try/catch assertions
+  (#8613).
 - An assertion inside a nested callback (`forEach`, `waitFor`, `act`, a
   subtest) or inside a declaration initializer is not collected, except
   the three forms RIPR-SPEC-0246 rule 2 names.
@@ -905,6 +911,54 @@ Candidates come from the first non-empty tier:
    a prototype, `defineProperty`; the gate does not track which object a
    receiver names, so an assignment on an unrelated object withholds too) is not related through the chain; a bare
    call-through spy is. The relation stays weak and never reads `exposed`.
+   **Cross-module continuation (#13592).** The same chain continues across an
+   import: an exported function of module X that bare-calls a binding it
+   imported from module Y reaches the owner Y declares (or the owner Y's own
+   exports reach). The import must resolve through the existing
+   `ReExportIndex` identity (relative or aliased specifier, named, renamed or
+   default binding, bounded re-export barrels, rename exports) to the stand-in
+   owner's own declaration; a namespace import, an unresolved specifier, an
+   ambiguous `export *` or an over-deep barrel adds no edge. The importing
+   function must bare-call the binding with every mention of the name in its
+   scope a bare call, so a parameter, local or inner function of that name, an
+   alias (`const f = helper`), `helper.call(...)`, a value pass, a reassignment
+   and a name that is only mentioned (module level, string, comment) all add no
+   edge. The whole chain (X's calls to the call site, the import, and Y's calls
+   to the owner) is at most 3 call edges, counted once across modules, and
+   chains through further importers within the same total. A test that mocks
+   any module the chain imports through (the helper module, a barrel, the
+   importer), or fabricates any binding on it with a `spyOn` replacement, is
+   not related through it; the owner-module mock gate still covers the
+   importer's own module. Like every entry it is admitted only when no test
+   calls the owner itself. Reach that exists only through such cross-module
+   entries reads `static_unknown` whatever the oracle (a weak oracle is not an
+   actionable gap here, unlike a same-module entry), is never `exposed`, and
+   starts no repair; the missing-evidence line says "only through cross-module
+   callers". The difference from a same-module entry is deliberate: a
+   same-module entry with a weak or absent oracle reads `weakly_exposed`, but
+   a cross-module entry with the same oracle reads `static_unknown`, because
+   the assertion sits two modules away from the changed code and a
+   strengthened assertion there is not shown to reach it. Like the same-module
+   chain, the reach contract is text-level: a bare call to the helper inside
+   dead code, or inside a nested function or callback the importing export
+   never invokes, still counts as an edge and can credit `static_unknown`
+   (never `exposed`). Fan-in is capped: when more than 32 exports of other
+   modules call one owner (`MAX_CROSS_MODULE_ENTRIES`), none of them is
+   followed, so the per-test relation scan never grows with the importer
+   count. An owner that some other relation reaches keeps that reading. An
+   owner left with no relation reads `static_unknown`, not `no_static_path`:
+   reach, observe and discriminate are unknown, the first missing line says
+   reach through more than 32 importers was not checked, and the
+   discriminate summary and next step say so and offer no repair packet (an
+   empty relation set past the limit is not the confident negative). The
+   limit is carried on every changed-line path, deleted lines included. When
+   some related tests reach the owner through same-module callers and others
+   through other modules' exports, the text names both ("same-module or
+   cross-module callers"); the class follows the same-module rule because not
+   every test's reach is cross-module. Each related test records the entries
+   it reaches once, so per-line classification does not rescan them. The importer's calls ride in the per-file export facts
+   (file-fact schema 8), so resolution never re-parses an importer, and run
+   only for owners of changed files.
 3. **Heuristic relations** when tiers 1 and 2 are empty, package-filtered,
    for function, arrow and component owners, when the test body
    references the owner name and does not import that name from an
@@ -962,9 +1016,35 @@ object holds the top-level function (or `const` arrow function; a `let` or
 its own name (`{ name }` or
 `{ name: name }`). The object must be made only of such plain entries; a
 spread, computed key, method, getter, renamed entry or duplicate key leaves
-every owner unmarked. The test file must use `local` for nothing but calls of
-that one member, anywhere in the file (setup hooks and file-level code
-included), so an alias (`const m = local.name`), a reassignment, `Object.assign`
+every owner unmarked, and so does a top-level name declared more than once.
+A sibling member called as `local.other()` could replace the owner before
+the asserted call (#13694 review), so each owner records the siblings whose
+declaration is unsafe: it contains `this`, `import(...)`, `import.meta`, a
+reference to `require`, `module`, `exports`, `globalThis`, `global`,
+`window`, `self`, `eval`, `Function`, `arguments`, `define`, `process`,
+`__filename` or `__dirname`, a reference
+to any imported binding (relative or package), or a reference to another
+unsafe top-level name (fixpoint; references match by name, so shadowing only
+over-approximates). A member that is not a top-level declaration of the
+module (an import, whose body is not scanned) and a name assigned anywhere in
+the module are unsafe as well. A module with an `import x = require(...)`, a
+namespace, or another top-level statement that escapes or hoists a `var`
+marks no owner; bodiless overload signatures are not second declarations.
+A test file that calls any unsafe sibling of the owner
+through `local` gets no rule-5 relation for that owner; a test that never
+calls one keeps it. When the owner has any unsafe sibling, a second binding of
+the owner's module in the test file (another default local, a named or
+namespace import, `import { default as u2 }`, a `require()`, or a dynamic `import()`/`require()`/`requireActual()`/`importActual()` of the owner's module string anywhere in the test file, hooks and top level included; a non-literal or `${}` template argument is not detected, and the literal prefix of a concatenated argument is treated as a load) also withholds
+the relation, since it could reach the sibling outside `local.member(` calls
+(`u2.extend()`, `ns.default.extend()`, `extend()`); this is a blanket
+fail-closed rule, not a check of which names the second binding uses (#13750).
+Known limits: a second binding whose source the import resolver cannot match
+to the owner module, and a sibling that reaches the module only through a
+path alias such as `@/utils` (only sources starting with `.` count as possibly
+self-reachable), are not covered. The test file must use `local` for nothing but direct
+calls `local.member(` (any number of distinct members, each credited only to
+the owner it names; amended #6653), anywhere in the file (setup hooks and
+file-level code included), so an alias (`const m = local.name`), a reassignment, `Object.assign`
 or a body-local rebinding of `local` all refuse the relation. The relation is
 `imported_owner_call` and the observation guard reads `local.name(...)` as a
 call of the owner, as it does for a namespace import.
@@ -1184,7 +1264,9 @@ bound whose changed side no input reaches). The evaluator is exact and
 small: number, string and boolean literals, the owner's parameters,
 `+ - * / %`, comparisons, `&&` `||` `!`, unary `-`, conditionals (only the
 selected arm is evaluated), template literals with literal substitutions
-`typeof` of a literal-bound value (its kind string) and
+`typeof` of a literal-bound value (its kind string),
+`String(x)` and `JSON.stringify(x)` of a literal-bound integer, boolean or
+string (#12296) and
 `Math.min` / `max` / `abs` / `floor` / `ceil` / `trunc`. Anything else
 (a free identifier, another call, a non-literal argument, mixed-type
 coercion, a parameter reassigned in the owner, a class pin credit, a lookup
@@ -1211,6 +1293,16 @@ wrapper; any parse failure keeps the existing verdict.
 When either version contains `typeof`, the probe also tries other value
 kinds (a string, `true`, `false`, `0`) for every argument, and flips boolean
 arguments, because a shifted number cannot separate a kind test.
+
+The `String` / `JSON.stringify` fold holds only for the built-in globals. It
+is refused, and the existing verdict kept, when an owner parameter is named
+`String` or `JSON`, or when the owner's file mentions either name in any
+form other than a plain `String(...)` or `JSON.stringify(...)` call: a
+module-scope `const` / `let` / `var`, function, class, import, export,
+assignment or member write, and any reference to `globalThis`, `global`,
+`window`, `self`, `eval`, `with` or `Function` (which can rebind a global).
+The check is an allowlist over the comment- and string-masked source, and an
+unreadable file refuses.
 
 The two versions must also differ on some probe input, so an equivalent
 rewrite is never reported as unexercised. Each numeric argument is probed at
@@ -1353,6 +1445,40 @@ or `static_unknown`, never `exposed`):
    returns a cached or stored value (`return cache.get(n)`), a sequence
    (`return (original.apply(this, args) + 1, 99)`), an array, a logical or
    conditional expression, or a second call keeps the old reading.
+2a. **Memoizing wrapper (amended 2026-11-08, #13657).** The one cached
+   shape admitted is the memo idiom whose cache can only ever hold what its
+   `set` computed:
+   `if (!cache.has(k)) { cache.set(k, <flow>); } return cache.get(k);`
+   (braces optional; `as T` and `!` on the return allowed). Every call then
+   returns `<flow>` evaluated for its key, so an edit to the `cache.set`
+   line reaches the decorated method's result, and that line, not the
+   `return`, is the observed line. Conditions: `cache` is a decorator-level
+   `const` initialized by an argument-free `new Map()` (type arguments
+   allowed) and named nowhere else in the decorator (no prefill, `clear`,
+   `delete`, export or escape); the key `k` is one plain wrapper parameter,
+   spelled identically in `has`, `set` and `get`; `<flow>` meets condition 2
+   and the original call passes only `this` and plain identifiers, so it
+   cannot rebind the key; the wrapper body is exactly the guard and the
+   return, with no `else` and no other statement in the guard; the
+   `cache.set` statement sits on one line of its own, after the `if` line
+   and before the `return` line (on a shared line, `if (true) cache.set(..)`
+   would disable the memo without changing any result); and every wrapper
+   parameter is a plain identifier with no default and there is no rest
+   parameter (a default closure could rebind the key while the original
+   runs). `Map` must be the global constructor. That is screened, not
+   proven: the file must be an ES module (it contains `export`, so it is
+   strict and no sloppy `this` reaches the global object), the word `Map`
+   appears nowhere else in it (no import, local class or binding), and it
+   holds no backslash (no `\u`, `\x` or octal escape) and none of the words
+   `eval`, `Function`, `constructor`, `globalThis`, `window`, `global`,
+   `self`, `Reflect`, `fromCharCode`, `prototype`, `__proto__`,
+   `getPrototypeOf`, `setPrototypeOf`, `getOwnPropertyDescriptor(s)` or
+   `arguments`. Deliberately obfuscated replacement of a built-in, in this
+   file or another module, is outside the static model, as it already is
+   for the pass-through rule's `original.call`; the screen refuses the
+   spellings that ordinary code would use. A `WeakMap`,
+   a `let` cache, a prefilled or shared cache, a mismatched key, or a
+   combined return (`cache.get(k) + 1`) keeps the old reading.
 3. The decorator is applied as a bare `@D` (or an import alias of it) on
    an ordinary instance method that is the only decorator on that method,
    in a class whose methods the owner relation can name, including
@@ -1383,8 +1509,12 @@ or `static_unknown`, never `exposed`):
 5. Tests of every decorated method count; a decorated method nobody tests
    is not a path.
 
-Negatives pinned by tests: a memoizing wrapper that returns
-`cache.get(n)` (`deco-decorator-wrapper-value`), a wrapper with a
+Negatives pinned by tests: a memoizing wrapper outside condition 2a
+(prefilled, `let` or leaked cache, mismatched key, extra flow, a rebound or
+patched `Map`, an escape, dynamic evaluation, a constructor or prototype
+route, global-object access or `arguments` in the file, a non-module file, a
+defaulted, destructured or rest wrapper parameter, a split `set` line, a
+`set` sharing the guard's line), a wrapper with a
 conditional return, an `await`ing wrapper, a side-effect-only change
 (`calls.push(key)`), a factory decorator, a stacked decorator, and a
 `@D` that resolves to a different function than the owner.
@@ -1724,7 +1854,10 @@ the masker.
 22. **Mock call counts (2026-10-22, #9684).**
     Adopted: for a changed side-effect call (a probe whose
     change is to what the owner's call sends), an assertion whose observed
-    expression ends in `.mock.callCount()` or `.mock.calls.length`,
+    expression ends in `.mock.callCount()` or `.mock.calls.length`, or in the
+    bounded Sinon spy forms `.callCount`, `.callCount()` and
+    `.getCalls().length` (any receiver; no `.mock` segment exists to bind, so
+    the rule fails closed),
     including optional chains, literal computed keys, and unambiguously bound
     callback-local `const` aliases of those paths, counts calls and reads
     `mock_expectation` / weak (#10174),
@@ -1745,22 +1878,34 @@ the masker.
     lexically later; this demotion establishes no execution or admission. Count facts are read once per related test; ordinary argument
     pins do not trigger repeated whole-test parsing. Mutable, destructured,
     outer-scope and ambiguous aliases, dynamic keys within the count
-    suffix, arithmetic on a count, and other APIs such as Sinon `callCount`
-    properties retain their existing reading; they are not covered by this
-    bounded recognizer. Ambiguous alias spellings, a test body that fails to
-    parse, and a worker-refusal textual fallback likewise retain the existing
-    reading (a disclosed fail-open). `toHaveBeenCalledTimes` already reads weak mock
+    suffix, arithmetic on a count, and other count APIs (for example Sinon
+    `spy.args.length` or `calledOnce`) retain their existing reading; they are
+    not covered by this bounded recognizer. A Sinon-named receiver that is
+    merely a plain counter with a `callCount` member also loses argument credit,
+    a deliberate miss rather than wrong credit. Ambiguous alias spellings and a
+    test body that fails to parse retain the existing reading (a disclosed
+    fail-open). When the parse worker refuses, a textual fallback demotes only
+    plain identifier-path receivers of the same count suffixes (no optional
+    chain, index or alias), so a worker failure cannot restore exact credit for
+    those. `toHaveBeenCalledTimes` already reads weak mock
     evidence without an exact-value equality.
-    For the separately bounded #12949 case, a direct Vitest test passes a fresh
-    empty array and an ASCII string literal to a single-statement owner whose
-    `array.push(value)` argument changes to `value.toUpperCase()`. A length
+    For the separately bounded #12949 case, a direct test imports unaliased
+    `test` and `expect` from the same `vitest` or `@jest/globals` module and
+    passes a fresh empty array and an ASCII string literal to a single-statement
+    owner whose `array.push(value)` argument changes to `value.toUpperCase()`. A length
     pin does not observe the appended value. The recognizer admits only the
     exact straight-line shape, standard bindings and inert literal assertions;
     it withholds count and unrelated assertions from both oracle ranking and
     sink observation. An exact pin on index zero that distinguishes the
-    literal from its uppercase form retains credit. Added or multiple push
-    arguments, aliases, mutation, shadowing and unrecognized forms retain
-    their prior readings. This syntax-first preview assumes ordinary native
+    literal from its uppercase form retains credit. The Jest extension requires
+    a plain `test(...)` or `test.only(...)` registration on that imported binding;
+    `test.only` also admits a third, finite nonnegative numeric literal timeout
+    up to 2147483647. Computed timeouts and extra arguments retain their prior
+    readings. An unused import cannot authenticate another registration, and a locally
+    replaced `only` member is refused. Existing Vitest registration readings remain unchanged.
+    Mixed-framework pairs, global Jest bindings, renamed imports, added or multiple push arguments,
+    aliases, mutation, shadowing and unrecognized forms retain their prior
+    readings. This syntax-first preview assumes ordinary native
     Array and String behavior; it cannot inspect every external setup module.
     Input and expected string literals are compared as parser-decoded values;
     different escape spellings cannot supply or suppress value credit merely
@@ -1872,6 +2017,9 @@ call-count oracle projection (#10174).
 
 ## Non-Goals
 
+- No general exception or promise-rejection analysis in finalizers. Implicit
+  expression failures and awaited rejections are outside the explicit
+  completion-replacement scan described above (#8613).
 - No collection of assertions inside nested callbacks or subtests,
   except the literal `forEach`, returned or awaited `.then` and awaited
   `t.test` forms of RIPR-SPEC-0246 rule 2.
@@ -2408,6 +2556,19 @@ keys); do not take the next number.
   move from `gap` to `credited`; `ts-trap-swallowed-assert` and
   `ts-trap-wrapped-swallow` stay `gap`.
 
+- #13592 (rule 2, cross-module continuation): `crates/ripr/src/analysis/language/typescript/tests/cross_module_entry_tests.rs`
+  pins the credited chains (a direct, barrel-imported, renamed, default and
+  private-helper-via-export import; a three-module chain; the exact three-edge
+  bound) against each refusal (a shadowing parameter, local, inner function and
+  callback parameter; a same-named helper of an unrelated module; an ambiguous
+  star export; a mocked helper, importer or barrel; a fabricating spy; an alias,
+  `.call`, computed, value-pass and reassigned use; a name only mentioned; a
+  namespace and a type-only import; four edges; a helper no tested export
+  reaches). Each negative asserts its positive twin first, and the parsed owners
+  and resolved entries are asserted before any class. Fixtures
+  `ts_cross_module_reach_chain` and `ts_cross_module_reach_shadowed` pin the
+  production `check` output.
+
 ## Implementation Mapping
 
 - #10157: `call_removal_guard.rs` owns parsed receiver/order witnesses;
@@ -2464,6 +2625,17 @@ keys); do not take the next number.
   the receiver-call stand-in that tier 2 checks, and
   `tests/class_entry_tests.rs` pins the credited chains against each shape
   that records no edge.
+- #13592: `module_entries.rs` (`module_entries_and_outbound`) records, from the
+  same module graph as the entries, the imported bindings each export's code
+  bare-calls (`OutboundImportCall`, persisted in `ModuleExportFacts`);
+  `related_tests.rs` `ReExportIndex::cross_module_entries` resolves them through
+  `resolve_export` for owners of changed files (capped at
+  `MAX_CROSS_MODULE_ENTRIES`, disclosed through `CrossModuleEntries` and
+  `OwnerLineContext::cross_module_fan_in_limited`),
+  `reaching_module_entry_positions` refuses a test that mocks or fabricates the
+  chain and records the reached entries on the candidate, and `classifier.rs`
+  reads cross-module only reach as `static_unknown` with its own discriminate
+  summary and next step.
 - `crates/ripr/src/analysis/language/typescript/classifier.rs`: rules 6
   and 7 (`ts_changed_value_is_observed`,
   `ts_observed_local_aliases_owner`), and rule 8's `static_unknown` arm

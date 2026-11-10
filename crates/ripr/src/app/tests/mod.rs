@@ -17,14 +17,22 @@ mod preview_analyzed_outcome;
 mod python_test_note;
 // Drives the Python adapter end to end through `check_workspace_with_config`.
 #[cfg(feature = "lang-python")]
+mod python_exception_variant;
+#[cfg(feature = "lang-python")]
 mod python_family_selection_packets;
+#[cfg(feature = "lang-python")]
+mod python_module_reader_packets;
 #[cfg(feature = "lang-python")]
 mod python_packet_eligibility;
 #[cfg(feature = "lang-python")]
 mod python_repo_mode_repair_failclosed;
+#[cfg(feature = "lang-python")]
+mod python_test_style_matrix;
 mod rendering_contracts;
 #[cfg(feature = "lang-typescript")]
 mod typescript_clause_single_token_packets;
+#[cfg(feature = "lang-typescript")]
+mod typescript_error_variant_packets;
 #[cfg(feature = "lang-typescript")]
 mod typescript_family_selection_packets;
 #[cfg(feature = "lang-typescript")]
@@ -117,9 +125,12 @@ pub(crate) fn check_output_with(findings: Vec<Finding>) -> CheckOutput {
         untracked_working_tree_source_paths: Vec::new(),
         ignored_working_tree_source_paths: Vec::new(),
         unlinked_python_tests: None,
+        owner_opt_outs: Vec::new(),
         suppression: None,
         analysis_outcome: None,
         partial_scope: None,
+        file_fact_cache: None,
+
         analyzed_revisions: None,
     }
 }

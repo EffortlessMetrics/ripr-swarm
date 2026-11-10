@@ -180,6 +180,14 @@ passes through untouched (#12420):
   next-action display binds the same way; the typed command args and the
   detail-reference routes stay portable and never enter card identity.
 
+- Printed right after a fresh `ripr repair` start, the human brief omits the
+  lines the start summary just printed in the same stdout: the continue
+  command, attempt id and packet file path (only when the summary printed
+  that attempt's id), plus the changed behavior and
+  assertion shape when the summary carries that exact text. A fact the
+  summary did not print, a held or non-started card, the resume path and
+  `ripr agent card` keep the full brief (#14002).
+
 `ripr agent packet` is unchanged and remains the compatibility path: same
 envelope, same schema, same bytes. Shared field names keep one meaning
 across the card, the packet, and the attempt manifest. The staged

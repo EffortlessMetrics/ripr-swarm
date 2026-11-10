@@ -255,13 +255,19 @@ Do not promote static evidence to `killed`, `survived`, `untested`, `proven` or
 
 ## Architecture and implementation
 
-Keep one published package/library/binary `ripr`, plus unpublished `xtask`.
+Keep one user-facing published package/library/binary `ripr`, plus unpublished
+`xtask`. Internal support crates may be published in lockstep with `ripr` when
+compiler-unit evidence requires a split (ADR 0027, #8382/#12726); they are
+implementation packages, re-exported at their established `ripr::` paths, and
+do not expose a product API. The first is `ripr-contract` (domain DTOs and
+adapter result shells).
 The unpublished `repo-policy` package is the bounded #7158/#7324 automation
 exception: it owns only workflow-policy, agent-skill and Git-index executable-file
 checks and has no normal/build dependency on the product or its parser stack.
 It does not expose a product API.
-Do not split it into `ripr-core`, `ripr-cli`, `ripr-lsp`, `ripr-engine` or
-`ripr-schema` without a real external contract.
+Do not split into `ripr-core`, `ripr-cli`, `ripr-lsp`, `ripr-engine` or
+`ripr-schema` without a real external contract; ADR 0027 support crates are
+the measured exception, not a general decomposition licence.
 
 Internal owners:
 
@@ -510,9 +516,13 @@ scope agreement and applicable repository policy. The same authorized lead makes
 that judgment and uses the applicable route in `docs/MERGE_FLOW.md`; queue
 activation must be verified before using its native-queue procedure.
 
-Read `.factory/skills/review-guidelines/SKILL.md`, `.factory/rules/rust.md`,
-`.factory/rules/github-actions.md`, `.factory/rules/security.md`, and
-`docs/agent-context/{repo-map,review-invariants,validation}.md` for review context.
+Read `.factory/skills/review-guidelines/SKILL.md` and
+`docs/agent-context/review-invariants.md` for review context. Use the guideline's
+surface-and-decision table to select applicable rules and reference sections;
+use `docs/agent-context/repo-map.md` when orientation is needed. Large CI,
+automation, schema, and policy catalogs are references, not mandatory whole-file
+reads for every candidate. Follow affected consumers and dependencies, widen
+context when needed, and preserve the applicable proof and merge obligations.
 Use the complete `review-pr` procedure: semantic owner and consumers, stimulus
 and oracle challenge, rendered behavior, runtime/schema/docs/output parity,
 platform branches, actual check steps, denominators and artifact identity.

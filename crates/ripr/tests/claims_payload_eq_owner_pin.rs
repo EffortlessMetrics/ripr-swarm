@@ -618,7 +618,9 @@ fn a_literal_matches_pin_neither_owner_version_returns_does_not_credit() -> Resu
 
 /// The same verified-import twin under probes that are not `return_value`
 /// (RIPR-SPEC-0197 rule 5): the macro is graded for the return-value family
-/// only, so every other family keeps `unknown` / none and no credit.
+/// and the whole-value field pin of `field_construction` (see
+/// `claims_payload_equality_pins_a_whole_value_field`), so every other family
+/// keeps `unknown` / none and no credit.
 #[test]
 fn claims_payload_equality_grades_only_the_return_value_family() -> Result<(), String> {
     let root_dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("claims_payload_eq_families");
@@ -755,6 +757,7 @@ fn claims_payload_equality_grades_only_the_return_value_family() -> Result<(), S
     Ok(())
 }
 
+#[derive(Debug)]
 struct Outcome {
     class: String,
     oracle: (String, String),
@@ -792,7 +795,10 @@ fn run(root_dir: &std::path::Path, case: &Case, family: &str) -> Result<Outcome,
         .find(|f| f.probe.family.as_str() == family)
         .ok_or_else(|| format!("{}: no {family} finding", case.name))?;
     if family == "return_value"
-        && (case.body.contains("assert_ok_eq!") || case.body.contains("assert_some_eq!"))
+        && (case.body.contains("assert_ok_eq!")
+            || case.body.contains("assert_some_eq!")
+            || case.body.contains("assert_eq!(checked_div(")
+            || case.body.contains("assert_eq!(half("))
     {
         assert_audit_agrees(&root, case, finding.class.as_str())?;
     }
@@ -813,12 +819,307 @@ fn run(root_dir: &std::path::Path, case: &Case, family: &str) -> Result<Outcome,
     })
 }
 
+const FIELD_OWNER: &str = "#[derive(Debug, PartialEq)]\npub struct Config {\n    pub retries: u32,\n}\npub fn config(n: u32) -> Result<Config, ()> {\n    Ok(Config { retries: n + 1 })\n}\n";
+const FIELD_DIFF: &str = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -3,5 +3,5 @@ pub struct Config {\n     pub retries: u32,\n }\n pub fn config(n: u32) -> Result<Config, ()> {\n-    Ok(Config { retries: n + 2 })\n+    Ok(Config { retries: n + 1 })\n }\n";
+const FIELD_LET_OWNER: &str = "#[derive(Debug, PartialEq)]\npub struct Config {\n    pub retries: u32,\n}\npub fn config(n: u32) -> Result<Config, ()> {\n    let n = n + 1;\n    Ok(Config { retries: n + 1 })\n}\n";
+const FIELD_LET_DIFF: &str = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -4,6 +4,6 @@ pub struct Config {\n }\n pub fn config(n: u32) -> Result<Config, ()> {\n     let n = n + 1;\n-    Ok(Config { retries: n + 2 })\n+    Ok(Config { retries: n + 1 })\n }\n";
+const FIELD_OPTION_OWNER: &str = "#[derive(Debug, PartialEq)]\npub struct Config {\n    pub retries: u32,\n}\npub fn config(n: u32) -> Option<Config> {\n    Some(Config { retries: n + 1 })\n}\n";
+const FIELD_OPTION_DIFF: &str = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -3,5 +3,5 @@ pub struct Config {\n     pub retries: u32,\n }\n pub fn config(n: u32) -> Option<Config> {\n-    Some(Config { retries: n + 2 })\n+    Some(Config { retries: n + 1 })\n }\n";
+
+/// #12394 item 5: the claims payload-equality macros also pin a changed field
+/// of the struct literal the owner returns inside `Ok(..)` / `Some(..)`
+/// (`field_construction`), under the same whole-value gates the unwrapped
+/// `assert_eq!` twin meets. The credited and withheld rows are the same
+/// subject with one thing changed.
+#[test]
+fn claims_payload_equality_pins_a_whole_value_field() -> Result<(), String> {
+    let root_dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("claims_payload_eq_field");
+    let ok_import = "use claims::assert_ok_eq;";
+    let some_import = "use claims::assert_some_eq;";
+    // (name, owner, diff, imports, body, assert_eq twin, credited)
+    let rows: [(&str, &str, &str, &str, &str, &str, bool); 13] = [
+        (
+            "ok_new_value",
+            FIELD_OWNER,
+            FIELD_DIFF,
+            ok_import,
+            "assert_ok_eq!(config(2), Config { retries: 3 });",
+            "assert_eq!(config(2), Ok(Config { retries: 3 }));",
+            true,
+        ),
+        (
+            "ok_old_value",
+            FIELD_OWNER,
+            FIELD_DIFF,
+            ok_import,
+            "assert_ok_eq!(config(2), Config { retries: 4 });",
+            "assert_eq!(config(2), Ok(Config { retries: 4 }));",
+            true,
+        ),
+        (
+            "ok_neither_version",
+            FIELD_OWNER,
+            FIELD_DIFF,
+            ok_import,
+            "assert_ok_eq!(config(2), Config { retries: 9 });",
+            "assert_eq!(config(2), Ok(Config { retries: 9 }));",
+            false,
+        ),
+        (
+            "ok_message_argument",
+            FIELD_OWNER,
+            FIELD_DIFF,
+            ok_import,
+            "assert_ok_eq!(config(2), Config { retries: 3 }, \"retries\");",
+            "assert_eq!(config(2), Ok(Config { retries: 3 }), \"retries\");",
+            true,
+        ),
+        (
+            "some_new_value",
+            FIELD_OPTION_OWNER,
+            FIELD_OPTION_DIFF,
+            some_import,
+            "assert_some_eq!(config(2), Config { retries: 3 });",
+            "assert_eq!(config(2), Some(Config { retries: 3 }));",
+            true,
+        ),
+        (
+            "some_neither_version",
+            FIELD_OPTION_OWNER,
+            FIELD_OPTION_DIFF,
+            some_import,
+            "assert_some_eq!(config(2), Config { retries: 9 });",
+            "assert_eq!(config(2), Some(Config { retries: 9 }));",
+            false,
+        ),
+        (
+            "wrong_direction_on_a_result",
+            FIELD_OWNER,
+            FIELD_DIFF,
+            some_import,
+            "assert_some_eq!(config(2), Config { retries: 3 });",
+            "assert_eq!(config(2), Some(Config { retries: 3 }));",
+            false,
+        ),
+        (
+            "no_claims_import",
+            FIELD_OWNER,
+            FIELD_DIFF,
+            "",
+            "assert_ok_eq!(config(2), Config { retries: 3 });",
+            "assert_eq!(config(2), Ok(Config { retries: 3 }));",
+            false,
+        ),
+        (
+            "another_struct_type",
+            FIELD_OWNER,
+            FIELD_DIFF,
+            ok_import,
+            "assert_ok_eq!(config(2), Other { retries: 3 });",
+            "assert_eq!(config(2), Ok(Other { retries: 3 }));",
+            false,
+        ),
+        // `let n = n + 1;` rebinds the parameter: with call arg 2 the new
+        // value is 4 and the old 5. Read on the changed line alone, the
+        // field would look like 3 / 4 and the legitimate old-value pin 5
+        // would be withheld while the neither-version 3 credited.
+        (
+            "ok_old_value_after_rebinding",
+            FIELD_LET_OWNER,
+            FIELD_LET_DIFF,
+            ok_import,
+            "assert_ok_eq!(config(2), Config { retries: 5 });",
+            "assert_eq!(config(2), Ok(Config { retries: 5 }));",
+            true,
+        ),
+        (
+            "ok_new_value_after_rebinding",
+            FIELD_LET_OWNER,
+            FIELD_LET_DIFF,
+            ok_import,
+            "assert_ok_eq!(config(2), Config { retries: 4 });",
+            "assert_eq!(config(2), Ok(Config { retries: 4 }));",
+            true,
+        ),
+        (
+            "ok_neither_after_rebinding",
+            FIELD_LET_OWNER,
+            FIELD_LET_DIFF,
+            ok_import,
+            "assert_ok_eq!(config(2), Config { retries: 3 });",
+            "assert_eq!(config(2), Ok(Config { retries: 3 }));",
+            false,
+        ),
+        (
+            "expected_through_a_binding",
+            FIELD_OWNER,
+            FIELD_DIFF,
+            ok_import,
+            "let want = Config { retries: 3 };\n    assert_ok_eq!(config(2), want);",
+            "let want = Config { retries: 3 };\n    assert_eq!(config(2), Ok(want));",
+            false,
+        ),
+    ];
+    for (name, owner, diff, imports, body, twin, credited) in rows {
+        let case = |name: &'static str, body: &'static str| Case {
+            name,
+            owner,
+            diff,
+            owner_extra: "struct Other {\n    retries: u32,\n}\n",
+            imports,
+            body,
+            dependency: CLAIMS_DEP,
+            credited,
+        };
+        let claims = run(&root_dir, &case(name, body), "field_construction")?;
+        let expected = if credited {
+            ("exact_value", "strong")
+        } else {
+            ("unknown", "none")
+        };
+        assert_eq!(
+            (claims.oracle.0.as_str(), claims.oracle.1.as_str()),
+            expected,
+            "{name}: {claims:?}"
+        );
+        if !credited {
+            assert_ne!(claims.class, "exposed", "{name}: {claims:?}");
+        }
+        // The unwrapped twin on the same subject credits every row the
+        // claims form credits, so the claims reading adds no new reach; it
+        // withholds a pin neither owner version computes too (it credited it
+        // before #12394 item 5, #12864).
+        let twin = run(
+            &root_dir.join("twin"),
+            &case(name, twin),
+            "field_construction",
+        )?;
+        if credited {
+            assert_eq!(twin.class, "exposed", "{name}: {twin:?}");
+        } else if name.ends_with("neither_version") || name.ends_with("neither_after_rebinding") {
+            assert_ne!(twin.class, "exposed", "{name}: {twin:?}");
+        }
+    }
+    Ok(())
+}
+
+const CLONE_OWNER: &str = "#[derive(Debug, PartialEq, Eq)]\npub struct Window {\n    start: u32,\n    end: u32,\n}\n\nimpl Window {\n    pub fn new(start: u32, end: u32) -> Self {\n        Window { start, end }\n    }\n}\n\n\nimpl Clone for Window {\n    fn clone(&self) -> Self {\n        Window {\n            start: self.start,\n            end: self.end,\n        }\n    }\n}\n";
+const CLONE_DIFF: &str = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -14,7 +14,7 @@ impl Window {\n impl Clone for Window {\n     fn clone(&self) -> Self {\n         Window {\n-            start: self.end,\n+            start: self.start,\n             end: self.end,\n         }\n     }\n";
+const ERR_OWNER: &str = "#[derive(Debug, PartialEq)]\npub enum Failure {\n    Bad { code: u32 },\n}\npub fn parse(n: u32) -> Result<u32, Failure> {\n    if n == 0 {\n        return Err(Failure::Bad { code: 1 });\n    }\n    Ok(n)\n}\n";
+const ERR_DIFF: &str = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -4,7 +4,7 @@ pub enum Failure {\n }\n pub fn parse(n: u32) -> Result<u32, Failure> {\n     if n == 0 {\n-        return Err(Failure::Bad { code: 2 });\n+        return Err(Failure::Bad { code: 1 });\n     }\n     Ok(n)\n }\n";
+
+/// #13558: the claims nomination also reaches the `field_construction` clone
+/// and err-variant gates. A claims form needs an `Ok`/`Some` payload, which a
+/// `clone` owner and an `Err(..)` pin cannot satisfy, so it must not credit
+/// them; the `assert_eq!` twin on the same subject is the control.
+#[test]
+fn claims_payload_equality_does_not_credit_clone_or_err_variant_owners() -> Result<(), String> {
+    let root_dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("claims_payload_eq_clone_err");
+    let ok_import = "use claims::assert_ok_eq;";
+    let some_import = "use claims::assert_some_eq;";
+    let make = |name: &'static str, owner, diff, imports, body| Case {
+        name,
+        owner,
+        diff,
+        owner_extra: "",
+        imports,
+        body,
+        dependency: CLAIMS_DEP,
+        credited: false,
+    };
+    let rows: [(&str, &str, &str, &str, &str); 6] = [
+        (
+            "clone_ok_eq",
+            CLONE_OWNER,
+            CLONE_DIFF,
+            ok_import,
+            "let window = Window::new(3, 9);\n    assert_ok_eq!(window.clone(), window);",
+        ),
+        (
+            "clone_some_eq",
+            CLONE_OWNER,
+            CLONE_DIFF,
+            some_import,
+            "let window = Window::new(3, 9);\n    assert_some_eq!(window.clone(), window);",
+        ),
+        // A literal expected operand gets past the claims extraction, so the
+        // refusal comes from the clone gate itself, not from the operand shape.
+        (
+            "clone_ok_eq_literal",
+            CLONE_OWNER,
+            CLONE_DIFF,
+            ok_import,
+            "let window = Window::new(3, 9);\n    assert_ok_eq!(window.clone(), 3);",
+        ),
+        (
+            "clone_some_eq_literal",
+            CLONE_OWNER,
+            CLONE_DIFF,
+            some_import,
+            "let window = Window::new(3, 9);\n    assert_some_eq!(window.clone(), 3);",
+        ),
+        (
+            "err_variant_ok_eq",
+            ERR_OWNER,
+            ERR_DIFF,
+            ok_import,
+            "assert_ok_eq!(parse(0), 1);",
+        ),
+        (
+            "err_variant_some_eq",
+            ERR_OWNER,
+            ERR_DIFF,
+            some_import,
+            "assert_some_eq!(parse(0), 1);",
+        ),
+    ];
+    for (name, owner, diff, imports, body) in rows {
+        let outcome = run(
+            &root_dir,
+            &make(name, owner, diff, imports, body),
+            "field_construction",
+        )?;
+        assert_ne!(outcome.class, "exposed", "{name}: {outcome:?}");
+        assert_eq!(
+            outcome.oracle,
+            ("unknown".to_string(), "none".to_string()),
+            "{name}: {outcome:?}"
+        );
+    }
+    // The `assert_eq!` twins on the same subjects, to show the subjects are
+    // ones a pin can reach at all.
+    for (name, owner, diff, body) in [
+        (
+            "clone_assert_eq_twin",
+            CLONE_OWNER,
+            CLONE_DIFF,
+            "let window = Window::new(3, 9);\n    assert_eq!(window.clone(), window);",
+        ),
+        (
+            "err_variant_assert_eq_twin",
+            ERR_OWNER,
+            ERR_DIFF,
+            "assert_eq!(parse(0), Err(Failure::Bad { code: 1 }));",
+        ),
+    ] {
+        let outcome = run(
+            &root_dir,
+            &make(name, owner, diff, "", body),
+            "field_construction",
+        )?;
+        assert_eq!(outcome.class, "exposed", "{name}: {outcome:?}");
+    }
+    Ok(())
+}
+
 /// #12394 item 3: the repo-wide audit reads the same test through the same
 /// owner-pin decision as `ripr check`. For the owner's `Ok(..)` / `Some(..)`
 /// return-value seam the audit reads `strongly_gripped` exactly when the diff
 /// path reads `exposed`: a credited shape is not under-credited by the audit,
-/// and a refused shape is not credited by it either. Plain `assert_eq!` bodies
-/// are extracted oracles on both paths and are not part of this control.
+/// and a refused shape is not credited by it either. The plain `assert_eq!`
+/// cases on the same owners are part of the control (#13005): the audit
+/// credits them from the extracted oracle, so a literal the current owner
+/// does not return must still be withheld.
 fn assert_audit_agrees(
     root: &std::path::Path,
     case: &Case,

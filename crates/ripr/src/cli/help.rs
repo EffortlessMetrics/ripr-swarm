@@ -60,6 +60,7 @@ const REGISTERED_COMMAND_PATHS: &[&str] = &[
     "cache status",
     "calibrate cargo-mutants",
     "check",
+    "completions",
     "config validate",
     "context",
     "continue",
@@ -142,6 +143,7 @@ pub(super) fn help_text_for(command: &str) -> Option<&'static str> {
         "calibrate cargo-mutants" => CALIBRATE_HELP,
         "capabilities" => CAPABILITIES_HELP,
         "check" => CHECK_HELP,
+        "completions" => COMPLETIONS_HELP,
         "config validate" => CONFIG_HELP,
         "context" => CONTEXT_HELP,
         "continue" => CONTINUE_HELP,
@@ -329,9 +331,13 @@ pub(super) fn print_review_comments_help() {
 }
 
 pub(super) fn print_gate_help() {
-    // `ripr gate evaluate --help` prints this same body; the catalog carries a
-    // richer example for that nested path than the bare `gate` row.
-    println!("{}", render_command_help(GATE_HELP, &["gate evaluate"]));
+    // `ripr gate evaluate --help` and `ripr gate check --help` print this same
+    // body; the catalog carries richer examples for those nested paths than
+    // the bare `gate` row.
+    println!(
+        "{}",
+        render_command_help(GATE_HELP, &["gate evaluate", "gate check"])
+    );
 }
 
 /// Help for a group command (`policy`, `reports`, `baseline`, `pr-comments`).
@@ -510,6 +516,10 @@ pub(super) fn print_context_help() {
 
 pub(super) fn print_capabilities_help() {
     println!("{}", render_command_help(CAPABILITIES_HELP, &[]));
+}
+
+pub(super) fn print_completions_help() {
+    println!("{}", render_command_help(COMPLETIONS_HELP, &[]));
 }
 
 pub(super) fn print_doctor_help() {
@@ -933,7 +943,8 @@ mod tests {
         assert!(CHECK_HELP.contains("percentage or ETA"));
         assert!(CHECK_HELP.contains("processed_<n>_of_<total>"));
         assert!(CHECK_HELP.contains("does not mean analysis is faster"));
-        assert!(CHECK_HELP.contains("json, sarif, github"));
+        assert!(CHECK_HELP.contains("json, json-compact, sarif,"));
+        assert!(CHECK_HELP.contains("github, missed-txt) keep stdout byte-clean"));
         assert!(!CHECK_HELP.contains("json, sarif, markdown"));
         assert!(DIFF_HELP.contains("Usage: ripr diff"));
         assert!(DIFF_HELP.contains("full-repo-limited"));
@@ -1185,7 +1196,7 @@ mod tests {
         assert!(SWARM_INGEST_HELP.contains("edited_forbidden_file"));
         assert!(EXPLAIN_HELP.starts_with("Print why ripr flagged"));
         assert!(EXPLAIN_HELP.contains("Usage: ripr explain"));
-        assert!(CONTEXT_HELP.starts_with("Print the per-change context packet"));
+        assert!(CONTEXT_HELP.starts_with("Print one finding's changed code and related tests"));
         assert!(CONTEXT_HELP.contains("Usage: ripr context"));
         assert!(DOCTOR_HELP.starts_with("Diagnose the local ripr setup"));
         assert!(DOCTOR_HELP.contains("Usage: ripr doctor [--root PATH]"));
@@ -1446,6 +1457,7 @@ mod tests {
     const CI_SUMMARY_PARSER_RS: &str = include_str!("commands/ci_summary.rs");
     const REVIEW_COMMENTS_PARSER_RS: &str = include_str!("commands/review_comments.rs");
     const CAPABILITIES_PARSER_RS: &str = include_str!("commands/capabilities.rs");
+    const COMPLETIONS_PARSER_RS: &str = include_str!("commands/completions.rs");
     const CONTEXT_PARSER_RS: &str = include_str!("commands/context.rs");
     const CONFIG_PARSER_RS: &str = include_str!("commands/config.rs");
     const DOCTOR_PARSER_RS: &str = include_str!("commands/doctor.rs");
@@ -1464,12 +1476,12 @@ mod tests {
     const SWARM_INGEST_PARSER_RS: &str = include_str!("commands/swarm/ingest.rs");
     const RERUN_PARSER_RS: &str = include_str!("rerun.rs");
     const MCP_PARSER_RS: &str = include_str!("../mcp/mod.rs");
-    const PR_SUMMARY_PARSER_RS: &str = include_str!("../app/pr_summary/mod.rs");
-    const ANNOTATIONS_PARSER_RS: &str = include_str!("../app/annotations.rs");
-    const PR_EVIDENCE_PARSER_RS: &str = include_str!("../app/pr_evidence.rs");
-    const IMPACTED_EVIDENCE_PARSER_RS: &str = include_str!("../app/impacted_evidence.rs");
-    const RIPR_PLUS_PARSER_RS: &str = include_str!("../app/ripr_plus.rs");
-    const FIRST_PR_PARSER_RS: &str = include_str!("../output/first_pr/options.rs");
+    const PR_SUMMARY_PARSER_RS: &str = include_str!("commands/pr_summary.rs");
+    const ANNOTATIONS_PARSER_RS: &str = include_str!("commands/annotations.rs");
+    const PR_EVIDENCE_PARSER_RS: &str = include_str!("commands/pr_evidence.rs");
+    const IMPACTED_EVIDENCE_PARSER_RS: &str = include_str!("commands/impacted_evidence.rs");
+    const RIPR_PLUS_PARSER_RS: &str = include_str!("commands/ripr_plus.rs");
+    const FIRST_PR_PARSER_RS: &str = include_str!("commands/first_pr.rs");
     const ASSISTANT_LOOP_PARSER_RS: &str = include_str!("commands/assistant_loop.rs");
     const FIRST_ACTION_PARSER_RS: &str = include_str!("commands/first_action.rs");
     const REPORTS_NAV_PARSER_RS: &str = include_str!("commands/reports.rs");
@@ -1532,11 +1544,7 @@ mod tests {
             AGENT_PARSER_RS,
             &["parse_agent_verify_execute_options"],
         ),
-        (
-            "annotations",
-            ANNOTATIONS_PARSER_RS,
-            &["run_annotations", "parse_options"],
-        ),
+        ("annotations", ANNOTATIONS_PARSER_RS, &["parse_options"]),
         (
             "assistant-loop health",
             ASSISTANT_LOOP_PARSER_RS,
@@ -1581,6 +1589,7 @@ mod tests {
             &["parse_calibrate_cargo_mutants_options"],
         ),
         ("capabilities", CAPABILITIES_PARSER_RS, &["capabilities"]),
+        ("completions", COMPLETIONS_PARSER_RS, &["completions"]),
         ("check", CHECK_PARSER_RS, &["check_inner"]),
         (
             "config validate",
@@ -1618,22 +1627,22 @@ mod tests {
             &["parse_first_action_options"],
         ),
         ("first-pr", FIRST_PR_PARSER_RS, &["parse_options"]),
-        ("gate", GATE_PARSER_RS, &["parse_gate_options"]),
+        (
+            "gate",
+            GATE_PARSER_RS,
+            &["parse_gate_options", "parse_gate_check_plan"],
+        ),
         (
             "impacted-evidence",
             IMPACTED_EVIDENCE_PARSER_RS,
-            &["run_impacted_evidence", "parse_options"],
+            &["parse_options"],
         ),
         ("init", INIT_PARSER_RS, &["parse_init_options"]),
         ("lsp", LSP_PARSER_RS, &["lsp_with_serve"]),
         ("mcp", MCP_PARSER_RS, &["run"]),
         ("outcome", CLI_COMMANDS_RS, &["parse_outcome_options"]),
         ("pilot", PILOT_PARSER_RS, &["parse_pilot_options"]),
-        (
-            "plus",
-            RIPR_PLUS_PARSER_RS,
-            &["run_ripr_plus", "parse_options"],
-        ),
+        ("plus", RIPR_PLUS_PARSER_RS, &["parse_options"]),
         (
             "policy history",
             POLICY_PARSE_RS,
@@ -1689,11 +1698,7 @@ mod tests {
             PR_COMMENTS_GITHUB_PARSER_RS,
             &["parse_pr_comments_summary_options"],
         ),
-        (
-            "pr-evidence",
-            PR_EVIDENCE_PARSER_RS,
-            &["run_pr_evidence", "parse_options"],
-        ),
+        ("pr-evidence", PR_EVIDENCE_PARSER_RS, &["parse_options"]),
         (
             "pr-ledger record",
             CLI_COMMANDS_RS,
@@ -1704,11 +1709,7 @@ mod tests {
             CLI_COMMANDS_RS,
             &["parse_pr_review_front_panel_options"],
         ),
-        (
-            "pr-summary",
-            PR_SUMMARY_PARSER_RS,
-            &["run_pr_summary", "parse_options"],
-        ),
+        ("pr-summary", PR_SUMMARY_PARSER_RS, &["parse_options"]),
         (
             "receipt check",
             RECEIPT_PARSER_RS,

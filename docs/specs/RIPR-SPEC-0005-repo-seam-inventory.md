@@ -90,6 +90,14 @@ in that matcher. Rust lexical whitespace, including non-ASCII line separators
 and direction marks, and raw identifiers cannot erase the qualifier.
 Bare type heads and enum variants retain their existing bounded handling;
 an independent supported local call can still establish the relation.
+One exception is bounded to the owner's own crate (#14036): in an integration
+test that is a test-crate root of the root package, `krate::Type::ctor(..)`
+reads as the owner's type only when `krate` is the root package's library
+identifier, the changed owner is a method of a top-level `impl` of a library file (a
+function-local or inline-module namesake type is not), a constructor of that type is indexed, and
+neither the file nor the test body declares, imports, renames or globs `krate`.
+A foreign crate, a shadowing module, a renamed crate and a test module child
+keep the refusal above.
 Bare generic annotations retain function-pointer, associated-type and
 const-expression arguments; punctuation inside those arguments cannot truncate
 the type or hide a qualified trailing path.

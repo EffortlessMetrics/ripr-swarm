@@ -1,0 +1,271 @@
+//! Project-relative module names of owners inside nested Python projects
+//! (#13675).
+//!
+//! In a monorepo where each package is its own project (`svc/b/pyproject.toml`)
+//! a test imports `svc/b/core.py` as `core`. These names go through the #4566
+//! ambiguity record, so a name identifies the owner only for a test under the
+//! owner's project root.
+
+use super::super::source_utils::normalized_path;
+use super::{
+    AmbiguousSrcModule, PythonOwner, module_name_identifies_owner_for, owner_module_paths,
+    rival_roots_for,
+};
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
+
+/// Files whose directory marks a Python project: pytest puts that directory
+/// (or a `pythonpath` entry under it) on `sys.path`, so a module below it is
+/// importable by its project-relative name.
+const PYTHON_PROJECT_MARKERS: [&str; 5] = [
+    "pyproject.toml",
+    "setup.py",
+    "setup.cfg",
+    "pytest.ini",
+    "tox.ini",
+];
+
+/// The deepest non-root ancestor directory of `file` that holds a project
+/// marker. The repository root is excluded: its project-relative names are the
+/// full dotted paths [`owner_module_paths`] already yields.
+fn nearest_project_root(
+    file: &Path,
+    has_marker: &mut impl FnMut(&Path) -> bool,
+) -> Option<PathBuf> {
+    let mut dir = file.parent();
+    while let Some(current) = dir {
+        if current.as_os_str().is_empty() {
+            return None;
+        }
+        if has_marker(current) {
+            return Some(current.to_path_buf());
+        }
+        dir = current.parent();
+    }
+    None
+}
+
+/// The dotted names `file` has relative to its project `root`.
+///
+/// The repository-root `lib/` import root of [`owner_module_paths`] is not
+/// applied: a project's `lib/core.py` is `lib.core`, never `core` (#13698).
+/// The `src/` layout root applies at any depth, as it does there.
+fn project_relative_module_names(file: &Path, root: &Path) -> Vec<String> {
+    let Ok(relative) = file.strip_prefix(root) else {
+        return Vec::new();
+    };
+    let Some(full) = owner_module_paths(relative)
+        .into_iter()
+        .next()
+        .filter(|full| !full.is_empty())
+    else {
+        // A project-root `__init__.py` is the project itself, not a module
+        // named by a bare import (#13737).
+        return Vec::new();
+    };
+    let parts = full.split('.').collect::<Vec<_>>();
+    let mut names = vec![full.clone()];
+    // Only directory segments are import roots, as in `owner_module_paths`.
+    let directory_count = relative.components().count().saturating_sub(1);
+    for (idx, part) in parts.iter().enumerate().take(directory_count) {
+        if *part == "src" {
+            let below = parts.get(idx + 1..).unwrap_or_default().join(".");
+            if !below.is_empty() && !names.contains(&below) {
+                names.push(below);
+            }
+        }
+    }
+    names
+}
+
+/// Records each owner's project-relative module names (`svc/b/core.py` in the
+/// project `svc/b` imports as `core`) so a test inside that project resolves
+/// `from core import limit`. A project-relative name identifies the owner only
+/// for a test under the owner's project root, which also keeps a same-named
+/// module of a sibling project from crediting this one. Runs after
+/// [`apply_src_module_ambiguity`]; names already recorded there keep their
+/// meaning.
+pub(in crate::analysis::language::python) fn apply_project_module_names<'a>(
+    owners: &mut [PythonOwner],
+    source_files: impl Iterator<Item = &'a PathBuf>,
+    mut is_present: impl FnMut(&Path) -> bool,
+) {
+    let mut index = ProjectNameIndex::build(source_files, &mut is_present);
+    apply_project_module_names_with(owners, &mut index, is_present);
+}
+
+/// The workspace-wide lookups [`apply_project_module_names_with`] reads, built
+/// once so a caller applying names file by file does not rebuild them per file.
+pub(in crate::analysis::language::python) struct ProjectNameIndex {
+    marker_cache: BTreeMap<PathBuf, bool>,
+    files_by_module: BTreeMap<String, Vec<(PathBuf, PathBuf)>>,
+    /// Package initializers by their repository-relative module path, to find
+    /// the file behind each recorded re-exporting package.
+    init_files: BTreeMap<String, Vec<PathBuf>>,
+}
+
+impl ProjectNameIndex {
+    pub(in crate::analysis::language::python) fn build<'a>(
+        source_files: impl Iterator<Item = &'a PathBuf>,
+        mut is_present: impl FnMut(&Path) -> bool,
+    ) -> Self {
+        let mut index = Self {
+            marker_cache: BTreeMap::new(),
+            files_by_module: BTreeMap::new(),
+            init_files: BTreeMap::new(),
+        };
+        for file in source_files {
+            if file.file_name().and_then(|name| name.to_str()) == Some("__init__.py")
+                && let Some(full) = owner_module_paths(file).into_iter().next()
+            {
+                index.init_files.entry(full).or_default().push(file.clone());
+            }
+            let Some(root) = index.project_root(file, &mut is_present) else {
+                continue;
+            };
+            for module in project_relative_module_names(file, &root) {
+                index
+                    .files_by_module
+                    .entry(module)
+                    .or_default()
+                    .push((file.clone(), root.clone()));
+            }
+        }
+        index
+    }
+
+    fn project_root(
+        &mut self,
+        file: &Path,
+        is_present: &mut impl FnMut(&Path) -> bool,
+    ) -> Option<PathBuf> {
+        let cache = &mut self.marker_cache;
+        nearest_project_root(file, &mut |dir: &Path| {
+            *cache.entry(dir.to_path_buf()).or_insert_with(|| {
+                PYTHON_PROJECT_MARKERS
+                    .iter()
+                    .any(|marker| is_present(&dir.join(marker)))
+            })
+        })
+    }
+}
+
+/// Applies project-relative names to `owners` from a prebuilt index.
+pub(in crate::analysis::language::python) fn apply_project_module_names_with(
+    owners: &mut [PythonOwner],
+    index: &mut ProjectNameIndex,
+    mut is_present: impl FnMut(&Path) -> bool,
+) {
+    for owner in owners.iter_mut() {
+        let Some(owner_root) = index.project_root(&owner.file, &mut is_present) else {
+            continue;
+        };
+        let owner_file = normalized_path(&owner.file);
+        let known = owner_module_paths(&owner.file);
+        for module in project_relative_module_names(&owner.file, &owner_root) {
+            if known.contains(&module)
+                || owner
+                    .ambiguous_src_modules
+                    .iter()
+                    .any(|ambiguous| ambiguous.module == module)
+            {
+                continue;
+            }
+            let rival_roots = rival_roots_for(&index.files_by_module, &module, |file, _| {
+                normalized_path(file) == owner_file
+            });
+            // Another file of the same project yields the same name
+            // (`pkg.py` beside `pkg/__init__.py`): the name alone does not say
+            // which one an import loads, so it identifies neither (#13698).
+            if rival_roots.contains(&owner_root) {
+                continue;
+            }
+            owner.ambiguous_src_modules.push(AmbiguousSrcModule {
+                module,
+                owner_root: owner_root.clone(),
+                rival_roots,
+                shadowed: false,
+            });
+        }
+        record_project_reexport_names(owner, &owner_root, index, &mut is_present);
+    }
+}
+
+/// Gives the package that re-exports `owner` its project-relative name
+/// (`svc/b/pkg/__init__.py` in the project `svc/b` imports as `pkg`), so
+/// `from pkg import limit` in a test of that project resolves (#13737).
+/// [`apply_package_reexports`](super::super::reexports) only knows the
+/// repository-relative paths (`svc.b.pkg`). The same closed gate applies as for
+/// the owner's own names: the package must sit in the owner's project root, the
+/// name goes through the ambiguity record (so only a test under that root may
+/// use it) and a same-project twin (`pkg.py` beside `pkg/__init__.py`) leaves
+/// the name identifying neither. Runs after the reexport pass.
+fn record_project_reexport_names(
+    owner: &mut PythonOwner,
+    owner_root: &Path,
+    index: &mut ProjectNameIndex,
+    is_present: &mut impl FnMut(&Path) -> bool,
+) {
+    let exporters = owner
+        .reexport_modules
+        .iter()
+        .filter_map(|module| index.init_files.get(module))
+        .flatten()
+        .cloned()
+        .collect::<Vec<_>>();
+    for init in exporters {
+        // A package of another project (or of none) is not importable by a
+        // project-relative name from this owner's project.
+        if index.project_root(&init, is_present).as_deref() != Some(owner_root) {
+            continue;
+        }
+        let known = owner_module_paths(&init);
+        for module in project_relative_module_names(&init, owner_root) {
+            if known.contains(&module)
+                || owner.reexport_modules.contains(&module)
+                || owner
+                    .ambiguous_src_modules
+                    .iter()
+                    .any(|ambiguous| ambiguous.module == module)
+            {
+                continue;
+            }
+            let init_file = normalized_path(&init);
+            let rival_roots = rival_roots_for(&index.files_by_module, &module, |file, _| {
+                normalized_path(file) == init_file
+            });
+            if rival_roots.iter().any(|root| root == owner_root) {
+                continue;
+            }
+            owner.ambiguous_src_modules.push(AmbiguousSrcModule {
+                module: module.clone(),
+                owner_root: owner_root.to_path_buf(),
+                rival_roots,
+                shadowed: false,
+            });
+            owner.reexport_modules.push(module);
+        }
+    }
+}
+
+/// Every dotted module path under which `test_file` may import the owner: its
+/// repository-relative paths plus the project-relative names recorded by
+/// [`apply_project_module_names`] whose project root holds `test_file`.
+/// Project-relative names are short (`core`, `pkg.main`), so they are only
+/// ever offered with that root check and are never used for suffix or package
+/// prefix matching elsewhere.
+pub(in crate::analysis::language::python) fn owner_import_modules_for(
+    owner: &PythonOwner,
+    test_file: &Path,
+) -> Vec<String> {
+    let mut paths = owner_module_paths(&owner.file);
+    for ambiguous in &owner.ambiguous_src_modules {
+        if !paths.contains(&ambiguous.module)
+            && !owner.reexport_modules.contains(&ambiguous.module)
+            && module_name_identifies_owner_for(owner, &ambiguous.module, test_file)
+        {
+            paths.push(ambiguous.module.clone());
+        }
+    }
+    paths
+}
