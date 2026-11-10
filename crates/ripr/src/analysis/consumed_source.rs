@@ -17,8 +17,9 @@ enum Commitment {
 #[derive(Clone, Debug, Default)]
 pub(crate) struct ConsumedRustSources {
     paths: BTreeMap<PathBuf, Commitment>,
-    #[cfg(test)]
-    pub(crate) file_fact_cache: crate::analysis::seam_cache::FileFactCacheStats,
+    /// Populated when the Rust index builder ran with a file-fact cache;
+    /// `None` when no cache stats were produced for this carrier.
+    pub(crate) file_fact_cache: Option<crate::analysis::seam_cache::FileFactCacheStats>,
 }
 
 impl ConsumedRustSources {
